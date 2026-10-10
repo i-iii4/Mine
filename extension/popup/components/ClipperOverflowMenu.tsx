@@ -22,8 +22,8 @@ import { sendToNative } from "../lib/messaging";
 import { openDownloadPage } from "../lib/standalone";
 
 const FEED_BUTTON_SWITCHES: ReadonlyArray<{ key: keyof FeedButtonSettings; label: string }> = [
-  { key: "x", label: "Mine on X" },
-  { key: "instagram", label: "Mine on Instagram" },
+  { key: "x", label: "Button on X posts" },
+  { key: "instagram", label: "Button on Instagram posts" },
 ];
 
 /// The extension's storage, where the clipper runs as part of the extension.

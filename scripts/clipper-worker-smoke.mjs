@@ -124,7 +124,7 @@ async function quietTransportPage() {
 // после живого просмотра», Р5 to Р10): the page under it keeps working, a new
 // document brings it back with the same clip, Screenshot takes the page shown
 // now for the card of the page the clip was opened on, the header moves it,
-// the corner resizes it, and the window keeps it whole.
+// the corners resize it, and the window keeps it whole.
 const SITE_PAGES = {
   '/a': { title: 'Page A', colour: 'rgb(255, 0, 0)' },
   '/b': { title: 'Page B', colour: 'rgb(0, 0, 255)' },
@@ -197,16 +197,23 @@ async function checkOverlayAcrossPages(worker) {
     await page.waitForFunction(() => window.scrollY > 0);
     assert.equal(await panel.isVisible(), true, 'the overlay closed under the page');
 
-    // Р10: the header moves it, the corner resizes it, both are kept.
+    // Р10: the header moves it, the corners resize it, both are kept.
     const start = await panelBox(page);
     const header = await page.locator('[data-clipper-drag-handle]').boundingBox();
     await dragBy(page, { x: header.x + header.width - 100, y: header.y + header.height / 2 }, -400, 120);
     const moved = await panelBox(page);
     assert.ok(Math.abs(moved.x - (start.x - 400)) <= 1 && Math.abs(moved.y - (start.y + 120)) <= 1, JSON.stringify({ start, moved }));
-    const corner = await page.locator('[data-clipper-resize-handle]').boundingBox();
+    const corner = await page.locator('[data-clipper-resize-handle="bottom-right"]').boundingBox();
     await dragBy(page, { x: corner.x + corner.width / 2, y: corner.y + corner.height / 2 }, 100, 60);
+    const grown = await panelBox(page);
+    assert.ok(Math.abs(grown.width - (moved.width + 100)) <= 1 && Math.abs(grown.height - (moved.height + 60)) <= 1, JSON.stringify({ moved, grown }));
+    // The top left corner grows it up and left; the bottom right corner stays.
+    const topLeft = await page.locator('[data-clipper-resize-handle="top-left"]').boundingBox();
+    await dragBy(page, { x: topLeft.x + topLeft.width / 2, y: topLeft.y + topLeft.height / 2 }, -60, -40);
     const sized = await panelBox(page);
-    assert.ok(Math.abs(sized.width - (moved.width + 100)) <= 1 && Math.abs(sized.height - (moved.height + 60)) <= 1, JSON.stringify({ moved, sized }));
+    assert.ok(Math.abs(sized.x - (grown.x - 60)) <= 1 && Math.abs(sized.y - (grown.y - 40)) <= 1
+      && Math.abs(sized.x + sized.width - (grown.x + grown.width)) <= 1
+      && Math.abs(sized.y + sized.height - (grown.y + grown.height)) <= 1, JSON.stringify({ grown, sized }));
     const kept = await worker.evaluate(async () => (await chrome.storage.local.get('mineOverlayBounds')).mineOverlayBounds);
     assert.ok(Math.abs(kept.left - sized.x) <= 1 && Math.abs(kept.top - sized.y) <= 1 && Math.abs(kept.width - sized.width) <= 1, JSON.stringify(kept));
     // The window shrinks: the panel stays whole in it; it grows back: the panel returns.
@@ -275,6 +282,80 @@ async function checkOverlayAcrossPages(worker) {
   } finally {
     await page.close();
     // The browser keeps its connections open; the site goes with them.
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+// Р10: the header drags by the window chrome's rule, the space's name
+// included. A long name leaves no empty part of the header; a press on it
+// that travels past 4 px moves the panel and opens nothing, a press without
+// it and a click open the space menu. The space comes from the kept
+// destination; Mine need not answer for the header to show it.
+const LONG_SPACE = '/Users/worker/Spaces/A space whose name fills the whole header of the clipper';
+
+async function checkHeaderDragBySpaceName(worker) {
+  const { server, origin } = await startSite();
+  const page = await context.newPage();
+  try {
+    await worker.evaluate(async (space) => {
+      await chrome.storage.local.set({
+        mineSaveDestination: { executor: 'native', vaultPath: space, bindingId: null },
+        mineKnownVaults: [space, '/Users/worker/Spaces/Journal'],
+      });
+    }, LONG_SPACE);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(`${origin}/a`);
+    await worker.evaluate(async (url) => {
+      const tab = (await chrome.tabs.query({})).find((candidate) => candidate.url === url);
+      if (!tab) throw new Error('No tab for the local page');
+      await chrome.tabs.update(tab.id, { active: true });
+      await openClipperUi(tab);
+    }, `${origin}/a`);
+    const name = page.locator('[data-clipper-space-switcher]');
+    await name.waitFor({ state: 'visible', timeout: 15_000 });
+    const search = page.getByRole('textbox', { name: 'Search spaces', exact: true });
+    const header = await page.locator('[data-clipper-space-row]').boundingBox();
+    const nameBox = await name.boundingBox();
+    assert.ok(nameBox.width > header.width / 2, `the name does not fill the header: ${JSON.stringify({ header, nameBox })}`);
+    const centre = { x: nameBox.x + nameBox.width / 2, y: nameBox.y + nameBox.height / 2 };
+
+    // Past the threshold: the panel follows the pointer, the menu stays shut.
+    const before = await panelBox(page);
+    await dragBy(page, centre, -200, 30);
+    const after = await panelBox(page);
+    const expected = {
+      x: Math.min(Math.max(before.x - 200, 0), 1280 - before.width),
+      y: Math.min(Math.max(before.y + 30, 0), 900 - before.height),
+    };
+    assert.ok(Math.abs(after.x - expected.x) <= 1 && Math.abs(after.y - expected.y) <= 1, JSON.stringify({ before, after, expected }));
+    assert.equal(await search.count(), 0, 'the space menu opened after a drag by the name');
+    assert.equal(await name.getAttribute('aria-expanded'), 'false');
+    const kept = await worker.evaluate(async () => (await chrome.storage.local.get('mineOverlayBounds')).mineOverlayBounds);
+    assert.ok(Math.abs(kept.left - after.x) <= 1 && Math.abs(kept.top - after.y) <= 1, JSON.stringify(kept));
+
+    // Below the threshold: the panel stays, the press is a click and opens the menu.
+    const moved = await name.boundingBox();
+    const pressAt = { x: moved.x + moved.width / 2, y: moved.y + moved.height / 2 };
+    await page.mouse.move(pressAt.x, pressAt.y);
+    await page.mouse.down();
+    await page.mouse.move(pressAt.x + 2, pressAt.y + 1);
+    await page.mouse.up();
+    await search.waitFor({ state: 'visible', timeout: 5_000 });
+    const still = await panelBox(page);
+    assert.ok(Math.abs(still.x - after.x) <= 0.5 && Math.abs(still.y - after.y) <= 0.5, JSON.stringify({ after, still }));
+    await page.keyboard.press('Escape');
+    await search.waitFor({ state: 'detached', timeout: 5_000 });
+
+    // A plain click opens it too.
+    await name.click();
+    await search.waitFor({ state: 'visible', timeout: 5_000 });
+    assert.equal(await name.getAttribute('aria-expanded'), 'true');
+    await page.keyboard.press('Escape');
+    await search.waitFor({ state: 'detached', timeout: 5_000 });
+  } finally {
+    await page.close();
+    await worker.evaluate(async () => chrome.storage.local.remove(['mineSaveDestination', 'mineKnownVaults']));
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   }
@@ -482,6 +563,7 @@ try {
   assert.deepEqual(finalCapture.names, ['Worker UI article.md', 'Worker image.md']);
   assert.deepEqual(finalCapture.pending, []);
   await checkOverlayAcrossPages(worker);
+  await checkHeaderDragBySpaceName(worker);
   Object.assign(report, { ok: true, scope: 'chromium-extension-worker-wasm',
     fixtures: fixtures.length, headless: true, temporaryProfile: true,
     persistedHandleBlobReceipt: true, browserRestarts: 3, popupSaveToFile: true,
@@ -489,7 +571,8 @@ try {
     savedFileStableAfterBrowserReopen: true,
     standaloneSetupTransport: true, nativeStatusTransport: true, serviceWorkerRestarts: 2,
     overlayLeavesPageWorking: true, overlayClipAcrossNewDocument: true, screenshotOfShownPageForOriginalCard: true,
-    overlayMovedResizedKeptAndFitted: true, openClipClearedAfterSave: true,
+    overlayMovedResizedKeptAndFitted: true, overlayResizedByTopLeftCorner: true,
+    overlayDraggedBySpaceName: true, spaceMenuOpensOnClickNotDrag: true, openClipClearedAfterSave: true,
     filesystem: 'OPFS-not-OS-folder' });
 } catch (error) {
   report.error = error.stack ?? String(error);

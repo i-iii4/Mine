@@ -56,7 +56,8 @@ export function StandaloneSetup({
     <div className="flex min-h-0 flex-col" data-clipper-standalone-setup="">
       <div className="flex h-10 shrink-0 select-none items-center border-b border-border bg-accent px-3" data-clipper-drag-handle="">
         <span className="text-base font-semibold text-foreground">Mine</span>
-        {onClose && <ChromeCloseButton className="ml-auto" label="Close" onClick={onClose} />}
+        {/* Above the overlay's resize corner: the button keeps every pixel. */}
+        {onClose && <ChromeCloseButton className="relative z-10 ml-auto" label="Close" onClick={onClose} />}
       </div>
 
       <div className="flex flex-col items-start gap-3 p-4 text-left">
@@ -121,7 +122,8 @@ export function StandaloneFolderRow({
         {folderName ?? "Folder"}
       </span>
       <span className="font-mono text-sm text-muted-foreground">browser</span>
-      <span className="ml-auto flex items-center gap-1">
+      {/* Above the overlay's resize corner: the buttons keep every pixel. */}
+      <span className="relative z-10 ml-auto flex items-center gap-1">
         <ClipperOverflowMenu canOpenApp={canOpenApp} onRetryConnection={onRetryConnection} onChooseNativeFolder={onChooseNativeFolder} />
         {onClose && <ChromeCloseButton label="Close" onClick={onClose} />}
       </span>

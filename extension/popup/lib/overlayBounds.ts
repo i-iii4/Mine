@@ -1,6 +1,6 @@
 // Where the overlay stands and how big it is (SPEC_CLIPPER.md, «Доработки после
 // живого просмотра», пункт 4 и Р10). The person sets a place and a size by
-// dragging the header and the bottom right corner; the browser window decides
+// dragging the header and any of the four corners; the browser window decides
 // what of it can be shown. What was set is kept between openings and never
 // changed by the window: the overlay comes back to it once there is room.
 
@@ -88,14 +88,31 @@ export function dragOverlay(bounds: OverlayBounds, frame: OverlayFrame, drawnHei
   };
 }
 
-/// The bounds after the bottom right corner was dragged by `dx`, `dy` from
-/// `frame`: the top left corner stays, the size keeps within its limits and
-/// within the window.
-export function resizeOverlay(frame: OverlayFrame, drawnHeight: number, dx: number, dy: number, viewport: Viewport): OverlayBounds {
+/** A corner of the panel the person drags to resize it. */
+export type OverlayCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+
+export const OVERLAY_CORNERS: readonly OverlayCorner[] = ["top-left", "top-right", "bottom-left", "bottom-right"];
+
+/// The bounds after `corner` was dragged by `dx`, `dy` from `frame`: the
+/// opposite corner stays where it was, and the size keeps within its limits
+/// and within the window. Only the minimum height outranks the fixed corner:
+/// a panel that cannot be 430 px tall above or below it grows past it, and
+/// `fitOverlay` then keeps the panel in the window.
+export function resizeOverlay(frame: OverlayFrame, drawnHeight: number, corner: OverlayCorner, dx: number, dy: number, viewport: Viewport): OverlayBounds {
+  const right = frame.left + frame.width;
+  const bottom = frame.top + drawnHeight;
+  const fromLeft = corner.endsWith("left");
+  const fromTop = corner.startsWith("top");
+  const width = fromLeft
+    ? clamp(frame.width - dx, OVERLAY_MIN_WIDTH, Math.min(OVERLAY_MAX_WIDTH, right))
+    : clamp(frame.width + dx, OVERLAY_MIN_WIDTH, Math.min(OVERLAY_MAX_WIDTH, viewport.width - frame.left));
+  const height = fromTop
+    ? clamp(drawnHeight - dy, OVERLAY_MIN_HEIGHT, bottom)
+    : clamp(drawnHeight + dy, OVERLAY_MIN_HEIGHT, viewport.height - frame.top);
   return {
-    left: frame.left,
-    top: frame.top,
-    width: clamp(frame.width + dx, OVERLAY_MIN_WIDTH, Math.min(OVERLAY_MAX_WIDTH, viewport.width - frame.left)),
-    height: clamp(drawnHeight + dy, OVERLAY_MIN_HEIGHT, viewport.height - frame.top),
+    left: fromLeft ? Math.max(right - width, 0) : frame.left,
+    top: fromTop ? Math.max(bottom - height, 0) : frame.top,
+    width,
+    height,
   };
 }

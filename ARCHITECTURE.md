@@ -1441,7 +1441,9 @@ before moving the row made every drop read as a snap-back followed by a jump.
 Rationale: Mine's top chrome is a native titlebar replacement, not a web form
 row. The user should be able to grab the space selector or channel search area
 to move the window, while still being able to click the same pixels to open the
-selector or focus the input. `useChromeDragGesture()` centralizes this behavior
+selector or focus the input. The threshold gesture itself is
+`usePressDragGesture()`, free of Tauri: the clipper's overlay drags its panel
+by its header with it (SPEC_CLIPPER.md, Р10). `useChromeDragGesture()` centralizes this behavior
 and calls Tauri's `getCurrentWindow().startDragging()` only after the gesture is
 clearly a drag. Empty chrome remains covered by `data-tauri-drag-region`.
 When Sidebar is collapsed, the left top-chrome segment does not follow the

@@ -46,6 +46,9 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const actionIdPrefix = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
+  // The pointer press on the name whose click decides the menu: whether the
+  // menu was shut when it began. A press on an open menu shuts it.
+  const pointerPressRef = useRef<{ opensMenu: boolean } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const label = value ? vaultName(value) : "";
 
@@ -162,10 +165,28 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
   ]);
 
   return (
-    // The header: in the overlay its empty part drags the panel (SPEC_CLIPPER.md, Р10).
+    // The header: in the overlay a press anywhere in it, the space's name
+    // included, drags the panel past the threshold (SPEC_CLIPPER.md, Р10).
     <div className="flex h-10 shrink-0 select-none items-center border-b border-border bg-accent px-2" data-clipper-space-row="" data-clipper-drag-handle="">
       <DropdownMenu open={open} onOpenChange={setOpen}>
-        <DropdownMenuTrigger asChild>
+        <DropdownMenuTrigger
+          asChild
+          // A press on the name may become a drag of the overlay, so the
+          // pointer opens the menu on the click that follows a press without
+          // movement, not on the press, as the app's top chrome does
+          // (useTopChromeTriggerInteraction.ts, deferPointerOpen). The
+          // keyboard keeps Radix's own Enter, Space and ArrowDown.
+          onPointerDown={(event) => {
+            if (event.button !== 0 || event.ctrlKey) return;
+            event.preventDefault();
+            pointerPressRef.current = { opensMenu: !open };
+          }}
+          onClick={() => {
+            const press = pointerPressRef.current;
+            pointerPressRef.current = null;
+            if (press) setOpen(press.opensMenu);
+          }}
+        >
           <MenuTextTrigger
             ref={triggerRef}
             aria-label={`Switch space: ${label}`}
@@ -173,6 +194,7 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
             surface="clipperHeader"
             showChevron
             data-clipper-space-switcher=""
+            data-clipper-drag-control=""
           />
         </DropdownMenuTrigger>
         <DropdownMenuContent
@@ -262,7 +284,8 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
           </div>
         </DropdownMenuContent>
       </DropdownMenu>
-      <span className="ml-auto flex items-center gap-1">
+      {/* Above the overlay's resize corner: the buttons keep every pixel. */}
+      <span className="relative z-10 ml-auto flex items-center gap-1">
         <ClipperOverflowMenu canOpenApp={canOpenApp} vaultPath={value} onRetryConnection={onRetryConnection} />
         {onClose && (
           <ChromeCloseButton label="Close" onClick={onClose} />

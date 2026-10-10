@@ -19,8 +19,43 @@ describe("the overlay's place and size", () => {
     expect(parseOverlayBounds({ left: 10, top: 20, width: 1000, height: 100 })).toEqual({ left: 10, top: 20, width: OVERLAY_MAX_WIDTH, height: OVERLAY_MIN_HEIGHT });
     expect(fitOverlay({ left: 0, top: 0, width: 200, height: 2000 }, large, 0)).toMatchObject({ width: OVERLAY_MIN_WIDTH, height: large.height });
     const frame = fitOverlay({ left: 100, top: 100, width: 400, height: 500 }, large, 0);
-    expect(resizeOverlay(frame, 500, 1000, 1000, large)).toEqual({ left: 100, top: 100, width: OVERLAY_MAX_WIDTH, height: large.height - 100 });
-    expect(resizeOverlay(frame, 500, -1000, -1000, large)).toEqual({ left: 100, top: 100, width: OVERLAY_MIN_WIDTH, height: OVERLAY_MIN_HEIGHT });
+    expect(resizeOverlay(frame, 500, "bottom-right", 1000, 1000, large)).toEqual({ left: 100, top: 100, width: OVERLAY_MAX_WIDTH, height: large.height - 100 });
+    expect(resizeOverlay(frame, 500, "bottom-right", -1000, -1000, large)).toEqual({ left: 100, top: 100, width: OVERLAY_MIN_WIDTH, height: OVERLAY_MIN_HEIGHT });
+  });
+
+  // From 400 × 500 at (400, 200), its corners at x 400 and 800, y 200 and 700.
+  const placed = fitOverlay({ left: 400, top: 200, width: 400, height: 500 }, large, 0);
+
+  it("resizes by any corner and keeps the opposite one where it was", () => {
+    expect(resizeOverlay(placed, 500, "bottom-right", 120, 80, large)).toEqual({ left: 400, top: 200, width: 520, height: 580 });
+    expect(resizeOverlay(placed, 500, "top-left", -120, -80, large)).toEqual({ left: 280, top: 120, width: 520, height: 580 });
+    expect(resizeOverlay(placed, 500, "top-right", 120, -80, large)).toEqual({ left: 400, top: 120, width: 520, height: 580 });
+    expect(resizeOverlay(placed, 500, "bottom-left", -120, 80, large)).toEqual({ left: 280, top: 200, width: 520, height: 580 });
+  });
+
+  it("keeps the opposite corner still when a corner meets the size limits", () => {
+    // Shrunk past the minimums: the right and bottom edges stay at 800 and 700.
+    expect(resizeOverlay(placed, 500, "top-left", 1000, 1000, large)).toEqual({ left: 800 - OVERLAY_MIN_WIDTH, top: 700 - OVERLAY_MIN_HEIGHT, width: OVERLAY_MIN_WIDTH, height: OVERLAY_MIN_HEIGHT });
+    expect(resizeOverlay(placed, 500, "top-right", -1000, 1000, large)).toEqual({ left: 400, top: 700 - OVERLAY_MIN_HEIGHT, width: OVERLAY_MIN_WIDTH, height: OVERLAY_MIN_HEIGHT });
+    expect(resizeOverlay(placed, 500, "bottom-left", 1000, -1000, large)).toEqual({ left: 800 - OVERLAY_MIN_WIDTH, top: 200, width: OVERLAY_MIN_WIDTH, height: OVERLAY_MIN_HEIGHT });
+    // Grown past the widest: the opposite edge stays, the width stops at 640.
+    expect(resizeOverlay(placed, 500, "bottom-left", -1000, 0, large)).toEqual({ left: 800 - OVERLAY_MAX_WIDTH, top: 200, width: OVERLAY_MAX_WIDTH, height: 500 });
+    expect(resizeOverlay(placed, 500, "top-right", 1000, 0, large)).toEqual({ left: 400, top: 200, width: OVERLAY_MAX_WIDTH, height: 500 });
+  });
+
+  it("keeps the opposite corner still when a corner meets the window's edge", () => {
+    const near = fitOverlay({ left: 100, top: 50, width: 400, height: 500 }, large, 0);
+    // The top left corner stops at the window's corner; the bottom right stays at (500, 550).
+    expect(resizeOverlay(near, 500, "top-left", -1000, -1000, large)).toEqual({ left: 0, top: 0, width: 500, height: 550 });
+    expect(resizeOverlay(near, 500, "top-right", 2000, -1000, large)).toEqual({ left: 100, top: 0, width: OVERLAY_MAX_WIDTH, height: 550 });
+    const low = fitOverlay({ left: 1000, top: 300, width: 400, height: 500 }, large, 0);
+    expect(resizeOverlay(low, 500, "bottom-right", 1000, 1000, large)).toEqual({ left: 1000, top: 300, width: large.width - 1000, height: large.height - 300 });
+    expect(resizeOverlay(low, 500, "bottom-left", -1000, 1000, large)).toEqual({ left: 1400 - OVERLAY_MAX_WIDTH, top: 300, width: OVERLAY_MAX_WIDTH, height: large.height - 300 });
+  });
+
+  it("lets only the minimum height move the fixed corner, where 430 px do not fit above it", () => {
+    const short = fitOverlay({ left: 400, top: 0, width: 400, height: null }, large, 300);
+    expect(resizeOverlay(short, 300, "top-left", 0, 10, large)).toEqual({ left: 400, top: 0, width: 400, height: OVERLAY_MIN_HEIGHT });
   });
 
   it("moves within the window when dragged, keeping its size", () => {

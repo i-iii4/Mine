@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { DropdownMenuPortalContainerProvider } from "@/components/ui/dropdown-menu";
+import { usePressDragGesture, type PressDragOrigin } from "@/hooks/usePressDragGesture";
+import { cn } from "@/lib/utils";
 import { PopupApp } from "./PopupApp";
 import { wrapTabFocus } from "./lib/focusCycle";
 import { ClipperEditsContext, type ClipperEdits } from "./lib/clipperEdits";
@@ -9,37 +11,71 @@ import {
   dragOverlay,
   fitOverlay,
   OVERLAY_BOUNDS_KEY,
+  OVERLAY_CORNERS,
   resizeOverlay,
   type OverlayBounds,
+  type OverlayCorner,
   type OverlayFrame,
   type Viewport,
 } from "./lib/overlayBounds";
 
-// Controls inside the header keep their own press: only its empty part drags.
+// Controls inside the header keep their own press. A control marked
+// `data-clipper-drag-control` (the space's name) is part of the header the
+// person grabs: a press on it moves the panel past the threshold and stays
+// its own click without it. The "…" and close buttons stay plain buttons.
 const HEADER_CONTROLS = "button, input, textarea, select, a[href], [role='button'], [role='menuitem'], [data-slot='dropdown-menu-trigger']";
+
+/** Each corner's place on the panel and its cursor: the diagonal it resizes along. */
+const CORNER_CLASSES: Record<OverlayCorner, string> = {
+  "top-left": "left-0 top-0 cursor-nwse-resize",
+  "top-right": "right-0 top-0 cursor-nesw-resize",
+  "bottom-left": "bottom-0 left-0 cursor-nesw-resize",
+  "bottom-right": "bottom-0 right-0 cursor-nwse-resize",
+};
 
 function readViewport(): Viewport {
   return { width: window.innerWidth, height: window.innerHeight };
 }
 
-/** A press on the header or the corner, followed until the pointer lets go. */
-interface Gesture {
-  kind: "move" | "resize";
+function isOverlayCorner(value: string | null): value is OverlayCorner {
+  return OVERLAY_CORNERS.some((corner) => corner === value);
+}
+
+/** Whether a press may move the panel: anywhere in its header but the
+ *  header's own controls, except the ones marked to move it. */
+function startsHeaderDrag(event: ReactPointerEvent<HTMLElement>): boolean {
+  const target = event.target;
+  if (!(target instanceof Element) || !target.closest("[data-clipper-drag-handle]")) return false;
+  const control = target.closest(HEADER_CONTROLS);
+  return control === null || control.hasAttribute("data-clipper-drag-control");
+}
+
+/** Where a move or a resize started: the frame drawn then. */
+interface GestureStart {
+  frame: OverlayFrame;
+  drawnHeight: number;
+}
+
+/** A press on a corner, followed until the pointer lets go. */
+interface ResizeGesture extends GestureStart {
+  corner: OverlayCorner;
   pointerId: number;
   x: number;
   y: number;
-  frame: OverlayFrame;
-  drawnHeight: number;
 }
 
 /**
  * Container for the in-page overlay version of the clipper.
  *
  * Place and size: the top right corner at the width of the detached popup
- * (360px) until the person drags the header or the bottom right corner; then
- * where they put it, kept between openings and fitted into the window
- * (SPEC_CLIPPER.md, «Доработки после живого просмотра», Р10). Border and
- * shadow follow the design system for floating elements (DESIGN_SYSTEM.md →
+ * (360px) until the person drags the header or a corner; then where they put
+ * it, kept between openings and fitted into the window (SPEC_CLIPPER.md,
+ * «Доработки после живого просмотра», Р10). The header moves the panel by the
+ * window chrome's rule of the app (usePressDragGesture.ts, the core of
+ * useChromeDragGesture.ts): a press anywhere in it, the space's name
+ * included, drags past 4 px and stays a click without it. A corner resizes
+ * at once and keeps the opposite corner where it was. Border and shadow
+ * follow the design system for floating elements (DESIGN_SYSTEM.md →
  * "Всплывающие элементы").
  *
  * Close behaviour: only the close button in the editor's header and Save
@@ -70,7 +106,8 @@ export function OverlayShell({ portalContainer, edits, restored = null, initialB
   // The panel's height while it follows its content: it decides how far up a
   // panel near the bottom has to move.
   const [contentHeight, setContentHeight] = useState(0);
-  const gestureRef = useRef<Gesture | null>(null);
+  const resizeRef = useRef<ResizeGesture | null>(null);
+  const moveRef = useRef<GestureStart | null>(null);
   // The bounds a gesture builds on and ends with, ahead of the render.
   const boundsRef = useRef(bounds);
   useEffect(() => {
@@ -93,53 +130,73 @@ export function OverlayShell({ portalContainer, edits, restored = null, initialB
 
   const frame = fitOverlay(bounds, viewport, contentHeight);
 
-  const drawnHeight = useCallback(() => ref.current?.getBoundingClientRect().height ?? 0, []);
-
-  const begin = useCallback((kind: Gesture["kind"], event: ReactPointerEvent<HTMLElement>) => {
-    if (event.button !== 0 || !ref.current) return;
-    event.preventDefault();
-    ref.current.setPointerCapture?.(event.pointerId);
-    const measured = drawnHeight();
+  // The frame drawn now: what a move or a resize starts from.
+  const gestureStart = useCallback((): GestureStart => {
+    const measured = ref.current?.getBoundingClientRect().height ?? 0;
     const start = fitOverlay(boundsRef.current, readViewport(), measured);
-    gestureRef.current = {
-      kind, pointerId: event.pointerId, x: event.clientX, y: event.clientY,
-      frame: start, drawnHeight: start.height ?? measured,
-    };
-  }, [drawnHeight]);
+    return { frame: start, drawnHeight: start.height ?? measured };
+  }, []);
 
-  const onPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const target = event.target as Element;
-    if (target.closest("[data-clipper-resize-handle]")) {
-      begin("resize", event);
-      return;
-    }
-    if (!target.closest("[data-clipper-drag-handle]") || target.closest(HEADER_CONTROLS)) return;
-    begin("move", event);
-  }, [begin]);
-
-  const onPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const gesture = gestureRef.current;
-    if (!gesture || gesture.pointerId !== event.pointerId) return;
-    const dx = event.clientX - gesture.x;
-    const dy = event.clientY - gesture.y;
-    const view = readViewport();
-    const next = gesture.kind === "move"
-      ? dragOverlay(boundsRef.current, gesture.frame, gesture.drawnHeight, dx, dy, view)
-      : resizeOverlay(gesture.frame, gesture.drawnHeight, dx, dy, view);
+  const apply = useCallback((next: OverlayBounds) => {
     boundsRef.current = next;
     setBounds(next);
   }, []);
 
   // The place and size the person set are kept for the next opening, in any
   // tab; the window never changes them.
-  const onPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const gesture = gestureRef.current;
-    if (!gesture || gesture.pointerId !== event.pointerId) return;
-    gestureRef.current = null;
-    ref.current?.releasePointerCapture?.(event.pointerId);
+  const keep = useCallback(() => {
     void chrome.storage.local.set({ [OVERLAY_BOUNDS_KEY]: boundsRef.current })
       .catch((cause) => console.warn("[Mine] overlay place kept for this opening only:", cause));
   }, []);
+
+  const startMove = useCallback((event: PointerEvent) => {
+    ref.current?.setPointerCapture?.(event.pointerId);
+    moveRef.current = gestureStart();
+  }, [gestureStart]);
+
+  const followMove = useCallback((event: PointerEvent, origin: PressDragOrigin) => {
+    const start = moveRef.current;
+    if (!start) return;
+    apply(dragOverlay(boundsRef.current, start.frame, start.drawnHeight,
+      event.clientX - origin.startX, event.clientY - origin.startY, readViewport()));
+  }, [apply]);
+
+  const endMove = useCallback((event: PointerEvent) => {
+    moveRef.current = null;
+    ref.current?.releasePointerCapture?.(event.pointerId);
+    keep();
+  }, [keep]);
+
+  const headerDrag = usePressDragGesture({
+    shouldStart: startsHeaderDrag,
+    onDragStart: startMove,
+    onDragMove: followMove,
+    onDragEnd: endMove,
+  });
+
+  const onPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !ref.current || !(event.target instanceof Element)) return;
+    const corner = event.target.closest("[data-clipper-resize-handle]")?.getAttribute("data-clipper-resize-handle") ?? null;
+    if (!isOverlayCorner(corner)) return;
+    event.preventDefault();
+    ref.current.setPointerCapture?.(event.pointerId);
+    resizeRef.current = { ...gestureStart(), corner, pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+  }, [gestureStart]);
+
+  const onPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const gesture = resizeRef.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    apply(resizeOverlay(gesture.frame, gesture.drawnHeight, gesture.corner,
+      event.clientX - gesture.x, event.clientY - gesture.y, readViewport()));
+  }, [apply]);
+
+  const onPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const gesture = resizeRef.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    resizeRef.current = null;
+    ref.current?.releasePointerCapture?.(event.pointerId);
+    keep();
+  }, [keep]);
 
   return (
     <DropdownMenuPortalContainerProvider container={portalContainer}>
@@ -158,6 +215,8 @@ export function OverlayShell({ portalContainer, edits, restored = null, initialB
           event.preventDefault();
           target.focus({ preventScroll: true });
         }}
+        onPointerDownCapture={headerDrag.onPointerDownCapture}
+        onClickCapture={headerDrag.onClickCapture}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -184,8 +243,12 @@ export function OverlayShell({ portalContainer, edits, restored = null, initialB
             </OpenClipContext.Provider>
           </ClipperEditsContext.Provider>
         </div>
-        {/* The corner the person drags to resize; the cursor is its only sign. */}
-        <div data-clipper-resize-handle="" aria-hidden="true" className="absolute bottom-0 right-0 size-4 cursor-nwse-resize" />
+        {/* The corners the person drags to resize; the cursor is their only
+            sign. The top ones lie over the header by their 16 px, under its
+            "…" and close buttons (VaultSelect.tsx, StandaloneSetup.tsx). */}
+        {OVERLAY_CORNERS.map((corner) => (
+          <div key={corner} data-clipper-resize-handle={corner} aria-hidden="true" className={cn("absolute size-4", CORNER_CLASSES[corner])} />
+        ))}
       </div>
     </DropdownMenuPortalContainerProvider>
   );

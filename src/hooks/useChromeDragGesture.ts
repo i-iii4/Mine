@@ -1,97 +1,24 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
 import { startWindowDrag } from "@/lib/commands";
-
-const DEFAULT_CHROME_DRAG_THRESHOLD_PX = 4;
-
-type ChromeDragState = {
-  pointerId: number;
-  startX: number;
-  startY: number;
-  dragging: boolean;
-};
+import { usePressDragGesture } from "@/hooks/usePressDragGesture";
 
 interface UseChromeDragGestureOptions {
   disabled?: boolean;
   thresholdPx?: number;
 }
 
+function dragWindow() {
+  // The backend finds this tab's window: a tab page moved into another
+  // window still names the first one itself (SPEC_TABS.md, В22, В23).
+  void startWindowDrag().catch((error: unknown) => {
+    console.error("Could not start dragging the window:", error);
+  });
+}
+
+/** The window chrome's gesture: a press past the threshold drags the window
+ *  of this page, a press without it stays a click (usePressDragGesture.ts). */
 export function useChromeDragGesture({
   disabled = false,
-  thresholdPx = DEFAULT_CHROME_DRAG_THRESHOLD_PX,
+  thresholdPx,
 }: UseChromeDragGestureOptions = {}) {
-  const stateRef = useRef<ChromeDragState | null>(null);
-  const cleanupRef = useRef<(() => void) | null>(null);
-  const suppressClickRef = useRef(false);
-
-  const cleanup = useCallback(() => {
-    cleanupRef.current?.();
-    cleanupRef.current = null;
-    stateRef.current = null;
-  }, []);
-
-  useEffect(() => cleanup, [cleanup]);
-
-  const handleClickCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
-    if (!suppressClickRef.current) return;
-    suppressClickRef.current = false;
-    event.preventDefault();
-    event.stopPropagation();
-  }, []);
-
-  const handlePointerDownCapture = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    if (disabled || event.button !== 0 || event.defaultPrevented) return;
-
-    cleanup();
-    stateRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      dragging: false,
-    };
-
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      const state = stateRef.current;
-      if (!state || state.pointerId !== moveEvent.pointerId || state.dragging) return;
-
-      const dx = moveEvent.clientX - state.startX;
-      const dy = moveEvent.clientY - state.startY;
-      if (Math.hypot(dx, dy) < thresholdPx) return;
-
-      state.dragging = true;
-      suppressClickRef.current = true;
-      moveEvent.preventDefault();
-      moveEvent.stopPropagation();
-      // The backend finds this tab's window: a tab page moved into another
-      // window still names the first one itself (SPEC_TABS.md, В22, В23).
-      void startWindowDrag().catch((error: unknown) => {
-        console.error("Could not start dragging the window:", error);
-      });
-    };
-
-    const handlePointerEnd = (endEvent: PointerEvent) => {
-      const state = stateRef.current;
-      if (!state || state.pointerId !== endEvent.pointerId) return;
-      cleanup();
-    };
-
-    window.addEventListener("pointermove", handlePointerMove, true);
-    window.addEventListener("pointerup", handlePointerEnd, true);
-    window.addEventListener("pointercancel", handlePointerEnd, true);
-    cleanupRef.current = () => {
-      window.removeEventListener("pointermove", handlePointerMove, true);
-      window.removeEventListener("pointerup", handlePointerEnd, true);
-      window.removeEventListener("pointercancel", handlePointerEnd, true);
-    };
-  }, [cleanup, disabled, thresholdPx]);
-
-  return {
-    onClickCapture: handleClickCapture,
-    onPointerDownCapture: handlePointerDownCapture,
-  };
+  return usePressDragGesture({ disabled, thresholdPx, onDragStart: dragWindow });
 }

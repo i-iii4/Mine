@@ -46,7 +46,7 @@ describe("tab bar constants", () => {
   });
 
   it("drag tabs past the chrome's own threshold", () => {
-    const hook = readFileSync("src/hooks/useChromeDragGesture.ts", "utf8");
+    const hook = readFileSync("src/hooks/usePressDragGesture.ts", "utf8");
     expect(hook).toContain(`const DEFAULT_CHROME_DRAG_THRESHOLD_PX = ${CHROME_DRAG_THRESHOLD_PX};`);
   });
 });

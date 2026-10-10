@@ -32,13 +32,13 @@ describe("the switches of the Mine buttons on X and Instagram", () => {
   it("shows both on until they are turned off, and keeps the menu open on a switch", async () => {
     render(<ClipperOverflowMenu canOpenApp />);
     openMenu();
-    const x = await screen.findByRole("menuitemcheckbox", { name: "Mine on X" });
+    const x = await screen.findByRole("menuitemcheckbox", { name: "Button on X posts" });
     expect(x).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByRole("menuitemcheckbox", { name: "Mine on Instagram" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("menuitemcheckbox", { name: "Button on Instagram posts" })).toHaveAttribute("aria-checked", "true");
     fireEvent.click(x);
     await waitFor(() => expect(storage.local.set).toHaveBeenCalledWith({ mineFeedButtons: { x: false, instagram: true } }));
-    expect(screen.getByRole("menuitemcheckbox", { name: "Mine on X" })).toHaveAttribute("aria-checked", "false");
-    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Mine on Instagram" }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "Button on X posts" })).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Button on Instagram posts" }));
     await waitFor(() => expect(storage.local.set).toHaveBeenLastCalledWith({ mineFeedButtons: { x: false, instagram: false } }));
   });
 
@@ -46,17 +46,17 @@ describe("the switches of the Mine buttons on X and Instagram", () => {
     stored.mineFeedButtons = { x: false, instagram: true };
     render(<ClipperOverflowMenu canOpenApp />);
     openMenu();
-    await waitFor(() => expect(screen.getByRole("menuitemcheckbox", { name: "Mine on X" })).toHaveAttribute("aria-checked", "false"));
+    await waitFor(() => expect(screen.getByRole("menuitemcheckbox", { name: "Button on X posts" })).toHaveAttribute("aria-checked", "false"));
     act(() => storage.set({ x: true, instagram: false }));
-    expect(screen.getByRole("menuitemcheckbox", { name: "Mine on X" })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByRole("menuitemcheckbox", { name: "Mine on Instagram" })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("menuitemcheckbox", { name: "Button on X posts" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("menuitemcheckbox", { name: "Button on Instagram posts" })).toHaveAttribute("aria-checked", "false");
   });
 
   it("says why a switch could not be kept", async () => {
     storage.local.set.mockRejectedValueOnce(new Error("Storage is full"));
     render(<ClipperOverflowMenu canOpenApp />);
     openMenu();
-    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Mine on X" }));
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Button on X posts" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Storage is full");
   });
 });

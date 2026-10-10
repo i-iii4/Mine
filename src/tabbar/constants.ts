@@ -31,5 +31,5 @@ export const TAB_REORDER_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
 export const DROP_MARKER_WIDTH_PX = 2;
 
 /** Pointer travel that turns a press into a drag: the chrome's threshold
- *  gesture (`DEFAULT_CHROME_DRAG_THRESHOLD_PX` in useChromeDragGesture.ts, В60). */
+ *  gesture (`DEFAULT_CHROME_DRAG_THRESHOLD_PX` in usePressDragGesture.ts, В60). */
 export const CHROME_DRAG_THRESHOLD_PX = 4;

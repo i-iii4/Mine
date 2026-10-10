@@ -5,10 +5,19 @@ import { VaultSelect } from "./VaultSelect";
 const CURRENT = "/Users/x/Spaces/Mine";
 const OTHER = "/Users/x/Spaces/Journal";
 
+function trigger() {
+  return screen.getByRole("button", { name: /Switch space: Mine/ });
+}
+
+/** A pointer press and the click a browser sends after it. */
+function pointerClick(target: HTMLElement) {
+  fireEvent.pointerDown(target, { button: 0, pointerId: 1 });
+  fireEvent.pointerUp(target, { button: 0, pointerId: 1 });
+  fireEvent.click(target, { detail: 1 });
+}
+
 async function openMenu() {
-  // Radix opens its trigger on pointerdown, not on the synthesized click.
-  const trigger = screen.getByRole("button", { name: /Switch space: Mine/ });
-  fireEvent.pointerDown(trigger, { button: 0, pointerId: 1 });
+  pointerClick(trigger());
   await screen.findByRole("menuitem", { name: "Journal" });
 }
 
@@ -26,6 +35,33 @@ function renderSelect(overrides: Partial<Parameters<typeof VaultSelect>[0]> = {}
 }
 
 describe("VaultSelect", () => {
+  // The name is part of the header the overlay is dragged by (SPEC_CLIPPER.md,
+  // Р10): the pointer opens the menu on the click, not on the press.
+  it("opens on the click that follows a pointer press, not on the press", async () => {
+    renderSelect();
+    fireEvent.pointerDown(trigger(), { button: 0, pointerId: 1 });
+    expect(screen.queryByRole("menuitem", { name: "Journal" })).not.toBeInTheDocument();
+    expect(trigger()).toHaveAttribute("aria-expanded", "false");
+    fireEvent.pointerUp(trigger(), { button: 0, pointerId: 1 });
+    fireEvent.click(trigger(), { detail: 1 });
+    expect(await screen.findByRole("menuitem", { name: "Journal" })).toBeInTheDocument();
+    expect(trigger()).toHaveAttribute("data-clipper-drag-control");
+  });
+
+  it("shuts on a click of the name while open", async () => {
+    renderSelect();
+    await openMenu();
+    pointerClick(trigger());
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "Journal" })).not.toBeInTheDocument());
+    expect(trigger()).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it.each(["Enter", " ", "ArrowDown"])("opens from the keyboard with %j, as before", async (key) => {
+    renderSelect();
+    fireEvent.keyDown(trigger(), { key });
+    expect(await screen.findByRole("menuitem", { name: "Journal" })).toBeInTheDocument();
+  });
+
   it("pins Reveal in Finder and Add space below the space list, desktop-style", async () => {
     renderSelect();
     await openMenu();

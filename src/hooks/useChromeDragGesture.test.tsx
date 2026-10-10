@@ -72,4 +72,20 @@ describe("useChromeDragGesture", () => {
     expect(commands.startWindowDrag).toHaveBeenCalledTimes(1);
     expect(onClick).not.toHaveBeenCalled();
   });
+
+  it("keeps the click of a new press after a drag whose pointer was cancelled", () => {
+    const onClick = vi.fn();
+    render(<ChromeButton onClick={onClick} />);
+
+    const button = screen.getByRole("button", { name: "Space" });
+    fireEvent.pointerDown(button, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 20, clientY: 10 });
+    // No click follows a cancelled pointer.
+    fireEvent.pointerCancel(window, { pointerId: 1, clientX: 20, clientY: 10 });
+    fireEvent.pointerDown(button, { button: 0, pointerId: 2, clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(window, { pointerId: 2, clientX: 10, clientY: 10 });
+    fireEvent.click(button);
+
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
 });

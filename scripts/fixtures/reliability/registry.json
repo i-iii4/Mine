@@ -2238,6 +2238,8 @@
         "extension/popup/hooks/useClipperState.standalone.test.tsx",
         "extension/popup/lib/openClip.test.ts",
         "extension/popup/lib/overlayBounds.test.ts",
+        "extension/popup/components/VaultSelect.test.tsx",
+        "src/hooks/usePressDragGesture.ts",
         "scripts/clipper-worker-smoke.mjs",
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/manifest.json",
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/background.js",
@@ -2257,7 +2259,9 @@
         "extension/popup/components/ClipperOverflowMenu.test.tsx",
         "extension/popup/hooks/useClipperState.openClip.test.tsx",
         "extension/popup/lib/openClip.test.ts",
-        "extension/popup/lib/overlayBounds.test.ts"
+        "extension/popup/lib/overlayBounds.test.ts",
+        "extension/popup/components/VaultSelect.test.tsx",
+        "src/hooks/useChromeDragGesture.test.tsx"
       ],
       "command": "test:frontend"
     },
