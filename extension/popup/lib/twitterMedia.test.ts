@@ -46,6 +46,24 @@ describe("X media recovery", () => {
     expect(r.publicMedia.mock.calls.map(([id]) => id)).toEqual(["10", "20"]);
   });
 
+  // SPEC_CLIPPER.md, «Пост с цитатой как в оригинале»: the preview list and
+  // the body come from the same posts, the quote video inside its block.
+  it("keeps a quote's video inside the quote block, after the post's own photos", async () => {
+    const photos = ["one", "two"].map(name => ({ kind: "image" as const, url: `https://pbs.twimg.com/media/${name}.jpg`, poster: null }));
+    const target: XPostContent = { id: "10", text: "Main text", media: photos, mediaComplete: true,
+      quote: { id: "20", handle: "alexisohanian", name: "Alexis Ohanian", text: "Quote text", media: [media(video)], mediaComplete: true } };
+    const r = resolver();
+    const result = await hydrateTwitterPosts(article([target]), r);
+    expect(result.content).toBe([
+      "Main text",
+      "![](https://pbs.twimg.com/media/one.jpg)",
+      "![](https://pbs.twimg.com/media/two.jpg)",
+      `> **Alexis Ohanian** [@alexisohanian](https://x.com/alexisohanian/status/20)\n> \n> Quote text\n> \n> ![](${video})`,
+    ].join("\n\n"));
+    expect(result.embeddedVideos?.map(m => m.src)).toEqual([video]);
+    expect(r.publicMedia).not.toHaveBeenCalled();
+  });
+
   it("preserves known media if both resolution paths fail", async () => {
     const r = resolver();
     r.authenticatedMedia.mockResolvedValue({ ok: false, media: [] });

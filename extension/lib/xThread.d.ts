@@ -6,6 +6,10 @@ export interface XPostMedia {
 
 export interface XPostContent {
   id: string;
+  /** Screen name without `@`; names the author of a quoted post. */
+  handle?: string;
+  /** Display name; names the author of a quoted post. */
+  name?: string;
   text: string;
   media: XPostMedia[];
   quote?: XPostContent | null;

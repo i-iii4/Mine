@@ -1,3 +1,4 @@
+import { fromMarkdown } from "mdast-util-from-markdown";
 import type { EmbeddedVideoPreview } from "./messaging";
 
 export function isVideoUrl(src: string | null | undefined): boolean {
@@ -27,3 +28,19 @@ export function buildEmbeddedVideoPreviewMap(videos: EmbeddedVideoPreview[]) {
   return map;
 }
 
+type MarkdownNode = { type: string; url?: string; children?: MarkdownNode[] };
+
+/** Preview identities of every image-syntax embed in a Markdown body. A video
+ * the body already holds is drawn at its place there, never again above it. */
+export function markdownMediaKeys(markdown: string): Set<string> {
+  const keys = new Set<string>();
+  function visit(node: MarkdownNode) {
+    if (node.type === "image") {
+      const key = videoPreviewKey(node.url);
+      if (key) keys.add(key);
+    }
+    node.children?.forEach(visit);
+  }
+  if (markdown) visit(fromMarkdown(markdown));
+  return keys;
+}

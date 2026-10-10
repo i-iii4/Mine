@@ -537,6 +537,8 @@
         if (quoteText || quoteMedia.length > 0) {
           quotedTweet = {
             tweetId: data.quoted_tweet.id_str || null,
+            handle: data.quoted_tweet.user?.screen_name || "",
+            name: data.quoted_tweet.user?.name || "",
             text: quoteText,
             media: quoteMedia.map((entry) => entry.url),
             mediaDetails: quoteMedia,
@@ -656,22 +658,6 @@
       }
     }
 
-    // Build Markdown body
-    const parts = [];
-    for (let i = 0; i < tweets.length; i++) {
-      const t = tweets[i];
-      if (t.text) parts.push(t.text);
-      for (const src of (t.media || [])) {
-        parts.push(`![](${src})`);
-      }
-      // A thread break is written as a rule of asterisks, not `---`. Three
-      // dashes on their own line are also how front matter is delimited, and a
-      // note whose body opens with them can be read as a second front matter
-      // block — Obsidian and our own parser included. `***` renders as the same
-      // horizontal rule with none of that ambiguity.
-      if (i < tweets.length - 1) parts.push("***");
-    }
-
     const firstText = (tweets[0]?.text || "").replace(/\n/g, " ").trim();
     const tweetTitle = firstText.slice(0, 80) || `@${authorHandle}`;
     const embeddedVideos = [];
@@ -718,16 +704,19 @@
     const structuredMedia = (urls, details = []) => urls.map(src => ({ url: src,
       kind: isInlineVideoUrl(src) ? "video" : "image",
       poster: details.find(media => media.url === src)?.poster || null }));
+    const twitterPosts = [{ id: tweetId, text: quote ? target.mainText : target.text,
+      media: structuredMedia(target.media || [], apiMediaDetails),
+      hasVideo: hasPlayerInPage,
+      quote: quote ? { id: quote.tweetId, handle: quote.handle || "", name: quote.name || "", text: quote.text,
+        media: structuredMedia(quote.media || [], quote.mediaDetails), hasVideo: !!quote.hasVideo } : null }];
     return {
       title: tweetTitle,
-      twitterPosts: [{ id: tweetId, text: quote ? target.mainText : target.text,
-        media: structuredMedia(target.media || [], apiMediaDetails),
-        hasVideo: hasPlayerInPage,
-        quote: quote ? { id: quote.tweetId, text: quote.text,
-          media: structuredMedia(quote.media || [], quote.mediaDetails), hasVideo: !!quote.hasVideo } : null }],
+      twitterPosts,
       threadWarning,
       threadPostCount: 1,
-      content: parts.join("\n\n"),
+      // The same composer as the collected thread: the post's text and media
+      // first, then the quote block with its author (SPEC_CLIPPER.md).
+      content: globalThis.MineXThread.compose(twitterPosts),
       byline: `@${authorHandle}`,
       excerpt: firstText.slice(0, 200),
       embeddedVideos,

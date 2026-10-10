@@ -582,14 +582,39 @@ fn extract_social_preview_tiles(
     dims: &std::collections::HashMap<String, [u32; 2]>,
     media_urls: Option<&str>,
 ) -> Vec<FeedPreviewTile> {
-    // Scan the whole body, across every `---` section. Two producers emit
-    // multi-section social bodies: a Twitter thread clip (one section per
-    // tweet) and a card merge (one section per merged card, joined by
-    // `\n\n---\n\n`). Both carry real media in later sections, so restricting
-    // to the first section drops those tiles and their posters. Quoted tweets
-    // are not separate sections — the clipper blockquotes them inside the
-    // parent tweet's section — so no quoted media is excluded by design here.
+    // Scan the whole body, across every part. Two producers emit multi-part
+    // social bodies: a Twitter thread clip (one part per tweet, joined by
+    // `***`) and a card merge (one part per merged card, joined by `---`).
+    // Both carry real media in later parts, so restricting to the first part
+    // drops those tiles and their posters.
+    //
+    // A quoted post is not a part: the clipper blockquotes it inside the post
+    // that quotes it. Its media are the cover only while that post has none of
+    // its own, a remote one included (SPEC_CLIPPER.md, «Пост с цитатой как в
+    // оригинале», rule 4). Body order puts a post's own media before its
+    // quote, the order the `<slug>.jpg` micro-preview also reads.
+    //
+    // Closes one part: its own tiles, or its quote's when it has no media.
+    fn close_part(
+        tiles: &mut Vec<FeedPreviewTile>,
+        own_tiles: &mut Vec<FeedPreviewTile>,
+        quote_tiles: &mut Vec<FeedPreviewTile>,
+        has_own_media: &mut bool,
+    ) {
+        tiles.append(if *has_own_media {
+            own_tiles
+        } else {
+            quote_tiles
+        });
+        own_tiles.clear();
+        quote_tiles.clear();
+        *has_own_media = false;
+    }
+
     let mut tiles = Vec::new();
+    let mut own_tiles = Vec::new();
+    let mut quote_tiles = Vec::new();
+    let mut has_own_media = false;
     let mut next_is_video_poster = false;
     // Index into the UNFILTERED media_urls list. media_urls records every
     // inline reference in body order, including remote URLs stored verbatim,
@@ -602,19 +627,28 @@ fn extract_social_preview_tiles(
     let mut media_index = 0usize;
 
     for line in body.lines() {
-        // A tweet-video marker never spans sections; reset it at each `---`
-        // boundary so it cannot bleed into the next merged card / tweet.
-        if line.trim() == "---" {
+        // A tweet-video marker never spans parts; reset it at each boundary so
+        // it cannot bleed into the next merged card / tweet.
+        let trimmed = line.trim();
+        if trimmed == "---" || trimmed == "***" {
+            close_part(
+                &mut tiles,
+                &mut own_tiles,
+                &mut quote_tiles,
+                &mut has_own_media,
+            );
             next_is_video_poster = false;
             continue;
         }
-        if line.trim() == "<!-- tweet-video -->" {
+        if trimmed == "<!-- tweet-video -->" {
             next_is_video_poster = true;
             continue;
         }
         let Some(src) = parse_inline_media_src(line) else {
             continue;
         };
+        let in_quote = line.trim_start().starts_with('>');
+        has_own_media |= !in_quote;
         // Prefer media_urls because it has already passed through the canonical
         // backend resolver; fall back to the raw body src only if the lists
         // somehow diverge in length.
@@ -627,14 +661,25 @@ fn extract_social_preview_tiles(
             next_is_video_poster = false;
             continue;
         }
-        tiles.push(media_tile(
+        let tile = media_tile(
             &resolved_src,
             dims,
             is_video_media(&resolved_src),
             next_is_video_poster,
-        ));
+        );
+        if in_quote {
+            quote_tiles.push(tile);
+        } else {
+            own_tiles.push(tile);
+        }
         next_is_video_poster = false;
     }
+    close_part(
+        &mut tiles,
+        &mut own_tiles,
+        &mut quote_tiles,
+        &mut has_own_media,
+    );
 
     tiles
 }
@@ -4327,6 +4372,57 @@ mod tests {
         assert_eq!(tiles[1].source_path, "vid2.mp4");
         assert!(tiles[1].is_video);
         assert_eq!(tiles[1].preview_path, None);
+    }
+
+    #[test]
+    fn extract_social_preview_tiles_leave_quote_media_out_while_the_post_has_its_own() {
+        // SPEC_CLIPPER.md, «Пост с цитатой как в оригинале», rule 4: two photos
+        // of the post, then a quote with a video. The cover is the post's.
+        let dims = std::collections::HashMap::new();
+        let body = "Post text\n\n![](one.jpg)\n\n![](two.jpg)\n\n\
+            > **Quoted** [@quoted](https://x.com/quoted/status/2)\n> \n> Quote text\n> \n> ![](quote.mp4)";
+        let media_urls = serde_json::to_string(&["one.jpg", "two.jpg", "quote.mp4"]).unwrap();
+
+        let tiles = extract_social_preview_tiles(body, &dims, Some(&media_urls));
+
+        let sources: Vec<_> = tiles.iter().map(|tile| tile.source_path.as_str()).collect();
+        assert_eq!(sources, ["one.jpg", "two.jpg"]);
+    }
+
+    #[test]
+    fn extract_social_preview_tiles_use_quote_media_when_the_post_has_none() {
+        let dims = std::collections::HashMap::new();
+        let body = "Post text\n\n> [@quoted](https://x.com/quoted/status/2)\n> \n> ![](quote.mp4)";
+        let media_urls = serde_json::to_string(&["quote.mp4"]).unwrap();
+
+        let tiles = extract_social_preview_tiles(body, &dims, Some(&media_urls));
+
+        assert_eq!(tiles.len(), 1);
+        assert_eq!(tiles[0].source_path, "quote.mp4");
+        assert!(tiles[0].is_video);
+    }
+
+    #[test]
+    fn extract_social_preview_tiles_decide_the_quote_rule_per_thread_part() {
+        // Part one has its own photo and a quoted video; part two only quotes
+        // a photo. A remote own video in part three still counts as its own.
+        let dims = std::collections::HashMap::new();
+        let body = "one\n\n![](own.jpg)\n\n> ![](quoted-one.mp4)\n\n***\n\n\
+            two\n\n> ![](quoted-two.jpg)\n\n***\n\n\
+            three\n\n![](https://video.twimg.com/big.mp4)\n\n> ![](quoted-three.jpg)";
+        let media_urls = serde_json::to_string(&[
+            "own.jpg",
+            "quoted-one.mp4",
+            "quoted-two.jpg",
+            "https://video.twimg.com/big.mp4",
+            "quoted-three.jpg",
+        ])
+        .unwrap();
+
+        let tiles = extract_social_preview_tiles(body, &dims, Some(&media_urls));
+
+        let sources: Vec<_> = tiles.iter().map(|tile| tile.source_path.as_str()).collect();
+        assert_eq!(sources, ["own.jpg", "quoted-two.jpg"]);
     }
 
     #[test]

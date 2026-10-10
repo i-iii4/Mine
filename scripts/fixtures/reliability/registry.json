@@ -2126,6 +2126,41 @@
         "src-tauri/src/commands/blocks.rs"
       ],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "extension/content.js",
+        "extension/lib/xThread.js",
+        "extension/lib/xThread.d.ts",
+        "extension/lib/xThread.test.ts",
+        "extension/lib/twitterTweetContent.js",
+        "extension/lib/twitterTweetContent.test.ts",
+        "extension/lib/tweetTextCompletion.test.ts",
+        "extension/popup/lib/videoPreview.ts",
+        "extension/popup/lib/twitterMedia.test.ts",
+        "extension/popup/PopupApp.tsx",
+        "extension/popup/PopupApp.test.tsx",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/content.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/xThread.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/twitterTweetContent.js"
+      ],
+      "requirement": "SPEC_CLIPPER.md#Пост с цитатой как в оригинале",
+      "tests": [
+        "extension/lib/xThread.test.ts",
+        "extension/lib/twitterTweetContent.test.ts",
+        "extension/lib/tweetTextCompletion.test.ts",
+        "extension/popup/lib/twitterMedia.test.ts",
+        "extension/popup/PopupApp.test.tsx",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": ["src-tauri/src/storage/index.rs"],
+      "requirement": "SPEC_CLIPPER.md#Пост с цитатой как в оригинале",
+      "tests": ["src-tauri/src/storage/index.rs"],
+      "command": "test:rust"
     }
   ],
   "release": null

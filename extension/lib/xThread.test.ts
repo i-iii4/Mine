@@ -118,6 +118,65 @@ describe("X author-chain contract", () => {
   it("keeps a quote inside its parent, uses note text and safe thread separators", () => {
     const t = { ...raw("10"), note_tweet: { note_tweet_results: { result: { text: "full long text" } } }, quoted_status_result: { result: raw("8", null, "9") } };
     const result = select([t, raw("11", "10")]);
-    expect(api.compose(result.posts)).toBe("full long text\n\n> post 8\n\n***\n\npost 11");
+    expect(api.compose(result.posts)).toBe("full long text\n\n> [@author](https://x.com/author/status/8)\n> \n> post 8\n\n***\n\npost 11");
+  });
+});
+
+// SPEC_CLIPPER.md, «Пост с цитатой как в оригинале» (09.10.2026).
+describe("X post with a quote, as in the original", () => {
+  const photo = (name: string) => ({ type: "photo", url: `https://t.co/${name}`, media_url_https: `https://pbs.twimg.com/media/${name}.jpg` });
+  const video = (name: string) => ({ type: "video", url: `https://t.co/${name}`, media_url_https: `https://pbs.twimg.com/amplify_video_thumb/${name}.jpg`,
+    video_info: { variants: [{ content_type: "video/mp4", bitrate: 20, url: `https://video.twimg.com/amplify_video/${name}/vid/avc1/720x1280/${name}.mp4` }] } });
+  function quoted(id: string, user: { handle: string; name: string }, text: string, media: object[]) {
+    return { __typename: "Tweet", rest_id: id,
+      core: { user_results: { result: { rest_id: "99", core: { screen_name: user.handle, name: user.name } } } },
+      legacy: { id_str: id, full_text: `${text} ${media.map(m => (m as { url: string }).url).join(" ")}`.trim(), extended_entities: { media } } };
+  }
+  const alexis = { handle: "alexisohanian", name: "Alexis Ohanian 🗽" };
+
+  it("keeps the post text and its photos on top, then one quote block with author, text and video", () => {
+    const quote = quoted("2108000000000000001", alexis, "Quote text", [video("q1")]);
+    const main = raw("2108558741528355242", null, "7", {
+      full_text: "Main text https://t.co/one https://t.co/two https://t.co/link",
+      entities: { urls: [{ url: "https://t.co/link", expanded_url: "https://twitter.com/alexisohanian/status/2108000000000000001" }] },
+      extended_entities: { media: [photo("one"), photo("two")] },
+    });
+    const result = select([{ ...main, quoted_status_result: { result: quote } }], "2108558741528355242");
+
+    expect(result.posts.map(p => p.id)).toEqual(["2108558741528355242"]);
+    expect(api.compose(result.posts)).toBe([
+      "Main text",
+      "![](https://pbs.twimg.com/media/one.jpg)",
+      "![](https://pbs.twimg.com/media/two.jpg)",
+      [
+        "> **Alexis Ohanian 🗽** [@alexisohanian](https://x.com/alexisohanian/status/2108000000000000001)",
+        "> ",
+        "> Quote text",
+        "> ",
+        "> ![](https://video.twimg.com/amplify_video/q1/vid/avc1/720x1280/q1.mp4)",
+      ].join("\n"),
+    ].join("\n\n"));
+  });
+
+  it("keeps a quote inside its own thread part and never makes it a part", () => {
+    const quote = quoted("8", { handle: "quoted", name: "Quoted" }, "post 8", [photo("q")]);
+    const result = select([raw("10"), { ...raw("11", "10"), quoted_status_result: { result: quote } }, raw("12", "11"), quote]);
+
+    expect(result.posts.map(p => p.id)).toEqual(["10", "11", "12"]);
+    expect(api.compose(result.posts)).toBe([
+      "post 10",
+      "***",
+      "post 11\n\n> **Quoted** [@quoted](https://x.com/quoted/status/8)\n> \n> post 8\n> \n> ![](https://pbs.twimg.com/media/q.jpg)",
+      "***",
+      "post 12",
+    ].join("\n\n"));
+  });
+
+  it("escapes Markdown in the author name and links the post when the handle is unknown", () => {
+    expect(api.compose([{ id: "1", text: "post", media: [],
+      quote: { id: "2", handle: "_bob_", name: "Bob *Star* [x]", text: "quoted", media: [] } }]))
+      .toBe("post\n\n> **Bob \\*Star\\* \\[x\\]** [@\\_bob\\_](https://x.com/_bob_/status/2)\n> \n> quoted");
+    expect(api.compose([{ id: "1", text: "post", media: [], quote: { id: "2", text: "quoted", media: [] } }]))
+      .toBe("post\n\n> [x.com/i/status/2](https://x.com/i/status/2)\n> \n> quoted");
   });
 });

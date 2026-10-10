@@ -132,10 +132,36 @@
     return null;
   }
 
-  function ensureQuoteGroup(groups, order, key, identity) {
+  function textWithEmoji(node) {
+    let out = "";
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) out += child.textContent;
+      else if (child.nodeName === "IMG") out += child.getAttribute("alt") || "";
+      else out += textWithEmoji(child);
+    }
+    return out;
+  }
+
+  /// The quoted author as the quote card shows it: display name, then
+  /// `@handle`. The permalink only knows the handle, lowercased.
+  function quoteAuthorFromContainer(container, identity) {
+    const userName = container.querySelector?.('[data-testid="User-Name"]');
+    const text = userName ? textWithEmoji(userName).replace(/\s+/g, " ") : "";
+    const handles = [...text.matchAll(/@(\w{1,15})/g)];
+    const match = handles.find((m) => m[1].toLowerCase() === identity?.handle) || handles[0];
+    return {
+      handle: match?.[1] || identity?.handle || "",
+      name: match ? text.slice(0, match.index).replace(/[\s·]+$/, "").trim() : "",
+    };
+  }
+
+  function ensureQuoteGroup(groups, order, key, identity, container) {
     if (!groups.has(key)) {
+      const author = quoteAuthorFromContainer(container, identity);
       const group = {
         tweetId: identity?.tweetId || null,
+        handle: author.handle,
+        name: author.name,
         text: "",
         media: [],
       };
@@ -159,7 +185,7 @@
       const container = quoteContainerForElement(article, textEl, rootIdentity);
       if (!container) continue;
       const identity = quoteIdentityForContainer(article, container, rootIdentity);
-      const quote = ensureQuoteGroup(quoteGroups, quoteOrder, identity?.tweetId || container, identity);
+      const quote = ensureQuoteGroup(quoteGroups, quoteOrder, identity?.tweetId || container, identity, container);
       const text = tweetTextToMarkdown(textEl).trim();
       if (text) quote.text = quote.text ? `${quote.text}\n\n${text}` : text;
     }
@@ -170,7 +196,7 @@
       const container = quoteContainerForElement(article, img, rootIdentity);
       if (container) {
         const identity = quoteIdentityForContainer(article, container, rootIdentity);
-        pushUnique(ensureQuoteGroup(quoteGroups, quoteOrder, identity?.tweetId || container, identity).media, src);
+        pushUnique(ensureQuoteGroup(quoteGroups, quoteOrder, identity?.tweetId || container, identity, container).media, src);
       } else {
         pushUnique(media, src);
       }
@@ -181,7 +207,7 @@
       let quote = null;
       if (container) {
         const identity = quoteIdentityForContainer(article, container, rootIdentity);
-        quote = ensureQuoteGroup(quoteGroups, quoteOrder, identity?.tweetId || container, identity);
+        quote = ensureQuoteGroup(quoteGroups, quoteOrder, identity?.tweetId || container, identity, container);
         quote.hasVideo = true;
       } else hasVideo = true;
       const src = video.src || video.querySelector("source")?.src || "";

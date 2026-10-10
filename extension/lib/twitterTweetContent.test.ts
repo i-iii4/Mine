@@ -7,7 +7,7 @@ type TweetContent = {
   extractTweetContentParts: (article: Element) => {
     mainText: string;
     media: string[];
-    quotes: Array<{ text: string; media: string[] }>;
+    quotes: Array<{ tweetId: string | null; handle: string; name: string; text: string; media: string[] }>;
   };
   extractTweetContent: (article: Element) => { text: string; media: string[] };
 };
@@ -88,6 +88,29 @@ describe("twitter tweet content extraction", () => {
     expect(content.text).toContain("> Quoted post text that belongs to the saved parent post.");
     expect(content.text).toContain("> ![](https://pbs.twimg.com/media/quote-one?format=jpg&name=large)");
     expect(content.text).not.toContain("This reply must never be clipped");
+  });
+
+  it("reads the quoted author as the quote card shows it", () => {
+    renderTweet(`
+      <div data-testid="tweetText">Main post.</div>
+      <div role="link">
+        <div data-testid="User-Name">
+          <div><span>Alexis Ohanian <img alt="🗽" src="https://abs-0.twimg.com/emoji/v2/svg/1f5fd.svg" /></span></div>
+          <div><a href="/AlexisOhanian"><span>@AlexisOhanian</span></a><span>·</span><time datetime="2026-10-08T00:00:00Z">Oct 8</time></div>
+        </div>
+        <a href="/alexisohanian/status/2108000000000000001"><time datetime="2026-10-08T00:00:00Z"></time></a>
+        <div data-testid="tweetText">Quote text.</div>
+      </div>
+    `);
+
+    const [quote] = tweetContent.extractTweetContentParts(targetArticle()).quotes;
+
+    expect(quote).toMatchObject({
+      tweetId: "2108000000000000001",
+      handle: "AlexisOhanian",
+      name: "Alexis Ohanian 🗽",
+      text: "Quote text.",
+    });
   });
 
   it("does not treat an inline status link in the main tweet text as a quote card", () => {

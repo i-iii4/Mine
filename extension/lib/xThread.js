@@ -33,10 +33,14 @@
     const quoted = t.quoted_status_result?.result;
     const quote = quoteDepth === 0 && quoted ? post(quoted, 1) : null;
     if (quoted && !quote || quote?.incomplete) incomplete = true;
+    // The quote block names and links the quoted post; a trailing permalink
+    // to it in the parent text would only repeat that link.
+    if (quote) text = text.replace(new RegExp(`\\s*https?://(?:www\\.|mobile\\.)?(?:x|twitter)\\.com/[^/\\s]+/status/${quote.id}(?:[/?#]\\S*)?\\s*$`, "i"), "");
     const mediaComplete = Array.isArray(l.extended_entities?.media)
       && media.length === l.extended_entities.media.length;
     return { id: t.rest_id || l.id_str, authorId: user.rest_id,
       handle: user.core?.screen_name || user.legacy?.screen_name || "",
+      name: user.core?.name || user.legacy?.name || "",
       parentId: id(l.in_reply_to_status_id_str), text: text.trim(), media, quote, incomplete, hasVideo, mediaComplete };
   }
   function page(data) {
@@ -126,13 +130,27 @@
     if (selected.some(p => p.incomplete)) issues.push("Some text or media could not be loaded.");
     return { posts: selected, issues: [...new Set(issues)] };
   }
+  // Name, @handle and a link to the quoted post: the first line of its block
+  // (SPEC_CLIPPER.md, «Пост с цитатой как в оригинале», rule 2).
+  function quoteAuthor(q) {
+    const handle = /^\w{1,15}$/.test(q.handle || "") ? q.handle : "";
+    const name = String(q.name || "").replace(/\s+/g, " ").trim().replace(/[\\`*_[\]<>~]/g, "\\$&");
+    // Only an underscore at the edge of a handle can open emphasis.
+    const at = handle && `@${handle.replace(/^_+|_+$/g, edge => edge.replace(/_/g, "\\_"))}`;
+    const url = id(q.id) && `https://x.com/${handle || "i"}/status/${q.id}`;
+    const link = url ? `[${at || url.slice("https://".length)}](${url})` : at;
+    return [name && `**${name}**`, link].filter(Boolean).join(" ");
+  }
+  // Each post: its text, then its own media in post order, then the quote as
+  // one blockquote with its author, text and media. Parts are joined by `***`,
+  // not `---`: three dashes at the top of a body read as front matter.
   function compose(posts) {
-    function body(p) {
-      const parts = [p.text, ...p.media.map(m => `![](${m.url})`)].filter(Boolean);
-      if (p.quote) parts.push(body(p.quote).split("\n").map(line => `> ${line}`).join("\n"));
+    function body(p, quoted = false) {
+      const parts = [quoted ? quoteAuthor(p) : "", p.text, ...p.media.map(m => `![](${m.url})`)].filter(Boolean);
+      if (p.quote) parts.push(body(p.quote, true).split("\n").map(line => `> ${line}`).join("\n"));
       return parts.join("\n\n");
     }
-    return posts.map(body).filter(Boolean).join("\n\n***\n\n");
+    return posts.map(p => body(p)).filter(Boolean).join("\n\n***\n\n");
   }
   root.MineXThread = { page, post, select, compose, continuations };
 })(globalThis);

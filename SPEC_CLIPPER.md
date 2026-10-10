@@ -483,8 +483,9 @@ Quote tweet является частью родительского tweet body,
 треда. Контракт сохранения:
 
 - основной `tweetText` сохраняется как обычный Markdown;
-- media основного post остаётся в top-level media списка;
-- quote text/media добавляются в body как Markdown blockquote;
+- media основного post идёт сразу после его текста, до цитаты;
+- quote text/media добавляются в body как Markdown blockquote со строкой
+  автора (порядок и вид ниже, «Пост с цитатой как в оригинале»);
 - если syndication API для target tweet возвращает `quoted_tweet`, он
   авторитетнее DOM-preview для quote body, потому что DOM X может обрезать
   quote text;
@@ -497,6 +498,54 @@ Quote tweet является частью родительского tweet body,
 Запрещено исправлять quote extraction расширением selector'ов на весь
 `document`: комментарии ниже, recommendations и sidebar остаются отдельными
 timeline articles и не должны попадать в body.
+
+##### Пост с цитатой как в оригинале (09.10.2026)
+
+Правила утверждены пользователем 09.10.2026. Контрольный пример:
+[пост artignatev](https://x.com/artignatev/status/2108558741528355242), в нём
+текст и два фото автора, ниже цитата @alexisohanian с текстом и видео.
+
+1. Сверху основной пост: его текст, затем его фото и видео в порядке поста.
+2. Ниже цитата одним блоком Markdown-цитаты (`> `). Первая строка блока
+   называет автора: `**Имя** [@ник](https://x.com/ник/status/ID)`, ссылка
+   ведёт на исходный пост цитаты. Дальше полный текст цитаты, затем её фото
+   и видео в их порядке. Без имени строка начинается со ссылки `[@ник](…)`;
+   без ника текстом ссылки служит адрес `x.com/i/status/ID`. Служебные
+   символы Markdown в имени экранируются. Ссылка на цитируемый пост в конце
+   текста основного поста удаляется: её заменяет строка автора.
+3. Видео стоит в теле там же, где в посте: видео основного поста после его
+   текста, видео цитаты внутри блока цитаты. Предпросмотр рисует постер видео
+   на его месте в теле. Отдельной полосы видео над текстом нет для видео,
+   которые уже есть в теле; полоса остаётся только для видео из
+   `embeddedVideos`, которых в теле нет.
+4. Обложка карточки: первое вложение основного поста; вложение цитаты только
+   если у поста вложений нет. Проверка 09.10.2026: миниатюра `<slug>.jpg`
+   берёт первое медиа тела по порядку документа, и по правилу 1 это первое
+   вложение поста, правило выполнялось. Плитки ленты для адреса X или
+   Instagram (`extract_social_preview_tiles` в `storage/index.rs`) брали все
+   медиа тела вместе с цитатой: у контрольного поста лента показывала коллаж
+   из двух фото и видео цитаты, это нарушало правило. Теперь медиа внутри
+   `> ` становится плиткой, только если в той же части тела (части разделяют
+   `***` и `---`) нет ни одного собственного медиа поста, включая оставшееся
+   удалённой ссылкой. Первая плитка совпадает с миниатюрой.
+5. Предпросмотр показывает ровно то, что сохранится, в том же порядке: он
+   рисует тот же Markdown, который уходит в Save (`resolveContentBody()`).
+6. Тред: отбор постов не меняется, части разделяются `***`, цитата остаётся
+   внутри своей части и не становится частью треда (правило 6
+   [SPEC_X_THREADS.md](SPEC_X_THREADS.md)).
+
+Тело собирает один `MineXThread.compose` для сбора через ответ страницы X и
+для запасного пути по разметке. Источники строки автора: при сборе через
+ответ страницы поля `core.name` или `legacy.name` и `screen_name`
+пользователя цитаты; на запасном пути ответ syndication `quoted_tweet.user`,
+а без него элемент `User-Name` внутри карточки цитаты.
+
+Проверки: [xThread.test.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/lib/xThread.test.ts>)
+(пост с цитатой с видео, тред с цитатой в одной из частей, прежние тесты
+тредов), [twitterTweetContent.test.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/lib/twitterTweetContent.test.ts>)
+(автор цитаты из разметки), [PopupApp.test.tsx](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/popup/PopupApp.test.tsx>)
+(видео на месте в теле, полосы нет), Rust-тест плиток цитаты в
+[index.rs](</Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/storage/index.rs>).
 
 #### X long-form article extractor
 
@@ -996,7 +1045,7 @@ idempotence, preview/save agreement, selection and social extraction. Приём
 
 ### Content video preview
 
-Content preview не воспроизводит видео. Content script передаёт в popup `articleData.embeddedVideos` с `src`, `poster`, `title`. Источники, по приоритету: social extractors, которые уже получают media candidates (Twitter/X syndication API, Instagram media API); DOM fallback (`<video>`, YouTube/Vimeo `<iframe>`); meta fallback (`og:video`, `twitter:player:stream`, poster из `og:image` / `twitter:image`). Для YouTube poster вычисляется из video id (`i.ytimg.com/vi/.../maxresdefault.jpg`); для `<video>` берётся `poster` attribute или, если сайт уже держит видимый video frame в памяти, preview-only canvas snapshot с ограниченным размером. DOM `<video>` с runtime-only source (`blob:` / `mediasource:`) не считается canonical video source: такой URL нельзя повторно скачать, сохранить или сопоставить с embed URL, поэтому он не seed'ит отдельный `embeddedVideos` preview и может дать только poster/frame fallback. Если extracted markdown содержит inline video URL (`.mp4`, `.webm`, `.m4v`, `.mov`) в image syntax, popup рендерит lightweight poster preview только если этот `src` ещё не представлен в `embeddedVideos`; одинаковый canonical video `src` должен давать один preview. Poster берётся из `embeddedVideos.poster`, а `metadata.image` / `og:image` используется только как последний fallback для inline video без structured preview. Сам video URL остаётся в markdown/save payload без изменений.
+Content preview не воспроизводит видео. Content script передаёт в popup `articleData.embeddedVideos` с `src`, `poster`, `title`. Источники, по приоритету: social extractors, которые уже получают media candidates (Twitter/X syndication API, Instagram media API); DOM fallback (`<video>`, YouTube/Vimeo `<iframe>`); meta fallback (`og:video`, `twitter:player:stream`, poster из `og:image` / `twitter:image`). Для YouTube poster вычисляется из video id (`i.ytimg.com/vi/.../maxresdefault.jpg`); для `<video>` берётся `poster` attribute или, если сайт уже держит видимый video frame в памяти, preview-only canvas snapshot с ограниченным размером. DOM `<video>` с runtime-only source (`blob:` / `mediasource:`) не считается canonical video source: такой URL нельзя повторно скачать, сохранить или сопоставить с embed URL, поэтому он не seed'ит отдельный `embeddedVideos` preview и может дать только poster/frame fallback. Видео в теле в синтаксисе изображения (источник зарегистрирован в `embeddedVideos` или ссылка с расширением `.mp4`, `.webm`, `.m4v`, `.mov`) popup рисует lightweight poster preview на его месте в теле. Полоса превью над текстом показывает только видео из `embeddedVideos`, которых в теле нет; одинаковый canonical video `src` даёт в полосе один preview (09.10.2026, «Пост с цитатой как в оригинале»). Poster берётся из `embeddedVideos.poster`, а `metadata.image` / `og:image` используется только как последний fallback для inline video без structured preview. Сам video URL остаётся в markdown/save payload без изменений.
 
 Twitter/X extractor должен считать syndication/API media более авторитетным источником, чем generic DOM video scan. Если API уже дал direct mp4 + `tweet_video_thumb` poster, DOM `<video>` fallback не добавляется в `embeddedVideos`, чтобы blob/player nodes и generic X cards не создавали лишние previews. Поскольку content scripts могут упереться в CORS при чтении syndication API, popup имеет native-host fallback `resolve_twitter_media`: он возвращает тот же direct mp4 / poster contract, который использует save path. Для `animated_gif` popup может заменить API thumbnail на preview-only кадр из direct mp4 с seek к текущему времени DOM video; если frame capture недоступен, используется `tweet_video_thumb`. Это не меняет saved markdown/body и не локализует дополнительный файл.
 

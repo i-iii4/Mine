@@ -13,7 +13,7 @@ import { ScreenshotPreview } from "./components/ScreenshotPreview";
 import { VaultSelect } from "./components/VaultSelect";
 import { StandaloneSetup, StandaloneFolderRow } from "./components/StandaloneSetup";
 import { emptyContentMessage } from "./lib/articleExtractionState";
-import { buildEmbeddedVideoPreviewMap, isVideoUrl, videoPreviewKey } from "./lib/videoPreview";
+import { buildEmbeddedVideoPreviewMap, isVideoUrl, markdownMediaKeys, videoPreviewKey } from "./lib/videoPreview";
 
 function VideoPosterPreview({
   posterUrl,
@@ -23,7 +23,8 @@ function VideoPosterPreview({
   title: string;
 }) {
   return (
-    <div className="relative overflow-hidden rounded-1 bg-accent" aria-label={title}>
+    // not-prose: inside the body preview, prose image margins would pad the poster.
+    <div className="not-prose relative overflow-hidden rounded-1 bg-accent" aria-label={title}>
       {posterUrl ? (
         <img
           src={posterUrl}
@@ -240,6 +241,19 @@ export function PopupApp() {
   const embeddedVideoBySrc = useMemo(() => {
     return buildEmbeddedVideoPreviewMap(embeddedVideoPreviews);
   }, [embeddedVideoPreviews]);
+  // A video the body holds is drawn at its place there; the strip above the
+  // text keeps only videos the body does not have (SPEC_CLIPPER.md, «Пост с
+  // цитатой как в оригинале», rule 3).
+  const bodyMediaKeys = useMemo(() => markdownMediaKeys(resolvedBody.text), [resolvedBody.text]);
+  const stripVideoPreviews = useMemo(
+    () => embeddedVideoPreviews.filter((video) => !bodyMediaKeys.has(videoPreviewKey(video.src) ?? "")),
+    [embeddedVideoPreviews, bodyMediaKeys],
+  );
+  // An extractor that registered a source already knows it is video, whatever
+  // the URL looks like; that answer outranks guessing from the extension,
+  // which API-style URLs (a method name, not a file type) do not carry.
+  const isBodyVideo = (src: string | null | undefined) =>
+    embeddedVideoBySrc.has(videoPreviewKey(src) ?? "") || isVideoUrl(src);
   const hasTypeRow = metadata?.detectedType !== "image";
   const previous = clipper.previousOperation;
   const previousSavePanel = previous && (
@@ -379,9 +393,9 @@ export function PopupApp() {
               {metadata?.detectedType === "video" && embeddedVideoPreviews.length === 0 && videoFallbackPoster && (
                 <VideoPosterPreview posterUrl={videoFallbackPoster} title="Video preview" />
               )}
-              {embeddedVideoPreviews.length > 0 && (
+              {stripVideoPreviews.length > 0 && (
                 <div className="space-y-1.5">
-                  {embeddedVideoPreviews.map((video, index) => (
+                  {stripVideoPreviews.map((video, index) => (
                     <VideoPosterPreview
                       key={`${video.src ?? video.poster ?? "video"}-${index}`}
                       posterUrl={video.poster ?? videoFallbackPoster}
@@ -410,17 +424,22 @@ export function PopupApp() {
                     remarkPlugins={[remarkGfm]}
                     urlTransform={safeMarkdownUrl}
                     components={{
-                      img: ({ src, alt, ...props }) => {
-                        // An extractor that registered this source already knows
-                        // it is video, whatever the URL looks like — that answer
-                        // outranks guessing from the extension, which API-style
-                        // URLs (a method name, not a file type) do not carry.
-                        if (embeddedVideoBySrc.has(videoPreviewKey(src) ?? "")) return null;
-                        if (isVideoUrl(src)) {
+                      // A paragraph that is only a video holds a block poster,
+                      // which a <p> may not contain.
+                      p: ({ node, children, ...props }) => {
+                        const content = node?.children.filter((child) => child.type !== "text" || child.value.trim());
+                        const only = content?.length === 1 ? content[0] : undefined;
+                        return only?.type === "element" && only.tagName === "img" && isBodyVideo(String(only.properties.src ?? ""))
+                          ? <div className="my-[0.75em]">{children}</div>
+                          : <p {...props}>{children}</p>;
+                      },
+                      img: ({ src, alt, node: _node, ...props }) => {
+                        if (isBodyVideo(src)) {
+                          const video = embeddedVideoBySrc.get(videoPreviewKey(src) ?? "");
                           return (
                             <VideoPosterPreview
-                              posterUrl={videoFallbackPoster}
-                              title={alt ? `Video preview: ${alt}` : "Video preview"}
+                              posterUrl={video?.poster ?? videoFallbackPoster}
+                              title={video?.title || (alt ? `Video preview: ${alt}` : "Video preview")}
                             />
                           );
                         }

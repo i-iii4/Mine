@@ -69,6 +69,32 @@ describe("clipper preview", () => {
     expect(container.querySelector('img[src="https://pbs.twimg.com/tweet_video_thumb/first.jpg"]')).not.toBeNull();
     expect(container.querySelector('img[src="https://example.com/x-promo.jpg"]')).toBeNull();
   });
+  // SPEC_CLIPPER.md, «Пост с цитатой как в оригинале»: the preview is the saved
+  // body in its order; a video the body holds is not repeated above the text.
+  it("draws a quote's video inside the quote block, after the post's text and photos", () => {
+    const video = "https://video.twimg.com/amplify_video/1/vid/avc1/720x1280/q.mp4";
+    const poster = "https://pbs.twimg.com/amplify_video_thumb/1/img/q.jpg";
+    state.metadata.url = "https://x.com/artignatev/status/2108558741528355242";
+    state.articleData.content = [
+      "Main text",
+      "![](https://pbs.twimg.com/media/one.jpg)",
+      `> **Alexis Ohanian** [@alexisohanian](https://x.com/alexisohanian/status/2)\n> \n> Quote text\n> \n> ![](${video})`,
+    ].join("\n\n");
+    state.articleData.embeddedVideos = [{ src: video, poster, title: "Tweet video preview" }];
+    const { container } = render(<PopupApp />);
+
+    const previews = screen.getAllByLabelText("Tweet video preview");
+    expect(previews).toHaveLength(1);
+    expect(container.querySelectorAll(`img[src="${poster}"]`)).toHaveLength(1);
+    const quote = container.querySelector("blockquote");
+    expect(quote).toContainElement(previews[0]!);
+    expect(quote).toHaveTextContent("Alexis Ohanian @alexisohanian");
+    expect(screen.getByRole("link", { name: "@alexisohanian" })).toHaveAttribute("href", "https://x.com/alexisohanian/status/2");
+    const photo = container.querySelector('img[src="https://pbs.twimg.com/media/one.jpg"]')!;
+    expect(screen.getByText("Main text").compareDocumentPosition(photo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(photo.compareDocumentPosition(previews[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelector("p [aria-label]")).toBeNull();
+  });
   it("renders extensionless objkt media once as video preview, not a broken image", () => {
     const article = normalizeArticleMedia(objktVideo.article, objktVideo.pageUrl);
     state.articleData.content = article.content;

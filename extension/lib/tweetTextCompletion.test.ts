@@ -59,10 +59,17 @@ describe("thread separator", () => {
   it("never writes the front matter delimiter into a body", async () => {
     // `---` on its own line is also how front matter is delimited: a body that
     // opens with it can be read as a second front matter block.
+    // Both X paths of content.js compose the body with MineXThread.compose.
+    await import("./xThread.js");
+    const body = globalThis.MineXThread.compose([
+      { id: "1", text: "one", media: [] },
+      { id: "2", text: "two", media: [] },
+    ]);
     const { readFileSync } = await import("node:fs");
     const content = readFileSync("extension/content.js", "utf8");
 
-    expect(content).toContain('parts.push("***")');
+    expect(body).toBe("one\n\n***\n\ntwo");
+    expect(content).toContain("content: globalThis.MineXThread.compose(twitterPosts)");
     expect(content).not.toContain('parts.push("---")');
   });
 });

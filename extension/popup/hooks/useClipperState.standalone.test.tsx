@@ -505,6 +505,27 @@ describe("standalone mode decision", () => {
     expect(standalone.standaloneSave.mock.calls[0][0].body).toBe(preview?.content);
     expect(preview?.content).toBe(`Post\n\n![](${video})\n\n![](${gif})`);
   });
+  // SPEC_CLIPPER.md, «Пост с цитатой как в оригинале», rule 5.
+  it("saves a post with a quoted video exactly as previewed", async () => {
+    browserDestination();
+    const video = "https://video.twimg.com/amplify_video/1/vid/avc1/720x1280/q.mp4";
+    const photo = "https://pbs.twimg.com/media/one.jpg";
+    const tweetId = "2108558741528355242";
+    const posts = [{ id: tweetId, text: "Main text", mediaComplete: true,
+      media: [{ kind: "image" as const, url: photo, poster: null }],
+      quote: { id: "2", handle: "alexisohanian", name: "Alexis Ohanian", text: "Quote text", mediaComplete: true,
+        media: [{ kind: "video" as const, url: video, poster: "https://pbs.twimg.com/amplify_video_thumb/1/img/q.jpg" }] } }];
+    threadArticle.value = { pageUrl: `https://x.com/artignatev/status/${tweetId}`,
+      title: "Main text", content: globalThis.MineXThread.compose(posts), byline: "@artignatev", excerpt: "Main text",
+      threadPostCount: 1, twitterPosts: posts };
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.articleData?.embeddedVideos).toHaveLength(1));
+    const preview = result.current.articleData;
+    expect(preview?.content).toBe(`Main text\n\n![](${photo})\n\n`
+      + `> **Alexis Ohanian** [@alexisohanian](https://x.com/alexisohanian/status/2)\n> \n> Quote text\n> \n> ![](${video})`);
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+    expect(standalone.standaloneSave.mock.calls[0][0].body).toBe(preview?.content);
+  });
   it.each(["browser", "native"])("sends a real UI timestamp accepted by shared WASM through %s", async (executor) => {
     // Keep nonzero milliseconds in the clock: hand-written seconds-only requests
     // would miss the UI/core contract failure this regression protects against.
