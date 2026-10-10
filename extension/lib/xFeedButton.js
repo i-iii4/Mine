@@ -1,16 +1,26 @@
-// The Mine button in the action row of every X post: feeds, lists, profiles,
-// search and X Pro columns (SPEC_CLIPPER.md, «Кнопка Mine в ленте X»). Only
-// the button lives here; what it saves is the content script's business.
+// The Mine button in the header of every X post: feeds, lists, profiles,
+// search, X Pro columns, and the header of the post X Pro opens over a column
+// (SPEC_CLIPPER.md, «Кнопка Mine в ленте X»; «Доработки после живого
+// просмотра», Р1 to Р4). Only the button lives here; what it saves is the
+// content script's business.
 (function (root) {
   "use strict";
 
   const OWNED = "data-mine-x-post";
   const POST = 'article[data-testid="tweet"]';
-  // A row of the post's own actions, not some other group inside the post.
-  const POST_ACTIONS = '[data-testid="reply"], [data-testid="retweet"], [data-testid="unretweet"], [data-testid="like"], [data-testid="unlike"]';
-  // Like and repost light up in colours of their own; every other control of
-  // the row lights up in X's accent, the hover the Mine button shares (rule 2).
-  const OWN_HOVER_COLOUR = new Set(["like", "unlike", "retweet", "unretweet"]);
+  const CARET = '[data-testid="caret"]';
+  const USER_NAME = '[data-testid="User-Name"]';
+  const STACK_HEADER = '[data-testid="root"]';
+  const HEADING = 'h1[role="heading"]';
+  // X's links are `a` elements with role="link"; any other element with that
+  // role inside a post is the clickable card of a quoted post.
+  const QUOTE_SHELL = '[role="link"]:not(a)';
+  // The label of the Grok button is a hint only: it changes with the
+  // interface language (Р1).
+  const GROK_LABEL = /grok/i;
+  // The stack header holds the close box, a spacer, the title and the
+  // actions box (Р2).
+  const STACK_HEADER_MIN_CHILDREN = 3;
   const X_HOSTS = new Set(["x.com", "twitter.com", "pro.x.com"]);
   const SVG_NS = "http://www.w3.org/2000/svg";
   // The Mine mark of src/components/MineLogo.tsx, in its own grid.
@@ -20,11 +30,14 @@
   const LABEL = "Save to Mine";
   // Events of the Mine button that X must not see: its post would open.
   const KEPT_FROM_X = ["pointerdown", "pointerup", "mousedown", "mouseup", "touchstart", "touchend"];
+  // The two controls a Mine button is copied from, each with a hover of its own.
+  const KIND_POST = "post";
+  const KIND_STACK = "stack";
 
   // What the copied control looked like when the Mine button was made from it.
   const templateLooks = new WeakMap();
-  // What X changes on one of its accent controls when the pointer is over it.
-  let accentHover = null;
+  // What X changes on each kind of template control when the pointer is over it.
+  const learnedHover = new Map();
 
   function isXHost(hostname) {
     return X_HOSTS.has(String(hostname || "").toLowerCase());
@@ -34,36 +47,213 @@
     return Boolean(node?.closest?.(`[${OWNED}]`));
   }
 
-  /// The post's own action row: the last group of X's post actions that
-  /// belongs to this post rather than to a post nested in it.
-  function actionRow(article) {
-    let row = null;
-    for (const group of article.querySelectorAll('[role="group"]')) {
-      if (group.closest(POST) === article && group.querySelector(POST_ACTIONS)) row = group;
-    }
-    return row;
+  function elementChildren(node) {
+    return [...node.children].filter((child) => !child.matches(`[${OWNED}]`));
   }
 
-  /// The last control X put in the row and the box it sits in: the box is
-  /// the outermost element that holds only this control.
-  function template(row) {
-    const controls = [...row.querySelectorAll("button")].filter((control) => !isOwned(control));
-    const control = controls[controls.length - 1];
-    if (!control) return null;
-    let box = control;
-    while (box.parentElement && box.parentElement !== row && box.parentElement.children.length === 1) {
-      box = box.parentElement;
+  /// Whether `element` belongs to `article` itself rather than to a post
+  /// nested in it or to the card of a quoted post.
+  function ownedBy(article, element) {
+    if (element.closest(POST) !== article) return false;
+    for (let node = element.parentElement; node && node !== article; node = node.parentElement) {
+      if (node.matches(QUOTE_SHELL)) return false;
     }
-    return { control, box };
+    return true;
   }
 
-  /// Classes and inline styles of the box: a different value means X drew
-  /// its controls anew (theme, font size), and the copy is made again.
-  function look(box) {
-    return [box, ...box.querySelectorAll("*")]
+  function own(article, selector) {
+    for (const element of article.querySelectorAll(selector)) {
+      if (!isOwned(element) && ownedBy(article, element)) return element;
+    }
+    return null;
+  }
+
+  // ── Which post ───────────────────────────────────────────────────────────
+
+  function statusIdentity(href, baseURI) {
+    if (!href) return null;
+    try {
+      const url = new URL(href, baseURI || "https://x.com/");
+      const match = url.pathname.match(/^\/([^/?#]+)\/status\/(\d+)(\/[^?#]*)?/i);
+      if (!match) return null;
+      return { handle: match[1], tweetId: match[2], rest: match[3] || "", href: url.href };
+    } catch {
+      return null;
+    }
+  }
+
+  function profileHandle(href, baseURI) {
+    try {
+      const segments = new URL(href, baseURI || "https://x.com/").pathname.split("/").filter(Boolean);
+      return segments.length === 1 ? segments[0].toLowerCase() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /// The post's own time, outside any quote it carries.
+  function ownTime(article) {
+    return own(article, "time");
+  }
+
+  function timeLink(article, time) {
+    const link = time?.closest("a[href]");
+    return link && article.contains(link) ? link : null;
+  }
+
+  /// The post X Pro opened over a column: its own time is not a link (Р2).
+  function isStackMainPost(article) {
+    const time = ownTime(article);
+    return Boolean(time) && !timeLink(article, time);
+  }
+
+  /// The post's ID and author handle as its links spell them: its time link,
+  /// else its own status links outside quotes and analytics (Р3).
+  function postIdentity(article) {
+    const baseURI = article.ownerDocument?.baseURI;
+    const fromTime = statusIdentity(timeLink(article, ownTime(article))?.getAttribute("href"), baseURI);
+    if (fromTime) return { tweetId: fromTime.tweetId, handle: fromTime.handle, href: fromTime.href };
+    const name = own(article, USER_NAME);
+    let author = null;
+    for (const link of name?.querySelectorAll("a[href]") ?? []) {
+      author = profileHandle(link.getAttribute("href"), baseURI);
+      if (author) break;
+    }
+    let first = null;
+    for (const link of article.querySelectorAll('a[href*="/status/"]')) {
+      if (isOwned(link) || !ownedBy(article, link)) continue;
+      const identity = statusIdentity(link.getAttribute("href"), baseURI);
+      if (!identity || /^\/analytics(?:\/|$)/i.test(identity.rest)) continue;
+      const found = { tweetId: identity.tweetId, handle: identity.handle, href: identity.href };
+      if (!author || identity.handle.toLowerCase() === author) return found;
+      first ??= found;
+    }
+    return first;
+  }
+
+  // ── Where the button goes ────────────────────────────────────────────────
+
+  function commonAncestor(a, b) {
+    for (let node = a.parentElement; node; node = node.parentElement) {
+      if (node.contains(b)) return node;
+    }
+    return null;
+  }
+
+  /// A box that holds one control with an icon and no text: Grok, by its
+  /// build rather than its label (Р1).
+  function isIconControlBox(box) {
+    const control = box.matches("button, [role='button']") ? box : box.querySelector("button, [role='button']");
+    if (!control || !control.querySelector("svg")) return false;
+    return box.textContent.trim() === "" || GROK_LABEL.test(control.getAttribute("aria-label") || "");
+  }
+
+  /// The row of the post's header: the nearest box holding both its "…" and
+  /// its author block, or `null` when the post has no header of its own.
+  function headerRow(article) {
+    const caret = own(article, CARET);
+    const name = own(article, USER_NAME);
+    if (!caret || !name) return null;
+    const row = commonAncestor(caret, name);
+    return row && article.contains(row) ? { row, caret } : null;
+  }
+
+  /// The place of a post's Mine button: the box it goes before and the box of
+  /// "…" it is copied from. `null` when the post has no header of its own.
+  function headerSlot(article) {
+    const header = headerRow(article);
+    if (!header) return null;
+    const { row, caret } = header;
+    let rightBlock = caret;
+    while (rightBlock.parentElement !== row) rightBlock = rightBlock.parentElement;
+    // The first level, from "…" up to the right block, where "…" has a
+    // neighbour: Grok, or a box with text such as Follow.
+    for (let node = caret; node !== rightBlock; node = node.parentElement) {
+      let neighbour = node.previousElementSibling;
+      while (neighbour?.matches(`[${OWNED}]`)) neighbour = neighbour.previousElementSibling;
+      if (!neighbour) continue;
+      return { source: node, before: isIconControlBox(neighbour) ? neighbour : node, control: caret };
+    }
+    // Nothing beside "…": the button stands just before the box of "…".
+    const source = caret.parentElement !== rightBlock && caret.parentElement !== row ? caret.parentElement : caret;
+    return { source, before: source, control: caret };
+  }
+
+  function isStackHeader(element) {
+    if (!element?.matches?.(STACK_HEADER)) return false;
+    const children = elementChildren(element);
+    if (children.length < STACK_HEADER_MIN_CHILDREN) return false;
+    const actions = children[children.length - 1];
+    return children.some((child) => child.querySelector(HEADING)) && !actions.querySelector(HEADING)
+      && Boolean(actions.querySelector("button"));
+  }
+
+  function stackActions(header) {
+    const children = elementChildren(header);
+    return children[children.length - 1] ?? null;
+  }
+
+  /// The post a stack header stands for: the first opened post in the nearest
+  /// ancestor of the header that holds posts at all (Р2).
+  function stackMainPost(header) {
+    const body = header.ownerDocument?.body;
+    for (let node = header.parentElement; node && node !== body; node = node.parentElement) {
+      const posts = [...node.querySelectorAll(POST)];
+      if (posts.length === 0) continue;
+      return posts.find((post) => !post.parentElement?.closest(POST) && isStackMainPost(post)) ?? null;
+    }
+    return null;
+  }
+
+  /// The stack header above an opened post, outside the post itself.
+  function stackHeaderOf(article) {
+    const body = article.ownerDocument?.body;
+    for (let node = article.parentElement; node && node !== body; node = node.parentElement) {
+      for (const header of node.querySelectorAll(STACK_HEADER)) {
+        if (!article.contains(header) && isStackHeader(header)) return header;
+      }
+    }
+    return null;
+  }
+
+  // ── The copy ─────────────────────────────────────────────────────────────
+
+  /// Classes and inline styles of the copied elements: a different value
+  /// means X drew its controls anew (theme, font size), and the copy is made
+  /// again.
+  function look(elements) {
+    return elements
       .filter((element) => element.localName !== "path" && element.localName !== "g")
       .map((element) => `${element.localName}.${element.getAttribute("class") ?? ""}{${element.getAttribute("style") ?? ""}}`)
       .join("|");
+  }
+
+  /// The boxes from `from` down to `control`, without their other children,
+  /// and the whole control: what the Mine button copies.
+  function pathTo(from, control) {
+    const chain = [];
+    for (let node = control.parentElement; node && from !== control; node = node.parentElement) {
+      chain.unshift(node);
+      if (node === from) break;
+    }
+    return chain;
+  }
+
+  function sourceLook(from, control) {
+    return look([...pathTo(from, control), control, ...control.querySelectorAll("*")]);
+  }
+
+  function clonePath(from, control) {
+    let top = null;
+    let parent = null;
+    for (const node of pathTo(from, control)) {
+      const copy = node.cloneNode(false);
+      if (parent) parent.append(copy); else top = copy;
+      parent = copy;
+    }
+    const copy = control.cloneNode(true);
+    if (parent) parent.append(copy); else top = copy;
+    return top;
   }
 
   function isHovered(element) {
@@ -118,12 +308,13 @@
 
   /// Puts X's hover change on the Mine button; the returned function takes
   /// it back off.
-  function applyHover(control) {
+  function applyHover(control, kind) {
     const parts = hoverParts(control);
-    if (!accentHover || !parts || parts.length !== accentHover.length) return null;
+    const hover = learnedHover.get(kind);
+    if (!hover || !parts || parts.length !== hover.length) return null;
     const saved = parts.map((element) => [element.getAttribute("class"), element.getAttribute("style")]);
     parts.forEach((element, index) => {
-      const { add, remove, style } = accentHover[index];
+      const { add, remove, style } = hover[index];
       element.classList.remove(...remove);
       element.classList.add(...add);
       for (const [name, value] of Object.entries(style)) element.style.setProperty(name, value);
@@ -142,13 +333,23 @@
     frame(() => frame(callback));
   }
 
+  /// Which template a control of X is: the "…" of a post, the button of a
+  /// stack header, or neither.
+  function templateKind(control) {
+    if (control.matches(CARET) && control.closest(POST)) return KIND_POST;
+    const header = control.closest(STACK_HEADER);
+    if (header && isStackHeader(header) && stackActions(header)?.querySelector("button") === control) return KIND_STACK;
+    return null;
+  }
+
   /// X draws hover with its own script, which a copy does not get. The
-  /// pointer over an accent control of X shows what that script changes; the
-  /// Mine button repeats it (rule 2).
+  /// pointer over a template control shows what that script changes; the
+  /// Mine buttons copied from it repeat it (rule 2).
   function learnHover(event) {
-    const target = event.target;
-    const control = target?.closest?.(`${POST} [role="group"] button, ${POST} [role="group"] a[href]`);
-    if (!control || isOwned(control) || OWN_HOVER_COLOUR.has(control.getAttribute("data-testid"))) return;
+    const control = event.target?.closest?.("button");
+    if (!control || isOwned(control)) return;
+    const kind = templateKind(control);
+    if (!kind) return;
     if (event.relatedTarget && control.contains(event.relatedTarget)) return;
     const parts = hoverParts(control);
     if (!parts) return;
@@ -160,11 +361,11 @@
       control.removeEventListener("pointerleave", leave);
       if (left || !control.isConnected) return;
       const change = hoverChange(rest, parts.map(partLook));
-      if (change) accentHover = change;
+      if (change) learnedHover.set(kind, change);
     });
   }
 
-  function wire(control, activate) {
+  function wire(control, kind, post, activate) {
     const keep = (event) => event.stopPropagation();
     for (const type of KEPT_FROM_X) control.addEventListener(type, keep, { passive: true });
     control.addEventListener("keydown", (event) => {
@@ -173,13 +374,13 @@
     control.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      const article = control.closest(POST);
+      const article = post(control);
       if (article) activate(article, control);
     });
     let undo = null;
     control.addEventListener("pointerenter", () => {
       undo?.();
-      undo = applyHover(control);
+      undo = applyHover(control, kind);
     });
     control.addEventListener("pointerleave", () => {
       undo?.();
@@ -187,10 +388,10 @@
     });
   }
 
-  /// A copy of X's control box with the Mine mark in its icon.
-  function createButton(source, activate) {
-    const doc = source.ownerDocument;
-    const box = source.cloneNode(true);
+  /// The copy of a template with the Mine mark in its icon. `post` finds the
+  /// post the button saves at the moment it is pressed.
+  function createButton(box, kind, post, activate) {
+    const doc = box.ownerDocument;
     for (const element of [box, ...box.querySelectorAll("*")]) {
       for (const name of element.getAttributeNames()) {
         if (name === "id" || name === "href" || name.startsWith("data-") || name.startsWith("aria-")) {
@@ -212,91 +413,149 @@
     icon.replaceChildren(group);
     control.setAttribute("type", "button");
     control.setAttribute("aria-label", LABEL);
-    box.setAttribute(OWNED, "");
-    wire(control, activate);
+    box.setAttribute(OWNED, kind);
+    wire(control, kind, post, activate);
     return box;
   }
 
-  /// One Mine button, last in the post's action row. Returns it, or `null`
-  /// when the post has no row of its own.
-  function ensureButton(article, activate) {
-    const row = actionRow(article);
-    if (!row) return null;
-    const existing = [...row.querySelectorAll(`[${OWNED}]`)];
+  /// One Mine button in `container`, just before `before`, copied from
+  /// `source` down to `control`. Returns it, or `null` when it cannot be made.
+  function place(container, before, source, control, kind, post, activate) {
+    const existing = [...container.children].filter((child) => child.matches(`[${OWNED}]`));
     for (const extra of existing.slice(1)) extra.remove();
     let box = existing[0] ?? null;
-    const source = template(row);
-    if (!source) {
-      box?.remove();
-      return null;
-    }
     // A hovered control shows X's hover, not its look at rest.
-    const sourceLook = isHovered(source.control) ? null : look(source.box);
-    if (box && sourceLook !== null && templateLooks.get(box) !== sourceLook) {
+    const currentLook = isHovered(control) ? null : sourceLook(source, control);
+    if (box && currentLook !== null && templateLooks.get(box) !== currentLook) {
       box.remove();
       box = null;
     }
     if (!box) {
-      if (sourceLook === null) return null;
-      box = createButton(source.box, activate);
+      if (currentLook === null) return null;
+      box = createButton(clonePath(source, control), kind, post, activate);
       if (!box) return null;
-      templateLooks.set(box, sourceLook);
+      templateLooks.set(box, currentLook);
     }
-    if (source.box.nextElementSibling !== box) source.box.after(box);
+    if (box.nextElementSibling !== before) before.before(box);
     return box;
   }
 
-  /// Every post of the page: the one full pass, when the buttons start.
+  function removeButtons(scope) {
+    for (const box of scope.querySelectorAll(`[${OWNED}]`)) box.remove();
+  }
+
+  function postOfControl(control) {
+    return control.closest(POST);
+  }
+
+  function postOfStackControl(control) {
+    const header = control.closest(STACK_HEADER);
+    return header ? stackMainPost(header) : null;
+  }
+
+  /// The Mine button of a stack header, before its actions box, while the
+  /// header stands for an opened post with an ID (Р2).
+  function ensureStackButton(header, activate) {
+    if (!isStackHeader(header)) return null;
+    const actions = stackActions(header);
+    const control = actions.querySelector("button");
+    const main = stackMainPost(header);
+    // The header nearest to the opened post is its own; a column header
+    // further up never claims it.
+    if (!main || !postIdentity(main) || stackHeaderOf(main) !== header) {
+      for (const box of [...header.children]) if (box.matches(`[${OWNED}]`)) box.remove();
+      return null;
+    }
+    return place(header, actions, actions, control, KIND_STACK, postOfStackControl, activate);
+  }
+
+  /// One Mine button in the post's header (Р1), or in the header of its stack
+  /// for the post X Pro opened (Р2). Returns the button, or `null` when the
+  /// post gets none here.
+  function ensureButton(article, activate) {
+    if (isStackMainPost(article)) {
+      for (const box of article.querySelectorAll(`[${OWNED}]`)) if (ownedBy(article, box)) box.remove();
+      const header = stackHeaderOf(article);
+      return header ? ensureStackButton(header, activate) : null;
+    }
+    const slot = headerSlot(article);
+    if (!slot || !postIdentity(article)) {
+      for (const box of article.querySelectorAll(`[${OWNED}]`)) if (ownedBy(article, box)) box.remove();
+      return null;
+    }
+    const container = slot.before.parentElement;
+    // A button left elsewhere in the post, such as in the action row by an
+    // earlier version, goes.
+    for (const box of article.querySelectorAll(`[${OWNED}]`)) {
+      if (box.parentElement !== container && ownedBy(article, box)) box.remove();
+    }
+    return place(container, slot.before, slot.source, slot.control, KIND_POST, postOfControl, activate);
+  }
+
+  /// Every post and stack header of the page: the one full pass, when the
+  /// buttons start.
   function scan(doc, activate) {
     for (const article of doc.querySelectorAll(POST)) ensureButton(article, activate);
+    for (const header of doc.querySelectorAll(STACK_HEADER)) ensureStackButton(header, activate);
   }
 
-  function holdsRowOrButton(node) {
-    return node.nodeType === 1
-      && (node.matches(`[role="group"], [${OWNED}]`) || Boolean(node.querySelector(`[role="group"], [${OWNED}]`)));
+  function holds(node, selector) {
+    return node.nodeType === 1 && (node.matches(selector) || Boolean(node.querySelector(selector)));
   }
 
-  /// The posts a batch of changes may have left without their button: posts
-  /// X added (the post itself or posts inside an added node), and posts
-  /// whose action row X redrew, the button's parent or neighbours included.
-  /// Changes anywhere else, other posts among them, are not looked at.
-  function changedPosts(records, into) {
+  const HEADER_PARTS = `${CARET}, ${USER_NAME}, [${OWNED}]`;
+
+  /// The posts and stack headers a batch of changes may have left without
+  /// their button: those X added, posts whose header X redrew (inside the
+  /// header row or the box of "…", "…" or the Mine button added or removed),
+  /// and stack headers whose children changed. Changes anywhere else, other
+  /// posts and the action rows among them, are not looked at (Р4).
+  function changedPosts(records, posts, headers) {
     for (const record of records) {
       for (const node of record.addedNodes) {
         if (node.nodeType !== 1) continue;
-        if (node.matches(POST)) into.add(node);
-        for (const post of node.querySelectorAll(POST)) into.add(post);
+        if (node.matches(POST)) posts.add(node);
+        for (const post of node.querySelectorAll(POST)) posts.add(post);
+        if (node.matches(STACK_HEADER)) headers.add(node);
+        for (const header of node.querySelectorAll(STACK_HEADER)) headers.add(header);
       }
       const target = record.target;
-      const post = target.nodeType === 1 ? target.closest(POST) : null;
+      if (target.nodeType !== 1) continue;
+      const header = target.closest(STACK_HEADER);
+      if (header) headers.add(header);
+      const post = target.closest(POST);
       if (!post) continue;
-      if (target.closest('[role="group"]')
-        || [...record.addedNodes].some(holdsRowOrButton) || [...record.removedNodes].some(holdsRowOrButton)) {
-        into.add(post);
+      if ([...record.addedNodes].some((node) => holds(node, HEADER_PARTS))
+        || [...record.removedNodes].some((node) => holds(node, HEADER_PARTS))
+        || headerRow(post)?.row.contains(target)) {
+        posts.add(post);
       }
     }
-    return into;
   }
 
   /// Keeps a Mine button on every post of the page as X adds, redraws and
-  /// reuses them: one full pass at the start, then only the posts the
-  /// changes concern. Returns the function that stops it.
+  /// reuses them: one full pass at the start, then only the posts and stack
+  /// headers the changes concern. Returns the function that stops it.
   function watch(doc, activate) {
     const view = doc.defaultView;
-    const pending = new Set();
+    const posts = new Set();
+    const headers = new Set();
     let queued = false;
     // Changes of X reach the observer before this runs: the records left
     // after it are of the buttons' own insertions and are dropped.
     const run = () => {
       queued = false;
-      const posts = [...pending];
-      pending.clear();
-      for (const post of posts) if (post.isConnected) ensureButton(post, activate);
+      const changed = [...posts];
+      const changedHeaders = [...headers];
+      posts.clear();
+      headers.clear();
+      for (const post of changed) if (post.isConnected) ensureButton(post, activate);
+      for (const header of changedHeaders) if (header.isConnected) ensureStackButton(header, activate);
       observer.takeRecords();
     };
     const queue = (records) => {
-      changedPosts(records, pending);
-      if (queued || pending.size === 0) return;
+      changedPosts(records, posts, headers);
+      if (queued || (posts.size === 0 && headers.size === 0)) return;
       queued = true;
       if (typeof view.requestAnimationFrame === "function") view.requestAnimationFrame(run);
       else setTimeout(run, 16);
@@ -308,10 +567,14 @@
     observer.takeRecords();
     return () => {
       observer.disconnect();
-      pending.clear();
+      posts.clear();
+      headers.clear();
       doc.removeEventListener("pointerover", learnHover, { capture: true });
     };
   }
 
-  root.MineXFeedButton = { OWNED_ATTRIBUTE: OWNED, isXHost, actionRow, ensureButton, scan, watch };
+  root.MineXFeedButton = {
+    OWNED_ATTRIBUTE: OWNED, isXHost, postIdentity, isStackMainPost, ensureButton, ensureStackButton, scan, watch,
+    removeAll: (doc) => removeButtons(doc),
+  };
 })(globalThis);

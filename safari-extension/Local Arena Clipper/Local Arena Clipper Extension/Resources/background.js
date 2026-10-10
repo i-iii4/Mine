@@ -70,13 +70,13 @@ async function resolveClipperTarget(tab, fallbackUrl = null) {
   return { tabId, tabUrl };
 }
 
+// The frame of a Save link clip must show the link, never the page it was
+// clicked on (SPEC_AUDIT_FIXES.md, В4.2).
 const CAPTURE_PAGE_CHANGED = "This tab shows another page than the one Mine opened for. Open Mine again on the page you want to capture.";
+const CAPTURE_PAGE_MOVED = "The page changed while the screenshot was taken. Retake it.";
 
-/// Whether the tab still shows the document the clipper opened for. The tab
-/// alone is not enough: after the tab moves from page A to page B (a link, or
-/// a single-page app changing its address), a screenshot of B would be saved
-/// with the link of A (SPEC_AUDIT_FIXES.md, Ф6, Б4.5). The address compares
-/// whole, fragment included, the same rule content extraction follows.
+/// Whether two addresses name the same document. The address compares whole,
+/// fragment included, the same rule content extraction follows.
 function showsCaptureDocument(tabUrl, documentUrl) {
   if (typeof tabUrl !== "string" || typeof documentUrl !== "string") return false;
   try {
@@ -87,12 +87,15 @@ function showsCaptureDocument(tabUrl, documentUrl) {
 }
 
 /// Capture the viewport of `tabId` only while it is the tab in front of its
-/// window and still shows `documentUrl`: `captureVisibleTab` takes whatever
-/// tab is in front, and a clip must never receive another page
-/// (SPEC_AUDIT_FIXES.md, Ф6).
-async function captureTabViewport(tabId, documentUrl) {
+/// window: `captureVisibleTab` takes whatever tab is in front (SPEC_AUDIT_FIXES.md,
+/// Ф6). The frame is the page the tab shows now and goes with the clip,
+/// whichever page the clip was opened on (SPEC_CLIPPER.md, «Доработки после
+/// живого просмотра», Р9); a frame taken while the tab changed address is
+/// dropped. `requiredUrl` is the link of a Save link clip: another page is
+/// refused (В4.2).
+async function captureTabViewport(tabId, requiredUrl) {
   const tab = await chrome.tabs.get(tabId);
-  if (!showsCaptureDocument(tab?.url, documentUrl)) throw new Error(CAPTURE_PAGE_CHANGED);
+  if (typeof requiredUrl === "string" && !showsCaptureDocument(tab?.url, requiredUrl)) throw new Error(CAPTURE_PAGE_CHANGED);
   if (!tab.active) {
     throw new Error("The page is not in front of its window. Bring it forward and retake the screenshot.");
   }
@@ -111,17 +114,18 @@ async function captureTabViewport(tabId, documentUrl) {
     throw new Error("The page left the front while the screenshot was taken. Retake it.");
   }
   // The page may have moved while the frame was taken.
-  if (!showsCaptureDocument(front.url, documentUrl)) throw new Error(CAPTURE_PAGE_CHANGED);
+  if (!showsCaptureDocument(front.url, tab.url)) throw new Error(CAPTURE_PAGE_MOVED);
   return dataUrl;
 }
 
-/// Start the crop overlay in `tabId` only while it still shows `documentUrl`
-/// (Ф6); the crop's own capture carries the same address. `cropId` names the
-/// crop of the editor that asked, and the crop reports under it: only that
-/// editor takes the result (SPEC_AUDIT_FIXES.md, Г3.3).
-async function startCropInTab(tabId, documentUrl, cropId) {
+/// Start the crop overlay in `tabId`, on the page it shows now (Р9); a Save
+/// link clip names its link, and another page is refused (В4.2). `cropId`
+/// names the crop of the editor that asked, and the crop reports under it:
+/// only that editor takes the result (SPEC_AUDIT_FIXES.md, Г3.3).
+async function startCropInTab(tabId, requiredUrl, cropId) {
   const tab = await chrome.tabs.get(tabId);
-  if (!showsCaptureDocument(tab?.url, documentUrl)) return { ok: false, error: CAPTURE_PAGE_CHANGED };
+  const documentUrl = typeof requiredUrl === "string" ? requiredUrl : null;
+  if (documentUrl !== null && !showsCaptureDocument(tab?.url, documentUrl)) return { ok: false, error: CAPTURE_PAGE_CHANGED };
   return new Promise((resolve) => {
     chrome.tabs.sendMessage(tabId, { action: "startCropOverlay", documentUrl, cropId }, (resp) => {
       if (chrome.runtime.lastError) {
@@ -149,10 +153,11 @@ function prepareTabForViewportCapture(tabId, callback) {
 
 /// `freshMaterial`: the launch brings something to clip (a context-menu
 /// target, a post already read), so it replaces a clip kept open with edits
-/// (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч11).
-function showExistingClipperOverlay(tabId, freshMaterial) {
+/// (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч11). `extra` carries the clip of an
+/// overlay reopened after its page changed (Ч12).
+function showExistingClipperOverlay(tabId, freshMaterial, extra = {}) {
   return new Promise((resolve) => {
-    chrome.tabs.sendMessage(tabId, { action: "showClipperOverlay", freshMaterial }, (resp) => {
+    chrome.tabs.sendMessage(tabId, { action: "showClipperOverlay", freshMaterial, ...extra }, (resp) => {
       if (chrome.runtime.lastError) {
         resolve(false);
         return;
@@ -307,7 +312,106 @@ async function takeClipperLaunch(sender) {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   void forgetClipperLaunch(tabId).catch(() => undefined);
+  void clearOpenClip(tabId).catch(() => undefined);
 });
+
+// ── The clip of an open overlay (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч12) ──────
+//
+// While an overlay is open, its editor hands its clip over after every change,
+// and the clip is kept under the overlay's tab in session storage. A new
+// document in the tab (a link, a reload, a page back from the history cache)
+// asks for it, and the overlay opens again with the same clip
+// (SPEC_CLIPPER.md, «Доработки после живого просмотра», Р7). The close, the
+// Save and the tab's close take it away; the browser's restart and the
+// extension's reload or update clear session storage with it. The list of
+// tabs with an open clip (`OPEN_CLIP_TABS_KEY`, beside `anyEditorOpen`) is a
+// key of its own: pages read it before asking.
+const OPEN_CLIP_PREFIX = "mineOpenClip:";
+// The clip format this version writes and opens (extension/popup/lib/openClip.ts).
+const OPEN_CLIP_VERSION = 1;
+
+function openClipKey(tabId) {
+  return `${OPEN_CLIP_PREFIX}${tabId}`;
+}
+
+// Changes of one tab's clip run one at a time, in the order they came.
+const openClipChanges = new Map();
+
+function changeOpenClip(tabId, change) {
+  const previous = openClipChanges.get(tabId) ?? Promise.resolve();
+  const run = previous.then(async () => {
+    const key = openClipKey(tabId);
+    const stored = (await chrome.storage.session.get(key))[key] ?? null;
+    const next = change(stored);
+    if (next === undefined) return;
+    if (next === null) {
+      await chrome.storage.session.remove(key);
+      await changeSessionValue(OPEN_CLIP_TABS_KEY, (tabs = []) => ({ next: tabs.filter((id) => id !== tabId) }));
+      return;
+    }
+    try {
+      await chrome.storage.session.set({ [key]: next });
+    } catch (error) {
+      // Session storage is bounded: a clip that does not fit is kept without
+      // its frame, which the person can take again on the page shown.
+      if (!next.screenshot) throw error;
+      console.warn("[Mine] open clip kept without its screenshot:", String(error?.message ?? error));
+      await chrome.storage.session.set({ [key]: { ...next, screenshot: null } });
+    }
+    await changeSessionValue(OPEN_CLIP_TABS_KEY, (tabs = []) => (tabs.includes(tabId) ? {} : { next: [...tabs, tabId] }));
+  });
+  const settled = run.catch(() => undefined);
+  openClipChanges.set(tabId, settled);
+  void settled.then(() => {
+    if (openClipChanges.get(tabId) === settled) openClipChanges.delete(tabId);
+  });
+  return run;
+}
+
+/// Keep the clip an overlay handed over. Without a `screenshot` field the
+/// stored frame stays: the editor sends it only when it changed.
+function writeOpenClip(tabId, clip) {
+  return changeOpenClip(tabId, (stored) => ({
+    ...clip,
+    screenshot: Object.prototype.hasOwnProperty.call(clip, "screenshot") ? clip.screenshot : stored?.screenshot ?? null,
+  }));
+}
+
+function clearOpenClip(tabId) {
+  return changeOpenClip(tabId, (stored) => (stored === null ? undefined : null));
+}
+
+async function readOpenClip(tabId) {
+  await (openClipChanges.get(tabId) ?? Promise.resolve());
+  const key = openClipKey(tabId);
+  return (await chrome.storage.session.get(key))[key] ?? null;
+}
+
+function isOpenClip(value) {
+  return typeof value === "object" && value !== null && value.version === OPEN_CLIP_VERSION
+    && typeof value.pageUrl === "string";
+}
+
+/// Whether the message comes from the top frame of a page in a tab: the frame
+/// an overlay lives in.
+function isPageTopFrame(sender) {
+  return typeof sender?.tab?.id === "number" && sender.frameId === 0 && !isExtensionPage(sender);
+}
+
+/// A new document in `tab` while its overlay was open: the overlay opens
+/// again there with the kept clip, by the delivery the icon uses. Openings of
+/// one tab still run one at a time (Г3.1).
+function restoreOpenClipInTab(tab) {
+  return trackClipperOpening(() => oneOpeningPerTab(tab.id, async () => {
+    const clip = await readOpenClip(tab.id);
+    if (!clip) return "none";
+    const restore = { restore: clip };
+    if (await showExistingClipperOverlay(tab.id, false, restore)) return "overlay";
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["dist/overlay.js"] });
+    if (await showExistingClipperOverlay(tab.id, false, restore)) return "overlay";
+    throw new Error("overlay injected but did not acknowledge the kept clip");
+  }));
+}
 
 // Openings of one tab, the last one under way. A second click or Alt+A while
 // the first opening still injects the overlay would find no listener and
@@ -767,10 +871,21 @@ function scheduleReloadCheck() {
   }, RELOAD_CHECK_DELAY_MS);
 }
 
+// The tabs whose overlay has a clip kept for its next document (Ч12).
+const OPEN_CLIP_TABS_KEY = "mineOpenClipTabs";
+
+async function anyOpenClip() {
+  const tabs = (await chrome.storage.session.get(OPEN_CLIP_TABS_KEY))[OPEN_CLIP_TABS_KEY];
+  return Array.isArray(tabs) && tabs.length > 0;
+}
+
 // Whether a clipper is open anywhere: an extension page (the window used where
 // the overlay cannot run, the folder setup page) or the overlay in some tab.
 // A browser that cannot list extension pages is treated as having one open.
 async function anyEditorOpen() {
+  // An overlay whose page is changing is still open: its clip waits for the
+  // next document of its tab (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч12).
+  if (await anyOpenClip()) return true;
   if (typeof chrome.runtime.getContexts !== "function") return true;
   const pages = await chrome.runtime.getContexts({ contextTypes: ["TAB", "POPUP", "SIDE_PANEL"] });
   if (pages.length > 0) return true;
@@ -1353,6 +1468,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // The open overlay of a page hands over its clip, or says it is gone
+  // (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч12). Only the top frame of a page tab
+  // has an overlay.
+  if (msg.action === "openClipWrite") {
+    if (!isPageTopFrame(sender) || !isOpenClip(msg.clip)) {
+      sendResponse({ ok: false });
+      return false;
+    }
+    writeOpenClip(sender.tab.id, msg.clip).then(() => sendResponse({ ok: true }),
+      (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    return true;
+  }
+
+  if (msg.action === "openClipClear") {
+    if (!isPageTopFrame(sender)) {
+      sendResponse({ ok: false });
+      return false;
+    }
+    clearOpenClip(sender.tab.id).then(() => {
+      sendResponse({ ok: true });
+      // The close that cleared it is when a pending update can apply (К4).
+      scheduleReloadCheck();
+    }, (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    return true;
+  }
+
+  // A new document of a tab whose overlay was open asks for its clip (Р7).
+  if (msg.action === "restoreOpenClip") {
+    if (!isPageTopFrame(sender)) {
+      sendResponse({ ok: false, mode: "none" });
+      return false;
+    }
+    restoreOpenClipInTab(sender.tab).then((mode) => sendResponse({ ok: mode === "overlay", mode }),
+      (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    return true;
+  }
+
   // Crop mode: a clipper asks background to start the crop overlay on its
   // page. An overlay asks from the page's own tab (it passes the sentinel -1
   // because it cannot know its tab id). The clipper window asks from its own
@@ -1374,8 +1526,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // A clipper asks background to capture its page's viewport (content scripts
   // cannot call chrome.tabs.captureVisibleTab directly). An overlay captures
-  // its own tab; the clipper window names its source tab. Either names the
-  // page address it opened for, and another page is never captured (Ф6).
+  // its own tab; the clipper window names its source tab. The frame is the
+  // page the tab shows now (SPEC_CLIPPER.md, Р9); a Save link clip names its
+  // link, and another page is refused (В4.2).
   if (msg.action === "captureForCrop") {
     const tabId = isExtensionPage(sender) && typeof msg.tabId === "number" ? msg.tabId : sender.tab?.id;
     if (typeof tabId !== "number") {

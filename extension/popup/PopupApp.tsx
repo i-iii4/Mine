@@ -100,31 +100,16 @@ export function PopupApp() {
     }
   }, [clipper.save, closeClipper]);
 
-  // Cmd+Enter to save, Esc to close, Tab to cycle Content → Screenshot → Link.
-  // Listener on window in CAPTURE phase so page scripts cannot swallow Tab
-  // before we see it (apple.com, medium, etc. commonly attach keydown
-  // handlers on document/window in bubble phase). In capture phase we get
-  // the event first, then decide whether to handle.
-  //
-  // Activation rule: handle the event only when focus is already inside
-  // the clipper overlay (or when the page body itself has focus — i.e. no
-  // explicit text-input engagement on the host page). This avoids hijacking
-  // Tab navigation when the user is typing in an input on the underlying
-  // page. The ergonomic consequence: the moment the overlay is visible and
-  // the user has not actively clicked into a page field, Tab cycles clipper
-  // tabs — no clicks on the overlay required.
+  // Cmd+Enter to save, the arrows to change the type, Escape to close the
+  // window. Listener on window in CAPTURE phase so page scripts cannot
+  // swallow the keys before the clipper sees them; it handles them only while
+  // the keyboard is in the clipper. The overlay is not modal: the page keeps
+  // its keys until the person clicks into the panel, and Escape never closes
+  // the overlay (SPEC_CLIPPER.md, «Доработки после живого просмотра», Р5).
   useEffect(() => {
-    // Architectural principle: while the clipper overlay is mounted it is
-    // a modal UI — Tab is a clipper shortcut, not page navigation. The
-    // ONLY reason to defer Tab to native behavior is when the user is
-    // typing inside a text field OWNED BY OVERLAY (title input, channel
-    // search). Page-level focus is irrelevant to us: even if apple.com
-    // autofocused one of its search fields, Tab while our overlay is
-    // visible should cycle clipper tabs.
-    //
-    // On the detached-popup fallback path (service pages) the overlay
-    // host doesn't exist — the entire document IS our UI — and the
-    // generic text-field check is correct.
+    // On the detached-popup fallback path (service pages) the overlay host
+    // doesn't exist: the entire document IS the clipper, and the generic
+    // text-field check is correct.
     function activeIsOverlayTextField(): boolean {
       const host = document.querySelector("[data-mine-clipper-overlay]");
       // Walk shadow roots: activeElement retargets to the shadow host,
@@ -183,6 +168,9 @@ export function PopupApp() {
       // Ф6, В4.3).
       if (mineOverlay()?.isHidden()) return;
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        // The page keeps its keys until the person clicks into the overlay
+        // (SPEC_CLIPPER.md, «Доработки после живого просмотра», Р5).
+        if (!focusInsideClipper()) return;
         e.preventDefault();
         // The same rule as the Save button: a screenshot waits for the frame
         // being taken (В4.5).
@@ -190,6 +178,9 @@ export function PopupApp() {
         return;
       }
       if (e.key === "Escape") {
+        // The overlay closes only by its close button and Save (Р5); Escape
+        // stays the page's, and the panel's own layers handle theirs.
+        if (mineOverlay()) return;
         // Escape climbs the layers, innermost first: a search field clears
         // its query (or blurs), an open dropdown closes itself. This capture
         // listener fires before either of them, so it must stand down while
@@ -320,7 +311,7 @@ export function PopupApp() {
   const footerError = saveError ?? clipper.nativeStatusError;
 
   return (
-    <div className="flex min-h-0 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       {previousSavePanel}
       {recoveryMessage && <p className="p-3 text-sm" role="status">{recoveryMessage}</p>}
       {clipper.saveMode === "standalone" && (
@@ -357,7 +348,7 @@ export function PopupApp() {
             stack keep their heights, so nothing overlaps and nothing
             disappears. min-h-0 lets the flex chain pass the squeeze down to
             those elastic boxes. */}
-        <div className="mine-clipper-section-stack min-h-0">
+        <div className="mine-clipper-section-stack min-h-0" data-clipper-preview-stack="">
           {clipper.currentType === "link" && (
             <div className="space-y-1.5 rounded-1 border border-border p-2">
               {ogImage && (
@@ -381,6 +372,7 @@ export function PopupApp() {
             <div
               className="max-h-[280px] min-h-24 overflow-y-auto rounded-1 border border-border p-2"
               data-clipper-scrollbar=""
+              data-clipper-preview=""
             >
               {/* The post goes on without a video the helper's tool could
                   not get; first in the box, so it is read before Save
@@ -461,7 +453,7 @@ export function PopupApp() {
           )}
 
           {clipper.currentType === "image" && ogImage && (
-            <div className="flex min-h-24 shrink justify-center overflow-hidden rounded-1 border border-border bg-accent">
+            <div className="flex min-h-24 shrink justify-center overflow-hidden rounded-1 border border-border bg-accent" data-clipper-preview="">
               <img
                 src={ogImage}
                 alt=""

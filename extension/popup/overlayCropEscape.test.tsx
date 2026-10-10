@@ -18,6 +18,7 @@ vi.hoisted(() => {
       },
       onMessage: { addListener: () => undefined },
     },
+    storage: { local: { get: async () => ({}), set: async () => undefined } },
   };
 });
 

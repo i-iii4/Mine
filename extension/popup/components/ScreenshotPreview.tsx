@@ -22,12 +22,13 @@ export function ScreenshotPreview({
   error = null,
 }: ScreenshotPreviewProps) {
   return (
-    <div className="mine-clipper-section-stack min-h-0">
+    <div className="mine-clipper-section-stack min-h-0" data-clipper-preview-stack="">
       {/* The image is the section's only elastic element: in a short viewport
-          the box compresses and object-contain scales the screenshot down.
-          The action row below is rigid — Crop Area and Retake must never
-          shrink away or be painted over. */}
-      <div className="flex min-h-24 shrink justify-center overflow-hidden rounded-1 border border-border bg-accent">
+          the box compresses and object-contain scales the screenshot down;
+          in a panel the person sized it takes the room left. The action row
+          below is rigid: Crop Area and Retake must never shrink away or be
+          painted over. */}
+      <div className="flex min-h-24 shrink justify-center overflow-hidden rounded-1 border border-border bg-accent" data-clipper-preview="">
         {dataUrl ? (
           <img
             src={dataUrl}

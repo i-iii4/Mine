@@ -162,7 +162,8 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
   ]);
 
   return (
-    <div className="flex h-10 shrink-0 items-center border-b border-border bg-accent px-2" data-clipper-space-row="">
+    // The header: in the overlay its empty part drags the panel (SPEC_CLIPPER.md, Р10).
+    <div className="flex h-10 shrink-0 select-none items-center border-b border-border bg-accent px-2" data-clipper-space-row="" data-clipper-drag-handle="">
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger asChild>
           <MenuTextTrigger

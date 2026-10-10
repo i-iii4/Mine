@@ -21,7 +21,7 @@ const { extensionRuntime, first } = vi.hoisted(() => {
     return { runtime, listeners };
   }
   const first = extensionRuntime();
-  (globalThis as unknown as { chrome: unknown }).chrome = { runtime: first.runtime };
+  (globalThis as unknown as { chrome: unknown }).chrome = { runtime: first.runtime, storage: { local: { get: async () => ({}) } } };
   return { extensionRuntime, first };
 });
 
@@ -75,7 +75,7 @@ describe("the overlay script runs once per page (SPEC_AUDIT_FIXES.md, Г3.1)", (
     const reloaded = extensionRuntime();
     // The old script stays in the page, cut off from its extension.
     first.runtime.id = undefined;
-    vi.stubGlobal("chrome", { runtime: reloaded.runtime });
+    vi.stubGlobal("chrome", { runtime: reloaded.runtime, storage: { local: { get: async () => ({}) } } });
 
     await injectAgain();
 

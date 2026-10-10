@@ -177,7 +177,7 @@ describe("standalone mode decision", () => {
     await settled(result);
     expect(result.current.currentType).toBe("screenshot");
     act(() => result.current.retakeScreenshot());
-    expect(capture).toHaveBeenCalledWith({ target: "background", action: "captureForCrop", tabId: 7, documentUrl: "https://example.com" }, expect.any(Function));
+    expect(capture).toHaveBeenCalledWith({ target: "background", action: "captureForCrop", tabId: 7 }, expect.any(Function));
     await waitFor(() => expect(result.current.screenshotDataUrl).toBe(newBytes));
     await act(async () => { finishOld?.("old-upload"); });
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
@@ -1186,12 +1186,12 @@ describe("screenshots in the editor (SPEC_AUDIT_FIXES.md, Б4.5, Б4.6)", () => 
     expect(standalone.standaloneSave.mock.calls[0]![0]).toMatchObject({ block_type: "image", screenshot_data_url: second });
   });
 
-  it("names the page address it opened for in every screenshot request", async () => {
+  it("asks for the page its source tab shows now, naming no page (SPEC_CLIPPER.md, Р9)", async () => {
     const { sent } = answerLater();
     renderHook(() => useClipperState());
     await waitFor(() => expect(sent.some((message) => message.action === "captureForCrop")).toBe(true));
     expect(sent.find((message) => message.action === "captureForCrop"))
-      .toEqual({ target: "background", action: "captureForCrop", tabId: 7, documentUrl: "https://example.com" });
+      .toEqual({ target: "background", action: "captureForCrop", tabId: 7 });
   });
 
   it("keeps the editor when the page refuses a crop from the window, and says why", async () => {
@@ -1206,7 +1206,7 @@ describe("screenshots in the editor (SPEC_AUDIT_FIXES.md, Б4.5, Б4.6)", () => 
     await act(async () => { await result.current.startCropMode(); });
 
     expect(sent.find((message) => message.action === "startCropMode"))
-      .toEqual({ target: "background", action: "startCropMode", tabId: 7, documentUrl: "https://example.com", cropId: null });
+      .toEqual({ target: "background", action: "startCropMode", tabId: 7, documentUrl: null, cropId: null });
     expect(result.current.state).toBe("main");
     expect(result.current.screenshotDataUrl).toBe(first);
     expect(result.current.captureError).toBe(refusal);

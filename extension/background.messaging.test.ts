@@ -389,6 +389,9 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
     // only once it is written back.
     worker.chrome.storage.session.get.mockImplementation(async (key: unknown) => ({ [key as string]: structuredClone(session[key as string]) }));
     worker.chrome.storage.session.set.mockImplementation(async (values: unknown) => { Object.assign(session, structuredClone(values)); });
+    worker.chrome.storage.session.remove.mockImplementation(async (keys: unknown) => {
+      for (const key of [keys].flat() as string[]) delete session[key];
+    });
     return worker;
   }
   const ask = (worker: ReturnType<typeof background>, sender: { url?: string; tab?: { id: number; windowId?: number } }) =>
@@ -445,7 +448,7 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
     await expect(capture()).resolves.toMatchObject({ ok: true, dataUrl: "data:image/jpeg;base64,AA" });
   });
 
-  describe("a screenshot belongs to the page address the clipper opened for (Б4.5)", () => {
+  describe("a screenshot takes the page the tab shows now (SPEC_CLIPPER.md, «Доработки после живого просмотра», Р9)", () => {
     const pageA = "https://a.example/story";
     const pageB = "https://b.example/other";
     const fromWindow = { url: "chrome-extension://test/dist/index.html", tab: { id: 900, windowId: 77 } };
@@ -457,39 +460,38 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       return { worker, tabs: chrome.tabs };
     }
 
-    it("refuses the window's screenshot once its source tab moved from A to B", async () => {
+    it("captures page B for the window whose source tab moved from A to B", async () => {
       const { worker, tabs } = captureWorker();
       tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: pageB });
       tabs.query.mockResolvedValue([{ id: 5, url: pageB }]);
-      const reply = await worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5, documentUrl: pageA }, fromWindow).response;
-      expect(reply).toMatchObject({ ok: false, error: expect.stringContaining("another page") });
-      expect(reply).not.toHaveProperty("dataUrl");
-      expect(tabs.captureVisibleTab).not.toHaveBeenCalled();
+      const reply = await worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5 }, fromWindow).response;
+      expect(reply).toMatchObject({ ok: true, dataUrl: "data:image/jpeg;base64,AA" });
     });
 
-    it("refuses the overlay's screenshot after its page changed address in place", async () => {
+    it("captures the page the overlay's tab shows after its address changed in place", async () => {
       const { worker, tabs } = captureWorker();
       tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: pageB });
       tabs.query.mockResolvedValue([{ id: 5, url: pageB }]);
-      const reply = await worker.dispatch({ target: "background", action: "captureForCrop", documentUrl: pageA }, { url: pageB, tab: { id: 5 } }).response;
-      expect(reply).toMatchObject({ ok: false });
-      expect(tabs.captureVisibleTab).not.toHaveBeenCalled();
+      const reply = await worker.dispatch({ target: "background", action: "captureForCrop" }, { url: pageB, tab: { id: 5 } }).response;
+      expect(reply).toMatchObject({ ok: true });
+      expect(tabs.captureVisibleTab).toHaveBeenCalledOnce();
     });
 
     it("drops a frame taken while the page moved away", async () => {
       const { worker, tabs } = captureWorker();
       tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: pageA });
       tabs.query.mockResolvedValue([{ id: 5, url: pageB }]);
-      const reply = await worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5, documentUrl: pageA }, fromWindow).response;
-      expect(reply).toMatchObject({ ok: false });
+      const reply = await worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5 }, fromWindow).response;
+      expect(reply).toMatchObject({ ok: false, error: "The page changed while the screenshot was taken. Retake it." });
       expect(reply).not.toHaveProperty("dataUrl");
     });
 
-    it("refuses a request that names no page", async () => {
+    it("refuses the frame of a Save link clip when the tab shows another page than the link (В4.2)", async () => {
       const { worker, tabs } = captureWorker();
       tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: pageA });
-      await expect(worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5 }, fromWindow).response)
-        .resolves.toMatchObject({ ok: false });
+      tabs.query.mockResolvedValue([{ id: 5, url: pageA }]);
+      const reply = await worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5, documentUrl: pageB }, fromWindow).response;
+      expect(reply).toMatchObject({ ok: false, error: expect.stringContaining("another page") });
       expect(tabs.captureVisibleTab).not.toHaveBeenCalled();
     });
   });
@@ -507,13 +509,20 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
 
     it("asks the page the window opened for, not the window's own tab", async () => {
       const { worker, tabs } = cropWorker(page);
-      const reply = await worker.dispatch({ target: "background", action: "startCropMode", tabId: 5, documentUrl: page }, fromWindow).response;
+      const reply = await worker.dispatch({ target: "background", action: "startCropMode", tabId: 5 }, fromWindow).response;
       expect(reply).toEqual({ ok: true });
-      expect(tabs.sendMessage).toHaveBeenCalledWith(5, { action: "startCropOverlay", documentUrl: page, cropId: null }, expect.any(Function));
+      expect(tabs.sendMessage).toHaveBeenCalledWith(5, { action: "startCropOverlay", documentUrl: null, cropId: null }, expect.any(Function));
       expect(tabs.sendMessage).not.toHaveBeenCalledWith(900, expect.anything(), expect.anything());
     });
 
-    it("does not start a crop once the source tab shows another page", async () => {
+    it("starts the crop on the page the source tab shows now (Р9)", async () => {
+      const { worker, tabs } = cropWorker("https://b.example/other");
+      const reply = await worker.dispatch({ target: "background", action: "startCropMode", tabId: 5 }, fromWindow).response;
+      expect(reply).toEqual({ ok: true });
+      expect(tabs.sendMessage).toHaveBeenCalledWith(5, expect.objectContaining({ action: "startCropOverlay" }), expect.any(Function));
+    });
+
+    it("does not start the crop of a Save link clip on another page than the link (В4.2)", async () => {
       const { worker, tabs } = cropWorker("https://b.example/other");
       const reply = await worker.dispatch({ target: "background", action: "startCropMode", tabId: 5, documentUrl: page }, fromWindow).response;
       expect(reply).toMatchObject({ ok: false, error: expect.stringContaining("another page") });
@@ -522,9 +531,87 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
 
     it("keeps an overlay's crop in the overlay's own tab, under the overlay's crop id (Г3.3)", async () => {
       const { worker, tabs } = cropWorker(page);
-      const reply = await worker.dispatch({ target: "background", action: "startCropMode", tabId: -1, documentUrl: page, cropId: "crop-1" }, { url: page, tab: { id: 5 } }).response;
+      const reply = await worker.dispatch({ target: "background", action: "startCropMode", tabId: -1, cropId: "crop-1" }, { url: page, tab: { id: 5 } }).response;
       expect(reply).toEqual({ ok: true });
-      expect(tabs.sendMessage).toHaveBeenCalledWith(5, { action: "startCropOverlay", documentUrl: page, cropId: "crop-1" }, expect.any(Function));
+      expect(tabs.sendMessage).toHaveBeenCalledWith(5, { action: "startCropOverlay", documentUrl: null, cropId: "crop-1" }, expect.any(Function));
+    });
+  });
+
+  describe("the clip of an open overlay waits for the next document of its tab (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч12)", () => {
+    const pageA = "https://a.example/story";
+    const pageB = "https://b.example/other";
+    const fromPage = (url: string, tabId = 5) => ({ url, frameId: 0, tab: { id: tabId, url } });
+    const shot = { dataUrl: "data:image/jpeg;base64,AA", uploadId: "shot-1" };
+    const clip = (title: string, extra: Record<string, unknown> = {}) => ({
+      version: 1, pageUrl: pageA, metadata: { url: pageA, title, selection: "", detectedType: "link" }, articleData: null,
+      articleExtractionState: "idle", launchedArticle: null, linkTarget: null, title, selectedTags: ["Design"],
+      currentType: "screenshot", destination: { executor: "native", vaultPath: "/v", bindingId: "b", label: "/v" },
+      edited: true, ...extra,
+    });
+    const write = (worker: ReturnType<typeof background>, value: unknown, sender = fromPage(pageA)) =>
+      worker.dispatch({ target: "background", action: "openClipWrite", clip: value }, sender).response;
+    const stored = (worker: ReturnType<typeof background>, tabId = 5) =>
+      worker.run(`readOpenClip(${tabId})`) as Promise<Record<string, unknown> | null>;
+
+    it("keeps the clip under its tab, and the frame it was sent with until a new one comes", async () => {
+      const worker = launchWorker();
+      await expect(write(worker, clip("First", { screenshot: shot }))).resolves.toEqual({ ok: true });
+      await expect(write(worker, clip("Second"))).resolves.toEqual({ ok: true });
+      await expect(stored(worker)).resolves.toMatchObject({ title: "Second", screenshot: shot });
+      await write(worker, clip("Third", { screenshot: null }));
+      await expect(stored(worker)).resolves.toMatchObject({ title: "Third", screenshot: null });
+      await expect(stored(worker, 6)).resolves.toBeNull();
+    });
+
+    it("takes a clip only from the top frame of a page tab, and only one it can open", async () => {
+      const worker = launchWorker();
+      await expect(write(worker, clip("Frame"), { ...fromPage(pageA), frameId: 3 })).resolves.toEqual({ ok: false });
+      await expect(write(worker, clip("Window"), { url: "chrome-extension://test/dist/index.html", frameId: 0, tab: { id: 5, url: "x" } }))
+        .resolves.toEqual({ ok: false });
+      await expect(write(worker, { ...clip("Old"), version: 0 })).resolves.toEqual({ ok: false });
+      await expect(stored(worker)).resolves.toBeNull();
+    });
+
+    it("forgets the clip when the overlay closes or saves, and when its tab closes", async () => {
+      const worker = launchWorker();
+      await write(worker, clip("Open"));
+      await expect(worker.dispatch({ target: "background", action: "openClipClear" }, fromPage(pageB)).response).resolves.toEqual({ ok: true });
+      await expect(stored(worker)).resolves.toBeNull();
+      await write(worker, clip("Open again"));
+      const removed = worker.chrome.tabs.onRemoved.addListener.mock.calls.map(([listener]) => listener as (tabId: number) => void);
+      removed.forEach((listener) => listener(5));
+      await vi.waitFor(async () => expect(await stored(worker)).toBeNull());
+      await expect(worker.run("anyOpenClip()")).resolves.toBe(false);
+    });
+
+    it("opens the overlay of a new document with the kept clip, by the icon's delivery", async () => {
+      const worker = launchWorker();
+      await write(worker, clip("Kept", { screenshot: shot }));
+      const shown: unknown[] = [];
+      worker.chrome.tabs.sendMessage.mockImplementation((_id: unknown, message: unknown, callback?: (r: unknown) => void) => {
+        shown.push(message);
+        callback?.(shown.length === 1 ? undefined : { ok: true });
+      });
+      const reply = await worker.dispatch({ target: "background", action: "restoreOpenClip" }, fromPage(pageB)).response;
+      expect(reply).toEqual({ ok: true, mode: "overlay" });
+      expect(worker.chrome.scripting.executeScript).toHaveBeenCalledWith({ target: { tabId: 5 }, files: ["dist/overlay.js"] });
+      expect(shown.at(-1)).toMatchObject({ action: "showClipperOverlay", freshMaterial: false,
+        restore: { title: "Kept", pageUrl: pageA, screenshot: shot } });
+    });
+
+    it("opens nothing in a tab without a kept clip", async () => {
+      const worker = launchWorker();
+      await write(worker, clip("Other tab"), fromPage(pageA, 6));
+      const reply = await worker.dispatch({ target: "background", action: "restoreOpenClip" }, fromPage(pageB)).response;
+      expect(reply).toEqual({ ok: false, mode: "none" });
+      expect(worker.chrome.tabs.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("counts a kept clip as an open clipper for a pending update (К4)", async () => {
+      const worker = launchWorker();
+      await expect(worker.run("anyEditorOpen()")).resolves.toBe(false);
+      await write(worker, clip("Open"));
+      await expect(worker.run("anyEditorOpen()")).resolves.toBe(true);
     });
   });
 

@@ -999,7 +999,40 @@
     }
   }
 
+  // ── The switches of the Mine buttons (SPEC_CLIPPER.md, Р11) ─────────────
+
+  /// Keeps a page's Mine buttons with their switch in the clipper's "…" menu:
+  /// on and off at once, without a reload. `start` puts the buttons on the
+  /// page and returns the function that stops them and takes them away.
+  function followFeedButtonSetting(key, start) {
+    const settings = window.MineFeedButtonSettings;
+    let stop = null;
+    const apply = (enabled) => {
+      if (enabled && !stop) stop = start();
+      else if (!enabled && stop) {
+        stop();
+        stop = null;
+      }
+    };
+    let storage = null;
+    try {
+      storage = chrome.storage?.local && chrome.storage.onChanged ? chrome.storage : null;
+    } catch {
+      // A context the browser has torn down refuses storage: the buttons stay
+      // on, as they were before the switches existed.
+    }
+    if (!settings || !storage) {
+      apply(true);
+      return;
+    }
+    settings.watch(storage, (value) => apply(value[key]));
+    void settings.read(storage.local).then((value) => apply(value[key]));
+  }
+
   // ── Instagram feed clip button ─────────────────────────────────────────
+
+  // Instagram is a single-page app: new posts are looked for this often.
+  const INSTAGRAM_SCAN_INTERVAL_MS = 500;
 
   function initInstagramFeedButton() {
     if (!window.location.hostname.includes("instagram.com")) return;
@@ -1174,9 +1207,14 @@
       }
     }
 
-    // Scan every 500ms for new posts (Instagram is SPA, DOM changes dynamically)
-    setInterval(scanArticles, 500);
-    scanArticles();
+    followFeedButtonSetting("instagram", () => {
+      const timer = setInterval(scanArticles, INSTAGRAM_SCAN_INTERVAL_MS);
+      scanArticles();
+      return () => {
+        clearInterval(timer);
+        for (const button of document.querySelectorAll(`[${BUTTON_ATTR}]`)) button.remove();
+      };
+    });
   }
 
   // Start Instagram feed button injection
@@ -1201,17 +1239,12 @@
   }
 
   /// The post a feed card stands for: its ID and its author's handle as the
-  /// timestamp link spells it. A repost card stands for the reposted post.
+  /// timestamp link spells it, or as the post's own links spell them where
+  /// the time is not a link (the post X Pro opened, «Доработки после живого
+  /// просмотра», Р3). A repost card stands for the reposted post.
   function xFeedPostIdentity(article) {
-    const identity = window.MineTwitterThreadSelection?.getTweetIdentity?.(article);
-    if (!identity?.tweetId) return null;
-    let handle = identity.handle;
-    try {
-      handle = new URL(identity.href).pathname.split("/")[1] || handle;
-    } catch {
-      // The lowercased handle still names the same account.
-    }
-    return { tweetId: identity.tweetId, handle };
+    const identity = window.MineXFeedButton?.postIdentity?.(article);
+    return identity?.tweetId ? { tweetId: identity.tweetId, handle: identity.handle } : null;
   }
 
   function firstXPostPicture(posts) {
@@ -1289,12 +1322,46 @@
   function initXFeedButton() {
     const feedButton = window.MineXFeedButton;
     if (!feedButton?.isXHost(window.location.hostname)) return;
-    feedButton.watch(document, (article, control) => {
-      void clipXFeedPost(article, control);
+    followFeedButtonSetting("x", () => {
+      const stopWatching = feedButton.watch(document, (article, control) => {
+        void clipXFeedPost(article, control);
+      });
+      return () => {
+        stopWatching();
+        feedButton.removeAll(document);
+      };
     });
   }
 
   initXFeedButton();
+
+  // ── The clip of an overlay open before this document ─────────────────────
+  //
+  // A new document in a tab whose overlay was open (a link, a reload, a page
+  // back from the history cache) asks background for the clip it keeps for
+  // the tab, and the overlay opens again with it (SPEC_CLIPPER.md, «Доработки
+  // после живого просмотра», Р7). The list of tabs with an open clip is read
+  // first: a page of a browser with no open overlay does not wake background.
+  const OPEN_CLIP_TABS_KEY = "mineOpenClipTabs";
+
+  async function restoreOpenClip() {
+    try {
+      const tabs = (await chrome.storage.session.get(OPEN_CLIP_TABS_KEY))?.[OPEN_CLIP_TABS_KEY];
+      if (!Array.isArray(tabs) || tabs.length === 0) return;
+    } catch {
+      // Pages may not read session storage until background has opened it to
+      // them, which it does before any overlay opens: nothing is kept yet.
+      return;
+    }
+    askBackground({ action: "restoreOpenClip" });
+  }
+
+  if (window.top === window) {
+    void restoreOpenClip();
+    window.addEventListener("pageshow", (event) => {
+      if (event.persisted) void restoreOpenClip();
+    });
+  }
 
   // ── Article extraction (Defuddle) ─────────────────────────────────────
 
@@ -1460,8 +1527,9 @@
 
   let cropOverlayHost = null;
   let cropToastHost = null;
-  // The page address the clipper opened for. The crop's capture names it, and
-  // background refuses a page that has changed since (SPEC_AUDIT_FIXES.md, Ф6).
+  // The link of a Save link clip: the crop's capture names it, and background
+  // refuses another page (SPEC_AUDIT_FIXES.md, В4.2). Any other crop takes the
+  // page shown now (SPEC_CLIPPER.md, «Доработки после живого просмотра», Р9).
   let cropDocumentUrl = null;
   // The crop under way, from its start until its result is handed over,
   // capture included. One at a time: another start meanwhile is ignored
@@ -1594,7 +1662,7 @@
     // Ask background for a full viewport capture
     const captureResp = await new Promise((resolve) => {
       chrome.runtime.sendMessage(
-        { target: "background", action: "captureForCrop", documentUrl: cropDocumentUrl },
+        { target: "background", action: "captureForCrop", ...(cropDocumentUrl ? { documentUrl: cropDocumentUrl } : {}) },
         (resp) => resolve(resp || { ok: false, error: "No response" }),
       );
     });
@@ -1648,7 +1716,7 @@
   function startCropOverlay(documentUrl, cropId) {
     // A crop already under way, its capture included, is not started again.
     if (activeCrop) return;
-    // No address named: background refuses the capture rather than guess.
+    // No address named: the crop takes the page shown now (Р9).
     cropDocumentUrl = typeof documentUrl === "string" ? documentUrl : null;
     const crop = { id: typeof cropId === "string" ? cropId : null, cancel: () => undefined };
 

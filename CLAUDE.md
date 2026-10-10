@@ -303,7 +303,7 @@ local-arena/
 │   │   ├── PopupApp.tsx        # Корневой компонент
 │   │   ├── components/         # VaultSelect, TypeSwitcher, ChannelList, SaveButton, ScreenshotPreview
 │   │   ├── hooks/              # useClipperState.ts
-│   │   └── lib/                # messaging.ts (типизированный native messaging)
+│   │   └── lib/                # messaging.ts (типизированный native messaging), openClip.ts (открытый клип вкладки между загрузками страниц), overlayBounds.ts (место и размер оверлея)
 │   ├── dist/                   # Собранный попап (output Vite)
 │   ├── lib/                    # Вендорные библиотеки (Defuddle UMD)
 │   ├── icons/                  # Иконки расширения

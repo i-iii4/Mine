@@ -85,7 +85,8 @@ describe("a crop belongs to the editor that started it (SPEC_AUDIT_FIXES.md, Г3
   async function startCrop(editor: Awaited<ReturnType<typeof openEditor>>): Promise<string> {
     await act(async () => { await editor.result.current.startCropMode(); });
     const call = crop.start.mock.calls.at(-1);
-    expect(call?.[0]).toBe(window.location.href);
+    // The crop takes the page shown now; only a Save link clip names a page (Р9).
+    expect(call?.[0]).toBeNull();
     expect(typeof call?.[1]).toBe("string");
     return call?.[1] as string;
   }

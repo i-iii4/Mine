@@ -1,28 +1,33 @@
-import { act, useEffect, useRef } from "react";
+import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type RuntimeListener = (message: unknown, sender: unknown, sendResponse: (response: unknown) => void) => unknown;
 
 // The entry listens for runtime messages as soon as it loads.
-const { runtimeListeners } = vi.hoisted(() => {
+const { runtimeListeners, local } = vi.hoisted(() => {
   const runtimeListeners: RuntimeListener[] = [];
+  const local: Record<string, unknown> = {};
   (globalThis as unknown as { chrome: unknown }).chrome = {
     runtime: {
       getURL: (path: string) => `chrome-extension://mine/${path}`,
       sendMessage: () => Promise.resolve(),
       onMessage: { addListener: (listener: RuntimeListener) => { runtimeListeners.push(listener); } },
     },
+    storage: { local: { get: async (key: string) => ({ [key]: local[key] }) } },
   };
-  return { runtimeListeners };
+  return { runtimeListeners, local };
 });
 
 vi.mock("./OverlayShell", () => ({
-  OverlayShell: function OverlayShellStub({ edits }: { edits: { changed: boolean } }) {
-    const ref = useRef<HTMLButtonElement>(null);
-    useEffect(() => ref.current?.focus(), []);
+  OverlayShell: function OverlayShellStub({ edits, restored, initialBounds }: {
+    edits: { changed: boolean };
+    restored?: { title: string } | null;
+    initialBounds?: { left: number | null; top: number | null };
+  }) {
     return (
-      <div data-mine-clipper-panel="" tabIndex={-1}>
-        <button ref={ref} type="button">Inside the clipper</button>
+      <div data-mine-clipper-panel="" tabIndex={-1} data-left={initialBounds?.left ?? ""} data-top={initialBounds?.top ?? ""}>
+        <button type="button">Inside the clipper</button>
+        <p data-restored-title="">{restored?.title ?? ""}</p>
         {/* What the editor does on any edit: title, collections, type. */}
         <button type="button" onClick={() => { edits.changed = true; }}>Make an edit</button>
       </div>
@@ -31,6 +36,13 @@ vi.mock("./OverlayShell", () => ({
 }));
 
 import { closeClipperOverlay, hideClipperOverlay, resumeClipperOverlay, showClipperOverlay } from "./overlay-entry";
+
+/// What a click into the clipper does to the keyboard: its control takes it.
+function clickInto(host: HTMLElement): HTMLButtonElement {
+  const button = host.shadowRoot!.querySelector("button")!;
+  button.focus();
+  return button;
+}
 
 describe("clipper overlay hands the keyboard back (А6.12)", () => {
   let pageField: HTMLInputElement;
@@ -55,8 +67,14 @@ describe("clipper overlay hands the keyboard back (А6.12)", () => {
     return document.querySelector<HTMLElement>("[data-mine-clipper-overlay]")!;
   }
 
+  it("leaves the keyboard on the page when it opens (SPEC_CLIPPER.md, Р5)", async () => {
+    await open();
+    expect(document.activeElement).toBe(pageField);
+  });
+
   it("returns focus to what had it on the page when the clipper closes with the keyboard inside", async () => {
     const host = await open();
+    clickInto(host);
     expect(document.activeElement).toBe(host);
 
     act(() => closeClipperOverlay());
@@ -66,7 +84,7 @@ describe("clipper overlay hands the keyboard back (А6.12)", () => {
   });
 
   it("leaves focus alone when it already moved to the page", async () => {
-    await open();
+    clickInto(await open());
     const elsewhere = document.createElement("button");
     document.body.appendChild(elsewhere);
     elsewhere.focus();
@@ -80,10 +98,11 @@ describe("clipper overlay hands the keyboard back (А6.12)", () => {
   // Escape and the close after Save close through closeClipperOverlay.
   describe("when a second open replaces the editor (SPEC_AUDIT_FIXES.md, Д1.3)", () => {
     it("returns focus to the page field the first editor took it from", async () => {
-      await open();
+      clickInto(await open());
       const host = await open();
       expect(document.querySelectorAll("[data-mine-clipper-overlay]")).toHaveLength(1);
-      expect(document.activeElement).toBe(host);
+      expect(document.activeElement).toBe(pageField);
+      clickInto(host);
 
       act(() => closeClipperOverlay());
 
@@ -92,11 +111,13 @@ describe("clipper overlay hands the keyboard back (А6.12)", () => {
 
     it("returns focus to the page field the first editor took it from after a hide lost the keyboard", async () => {
       const first = await open();
+      clickInto(first);
       hideClipperOverlay();
       (first.shadowRoot!.activeElement as HTMLElement).blur();
       expect(document.activeElement).toBe(document.body);
 
       const host = await open();
+      clickInto(host);
       expect(document.activeElement).toBe(host);
       act(() => closeClipperOverlay());
 
@@ -104,12 +125,13 @@ describe("clipper overlay hands the keyboard back (А6.12)", () => {
     });
 
     it("returns focus to the page field that had it when the second open came", async () => {
-      await open();
+      clickInto(await open());
       const elsewhere = document.createElement("input");
       document.body.appendChild(elsewhere);
       elsewhere.focus();
 
       const host = await open();
+      clickInto(host);
       expect(document.activeElement).toBe(host);
       act(() => closeClipperOverlay());
 
@@ -135,7 +157,7 @@ describe("clipper overlay keeps the keyboard across a screenshot (Б4.9)", () =>
     });
     const host = document.querySelector<HTMLElement>("[data-mine-clipper-overlay]")!;
     const shadow = host.shadowRoot!;
-    const button = shadow.querySelector("button")!;
+    const button = clickInto(host);
     expect(shadow.activeElement).toBe(button);
     return { host, shadow, button };
   }
@@ -300,7 +322,7 @@ describe("one editor per tab (SPEC_AUDIT_FIXES.md, Г3.1)", () => {
   });
 });
 
-describe("a clip with edits is not lost to a stray click or a repeated launch (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч10, Ч11)", () => {
+describe("a clip is not lost to a stray click or a repeated launch (SPEC_CLIPPER.md, Р5; SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч11)", () => {
   let pageField: HTMLInputElement;
 
   beforeEach(() => {
@@ -337,27 +359,26 @@ describe("a clip with edits is not lost to a stray click or a repeated launch (S
     });
   }
 
-  it("closes on a click outside while the clip has no edits (Т7)", async () => {
-    await open();
-    clickPage();
-    expect(document.querySelector("[data-mine-clipper-overlay]")).toBeNull();
-  });
-
-  it("stays open on a click outside once the clip has an edit (Т7)", async () => {
+  it("stays open on a click outside, without edits and with them, and the page takes the click (Р5)", async () => {
     const host = await open();
+    const pageClicks = vi.fn();
+    pageField.addEventListener("mousedown", pageClicks);
+    clickPage();
+    expect(document.querySelector("[data-mine-clipper-overlay]")).toBe(host);
     edit(host);
     clickPage();
     expect(document.querySelector("[data-mine-clipper-overlay]")).toBe(host);
+    expect(pageClicks).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the clip with edits on a repeated launch without new material and gives it the keyboard (Т8)", async () => {
+  it("keeps the clip with edits on a repeated launch without new material and leaves the keyboard where it is (Т8, Р5)", async () => {
     const host = await open();
     edit(host);
     pageField.focus();
     const again = await open(false);
     expect(again).toBe(host);
     expect(document.querySelectorAll("[data-mine-clipper-overlay]")).toHaveLength(1);
-    expect(document.activeElement).toBe(host);
+    expect(document.activeElement).toBe(pageField);
   });
 
   it("starts a new clip for a launch with new material (Т8)", async () => {
@@ -401,5 +422,117 @@ describe("a clip with edits is not lost to a stray click or a repeated launch (S
     expect(document.querySelector("[data-mine-clipper-overlay]")).toBeNull();
     const reopened = await open(false);
     expect(reopened).not.toBe(host);
+  });
+});
+
+describe("the overlay outlives its page in the same tab (SPEC_CLIPPER.md, «Доработки после живого просмотра», Р6, Р7)", () => {
+  const editors = () => document.querySelectorAll<HTMLElement>("[data-mine-clipper-overlay]");
+  type Runtime = { sendMessage: (message: { action?: string }, callback?: unknown) => Promise<void> };
+  const runtime = () => (globalThis as unknown as { chrome: { runtime: Runtime } }).chrome.runtime;
+  let told: string[] = [];
+  let send: Runtime["sendMessage"];
+  const kept = {
+    version: 1, pageUrl: "https://a.example/story",
+    metadata: { url: "https://a.example/story", title: "Story", description: "", image: null, author: null, ogType: null,
+      favicon: null, selection: "", detectedType: "link", isArticle: false },
+    articleData: null, articleExtractionState: "idle", launchedArticle: null, linkTarget: null, title: "Kept title",
+    selectedTags: ["Design"], currentType: "screenshot",
+    destination: { executor: "native", vaultPath: "/v", bindingId: "b", label: "/v" },
+    screenshot: { dataUrl: "data:image/jpeg;base64,AA", uploadId: null }, edited: true,
+  };
+  /// What background sends a new document whose tab kept a clip.
+  async function restore(clip: unknown) {
+    await act(async () => {
+      runtimeListeners.forEach((listener) => listener({ action: "showClipperOverlay", freshMaterial: false, restore: clip }, {}, () => undefined));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", () => Promise.resolve({ text: () => Promise.resolve("") }));
+    told = [];
+    send = runtime().sendMessage;
+    runtime().sendMessage = (message) => {
+      if (message.action) told.push(message.action);
+      return Promise.resolve();
+    };
+  });
+
+  afterEach(() => {
+    act(() => closeClipperOverlay());
+    runtime().sendMessage = send;
+    vi.unstubAllGlobals();
+  });
+
+  it("opens with the clip background kept for the tab, without taking the keyboard", async () => {
+    const field = document.createElement("input");
+    document.body.appendChild(field);
+    field.focus();
+    await restore(kept);
+    expect(editors()).toHaveLength(1);
+    expect(editors()[0]!.shadowRoot!.querySelector("[data-restored-title]")!.textContent).toBe("Kept title");
+    expect(document.activeElement).toBe(field);
+    field.remove();
+  });
+
+  it("drops a kept clip this version cannot open, and opens nothing", async () => {
+    await restore({ ...kept, version: 0 });
+    expect(editors()).toHaveLength(0);
+    expect(told).toEqual(["openClipClear"]);
+  });
+
+  it("keeps an overlay already open here when a kept clip comes", async () => {
+    await act(async () => { await showClipperOverlay(); });
+    const host = editors()[0];
+    await restore(kept);
+    expect(editors()).toHaveLength(1);
+    expect(editors()[0]).toBe(host);
+  });
+
+  it("forgets the kept clip when the overlay is closed or a new clip replaces it (Ч12)", async () => {
+    await act(async () => { await showClipperOverlay(); });
+    await act(async () => { await showClipperOverlay(true); });
+    expect(told.filter((action) => action === "openClipClear")).toHaveLength(1);
+    act(() => closeClipperOverlay());
+    expect(told.filter((action) => action === "openClipClear")).toHaveLength(2);
+  });
+
+  it("goes with its page and leaves the clip kept for the next document", async () => {
+    await act(async () => { await showClipperOverlay(); });
+    act(() => { window.dispatchEvent(new Event("pagehide")); });
+    expect(editors()).toHaveLength(0);
+    expect(told).not.toContain("openClipClear");
+  });
+
+  it("comes back into the page when the page replaces its body or clears it", async () => {
+    await act(async () => { await showClipperOverlay(); });
+    const host = editors()[0]!;
+    const body = document.createElement("body");
+    document.documentElement.replaceChild(body, document.body);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(host.parentElement).toBe(document.body);
+    document.body.innerHTML = "";
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(host.parentElement).toBe(document.body);
+    expect(editors()).toHaveLength(1);
+  });
+});
+
+describe("the overlay opens where the person left it (SPEC_CLIPPER.md, Р10)", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", () => Promise.resolve({ text: () => Promise.resolve("") }));
+  });
+  afterEach(() => {
+    act(() => closeClipperOverlay());
+    delete local.mineOverlayBounds;
+    vi.unstubAllGlobals();
+  });
+
+  it("reads the kept place before it shows", async () => {
+    local.mineOverlayBounds = { left: 120, top: 80, width: 480, height: null };
+    await act(async () => { await showClipperOverlay(); });
+    const panel = document.querySelector("[data-mine-clipper-overlay]")!.shadowRoot!.querySelector("[data-mine-clipper-panel]")!;
+    expect(panel.getAttribute("data-left")).toBe("120");
+    expect(panel.getAttribute("data-top")).toBe("80");
   });
 });

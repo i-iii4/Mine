@@ -2199,6 +2199,77 @@
         "extension/popup/hooks/useClipperState.standalone.test.tsx"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "extension/manifest.json",
+        "extension/background.js",
+        "extension/content.js",
+        "extension/lib/xFeedButton.js",
+        "extension/lib/xFeed.fixtures.ts",
+        "extension/lib/feedButtonSettings.js",
+        "extension/lib/feedButtonSettings.d.ts",
+        "extension/lib/feedButtonSwitch.fixtures.ts",
+        "extension/popup/overlay-entry.tsx",
+        "extension/popup/OverlayShell.tsx",
+        "extension/popup/PopupApp.tsx",
+        "extension/popup/components/ClipperOverflowMenu.tsx",
+        "extension/popup/components/ScreenshotPreview.tsx",
+        "extension/popup/components/StandaloneSetup.tsx",
+        "extension/popup/components/VaultSelect.tsx",
+        "extension/popup/hooks/useClipperState.ts",
+        "extension/popup/lib/messaging.ts",
+        "extension/popup/lib/openClip.ts",
+        "extension/popup/lib/overlayBounds.ts",
+        "src/styles/global.css",
+        "extension/lib/xFeedButton.test.ts",
+        "extension/lib/instagramFeedButton.test.ts",
+        "extension/lib/openClipRestore.test.ts",
+        "extension/lib/cropCapture.test.ts",
+        "extension/background.messaging.test.ts",
+        "extension/popup/overlay-entry.test.tsx",
+        "extension/popup/overlay-entry.instance.test.tsx",
+        "extension/popup/overlayCropEscape.test.tsx",
+        "extension/popup/OverlayShell.test.tsx",
+        "extension/popup/PopupApp.test.tsx",
+        "extension/popup/components/ClipperOverflowMenu.test.tsx",
+        "extension/popup/hooks/useClipperState.openClip.test.tsx",
+        "extension/popup/hooks/useClipperState.overlayCrop.test.tsx",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx",
+        "extension/popup/lib/openClip.test.ts",
+        "extension/popup/lib/overlayBounds.test.ts",
+        "scripts/clipper-worker-smoke.mjs",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/manifest.json",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/background.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/content.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/xFeedButton.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/feedButtonSettings.js"
+      ],
+      "requirement": "SPEC_CLIPPER.md#Доработки после живого просмотра (10.10.2026)",
+      "tests": [
+        "extension/lib/xFeedButton.test.ts",
+        "extension/lib/instagramFeedButton.test.ts",
+        "extension/lib/openClipRestore.test.ts",
+        "extension/background.messaging.test.ts",
+        "extension/popup/overlay-entry.test.tsx",
+        "extension/popup/OverlayShell.test.tsx",
+        "extension/popup/PopupApp.test.tsx",
+        "extension/popup/components/ClipperOverflowMenu.test.tsx",
+        "extension/popup/hooks/useClipperState.openClip.test.tsx",
+        "extension/popup/lib/openClip.test.ts",
+        "extension/popup/lib/overlayBounds.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/clipper-worker-smoke.mjs"
+      ],
+      "requirement": "SPEC_CLIPPER.md#Доработки после живого просмотра (10.10.2026)",
+      "tests": [
+        "scripts/clipper-worker-smoke.mjs"
+      ],
+      "command": "test:clipper-worker"
     }
   ],
   "release": null

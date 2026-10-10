@@ -302,6 +302,19 @@ interface MineContentHelpers {
   extractArticleAsync: () => Promise<ArticleData>;
   getImageInfo: (src: string) => { src: string; alt: string | null; title: string | null; width: number | null; height: number | null; postUrl?: string | null };
   detectTwitterLightboxImage: () => TwitterLightboxResult | null;
+  captureDocumentSnapshot?: () => CaptureDocument;
+}
+
+/** The document the page shows now: its address and navigation generation. */
+export interface CaptureDocument {
+  documentUrl: string;
+  captureGeneration: string;
+}
+
+/// The document this page shows now, read in the overlay's own page; `null`
+/// outside a page or where the content script predates the snapshot.
+export function currentCaptureDocument(): CaptureDocument | null {
+  return contentHelpers()?.captureDocumentSnapshot?.() ?? null;
 }
 
 function contentHelpers(): MineContentHelpers | null {

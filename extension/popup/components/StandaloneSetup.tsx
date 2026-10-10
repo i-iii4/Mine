@@ -54,7 +54,7 @@ export function StandaloneSetup({
 
   return (
     <div className="flex min-h-0 flex-col" data-clipper-standalone-setup="">
-      <div className="flex h-10 shrink-0 items-center border-b border-border bg-accent px-3">
+      <div className="flex h-10 shrink-0 select-none items-center border-b border-border bg-accent px-3" data-clipper-drag-handle="">
         <span className="text-base font-semibold text-foreground">Mine</span>
         {onClose && <ChromeCloseButton className="ml-auto" label="Close" onClick={onClose} />}
       </div>
@@ -112,8 +112,9 @@ export function StandaloneFolderRow({
 }) {
   return (
     <div
-      className="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-accent px-3"
+      className="flex h-10 shrink-0 select-none items-center gap-2 border-b border-border bg-accent px-3"
       data-clipper-standalone-row=""
+      data-clipper-drag-handle=""
     >
       <FolderOpen className="size-[13px] text-muted-foreground" aria-hidden="true" />
       <span className="min-w-0 truncate text-base text-foreground">

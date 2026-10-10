@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -118,6 +119,167 @@ async function quietTransportPage() {
   await page.goto(`chrome-extension://${extensionId}/dist/index.html`);
   return page;
 }
+// Two pages of a local site in the same tab, to check the in-page overlay of
+// the built extension the way a person meets it (SPEC_CLIPPER.md, «Доработки
+// после живого просмотра», Р5 to Р10): the page under it keeps working, a new
+// document brings it back with the same clip, Screenshot takes the page shown
+// now for the card of the page the clip was opened on, the header moves it,
+// the corner resizes it, and the window keeps it whole.
+const SITE_PAGES = {
+  '/a': { title: 'Page A', colour: 'rgb(255, 0, 0)' },
+  '/b': { title: 'Page B', colour: 'rgb(0, 0, 255)' },
+};
+
+function sitePage(path) {
+  const { title, colour } = SITE_PAGES[path];
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
+<style>html,body{margin:0;background:${colour};min-height:3000px}#press{position:fixed;left:20px;top:20px}
+#field{position:fixed;left:20px;top:80px}#next{position:fixed;left:20px;top:140px;color:#fff}</style></head>
+<body><button id="press" type="button">Pressed 0</button><input id="field"><a id="next" href="/b">Next page</a>
+<script>let presses=0;document.getElementById('press').addEventListener('click',(event)=>{presses+=1;event.currentTarget.textContent='Pressed '+presses;});</script>
+</body></html>`;
+}
+
+async function startSite() {
+  const server = createServer((request, response) => {
+    const path = new URL(request.url, 'http://127.0.0.1').pathname;
+    if (!SITE_PAGES[path]) {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(sitePage(path));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return { server, origin: `http://127.0.0.1:${server.address().port}` };
+}
+
+async function panelBox(page) {
+  const box = await page.locator('[data-mine-clipper-panel]').boundingBox();
+  assert.ok(box, 'the overlay panel is not on the page');
+  return box;
+}
+
+async function dragBy(page, from, dx, dy) {
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + dx, from.y + dy, { steps: 4 });
+  await page.mouse.up();
+}
+
+async function checkOverlayAcrossPages(worker) {
+  const { server, origin } = await startSite();
+  const page = await context.newPage();
+  try {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(`${origin}/a`);
+    await worker.evaluate(async (url) => {
+      const tab = (await chrome.tabs.query({})).find((candidate) => candidate.url === url);
+      if (!tab) throw new Error('No tab for the local page');
+      await chrome.tabs.update(tab.id, { active: true });
+      await openClipperUi(tab);
+    }, `${origin}/a`);
+    const panel = page.locator('[data-mine-clipper-panel]');
+    await panel.waitFor({ state: 'visible', timeout: 15_000 });
+    await page.getByRole('button', { name: 'Connect Worker collection', exact: true }).waitFor({ timeout: 15_000 });
+
+    // Р5: the overlay does not take the keyboard, and the page under it takes
+    // clicks, typing, Escape and scrolling.
+    assert.equal(await page.evaluate(() => document.activeElement?.hasAttribute('data-mine-clipper-overlay') ?? false), false);
+    assert.equal(await page.evaluate(() => document.elementFromPoint(30, 30)?.id), 'press');
+    await page.mouse.click(40, 30);
+    assert.equal(await page.locator('#press').textContent(), 'Pressed 1');
+    await page.locator('#field').click();
+    await page.keyboard.type('typed on the page');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#field').inputValue(), 'typed on the page');
+    await page.mouse.move(300, 600);
+    await page.mouse.wheel(0, 400);
+    await page.waitForFunction(() => window.scrollY > 0);
+    assert.equal(await panel.isVisible(), true, 'the overlay closed under the page');
+
+    // Р10: the header moves it, the corner resizes it, both are kept.
+    const start = await panelBox(page);
+    const header = await page.locator('[data-clipper-drag-handle]').boundingBox();
+    await dragBy(page, { x: header.x + header.width - 100, y: header.y + header.height / 2 }, -400, 120);
+    const moved = await panelBox(page);
+    assert.ok(Math.abs(moved.x - (start.x - 400)) <= 1 && Math.abs(moved.y - (start.y + 120)) <= 1, JSON.stringify({ start, moved }));
+    const corner = await page.locator('[data-clipper-resize-handle]').boundingBox();
+    await dragBy(page, { x: corner.x + corner.width / 2, y: corner.y + corner.height / 2 }, 100, 60);
+    const sized = await panelBox(page);
+    assert.ok(Math.abs(sized.width - (moved.width + 100)) <= 1 && Math.abs(sized.height - (moved.height + 60)) <= 1, JSON.stringify({ moved, sized }));
+    const kept = await worker.evaluate(async () => (await chrome.storage.local.get('mineOverlayBounds')).mineOverlayBounds);
+    assert.ok(Math.abs(kept.left - sized.x) <= 1 && Math.abs(kept.top - sized.y) <= 1 && Math.abs(kept.width - sized.width) <= 1, JSON.stringify(kept));
+    // The window shrinks: the panel stays whole in it; it grows back: the panel returns.
+    await page.setViewportSize({ width: 640, height: 500 });
+    await page.waitForFunction(() => {
+      const box = document.querySelector('[data-mine-clipper-overlay]')?.shadowRoot?.querySelector('[data-mine-clipper-panel]')?.getBoundingClientRect();
+      return box && box.left >= 0 && box.top >= 0 && box.right <= window.innerWidth + 0.5 && box.bottom <= window.innerHeight + 0.5;
+    });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.waitForFunction((expected) => {
+      const box = document.querySelector('[data-mine-clipper-overlay]')?.shadowRoot?.querySelector('[data-mine-clipper-panel]')?.getBoundingClientRect();
+      return box && Math.abs(box.left - expected.x) <= 1 && Math.abs(box.top - expected.y) <= 1 && Math.abs(box.width - expected.width) <= 1;
+    }, sized);
+
+    // The clip gets a collection and the Link type, then the page changes.
+    await page.getByRole('button', { name: 'Connect Worker collection', exact: true }).click();
+    await page.getByRole('tab', { name: 'Link', exact: true }).click();
+    // The page changes right after the last edit: what is pending reaches
+    // background as the document goes.
+    await page.locator('#next').click();
+    await page.waitForURL(`${origin}/b`);
+
+    // Р7: the new document opens the overlay with the same clip, where it was.
+    await page.getByRole('button', { name: 'Save to 1 collection', exact: true }).waitFor({ timeout: 15_000 });
+    assert.equal(await page.getByRole('tab', { name: 'Link', exact: true }).getAttribute('aria-selected'), 'true');
+    assert.ok((await panel.textContent()).includes(`${origin}/a`), 'the restored clip lost its page');
+    const restored = await panelBox(page);
+    assert.ok(Math.abs(restored.x - sized.x) <= 1 && Math.abs(restored.y - sized.y) <= 1, JSON.stringify({ sized, restored }));
+    assert.equal(await page.evaluate(() => document.activeElement?.hasAttribute('data-mine-clipper-overlay') ?? false), false);
+
+    // Р9: Screenshot takes page B for the card of page A.
+    await page.getByRole('tab', { name: 'Screenshot', exact: true }).click();
+    await page.getByRole('button', { name: 'Retake', exact: true }).click();
+    // Save waits for the frame being taken (В4.5).
+    await page.getByRole('button', { name: 'Save to 1 collection', exact: true }).click();
+    await page.locator('[data-clipper-saved]').waitFor({ state: 'visible', timeout: 15_000 });
+
+    const saved = await worker.evaluate(async () => {
+      const folder = await globalThis.MineStandaloneVault.loadDirectoryHandle();
+      const cards = await folder.getDirectoryHandle('Cards');
+      const media = await folder.getDirectoryHandle('Media');
+      const markdown = await (await (await cards.getFileHandle('Page A.md')).getFile()).text();
+      const names = [];
+      for await (const name of media.keys()) names.push(name);
+      const image = names.find((name) => name.startsWith('Page A.'));
+      const bitmap = await createImageBitmap(await (await media.getFileHandle(image)).getFile());
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const draw = canvas.getContext('2d');
+      draw.drawImage(bitmap, 0, 0);
+      const [red, green, blue] = draw.getImageData(Math.floor(bitmap.width / 2), Math.floor(bitmap.height / 2), 1, 1).data;
+      // The Save took the clip away; background may still be writing that.
+      let session = await chrome.storage.session.get(null);
+      for (let attempt = 0; attempt < 40 && Object.keys(session).some((key) => key.startsWith('mineOpenClip:')); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        session = await chrome.storage.session.get(null);
+      }
+      return { markdown, colour: { red, green, blue },
+        openClips: Object.keys(session).filter((key) => key.startsWith('mineOpenClip:')), tabs: session.mineOpenClipTabs ?? [] };
+    });
+    assert.ok(saved.markdown.includes(`${origin}/a`), saved.markdown);
+    assert.ok(saved.markdown.includes('[[Worker collection]]'), saved.markdown);
+    assert.ok(saved.colour.blue > 200 && saved.colour.red < 60, `the screenshot is not of page B: ${JSON.stringify(saved.colour)}`);
+    // Ч12: the Save leaves nothing of the clip for the tab.
+    assert.deepEqual(saved.openClips, []);
+    assert.deepEqual(saved.tabs, []);
+  } finally {
+    await page.close();
+    // The browser keeps its connections open; the site goes with them.
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
 try {
   let worker = await launch();
   const results = await worker.evaluate(async (commands) => {
@@ -319,12 +481,15 @@ try {
   assert.equal(finalCapture.collectionMarkdown, uiCapture.collectionMarkdown);
   assert.deepEqual(finalCapture.names, ['Worker UI article.md', 'Worker image.md']);
   assert.deepEqual(finalCapture.pending, []);
+  await checkOverlayAcrossPages(worker);
   Object.assign(report, { ok: true, scope: 'chromium-extension-worker-wasm',
     fixtures: fixtures.length, headless: true, temporaryProfile: true,
     persistedHandleBlobReceipt: true, browserRestarts: 3, popupSaveToFile: true,
     popupSelectedCollectionToFile: true, noClipStorageBeforeSave: true, journalClearedAfterSave: true,
     savedFileStableAfterBrowserReopen: true,
     standaloneSetupTransport: true, nativeStatusTransport: true, serviceWorkerRestarts: 2,
+    overlayLeavesPageWorking: true, overlayClipAcrossNewDocument: true, screenshotOfShownPageForOriginalCard: true,
+    overlayMovedResizedKeptAndFitted: true, openClipClearedAfterSave: true,
     filesystem: 'OPFS-not-OS-folder' });
 } catch (error) {
   report.error = error.stack ?? String(error);

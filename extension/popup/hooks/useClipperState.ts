@@ -33,7 +33,11 @@ import {
   revealVault,
   requestYoutubeChannel,
   waitForYoutubeChannel,
+  currentCaptureDocument,
 } from "../lib/messaging";
+import {
+  clearOpenClip, OPEN_CLIP_VERSION, OpenClipContext, writeOpenClip, type OpenClip, type OpenClipScreenshot, type OpenClipWrite,
+} from "../lib/openClip";
 
 // Detection: when PopupApp runs as a content-script overlay, chrome.tabs /
 // chrome.action are not exposed to that execution context. The window-entry
@@ -50,6 +54,10 @@ export const MINE_TOO_OLD = "This clipper needs a newer Mine. Open the updated M
 /** Save stopped: the clip moved to another folder after Save was pressed, and
  *  the collections of the folder it was in no longer go with it (Г3.2). */
 export const DESTINATION_CHANGED_DURING_SAVE = "The folder changed before this clip was saved. Nothing was saved: check the folder and collections, then save again.";
+/** Content asked for after the overlay's page changed: the original page is
+ *  gone and its text was never read (SPEC_CLIPPER.md, «Доработки после живого
+ *  просмотра», Р8). */
+export const SOURCE_PAGE_LEFT = "Mine can't read the original page after leaving it. Save it as Screenshot or Link.";
 
 import { resolveCaptureAuthor, resolveCaptureResult, youtubeCaptureSourceUrl } from "../lib/captureResult";
 import {
@@ -275,15 +283,19 @@ export function useClipperState() {
     }).catch(cause => console.warn("Screenshot cache unavailable; captured bytes retained", cause));
   }, [setScreenshotUploadId]);
 
-  // The page address this clipper opened for, until metadata names the
-  // document it was read from. Every screenshot and crop names it, and
-  // background refuses a tab that shows another page since
-  // (SPEC_AUDIT_FIXES.md, Ф6, Б4.5).
-  const captureDocumentRef = useRef<string | null>(null);
-  const captureDocumentUrl = useCallback(
-    () => metadataRef.current?.documentUrl ?? captureDocumentRef.current,
-    [],
-  );
+  // A screenshot and a crop take the page the tab shows now and go with this
+  // clip, whichever page it was opened on (SPEC_CLIPPER.md, «Доработки после
+  // живого просмотра», Р9). Only a Save link clip names a page: its frame
+  // must show the link, never the page it was clicked on (В4.2).
+  const linkTargetRef = useRef<string | null>(null);
+  const captureDocumentUrl = useCallback(() => linkTargetRef.current, []);
+  // The page this clip was opened on: a launch on another address starts a
+  // new clip (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч11).
+  const pageUrlRef = useRef<string>(IS_CONTENT_SCRIPT_CONTEXT ? window.location.href : "");
+  // The clip this overlay reopens after its page changed (Р7), read once.
+  const restoredRef = useRef<OpenClip | null>(useContext(OpenClipContext));
+  // After a Save the clip is done: nothing of it is kept for the tab (Ч12).
+  const clipEndedRef = useRef(false);
   // Screenshot requests are numbered; only the answer to the latest one is
   // applied. A failure is shown in the editor, which keeps its state and the
   // previous frame (SPEC_AUDIT_FIXES.md, Б4.6).
@@ -363,7 +375,7 @@ export function useClipperState() {
           // Replaced before it was sent: one capture less against the
           // browser's limit of two per second.
           if (!isLatest()) return;
-          chrome.runtime.sendMessage({ target: "background", action: "captureForCrop", documentUrl }, settle);
+          chrome.runtime.sendMessage({ target: "background", action: "captureForCrop", ...(documentUrl ? { documentUrl } : {}) }, settle);
         });
       });
       return;
@@ -371,7 +383,7 @@ export function useClipperState() {
     // The detached window captures the page it was opened for, and only
     // while that page is in front (SPEC_AUDIT_FIXES.md, Ф6).
     chrome.runtime.sendMessage(
-      { target: "background", action: "captureForCrop", tabId: tabIdRef.current, documentUrl },
+      { target: "background", action: "captureForCrop", tabId: tabIdRef.current, ...(documentUrl ? { documentUrl } : {}) },
       settle,
     );
   }, [cacheCapturedScreenshot, captureDocumentUrl, setCapturing, setScreenshotDataUrl, setScreenshotUploadId]);
@@ -402,6 +414,20 @@ export function useClipperState() {
       return null;
     }
 
+    const launched = launchedArticleRef.current;
+    // The overlay's page changed since the clip was opened: the original
+    // page is gone, and this page is not the clip's (Р8). A Save link clip
+    // keeps its own refusal: its page was never this one.
+    if (IS_CONTENT_SCRIPT_CONTEXT && !launched && !linkTargetRef.current) {
+      const shown = currentCaptureDocument();
+      if (shown && meta.documentUrl !== undefined && (shown.documentUrl !== meta.documentUrl
+        || (meta.captureGeneration !== undefined && shown.captureGeneration !== meta.captureGeneration))) {
+        setArticleDataValue({ ...(existing ?? { title: "", content: "", byline: null, excerpt: "" }), unavailableReason: SOURCE_PAGE_LEFT });
+        setArticleExtractionStateValue("empty");
+        return articleDataRef.current;
+      }
+    }
+
     setArticleExtractionStateValue("loading");
     const epoch = extractionEpochRef.current;
     // An X post may need the helper's video tool: its self-check runs beside
@@ -410,7 +436,6 @@ export function useClipperState() {
     const videoTool = isTwitterStatusUrl(meta.url)
       ? sendToNative({ action: "video_tool_status" }).then(videoToolState, () => null)
       : Promise.resolve(null);
-    const launched = launchedArticleRef.current;
     const promise = (launched ? Promise.resolve(launched) : extractArticleAsync(tabId))
       .then(async (asyncArticle) => {
         if (extractionEpochRef.current !== epoch) return null;
@@ -787,8 +812,75 @@ export function useClipperState() {
     return () => chrome.runtime.onMessage.removeListener(onMessage);
   }, [refreshChannels, ensureNativeStatus]);
 
+  // ── The clip background keeps for the tab while the overlay is open ──
+  //
+  // Every change of the open clip goes to background, so that a new document
+  // in this tab opens the overlay with the same clip (SPEC_CLIPPER.md,
+  // «Доработки после живого просмотра», Р7; SPEC_CLIPPER_DRAFTS_REMOVAL.md,
+  // Ч12). Changes of one moment go as one message; the screenshot travels
+  // only when it changed. The window stays on its page and keeps nothing.
+  const openClipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openClipPendingRef = useRef<OpenClipWrite | null>(null);
+  // The screenshot background has; `undefined` until the first message.
+  const sentScreenshotRef = useRef<OpenClipScreenshot | null | undefined>(undefined);
+  const flushOpenClip = useCallback(() => {
+    if (openClipTimerRef.current !== null) clearTimeout(openClipTimerRef.current);
+    openClipTimerRef.current = null;
+    const clip = openClipPendingRef.current;
+    openClipPendingRef.current = null;
+    if (clip && !clipEndedRef.current) writeOpenClip(clip);
+  }, []);
+  /// The clip is saved: nothing of it stays for the tab.
+  const endOpenClip = useCallback(() => {
+    clipEndedRef.current = true;
+    if (openClipTimerRef.current !== null) clearTimeout(openClipTimerRef.current);
+    openClipTimerRef.current = null;
+    openClipPendingRef.current = null;
+    if (IS_CONTENT_SCRIPT_CONTEXT) clearOpenClip();
+  }, []);
+  useEffect(() => {
+    if (!IS_CONTENT_SCRIPT_CONTEXT || state !== "main" || !metadata || clipEndedRef.current) return;
+    const clip: OpenClipWrite = {
+      version: OPEN_CLIP_VERSION,
+      pageUrl: pageUrlRef.current,
+      metadata,
+      articleData,
+      articleExtractionState,
+      launchedArticle: launchedArticleRef.current,
+      linkTarget: linkTargetRef.current,
+      title,
+      selectedTags,
+      currentType,
+      destination: {
+        executor: destinationRef.current,
+        vaultPath: vaultRef.current,
+        bindingId: bindingIdRef.current,
+        label: destinationLabelRef.current,
+      },
+      edited: editsRef.current.changed,
+    };
+    const screenshot = screenshotDataUrl ? { dataUrl: screenshotDataUrl, uploadId: screenshotUploadId } : null;
+    const sent = sentScreenshotRef.current;
+    if (sent === undefined || sent?.dataUrl !== screenshot?.dataUrl || sent?.uploadId !== screenshot?.uploadId) {
+      clip.screenshot = screenshot;
+      sentScreenshotRef.current = screenshot;
+    } else if (openClipPendingRef.current && "screenshot" in openClipPendingRef.current) {
+      // A screenshot the replaced message was to carry still has to go.
+      clip.screenshot = openClipPendingRef.current.screenshot;
+    }
+    openClipPendingRef.current = clip;
+    if (openClipTimerRef.current === null) openClipTimerRef.current = setTimeout(flushOpenClip, 0);
+  }, [
+    state, metadata, articleData, articleExtractionState, title, selectedTags, currentType, selectedVault, saveMode,
+    standaloneFolder, screenshotDataUrl, screenshotUploadId, flushOpenClip,
+  ]);
+  // The editor goes, the page with it or by a close: what is pending still
+  // reaches background first. A close clears it right after.
+  useEffect(() => () => flushOpenClip(), [flushOpenClip]);
+
   const captureSourceUrl = resolveCaptureResult(currentType, metadata, articleData).sourceUrl;
   const confirmSavedOperation = useCallback(async (operation: PinnedSaveOperation, result: NativeResponse) => {
+    endOpenClip();
     // The executor has confirmed the source commit. A failed recovery receipt
     // cannot turn that outcome into failure or allocate another operation.
     operation.terminalResult = result;
@@ -802,7 +894,7 @@ export function useClipperState() {
     // committed receipt and is removed the next time a clipper opens (Ч4).
     void clearPendingSave(operation).catch(cause => console.warn("Saved clip record removal deferred", cause));
     return { ok: true as const, warning: result.warning };
-  }, []);
+  }, [endOpenClip]);
 
   // Records whose save is committed have nothing left to check (Ч4).
   useEffect(() => {
@@ -851,9 +943,9 @@ export function useClipperState() {
     if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
     if (!cropSupported || tabIdRef.current === null) return;
 
-    // Background starts the crop overlay only while the page still shows the
-    // address this clipper opened for, and the crop's capture names it too
-    // (SPEC_AUDIT_FIXES.md, Ф6). A refusal is shown in the editor.
+    // The crop takes the page the tab shows now; a Save link clip names its
+    // link, and background refuses another page (Р9, В4.2). A refusal is
+    // shown in the editor.
     const documentUrl = captureDocumentUrl();
     const requestCrop = (cropId: string | null) => new Promise<{ ok: true } | { ok: false; error: string }>((resolve) => {
       chrome.runtime.sendMessage(
@@ -974,7 +1066,17 @@ export function useClipperState() {
         chrome.action.setBadgeText({ text: "" });
       }
 
+      // The overlay reopened after its page changed: the clip it had, its
+      // destination first, so that the destination check keeps it (Р7).
+      const restored = IS_CONTENT_SCRIPT_CONTEXT ? restoredRef.current : null;
+      if (restored) applyRestoredDestination(restored);
+
       void ensureNativeStatus();
+
+      if (restored) {
+        applyRestoredClip(restored);
+        return;
+      }
 
       // This opening and what it brought: an Instagram post already read,
       // a context-menu target. Only this clipper's source tab receives them.
@@ -982,7 +1084,7 @@ export function useClipperState() {
       if (launch?.preloaded) {
         const { metadata: preMeta, article: preArticle } = launch.preloaded;
         tabIdRef.current = IS_CONTENT_SCRIPT_CONTEXT ? CONTENT_SCRIPT_CONTEXT : launch.sourceTabId;
-        captureDocumentRef.current = IS_CONTENT_SCRIPT_CONTEXT ? window.location.href : launch.sourceUrl;
+        const sourcePage = IS_CONTENT_SCRIPT_CONTEXT ? window.location.href : launch.sourceUrl;
 
         setMetadataValue(preMeta as PageMetadata);
         setTitle(preMeta.title ?? "");
@@ -992,7 +1094,7 @@ export function useClipperState() {
         // (SPEC_CLIPPER.md, «Кнопка Mine в ленте X», rule 5).
         if (isTwitterStatusUrl(preMeta.url) && preArticle.twitterPosts) {
           launchedArticleRef.current = preArticle;
-          applyCropCapability(captureDocumentRef.current);
+          applyCropCapability(sourcePage);
           setArticleDataValue({ title: preArticle.title, content: "", byline: preArticle.byline, excerpt: "" });
           setArticleExtractionStateValue("idle");
           setState("main");
@@ -1030,7 +1132,7 @@ export function useClipperState() {
         chrome.storage.session.remove(["cropPendingState", "cropResult"]);
 
         tabIdRef.current = pending.tabId;
-        captureDocumentRef.current = pending.documentUrl ?? null;
+        linkTargetRef.current = pending.documentUrl ?? null;
         vaultRef.current = pending.selectedVault;
         setSelectedVault(pending.selectedVault);
         setMetadataValue(pending.metadata);
@@ -1092,12 +1194,13 @@ export function useClipperState() {
         tabTitle = launch.sourceTitle ?? undefined;
       }
       tabIdRef.current = tabId;
-      captureDocumentRef.current = tabUrl ?? null;
+      if (tabUrl && !IS_CONTENT_SCRIPT_CONTEXT) pageUrlRef.current = tabUrl;
       applyCropCapability(tabUrl ?? null);
 
       // "Save link" clips the link, never the page it was clicked on: nothing
       // is read from that page (SPEC_AUDIT_FIXES.md, Ф5, Ф6, В4.2).
       const linkTarget = ctxData?.menuItemId === "save-link" && ctxData.linkUrl ? ctxData.linkUrl : null;
+      linkTargetRef.current = linkTarget;
       const meta = linkTarget ? linkTargetMetadata(linkTarget) : await extractMetadata(tabId);
       let article: ArticleData = { title: "", content: "", byline: null, excerpt: "" };
 
@@ -1179,6 +1282,49 @@ export function useClipperState() {
       }
     } catch (e) {
       showError("Failed to initialize: " + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  /// Where the restored clip was going: set before the first destination
+  /// check, which keeps a destination already chosen (Р7).
+  function applyRestoredDestination(clip: OpenClip) {
+    const { executor, vaultPath, bindingId, label } = clip.destination;
+    if (!executor) return;
+    destinationRef.current = executor;
+    bindingIdRef.current = bindingId;
+    destinationLabelRef.current = label;
+    if (executor === "native" && vaultPath) {
+      vaultRef.current = vaultPath;
+      setSelectedVault(vaultPath);
+    }
+  }
+
+  /// The editor as it was before the page changed: the same clip, the same
+  /// type and frame, nothing read from the page shown now (Р7, Р8).
+  function applyRestoredClip(clip: OpenClip) {
+    tabIdRef.current = CONTENT_SCRIPT_CONTEXT;
+    pageUrlRef.current = clip.pageUrl;
+    linkTargetRef.current = clip.linkTarget;
+    launchedArticleRef.current = clip.launchedArticle;
+    editsRef.current.changed = clip.edited;
+    setMetadataValue(clip.metadata);
+    setArticleDataValue(clip.articleData);
+    // An extraction under way did not survive the page: it starts again, and
+    // the page it would read is gone unless the clip brought its post.
+    const extraction = clip.articleExtractionState === "loading" ? "idle" : clip.articleExtractionState;
+    setArticleExtractionStateValue(extraction);
+    setTitle(clip.title);
+    setSelectedTags(clip.selectedTags);
+    setCurrentType(clip.currentType);
+    if (clip.screenshot) {
+      setScreenshotDataUrl(clip.screenshot.dataUrl);
+      setScreenshotUploadId(clip.screenshot.uploadId);
+    }
+    // The overlay always runs on a page its content script reaches.
+    setCropSupported(true);
+    setState("main");
+    if (clip.currentType === "content" && extraction === "idle" && contentModeNeedsArticleExtraction(clip.metadata)) {
+      void ensureArticleLoaded();
     }
   }
 

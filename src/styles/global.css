@@ -631,6 +631,22 @@ body {
   gap: var(--mine-clipper-section-gap);
 }
 
+/* An overlay the person sized: the previews take the room it gives instead
+   of their caps for a panel that follows its content (SPEC_CLIPPER.md,
+   «Доработки после живого просмотра», Р10). */
+[data-clipper-sized] [data-clipper-preview-stack] {
+  flex: 1 1 auto;
+}
+
+[data-clipper-sized] [data-clipper-preview] {
+  flex: 1 1 auto;
+  max-height: none;
+}
+
+[data-clipper-sized] [data-clipper-preview] > img {
+  max-height: 100%;
+}
+
 .mine-clipper-article-preview {
   font-size: 14px;
   line-height: 20px;

@@ -111,9 +111,35 @@ function actions(statusPath: string) {
     + `</div>`;
 }
 
-function userName(user: RawUser, base: string) {
+function userName(user: RawUser, base: string, time = "") {
   return `<div data-testid="User-Name"><div><a href="${base}/${user.handle}" role="link"><span>${user.name}</span></a></div>`
-    + `<div><a href="${base}/${user.handle}" role="link"><span>@${user.handle}</span></a></div></div>`;
+    + `<div><a href="${base}/${user.handle}" role="link"><span>@${user.handle}</span></a>${time}</div></div>`;
+}
+
+/** X's header icons: "…", Grok and the stack header's buttons, 19 px. */
+const HEADER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" class="r-4qtqp9 r-yyyyoo r-dnmrzs r-bnwqim r-lrvibr"><g><path d="M3 12c0-1.1.9-2 2-2"></path></g></svg>';
+
+/** The box of "…" in a post's header, as X renders it. */
+function caretBox() {
+  return `<div class="css-175oi2r r-18u37iz r-1h0z5md">`
+    + `<button aria-expanded="false" aria-haspopup="menu" aria-label="More" role="button" class="css-175oi2r r-1777fci r-bt1l66" data-testid="caret" type="button">`
+    + `<div dir="ltr" class="css-146c3p1 r-bcqeeo r-1ttztb7" style="color: ${REST_COLOUR};">`
+    + `<div class="css-175oi2r r-xoduu5"><div class="css-175oi2r r-xoduu5 r-1p0dtai r-1niwhzg"></div>${HEADER_ICON}</div></div></button></div>`;
+}
+
+/** The box of the Grok button; its label is in the interface language, `null` draws none. */
+function grokBox(label: string | null) {
+  const aria = label === null ? "" : ` aria-label="${label}"`;
+  return `<div class="css-175oi2r r-1awozwy r-6koalj r-18u37iz"><div class="css-175oi2r">`
+    + `<button${aria} role="button" class="css-175oi2r r-1777fci r-grok" type="button">`
+    + `<div dir="ltr" class="css-146c3p1 r-grok-tint" style="color: ${REST_COLOUR};"><svg viewBox="0 0 33 32" aria-hidden="true" class="r-grok-icon"><g><path d="M12.7 19.4"></path></g></svg></div>`
+    + `</button></div></div>`;
+}
+
+/** The Follow button the main post of a post page shows in its header. */
+function followBox(user: RawUser) {
+  return `<div class="css-175oi2r r-follow"><button aria-label="Follow @${user.handle}" role="button" class="css-175oi2r r-follow-button" data-testid="${user.id}-follow" type="button">`
+    + `<div dir="ltr" class="css-146c3p1"><span><span>Follow</span></span></div></button></div>`;
 }
 
 interface CardOptions {
@@ -122,6 +148,14 @@ interface CardOptions {
   text?: string;
   social?: string;
   quote?: { user: RawUser; id: string; text: string };
+  /** The Grok button and its label: absent from lists and X Pro (`false`); `null` draws it unlabelled. */
+  grok?: string | null | false;
+  /** The Follow button of a post page's main post. */
+  follow?: boolean;
+  /** The post X Pro opened: its time is not a link, its photo link names it. */
+  opened?: boolean;
+  /** An analytics link of the opened post, naming the post it gives. */
+  analyticsId?: string;
 }
 
 /** One feed cell with its post card, as X renders it. */
@@ -131,12 +165,50 @@ export function card(user: RawUser, id: string, options: CardOptions = {}) {
   const social = options.social ? `<span data-testid="socialContext">${options.social} reposted</span>` : "";
   const quote = options.quote
     ? `<div role="link" tabindex="0">${userName(options.quote.user, base)}<time datetime="2026-10-09T10:00:00.000Z">Oct 9</time>`
-      + `<div data-testid="tweetText"><span>${options.quote.text}</span></div></div>`
+      + `<div data-testid="tweetText"><span>${options.quote.text}</span></div>`
+      + `<a href="${base}/${options.quote.user.handle}/status/${options.quote.id}/photo/1" role="link"><img alt="" src="https://pbs.twimg.com/media/q.jpg"></a></div>`
+    : "";
+  const time = options.opened
+    ? `<span><time datetime="2026-10-10T10:00:00.000Z">10:00 AM, Oct 10, 2026</time></span>`
+    : `<a href="${statusPath}" role="link"><time datetime="2026-10-10T10:00:00.000Z">1h</time></a>`;
+  const grok = options.grok === undefined ? (base ? false : "Grok actions") : options.grok;
+  const right = (options.follow ? followBox(user) : "") + (grok === false ? "" : grokBox(grok)) + caretBox();
+  const header = `<div class="css-175oi2r r-zl2h9q"><div class="css-175oi2r r-k4xj1c r-18u37iz r-1wtj0ep">`
+    + `<div class="css-175oi2r r-1d09ksm r-18u37iz r-1wbh5a2"><div class="css-175oi2r r-1wbh5a2 r-dnmrzs">${userName(user, base, time)}</div></div>`
+    + `<div class="css-175oi2r r-1kkk96v"><div class="css-175oi2r r-1awozwy r-18u37iz r-1cmwbt1 r-1wtj0ep">${right}</div></div>`
+    + `</div></div>`;
+  const openedLinks = options.opened
+    ? (options.analyticsId ? `<a href="${base}/${user.handle}/status/${options.analyticsId}/analytics" role="link">Views</a>` : "")
+      + `<a href="${statusPath}/photo/1" role="link"><img alt="" src="https://pbs.twimg.com/media/own.jpg"></a>`
     : "";
   return `<div data-testid="cellInnerDiv"><div><article aria-labelledby="id__card" role="article" tabindex="0" data-testid="tweet">`
-    + `<div>${social}${userName(user, base)}<a href="${statusPath}" role="link"><time datetime="2026-10-10T10:00:00.000Z">1h</time></a></div>`
-    + `<div data-testid="tweetText"><span>${options.text ?? `post ${id}`}</span></div>${quote}${actions(statusPath)}`
+    + `<div>${social}${header}</div>`
+    + `<div data-testid="tweetText"><span>${options.text ?? `post ${id}`}</span></div>${quote}${openedLinks}${actions(statusPath)}`
     + `</article></div></div>`;
+}
+
+/** An icon button of the stack header of X Pro, 34 px. */
+function stackButton(label: string, extra = "") {
+  return `<button aria-label="${label}" role="button" class="css-175oi2r r-34 r-stack-button${extra}" type="button">`
+    + `<div dir="ltr" class="css-146c3p1 r-stack-tint" style="color: ${REST_COLOUR};"><div class="css-175oi2r r-xoduu5"><div class="css-175oi2r r-stack-halo"></div>${HEADER_ICON}</div></div></button>`;
+}
+
+/** The header of the stack X Pro opens over a column: close, spacer, title, actions. */
+export function stackHeader() {
+  return `<div data-testid="root" class="css-175oi2r r-18u37iz r-stack-header">`
+    + `<div class="css-175oi2r r-close-box">${stackButton("Close stack")}</div>`
+    + `<div class="css-175oi2r r-1iusvr4 r-16y2uox"></div>`
+    + `<div class="css-175oi2r r-title-box"><h1 role="heading" class="css-146c3p1 r-title">Column: Post</h1></div>`
+    + `<div class="css-175oi2r r-actions-box"><div class="css-175oi2r r-18u37iz r-actions-row"><div data-testid="wrapper"></div>${stackButton("Create a separate column", " r-new-column")}</div></div>`
+    + `</div>`;
+}
+
+/** A column of X Pro with its feed, and the stack of a post opened over it. */
+export function column(feed: string[], opened: { main?: string; replies?: string[] } | null = null) {
+  const stack = opened
+    ? `<div class="css-175oi2r r-stack">${stackHeader()}<div class="css-175oi2r r-stack-timeline">${opened.main ?? ""}${(opened.replies ?? []).join("")}</div></div>`
+    : "";
+  return `<section role="region" class="css-175oi2r r-column"><div class="css-175oi2r r-column-timeline">${feed.join("")}</div>${stack}</section>`;
 }
 
 /** The syndication answer for a post, in the shape the clipper already reads. */

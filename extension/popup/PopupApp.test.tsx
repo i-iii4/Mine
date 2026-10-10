@@ -189,11 +189,57 @@ describe("a clipper hidden for a screenshot or a crop leaves the keyboard alone 
     expect(state.save).not.toHaveBeenCalled();
   });
 
-  it("closes on Escape again once it is back", () => {
+  it("does not close on Escape once it is back either: only its close button and Save close it (Р5)", () => {
     overlay.isHidden.mockReturnValue(false);
+    const withSpace = state as unknown as { selectedVault?: string };
+    withSpace.selectedVault = "/Users/me/Mine";
+    try {
+      render(<PopupApp />);
+      const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+      window.dispatchEvent(escape);
+      expect(escape.defaultPrevented).toBe(false);
+      expect(overlay.close).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      expect(overlay.close).toHaveBeenCalledOnce();
+    } finally {
+      delete withSpace.selectedVault;
+    }
+  });
+});
+
+describe("the overlay leaves the page its keys (SPEC_CLIPPER.md, «Доработки после живого просмотра», Р5)", () => {
+  let host: HTMLElement;
+  beforeEach(() => {
+    host = document.createElement("div");
+    host.setAttribute("data-mine-clipper-overlay", "");
+    document.body.appendChild(host);
+    (globalThis as unknown as { __mineOverlay?: unknown }).__mineOverlay = { close: vi.fn(), isHidden: () => false };
+  });
+  afterEach(() => {
+    host.remove();
+    delete (globalThis as unknown as { __mineOverlay?: unknown }).__mineOverlay;
+  });
+
+  it("does not save on Cmd+Enter while the keyboard is on the page", () => {
+    render(<PopupApp />);
+    const field = document.createElement("input");
+    document.body.appendChild(field);
+    field.focus();
+    const save = new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true, cancelable: true });
+    field.dispatchEvent(save);
+    expect(save.defaultPrevented).toBe(false);
+    expect(state.save).not.toHaveBeenCalled();
+    field.remove();
+  });
+});
+
+describe("the detached window", () => {
+  it("closes on Escape", () => {
+    const close = vi.spyOn(window, "close").mockImplementation(() => undefined);
     render(<PopupApp />);
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(overlay.close).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+    close.mockRestore();
   });
 });
 

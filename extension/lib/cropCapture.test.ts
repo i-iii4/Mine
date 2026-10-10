@@ -64,8 +64,8 @@ function page(options: { holdCapture?: boolean } = {}) {
   return { dom, sent, heldCaptures, dragSelection, receive: (message: Message) => listener(message, {}, () => undefined) };
 }
 
-describe("page crop names the page it was started for", () => {
-  it("asks for the capture of the window's page address, even after the page moved, and reports the refusal", async () => {
+describe("page crop names the link of a Save link clip", () => {
+  it("asks for the capture of the named page address, even after the page moved, and reports the refusal", async () => {
     const tab = page();
     tab.receive({ action: "startCropOverlay", documentUrl: pageA });
     tab.dom.window.history.pushState({}, "", "/other");
@@ -101,11 +101,11 @@ describe("page crop names the page it was started for", () => {
     expect(tab.sent.find((message) => message.action === "cropDone")).toMatchObject({ cropId: "crop-2", status: "cancelled", error: refusal });
   });
 
-  it("names no address when the clipper named none, so background refuses rather than guesses", async () => {
+  it("names no address when the clipper named none: the crop takes the page shown now (SPEC_CLIPPER.md, Р9)", async () => {
     const tab = page();
     tab.receive({ action: "startCropOverlay" });
     await tab.dragSelection();
-    expect(tab.sent.find((message) => message.action === "captureForCrop")).toMatchObject({ documentUrl: null });
+    expect(tab.sent.find((message) => message.action === "captureForCrop")).toEqual({ target: "background", action: "captureForCrop" });
   });
 });
 
