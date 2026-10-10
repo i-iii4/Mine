@@ -227,6 +227,9 @@ export function useClipperState() {
   const articleExtractionStateRef = useRef<ArticleExtractionState>("idle");
   const articleExtractionPromiseRef = useRef<Promise<ArticleData | null> | null>(null);
   const deferredArticleRef = useRef<ArticleData | null>(null);
+  // The post an X feed button brought (SPEC_CLIPPER.md, «Кнопка Mine в ленте
+  // X», rule 5): extraction hands it on and never reads the feed page.
+  const launchedArticleRef = useRef<ArticleData | null>(null);
   const extractionEpochRef = useRef(0);
   // The channel of a YouTube capture: asked once per capture, beside its
   // extraction, for the video its address names; Save awaits the answer for
@@ -407,7 +410,8 @@ export function useClipperState() {
     const videoTool = isTwitterStatusUrl(meta.url)
       ? sendToNative({ action: "video_tool_status" }).then(videoToolState, () => null)
       : Promise.resolve(null);
-    const promise = extractArticleAsync(tabId)
+    const launched = launchedArticleRef.current;
+    const promise = (launched ? Promise.resolve(launched) : extractArticleAsync(tabId))
       .then(async (asyncArticle) => {
         if (extractionEpochRef.current !== epoch) return null;
         if (meta.documentUrl && asyncArticle.documentUrl && meta.documentUrl !== asyncArticle.documentUrl) {
@@ -418,7 +422,8 @@ export function useClipperState() {
         }
         const hydrated = await hydrateTwitterVideoPreviews(meta, asyncArticle, videoTool);
         if (extractionEpochRef.current !== epoch) return null;
-        if (articleHasText(hydrated) || articleHasPreviewMedia(hydrated) || hydrated.threadWarning || hydrated.videoNotice) {
+        if (articleHasText(hydrated) || articleHasPreviewMedia(hydrated) || hydrated.threadWarning || hydrated.videoNotice
+          || hydrated.unavailableReason) {
           setArticleDataValue(hydrated);
           if (hydrated.title) {
             setTitle((current) => current === meta.title ? hydrated.title : current);
@@ -980,10 +985,22 @@ export function useClipperState() {
         captureDocumentRef.current = IS_CONTENT_SCRIPT_CONTEXT ? window.location.href : launch.sourceUrl;
 
         setMetadataValue(preMeta as PageMetadata);
-        setArticleDataValue(preArticle as ArticleData);
-        setArticleExtractionStateValue(articleExtractionStateForResult(preArticle, preMeta));
         setTitle(preMeta.title ?? "");
         setCurrentType("content");
+        // A post from an X feed takes the road of a post page: the preview
+        // is assembled by the same extraction, video recovery included
+        // (SPEC_CLIPPER.md, «Кнопка Mine в ленте X», rule 5).
+        if (isTwitterStatusUrl(preMeta.url) && preArticle.twitterPosts) {
+          launchedArticleRef.current = preArticle;
+          applyCropCapability(captureDocumentRef.current);
+          setArticleDataValue({ title: preArticle.title, content: "", byline: preArticle.byline, excerpt: "" });
+          setArticleExtractionStateValue("idle");
+          setState("main");
+          void ensureArticleLoaded();
+          return;
+        }
+        setArticleDataValue(preArticle as ArticleData);
+        setArticleExtractionStateValue(articleExtractionStateForResult(preArticle, preMeta));
         setState("main");
         return;
       }
@@ -1440,7 +1457,7 @@ export function useClipperState() {
         setSaving(false);
         return {
           ok: false as const,
-          error: emptyContentMessage(saveMetadata, articleExtractionStateRef.current),
+          error: emptyContentMessage(saveMetadata, articleExtractionStateRef.current, articleDataRef.current),
         };
       }
       payload.body = resolved.text;

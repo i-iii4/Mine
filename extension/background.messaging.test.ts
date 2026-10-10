@@ -8,7 +8,7 @@ type BrowserApiMode = "callback" | "promise";
 type Message = Record<string, unknown>;
 type MessageListener = (
   message: Message,
-  sender: { url?: string; tab?: { id: number; windowId?: number } },
+  sender: { url?: string; frameId?: number; tab?: { id: number; windowId?: number; url?: string } },
   sendResponse: (response: Message) => void,
 ) => boolean | undefined;
 
@@ -105,7 +105,7 @@ function background(apiMode: BrowserApiMode, options: { standaloneVault?: Record
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/youtubeSource.js"), "utf8"), context);
   runInContext(source, context);
 
-  function dispatch(message: Message, sender: { url?: string; tab?: { id: number; windowId?: number } } = {}) {
+  function dispatch(message: Message, sender: Parameters<MessageListener>[1] = {}) {
     let resolveResponse: (response: Message) => void = () => undefined;
     const response = new Promise<Message>((resolve) => { resolveResponse = resolve; });
     const keepAlive = receiveRuntimeMessage(message, sender, resolveResponse);
@@ -320,6 +320,64 @@ describe("widget and background compatibility", () => {
     const request = worker.dispatch({ target: "background", action: "clipperHandshake", save_protocols: [1], required_capabilities: ["future_required"] });
     await expect(request.response).resolves.toMatchObject({ ok: false, code: "incompatible_protocol" });
     expect(worker.nativePort.postMessage).not.toHaveBeenCalled();
+  });
+});
+
+// SPEC_CLIPPER.md, «Кнопка Mine в ленте X», rule 8.
+describe("the post of an X feed is read only for X itself", () => {
+  const post = { id: "2108558741528355242", text: "Main text" };
+  function xWorker() {
+    const worker = background("promise");
+    worker.chrome.scripting.executeScript.mockResolvedValue([{ result: post }]);
+    return worker;
+  }
+  const read = (worker: ReturnType<typeof background>, sender: Parameters<MessageListener>[1], tweetId: unknown = post.id) =>
+    worker.dispatch({ target: "background", action: "readXPost", tweetId }, sender);
+
+  it.each([
+    "https://x.com/i/lists/2015212000000000000",
+    "https://x.com/home",
+    "https://twitter.com/search?q=mine",
+    "https://pro.x.com/i/decks/1840000000000000000",
+  ])("reads the post in the MAIN world of the top frame of %s", async (url) => {
+    const worker = xWorker();
+    const request = read(worker, { url, frameId: 0, tab: { id: 4 } });
+    expect(request.keepAlive).toBe(true);
+    await expect(request.response).resolves.toEqual({ post });
+    const [injection] = worker.chrome.scripting.executeScript.mock.calls[0] as [Record<string, unknown>];
+    expect(injection).toMatchObject({ target: { tabId: 4, frameIds: [0] }, world: "MAIN", args: [post.id] });
+  });
+
+  it.each([
+    [{ url: "https://example.com/x.com/home", frameId: 0, tab: { id: 4 } }, post.id],
+    [{ url: "https://x.com.example.com/home", frameId: 0, tab: { id: 4 } }, post.id],
+    [{ url: "http://x.com/home", frameId: 0, tab: { id: 4 } }, post.id],
+    [{ url: "https://x.com/home", frameId: 3, tab: { id: 4 } }, post.id],
+    [{ url: "https://x.com/home", frameId: 0 }, post.id],
+    [{ url: "https://x.com/home", frameId: 0, tab: { id: 4 } }, "1; alert(1)"],
+    [{ url: "https://x.com/home", frameId: 0, tab: { id: 4 } }, 2108558741528355242],
+  ])("answers no post to %j asking for %j, without touching the page", async (sender, tweetId) => {
+    const worker = xWorker();
+    const request = read(worker, sender, tweetId);
+    await expect(request.response).resolves.toEqual({ post: null });
+    expect(worker.chrome.scripting.executeScript).not.toHaveBeenCalled();
+  });
+
+  it("answers no post when the page has no observer yet or the injection fails", async () => {
+    const worker = xWorker();
+    worker.chrome.scripting.executeScript.mockResolvedValueOnce([{ result: null }]);
+    await expect(read(worker, { url: "https://x.com/home", frameId: 0, tab: { id: 4 } }).response).resolves.toEqual({ post: null });
+    worker.chrome.scripting.executeScript.mockRejectedValueOnce(new Error("Frame with ID 0 was removed."));
+    await expect(read(worker, { url: "https://x.com/home", frameId: 0, tab: { id: 4 } }).response).resolves.toEqual({ post: null });
+  });
+
+  it("still collects a thread only on the page of that post, X Pro included", async () => {
+    const worker = xWorker();
+    worker.chrome.scripting.executeScript.mockResolvedValue([{ result: { posts: [post], issues: [] } }]);
+    const collect = (url: string) => worker.dispatch({ target: "background", action: "collectXThread", tweetId: post.id },
+      { url, frameId: 0, tab: { id: 4 } }).response;
+    await expect(collect("https://x.com/home")).resolves.toMatchObject({ posts: [] });
+    await expect(collect(`https://pro.x.com/artignatev/status/${post.id}`)).resolves.toMatchObject({ posts: [post] });
   });
 });
 

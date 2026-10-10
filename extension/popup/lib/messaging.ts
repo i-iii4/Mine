@@ -248,6 +248,9 @@ export interface ArticleData {
    *  failed or is known not to work. The post is saved without it
    *  (SPEC_CLIPPER.md, 3d, В4). */
   videoNotice?: string;
+  /** Why the post brought by an X feed button could not be read; shown in
+   *  place of the preview (SPEC_CLIPPER.md, «Кнопка Mine в ленте X», rule 7). */
+  unavailableReason?: string;
 }
 
 export interface EmbeddedVideoPreview {

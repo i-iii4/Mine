@@ -19,6 +19,7 @@
   "host_permissions": [
     "http://127.0.0.1/*",
     "https://x.com/*",
+    "https://pro.x.com/*",
     "https://twitter.com/*",
     "https://public.api.bsky.app/*",
     "<all_urls>"
@@ -38,7 +39,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "matches": ["https://x.com/*", "https://pro.x.com/*", "https://twitter.com/*"],
       "js": ["lib/xThread.js", "lib/xThreadPage.js"],
       "world": "MAIN",
       "run_at": "document_start"
@@ -58,6 +59,7 @@
         "lib/productExtraction.js",
         "lib/tweetTextCompletion.js",
         "lib/youtubeSource.js",
+        "lib/xFeedButton.js",
         "content.js"
       ],
       "run_at": "document_idle"

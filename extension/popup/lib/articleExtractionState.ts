@@ -39,7 +39,9 @@ export function buildLinkBody(title: string): string {
 export function emptyContentMessage(
   metadata: PageMetadata | null,
   state: ArticleExtractionState,
+  article: ArticleData | null = null,
 ): string {
+  if (article?.unavailableReason) return article.unavailableReason;
   if (state === "failed") {
     return "Content extraction failed. Save as Screenshot or Link, or try again.";
   }

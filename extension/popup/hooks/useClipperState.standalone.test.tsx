@@ -526,6 +526,57 @@ describe("standalone mode decision", () => {
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
     expect(standalone.standaloneSave.mock.calls[0][0].body).toBe(preview?.content);
   });
+  // SPEC_CLIPPER.md, «Кнопка Mine в ленте X», rules 5 and 7.
+  describe("a post brought by the Mine button of an X feed", () => {
+    const feedUrl = "https://x.com/i/lists/123";
+    const tweetId = "2108558741528355242";
+    const postUrl = `https://x.com/artignatev/status/${tweetId}`;
+    function launch(article: Record<string, unknown>) {
+      clipperLaunch.value = { sourceTabId: 7, sourceUrl: feedUrl, sourceTitle: "List", contextMenu: null, preloaded: {
+        metadata: { url: postUrl, documentUrl: feedUrl, title: String(article.title), description: "", image: null,
+          author: "@artignatev", ogType: null, favicon: null, selection: "", detectedType: "article", isArticle: true },
+        article: { byline: "@artignatev", excerpt: "", sourceUrl: postUrl, documentUrl: feedUrl, ...article },
+      } };
+    }
+
+    it("is assembled like a post page, the feed page unread, and saved as previewed", async () => {
+      browserDestination();
+      const video = "https://video.twimg.com/amplify_video/1/vid/avc1/720x1280/q.mp4";
+      const posts = [{ id: tweetId, text: "Main text", mediaComplete: true,
+        media: [{ kind: "image" as const, url: "https://pbs.twimg.com/media/one.jpg", poster: null }],
+        quote: { id: "2", handle: "alexisohanian", name: "Alexis Ohanian", text: "Quote text", mediaComplete: true,
+          media: [{ kind: "video" as const, url: video, poster: "https://pbs.twimg.com/amplify_video_thumb/1/img/q.jpg" }] } }];
+      launch({ title: "Main text", content: globalThis.MineXThread.compose(posts), threadPostCount: 1, twitterPosts: posts });
+      const readPage = vi.spyOn(messaging, "extractArticleAsync");
+      const readMetadata = vi.spyOn(messaging, "extractMetadata");
+      const { result } = renderHook(() => useClipperState());
+      await waitFor(() => expect(result.current.articleExtractionState).toBe("ready"));
+      const preview = result.current.articleData;
+      // The video strip of the preview comes from the same recovery as on a post page.
+      expect(preview?.embeddedVideos?.map((m) => m.src)).toEqual([video]);
+      expect(preview?.content).toBe(globalThis.MineXThread.compose(posts));
+      expect(result.current.currentType).toBe("content");
+      act(() => result.current.setCurrentType("link"));
+      act(() => result.current.setCurrentType("content"));
+      await settled(result);
+      await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+      expect(readPage).not.toHaveBeenCalled();
+      expect(readMetadata).not.toHaveBeenCalled();
+      expect(standalone.standaloneSave.mock.calls[0][0]).toMatchObject({ body: preview?.content, url: postUrl, author: "@artignatev" });
+    });
+
+    it("shows why the post could not be read and saves nothing empty", async () => {
+      browserDestination();
+      const reason = "Mine couldn't read this post here. Open the post and save it from its page.";
+      launch({ title: "@artignatev", content: "", threadPostCount: 0, twitterPosts: [], embeddedVideos: [], unavailableReason: reason });
+      const { result } = renderHook(() => useClipperState());
+      await waitFor(() => expect(result.current.articleExtractionState).toBe("empty"));
+      expect(result.current.articleData?.unavailableReason).toBe(reason);
+      await settled(result);
+      await act(async () => { expect(await result.current.save()).toMatchObject({ ok: false, error: reason }); });
+      expect(standalone.standaloneSave).not.toHaveBeenCalled();
+    });
+  });
   it.each(["browser", "native"])("sends a real UI timestamp accepted by shared WASM through %s", async (executor) => {
     // Keep nonzero milliseconds in the clock: hand-written seconds-only requests
     // would miss the UI/core contract failure this regression protects against.

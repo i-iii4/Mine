@@ -260,6 +260,19 @@ function isExtensionPage(sender) {
   return typeof sender?.url === "string" && sender.url.startsWith(chrome.runtime.getURL(""));
 }
 
+// The pages of X itself: posts, feeds, lists, profiles, search and X Pro decks.
+const X_PAGE_ORIGINS = new Set(["https://x.com", "https://twitter.com", "https://pro.x.com"]);
+
+/// Whether the message comes from the top frame of a tab showing X.
+function isXPageSender(sender) {
+  if (typeof sender?.tab?.id !== "number" || sender.frameId !== 0) return false;
+  try {
+    return X_PAGE_ORIGINS.has(new URL(sender.url || sender.tab.url || "").origin);
+  } catch {
+    return false;
+  }
+}
+
 /// The source tab of the clipper that asks: an overlay asks from the page's
 /// own tab; the window asks from an extension page and is mapped to the tab
 /// it opened for. The window may ask before its source is written, so it
@@ -1120,7 +1133,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === "collectXThread") {
     const source = sender.url || sender.tab?.url || "";
-    const match = source.match(/^https:\/\/(?:x\.com|twitter\.com)\/[^/]+\/status\/(\d+)(?:[/?#]|$)/);
+    const match = source.match(/^https:\/\/(?:x\.com|pro\.x\.com|twitter\.com)\/[^/]+\/status\/(\d+)(?:[/?#]|$)/);
     if (!match || match[1] !== msg.tweetId || sender.tab?.id === undefined || sender.frameId !== 0) {
       sendResponse({ posts: [], issues: ["Open the original X post to collect its thread."] });
       return false;
@@ -1133,6 +1146,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       args: [msg.tweetId],
     }).then(results => sendResponse(results[0]?.result || { posts: [], issues: ["No thread data returned."] }))
       .catch(() => sendResponse({ posts: [], issues: ["Thread extraction failed. Reload the page and retry."] }));
+    return true;
+  }
+
+  // The Mine button of a post in an X feed or X Pro column asks for the post
+  // the page's feeds delivered (SPEC_CLIPPER.md, «Кнопка Mine в ленте X»,
+  // rules 6 and 8). Only X itself asks, from its top frame.
+  if (msg.action === "readXPost") {
+    if (!isXPageSender(sender) || typeof msg.tweetId !== "string" || !/^\d{1,25}$/.test(msg.tweetId)) {
+      sendResponse({ post: null });
+      return false;
+    }
+    chrome.scripting.executeScript({
+      target: { tabId: sender.tab.id, frameIds: [0] }, world: "MAIN",
+      func: async (id) => globalThis.MineXThreadPage?.post ? globalThis.MineXThreadPage.post(id) : null,
+      args: [msg.tweetId],
+    }).then(results => sendResponse({ post: results?.[0]?.result ?? null }))
+      .catch(() => sendResponse({ post: null }));
     return true;
   }
 

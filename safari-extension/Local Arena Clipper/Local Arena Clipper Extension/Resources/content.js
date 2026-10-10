@@ -102,7 +102,7 @@
     }
   }
 
-  const MINE_OWNED_NODE_SELECTOR = "[data-mine-clipper-overlay], [data-la-clip]";
+  const MINE_OWNED_NODE_SELECTOR = "[data-mine-clipper-overlay], [data-la-clip], [data-mine-x-post]";
 
   function removeMineOwnedNodes(root) {
     if (!root?.querySelectorAll) return;
@@ -197,10 +197,11 @@
     return loaded;
   }
 
-  function extractEmbeddedVideoPreviews() {
+  /// `scope`: the post the clip is of, when the page shows many (an X feed).
+  function extractEmbeddedVideoPreviews(scope = null) {
     const youtube = youtubeSource(window.location.href);
     if (youtube) return [{ src: youtube.embedUrl, poster: youtube.posterUrl, title: document.title }];
-    const root = document.querySelector("article") || document.body;
+    const root = scope || document.querySelector("article") || document.body;
     if (!root) return [];
 
     const out = [];
@@ -458,17 +459,6 @@
     return window.MineTwitterTweetContent?.composeTweetText?.(mainText, quotes) || String(mainText || "").trim();
   }
 
-  /// The full text of one post, by id. Used for thread parts the page shows
-  /// collapsed: their markup holds only what fits before "Show more".
-  async function fetchTweetText(tweetId) {
-    try {
-      const details = await fetchTweetDetails(tweetId);
-      return details.text || "";
-    } catch {
-      return "";
-    }
-  }
-
   function preferCompleteTweetText(domText, apiText) {
     return window.MineTweetTextCompletion?.preferCompleteTweetText?.(domText, apiText)
       ?? String(domText || "").trim();
@@ -556,6 +546,21 @@
     }
   }
 
+  /// The clip of collected X posts: the body every X path composes alike
+  /// (SPEC_CLIPPER.md, «Пост с цитатой как в оригинале»).
+  function articleFromXPosts(posts, authorHandle) {
+    const content = globalThis.MineXThread.compose(posts);
+    const embeddedVideos = [];
+    for (const part of posts) {
+      for (const media of [...part.media, ...(part.quote?.media || [])]) {
+        if (media.kind === "video") pushVideoUrlPreview(embeddedVideos, media.url, media.poster, "Tweet video preview");
+      }
+    }
+    const title = posts[0].text.replace(/\n/g, " ").slice(0, 80) || `@${authorHandle}`;
+    return { title, content, twitterPosts: posts, byline: `@${authorHandle}`, excerpt: posts[0].text.slice(0, 200),
+      embeddedVideos, threadPostCount: posts.length };
+  }
+
   async function extractTwitterThread() {
     const url = window.location.href;
 
@@ -572,17 +577,7 @@
     });
     if (window.location.href !== url) return null;
     if (snapshot?.posts?.length) {
-      const content = globalThis.MineXThread.compose(snapshot.posts);
-      const embeddedVideos = [];
-      for (const part of snapshot.posts) {
-        for (const media of [...part.media, ...(part.quote?.media || [])]) {
-          if (media.kind === "video") pushVideoUrlPreview(embeddedVideos, media.url, media.poster, "Tweet video preview");
-        }
-      }
-      const title = snapshot.posts[0].text.replace(/\n/g, " ").slice(0, 80) || `@${authorHandle}`;
-      return { title, content, twitterPosts: snapshot.posts, byline: `@${authorHandle}`, excerpt: snapshot.posts[0].text.slice(0, 200),
-        embeddedVideos, threadWarning: snapshot.issues?.join(" ") || undefined,
-        threadPostCount: snapshot.posts.length };
+      return { ...articleFromXPosts(snapshot.posts, authorHandle), threadWarning: snapshot.issues?.join(" ") || undefined };
     }
     // Keep a single-post preview when a page predates the observer. Never
     // silently claim that the old DOM window is a complete author thread.
@@ -594,51 +589,40 @@
       targetTweetId: tweetId,
       authorHandle,
     }) || [];
-    const articles = candidates.filter(article => threadSelection?.getTweetIdentity?.(article)?.tweetId === tweetId);
-    if (articles.length === 0) return { title: document.title, content: "", byline: null, excerpt: "", threadWarning };
-    const targetArticle = articles.find((article) => {
-      return threadSelection?.getTweetIdentity?.(article)?.tweetId === tweetId;
-    }) || articles[0];
+    const targetArticle = candidates.find(article => threadSelection?.getTweetIdentity?.(article)?.tweetId === tweetId);
+    if (!targetArticle) return { title: document.title, content: "", byline: null, excerpt: "", threadWarning };
+    const post = await extractTwitterPostFromArticle(targetArticle, tweetId, authorHandle, { postUrl: window.location.href });
+    return post && { ...post, threadWarning };
+  }
 
+  /// One X post from its card in the page and the syndication API: the
+  /// fallback of a post page without collected thread data, and of a feed
+  /// post its page's feeds did not deliver. `postUrl` is the post's address;
+  /// `videoScope` narrows the page-wide video scan to this card. With
+  /// `requireApi` the card alone is not enough (SPEC_CLIPPER.md, «Кнопка Mine
+  /// в ленте X», rule 6): a feed cuts long text and keeps video behind `blob:`.
+  async function extractTwitterPostFromArticle(targetArticle, tweetId, authorHandle, { postUrl, videoScope = null, requireApi = false }) {
     // Fetch media from syndication API (includes videos that DOM can't capture).
     // Quote tweets stay inside the parent tweet body; they are not thread items.
-    let apiMediaDetails = [];
-    let apiQuotedTweet = null;
-    let apiTargetText = "";
-    if (tweetId) {
-      const tweetDetails = await fetchTweetDetails(tweetId);
-      apiMediaDetails = tweetDetails.mediaDetails;
-      apiQuotedTweet = tweetDetails.quotedTweet;
-      apiTargetText = tweetDetails.text || "";
-    }
+    const tweetDetails = await fetchTweetDetails(tweetId);
+    const apiMediaDetails = tweetDetails.mediaDetails;
+    const apiQuotedTweet = tweetDetails.quotedTweet;
+    const apiTargetText = tweetDetails.text || "";
+    if (requireApi && !apiTargetText && apiMediaDetails.length === 0 && !apiQuotedTweet) return null;
     const apiMedia = apiMediaDetails.map((m) => m.url);
 
-    const tweets = [];
-    for (const article of articles) {
-      const contentParts = extractTweetContentParts(article);
-      const partId = threadSelection?.getTweetIdentity?.(article)?.tweetId || null;
-      // Target tweet: prefer API media (complete — photos + GIFs + videos).
-      // Fallback to DOM media if API returned nothing.
-      const isTargetTweet = partId === tweetId;
-      const finalMedia = isTargetTweet && apiMedia.length > 0 ? apiMedia : contentParts.media;
-      const quotes = isTargetTweet && apiQuotedTweet ? [apiQuotedTweet] : contentParts.quotes;
-      // X collapses a long post behind "Show more" and keeps only the visible
-      // half in the markup, so DOM text can stop mid-word. The syndication API
-      // answers with the whole post, per id — asked for every thread part, not
-      // just the one the URL points at, because any part can be the long one.
-      const apiText = isTargetTweet
-        ? apiTargetText
-        : partId
-          ? await fetchTweetText(partId)
-          : "";
-      const mainText = preferCompleteTweetText(contentParts.mainText, apiText);
-      const text = composeTweetText(mainText, quotes);
-      if (text || finalMedia.length > 0 || contentParts.hasVideo || quotes.some(quote => quote.hasVideo)) {
-        tweets.push({ text, mainText, quotes, media: finalMedia, hasVideo: contentParts.hasVideo });
-      }
-    }
-
-    if (tweets.length === 0) return null;
+    const contentParts = extractTweetContentParts(targetArticle);
+    // Prefer API media (complete — photos + GIFs + videos).
+    // Fallback to DOM media if API returned nothing.
+    const finalMedia = apiMedia.length > 0 ? apiMedia : contentParts.media;
+    const quotes = apiQuotedTweet ? [apiQuotedTweet] : contentParts.quotes;
+    // X collapses a long post behind "Show more" and keeps only the visible
+    // half in the markup, so DOM text can stop mid-word. The syndication API
+    // answers with the whole post.
+    const mainText = preferCompleteTweetText(contentParts.mainText, apiTargetText);
+    const text = composeTweetText(mainText, quotes);
+    if (!text && finalMedia.length === 0 && !contentParts.hasVideo && !quotes.some(quote => quote.hasVideo)) return null;
+    const tweets = [{ text, mainText, quotes, media: finalMedia, hasVideo: contentParts.hasVideo }];
 
     // For X/Twitter animated media, the API thumbnail can differ from the
     // actual frame the user sees in the page. Prefer a preview-only snapshot
@@ -681,7 +665,7 @@
     // produced a direct mp4 + tweet_video_thumb poster, generic DOM fallback
     // would only add noisy duplicates to the popup preview.
     if (embeddedVideos.length === 0) {
-      for (const video of extractEmbeddedVideoPreviews()) {
+      for (const video of extractEmbeddedVideoPreviews(videoScope)) {
         pushUniqueVideo(embeddedVideos, video);
       }
     }
@@ -712,7 +696,6 @@
     return {
       title: tweetTitle,
       twitterPosts,
-      threadWarning,
       threadPostCount: 1,
       // The same composer as the collected thread: the post's text and media
       // first, then the quote block with its author (SPEC_CLIPPER.md).
@@ -721,7 +704,7 @@
       excerpt: firstText.slice(0, 200),
       embeddedVideos,
       needsAuthenticatedVideo,
-      tweetUrl: needsAuthenticatedVideo ? window.location.href : undefined,
+      tweetUrl: needsAuthenticatedVideo ? postUrl : undefined,
       tweetId: needsAuthenticatedVideo ? tweetId : undefined,
     };
   }
@@ -1198,6 +1181,120 @@
 
   // Start Instagram feed button injection
   initInstagramFeedButton();
+
+  // ── X feed Mine button (SPEC_CLIPPER.md, «Кнопка Mine в ленте X») ────────
+
+  const X_POST_UNAVAILABLE = "Mine couldn't read this post here. Open the post and save it from its page.";
+
+  /// One request to background; `null` when it does not answer, including
+  /// an extension reloaded under the page.
+  function askBackground(message) {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ target: "background", ...message }, (response) => {
+          resolve(chrome.runtime.lastError ? null : response ?? null);
+        });
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
+  /// The post a feed card stands for: its ID and its author's handle as the
+  /// timestamp link spells it. A repost card stands for the reposted post.
+  function xFeedPostIdentity(article) {
+    const identity = window.MineTwitterThreadSelection?.getTweetIdentity?.(article);
+    if (!identity?.tweetId) return null;
+    let handle = identity.handle;
+    try {
+      handle = new URL(identity.href).pathname.split("/")[1] || handle;
+    } catch {
+      // The lowercased handle still names the same account.
+    }
+    return { tweetId: identity.tweetId, handle };
+  }
+
+  function firstXPostPicture(posts) {
+    const post = posts[0];
+    const media = [...(post?.media || []), ...(post?.quote?.media || [])][0];
+    if (!media) return null;
+    return media.kind === "image" ? media.url : media.poster || null;
+  }
+
+  /// What the clipper opens with for one post of an X feed: the post as the
+  /// page's feeds delivered it, else as syndication gives it, else the reason
+  /// it could not be read (rules 4, 6, 7). Never the thread, never the feed.
+  async function readXFeedPost(article, identity) {
+    const snapshot = captureDocumentSnapshot();
+    const { tweetId } = identity;
+    const cached = (await askBackground({ action: "readXPost", tweetId }))?.post || null;
+    const handle = cached?.handle || identity.handle;
+    const postUrl = `https://x.com/${handle}/status/${tweetId}`;
+    const post = cached
+      ? articleFromXPosts([cached], handle)
+      : await extractTwitterPostFromArticle(article, tweetId, handle, { postUrl, videoScope: article, requireApi: true });
+    const extracted = post || {
+      title: `@${handle}`, content: "", byline: `@${handle}`, excerpt: "",
+      twitterPosts: [], embeddedVideos: [], threadPostCount: 0, unavailableReason: X_POST_UNAVAILABLE,
+    };
+    const capture = { sourceUrl: postUrl, documentUrl: snapshot.documentUrl, captureGeneration: snapshot.captureGeneration };
+    return {
+      snapshot,
+      metadata: {
+        url: postUrl,
+        documentUrl: snapshot.documentUrl,
+        captureGeneration: snapshot.captureGeneration,
+        title: extracted.title,
+        description: extracted.excerpt,
+        image: firstXPostPicture(extracted.twitterPosts),
+        author: `@${handle}`,
+        ogType: null,
+        favicon: getFavicon(),
+        selection: "",
+        detectedType: "article",
+        isArticle: true,
+      },
+      article: { ...extracted, ...capture },
+    };
+  }
+
+  // Controls whose post is being read; a second press meanwhile does nothing.
+  const xFeedOpenings = new WeakSet();
+
+  /// The Mine button of an X post was pressed: the clipper opens in this page
+  /// with this post, the way the Instagram button opens it (rule 3).
+  async function clipXFeedPost(article, control) {
+    if (xFeedOpenings.has(control)) return;
+    const identity = xFeedPostIdentity(article);
+    if (!identity) return;
+    xFeedOpenings.add(control);
+    control.setAttribute("aria-busy", "true");
+    try {
+      const { snapshot, metadata, article: post } = await readXFeedPost(article, identity);
+      // A page that moved on meanwhile gets no clipper for the post it left.
+      const current = captureDocumentSnapshot();
+      if (current.documentUrl !== snapshot.documentUrl || current.captureGeneration !== snapshot.captureGeneration) return;
+      const response = await askBackground({
+        action: "showOverlayInThisTab",
+        pageUrl: window.location.href,
+        preloaded: { metadata, article: post },
+      });
+      if (!response?.ok) console.warn("[Mine] The clipper did not open for this X post:", response?.error ?? "no answer");
+    } finally {
+      xFeedOpenings.delete(control);
+      control.removeAttribute("aria-busy");
+    }
+  }
+
+  function initXFeedButton() {
+    const feedButton = window.MineXFeedButton;
+    if (!feedButton?.isXHost(window.location.hostname)) return;
+    feedButton.watch(document, (article, control) => {
+      void clipXFeedPost(article, control);
+    });
+  }
+
+  initXFeedButton();
 
   // ── Article extraction (Defuddle) ─────────────────────────────────────
 

@@ -2161,6 +2161,44 @@
       "requirement": "SPEC_CLIPPER.md#Пост с цитатой как в оригинале",
       "tests": ["src-tauri/src/storage/index.rs"],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "extension/manifest.json",
+        "extension/background.js",
+        "extension/background.messaging.test.ts",
+        "extension/content.js",
+        "extension/lib/xFeedButton.js",
+        "extension/lib/xFeedButton.test.ts",
+        "extension/lib/xFeed.fixtures.ts",
+        "extension/lib/xThread.js",
+        "extension/lib/xThread.test.ts",
+        "extension/lib/xThreadPage.js",
+        "extension/lib/xThreadPage.test.ts",
+        "extension/popup/PopupApp.tsx",
+        "extension/popup/hooks/useClipperState.ts",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx",
+        "extension/popup/lib/articleExtractionState.ts",
+        "extension/popup/lib/articleExtractionState.test.ts",
+        "extension/popup/lib/messaging.ts",
+        "scripts/fixtures/reliability/registry.json",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/manifest.json",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/background.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/content.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/xFeedButton.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/xThread.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/xThreadPage.js"
+      ],
+      "requirement": "SPEC_CLIPPER.md#Кнопка Mine в ленте X (10.10.2026)",
+      "tests": [
+        "extension/lib/xFeedButton.test.ts",
+        "extension/lib/xThread.test.ts",
+        "extension/lib/xThreadPage.test.ts",
+        "extension/background.messaging.test.ts",
+        "extension/popup/lib/articleExtractionState.test.ts",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import "./xThread.js";
+import {
+  listResponse, POST_VIDEO, QUOTE_POST_ID, QUOTED_ID, QUOTED_VIDEO, quotePost, REPOST_ID, REPOSTED_ID, userTweetsResponse, VIDEO_POST_ID,
+} from "./xFeed.fixtures";
 
 const api = globalThis.MineXThread;
 function raw(id: string, parent: string | null = null, author = "7", extra = {}) {
@@ -178,5 +181,40 @@ describe("X post with a quote, as in the original", () => {
       .toBe("post\n\n> **Bob \\*Star\\* \\[x\\]** [@\\_bob\\_](https://x.com/_bob_/status/2)\n> \n> quoted");
     expect(api.compose([{ id: "1", text: "post", media: [], quote: { id: "2", text: "quoted", media: [] } }]))
       .toBe("post\n\n> [x.com/i/status/2](https://x.com/i/status/2)\n> \n> quoted");
+  });
+});
+
+// SPEC_CLIPPER.md, «Кнопка Mine в ленте X», rule 6.
+describe("posts of an X feed response", () => {
+  it("reads every post of a list page in the post shape of a thread, the reposted post under its own ID", () => {
+    const posts = api.feed(listResponse());
+    expect(posts.map(p => p.id)).toEqual([QUOTE_POST_ID, VIDEO_POST_ID, REPOSTED_ID]);
+    expect(posts[0]).toMatchObject({ handle: "artignatev", name: "Art Ignatev", mediaComplete: true,
+      quote: { id: QUOTED_ID, handle: "alexisohanian", hasVideo: true } });
+    expect(api.compose([posts[0]])).toBe([
+      "Main text",
+      "![](https://pbs.twimg.com/media/one.jpg)",
+      "![](https://pbs.twimg.com/media/two.jpg)",
+      `> **Alexis Ohanian** [@alexisohanian](https://x.com/alexisohanian/status/${QUOTED_ID})\n> \n> Quote text\n> \n> ![](${QUOTED_VIDEO})`,
+    ].join("\n\n"));
+    expect(posts[1]).toMatchObject({ handle: "GasprArt", hasVideo: true, mediaComplete: true, media: [{ kind: "video", url: POST_VIDEO }] });
+    expect(posts[2]).toMatchObject({ handle: "michaelmicasso", text: "post 2099105293938708797" });
+    expect(posts.some(p => p.id === REPOST_ID)).toBe(false);
+  });
+  it("reads a pinned post and posts inside modules of a profile page", () => {
+    expect(api.feed(userTweetsResponse()).map(p => p.id)).toEqual([VIDEO_POST_ID, QUOTE_POST_ID]);
+  });
+  it("keeps a promoted post a feed shows: its Mine button saves it", () => {
+    const d = listResponse([quotePost()]);
+    const first = d.data.list.tweets_timeline.timeline.instructions[1].entries?.[0].content as { itemContent: Record<string, unknown> };
+    first.itemContent.promotedMetadata = { advertiser_results: {} };
+    expect(api.feed(d).map(p => p.id)).toEqual([QUOTE_POST_ID]);
+  });
+  it("gives no posts for a response it cannot read, without an error", () => {
+    expect(api.feed({})).toEqual([]);
+    expect(api.feed({ data: { list: { name: "List" } } })).toEqual([]);
+    expect(api.feed({ data: { list: { tweets_timeline: { timeline: { instructions: [{ type: "TimelineAddEntries", entries: [
+      { content: { itemContent: { itemType: "TimelineTweet", tweet_results: { result: { __typename: "TweetTombstone" } } } } },
+    ] }] } } } } })).toEqual([]);
   });
 });

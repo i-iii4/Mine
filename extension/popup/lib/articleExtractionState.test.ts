@@ -80,4 +80,11 @@ describe("article extraction state", () => {
     expect(emptyContentMessage(meta({ detectedType: "video" }), "empty")).toContain("No transcript");
     expect(emptyContentMessage(meta(), "failed")).toContain("failed");
   });
+
+  it("names why a post brought from an X feed could not be read (SPEC_CLIPPER.md, «Кнопка Mine в ленте X», rule 7)", () => {
+    const reason = "Mine couldn't read this post here. Open the post and save it from its page.";
+    const article: ArticleData = { title: "", content: "", byline: null, excerpt: "", unavailableReason: reason };
+    expect(emptyContentMessage(meta(), "empty", article)).toBe(reason);
+    expect(emptyContentMessage(meta(), "failed", article)).toBe(reason);
+  });
 });

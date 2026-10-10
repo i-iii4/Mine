@@ -43,9 +43,32 @@
       name: user.core?.name || user.legacy?.name || "",
       parentId: id(l.in_reply_to_status_id_str), text: text.trim(), media, quote, incomplete, hasVideo, mediaComplete };
   }
+  // A feed shows a repost as the post it reposts: that post, under its own ID,
+  // is what the feed card and its timestamp link stand for.
+  function feedPost(result) {
+    const t = result?.tweet || result;
+    const original = t?.legacy?.retweeted_status_result?.result || t?.retweeted_status_result?.result;
+    return post(original || result);
+  }
   function page(data) {
     const instructions = data?.data?.threaded_conversation_with_injections_v2?.instructions;
     if (!Array.isArray(instructions) || data.errors?.length) throw new Error("X did not return a readable conversation.");
+    return walk(instructions, { normalize: post, promoted: false });
+  }
+  // Every `instructions` list of a feed response: its place above them differs
+  // per operation (list, home, profile, search, X Pro column).
+  function instructionLists(value, depth, out) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || depth > 8) return out;
+    if (Array.isArray(value.instructions)) out.push(value.instructions);
+    for (const key of Object.keys(value)) if (key !== "instructions") instructionLists(value[key], depth + 1, out);
+    return out;
+  }
+  // The posts of a feed response (SPEC_CLIPPER.md, «Кнопка Mine в ленте X»,
+  // rule 6). A shape it does not know gives no posts, never an error.
+  function feed(data) {
+    return instructionLists(data?.data, 0, []).flatMap(list => walk(list, { normalize: feedPost, promoted: true }).posts);
+  }
+  function walk(instructions, { normalize, promoted }) {
     const posts = [], cursors = [], modules = [];
     let unavailable = false;
     function item(content, scope = null) {
@@ -56,8 +79,8 @@
         if (["Bottom", "ShowMore", "Top", "ShowMoreThreads"].includes(direction) && typeof content.value === "string") {
           cursors.push({ value: content.value, direction, moduleId: scope?.id || null });
         }
-      } else if (type === "TimelineTweet" && !content.promotedMetadata) {
-        const normalized = post(content.tweet_results?.result);
+      } else if (type === "TimelineTweet" && (promoted || !content.promotedMetadata)) {
+        const normalized = normalize(content.tweet_results?.result);
         if (normalized) { posts.push(normalized); scope?.postIds.push(normalized.id); }
         else if (scope) scope.unavailable = true;
         else unavailable = true;
@@ -80,7 +103,7 @@
         const scope = { id: instruction.moduleEntryId || instruction.module_entry_id || `anonymous-${modules.length}`, postIds: [], unavailable: false };
         modules.push(scope);
         for (const e of instruction.moduleItems || []) item(e, scope);
-      } else if (type === "TimelineReplaceEntry" && instruction.entry) entry(instruction.entry);
+      } else if ((type === "TimelineReplaceEntry" || type === "TimelinePinEntry") && instruction.entry) entry(instruction.entry);
     }
     return { posts, cursors, modules, unavailable };
   }
@@ -152,5 +175,5 @@
     }
     return posts.map(p => body(p)).filter(Boolean).join("\n\n***\n\n");
   }
-  root.MineXThread = { page, post, select, compose, continuations };
+  root.MineXThread = { page, feed, post, select, compose, continuations };
 })(globalThis);

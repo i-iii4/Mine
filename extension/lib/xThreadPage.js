@@ -1,24 +1,46 @@
-// Observe only X conversation responses. Request credentials never leave this world.
+// Observe only X conversation and feed responses. Request credentials never leave this world.
 (() => {
   "use strict";
   if (globalThis.MineXThreadPage || !globalThis.MineXThread) return;
   const originalFetch = window.fetch.bind(window);
   const records = new Map();
   const MAX_RECORDS = 8, MAX_PAGES = 20, MAX_POSTS = 1000, DEADLINE_MS = 15000;
+  // Posts the feeds of this page showed, by post ID, for the Mine button of
+  // each post (SPEC_CLIPPER.md, «Кнопка Mine в ленте X», rule 6).
+  const MAX_KNOWN_POSTS = 500, KNOWN_POST_WAIT_MS = 500;
+  const FEED_OPERATIONS = new Set(["ListLatestTweetsTimeline", "HomeTimeline", "HomeLatestTimeline",
+    "UserTweets", "UserOriginalsTimeline", "SearchTimeline"]);
+  const knownPosts = new Map();
   const pending = new Set();
-  function requestInfo(input) {
+  function requestInfo(input, method) {
     try {
       const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url, location.href);
-      if (url.origin !== location.origin || !/^\/i\/api\/graphql\/[^/]+\/(TweetDetail|ConversationTimeline)$/.test(url.pathname)) return null;
+      const operation = url.origin === location.origin && url.pathname.match(/^\/i\/api\/graphql\/[^/]+\/([A-Za-z]+)$/)?.[1];
+      if (!operation) return null;
+      // A feed is only read: GET or POST, its request is never replayed.
+      if (FEED_OPERATIONS.has(operation)) return { feed: true };
+      if (method !== "GET" || (operation !== "TweetDetail" && operation !== "ConversationTimeline")) return null;
       const variables = JSON.parse(url.searchParams.get("variables") || "{}");
       const target = variables.focalTweetId || variables.focal_tweet_id;
       if (!/^\d+$/.test(target)) return null;
       return { url: url.href, target, variables };
     } catch { return null; }
   }
+  function remember(posts) {
+    for (const post of posts) {
+      knownPosts.delete(post.id);
+      knownPosts.set(post.id, post);
+    }
+    while (knownPosts.size > MAX_KNOWN_POSTS) knownPosts.delete(knownPosts.keys().next().value);
+  }
+  function acceptFeed(data) {
+    try { remember(globalThis.MineXThread.feed(data)); } catch { /* An unreadable feed leaves the cache as it was. */ }
+  }
   function accept(info, headers, data) {
+    if (info.feed) { acceptFeed(data); return; }
     try {
       const page = globalThis.MineXThread.page(data);
+      remember(page.posts);
       const prior = records.get(info.target);
       // The initial response owns the request template. Cursor pages only add records.
       if (!info.variables.cursor || !prior) {
@@ -36,11 +58,12 @@
   }
   window.fetch = function(input, init) {
     const response = originalFetch(input, init);
-    const method = init?.method || input?.method || "GET";
-    const info = method.toUpperCase() === "GET" ? requestInfo(input) : null;
+    const method = (init?.method || input?.method || "GET").toUpperCase();
+    const info = requestInfo(input, method);
     if (info) {
-      const headers = new Headers(typeof Request !== "undefined" && input instanceof Request ? input.headers : undefined);
-      new Headers(init?.headers).forEach((v, k) => headers.set(k, v));
+      // A feed request is never replayed: its headers are not kept.
+      const headers = new Headers(!info.feed && typeof Request !== "undefined" && input instanceof Request ? input.headers : undefined);
+      if (!info.feed) new Headers(init?.headers).forEach((v, k) => headers.set(k, v));
       track(response.then(r => r.ok ? r.clone().json().then(d => accept(info, headers, d)) : undefined).catch(() => undefined));
     }
     return response;
@@ -50,12 +73,13 @@
   const setHeader = XMLHttpRequest.prototype.setRequestHeader;
   const xhrInfo = new WeakMap();
   XMLHttpRequest.prototype.open = function(method, url, ...args) {
-    const info = method.toUpperCase() === "GET" ? requestInfo(String(url)) : null;
+    const info = requestInfo(String(url), String(method).toUpperCase());
     xhrInfo.set(this, info ? { info, headers: new Headers() } : null);
     return open.call(this, method, url, ...args);
   };
   XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
-    xhrInfo.get(this)?.headers.set(name, value);
+    const captured = xhrInfo.get(this);
+    if (captured && !captured.info.feed) captured.headers.set(name, value);
     return setHeader.call(this, name, value);
   };
   XMLHttpRequest.prototype.send = function(...args) {
@@ -71,6 +95,16 @@
     }
     return send.apply(this, args);
   };
+  /// The post `id` as a feed or conversation of this page delivered it, or
+  /// `null`. A response still on its way is waited for a moment.
+  async function post(id) {
+    const key = String(id);
+    if (!/^\d+$/.test(key)) return null;
+    if (!knownPosts.has(key) && pending.size) {
+      await Promise.race([Promise.all([...pending]), new Promise(resolve => setTimeout(resolve, KNOWN_POST_WAIT_MS))]);
+    }
+    return knownPosts.get(key) ?? null;
+  }
   async function collect(target) {
     const startedUrl = location.href;
     if (!new RegExp(`/status/${target}(?:[/?#]|$)`).test(new URL(startedUrl).pathname)) return { posts: [], issues: ["The page changed. Open the clipper again."] };
@@ -115,5 +149,5 @@
       return { posts: result.posts, issues: [...result.issues, error.name === "AbortError" ? "Thread loading timed out." : error.message] };
     } finally { clearTimeout(timer); window.removeEventListener("pagehide", cancel); }
   }
-  globalThis.MineXThreadPage = { collect };
+  globalThis.MineXThreadPage = { collect, post };
 })();

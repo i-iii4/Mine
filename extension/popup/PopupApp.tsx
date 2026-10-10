@@ -453,7 +453,7 @@ export function PopupApp() {
               ) : (
                 <p className="mt-1.5 text-sm text-muted-foreground">
                   {clipper.articleExtractionState === "empty" || clipper.articleExtractionState === "failed"
-                    ? emptyContentMessage(metadata, clipper.articleExtractionState)
+                    ? emptyContentMessage(metadata, clipper.articleExtractionState, articleData)
                     : metadata?.description || "No content extracted"}
                 </p>
               )}
