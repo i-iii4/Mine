@@ -70,16 +70,57 @@ describe("surface tokens", () => {
   });
 });
 
+// A menu's width is its role's (user's decision of 11.10.2026;
+// DESIGN_SYSTEM.md, «Всплывающие элементы», «Ширина»).
+describe("menu width roles", () => {
+  const ruleBody = (selector: string) => {
+    const escaped = selector.replace(/[[\]"]/g, (char) => `\\${char}`);
+    return new RegExp(`(?:^|\\n)${escaped} \\{([^}]*)\\}`).exec(css)?.[1] ?? null;
+  };
+
+  // The width global.css gives a menu of `role` when the window leaves
+  // `available` pixels for it.
+  function menuWidthPx(role: string, available: number): number {
+    const base = ruleBody("[data-floating-menu]") ?? "";
+    expect(base).toMatch(
+      /width: min\(var\(--floating-menu-width\), var\(--floating-menu-available-width\)\);/,
+    );
+    const roleWidth = /--floating-menu-width: (\d+)px;/.exec(
+      ruleBody(`[data-floating-menu="${role}"]`) ?? "",
+    )?.[1];
+    expect(roleWidth).toBeDefined();
+    return Math.min(Number(roleWidth), available);
+  }
+
+  it("gives a menu of actions or a panel 240px and a list under a search field 300px", () => {
+    expect(menuWidthPx("action", 10_000)).toBe(240);
+    expect(menuWidthPx("search", 10_000)).toBe(300);
+  });
+
+  it("has exactly the two roles", () => {
+    const roles = [...css.matchAll(/\[data-floating-menu="([^"]+)"\]/g)].map((match) => match[1]);
+    expect(roles).toEqual(["action", "search"]);
+  });
+
+  it("never sizes a menu by its rows: only the window's room narrows it", () => {
+    for (const selector of [
+      "[data-floating-menu]",
+      '[data-floating-menu="action"]',
+      '[data-floating-menu="search"]',
+    ]) {
+      const body = ruleBody(selector);
+      expect(body).not.toBeNull();
+      expect(body).not.toMatch(/max-content|fit-content|min-content|min-width|max-width/);
+    }
+    expect(menuWidthPx("action", 200)).toBe(200);
+    expect(menuWidthPx("search", 260)).toBe(260);
+    expect(css).not.toMatch(/data-floating-menu-width/);
+  });
+});
+
 // User's decisions of 07.10.2026 (DESIGN_SYSTEM.md, «Всплывающие элементы»,
 // «Плотность»).
 describe("menus and the chrome inset", () => {
-  it("sizes every menu by one rule: its longest row, from 128px to 300px", () => {
-    const rule = /\[data-floating-menu\] \{([^}]*)\}/.exec(css)?.[1] ?? "";
-    expect(rule).toMatch(/width: max-content;/);
-    expect(rule).toMatch(/min-width: 128px;/);
-    expect(rule).toMatch(/max-width: min\(300px, var\(--floating-menu-available-width\)\);/);
-    expect(css).not.toMatch(/data-floating-menu-width/);
-  });
 
   it("keeps one chrome inset, the card's 8px round its buttons", () => {
     expect(css.match(/--chrome-edge-pad:\s*[^;]+;/g)).toEqual(["--chrome-edge-pad: 8px;"]);

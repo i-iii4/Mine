@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CardHoverMenu, CardMoreMenu, CardPointMenu } from "./CardHoverMenu";
+import { CardConnectMenu, CardHoverMenu, CardMoreMenu, CardPointMenu } from "./CardHoverMenu";
 import { getBlock, startWindowDrag } from "@/lib/commands";
 import type { LightBlock } from "@/types";
 
@@ -177,6 +177,83 @@ describe("CardHoverMenu", () => {
     expect(onActionsPinnedChange).toHaveBeenLastCalledWith(false);
     fireEvent.pointerDown(screen.getByRole("button", { name: /Connect/ }), { button: 0, ctrlKey: false, pointerType: "mouse" });
     await waitFor(() => expect(onActionsPinnedChange).toHaveBeenLastCalledWith(true));
+  });
+
+  // DESIGN_SYSTEM.md, «Ширина» (11.10.2026): the card's menu has the action
+  // width; the collections under its search field have the search width,
+  // from the menu's Connect and from the plus alike.
+  it("gives the card menu the action width and its Connect list the search width", async () => {
+    render(
+      <CardMoreMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        openRequestSequence={1}
+      />,
+    );
+
+    const connect = (await screen.findByText("Connect")).closest<HTMLElement>("[role='menuitem']")!;
+    expect(document.querySelector("[data-slot='dropdown-menu-content']")).toHaveAttribute(
+      "data-floating-menu",
+      "action",
+    );
+    connect.focus();
+    fireEvent.keyDown(connect, { key: "ArrowRight" });
+    await screen.findByPlaceholderText("Search collections...");
+    expect(document.querySelector("[data-slot='dropdown-menu-sub-content']")).toHaveAttribute(
+      "data-floating-menu",
+      "search",
+    );
+  });
+
+  it("gives the plus's collection list the search width", async () => {
+    render(
+      <CardConnectMenu
+        block={makeBlock()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+      />,
+    );
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Connect" }), {
+      button: 0,
+      ctrlKey: false,
+      pointerType: "mouse",
+    });
+    await screen.findByPlaceholderText("Search collections...");
+    expect(document.querySelector("[data-slot='dropdown-menu-content']")).toHaveAttribute(
+      "data-floating-menu",
+      "search",
+    );
+  });
+
+  // A collection's name can be any length; the row cuts it with an ellipsis
+  // at the menu's width instead of wrapping.
+  it("cuts a long collection name in Disconnect with an ellipsis", async () => {
+    const name = "a collection whose name is far longer than the menu";
+    vi.mocked(getBlock).mockResolvedValueOnce({ tags: [name] } as Awaited<ReturnType<typeof getBlock>>);
+    render(
+      <CardMoreMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        currentTag={name}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        openRequestSequence={1}
+      />,
+    );
+
+    const label = await screen.findByText(`Disconnect from “${name}”`);
+    expect(label).toHaveClass("min-w-0", "truncate");
+    expect(label.parentElement).toHaveAttribute("role", "menuitem");
   });
 
   it("copies the card path through the native clipboard, not the web API", async () => {

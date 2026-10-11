@@ -298,7 +298,7 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
           Connect
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent
-         
+          widthRole="search"
           className={COLLECTION_PICKER_CONTENT_CLASS}
           onKeyDownCapture={onKeyDownCapture}
         >
@@ -354,7 +354,9 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
           <MenuIconSlot>
             <Unlink className="size-[13px]" />
           </MenuIconSlot>
-          Disconnect from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
+          <span className="min-w-0 truncate">
+            Disconnect from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
+          </span>
         </DropdownMenuItem>
       )}
 
@@ -659,7 +661,7 @@ export function CardConnectMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
-       
+        widthRole="search"
         className={COLLECTION_PICKER_CONTENT_CLASS}
         align="end"
         onCloseAutoFocus={onCloseAutoFocus}

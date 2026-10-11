@@ -16,6 +16,14 @@ it("passes the selected space, not the desktop's previous binding", async () => 
   await waitFor(() => expect(send).toHaveBeenCalledWith({action:"open_app",path:"/tmp/Моё пространство"}));
 });
 
+// DESIGN_SYSTEM.md, «Ширина» (11.10.2026): a menu of actions has the action
+// width, in the clipper as in the app.
+it("has the action width", async () => {
+  render(<ClipperOverflowMenu canOpenApp />);
+  openMenu();
+  expect(await screen.findByRole("menu")).toHaveAttribute("data-floating-menu", "action");
+});
+
 // SPEC_CLIPPER.md, «Доработки после живого просмотра», пункт 5 и Р11.
 describe("the switches of the Mine buttons on X and Instagram", () => {
   let storage: ReturnType<typeof switchStorage> & { local: { set: ReturnType<typeof vi.fn> } };

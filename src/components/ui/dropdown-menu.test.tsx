@@ -128,7 +128,8 @@ describe("DropdownMenu", () => {
     expect(subContent).not.toHaveClass("bg-popover", "text-popover-foreground");
   });
 
-  it("gives the menu and its submenu the one width rule (07.10.2026)", () => {
+  // DESIGN_SYSTEM.md, «Ширина» (11.10.2026): the width is the role's.
+  it("gives the menu and its submenu the action width unless they are told search", () => {
     render(
       <DropdownMenu open modal={false}>
         <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
@@ -146,25 +147,58 @@ describe("DropdownMenu", () => {
 
     for (const slot of ["dropdown-menu-content", "dropdown-menu-sub-content"]) {
       const content = document.querySelector(`[data-slot='${slot}']`);
-      expect(content).toHaveAttribute("data-floating-menu", "");
+      expect(content).toHaveAttribute("data-floating-menu", "action");
       expect(content).not.toHaveAttribute("data-floating-menu-width");
-      expect(content?.className).not.toMatch(/(?:^|\s)min-w-/);
+      expect(content?.className).not.toMatch(/(?:^|\s)(?:min-|max-)?w-/);
     }
   });
 
-  it("holds the width a menu opened with as its least", () => {
+  it("gives a list under a search field the search width, on the menu and on a submenu", () => {
+    render(
+      <DropdownMenu open modal={false}>
+        <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
+        <DropdownMenuContent widthRole="search">
+          <DropdownMenuItem>Action item</DropdownMenuItem>
+          <DropdownMenuSub open>
+            <DropdownMenuSubTrigger>Nested actions</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent widthRole="search">
+              <DropdownMenuItem>Nested item</DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    );
+
+    for (const slot of ["dropdown-menu-content", "dropdown-menu-sub-content"]) {
+      const content = document.querySelector(`[data-slot='${slot}']`);
+      expect(content).toHaveAttribute("data-floating-menu", "search");
+    }
+  });
+
+  it("does not take its width from its rows: a long row and a short one give one menu", () => {
     const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(176);
     try {
-      render(
-        <DropdownMenu open modal={false}>
-          <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuItem>Action item</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>,
-      );
-      const content = document.querySelector<HTMLElement>("[data-slot='dropdown-menu-content']");
-      expect(content?.style.minWidth).toBe("176px");
+      const menus = ["Go", "A row far longer than any menu of actions is ever wide"].map((row) => {
+        const { unmount } = render(
+          <DropdownMenu open modal={false}>
+            <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem>{row}</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>,
+        );
+        const content = document.querySelector<HTMLElement>("[data-slot='dropdown-menu-content']");
+        const shape = {
+          role: content?.getAttribute("data-floating-menu"),
+          width: content?.style.width,
+          minWidth: content?.style.minWidth,
+          maxWidth: content?.style.maxWidth,
+        };
+        unmount();
+        return shape;
+      });
+      expect(menus[0]).toEqual({ role: "action", width: "", minWidth: "", maxWidth: "" });
+      expect(menus[1]).toEqual(menus[0]);
     } finally {
       width.mockRestore();
     }

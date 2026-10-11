@@ -5,7 +5,7 @@ import { CheckIcon, ChevronRightIcon } from "lucide-react"
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
 
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot"
-import { FLOATING_LAYER_EDGE_PX, useHeldMenuWidth } from "@/lib/floatingLayer"
+import { FLOATING_LAYER_EDGE_PX, type FloatingMenuWidth } from "@/lib/floatingLayer"
 import { useMenuSurface } from "@/lib/openMenus"
 import { cn } from "@/lib/utils"
 
@@ -85,23 +85,27 @@ function DropdownMenuTrigger({
   )
 }
 
+// The width is the role's: `action` unless the menu is a list under a search
+// field (src/lib/floatingLayer.ts). A call site never sets it in pixels.
 function DropdownMenuContent({
   className,
   sideOffset = 4,
   collisionPadding = FLOATING_LAYER_EDGE_PX,
+  widthRole = "action",
   ref,
   onPointerDownOutside,
   onCloseAutoFocus,
   ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Content> & {
+  widthRole?: FloatingMenuWidth
+}) {
   const surface = useMenuSurface("dropdown", ref, { onPointerDownOutside, onCloseAutoFocus })
-  const holdWidth = useHeldMenuWidth(surface.ref)
   return (
     <DropdownMenuPortal>
       <DropdownMenuPrimitive.Content
-        ref={holdWidth}
+        ref={surface.ref}
         data-slot="dropdown-menu-content"
-        data-floating-menu=""
+        data-floating-menu={widthRole}
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
         onPointerDownOutside={surface.onPointerDownOutside}
@@ -296,15 +300,15 @@ function DropdownMenuSubTrigger({
 function DropdownMenuSubContent({
   className,
   collisionPadding = FLOATING_LAYER_EDGE_PX,
-  ref,
+  widthRole = "action",
   ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
-  const holdWidth = useHeldMenuWidth(ref)
+}: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent> & {
+  widthRole?: FloatingMenuWidth
+}) {
   return (
     <DropdownMenuPrimitive.SubContent
-      ref={holdWidth}
       data-slot="dropdown-menu-sub-content"
-      data-floating-menu=""
+      data-floating-menu={widthRole}
       collisionPadding={collisionPadding}
       className={cn(
         "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden rounded-1 border p-surface shadow-md",

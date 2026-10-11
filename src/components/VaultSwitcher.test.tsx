@@ -265,6 +265,25 @@ describe("VaultSwitcher", () => {
     );
   });
 
+  // DESIGN_SYSTEM.md, «Ширина» (11.10.2026): a list under a search field has
+  // the search width, and the query never changes it.
+  it("gives the space list the search width, the same while it is filtered", async () => {
+    commandMocks.listKnownVaults.mockResolvedValue(["/tmp/Mine", "/tmp/Журнал", "/tmp/Фотоальбомы"]);
+
+    render(<VaultSwitcher currentPath="/tmp/Mine" onVaultSelected={vi.fn()} surface="topChrome" />);
+    await waitFor(() => expect(commandMocks.listKnownVaults).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: /Switch space: Mine/ }));
+    const search = await screen.findByRole("textbox", { name: "Search spaces" });
+    const menu = document.querySelector<HTMLElement>("[data-vault-switcher-menu]");
+    expect(menu).toHaveAttribute("data-floating-menu", "search");
+
+    fireEvent.change(search, { target: { value: "Фото" } });
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "Журнал" })).not.toBeInTheDocument());
+    expect(menu).toHaveAttribute("data-floating-menu", "search");
+    expect(menu?.style.width).toBe("");
+    expect(menu?.style.minWidth).toBe("");
+  });
+
   it("filters spaces and keeps input focus while arrow navigation changes the active row", async () => {
     commandMocks.listKnownVaults.mockResolvedValue([
       "/Users/i_iii/Library/Mobile Documents/com~apple~CloudDocs/Mine",

@@ -110,6 +110,7 @@ import { TopFadeScrim } from "./TopFadeScrim";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset, resolveNoteLink } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
+import type { FloatingMenuWidth } from "@/lib/floatingLayer";
 import { useHoverIntent, type HoverIntentHandle } from "@/hooks/useHoverIntent";
 import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
 import {
@@ -1102,7 +1103,7 @@ function DetailActionRow({
             <Plus className="size-[13px]" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent className={COLLECTION_PICKER_CONTENT_CLASS} align="start">
+        <DropdownMenuContent widthRole="search" className={COLLECTION_PICKER_CONTENT_CLASS} align="start">
           <CollectionPicker
             blockSlug={block.slug}
             selectedTags={selectedTags}
@@ -2355,7 +2356,11 @@ interface MediaMenuKit {
   Separator: ComponentType;
   Sub: ComponentType<{ open?: boolean; onOpenChange?: (open: boolean) => void; children?: ReactNode }>;
   SubTrigger: ComponentType<{ children?: ReactNode }>;
-  SubContent: ComponentType<{ className?: string; children?: ReactNode }>;
+  SubContent: ComponentType<{
+    widthRole?: FloatingMenuWidth;
+    className?: string;
+    children?: ReactNode;
+  }>;
 }
 
 const DROPDOWN_MENU_KIT: MediaMenuKit = {
@@ -2417,7 +2422,7 @@ function MediaAssetMenuItems({
           </MenuIconSlot>
           Create Element
         </SubTrigger>
-        <SubContent className={COLLECTION_PICKER_CONTENT_CLASS}>
+        <SubContent widthRole="search" className={COLLECTION_PICKER_CONTENT_CLASS}>
           <MediaAssetCollectionPicker
             asset={asset}
             tags={tags}
@@ -3742,7 +3747,7 @@ function TextSelectionActionBar({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
-           
+            widthRole="search"
             className={COLLECTION_PICKER_CONTENT_CLASS}
             align="start"
           >

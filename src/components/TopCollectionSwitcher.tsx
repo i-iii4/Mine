@@ -281,7 +281,7 @@ export function TopCollectionSwitcher({
           alignOffset={menuAlignOffset}
           side="bottom"
           sideOffset={4}
-         
+          widthRole="search"
           onCloseAutoFocus={topChromeTrigger.handleCloseAutoFocus}
           className="overflow-hidden p-0"
           data-top-collection-menu=""

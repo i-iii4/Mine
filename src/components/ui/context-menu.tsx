@@ -3,7 +3,7 @@ import { CheckIcon, ChevronRightIcon } from "lucide-react"
 import { ContextMenu as ContextMenuPrimitive } from "radix-ui"
 
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot"
-import { FLOATING_LAYER_EDGE_PX, useHeldMenuWidth } from "@/lib/floatingLayer"
+import { FLOATING_LAYER_EDGE_PX, type FloatingMenuWidth } from "@/lib/floatingLayer"
 import { useContextMenuPresence, useMenuSurface } from "@/lib/openMenus"
 import { cn } from "@/lib/utils"
 
@@ -103,15 +103,15 @@ function ContextMenuSubTrigger({
 function ContextMenuSubContent({
   className,
   collisionPadding = FLOATING_LAYER_EDGE_PX,
-  ref,
+  widthRole = "action",
   ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.SubContent>) {
-  const holdWidth = useHeldMenuWidth(ref)
+}: React.ComponentProps<typeof ContextMenuPrimitive.SubContent> & {
+  widthRole?: FloatingMenuWidth
+}) {
   return (
     <ContextMenuPrimitive.SubContent
-      ref={holdWidth}
       data-slot="context-menu-sub-content"
-      data-floating-menu=""
+      data-floating-menu={widthRole}
       collisionPadding={collisionPadding}
       className={cn(
         "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 origin-(--radix-context-menu-content-transform-origin) overflow-hidden rounded-1 border p-surface shadow-md",
@@ -122,22 +122,25 @@ function ContextMenuSubContent({
   )
 }
 
+// The width is the role's, as DropdownMenuContent's (src/lib/floatingLayer.ts).
 function ContextMenuContent({
   className,
   collisionPadding = FLOATING_LAYER_EDGE_PX,
+  widthRole = "action",
   ref,
   onPointerDownOutside,
   onCloseAutoFocus,
   ...props
-}: React.ComponentProps<typeof ContextMenuPrimitive.Content>) {
+}: React.ComponentProps<typeof ContextMenuPrimitive.Content> & {
+  widthRole?: FloatingMenuWidth
+}) {
   const surface = useMenuSurface("context", ref, { onPointerDownOutside, onCloseAutoFocus })
-  const holdWidth = useHeldMenuWidth(surface.ref)
   return (
     <ContextMenuPrimitive.Portal>
       <ContextMenuPrimitive.Content
-        ref={holdWidth}
+        ref={surface.ref}
         data-slot="context-menu-content"
-        data-floating-menu=""
+        data-floating-menu={widthRole}
         collisionPadding={collisionPadding}
         onPointerDownOutside={surface.onPointerDownOutside}
         onCloseAutoFocus={surface.onCloseAutoFocus}

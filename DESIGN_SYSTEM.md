@@ -1406,8 +1406,8 @@ Shortcut `Cmd+,` продолжает открывать то же окно на
 `currentColor` наследуется от общего Button: muted в покое, foreground при
 hover/open/focus; собственного цветового класса у SVG нет. Белой подложки нет.
 Hover/open/keyboard focus используют
-`state-active`, как остальные меню chrome. Dropdown выровнен вправо и использует
-штатную ширину `command`; список разделов общий с окном Settings. Кнопка
+`state-active`, как остальные меню chrome. Dropdown выровнен вправо, его ширина
+это роль `action` (`240px`, раздел «Ширина»); список разделов общий с окном Settings. Кнопка
 остаётся последней справа при открытой карточке и скрытом bottom bar.
 
 Иконки действий chrome используют тот же вариант Button: область 24×30px,
@@ -1846,8 +1846,8 @@ Icon actions строки пространства (`FolderOpen` — reveal, `X`
 нести tooltip: иконка без подписи внутри списка не объясняет себя, а цена
 ошибки здесь несимметрична. Тексты — `Reveal in Finder` и `Remove from the list
 — files stay on disk`; второй называет последствие, а не действие, потому что
-именно эту команду читают как «удалить папку». Ширина dropdown — floating width role `selector`
-(`18rem` с available-width cap), а не ширина trigger и не content-fit.
+именно эту команду читают как «удалить папку». Ширина dropdown это роль `search`
+(`300px`, не шире места в окне, раздел «Ширина»), а не ширина trigger и не ширина строк.
 Позиционирование dropdown привязано к видимой внутренней пуле selector, а не к
 невидимому root slot: Radix `align="start"` использует `alignOffset=12`, равный
 root inset `px-3`.
@@ -1916,8 +1916,8 @@ input — menu-styled action buttons с `role="menuitem"`, а не roving-focus
 закрывает dropdown и открывает отдельный create-channel dialog; dialog может
 prefill'иться текущим query, валидирует пустые/дублирующиеся имена, вызывает
 штатный channel create command, обновляет taxonomy/grid snapshots и переводит
-route в новый канал. Ширина dropdown — floating width role `selector` (`18rem`),
-такая же как у Space dropdown.
+route в новый канал. Ширина dropdown это роль `search` (`300px`), как у выбора
+пространства.
 Позиционирование dropdown привязано к видимой внутренней пуле collection
 trigger. Radix `alignOffset` равен левому полю root, измеренному при открытии
 (`getComputedStyle(...).paddingLeft`), а не записанному числом. Dropdown не
@@ -2237,12 +2237,10 @@ they must never widen the dialog or overlap footer actions.
 Content: `rounded-1 border bg-card p-surface text-card-foreground` в разметке, но стоит на `--popover`: правило в `global.css` ставит меню и подменю фон и `--surface` плавающего слоя (раздел «Поверхности»); тень единая для всплывающих элементов (см. «Всплывающие элементы»).
 Item: `rounded-1 min-h-row px-plate text-base cursor-default`: ряд 32 на поле поверхности, значок и текст на поле плашки (раздел «Система отступов поверхностей»).
 Item hover/focus uses the active surface swatch: `focus:state-active focus:text-foreground`. Submenu trigger open state uses the same `state-active`. Item `variant="destructive"`: красный текст (`text-destructive`), тот же hover/focus фон (`focus:state-active`).
-Width follows one rule for every menu, submenu and context menu
-(`[data-floating-menu]`, «Всплывающие элементы»; 07.10.2026): the longest
-row, from 128px to 300px; a list with a search field holds its opening width
-while the query narrows it. The former width roles (`command`, `selector`,
-`picker`, `widthRole`) are gone. Raw `w-64` / `w-72` in feature components is
-invalid.
+Ширина меню задаётся ролью, а не строками (`widthRole` у общих обёрток,
+«Всплывающие элементы», «Ширина»; 11.10.2026): `action` `240px` у меню
+действий и панелей, `search` `300px` у списка под полем поиска. Классы
+`w-64`, `w-72` и любые другие ширины на меню в компонентах запрещены.
 
 Выбор из нескольких значений (`DropdownMenuRadioItem`, `ContextMenuRadioItem`)
 не сдвигает текст на `pl-8` и не рисует кружок: текущий пункт несёт галочку
@@ -2771,32 +2769,77 @@ SubContent (подменю) — та же тень.
 
 ### Ширина
 
-Одно правило ширины для каждого меню, подменю, контекстного меню и списка с
-поиском (решение пользователя 07.10.2026 «стандартизировать ширину»; прежние
-роли `command`, `selector`, `picker` с минимумом `192px` и фиксированными
-`288px` и `320px` убраны): **меню шириной по самой длинной строке, от `128px`
-до `300px`** (`[data-floating-menu]` в `global.css`, ставят обёртки
+**Ширина меню не зависит от содержимого** (решение пользователя 11.10.2026;
+прежнее правило 07.10.2026 «по самой длинной строке, от `128px` до `300px`»
+снято). У меню две постоянные ширины по роли:
+
+| Роль | Ширина | Какие меню |
+|---|---:|---|
+| `action` | `240px` | меню действий и панели, подменю без поля поиска |
+| `search` | `300px` | список, над которым стоит поле поиска |
+
+Новых значений нет, оба уже были в системе. `240px` это место превью
+карточки в боковом меню и графе (`GRAPH_PREVIEW_WIDTH`). `300px` это прежний
+предел: в списке коллекций рядом с действием `Connect` (`84px`) остаётся
+около `188px` под имя, и из реальных имён пространства (32 коллекции,
+медиана 11 знаков, 90% не длиннее 23) целиком видны девять из десяти.
+
+Роль задаётся в одном месте: свойство `widthRole` обёрток
 `DropdownMenuContent`, `DropdownMenuSubContent`, `ContextMenuContent`,
-`ContextMenuSubContent`; места вызова ширину не задают).
+`ContextMenuSubContent` (тип `FloatingMenuWidth` в
+`src/lib/floatingLayer.ts`), по умолчанию `action`. Обёртка ставит роль в
+атрибут `data-floating-menu`, ширину каждой роли держит только `global.css`.
+Места вызова ширину числом не задают: классы `w-*`, `min-w-*`, `max-w-*` на
+меню запрещены.
 
-- Нижний предел `128px` это наименьшая ширина реестра shadcn. Естественная
-  ширина коротких меню по замеру 07.10.2026: правый клик по коллекции `96px`,
-  Display `120px`, меню карточки `143px`; при прежних `192px` они были
-  заметно шире своих строк.
-- Верхний предел `300px`: в списке коллекций с поиском и действием `Connect`
-  справа (`84px`) остаётся около `188px` под имя, и из реальных имён
-  пространства (32 коллекции, медиана 11 знаков, 90% не длиннее 23) целиком
-  видны девять из десяти; длиннее режется многоточием.
-- Список с полем поиска не сужается, пока его фильтруют: ширина, с которой
-  меню открылось, становится его минимумом (`useHeldMenuWidth` в
-  `src/lib/floatingLayer.ts`, `min-width` на слое). Строка, пришедшая позже,
-  может расширить меню до предела, запрос сузить не может.
+- Меню уже его роли делает только край окна: ширина равна
+  `min(ширина роли, available-width)`.
+- Строка, которая не помещается, режется многоточием (`min-w-0 truncate` на
+  подписи), а не переносится и не расширяет меню. Так режутся имена
+  коллекций и пространств в списках и подпись `Disconnect from “…”` в меню
+  карточки.
+- Список с поиском не меняет ширину, пока его фильтруют: ширина постоянна,
+  отдельное удержание ширины (`useHeldMenuWidth`) убрано.
+- Подменю берёт роль по своему содержимому, а не по родителю: подменю
+  `Connect` и `Create Element` со списком коллекций под полем поиска имеет
+  ширину `search` внутри меню `action`.
 
-Замер после правки: Display `128px` (было `192px`), меню карточки и
-контекстное меню карточки `143px` (было `192px`), правый клик по коллекции
-`128px` (было `192px`), выбор пространства и коллекции `300px` (было `288px`,
-естественная ширина `425px` и `340px` из-за длинных имён), выбор коллекций
-`Connect` `300px` (было `320px`).
+Меню по ролям (11.10.2026).
+
+`action`, `240px`:
+
+- панель Display ленты и графа (`DisplayMenu.tsx`), одной ширины в обоих видах;
+- меню карточки: кнопка `More` и правый клик в ленте (`CardHoverMenu.tsx`,
+  `CardContextMenu.tsx`);
+- меню группы карточек и его правый клик (`GroupSelectionCardMenu.tsx`,
+  `GroupSelectionContextMenu.tsx`);
+- правый клик по коллекции в боковом меню (`Sidebar.tsx`);
+- меню медиа в открытой карточке, кнопка и правый клик (`Detail.tsx`);
+- правый клик по видео YouTube (`YoutubeSourcePlayer.tsx`);
+- меню логотипа на странице без вкладок (`AppSettingsMenu.tsx`);
+- окно настроек: меню пространства в разделе Spaces (`SpacesSection.tsx`) и
+  выбор открытого пространства (`OpenSpaceSelect.tsx`, поля поиска в нём нет);
+- клиппер: меню `More` (`ClipperOverflowMenu.tsx`).
+
+`search`, `300px`:
+
+- выбор пространства в верхнем ряду (`VaultSwitcher.tsx`) и в клиппере
+  (`extension/popup/components/VaultSelect.tsx`);
+- выбор коллекции в пути (`TopCollectionSwitcher.tsx`);
+- выбор коллекций карточки `Connect`: плюс на карточке, подменю в меню
+  карточки и в правом клике, кнопка в открытой карточке (`CardHoverMenu.tsx`,
+  `CardContextMenu.tsx`, `Detail.tsx`);
+- `Connect` группы карточек: кнопка панели выбора и подменю
+  (`GroupSelectionCommands.tsx`, `GroupSelectionCardMenu.tsx`,
+  `GroupSelectionContextMenu.tsx`);
+- `Create Element` для медиа и для выделенного текста (`Detail.tsx`).
+
+Нативные меню macOS (меню логотипа и меню вкладки на полосе вкладок)
+живут вне этого правила.
+
+Проверки: `src/styles/global.test.ts` (ширина каждой роли, никакой ширины по
+строкам), тесты обёрток в `src/components/ui`, `GraphDisplayMenu.test.tsx`
+(панель Display одной ширины в ленте и в графе).
 
 `available-width` берётся из Radix collision variables
 (`--radix-dropdown-menu-content-available-width` /
@@ -3677,14 +3720,12 @@ Pointer and keyboard navigation share the same `activeIndex`: moving the mouse
 selects that row, pressing arrows transfers ownership back to keyboard, and
 there is never a simultaneous pointer hover and keyboard hover. Right-slot
 visibility changes are immediate, without opacity transition.
-CollectionPicker menu content uses floating width role `picker` (`20rem` with
-available-width cap). Its scrollable list is not capped by a raw rem value:
-`QuantizedMenuScrollArea` computes the visible list height as whole `default`
-rows after subtracting the search header and any fixed footer from the Radix
-available height. The `20rem` role width is required because the right action
-slot is fixed at `10ch`; narrower menus leave too little scan width for Russian
-collection names. The ordinary Card overflow menu around it remains role
-`command`.
+Меню со списком коллекций имеет ширину роли `search` (`300px`, не шире места
+в окне, раздел «Ширина»): справа в строке стоит действие `Connect`, и более
+узкое меню оставило бы имени коллекции слишком мало места. Высота списка не
+ограничена числом в `rem`: `QuantizedMenuScrollArea` вычитает из доступной
+высоты Radix строку поиска и закреплённый низ и показывает целое число строк
+`default`. Обычное меню карточки вокруг него имеет роль `action` (`240px`).
 Keyboard-triggered scroll cannot transfer ownership to a stationary pointer:
 rows ignore `pointerenter` and ignore the first post-keyboard `pointermove` if
 its coordinates match the last known pointer position. Pointer hover never

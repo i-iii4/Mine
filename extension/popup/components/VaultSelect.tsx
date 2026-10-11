@@ -201,6 +201,7 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
           align="start"
           side="bottom"
           sideOffset={4}
+          widthRole="search"
           className="overflow-hidden bg-accent p-0 text-foreground"
           onCloseAutoFocus={(event) => {
             event.preventDefault();

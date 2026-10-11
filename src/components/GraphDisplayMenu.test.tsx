@@ -8,6 +8,7 @@ import {
   reloadGraphPreferences,
   setGraphPreference,
 } from "@/lib/graphPreferences";
+import { FeedDisplayMenu } from "./FeedDisplayMenu";
 import { GraphDisplayMenu } from "./GraphDisplayMenu";
 
 describe("The graph's Display panel (SPEC_GRAPH_VIEW.md, «Панель графа»)", () => {
@@ -44,9 +45,37 @@ describe("The graph's Display panel (SPEC_GRAPH_VIEW.md, «Панель граф
     expect(trigger).toHaveAttribute("data-variant", "chrome");
     await user.click(trigger);
     const menu = screen.getByRole("menu");
-    expect(menu).toHaveAttribute("data-floating-menu", "");
+    expect(menu).toHaveAttribute("data-floating-menu", "action");
     expect(menu).toHaveAttribute("data-align", "end");
     expect(menu).toHaveAttribute("data-display-panel", "graph");
+  });
+
+  // DESIGN_SYSTEM.md, «Ширина» (11.10.2026): the panel's width is its role's,
+  // so the feed's three groups and the graph's one give the same panel.
+  it("is as wide as the feed's panel, whatever each holds", async () => {
+    const user = userEvent.setup();
+    const shapes: Array<Record<string, string | null>> = [];
+    for (const Panel of [FeedDisplayMenu, GraphDisplayMenu]) {
+      const { unmount } = render(<Panel />);
+      await user.click(screen.getByRole("button", { name: "Display options" }));
+      const menu = screen.getByRole("menu");
+      shapes.push({
+        role: menu.getAttribute("data-floating-menu"),
+        className: menu.className,
+        width: menu.style.width,
+        minWidth: menu.style.minWidth,
+        maxWidth: menu.style.maxWidth,
+      });
+      unmount();
+    }
+    expect(shapes[0]).toEqual({
+      role: "action",
+      className: expect.not.stringMatching(/(?:^|\s)(?:min-|max-)?w-/),
+      width: "",
+      minWidth: "",
+      maxWidth: "",
+    });
+    expect(shapes[1]).toEqual(shapes[0]);
   });
 
   it("offers one Links group with Wikilinks and Related notes, both on by default, and no switch for collections", async () => {

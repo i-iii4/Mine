@@ -35,6 +35,64 @@ describe("ContextMenu", () => {
     expect(screen.getByText("Action item")).not.toHaveClass("focus:bg-accent");
   });
 
+  // DESIGN_SYSTEM.md, «Ширина» (11.10.2026): the width is the role's, the
+  // action width unless the menu is a list under a search field.
+  it("gives the menu the action width and a searchable submenu the search width", () => {
+    render(
+      <ContextMenu modal={false}>
+        <ContextMenuTrigger>Open context menu</ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem>Action item</ContextMenuItem>
+          <ContextMenuSub open>
+            <ContextMenuSubTrigger>Nested actions</ContextMenuSubTrigger>
+            <ContextMenuSubContent widthRole="search">
+              <ContextMenuItem>Nested item</ContextMenuItem>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        </ContextMenuContent>
+      </ContextMenu>,
+    );
+
+    fireEvent.contextMenu(screen.getByText("Open context menu"));
+
+    const content = document.querySelector<HTMLElement>("[data-slot='context-menu-content']");
+    const subContent = document.querySelector<HTMLElement>("[data-slot='context-menu-sub-content']");
+    expect(content).toHaveAttribute("data-floating-menu", "action");
+    expect(subContent).toHaveAttribute("data-floating-menu", "search");
+    for (const layer of [content, subContent]) {
+      expect(layer?.style.width).toBe("");
+      expect(layer?.style.minWidth).toBe("");
+    }
+  });
+
+  it("gives a submenu without a search field the action width", () => {
+    render(
+      <ContextMenu modal={false}>
+        <ContextMenuTrigger>Open context menu</ContextMenuTrigger>
+        <ContextMenuContent widthRole="search">
+          <ContextMenuItem>Action item</ContextMenuItem>
+          <ContextMenuSub open>
+            <ContextMenuSubTrigger>Nested actions</ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuItem>Nested item</ContextMenuItem>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        </ContextMenuContent>
+      </ContextMenu>,
+    );
+
+    fireEvent.contextMenu(screen.getByText("Open context menu"));
+
+    expect(document.querySelector("[data-slot='context-menu-content']")).toHaveAttribute(
+      "data-floating-menu",
+      "search",
+    );
+    expect(document.querySelector("[data-slot='context-menu-sub-content']")).toHaveAttribute(
+      "data-floating-menu",
+      "action",
+    );
+  });
+
   // DESIGN_SYSTEM.md, «Цвет текста и значков»: focus and an open submenu
   // lift the icon one step together with the text.
   it("lifts the item icon with its text on focus and an open submenu", () => {

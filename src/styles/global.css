@@ -533,12 +533,13 @@ body.sidebar-resizing ::selection {
   -webkit-user-drag: none;
 }
 
-/* One width rule for every menu, submenu and context menu (DESIGN_SYSTEM.md,
-   «Всплывающие элементы», «Ширина»; user's decision of 07.10.2026): as wide
-   as its longest row, from 128px (the registry's least, the narrowest menus
-   measured 96 to 143px) to 300px (a collection picker shows nine names in
-   ten whole beside its action). The width a menu opens with holds while its
-   list is filtered (useHeldMenuWidth in src/lib/floatingLayer.ts). */
+/* A menu's width is its role's, never its rows' (DESIGN_SYSTEM.md,
+   «Всплывающие элементы», «Ширина»; user's decision of 11.10.2026). The
+   wrappers put the role on the attribute (src/lib/floatingLayer.ts): 240px
+   for menus of actions and panels, the hover preview's place; 300px for a
+   list under a search field, room for a collection's name beside its
+   Connect action. Only the window's edge may narrow either; a row that does
+   not fit is cut with an ellipsis. */
 [data-floating-menu] {
   --floating-menu-available-width: var(
     --radix-dropdown-menu-content-available-width,
@@ -548,9 +549,13 @@ body.sidebar-resizing ::selection {
     --radix-dropdown-menu-content-available-height,
     var(--radix-context-menu-content-available-height, calc(100vh - 16px))
   );
-  width: max-content;
-  min-width: 128px;
-  max-width: min(300px, var(--floating-menu-available-width));
+  width: min(var(--floating-menu-width), var(--floating-menu-available-width));
+}
+[data-floating-menu="action"] {
+  --floating-menu-width: 240px;
+}
+[data-floating-menu="search"] {
+  --floating-menu-width: 300px;
 }
 
 /* No menu is modal, and a press outside an open one only closes it

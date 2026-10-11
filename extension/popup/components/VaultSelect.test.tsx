@@ -97,6 +97,15 @@ describe("VaultSelect", () => {
     expect(await screen.findByRole("menuitem", { name: "Journal" })).toBeInTheDocument();
   });
 
+  // DESIGN_SYSTEM.md, «Ширина» (11.10.2026): a list under a search field has
+  // the search width, the desktop space switcher's.
+  it("gives the space list the search width", async () => {
+    renderSelect();
+    await openMenu();
+    expect(screen.getByRole("textbox", { name: "Search spaces" }).closest("[data-floating-menu]"))
+      .toHaveAttribute("data-floating-menu", "search");
+  });
+
   it("pins Reveal in Finder and Add space below the space list, desktop-style", async () => {
     renderSelect();
     await openMenu();

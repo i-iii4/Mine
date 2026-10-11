@@ -1540,6 +1540,17 @@ width it opened with as its minimum (`useHeldMenuWidth`,
 `selector` and `picker` roles bought with a fixed width is kept without
 fixing it. Call sites still never set a width.
 
+Superseded 11.10.2026 by the user's decision that a menu's width never depends
+on its content. Two fixed widths by role, both values already in the system:
+`action` 240px (the hover preview's place) for menus of actions and panels,
+and `search` 300px (the former cap) for a list under a search field. A call
+site names the role through `widthRole` on the same four wrappers (type
+`FloatingMenuWidth` in `src/lib/floatingLayer.ts`, `action` by default); the
+wrapper writes it to `data-floating-menu`, and `global.css` alone maps each
+role to its width, narrowed only by the window's room. A row that does not
+fit is cut with an ellipsis. With a fixed width a filtered list cannot
+narrow, so `useHeldMenuWidth` is gone.
+
 ### 021: Feed canvas feel requires media readiness, not only DOM overscan
 
 | Approach | Problem |

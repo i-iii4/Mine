@@ -72,7 +72,7 @@ export function CardTagMenu({
           </MenuIconSlot>
           Connect
         </ContextMenuSubTrigger>
-        <ContextMenuSubContent className={COLLECTION_PICKER_CONTENT_CLASS}>
+        <ContextMenuSubContent widthRole="search" className={COLLECTION_PICKER_CONTENT_CLASS}>
           <CollectionPicker
             blockSlug={block.slug}
             selectedTags={selectedTags}
@@ -118,7 +118,9 @@ export function CardTagMenu({
           <MenuIconSlot>
             <Unlink className="size-[13px]" />
           </MenuIconSlot>
-          Disconnect from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
+          <span className="min-w-0 truncate">
+            Disconnect from &ldquo;{collectionRefLabel(currentTag)}&rdquo;
+          </span>
         </ContextMenuItem>
       )}
 

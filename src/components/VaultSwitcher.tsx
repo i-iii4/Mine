@@ -407,6 +407,7 @@ export function VaultSwitcher({
         alignOffset={menuAlignOffset}
         sideOffset={isTopChrome ? 4 : 8}
         onCloseAutoFocus={isTopChrome ? topChromeTrigger.handleCloseAutoFocus : undefined}
+        widthRole={isTopChrome ? "search" : "action"}
         className={isTopChrome ? "overflow-hidden p-0" : undefined}
         data-vault-switcher-menu={isTopChrome ? "" : undefined}
         data-vault-switcher-menu-align-offset={isTopChrome ? menuAlignOffset : undefined}
