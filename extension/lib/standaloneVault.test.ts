@@ -255,6 +255,16 @@ describe("browser executor backed by actual WASM", () => {
     expect(await folder.text("Cards/Article.md")).toContain("[[Article.png]]");
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+  it("names downloaded media by its bytes, not by the address or the declared type", async () => {
+    // A server that negotiates formats answers a `.png` URL with AVIF.
+    const avif = Uint8Array.from(Buffer.from("\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf", "latin1"));
+    const fetcher = vi.fn(async () => ({ ok: true, blob: async () => new NodeBlob([avif], { type: "image/png" }) }));
+    const image = request({ block_type: "image", body: "", image_url: "https://example.com/logo.png" });
+    expect(await vault.saveStandaloneBlock(image, { ...options(), fetch: fetcher })).toMatchObject({ ok: true });
+    expect(folder.directories.get("Media")!.files.has("Article.avif")).toBe(true);
+    expect(folder.directories.get("Media")!.files.has("Article.png")).toBe(false);
+    expect(await folder.text("Cards/Article.md")).toContain("[[Article.avif]]");
+  });
   it("lists only parsed collection documents, including a flat vault", async () => {
     folder.files.set("Note.md", new FakeFile("Plain note"));
     expect(await vault.createStandaloneChannel("Reference", null, options())).toMatchObject({ ok: true, tag: "Reference" });

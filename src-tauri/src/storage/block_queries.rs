@@ -359,6 +359,38 @@ pub fn list_slugs_by_media_file(conn: &Connection, media_file: &str) -> Result<V
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+/// What one indexed note says about files: its frontmatter file and
+/// thumbnail as the index holds them, and the body the references are read
+/// from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteFileMentions {
+    pub slug: String,
+    pub media_file: Option<String>,
+    pub thumbnail: Option<String>,
+    pub body: String,
+}
+
+/// Every indexed note but `except`, with what it says about files.
+///
+/// The delete window asks the index which notes use the media of a card
+/// (decision of 11.10.2026): the four columns are all it reads, so the
+/// answer needs neither the notes on disk nor the rest of each row.
+pub fn list_note_file_mentions(conn: &Connection, except: &str) -> Result<Vec<NoteFileMentions>> {
+    let mut stmt = conn.prepare(
+        "SELECT slug, media_file, thumbnail, COALESCE(body, '') FROM blocks
+         WHERE slug != ?1 AND slug != '' ORDER BY slug",
+    )?;
+    let rows = stmt.query_map([except], |row| {
+        Ok(NoteFileMentions {
+            slug: row.get(0)?,
+            media_file: row.get(1)?,
+            thumbnail: row.get(2)?,
+            body: row.get(3)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
 /// Return the newest previewable blocks per collection, members only
 /// ([`collection_membership_join_sql`]).
 pub fn list_preview_blocks_by_tag(

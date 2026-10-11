@@ -1,7 +1,7 @@
 // Thumbnail commands: WebView ↔ Rust bridge for the two-phase pipeline.
 //
-// Phase 2 (see SPEC_THUMBNAILS.md) runs decoded JPEG bytes back from a
-// Web Worker in the frontend into the vault cache via `save_thumb`, and
+// Phase 2 (see SPEC_THUMBNAILS.md) runs decoded JPEG or PNG bytes back from
+// a Web Worker in the frontend into the vault cache via `save_thumb`, and
 // enumerates pending upgrades at startup via `list_pending_thumb_upgrades`.
 //
 // Contract: SPEC_THUMBNAILS.md#contracts
@@ -41,7 +41,8 @@ pub struct ThumbUpgradeRequest {
     /// card needs. Empty for non-gallery blocks. Each is decoded by the
     /// browser and saved via `save_tile_poster`. Note `slug`/`media_path`
     /// above may be empty when only tile posters are missing (the block thumb
-    /// is already a real JPEG) — the frontend skips an empty `media_path`.
+    /// is already a finished picture); the frontend skips an empty
+    /// `media_path`.
     #[serde(rename = "tilePosters")]
     pub tile_posters: Vec<TilePosterUpgrade>,
 }
@@ -61,15 +62,16 @@ pub struct TilePosterUpgrade {
 
 // ─── Commands ───────────────────────────────────────────────────────────────
 
-/// Write a decoded JPEG thumbnail for `slug` into the vault cache.
+/// Write a thumbnail the browser decoded for `slug` into the vault cache.
 ///
 /// Called by the frontend after a Web Worker decodes a media file that
-/// Rust's `image` crate can't handle (VP8X WebP, HEIC, AVIF, HEVC video
+/// Rust's `image` crate can't handle (animated WebP, HEIC, AVIF, HEVC video
 /// frame, …). The worker does the actual decode via `createImageBitmap`
-/// / `<video>` + `OffscreenCanvas.convertToBlob('image/jpeg', 0.85)`,
-/// then ships the resulting bytes here.
+/// / `<video>` and encodes by content, as Rust does (rule П6): PNG for a
+/// picture that uses its alpha channel, JPEG otherwise. Either is a finished
+/// picture; neither carries the text placeholder record (rule П7).
 ///
-/// Transport: the JPEG travels as the raw IPC request body
+/// Transport: the picture travels as the raw IPC request body
 /// (`application/octet-stream`), not a JSON number array, so a 40–80 KB
 /// thumb no longer inflates ~4x into a JSON payload the main thread has to
 /// build and Rust has to parse. `slug` rides in the percent-encoded
@@ -78,7 +80,8 @@ pub struct TilePosterUpgrade {
 /// Preconditions enforced in code:
 ///   - Vault is open
 ///   - `slug` is a safe filename stem (`validate_slug`)
-///   - `bytes` starts with JPEG magic (FF D8 FF)
+///   - `bytes` is a JPEG or a PNG picture, each recognised by its own
+///     signature (`validate_picture_bytes`)
 ///
 /// Writes atomically (temp file + rename) so a concurrent read of the
 /// thumb from the sidebar never sees a half-written file. Emits
@@ -92,7 +95,7 @@ pub fn save_thumb(
     request: Request<'_>,
 ) -> Result<(), CommandError> {
     let slug = decode_header(&request, "x-slug")?;
-    let bytes = request_jpeg_bytes(&request)?;
+    let bytes = request_picture_bytes(&request)?;
     validate_thumb_write_request(&slug, &bytes)?;
 
     let vault = {
@@ -128,7 +131,7 @@ pub fn save_thumb(
         .map_err(|e| CommandError::Internal(format!("sync_thumb_metadata: {e:#}")))?;
     schedule_preview_reconcile(&app, vault.clone(), [slug.clone()], false)?;
 
-    // save_thumb always writes JPEG — never a text placeholder.
+    // save_thumb writes a picture, never a text placeholder.
     let _ = crate::commands::space_events::emit_to_vault(&app, &vault, 
         "thumb:updated",
         ThumbUpdatedPayload {
@@ -142,21 +145,30 @@ pub fn save_thumb(
 
 fn validate_thumb_write_request(slug: &str, bytes: &[u8]) -> Result<(), CommandError> {
     validate_slug(slug).map_err(|e| CommandError::Internal(e.to_string()))?;
+    validate_picture_bytes("save_thumb", bytes)
+}
 
-    if bytes.len() < 3 || bytes[0] != 0xFF || bytes[1] != 0xD8 || bytes[2] != 0xFF {
-        return Err(CommandError::Internal(
-            "save_thumb: bytes are not a JPEG (missing FF D8 FF magic)".into(),
-        ));
+/// The bytes a browser upgrade may write: a JPEG or a PNG picture, each
+/// recognised by its own signature (`mine_core::domain::media_type`). A PNG
+/// carrying the text placeholder record is refused: the browser writes
+/// pictures only, and a placeholder written here would read as one forever.
+fn validate_picture_bytes(command: &str, bytes: &[u8]) -> Result<(), CommandError> {
+    match thumbnails::preview_origin_of(bytes) {
+        Some(thumbnails::PreviewOrigin::Picture) => Ok(()),
+        Some(thumbnails::PreviewOrigin::TextPlaceholder) => Err(CommandError::Internal(format!(
+            "{command}: bytes are a text placeholder, not a picture"
+        ))),
+        None => Err(CommandError::Internal(format!(
+            "{command}: bytes are neither a JPEG nor a PNG"
+        ))),
     }
-
-    Ok(())
 }
 
 // ─── Binary IPC transport ─────────────────────────────────────────────────────
 
 /// Percent-decode an IPC metadata header value into its original Unicode string.
 ///
-/// The JPEG rides in the raw request body, so metadata (slug, poster name)
+/// The picture rides in the raw request body, so metadata (slug, poster name)
 /// travels in request headers instead. HTTP header values are ASCII-only, yet
 /// slugs are routinely Unicode (Cyrillic, symbols like `⊷`), so the frontend
 /// percent-encodes them with `encodeURIComponent`. This reverses that.
@@ -178,19 +190,19 @@ fn decode_header(request: &Request<'_>, name: &str) -> Result<String, CommandErr
     percent_decode_header(name, raw)
 }
 
-/// Extract the JPEG bytes carried as the raw IPC request body.
+/// Extract the picture bytes carried as the raw IPC request body.
 ///
 /// The desktop custom-protocol transport delivers them as `InvokeBody::Raw`
 /// (the fast path — borrowed, zero-copy). The postMessage fallback, used only
 /// when the custom protocol is unavailable (e.g. blocked by CSP), serializes
 /// the payload to a JSON number array instead; accept that too so the command
 /// stays transport-agnostic.
-fn request_jpeg_bytes<'a>(request: &'a Request<'_>) -> Result<Cow<'a, [u8]>, CommandError> {
+fn request_picture_bytes<'a>(request: &'a Request<'_>) -> Result<Cow<'a, [u8]>, CommandError> {
     match request.body() {
         InvokeBody::Raw(bytes) => Ok(Cow::Borrowed(bytes.as_slice())),
         InvokeBody::Json(value) => serde_json::from_value::<Vec<u8>>(value.clone())
             .map(Cow::Owned)
-            .map_err(|_| CommandError::Internal("request body is not a JPEG byte array".into())),
+            .map_err(|_| CommandError::Internal("request body is not a picture byte array".into())),
     }
 }
 
@@ -201,13 +213,14 @@ struct ThumbUpdatedPayload {
     is_text: bool,
 }
 
-/// Write a decoded JPEG poster for a single gallery video tile into the vault
-/// cache. `poster_name` is the tile's `preview_path` value (`<media-stem>.jpg`)
-/// — a media filename, not a block slug, so it is validated as a plain
+/// Write a poster the browser decoded for a single gallery tile into the vault
+/// cache, JPEG or PNG as for `save_thumb`. `poster_name` is the tile's
+/// `preview_path` value (`<media-stem>.jpg`): a media filename, not a block
+/// slug, so it is validated as a plain
 /// filename rather than via `validate_slug`. `slug` is the owning block, used
 /// only to emit `thumb:updated` so its card refreshes the tile.
 ///
-/// Transport mirrors `save_thumb`: the JPEG is the raw request body while
+/// Transport mirrors `save_thumb`: the picture is the raw request body while
 /// `poster_name` and `slug` ride in the percent-encoded `x-poster-name` and
 /// `x-slug` headers.
 #[tauri::command(async)]
@@ -219,7 +232,7 @@ pub fn save_tile_poster(
 ) -> Result<(), CommandError> {
     let poster_name = decode_header(&request, "x-poster-name")?;
     let slug = decode_header(&request, "x-slug")?;
-    let bytes = request_jpeg_bytes(&request)?;
+    let bytes = request_picture_bytes(&request)?;
     validate_tile_poster_request(&poster_name, &bytes)?;
     validate_slug(&slug).map_err(|error| CommandError::Internal(error.to_string()))?;
 
@@ -308,16 +321,12 @@ fn validate_tile_poster_request(poster_name: &str, bytes: &[u8]) -> Result<(), C
             "save_tile_poster: unsafe poster name {poster_name:?}"
         )));
     }
-    if bytes.len() < 3 || bytes[0] != 0xFF || bytes[1] != 0xD8 || bytes[2] != 0xFF {
-        return Err(CommandError::Internal(
-            "save_tile_poster: bytes are not a JPEG (missing FF D8 FF magic)".into(),
-        ));
-    }
-    Ok(())
+    validate_picture_bytes("save_tile_poster", bytes)
 }
 
 /// Enumerate every indexed block whose current on-disk thumb is missing or
-/// is not a real JPEG, and which references media the browser can decode.
+/// is not a finished picture, and which references media the browser can
+/// decode.
 /// Returned list is what the frontend feeds into the worker queue at startup
 /// — each entry is a pending Phase 2 upgrade.
 ///
@@ -354,7 +363,7 @@ pub async fn list_pending_thumb_upgrades(
             let mut out: Vec<ThumbUpgradeRequest> = Vec::new();
             for block in &blocks {
                 // Block <slug>.jpg upgrade — only when the current thumb is not
-                // already a real JPEG.
+                // already a finished picture.
                 let slug_upgrade = resolve_upgrade_media(
                     &vault,
                     PreviewUpgradeInput {
@@ -400,36 +409,16 @@ pub async fn list_pending_thumb_upgrades(
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+/// Whether the block's thumbnail still waits for the browser: it is missing,
+/// unreadable, or the text placeholder. A finished picture never goes back:
+/// neither the format (a transparent picture is PNG, rule П6) nor whether Rust
+/// decodes the source (the browser's own picture of an AVIF is finished) says
+/// otherwise; the preview's recorded provenance does (rule П7).
 fn needs_browser_thumb_upgrade(
     vault: &crate::domain::vault::VaultLayout,
     block: &index::PendingThumbUpgradeBlock,
 ) -> bool {
-    match thumbnails::thumb_disk_state(&vault.thumb_path(&block.slug)) {
-        thumbnails::ThumbDiskState::Jpeg => false,
-        // A PNG thumbnail is not evidence of an unfinished one. Phase 1 writes
-        // PNG whenever the picture actually uses its alpha channel (rule П6),
-        // and re-encoding that through the browser flattens the transparency
-        // onto white. Phase 2 exists for formats Rust cannot decode, so that —
-        // not the output format — is what decides.
-        thumbnails::ThumbDiskState::Png => !rust_decodable_primary_media(vault, block),
-        _ => true,
-    }
-}
-
-/// Whether the block's own picture is one Rust already decoded successfully.
-/// A block with no media of its own has nothing waiting on a decoder, but it
-/// also has no finished picture, so it stays in the queue.
-fn rust_decodable_primary_media(
-    vault: &crate::domain::vault::VaultLayout,
-    block: &index::PendingThumbUpgradeBlock,
-) -> bool {
-    let reference = block.media_file.as_deref().or(block.thumbnail.as_deref());
-    reference.is_some()
-        && thumbnails::media_reference_is_rust_decodable(
-            &mut crate::storage::media_refs::MediaResolver::new(vault),
-            &block.slug,
-            reference,
-        )
+    !thumbnails::is_finished_picture(&vault.thumb_path(&block.slug))
 }
 
 /// Resolve every derived tile still missing for `block`. Rust handles formats
@@ -451,11 +440,7 @@ fn resolve_tile_posters(
         let Some(poster_name) = tile.preview_path.clone() else {
             continue;
         };
-        let poster_path = vault.thumbs_dir().join(&poster_name);
-        if matches!(
-            thumbnails::thumb_disk_state(&poster_path),
-            thumbnails::ThumbDiskState::Jpeg
-        ) {
+        if thumbnails::is_finished_picture(&vault.thumbs_dir().join(&poster_name)) {
             continue;
         }
         if let Some(media_path) = resolve_block_reference(vault, &block.slug, &tile.source_path) {
@@ -755,6 +740,44 @@ mod tests {
         assert!(needs_browser_thumb_upgrade(&vault, &block));
     }
 
+    /// An AVIF with transparency under `.png` is decoded only by the browser,
+    /// which keeps the alpha by encoding PNG (rule П6). `save_thumb` took only
+    /// JPEG and refused it, and the upgrade queue read any PNG over media Rust
+    /// cannot decode as a placeholder, so the card stayed empty and was queued
+    /// again on every launch.
+    #[test]
+    fn a_transparent_picture_from_the_browser_is_saved_and_leaves_the_queue() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        std::fs::write(
+            dir.path().join("logo.png"),
+            b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf",
+        )
+        .unwrap();
+        thumbnails::generate_text_thumbnail(Some("logo"), "", &vault.thumb_path("logo")).unwrap();
+        let block = index::PendingThumbUpgradeBlock {
+            slug: "logo".into(),
+            media_file: Some("logo.png".into()),
+            thumbnail: None,
+            first_image: None,
+            media_urls: None,
+            preview_manifest: None,
+        };
+        assert!(needs_browser_thumb_upgrade(&vault, &block));
+
+        let picture = image::RgbaImage::from_fn(32, 24, |x, _| {
+            image::Rgba([200, 40, 90, if x < 16 { 0 } else { 255 }])
+        });
+        let mut png = std::io::Cursor::new(Vec::new());
+        picture.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let png = png.into_inner();
+
+        validate_thumb_write_request("logo", &png).expect("a PNG picture is accepted");
+        files::write_atomically(&vault.thumb_path("logo"), &png).unwrap();
+
+        assert!(!needs_browser_thumb_upgrade(&vault, &block));
+    }
+
     #[test]
     fn needs_browser_thumb_upgrade_accepts_missing_thumb() {
         let dir = tempfile::tempdir().unwrap();
@@ -857,9 +880,26 @@ mod tests {
         assert!(validate_thumb_write_request("foo\0bar", &[0xFF, 0xD8, 0xFF, 0x00]).is_err());
     }
 
+    /// JPEG and PNG are both pictures, each recognised by its own signature.
+    /// A truncated signature, another format and the text placeholder are not.
     #[test]
-    fn validate_thumb_write_request_rejects_non_jpeg_bytes() {
+    fn validate_thumb_write_request_takes_a_jpeg_or_png_picture_only() {
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13];
+        assert!(validate_thumb_write_request("valid slug", &[0xFF, 0xD8, 0xFF, 0x00]).is_ok());
+        assert!(validate_thumb_write_request("valid slug", &png).is_ok());
         assert!(validate_thumb_write_request("valid slug", &[0x89, 0x50, 0x4E]).is_err());
+        assert!(validate_thumb_write_request("valid slug", b"GIF89a\x01\x00").is_err());
+        assert!(validate_thumb_write_request(
+            "valid slug",
+            b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf"
+        )
+        .is_err());
+
+        let dir = tempfile::tempdir().unwrap();
+        let placeholder = dir.path().join("placeholder.jpg");
+        thumbnails::generate_text_thumbnail(Some("Note"), "body", &placeholder).unwrap();
+        let placeholder = std::fs::read(placeholder).unwrap();
+        assert!(validate_thumb_write_request("valid slug", &placeholder).is_err());
     }
 
     // ── header percent-decode (binary IPC metadata) ──────────────────────
@@ -926,8 +966,15 @@ mod tests {
                 "should reject {name:?}"
             );
         }
-        // valid name, but not JPEG bytes
+        // valid name, but neither a JPEG nor a PNG
         assert!(validate_tile_poster_request("x.jpg", &[0x89, 0x50, 0x4E]).is_err());
+    }
+
+    /// A transparent picture in a gallery is PNG, like any other (rule П6).
+    #[test]
+    fn validate_tile_poster_request_accepts_a_png_picture() {
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13];
+        assert!(validate_tile_poster_request("Cards/Note.preview-1.jpg", &png).is_ok());
     }
 
     #[test]
@@ -1034,6 +1081,43 @@ mod tests {
             thumbnail: None,
             first_image: None,
             media_urls: Some(r#"["clip-a.mp4"]"#.into()),
+            preview_manifest: Some(manifest),
+        };
+
+        assert!(resolve_tile_posters(&vault, &block).is_empty());
+    }
+
+    /// A gallery tile the browser wrote as PNG (a transparent picture, rule
+    /// П6) is finished; asking for it again queued it on every launch.
+    #[test]
+    fn resolve_tile_posters_skips_a_png_picture_poster() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        std::fs::write(
+            dir.path().join("logo.avif"),
+            b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf",
+        )
+        .unwrap();
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([1, 2, 3, 0]))
+            .save_with_format(vault.thumbs_dir().join("g.preview-1.jpg"), image::ImageFormat::Png)
+            .unwrap();
+
+        let manifest = serde_json::json!({
+            "kind": "composite",
+            "primary_preview_path": "g.jpg",
+            "width": 1, "height": 1,
+            "tiles": [
+                {"source_path": "logo.avif", "preview_path": "g.preview-1.jpg", "width": 8, "height": 8, "is_video": false, "is_video_poster": false}
+            ],
+            "overflow_count": 0
+        })
+        .to_string();
+        let block = index::PendingThumbUpgradeBlock {
+            slug: "g".into(),
+            media_file: None,
+            thumbnail: None,
+            first_image: None,
+            media_urls: Some(r#"["logo.avif"]"#.into()),
             preview_manifest: Some(manifest),
         };
 

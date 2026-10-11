@@ -377,5 +377,142 @@
         }
       ]
     }
+  },
+  {
+    "name": "media named by its bytes: avif served for a png",
+    "command": {
+      "op": "media_extension",
+      "head": [
+        0,
+        0,
+        0,
+        28,
+        102,
+        116,
+        121,
+        112,
+        97,
+        118,
+        105,
+        102,
+        0,
+        0,
+        0,
+        0,
+        97,
+        118,
+        105,
+        102,
+        109,
+        105,
+        102,
+        49,
+        109,
+        105,
+        97,
+        102
+      ],
+      "content_type": "image/png"
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "extension": "avif"
+      }
+    }
+  },
+  {
+    "name": "media named by the declared type when the bytes are not an image",
+    "command": {
+      "op": "media_extension",
+      "head": [
+        0,
+        0,
+        0,
+        32,
+        102,
+        116,
+        121,
+        112,
+        105,
+        115,
+        111,
+        109,
+        0,
+        0,
+        2,
+        0,
+        105,
+        115,
+        111,
+        109,
+        105,
+        115,
+        111,
+        50,
+        97,
+        118,
+        99,
+        49,
+        109,
+        112,
+        52,
+        49
+      ],
+      "content_type": "video/mp4; codecs=avc1"
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "extension": "mp4"
+      }
+    }
+  },
+  {
+    "name": "media with neither a known signature nor a known type has no extension",
+    "command": {
+      "op": "media_extension",
+      "head": [
+        0,
+        0,
+        0,
+        32,
+        102,
+        116,
+        121,
+        112,
+        105,
+        115,
+        111,
+        109,
+        0,
+        0,
+        2,
+        0,
+        105,
+        115,
+        111,
+        109,
+        105,
+        115,
+        111,
+        50,
+        97,
+        118,
+        99,
+        49,
+        109,
+        112,
+        52,
+        49
+      ],
+      "content_type": "application/octet-stream"
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "extension": null
+      }
+    }
   }
 ]

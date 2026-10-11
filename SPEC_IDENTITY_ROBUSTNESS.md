@@ -196,6 +196,7 @@ vault-relative:
 2. Identity stable для immutable контента: если `.md` файл не менялся и не был перемещён, slug гарантированно тот же при каждом scan.
 3. Rename файла без изменения body содержимого **не создаёт** новый блок в DB — существующая запись обновляется.
 4. iCloud conflict file (`<name> (conflict).md`) **не создаёт** второй блок автоматически — требуется user decision.
+   Заменено 11.10.2026: конфликт это неразрешённые версии `NSFileVersion` у одного файла, файл с любым именем индексируется как карточка ([SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md), ВК1).
 5. In-app rename через Mine — канонический smart path: `.md` файл переименовывается, Mine-owned media rename-family переименовывается, wikilinks и file references переписываются по vault.
 6. External rename через Finder / Obsidian сохраняет identity и derived artifacts, но **не** переписывает другие `.md` файлы и не переименовывает source media.
 
@@ -276,6 +277,13 @@ vault-relative:
 **Boundary:** external rename **не** переписывает другие `.md` файлы и **не** переименовывает source media. Это deliberate отличие от in-app rename.
 
 ### iCloud conflict detection
+
+> Заменено решением пользователя 11.10.2026:
+> [SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md). Конфликт определяет
+> системный механизм версий файлов (`NSFileVersion`), а не имя файла; таблица
+> хранит путь от корня с папками; прежняя версия уходит в Корзину, а не в
+> `conflicts-archive`. Ниже описана прежняя реализация, реализация замены в
+> Phase 45 ([PLAN.md](PLAN.md)).
 
 **Компоненты:**
 

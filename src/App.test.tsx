@@ -15,7 +15,7 @@ import { act, render, screen, waitFor, fireEvent, within } from "@testing-librar
 import { MemoryRouter } from "react-router";
 import { isTauri } from "@tauri-apps/api/core";
 
-import type { ChannelDto, DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, SidebarLayout, TabBootstrap, TabLocation, TabView, TaxonomySnapshot, VaultOpenResult, VaultStats } from "@/types";
+import type { ChannelDto, DeleteBlockOutcome, DeleteBlockPlan, GridSnapshot, IndexedBlock, LightBlock, SidebarLayout, TabBootstrap, TabLocation, TabView, TaxonomySnapshot, VaultOpenResult, VaultStats } from "@/types";
 import { App, AppWithVault } from "./App";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { SEARCH_OVERLAY_RECENT_LIMIT, SEARCH_OVERLAY_RESULT_LIMIT } from "@/components/SearchOverlay";
@@ -72,7 +72,7 @@ const commandMocks = vi.hoisted(() => ({
   reorderChannels: vi.fn(async (_items: { tag: string; position: number }[]) => undefined),
   renameBlockFile: vi.fn(),
   prepareDeleteBlock: vi.fn<(slug: string) => Promise<DeleteBlockPlan>>(),
-  deleteBlock: vi.fn<(slug: string, deleteUnusedMedia?: boolean) => Promise<boolean>>(),
+  deleteBlock: vi.fn<(slug: string, deleteUnusedMedia?: boolean) => Promise<DeleteBlockOutcome>>(),
   deleteBlocks: vi.fn<(slugs: string[]) => Promise<number>>(),
   mergeBlocks: vi.fn<(orderedSlugs: string[]) => Promise<unknown>>(),
   getBlock: vi.fn(),
@@ -655,7 +655,7 @@ describe("AppWithVault", () => {
       unused_media: [],
       shared_media: [],
     });
-    commandMocks.deleteBlock.mockResolvedValue(true);
+    commandMocks.deleteBlock.mockResolvedValue({ removed: true, kept_media: [] });
     commandMocks.deleteBlocks.mockResolvedValue(1);
     commandMocks.mergeBlocks.mockResolvedValue({});
     commandMocks.getBlock.mockImplementation(async (slug: string) => indexedBlock(1, slug, slug));
@@ -3421,6 +3421,88 @@ describe("AppWithVault", () => {
     });
     expect(document.querySelector("[data-detail-root]")).not.toBeNull();
     expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+  });
+
+  // User's decision of 11.10.2026: the window waits for its plan and opens at
+  // its final width, never as a narrow "checking" window that widens.
+  it("opens the delete window once its plan is here, at its final width", async () => {
+    let resolvePlan: (plan: DeleteBlockPlan) => void = () => {};
+    commandMocks.prepareDeleteBlock.mockImplementation(
+      () => new Promise<DeleteBlockPlan>((resolve) => {
+        resolvePlan = resolve;
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete detail" }));
+    await waitFor(() => {
+      expect(commandMocks.prepareDeleteBlock).toHaveBeenCalledWith("alpha-block");
+    });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    await act(async () => {
+      resolvePlan({
+        slug: "alpha-block",
+        markdown_file: "alpha-block.md",
+        unused_media: [{ path: "photo.png", file_name: "photo.png", kind: "image", referenced_by: [] }],
+        shared_media: [],
+      });
+    });
+
+    expect(await screen.findByRole("alertdialog")).toHaveAttribute("data-modal-width", "content");
+  });
+
+  // Decision of 11.10.2026: Delete checks the files against the notes on
+  // disk; a file the window offered that another note uses stays, and a
+  // notice says so. A file the window already said would stay is no news.
+  it("tells which offered file Delete kept because another note uses it", async () => {
+    const photo = { path: "Media/photo.png", file_name: "photo.png", kind: "image" as const, referenced_by: [] };
+    const lone = { path: "Media/lone.png", file_name: "lone.png", kind: "image" as const, referenced_by: [] };
+    const shared = { path: "Media/shared.png", file_name: "shared.png", kind: "image" as const, referenced_by: ["beta-block"] };
+    commandMocks.prepareDeleteBlock.mockResolvedValue({
+      slug: "alpha-block",
+      markdown_file: "alpha-block.md",
+      unused_media: [photo, lone],
+      shared_media: [shared],
+    });
+    commandMocks.deleteBlock.mockResolvedValue({
+      removed: true,
+      kept_media: [shared, { ...photo, referenced_by: ["Cards/Late"] }],
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete detail" }));
+    expect(await screen.findByText("Delete element?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(commandMocks.deleteBlock).toHaveBeenCalledWith("alpha-block", true);
+    });
+    expect(await screen.findByText("Media kept")).toBeInTheDocument();
+    expect(document.querySelector("[data-delete-kept-media]")).toHaveTextContent(
+      "photo.png is used by another element and stayed in the space.",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText("Media kept")).toBeNull();
   });
 
   it("updates the open detail when block:renamed arrives", async () => {

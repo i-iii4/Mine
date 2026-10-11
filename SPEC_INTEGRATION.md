@@ -315,7 +315,7 @@ enum CommandError {
 #[tauri::command] delete_text_selection(state, params: DeleteTextSelectionParams) -> Result<IndexedBlock, TextSelectionExtractError>
 #[tauri::command] extract_text_selection(state, ...) -> Result<IndexedBlock, TextSelectionExtractError>
 #[tauri::command] prepare_delete_block(state, slug: String) -> Result<DeleteBlockPlan, CommandError>
-#[tauri::command] delete_block(state, slug: String, delete_unused_media: Option<bool>) -> Result<bool, CommandError>
+#[tauri::command] delete_block(state, slug: String, delete_unused_media: Option<bool>) -> Result<DeleteBlockOutcome, CommandError>
 #[tauri::command] prepare_delete_blocks(state, slugs: Vec<String>) -> Result<DeleteBlocksPlan, CommandError>
 #[tauri::command] delete_blocks(state, slugs: Vec<String>, delete_unused_media: bool) -> Result<bool, CommandError>
 #[tauri::command] merge_blocks(state, ordered_slugs: Vec<String>) -> Result<MergeBlocksResult, MergeBlocksError>
@@ -433,12 +433,19 @@ targets:
 
 ### Поведение delete_block
 
-1. `prepare_delete_block` строит `DeleteBlockPlan`: `.md`, media текущего блока, media, используемые другими блоками, и unused media.
-2. Media refs резолвятся через общий backend resolver (`frontmatter.file`, `thumbnail`, `![[...]]`, `![](...)`, nested/relative/Obsidian basename lookup).
-3. `delete_block(..., delete_unused_media=true)` удаляет `.md` и все unused media из плана; shared media не удаляются.
-4. `delete_block(..., delete_unused_media=false)` удаляет только `.md` и derived artifacts.
-5. Legacy-вызов без `delete_unused_media` сохраняет старый режим: удаляет `.md` и только slug-owned primary media.
-6. Индекс удаляется только после успешного file cleanup; если удаление файлов упало, карточка не получает ложный successful delete.
+Решение пользователя 11.10.2026: окно удаления открывается сразу и сразу нужного размера, без ожидания и без скачка ширины. Окну хватает индекса, диск проверяется в момент удаления.
+
+1. `prepare_delete_block` строит `DeleteBlockPlan` только из индекса: строка карточки (`get_block`) и для каждой другой заметки её `media_file`, `thumbnail` и тело (`block_queries::list_note_file_mentions`). Заметки с диска не читаются (`build_delete_block_plan_from_index`). Медиа карточки и ссылки других заметок разрешает один `MediaResolver`, поэтому список файлов пространства обходится не больше одного раза. Ссылки заметки разрешаются, только если среди них есть имя одного из файлов карточки (та же сверка имён, что у `media_users_on_disk`).
+2. Media refs резолвятся через общий backend resolver (`frontmatter.file`, `thumbnail`, `![[...]]`, `![](...)`, nested/relative/Obsidian basename lookup). Заметка пользуется файлом, если на него указывает любая форма ссылки, которую читает Obsidian (`iter_file_references`, SPEC_AUDIT_FIXES.md, Г1.1).
+3. Фронтенд открывает окно, когда пришёл план или ошибка; до этого окна нет. Ширина задаётся сразу: `content`, если в плане есть медиа к удалению, иначе `question`. Закрытое окно хранит свой план до следующего запроса и уходит в той же ширине.
+4. `delete_block(..., delete_unused_media=true)` строит план заново (`build_delete_block_plan`): план из индекса, затем каждый файл, который индекс считает неиспользуемым, сверяется с заметками на диске (`media_users_on_disk`). Файл, которым пользуется другая заметка (индекс отстал), не удаляется и переходит в shared media. Удаляются `.md` и только оставшиеся unused media.
+5. `delete_block` возвращает `DeleteBlockOutcome { removed, kept_media }`. `kept_media` перечисляет медиа карточки, которые остались, потому что ими пользуется другая заметка; список заполняется только при `delete_unused_media=true`.
+6. Фронтенд сверяет `kept_media` с файлами, которые окно предлагало удалить (`unused_media` плана окна). Если такой файл остался, лента показывает уведомление `NotificationCard` в правом нижнем углу, как остальные уведомления ленты (DESIGN_SYSTEM.md, «Уведомления»): заголовок `Media kept`, текст `photo.jpg is used by another element and stayed in the space.` для одного файла и `N media files are used by other elements and stayed in the space.` для нескольких. Уведомление закрывается кнопкой и сбрасывается при новом запросе удаления или смене пространства. Файлы, о которых окно уже сказало, что они останутся, в уведомлении не упоминаются.
+7. `delete_block(..., delete_unused_media=false)` удаляет только `.md` и derived artifacts.
+8. Legacy-вызов без `delete_unused_media` сохраняет старый режим: удаляет `.md` и только slug-owned primary media.
+9. Индекс удаляется только после успешного file cleanup; если удаление файлов упало, карточка не получает ложный successful delete.
+
+Проверки: `the_delete_window_plan_comes_from_the_index_alone` и `delete_keeps_a_file_the_stale_index_called_unused_and_names_it` в `commands/blocks.rs`; открытие окна и уведомление в `DeleteBlockDialog.test.tsx` и `App.test.tsx`.
 
 ### Поведение batch delete
 

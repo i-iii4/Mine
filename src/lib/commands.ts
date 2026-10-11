@@ -24,6 +24,7 @@ import type {
   GraphOptions,
   GraphScope,
   LightBlock,
+  DeleteBlockOutcome,
   DeleteBlockPlan,
   RenameBlockError,
   RenameBlockResult,
@@ -440,14 +441,17 @@ export const checkBlockRename = async (
   }
 };
 
+/** The delete window's plan, read from the index alone (11.10.2026). */
 export const prepareDeleteBlock = (slug: string) =>
   invoke<DeleteBlockPlan>("prepare_delete_block", { slug });
 
 /** Delete the selection atomically, retaining all source media. */
 export const deleteBlocks = (slugs: string[]) => invoke<number>("delete_blocks", { slugs });
 
+/** Delete one card; with its media, the files are checked against the notes
+ *  on disk first, and `kept_media` names the ones another note uses. */
 export const deleteBlock = (slug: string, delete_unused_media?: boolean) =>
-  invoke<boolean>(
+  invoke<DeleteBlockOutcome>(
     "delete_block",
     delete_unused_media === undefined ? { slug } : { slug, delete_unused_media },
   );

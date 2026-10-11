@@ -159,10 +159,13 @@
     try { await writer.write(data); await writer.close(); }
     catch (failure) { try { await writer.abort(); } catch { /* already closed/disconnected */ } throw failure; }
   }
-  function mediaExtension(type) {
-    const extension = { "image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp",
-      "image/avif": "avif", "image/heic": "heic", "video/mp4": "mp4", "video/webm": "webm",
-    }[String(type).split(";")[0].trim().toLowerCase()];
+  // The save core names the file by its bytes, and by the type the server
+  // declared only when the bytes are not a picture it recognises: a server
+  // that negotiates formats answers a `.png` URL with AVIF (SPEC_SAVE_CORE.md,
+  // «Имя медиафайла по содержимому»). 64 bytes is the core's IMAGE_HEAD_LEN.
+  async function mediaExtension(blob) {
+    const head = Array.from(new Uint8Array(await blob.slice(0, 64).arrayBuffer()));
+    const { extension } = await core({ op: "media_extension", head, content_type: blob.type || null });
     if (!extension) throw error("unsupported_media", "Unsupported downloaded media type");
     return extension;
   }
@@ -173,7 +176,7 @@
     if (!response.ok) throw error("download_failed", `Image download failed: HTTP ${response.status}`);
     const blob = await response.blob();
     if (!blob.size) throw error("missing_media", "Downloaded media is empty");
-    return { blob, extension: mediaExtension(blob.type), hash: await hash(blob) };
+    return { blob, extension: await mediaExtension(blob), hash: await hash(blob) };
   }
   // A collection answers with the reference cards name it by, not with the
   // path of its page: `Collections/Reference` tagged on a card splits one

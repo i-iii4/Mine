@@ -2,7 +2,11 @@
 
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
-Status: implemented.
+Status: implemented, кроме полного группового удаления. Временная версия
+удаляет только `.md` выбранных карточек и никогда не трогает медиа; решение
+пользователя 11.10.2026 заменить её полной версией из раздела «Batch Delete»
+(одно окно, поведение как у удаления одного элемента), реализация в Phase 45
+([PLAN.md](PLAN.md), этапы 45.7 и 45.8).
 
 ## Goal
 
@@ -169,8 +173,10 @@ When Grid keyboard focus is active:
 - `Shift+Enter` toggles the focused committed card in `selectedSlugs`;
 - after `selectedSlugs.size > 0`, plain `Enter` also toggles the focused card
   instead of opening Detail;
-- the macOS `Delete` key (`⌫`, DOM `Backspace`) opens the existing batch delete
-  confirmation for the whole selected set; it never deletes without confirmation;
+- the macOS `Delete` key (`⌫`, DOM `Backspace`) opens the batch delete window
+  for the whole selected set, with one selected element the element's own
+  `Delete element?` (раздел «Batch Delete», «Точки входа»); it never deletes
+  without confirmation;
 - arrow keys continue to move Grid focus by `layout.positions`;
 - `Cmd+K` opens a contextual batch menu anchored to the focused card's
   top-right overflow action.
@@ -195,7 +201,7 @@ count header (`1 карточка`, `2 карточки`, `5 карточек`) 
   cards from that current collection;
 - `Merge` appears only when at least two cards are selected and opens the
   reorder-first merge dialog from [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md);
-- `Delete` opens the existing batch delete confirmation.
+- `Delete` calls `requestDeleteSelection()` (раздел «Batch Delete», «Точки входа»).
 
 `Connect` (`Plus`), `Disconnect` (`Unlink`) and `Delete` (`Trash2`) carry icons
 in the batch menu, matching the card menus; `Merge` is a text command with an
@@ -223,8 +229,9 @@ act on less than the user sees selected.
   selection menu rather than disabled: each addresses exactly one file or one
   URL, so on a selection they would either pick a card silently or open a window
   per card;
-- the delete confirmation is the shared selection dialog and is mounted by the
-  grid, not by the menu content, which unmounts as soon as the menu closes.
+- the delete confirmation is the one batch delete window mounted by the grid,
+  not by the menu content, which unmounts as soon as the menu closes; the
+  focused-card batch menu (`Cmd+K`) mounts no window of its own either.
 
 Both entry points read their state through one hook, so the two menus cannot
 drift apart in what a batch command does.
@@ -430,7 +437,9 @@ Ownership and mechanics:
   selected card;
 - hidden while a block drag is active, so the stack preview/drop operation is
   the only primary drag affordance;
-- the action error renders as a single line anchored under the row;
+- the action error renders as a single line anchored under the row; ошибка
+  удаления сюда не попадает: её показывает окно удаления (раздел «Batch
+  Delete»), потому что строку под рядом закрывает затемнение окна;
 - при сужении ряда первым обрезается счётчик, команды сохраняют размер; ряд
   прокручивается по горизонтали, только когда не помещаются сами команды.
 
@@ -461,7 +470,7 @@ colors). `Connect`, `Disconnect` and `Merge` use `variant="default"`
 | `Connect` | always enabled when at least one element is selected | Opens batch collection picker for selected elements. |
 | `Disconnect` | visible only when `currentTag` is present | Removes all selected elements from the current collection. |
 | `Merge` | visible only when at least two elements are selected | Opens the merge reorder dialog, then one backend merge command creates one new element and removes the selected sources. |
-| `Delete` | always enabled when at least one element is selected | Opens batch destructive confirmation before deleting selected elements. |
+| `Delete` | always enabled when at least one element is selected | При двух и более выделенных открывает одно окно группового удаления (раздел «Batch Delete»); при одном открывает окно `Delete element?` этого элемента. |
 
 The bottom action bar narrows to the selection's commands at the same time:
 navigation and `Focus` entries leave, a pressable `Clear selection esc`
@@ -469,54 +478,153 @@ arrives ([SPEC_KEYBOARD.md](SPEC_KEYBOARD.md)).
 
 ## Batch Delete
 
-Batch Delete must match the single-card delete model: plan first, then commit.
-It must not be implemented as a loop over `deleteBlock(slug, false)` because
-that makes media behavior different from ordinary card deletion and cannot
-detect media that becomes unused only after the whole selected set is removed.
+Решение пользователя 11.10.2026: полная версия вместо временной, одно окно,
+поведение как у удаления одного элемента (`Delete element?`,
+[SPEC_INTEGRATION.md](SPEC_INTEGRATION.md), «Поведение delete_block»).
+Реализация в Phase 45 ([PLAN.md](PLAN.md), этапы 45.7 и 45.8). Тексты окна в
+[DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), «Окна», «Тексты окон».
 
-Backend owns the aggregate plan:
+### Что было (проверка по коду 11.10.2026)
 
-```ts
-type DeleteBlocksPlan = {
-  slugs: string[];
-  markdown_files: string[];
-  unused_media: DeleteBlockMedia[];
-  shared_media: DeleteBlockMedia[];
-};
+- `delete_blocks(slugs)` в `src-tauri/src/commands/blocks.rs` удаляет только
+  `.md` выбранных карточек и никогда не трогает медиа, а удаление одного
+  элемента предлагает удалить медиа, которыми пользуется только он.
+- Одна выделенная карточка по Backspace идёт групповым путём и теряет это
+  предложение.
+- Окно существует в трёх экземплярах: `DeleteSelectedCardsDialog` у Grid (меню
+  правого щелчка и Backspace), он же в `GroupSelectionCardMenu` (меню ⌘K) и
+  отдельная копия разметки в `GroupSelectionCommands` (кнопка ряда команд).
+  Копия в ряду при сбое остаётся открытой, а ошибку пишет строкой под рядом,
+  за затемнением окна.
+
+### Точки входа
+
+Кнопка `Delete` ряда команд, пункт `Delete` меню ⌘K, пункт `Delete` меню
+правого щелчка и Backspace (`delete-selection`) вызывают одну функцию Grid
+`requestDeleteSelection()`:
+
+- выделен один элемент: вызывается `onRequestDelete(slug)`, то есть окно
+  `Delete element?` с его планом, как у пункта `Delete` самой карточки.
+  Выделение очищается само, когда удалённая карточка уходит из ленты
+  (правило «disappearing selected blocks are removed from selection»);
+- выделено два и более: открывается окно группового удаления.
+
+Окно группового удаления одно: `DeleteSelectedCardsDialog`, один экземпляр у
+Grid. Своё окно в `GroupSelectionCommands` и экземпляр в
+`GroupSelectionCardMenu` удаляются; меню и ряд только вызывают
+`requestDeleteSelection()`.
+
+### План
+
+Бэкенд строит общий план всего выделения, как `prepare_delete_block` для
+одного элемента: из индекса, без чтения заметок с диска (решение пользователя
+11.10.2026: окно ждёт план и открывается сразу в своей ширине).
+
+```rust
+#[derive(Serialize, specta::Type)]
+pub struct DeleteBlocksPlan {
+    /// Выбранные карточки, которые есть в индексе, по алфавиту, без повторов.
+    pub slugs: Vec<String>,
+    /// `{slug}.md` в том же порядке.
+    pub markdown_files: Vec<String>,
+    /// Медиа, которыми после удаления всего выделения не пользуется ни одна
+    /// заметка; каждый файл один раз; `referenced_by` это выбранные
+    /// карточки, которые им пользуются.
+    pub unused_media: Vec<DeleteBlockMedia>,
+    /// Медиа выбранных карточек, которыми пользуется хотя бы одна
+    /// невыбранная заметка; `referenced_by` это невыбранные заметки.
+    pub shared_media: Vec<DeleteBlockMedia>,
+}
+
+#[derive(Serialize, specta::Type)]
+pub struct DeleteBlocksOutcome {
+    /// Сколько строк индекса ушло вместе с файлами.
+    pub removed: usize,
+    /// Предложенные окном медиа, которые удаление оставило: по сверке с
+    /// диском ими пользуется невыбранная заметка. Заполняется только при
+    /// `delete_unused_media = true`.
+    pub kept_media: Vec<DeleteBlockMedia>,
+}
 ```
 
-`unused_media` means media that will have no remaining parseable references
-after deleting all selected cards. `shared_media` means media referenced by at
-least one non-selected card/note and must never be deleted by this batch action.
+`prepare_delete_blocks(slugs) -> Result<DeleteBlocksPlan, CommandError>`:
 
-Examples:
+1. Медиа каждой выбранной карточки собираются тем же сборщиком, что у одного
+   элемента (`collect_delete_media_for_block`), и объединяются по абсолютному
+   пути.
+2. Кто ещё пользуется файлом, читается из индекса так же, как у одного
+   элемента (`list_note_file_mentions`), но исключаются все выбранные
+   карточки, а не одна: функция принимает множество исключаемых имён.
+3. Выбранной карточки нет в индексе: она не попадает в `slugs` (её уже
+   удалили); отказа нет. Окно считает элементы по `plan.slugs.length`.
 
-- one selected card owns one image and no other note references it ->
-  `unused_media` includes that image;
-- two selected cards both reference the same image and no unselected note
-  references it -> `unused_media` includes that image once;
-- a selected card and an unselected article both reference the same image ->
-  `shared_media` includes that image and the image stays on disk.
+Примеры:
 
-The dialog copy follows the single delete confirmation semantics:
+- одна выбранная карточка, её картинкой больше никто не пользуется: картинка
+  в `unused_media`;
+- две выбранные карточки с одной картинкой, невыбранные ею не пользуются:
+  картинка в `unused_media` один раз;
+- выбранная карточка и невыбранная статья с одной картинкой: картинка в
+  `shared_media` и остаётся на диске.
 
-- title: `Delete selected cards?`;
-- description always names the selected-card count;
-- when `unused_media.length === 0`, only one destructive commit action is
-  needed and the dialog states that media files stay in the vault;
-- when `unused_media.length > 0`, the dialog shows compact media previews and
-  offers both `Keep media` and `Delete media`;
-- `Keep media` deletes selected `.md` cards and derived artifacts only;
-- `Delete media` deletes selected `.md` cards plus eligible `unused_media`;
-- `shared_media` is never offered for deletion, but may be summarized as kept
-  when useful for clarity.
+### Удаление
 
-The commit path must be one backend batch command, not N independent frontend
-calls. The backend command receives the selected slugs plus
-`delete_unused_media`, rebuilds or validates the plan at commit time, deletes
-only eligible media, refreshes affected index rows/previews, and returns one
-success/failure result. After success, Grid clears selection and preserves the
-viewport using the existing delete scroll-anchor contract.
+`delete_blocks(slugs, delete_unused_media: bool) -> Result<DeleteBlocksOutcome,
+CommandError>`, одна команда вне потока интерфейса:
+
+1. План строится заново из индекса по тем же правилам; медиа, которые он
+   называет неиспользуемыми, сверяются с заметками на диске
+   (`media_users_on_disk`, пропуская все выбранные `.md`); файл, которым
+   пользуется заметка на диске, переходит в `kept_media` и остаётся. Так же
+   поступает удаление одного элемента (`build_delete_block_plan`).
+2. `delete_unused_media = false`: медиа не трогаются, разбор ссылок всего
+   пространства не выполняется (нынешний быстрый путь
+   `delete_blocks_inner`).
+3. Все `.md` выбранных карточек и подходящие медиа уходят в Корзину одной
+   `StagedSourceMutation` с подавлением наблюдателя; строки индекса
+   удаляются в той же фиксации. Сбой откатывает пакет целиком: ни один файл
+   не тронут.
+4. После фиксации убираются превью и звук статей удалённых карточек.
+5. Удаление одного элемента с `Keep media` по-прежнему идёт через
+   `delete_blocks_inner` с одним именем и `delete_unused_media = false`.
+
+### Окно
+
+`DeleteSelectedCardsDialog` повторяет `DeleteBlockDialog` и берёт у него части:
+сетку превью медиа (`DeleteMediaPreviewGrid`; постер видео берётся у первой
+карточки из `referenced_by`), счёт файлов и уведомление `Media kept`
+(`DeleteKeptMediaNotice`, `keptOfferedMedia`). Общие части выносятся в один
+модуль, копий разметки нет.
+
+- Заголовок `Delete selected elements?`.
+- Окно ждёт план и открывается сразу в своей ширине: без медиа к удалению
+  `question`, с ними `content`; состояния «проверяем» нет.
+- Описание по плану, формулировки в DESIGN_SYSTEM.md, «Тексты окон». Ошибка
+  плана: `Could not prepare delete plan: {error}`, `Delete` недоступна.
+- Кнопки: `Cancel`; `Keep media` (`secondary`, только при `unused_media`);
+  `Delete` (`destructive`). `Delete` удаляет карточки и `unused_media`,
+  `Keep media` только карточки. `shared_media` к удалению не предлагается
+  никогда.
+- После нажатия окно остаётся открытым до ответа команды, нажатая кнопка
+  показывает `Deleting…`, остальные недоступны. Групповое удаление одним
+  атомарным пакетом может идти долго, поэтому ход держит окно; в этом его
+  отличие от `Delete element?`, которое закрывается сразу.
+- Сбой: окно остаётся открытым, ошибка строкой `MODAL_ERROR_CLASS` над
+  кнопками, ничего не удалено, выделение сохраняется.
+- Успех: окно закрывается, выделение очищается, лента сохраняет место по
+  якорю (ниже). Непустой `kept_media` показывает уведомление `Media kept`
+  этой вкладки, как после удаления одного элемента.
+
+### Место ленты после удаления
+
+After a successful delete, Grid must preserve the user's approximate viewport
+instead of keeping the old absolute `scrollTop`. The source of truth is the
+previous `layout.positions`: Grid captures a surviving card near the viewport
+top before the block list changes, carries that anchor across the new layout
+generation, and restores the same viewport offset only after the anchor card is
+committed in the reflowed masonry layout. Pending delete anchoring suppresses
+stale keyboard-focus autoscroll, so an old focused card cannot pull the feed
+away from the user's current reading position.
 
 ## Batch Connect
 
@@ -546,25 +654,6 @@ The row label/state update is local and optimistic. The picker must switch
 starts; persistence runs after the UI update, and App refreshes grid/taxonomy/
 previews through the coalesced refresh queue instead of blocking the open menu
 with `reloadAllSnapshots()`.
-
-## Batch Delete
-
-Batch Delete must reuse the existing destructive confirmation principles:
-
-- show exact selected count;
-- name the action as deleting cards, not media assets;
-- do not delete unrelated media unless the existing card-delete flow already
-  owns that behavior for each selected block;
-- clear selection only after successful completion.
-
-After a successful delete, Grid must preserve the user's approximate viewport
-instead of keeping the old absolute `scrollTop`. The source of truth is the
-previous `layout.positions`: Grid captures a surviving card near the viewport
-top before the block list changes, carries that anchor across the new layout
-generation, and restores the same viewport offset only after the anchor card is
-committed in the reflowed masonry layout. Pending delete anchoring suppresses
-stale keyboard-focus autoscroll, so an old focused card cannot pull the feed
-away from the user's current reading position.
 
 ## Collection-Scoped Disconnect
 
@@ -612,7 +701,31 @@ Frontend tests must cover:
   two or more cards are selected;
 - `Merge` opens the reorder-first merge dialog from
   [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md);
-- `Delete` opens batch confirmation;
+- кнопка ряда, пункт меню ⌘K, пункт меню правого щелчка и Backspace открывают
+  один и тот же экземпляр `DeleteSelectedCardsDialog`; при одном выделенном
+  элементе все четыре открывают `Delete element?` этого элемента;
+- окно без медиа к удалению: ширина `question`, кнопки `Cancel` и `Delete`;
+  с медиа: ширина `content`, превью, `Keep media`; общие медиа к удалению не
+  предлагаются;
+- `Delete` передаёт `deleteUnusedMedia = true`, `Keep media` передаёт `false`;
+- пока команда идёт, окно открыто и показывает `Deleting…`; сбой оставляет окно
+  открытым с ошибкой в окне и выделение целым;
+- непустой `kept_media` показывает уведомление `Media kept`.
+
+Rust tests (`commands/blocks.rs`) must cover `prepare_delete_blocks` and
+`delete_blocks`:
+
+- медиа, общее только внутри выделения, попадает в `unused_media` один раз и
+  удаляется при `delete_unused_media = true`;
+- медиа, которым пользуется невыбранная заметка в индексе, попадает в
+  `shared_media` и остаётся;
+- медиа, которым по индексу никто не пользуется, а по диску пользуется
+  невыбранная заметка, остаётся и возвращается в `kept_media`;
+- `delete_unused_media = false` оставляет все медиа;
+- выбранной карточки нет в индексе: план её пропускает, удаление остальных
+  проходит;
+- сбой одного файла откатывает пакет целиком;
+- раскладка `Cards/` и `Media/` и плоское пространство.
 - deleting cards preserves the viewport anchor after masonry reflow, including
   when removed cards are scattered above and below the current viewport;
 - stale keyboard focus does not override delete scroll anchoring;

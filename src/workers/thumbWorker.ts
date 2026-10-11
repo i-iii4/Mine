@@ -4,7 +4,7 @@
 //
 // Phase 2 of the two-phase thumbnail pipeline (SPEC_THUMBNAILS.md). Runs
 // off-main-thread so sidebar scroll and grid re-layout stay at 60+ FPS
-// while hundreds of placeholder thumbs get upgraded to real JPEGs in
+// while hundreds of placeholder thumbs get upgraded to real pictures in
 // the background.
 //
 // Protocol:
@@ -13,9 +13,9 @@
 //   worker → main: { id, slug, ok: true,  bytes: ArrayBuffer }
 //                  { id, slug, ok: false, error: string }
 //
-// The decoded JPEG bytes are sent back via a transfer list so no copy
-// crosses the thread boundary. Main thread then ships them to Rust via
-// the `save_thumb` IPC command.
+// The encoded picture (JPEG, or PNG when it uses alpha) is sent back via a
+// transfer list so no copy crosses the thread boundary. Main thread then
+// ships it to Rust via the `save_thumb` IPC command.
 //
 // Concurrency: FIFO queue, four parallel in-flight requests, each limited in
 // time (see thumbQueue.ts). Main thread can drain the queue and abort

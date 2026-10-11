@@ -28,12 +28,11 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
+use mine_core::domain::media_type::extension_for_content_type;
 use mine_core::links::LinkIndex;
 use mine_core::save::select_unique_file_stem;
 use mine_lib::domain::vault::VaultLayout;
-use mine_lib::markdown_images::{
-    build_inline_wikilink, media_extension_for_content_type, replaceable_body_images, BodyImage,
-};
+use mine_lib::markdown_images::{build_inline_wikilink, replaceable_body_images, BodyImage};
 use mine_lib::net::{download_validated_to_file, fetch_validated_head};
 use mine_lib::storage::files;
 
@@ -190,7 +189,7 @@ fn run(vault_path: &Path, apply: bool, remote: &dyn Remote) -> anyhow::Result<Re
             let content_type = remote.content_type(url);
             let Some(ext) = content_type
                 .as_deref()
-                .and_then(media_extension_for_content_type)
+                .and_then(extension_for_content_type)
             else {
                 report.skipped += 1;
                 if !apply {

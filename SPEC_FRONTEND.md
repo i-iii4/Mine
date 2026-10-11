@@ -186,7 +186,7 @@ getBlock(slug: string): Promise<IndexedBlock | null>
 createBlock(params: CreateBlockParams): Promise<IndexedBlock>
 extractTextSelection(params: ExtractTextSelectionParams): Promise<IndexedBlock>
 prepareDeleteBlock(slug: string): Promise<DeleteBlockPlan>
-deleteBlock(slug: string, deleteUnusedMedia?: boolean): Promise<boolean>
+deleteBlock(slug: string, deleteUnusedMedia?: boolean): Promise<DeleteBlockOutcome>
 prepareDeleteBlocks(slugs: string[]): Promise<DeleteBlocksPlan>
 deleteBlocks(slugs: string[], deleteUnusedMedia: boolean): Promise<boolean>
 mergeBlocks(orderedSlugs: string[]): Promise<MergeBlocksResult>
@@ -223,6 +223,7 @@ getVaultStats(currentCollection?: string | null): Promise<VaultStats>
 ## Delete confirmation
 
 - Grid and Detail delete entry points open the same App-level delete dialog through `prepareDeleteBlock` before committing.
+- Решение пользователя 11.10.2026 ([SPEC_INTEGRATION.md](SPEC_INTEGRATION.md), «Поведение delete_block»): план окна приходит из индекса, окно открывается, когда план готов, и сразу в своей ширине. Файл, который окно предлагало удалить, а удаление оставило по сверке с диском, называет уведомление `Media kept`.
 - If the plan has `unused_media`, the dialog shows compact previews, uses the card thumbnail/poster for video previews, and offers both `Keep media` and `Delete`.
 - `Keep media` commits with `deleteUnusedMedia=false`: only the `.md` card and derived artifacts are removed.
 - Media referenced by other cards is never offered for deletion and remains on disk.

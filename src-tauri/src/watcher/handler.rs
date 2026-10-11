@@ -332,11 +332,11 @@ fn spawn_thumb_jobs_worker(
                                 ),
                             }
                         }
+                        // Only the text placeholder waits for the browser;
+                        // a PNG may be a finished transparent picture (П7).
                         if is_active_vault()
-                            && matches!(
-                                thumbnails::thumb_disk_state(&thumb_path),
-                                thumbnails::ThumbDiskState::Png
-                            )
+                            && thumbnails::preview_origin(&thumb_path)
+                                == Some(thumbnails::PreviewOrigin::TextPlaceholder)
                         {
                             if let Some(ref app) = app {
                                 let upgrade = metadata_conn.as_ref().and_then(|conn| {
@@ -522,10 +522,11 @@ pub fn index_md_file(
         if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path, &job.block, vault) {
             let _ =
                 index::sync_thumb_metadata(conn, &job.block.slug, &thumb_path, Some(vault.root()));
-            if matches!(
-                thumbnails::thumb_disk_state(&thumb_path),
-                thumbnails::ThumbDiskState::Png
-            ) {
+            // Only the text placeholder waits for the browser; a PNG may be a
+            // finished transparent picture (SPEC_THUMBNAILS.md, П7).
+            if thumbnails::preview_origin(&thumb_path)
+                == Some(thumbnails::PreviewOrigin::TextPlaceholder)
+            {
                 if let Some(app) = app {
                     let upgrade = index::get_pending_thumb_upgrade_block(conn, &job.block.slug)
                         .ok()

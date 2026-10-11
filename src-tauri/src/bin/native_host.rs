@@ -24,9 +24,8 @@ use mine_lib::domain::block::{parse_markdown_document, Block, BlockType, DateTim
 use mine_lib::domain::channel::Channel;
 use mine_lib::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use mine_lib::domain::vault::VaultLayout;
-use mine_lib::markdown_images::{
-    build_inline_wikilink, media_extension_for_content_type, replaceable_body_images,
-};
+use mine_core::domain::media_type::{extension_for_content_type, stored_media_extension};
+use mine_lib::markdown_images::{build_inline_wikilink, replaceable_body_images};
 use mine_lib::net;
 use mine_lib::space_registry::{CloudRead, IdentityUnreadable};
 use mine_lib::storage::{clipper_uploads, db, file_identity, files, index, save_operations, thumbnails};
@@ -1777,19 +1776,32 @@ fn handle_get_save_operation(vault: &VaultLayout, params: serde_json::Value) {
     });
 }
 
-fn dedupe_prepared_media_ref(
+/// Settle the final name of a prepared media file in staging: the extension
+/// its bytes call for, and a stem free across the source vault and the rest
+/// of staging.
+///
+/// The extension comes from the save core (`stored_media_extension`,
+/// SPEC_SAVE_CORE.md, «Имя медиафайла по содержимому»), the same rule the
+/// browser executor applies: a server that negotiates formats sends AVIF for
+/// a URL ending in `.png`, and a file named by the address then lies about
+/// what it holds. The declared extension (from the address, the data URL or
+/// the upload) stays when the bytes agree or say nothing.
+fn settle_prepared_media_name(
     source_vault: &VaultLayout,
     staging: &VaultLayout,
     reference: &mut Option<String>,
 ) -> anyhow::Result<()> {
     let Some(current) = reference.as_ref() else { return Ok(()); };
     let filename = current.rsplit('/').next().unwrap_or(current);
-    let (stem, extension) = filename.rsplit_once('.')
+    let (stem, declared) = filename.rsplit_once('.')
         .ok_or_else(|| anyhow::anyhow!("prepared media has no extension"))?;
+    let head = files::read_media_head(&staging.root().join(current))?;
+    let extension = stored_media_extension(&head, Some(declared))
+        .unwrap_or_else(|| declared.to_string());
     let mut occupied = files::scan_vault_file_paths(source_vault)?;
     occupied.extend(files::scan_vault_file_paths(staging)?.into_iter().filter(|path| path != current));
-    let unique = mine_core::save::select_unique_file_stem(stem, extension, &occupied)?;
-    if unique != stem {
+    let unique = mine_core::save::select_unique_file_stem(stem, &extension, &occupied)?;
+    if unique != stem || extension != declared {
         let filename = format!("{unique}.{extension}");
         let destination = staging.new_media_path(&filename);
         files::validate_vault_write_target(staging, &destination)?;
@@ -1942,8 +1954,8 @@ fn perform_save_block_with_publisher(
         }
     }
 
-    dedupe_prepared_media_ref(source_vault, vault, &mut media_file)?;
-    dedupe_prepared_media_ref(source_vault, vault, &mut thumbnail_file)?;
+    settle_prepared_media_name(source_vault, vault, &mut media_file)?;
+    settle_prepared_media_name(source_vault, vault, &mut thumbnail_file)?;
     let mut link_paths = files::scan_vault_file_paths(source_vault)?;
     link_paths.extend(inline_files.iter().filter_map(|path| vault.root_relative_reference(path)));
     link_paths.extend(media_file.iter().chain(thumbnail_file.iter()).cloned());
@@ -2228,15 +2240,9 @@ fn decode_data_url(data_url: &str) -> anyhow::Result<(Vec<u8>, String)> {
     let (header, data) = rest
         .split_once(',')
         .ok_or_else(|| anyhow::anyhow!("malformed data URL: no comma"))?;
-    // Extract MIME type → extension
-    let mime = header.split(';').next().unwrap_or("image/png");
-    let ext = match mime {
-        "image/png" => "png",
-        "image/jpeg" => "jpg",
-        "image/webp" => "webp",
-        "image/gif" => "gif",
-        _ => "png",
-    };
+    // The declared type names the file for now; the bytes settle it
+    // (`settle_prepared_media_name`).
+    let ext = extension_for_content_type(header).unwrap_or("png");
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .map_err(|e| anyhow::anyhow!("base64 decode failed: {e}"))?;
@@ -2274,7 +2280,7 @@ fn ext_from_url_opt(url: &str) -> Option<&str> {
 /// so a server that refuses HEAD costs nothing beyond one request.
 fn probe_ext_over_network(url: &str) -> Option<&'static str> {
     let resp = mine_lib::net::fetch_validated_head(url, INLINE_REQUEST_TIMEOUT, &[]).ok()?;
-    media_extension_for_content_type(resp.header("Content-Type")?)
+    extension_for_content_type(resp.header("Content-Type")?)
 }
 
 /// Whole-request timeout for the HEAD probe of inline media. ureq 2.x default
@@ -2736,6 +2742,7 @@ fn localize_body_images(
         MAX_PER_DOMAIN,
     );
     let outcomes = run_parallel_downloads(&tasks, page_url);
+    name_inline_media_by_content(vault, &mut tasks, &outcomes, &mut paths);
     let ok = outcomes.iter().filter(|r| r.is_ok()).count();
     // Video that stayed remote is reported separately: the note now depends on
     // someone else's server for it, and the caller can at least keep a local
@@ -2758,6 +2765,64 @@ fn localize_body_images(
         tasks.len()
     );
     (result, inline_files, unresolved_videos)
+}
+
+/// Rename each downloaded inline file to the extension its bytes call for
+/// (`stored_media_extension`, the save core's rule; SPEC_SAVE_CORE.md,
+/// «Имя медиафайла по содержимому»), before the body is rewritten to embed it.
+///
+/// The name was chosen from the address before anything was downloaded, and a
+/// server that negotiates formats answers `photo.png` with AVIF. The files are
+/// still in staging, so renaming them touches nothing the person can see. A
+/// file that cannot be renamed keeps its first name: the picture is saved
+/// either way.
+fn name_inline_media_by_content(
+    staging: &VaultLayout,
+    tasks: &mut [InlineTask],
+    outcomes: &[Result<(), String>],
+    paths: &mut [String],
+) {
+    for (task, outcome) in tasks.iter_mut().zip(outcomes) {
+        if outcome.is_err() {
+            continue;
+        }
+        let filename = task.dest_name.rsplit('/').next().unwrap_or(&task.dest_name);
+        let (stem, declared) = filename.rsplit_once('.').unwrap_or((filename, ""));
+        let Ok(head) = files::read_media_head(&task.dest_path) else {
+            continue;
+        };
+        let Some(extension) = stored_media_extension(&head, Some(declared)) else {
+            continue;
+        };
+        if extension == declared {
+            continue;
+        }
+        let others = paths
+            .iter()
+            .filter(|path| **path != task.dest_name)
+            .cloned()
+            .collect::<Vec<_>>();
+        let Ok(name) = mine_core::save::select_unique_file_stem(stem, &extension, &others) else {
+            log::warn!("inline-media: no free name for {} as .{extension}", task.dest_name);
+            continue;
+        };
+        let renamed = format!("{name}.{extension}");
+        let dest_path = staging.new_media_path(&renamed);
+        if files::validate_vault_write_target(staging, &dest_path).is_err() {
+            continue;
+        }
+        if let Err(error) = std::fs::rename(&task.dest_path, &dest_path) {
+            log::warn!("inline-media: rename {} -> {renamed} failed: {error}", task.dest_name);
+            continue;
+        }
+        let dest_name = staging.new_media_stem(&renamed);
+        log::info!("inline-media: {} is .{extension} by content", task.dest_name);
+        if let Some(entry) = paths.iter_mut().find(|path| **path == task.dest_name) {
+            entry.clone_from(&dest_name);
+        }
+        task.dest_path = dest_path;
+        task.dest_name = dest_name;
+    }
 }
 
 /// Compare two files byte-by-byte. Returns true if identical.
@@ -5868,6 +5933,48 @@ mod tests {
         assert_eq!(count, 2, "both clips must be indexed");
     }
 
+    /// SPEC_SAVE_CORE.md, «Имя медиафайла по содержимому»: what a picture is
+    /// decides its extension, not the name it arrived under.
+    #[test]
+    fn save_block_names_an_uploaded_picture_by_its_bytes() {
+        let tmp = TempDir::new().unwrap();
+        let vault =
+            VaultLayout::with_derived_root(tmp.path().join("vault"), tmp.path().join("derived"));
+        std::fs::create_dir_all(vault.root()).unwrap();
+
+        let upload = clipper_uploads::write_pending_upload(
+            &vault,
+            "logo.png",
+            Some("image/png".into()),
+            b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf",
+        )
+        .unwrap();
+
+        handle_save_block(
+            &vault,
+            serde_json::json!({
+                "block_type": "image",
+                "title": "Logo",
+                "url": "https://example.com/logo",
+                "pre_uploaded_id": upload.upload_id,
+                "body": "",
+                "tags": []
+            }),
+        );
+
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        let media_file: String = conn
+            .query_row(
+                "SELECT media_file FROM blocks WHERE slug = ?1",
+                ["Logo"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(media_file, "Logo.avif");
+        assert!(vault.root().join("Logo.avif").exists());
+        assert!(!vault.root().join("Logo.png").exists());
+    }
+
     #[test]
     fn save_block_with_avif_upload_writes_placeholder_thumb_metadata() {
         let tmp = TempDir::new().unwrap();
@@ -6451,6 +6558,52 @@ mod tests {
         assert!(!tmp.path().join("S (image 2).jpg").exists());
         assert!(tmp.path().join("S (image 1).jpg").exists());
         assert_eq!(surviving, vec![tmp.path().join("S (image 1).jpg")]);
+    }
+
+    /// SPEC_SAVE_CORE.md, «Имя медиафайла по содержимому»: a URL ending in
+    /// `.png` answered with AVIF is stored and embedded as `.avif`.
+    #[test]
+    fn inline_media_is_named_by_its_bytes_before_the_body_embeds_it() {
+        let tmp = TempDir::new().unwrap();
+        let vault = vault_at(tmp.path());
+        let body = "![logo](https://h.com/logo.png)";
+        let mut tasks = scan_inline_tasks(body, &vault, "S");
+        std::fs::write(
+            &tasks[0].dest_path,
+            b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf",
+        )
+        .unwrap();
+        let outcomes = vec![Ok(())];
+        let mut paths = vec!["S.md".to_string(), tasks[0].dest_name.clone()];
+
+        name_inline_media_by_content(&vault, &mut tasks, &outcomes, &mut paths);
+
+        assert_eq!(tasks[0].dest_name, "S (image 1).avif");
+        assert!(tmp.path().join("S (image 1).avif").exists());
+        assert!(!tmp.path().join("S (image 1).png").exists());
+        assert_eq!(paths, vec!["S.md".to_string(), "S (image 1).avif".to_string()]);
+        let (rewritten, surviving) = apply_rewrites(body, &tasks, &outcomes);
+        assert_eq!(rewritten, "![[S (image 1).avif|logo]]");
+        assert_eq!(surviving, vec![tmp.path().join("S (image 1).avif")]);
+    }
+
+    /// A file whose bytes agree with its name, or say nothing, keeps it.
+    #[test]
+    fn inline_media_keeps_a_name_its_bytes_agree_with() {
+        let tmp = TempDir::new().unwrap();
+        let vault = vault_at(tmp.path());
+        let body = "![a](https://h.com/a.jpeg)\n\n![v](https://h.com/v.mp4)";
+        let mut tasks = scan_inline_tasks(body, &vault, "S");
+        std::fs::write(&tasks[0].dest_path, [0xFF, 0xD8, 0xFF, 0xE0]).unwrap();
+        std::fs::write(&tasks[1].dest_path, b"\x00\x00\x00\x20ftypisom").unwrap();
+        let before = tasks.iter().map(|task| task.dest_name.clone()).collect::<Vec<_>>();
+        let mut paths = before.clone();
+
+        name_inline_media_by_content(&vault, &mut tasks, &[Ok(()), Ok(())], &mut paths);
+
+        let after = tasks.iter().map(|task| task.dest_name.clone()).collect::<Vec<_>>();
+        assert_eq!(after, before);
+        assert_eq!(paths, before);
     }
 
     #[test]

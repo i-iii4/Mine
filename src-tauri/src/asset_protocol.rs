@@ -291,9 +291,11 @@ fn multipart_boundary() -> String {
 
 #[cfg(feature = "desktop")]
 fn mime_type_for_file(path: &Path) -> &'static str {
+    // The bytes are read by the one image reader of Mine
+    // (`mine_core::domain::media_type`); the name is only the fallback.
     if should_sniff_image_content(path) {
-        if let Some(mime) = mime_type_from_magic(path) {
-            return mime;
+        if let Some(image) = crate::storage::files::image_type(path) {
+            return image.mime();
         }
     }
     mime_type_for_path(path)
@@ -308,41 +310,6 @@ fn should_sniff_image_content(path: &Path) -> bool {
             .as_deref(),
         Some("jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "heic" | "heif")
     )
-}
-
-#[cfg(feature = "desktop")]
-fn mime_type_from_magic(path: &Path) -> Option<&'static str> {
-    let mut file = File::open(path).ok()?;
-    let mut buf = [0u8; 16];
-    let n = file.read(&mut buf).ok()?;
-    let bytes = &buf[..n];
-
-    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        return Some("image/jpeg");
-    }
-    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
-        return Some("image/png");
-    }
-    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        return Some("image/gif");
-    }
-    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-        return Some("image/webp");
-    }
-    if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
-        let brand = &bytes[8..12];
-        if matches!(brand, b"avif" | b"avis") {
-            return Some("image/avif");
-        }
-        if matches!(
-            brand,
-            b"heic" | b"heix" | b"hevc" | b"hevx" | b"mif1" | b"msf1"
-        ) {
-            return Some("image/heic");
-        }
-    }
-
-    None
 }
 
 #[cfg(feature = "desktop")]
@@ -419,6 +386,17 @@ mod tests {
         std::fs::write(&path, [0xFF, 0xD8, 0xFF, 0x00]).unwrap();
 
         assert_eq!(mime_type_for_file(&path), "image/jpeg");
+    }
+
+    /// A server that negotiates formats answered a `.png` URL with AVIF; the
+    /// WebView needs the real type to draw it.
+    #[test]
+    fn mime_type_sniffs_avif_saved_under_png_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("logo.png");
+        std::fs::write(&path, b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf").unwrap();
+
+        assert_eq!(mime_type_for_file(&path), "image/avif");
     }
 
     #[test]

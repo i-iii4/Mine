@@ -221,6 +221,7 @@ function fetchGridBlocks(
 import type {
   UnavailableVault,
   UnavailableVaultReason,
+  DeleteBlockMedia,
   DeleteBlockPlan,
   FeedOrder,
   IndexedBlock,
@@ -372,7 +373,11 @@ import {
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
 import { SearchOverlay } from "@/components/SearchOverlay";
 import { CreateCollectionDialog } from "@/components/CreateCollectionDialog";
-import { DeleteBlockDialog } from "@/components/DeleteBlockDialog";
+import {
+  DeleteBlockDialog,
+  DeleteKeptMediaNotice,
+  keptOfferedMedia,
+} from "@/components/DeleteBlockDialog";
 import {
   ImagePreviewOverlay,
   type ImagePreviewRequest,
@@ -1072,6 +1077,9 @@ export function AppWithVault({
   const [deleteTargetSlug, setDeleteTargetSlug] = useState<string | null>(null);
   const [deletePlan, setDeletePlan] = useState<DeleteBlockPlan | null>(null);
   const [deletePlanError, setDeletePlanError] = useState<string | null>(null);
+  // Files the delete window offered that the deletion left: another note
+  // uses them, as the notes on disk showed.
+  const [deleteKeptMedia, setDeleteKeptMedia] = useState<DeleteBlockMedia[] | null>(null);
   const [detailChromeClosing, setDetailChromeClosing] = useState(false);
   const [closingDetailBlock, setClosingDetailBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [closingDetailTags, setClosingDetailTags] = useState<string[]>([]);
@@ -1822,16 +1830,14 @@ export function AppWithVault({
     };
   }, [selectedBlock]);
 
+  // The delete window opens once its plan is here (user's decision of
+  // 11.10.2026): the plan comes from the index at once, and the window shows
+  // at its final width instead of widening when the media arrive. A closed
+  // window keeps its plan, so it leaves at the width it had.
   useEffect(() => {
-    if (!deleteTargetSlug) {
-      setDeletePlan(null);
-      setDeletePlanError(null);
-      return;
-    }
+    if (!deleteTargetSlug) return;
 
     let cancelled = false;
-    setDeletePlan(null);
-    setDeletePlanError(null);
     prepareDeleteBlock(deleteTargetSlug)
       .then((plan) => {
         if (!cancelled) setDeletePlan(plan);
@@ -2149,6 +2155,7 @@ export function AppWithVault({
     setGridLoadError(null);
     setTaxonomyLoadError(null);
     setSelectionCardError(null);
+    setDeleteKeptMedia(null);
     cancelGridRetry();
     cancelPageRetry();
     setVaultStats(null);
@@ -4291,17 +4298,20 @@ export function AppWithVault({
   );
 
   const requestDeleteBlock = useCallback((slug: string) => {
+    // The last window's plan goes in the same render, so the new window
+    // never shows it while its own is read.
+    setDeletePlan(null);
+    setDeletePlanError(null);
+    setDeleteKeptMedia(null);
     setDeleteTargetSlug(slug);
   }, []);
 
   const closeDeleteDialog = useCallback(() => {
     setDeleteTargetSlug(null);
-    setDeletePlan(null);
-    setDeletePlanError(null);
   }, []);
 
   const performDeleteBlock = useCallback(
-    async (slug: string, deleteUnusedMedia: boolean) => {
+    async (slug: string, deleteUnusedMedia: boolean, offeredMedia: DeleteBlockMedia[]) => {
       // The open card closes when it is the one deleted. A card deleted from
       // a row over it (a related note, a search result) leaves it open.
       if (selectedBlockRef.current?.slug === slug) {
@@ -4313,7 +4323,12 @@ export function AppWithVault({
       // truth (and self-heals the list if the delete failed).
       window.dispatchEvent(new CustomEvent("block-deleted", { detail: { slug } }));
       try {
-        await deleteBlock(slug, deleteUnusedMedia);
+        const outcome = await deleteBlock(slug, deleteUnusedMedia);
+        // The window's plan came from the index; the deletion checked the
+        // notes on disk. A file the window offered that a note uses after
+        // all stayed, and the reader hears of it (11.10.2026).
+        const kept = keptOfferedMedia(offeredMedia, outcome.kept_media);
+        if (kept.length > 0) setDeleteKeptMedia(kept);
       } catch (err) {
         console.error("Failed to delete block:", err);
       }
@@ -4327,7 +4342,7 @@ export function AppWithVault({
       if (!deleteTargetSlug || !deletePlan || deletePlanError) return;
       const slug = deleteTargetSlug;
       closeDeleteDialog();
-      void performDeleteBlock(slug, deleteUnusedMedia);
+      void performDeleteBlock(slug, deleteUnusedMedia, deleteUnusedMedia ? deletePlan.unused_media : []);
     },
     [closeDeleteDialog, deletePlan, deletePlanError, deleteTargetSlug, performDeleteBlock],
   );
@@ -4405,6 +4420,7 @@ export function AppWithVault({
   const showFirstCardMarker = lead && firstCardSlug !== null;
   const showNotifications = feedErrorNotices.length > 0
     || selectionCardError !== null
+    || deleteKeptMedia !== null
     || showFirstCardMarker
     || showIndexingNotice;
 
@@ -4845,6 +4861,13 @@ export function AppWithVault({
                   {selectionCardError}
                 </p>
               </NotificationCard>
+            )}
+            {deleteKeptMedia !== null && (
+              // This tab's own deletion: its notice shows here, lead or not.
+              <DeleteKeptMediaNotice
+                media={deleteKeptMedia}
+                onClose={() => setDeleteKeptMedia(null)}
+              />
             )}
             {showIndexingNotice && indexingStep !== null && (
               // The opening counts out loud in the corner (О13): one card,

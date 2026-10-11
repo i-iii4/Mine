@@ -8,10 +8,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { NotificationCard } from "@/components/NotificationCard";
 import { fallbackThumbsRoot, mediaUrl, thumbnailUrl } from "@/lib/assets";
 import type { DeleteBlockMedia, DeleteBlockPlan } from "@/types";
 
 interface DeleteBlockDialogProps {
+  /** Asked for: the window shows once the plan or its error is here. */
   open: boolean;
   vaultPath: string;
   thumbsRootPath?: string;
@@ -35,11 +37,15 @@ export function DeleteBlockDialog({
   const unusedCount = plan?.unused_media.length ?? 0;
   const sharedCount = plan?.shared_media.length ?? 0;
   const hasUnusedMedia = unusedCount > 0;
-  const description = deleteDialogDescription(error, plan, unusedCount, sharedCount);
+  const description = deleteDialogDescription(error, unusedCount, sharedCount);
+  // The window waits for its plan, read from the index at once, and opens
+  // already at its width: no "checking" state that widens when the media
+  // arrive (user's decision of 11.10.2026).
+  const ready = plan !== null || error !== null;
 
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      {/* A question, until it shows the media that go with the element. */}
+    <AlertDialog open={open && ready} onOpenChange={onOpenChange}>
+      {/* A question, unless it shows the media that go with the element. */}
       <AlertDialogContent widthRole={hasUnusedMedia ? "content" : "question"}>
         <AlertDialogHeader>
           <AlertDialogTitle>
@@ -87,12 +93,10 @@ export function DeleteBlockDialog({
 /// the dialog shows the title alone.
 function deleteDialogDescription(
   error: string | null,
-  plan: DeleteBlockPlan | null,
   unusedCount: number,
   sharedCount: number,
 ): string | null {
   if (error) return `Could not prepare delete plan: ${error}`;
-  if (!plan) return "Checking media references before deleting.";
   if (unusedCount > 0 && sharedCount > 0) {
     return `${mediaCountLabel(unusedCount)} ${mediaCountVerb(unusedCount)} only used by this element. ${mediaCountLabel(sharedCount)} ${mediaCountVerb(sharedCount)} used by other elements and will stay in the space.`;
   }
@@ -103,6 +107,42 @@ function deleteDialogDescription(
     return `${mediaCountLabel(sharedCount)} ${mediaCountVerb(sharedCount)} used by other elements and will stay in the space. Only this element will be deleted.`;
   }
   return null;
+}
+
+/// The files the window offered for deletion that the deletion kept.
+///
+/// The window's plan comes from the index; the deletion checks the notes on
+/// disk, and a file another note uses stays (decision of 11.10.2026).
+/// `kept` names every file of the card that stayed, the ones the window
+/// already said would stay included: only the offered ones are news.
+export function keptOfferedMedia(
+  offered: DeleteBlockMedia[],
+  kept: DeleteBlockMedia[],
+): DeleteBlockMedia[] {
+  const offeredPaths = new Set(offered.map((media) => media.path));
+  return kept.filter((media) => offeredPaths.has(media.path));
+}
+
+/// The deletion's word on files it kept against the window's offer: one
+/// notice in the corner, as every notice of the feed.
+export function DeleteKeptMediaNotice({
+  media,
+  onClose,
+}: {
+  media: DeleteBlockMedia[];
+  onClose: () => void;
+}) {
+  const [only, ...rest] = media;
+  const text = only && rest.length === 0
+    ? `${only.file_name} is used by another element and stayed in the space.`
+    : `${mediaCountLabel(media.length)} are used by other elements and stayed in the space.`;
+  return (
+    <NotificationCard title="Media kept" onClose={onClose}>
+      <p className="text-sm text-muted-foreground" data-delete-kept-media="">
+        {text}
+      </p>
+    </NotificationCard>
+  );
 }
 
 function mediaCountLabel(count: number) {

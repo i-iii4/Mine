@@ -179,7 +179,13 @@ export type CoreCommand = { op: "capture"; request: CaptureRequest } | { op: "na
  * ([`require_collection_pages`]); `with_pages` are the ones the
  * executor found a page for.
  */
-{ op: "collection_pages"; selected: string[]; with_pages: string[] } | { op: "advance"; phase: SavePhase; evidence: SaveEvidence } | { op: "fingerprint"; value: string }
+{ op: "collection_pages"; selected: string[]; with_pages: string[] } | { op: "advance"; phase: SavePhase; evidence: SaveEvidence } | { op: "fingerprint"; value: string } |
+/**
+ * The extension a downloaded medium is saved under: what its first
+ * bytes are, else the type the server declared
+ * ([`stored_media_extension`]).
+ */
+{ op: "media_extension"; head: number[]; content_type: string | null }
 
 export type CreateBlockParams = { block_type: string; title: string | null; url: string | null; tags: string[]; file_path: string | null;
 /**
@@ -190,6 +196,21 @@ body?: string | null }
 export type CreateMediaAssetCardParams = { media_ref: string; target_tag: string; source_slug: string | null }
 
 export type DeleteBlockMedia = { path: string; file_name: string; kind: DeleteMediaAssetKind; referenced_by: string[] }
+
+/**
+ * What `delete_block` did (decision of 11.10.2026).
+ */
+export type DeleteBlockOutcome = {
+/**
+ * Whether the card's index row went with its file.
+ */
+removed: boolean;
+/**
+ * The card's media another note uses, as the deletion found the notes
+ * on disk: they stayed in the space. Only a deletion asked to take the
+ * media fills it; the window tells which of the files it offered stayed.
+ */
+kept_media: DeleteBlockMedia[] }
 
 export type DeleteBlockPlan = { slug: string; markdown_file: string; unused_media: DeleteBlockMedia[]; shared_media: DeleteBlockMedia[] }
 

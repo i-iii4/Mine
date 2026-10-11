@@ -1272,7 +1272,7 @@ fn serialize_feed_playback(
 }
 
 fn read_thumb_metadata_from_disk(path: &Path) -> Option<(ThumbFormat, u64)> {
-    use std::io::Read;
+    use mine_core::domain::media_type::ImageType;
 
     let meta = std::fs::metadata(path).ok()?;
     let mtime = meta
@@ -1282,13 +1282,9 @@ fn read_thumb_metadata_from_disk(path: &Path) -> Option<(ThumbFormat, u64)> {
         .ok()?
         .as_secs();
 
-    let mut file = std::fs::File::open(path).ok()?;
-    let mut buf = [0u8; 3];
-    file.read_exact(&mut buf).ok()?;
-
-    let format = match buf {
-        [0xFF, 0xD8, 0xFF] => ThumbFormat::Jpeg,
-        [0x89, 0x50, 0x4E] => ThumbFormat::Png,
+    let format = match crate::storage::files::image_type(path)? {
+        ImageType::Jpeg => ThumbFormat::Jpeg,
+        ImageType::Png => ThumbFormat::Png,
         _ => return None,
     };
 
@@ -4880,7 +4876,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let png_thumb = dir.path().join("design-a.jpg");
-        std::fs::write(&png_thumb, [0x89, 0x50, 0x4E, 0x47]).unwrap();
+        std::fs::write(&png_thumb, mine_core::domain::media_type::PNG_SIGNATURE).unwrap();
         let jpeg_thumb = dir.path().join("design-b.jpg");
         std::fs::write(&jpeg_thumb, [0xFF, 0xD8, 0xFF, 0x00]).unwrap();
 

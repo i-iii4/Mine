@@ -2,7 +2,9 @@
 //!
 //! `preview_manifest` is a plan. Grid may consume it only while
 //! `preview_state = ready`, the recorded source stamp matches, and every
-//! referenced derived JPEG exists. Source media is never a feed fallback.
+//! referenced derived preview exists as a finished picture: JPEG or PNG, but
+//! never the text placeholder (SPEC_THUMBNAILS.md, rule П7). Source media is
+//! never a feed fallback.
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -490,9 +492,7 @@ fn reconcile_slug(
         .source_stamp
         .as_deref()
         .is_some_and(|stamp| stamp != source_stamp);
-    if !source_changed && expected
-        .iter()
-        .all(|path| is_ready_preview(resolver, slug, record.media_file.as_deref(), path)) {
+    if !source_changed && expected.iter().all(|path| thumbnails::is_finished_picture(path)) {
         // Nothing to generate, but the artifacts are on disk and therefore
         // measurable. This is where previews written before the manifest
         // carried artifact geometry get their dimensions: they reach this
@@ -527,7 +527,7 @@ fn reconcile_slug(
 
     if cloud == CloudSources::Defer {
         if let Some(reference) =
-            source_waiting_for_cloud(resolver, slug, &block, &manifest, &record, source_changed)?
+            source_waiting_for_cloud(resolver, slug, &block, &manifest, source_changed)?
         {
             record_cloud_wait(vault, slug);
             return mark_non_ready(
@@ -553,15 +553,13 @@ fn reconcile_slug(
         .transpose()?;
     if let Some(primary_path) = manifest.primary_preview_path.as_deref() {
         let primary = preview_disk_path(vault, primary_path)?;
-        if source_changed
-            || !is_ready_preview(resolver, slug, record.media_file.as_deref(), &primary)
-        {
+        if source_changed || !thumbnails::is_finished_picture(&primary) {
             let source = thumbnails::generate_for_block_with_resolver(&block, resolver);
             regenerated |= matches!(
                 source,
                 thumbnails::ThumbSource::Image | thumbnails::ThumbSource::Video
             );
-            if !is_ready_preview(resolver, slug, record.media_file.as_deref(), &primary) {
+            if !thumbnails::is_finished_picture(&primary) {
                 // Distinguish "the file is not there" from "we cannot decode
                 // it here". Reporting a missing file as a decoding problem sent
                 // the reader looking for a format issue that does not exist.
@@ -596,9 +594,7 @@ fn reconcile_slug(
             continue;
         };
         let destination = preview_disk_path(vault, preview_path)?;
-        if !source_changed
-            && is_ready_preview(resolver, slug, record.media_file.as_deref(), &destination)
-        {
+        if !source_changed && thumbnails::is_finished_picture(&destination) {
             continue;
         }
         let can_copy_primary = tile_index == 0
@@ -607,9 +603,7 @@ fn reconcile_slug(
             && generation_failure.is_none()
             && primary_disk_path
                 .as_deref()
-                .is_some_and(|path| {
-                    is_ready_preview(resolver, slug, record.media_file.as_deref(), path)
-                });
+                .is_some_and(thumbnails::is_finished_picture);
         if can_copy_primary {
             let primary = primary_disk_path
                 .as_deref()
@@ -665,9 +659,7 @@ fn reconcile_slug(
         }
     }
 
-    let all_ready = expected
-        .iter()
-        .all(|path| is_ready_preview(resolver, slug, record.media_file.as_deref(), path));
+    let all_ready = expected.iter().all(|path| thumbnails::is_finished_picture(path));
     if all_ready && (!source_changed || generation_failure.is_none()) {
         return publish_ready(conn, vault, slug, &record, &manifest, &source_stamp, regenerated)
             .map(Some);
@@ -868,30 +860,6 @@ fn preview_disk_path(vault: &VaultLayout, relative: &str) -> Result<PathBuf> {
     Ok(vault.thumbs_dir().join(path))
 }
 
-/// Whether a derived artifact on disk is a finished preview.
-///
-/// Readiness used to mean "the file is JPEG". Rule П6 broke that: a picture
-/// that uses its alpha channel is written as PNG, and calling it unfinished
-/// left the block in `failed / browser_decode_required` forever — the grid
-/// withholds the manifest of such a block, so a perfectly good screenshot
-/// showed up in the feed as its own file name. The format cannot answer this;
-/// the source can. A picture Rust decoded is done, whatever it was encoded as;
-/// a PNG standing in for media Rust cannot decode is still a placeholder.
-fn is_ready_preview(
-    resolver: &mut media_refs::MediaResolver<'_>,
-    slug: &str,
-    media_reference: Option<&str>,
-    path: &Path,
-) -> bool {
-    match thumbnails::thumb_disk_state(path) {
-        thumbnails::ThumbDiskState::Jpeg => true,
-        thumbnails::ThumbDiskState::Png => {
-            thumbnails::media_reference_is_rust_decodable(resolver, slug, media_reference)
-        }
-        _ => false,
-    }
-}
-
 /// The standing record behind the Keep Downloaded recommendation (Х16): one
 /// wait per block per session. Best effort: failing to count must not fail
 /// the reconcile.
@@ -909,13 +877,11 @@ fn source_waiting_for_cloud(
     slug: &str,
     block: &Block,
     manifest: &FeedPreviewManifest,
-    record: &PreviewRecord,
     source_changed: bool,
 ) -> Result<Option<String>> {
     let needs = |resolver: &mut media_refs::MediaResolver<'_>, relative: &str| -> Result<bool> {
         let path = preview_disk_path(resolver.vault(), relative)?;
-        Ok(source_changed
-            || !is_ready_preview(resolver, slug, record.media_file.as_deref(), &path))
+        Ok(source_changed || !thumbnails::is_finished_picture(&path))
     };
     if let Some(primary) = manifest.primary_preview_path.as_deref() {
         if needs(resolver, primary)? {
@@ -1660,6 +1626,52 @@ mod tests {
         assert!(ready.failure.is_none());
     }
 
+    /// An AVIF with transparency, saved under `.png`, is a picture only the
+    /// browser decodes, and the browser keeps its alpha by writing PNG (rule
+    /// П6). Readiness used to ask the source whether Rust decodes it, so a PNG
+    /// over undecodable media counted as a text placeholder: the browser's
+    /// picture was overwritten by the placeholder again and the card stayed
+    /// empty, queued on every launch.
+    #[test]
+    fn a_transparent_picture_from_the_browser_is_ready() {
+        let (_source, vault, conn) = setup();
+        let block = image_block("Logo", "logo.png");
+        std::fs::write(
+            vault.root().join("logo.png"),
+            b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf",
+        )
+        .unwrap();
+        files::write_block_file(&vault, &block).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let waiting = reconcile_preview_for_slug(&conn, &vault, "Logo")
+            .unwrap()
+            .unwrap();
+        assert_eq!(waiting.state, DerivedPreviewState::Failed);
+        assert_eq!(
+            waiting.failure.unwrap().error_kind,
+            PreviewErrorKind::BrowserDecodeRequired
+        );
+
+        let picture = image::RgbaImage::from_fn(32, 24, |x, _| {
+            image::Rgba([200, 40, 90, if x < 16 { 0 } else { 255 }])
+        });
+        for path in [
+            vault.thumb_path("Logo"),
+            vault.thumbs_dir().join("Logo.preview-1.jpg"),
+        ] {
+            picture
+                .save_with_format(&path, image::ImageFormat::Png)
+                .unwrap();
+        }
+
+        let ready = reconcile_preview_for_slug(&conn, &vault, "Logo")
+            .unwrap()
+            .unwrap();
+        assert_eq!(ready.state, DerivedPreviewState::Ready, "{ready:?}");
+        assert!(ready.failure.is_none());
+    }
+
     #[test]
     fn legacy_primary_preview_materializes_single_tile_without_source_decode() {
         let (_source, vault, conn) = setup();
@@ -2033,12 +2045,7 @@ mod tests {
             let path = vault.thumbs_dir().join(relative);
             std::fs::write(&path, b"\xff\xd8\xffnot really a jpeg at all").unwrap();
             assert!(
-                is_ready_preview(
-                    &mut media_refs::MediaResolver::new(&vault),
-                    "any-slug",
-                    None,
-                    &path
-                ),
+                thumbnails::is_finished_picture(&path),
                 "the readiness check must still accept this file — that is the point"
             );
         }

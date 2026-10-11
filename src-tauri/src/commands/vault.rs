@@ -1342,7 +1342,13 @@ fn layout_space_id(layout: &VaultLayout) -> Option<String> {
 /// Current thumb cache format version. Bump this when the thumbnail
 /// pipeline changes in a way that makes old cached files incompatible
 /// (e.g. text placeholders switched from JPEG to PNG, or new font).
-const THUMB_FORMAT_VERSION: &str = "7";
+///
+/// 8: a text placeholder records that it is one (SPEC_THUMBNAILS.md, П7), and
+/// readiness asks that record alone. A placeholder written before carries no
+/// record and would read as a finished picture, and the previews that failed
+/// because the browser's PNG picture was refused have to be built again; both
+/// need every cached preview rebuilt once.
+const THUMB_FORMAT_VERSION: &str = "8";
 
 /// If the thumb cache was written by an older format version, delete
 /// all cached thumbnails and let a background sync regenerate them fresh.

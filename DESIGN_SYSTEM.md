@@ -2271,9 +2271,9 @@ physics и не является отдельным интерактивным �
 | `Rename media` | Dialog | `content` | нет | `Detail.tsx`, `RenameMediaAssetDialog` |
 | `New collection` | Dialog | `content` | нет | `CreateCollectionDialog.tsx`; из пути `TopCollectionSwitcher.tsx`, `CreateCollectionNameDialog`, тот же текст |
 | `Merge N elements` | Dialog | `content` | нет | `MergeCardsDialog.tsx` |
-| `Resolve iCloud sync conflicts` | Dialog | `content` | есть, `Cancel` нет, внизу `Close` | `VaultConflictsBanner.tsx`, `VaultConflictsDialog`; в каждом конфликте главная `Keep original` (`default`), `Keep conflict version` и `I'll merge manually` `secondary` |
+| `Resolve iCloud sync conflicts` | Dialog | `content` | есть, `Cancel` нет, внизу `Close` (решение 11.10.2026: `Close` убрать, кнопок внизу нет; окно по SPEC_ICLOUD_CONFLICTS.md, ВК11) | `VaultConflictsBanner.tsx`, `VaultConflictsDialog`; в каждом конфликте главная `Keep original` (`default`), `Keep conflict version` и `I'll merge manually` `secondary`; по решению 11.10.2026 строка на каждую версию с кнопкой `Keep`, у текущей `default`, и `Keep all` |
 | `Delete element?` | AlertDialog | без медиа к удалению `question`, с ними `content` | нет | `DeleteBlockDialog.tsx`; при медиа превью файлов и кнопки `Cancel`, `Keep media` (`secondary`), `Delete` |
-| `Delete selected elements?` | AlertDialog | `question` | нет | `DeleteSelectedCardsDialog.tsx`, копия в `GroupSelectionCommands.tsx` |
+| `Delete selected elements?` | AlertDialog | `question`; по решению 11.10.2026 как у `Delete element?`: без медиа к удалению `question`, с ними `content` | нет | `DeleteSelectedCardsDialog.tsx`, копия в `GroupSelectionCommands.tsx`; по решению 11.10.2026 один экземпляр у Grid, копия удаляется, превью и `Keep media` как у `Delete element?` (SPEC_GROUP_SELECTION.md, «Batch Delete») |
 | `Delete collection?` | AlertDialog | `question` | нет | `Sidebar.tsx`, `DeleteCollectionDialog` |
 | `Remove … from the list?` | AlertDialog | `question` | нет | `VaultSwitcher.tsx`, `RemoveSpaceDialog` |
 | `Delete embed from element?` | AlertDialog | `question` | нет | `YoutubeSourcePlayer.tsx`, `DeleteSourceVideoDialog` |
@@ -2286,7 +2286,85 @@ physics и не является отдельным интерактивным �
 сам и стандарту окон не следует. Крестик он снимает сам
 (`showCloseButton={false}`); других мест вызова у этого свойства нет.
 
+#### Что вернуть нельзя
+
+Решение пользователя 11.10.2026 после проверки всех окон по коду: одно правило
+для всех разрушительных окон (главная кнопка `destructive`). Реализация в
+Phase 45 ([PLAN.md](PLAN.md), этап 45.9). Проверка показала: только
+`Delete collection?` писало «This cannot be undone», и верно это было лишь про
+связи: страница уходит в Корзину, а связи с карточками вычищаются безвозвратно.
+Так же безвозвратно `Delete media file?` вычищает ссылки на файл из всех
+карточек, а `Delete embed from element?` стирает из карточки `url` и
+`thumbnail`. Почти всё остальное уходит в Корзину, но окна этого не говорили.
+
+Описание разрушительного окна называет судьбу каждой затронутой вещи:
+
+1. **Файл уходит в Корзину**: так и написано, `goes to the Trash`. Из Корзины
+   файл возвращает Put Back в Finder.
+2. **Связь или поле вычищаются из файлов** (членство в коллекции, ссылки на
+   медиа, `url` и `thumbnail` карточки, ссылки на исходные элементы при
+   слиянии): написано, что их не вернуть, в том числе вернув файл из Корзины.
+3. **Что остаётся**, пишется только там, где пользователь мог ждать обратного:
+   медиа, которыми пользуются другие элементы; папка пространства.
+4. Заголовок и кнопки не пересказываются. «This cannot be undone» без того, что
+   именно нельзя вернуть, не пишется.
+
+#### Тексты окон
+
+Решение пользователя 11.10.2026: тексты по фактическому поведению, без
+пересказа очевидного. Описание окна это английский текст интерфейса; `{U}` и
+`{S}` это `1 media file is` или `N media files are`, `{N elements}` это
+`selectedElementCountLabel(n)`. Строки `Delete element?` вводятся после правок
+окна удаления элемента, которые идут параллельно (PLAN.md, этап 45.9).
+
+| Окно | Описание | Что было не так |
+|---|---|---|
+| `Delete element?`, медиа нет | `The element goes to the Trash.` | описания не было, окно не говорило, что элемент можно вернуть |
+| `Delete element?`, только общие медиа | `The element goes to the Trash. {S} used by other elements and will stay in the space.` | фраза «Only this element will be deleted» пересказывала заголовок |
+| `Delete element?`, есть медиа только этого элемента | `The element and the media files you delete with it go to the Trash. {U} only used by this element.`, при общих медиа затем фраза об общих | «Delete them too, or keep them in the space» пересказывало кнопки |
+| `Delete selected elements?` | те же три формы: `{N elements} go to the Trash.`; `{N elements} go to the Trash. {S} used by other elements and will stay in the space.`; `{N elements} and the media files you delete with them go to the Trash. {U} only used by these elements.` | «Media files stay in the space» было верно только для временной версии |
+| `Delete collection?` | `The collection page goes to the Trash. Its elements stay, but their connection to “{label}” is removed and does not come back if you restore the page.` | «This cannot be undone» было верно лишь про связи |
+| `Delete media file?` | `The file goes to the Trash. Its references are removed from the elements below and do not come back if you restore the file.` Если файл главное медиа хотя бы одного элемента (`reference_kinds` содержит `frontmatter_file`), затем `Elements that show it as their main media will show nothing in its place.` Без элементов только `The file goes to the Trash.` | окно молчало, что карточка-изображение станет пустой и что ссылки не вернутся |
+| `Delete embed from element?` | `The video link and its poster are removed from this element and cannot be restored. The poster file goes to the Trash unless another element uses it.` | окно молчало, что из карточки пропадает ссылка на видео; «Text and collections stay» пересказывало очевидное |
+| `Merge N elements` | `Drag to set the order. These elements go to the Trash; links to them now lead to the new element, even if you restore them.` | окно молчало, что исходные элементы уходят в Корзину |
+| `Rename file` | `Media files named after this element are renamed with it, and links to it follow the new name.` | слово article неверно для любого элемента; переименование медиа не было сказано |
+| `Remove … from the list?` | `The folder and its files stay where they are. Open tabs of this space switch to choosing a space. You can add it back with Add space.` | окно молчало про открытые вкладки пространства |
+| `New collection` | видимого описания нет; для диктора скрытый `Name the new collection.` (`NEW_COLLECTION_DESCRIPTION`, оба пути) | текст отсылал к боковому меню и показывался как раз при свёрнутом меню |
+| `Delete N files?` | `The files go to the Trash.`, для одного `The file goes to the Trash.` | смысл прежний, формулировка правила одна |
+| `Resolve iCloud sync conflicts` | SPEC_ICLOUD_CONFLICTS.md, ВК11 | «iCloud detected parallel edits» неверно, судьба версий не сказана |
+
+`Remove media from element?` и `Rename media` не меняются: они ничего не
+удаляют, и их тексты верны.
+
+#### Сбой после закрытия окна
+
+Решение пользователя 11.10.2026. `Delete element?` закрывается по нажатию до
+ответа команды: открытая карточка закрывается, строка поиска исчезает сразу.
+Показать ошибку в окне поэтому нельзя. Сейчас сбой уходит только в консоль
+(`App.tsx`, `performDeleteBlock`), и пользователь не узнаёт, что элемент не
+удалён: строка поиска тихо возвращается при перечитывании снимков. Реализация
+в Phase 45 ([PLAN.md](PLAN.md), этап 45.10).
+
+Правило: сбой действия, чьё окно уже закрыто, показывает уведомление той
+вкладки, где действие начато (не только ведущей), так же, как
+`Could not create an element`:
+
+- `NotificationCard` с заголовком `Could not delete the element`;
+- текст: сообщение ошибки (`Error.message`; для `CommandError` его составляет
+  `commandErrorMessage` в `src/lib/commands.ts`) строкой `text-sm
+  text-destructive`;
+- крестик закрывает уведомление; следующее удаление прячет прежнее;
+- ленту и поиск выправляет перечитывание снимков, которое и так идёт после
+  удаления. Вывод только в консоль запрещён.
+
+Окно, которое ждёт ответа (`Deleting…`, `Renaming…`, `Removing…`), показывает
+ошибку у себя строкой ошибки и остаётся открытым; уведомление ему не нужно.
+
 ### Диалог удаления — описание только по делу
+
+С решением пользователя 11.10.2026 (раздел «Окна», «Тексты окон») описание
+есть всегда: первая фраза говорит, что элемент уходит в Корзину, а фразы о
+медиа не повторяют кнопки. Написанное ниже действует до этапа 45.9 Phase 45.
 
 Описание в `Delete element?` объясняет судьбу медиафайлов: какие удалятся вместе
 с карточкой, какие останутся, потому что их используют другие карточки.
@@ -2705,7 +2783,8 @@ Radix-обёртка: `size-4 rounded-[2px] border border-primary`. Checked: `bg
   (решение пользователя 08.10.2026). До этого был `font-semibold`, как
   подпись группы в меню, хотя уведомление не меню.
 - **Кнопка закрытия** только у уведомлений, которые закрывают насовсем:
-  ошибки, рекомендации, отметка первой карточки. У уведомления о ходе
+  ошибки, рекомендации, отметка первой карточки, `Media kept` после
+  удаления (SPEC_INTEGRATION.md, «Поведение delete_block»). У уведомления о ходе
   открытия её нет: она прятала уведомление, но не отменяла операцию
   (SPEC_ONBOARDING.md, О13).
 - **Счёт хода** `text-sm text-muted-foreground tabular-nums` в строке

@@ -927,7 +927,8 @@ fn cmd_card_delete(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
         slug,
         Some(flags.delete_unused_media),
     )
-    .map_err(|e| CliError::internal(format!("delete: {e:?}")))?;
+    .map_err(|e| CliError::internal(format!("delete: {e:?}")))?
+    .removed;
     if flags.json {
         return Ok(format!(
             "{}\n",

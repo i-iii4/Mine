@@ -12,6 +12,7 @@ use crate::domain::block::{
     Block, BlockType, DateTime, Frontmatter,
 };
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
+use crate::domain::media_type::{extension_for_content_type, stored_media_extension};
 pub use crate::domain::vault::VaultWriteLayout as CoreLayout;
 use crate::domain::vault::{normalize_filename_stem, validate_slug, VaultWriteLayout};
 use crate::links::LinkIndex;
@@ -515,6 +516,13 @@ pub enum CoreCommand {
     Fingerprint {
         value: String,
     },
+    /// The extension a downloaded medium is saved under: what its first
+    /// bytes are, else the type the server declared
+    /// ([`stored_media_extension`]).
+    MediaExtension {
+        head: Vec<u8>,
+        content_type: Option<String>,
+    },
 }
 
 /// Execute a pure bridge command. Native fixtures and WASM use this same entry point.
@@ -622,6 +630,10 @@ pub fn execute(command: CoreCommand) -> Result<serde_json::Value, SaveError> {
             let value = serde_json::from_str(&value)
                 .map_err(|e| failure(SaveErrorCode::InvalidRequest, e))?;
             Ok(json!(request_fingerprint(&value)))
+        }
+        CoreCommand::MediaExtension { head, content_type } => {
+            let declared = content_type.as_deref().and_then(extension_for_content_type);
+            Ok(json!({ "extension": stored_media_extension(&head, declared) }))
         }
     }
 }

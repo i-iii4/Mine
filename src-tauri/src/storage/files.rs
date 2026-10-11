@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use mine_core::domain::media_type::{sniff_image_type, ImageType, IMAGE_HEAD_LEN};
 use rusqlite::Connection;
 
 use crate::domain::block::{
@@ -598,6 +599,23 @@ mod link_repair_tests {
 
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
+}
+
+/// The first `IMAGE_HEAD_LEN` bytes of a file (fewer when the file is
+/// shorter) for the content checks of `mine_core::domain::media_type`.
+pub fn read_media_head(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut head = Vec::with_capacity(IMAGE_HEAD_LEN);
+    std::fs::File::open(path)?
+        .take(IMAGE_HEAD_LEN as u64)
+        .read_to_end(&mut head)?;
+    Ok(head)
+}
+
+/// What image a file holds, read from its bytes and never from its name.
+/// `None` for a file that cannot be read or is not an image Mine recognises.
+pub fn image_type(path: &Path) -> Option<ImageType> {
+    sniff_image_type(&read_media_head(path).ok()?)
 }
 
 /// Atomically publish a new file without replacing an existing destination.

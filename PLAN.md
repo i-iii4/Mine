@@ -1095,7 +1095,7 @@ checks and feature requests are kept separate from architecture.
 | `11.7` | SUPERSEDED | Current top chrome/action surfaces are governed by `DESIGN_SYSTEM.md`, not the old toolbar placeholder |
 | `11.8`, `12.7.1`, `12.7.2`, `12.11`, `21.7`, `22.7`, `23.7`, `25.8`, `26.12`, `27.8` | MANUAL QA | Implementations/automated checks exist; these rows are real-vault or visual acceptance only |
 | `12.5.4` | DEFERRED | iOS/Safari work is outside the active desktop scope |
-| `26.6.1–26.6.4` | FEATURE BACKLOG | Atomic batch delete parity is a product feature, not a prerequisite for A1–A4 |
+| `26.6.1–26.6.4` | Phase 45 | Решение пользователя 11.10.2026: полная версия группового удаления, этапы 45.7 и 45.8 |
 | `30.3–30.7` | DONE A4 | M1 edge/scoping/search/a11y contracts and real-browser dark/light Canvas budgets pass |
 
 ## Стратегия: вертикальные срезы с эталонным модулем
@@ -2340,10 +2340,10 @@ contract: [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md).
 | 26.4 | Bottom action island | [x] | Main-pane-centered `h-8` opaque island, `bottom-s3`, clear button, Detail-top-bar-style muted Russian selected-card count, direct Button actions `Connect`, text-only collection-scoped `Disconnect`, red text-only `Delete`, horizontal overflow |
 | 26.5 | Batch Connect | [x] | `BatchCollectionPicker` reuses `CollectionPicker` row/input/action styling; binary all/not-all states, sidebar-order rows, optimistic state without row reordering or partial count labels |
 | 26.6 | Batch Disconnect/Delete v1 | [x] | Disconnect selected cards from current collection; conservative batch destructive confirmation for Delete |
-| 26.6.1 | Batch delete backend plan | FEATURE BACKLOG | Add `prepare_delete_blocks(slugs)` with aggregate `DeleteBlocksPlan`: selected `.md` files, deduped `unused_media` after deleting the whole selected set, and `shared_media` kept by non-selected refs |
-| 26.6.2 | Batch delete backend commit | FEATURE BACKLOG | Add `delete_blocks(slugs, delete_unused_media)` as one command; validate/rebuild plan at commit, delete selected cards plus optional eligible unused media, never delete shared media |
-| 26.6.3 | Batch delete dialog parity | FEATURE BACKLOG | Replace v1 copy with single-delete-equivalent dialog: card count, optional unused-media previews, `Keep media` and `Delete media` actions, shared media kept |
-| 26.6.4 | Batch delete tests | FEATURE BACKLOG | Rust and frontend coverage for media shared only inside selection, media shared with unselected cards, stale plan validation, viewport preservation and selection clear |
+| 26.6.1 | Batch delete backend plan | → 45.7 | Add `prepare_delete_blocks(slugs)` with aggregate `DeleteBlocksPlan`: selected `.md` files, deduped `unused_media` after deleting the whole selected set, and `shared_media` kept by non-selected refs |
+| 26.6.2 | Batch delete backend commit | → 45.7 | Add `delete_blocks(slugs, delete_unused_media)` as one command; validate/rebuild plan at commit, delete selected cards plus optional eligible unused media, never delete shared media |
+| 26.6.3 | Batch delete dialog parity | → 45.8 | Replace v1 copy with single-delete-equivalent dialog: card count, optional unused-media previews, `Keep media` and `Delete media` actions, shared media kept |
+| 26.6.4 | Batch delete tests | → 45.7, 45.8 | Rust and frontend coverage for media shared only inside selection, media shared with unselected cards, stale plan validation, viewport preservation and selection clear |
 | 26.7 | Group drag-to-channel | [x] | Dragging a selected card drags the selected slug set, renders a capped macOS-style flocking stack of real frozen card previews, and connects all dragged cards on channel/create-channel drop |
 | 26.8 | Batch Merge SPEC | [x] | `SPEC_CARD_MERGE.md` defines the reorder dialog, shared card-reference rows, one backend `merge_blocks` command, Markdown section composition, media reuse and many-to-one relationship preservation |
 | 26.9 | Batch Merge UI | [x] | Added `Merge` to the bottom action island and focused-card batch menu, extracted shared `CardReferenceRow` from Detail related notes, and built the reorder-first merge dialog |
@@ -2680,12 +2680,40 @@ Progress).
 | 44.11 | Документы и коммит | DONE 10.10.2026 | статусы в SPEC_COLLECTIONS_OBSIDIAN_LINKS и затронутых спецификациях, PLAN.md, запись DEVLOG в коммите |
 | 44.12 | Живая приёмка | IN PROGRESS | проверено вживую 10.10.2026: ссылка на коллекцию без страницы не видна в меню, файл коллекции в Корзину и обратно убирает и возвращает коллекцию с карточками, `mine connect` без страницы отвечает кодом 4; найдена и исправлена ошибка помощника клиппера (уточнение 16); перестановка, Reveal in Finder и Create collection в окне Mine не проверены по решению пользователя |
 
+### Phase 45: окна и разрушительные действия
+
+Решения пользователя 11.10.2026 по проверке сценариев по коду: конфликты
+iCloud, групповое удаление, необратимость, тексты окон, сбой удаления
+элемента. Контракты: [SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md);
+[SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md), «Batch Delete»;
+[DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), «Окна» («Что вернуть нельзя», «Тексты
+окон», «Сбой после закрытия окна»); решение 056 в
+[ARCHITECTURE.md](ARCHITECTURE.md). Параллельно идут правки удаления элемента
+(`prepare_delete_block`, `DeleteBlockDialog`) и превью: этапы от 45.7 до 45.10
+начинаются после их коммита и строятся на нём. Работа по конфликтам после
+45.2 идёт, только если живая проверка подтвердила, что версии видны.
+
+| # | Срез | Статус | Содержание |
+|---|---|---|---|
+| 45.1 | Решения и документы | DONE 11.10.2026 | SPEC_ICLOUD_CONFLICTS (новый), SPEC_GROUP_SELECTION, SPEC_IDENTITY_ROBUSTNESS, DESIGN_SYSTEM, ARCHITECTURE (056), CLAUDE.md, PLAN |
+| 45.2 | Конфликты: живая проверка | TODO | ВК14: прототип `scan` помощника; второе устройство пользователя с тем же iCloud (Mac или iPhone с Obsidian); временное пространство в `iCloud~md~obsidian/Documents/`; шесть вопросов, ответы в SPEC_ICLOUD_CONFLICTS, «Результаты живой проверки»; без версий в `scan` работа по конфликтам останавливается, итог уходит пользователю |
+| 45.3 | Конфликты: помощник | TODO | `native/icloud_conflicts_helper.swift`: `scan`, `read`, `settle` через `NSFileCoordinator`, токен из `persistentIdentifier`; сборка в `build.rs`, бандл, `verify:bundle-binaries`; запуск через `run_with_deadline`, сроки по ВК5 |
+| 45.4 | Конфликты: индекс и проверка | TODO | удалить `detect_icloud_conflict` и его вызовы в `watcher/handler.rs` и `storage/reconcile.rs`; миграция `vault_conflicts(path, detected_at)` и уборка `conflicts-archive` в Корзину; проход после сверки и после пачки наблюдателя, один на пространство; событие `vault-conflicts-changed`; признак пространства iCloud (ВК3); тесты ВК13 с поддельным помощником |
+| 45.5 | Конфликты: решение | TODO | `list_vault_conflicts` с версиями (ВК7); `resolve_vault_conflict(path, choice, expected_tokens)` по ВК8; отдельные файлы по ВК9; Корзина из папки оригинала; `VaultConflictError` (ВК12); привязки Specta; тесты в плоском пространстве и в `Cards/` |
+| 45.6 | Конфликты: интерфейс | TODO | плашка из шапки бокового меню удаляется; уведомление ведущей вкладки (ВК10); окно (ВК11): строки версий, `Keep`, `Keep all`, одна кнопка закрытия, ошибка под группой; `/__popups`; Vitest |
+| 45.7 | Групповое удаление: бэкенд | TODO | бывшие 26.6.1, 26.6.2 и Rust часть 26.6.4: `prepare_delete_blocks(slugs)`, `delete_blocks(slugs, delete_unused_media) -> DeleteBlocksOutcome`; набор исключаемых карточек в чтении индекса и в сверке с диском; привязки Specta; тесты по SPEC_GROUP_SELECTION.md |
+| 45.8 | Групповое удаление: окно | TODO | бывшие 26.6.3 и Vitest часть 26.6.4: `requestDeleteSelection()` для кнопки ряда, меню ⌘K, меню правого щелчка и Backspace; один элемент идёт в `Delete element?`; один экземпляр `DeleteSelectedCardsDialog` у Grid, копия в `GroupSelectionCommands` и экземпляр в `GroupSelectionCardMenu` удаляются; общие части с `DeleteBlockDialog` в одном модуле; `Deleting…`, ошибка в окне, `Media kept`; `/__popups` |
+| 45.9 | Тексты окон | TODO | правило «Что вернуть нельзя» и таблица «Тексты окон» во всех перечисленных окнах; `NEW_COLLECTION_DESCRIPTION` скрытым текстом; строки `Delete element?` после параллельных правок `DeleteBlockDialog`; Vitest на тексты по условиям (медиа, `frontmatter_file`, число элементов, без элементов) |
+| 45.10 | Сбой удаления элемента | TODO | `performDeleteBlock` в `App.tsx`: ошибка в уведомление `Could not delete the element` этой вкладки (DESIGN_SYSTEM.md, «Сбой после закрытия окна»), без вывода только в консоль; после параллельных правок удаления элемента; Vitest |
+| 45.11 | Документы реализации | TODO | статусы SPEC_ICLOUD_CONFLICTS и SPEC_GROUP_SELECTION; в SPEC_INTEGRATION раздел «Пакетное удаление карточек» (описывает временную версию) и сигнатура `delete_blocks`; SPEC_FRONTEND; CLAUDE.md (структура: помощник); ARCHITECTURE; запись DEVLOG в коммите |
+| 45.12 | Живая приёмка | TODO | за пользователем: конфликт правки на двух устройствах и все три выбора; групповое удаление с собственными и общими медиа; тексты окон; сбой удаления элемента |
+
 ### Backlog
 
 | Task | Description |
 |---|---|
 | Validate vault | Команда проверки целостности vault: валидация frontmatter, осиротевшие медиа, консистентность индекса, автоисправление |
-| Conflict diff view | Опциональный side-by-side diff base ↔ conflict перед `dismiss_for_manual_merge`. См. [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) § Conflict resolution. |
+| Conflict diff view | Сравнение версий построчно перед выбором в окне конфликтов iCloud. См. [SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md), «Что не входит». |
 | Tight per-kind numbering после dedup/failed | После Phase C индексы могут содержать gap'ы (`image 1, image 3`). Renumber + rename файлов на диске для консистентности с пользовательским ожиданием. UX-only, не функционально. |
 | Имя файла миниатюры по содержимому | `.micro.jpg` может содержать PNG — расширение врёт, и из этого корня уже выросли правила П5 (чтение) и П6 (запись). Честное лечение: `.micro.png`, ценой перебора двух расширений в `thumbnailLevelUrl` либо формата уровня в БД. См. [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) § Правила. |
 | Фон композитной миниатюры зависит от темы | `generate_composite_thumbnail` заливает `[24, 24, 27, 255]` — цвет тёмной темы запечён в файл, в светлой теме мозаика остаётся тёмной. Та же болезнь, что I10, но на коллаже. |

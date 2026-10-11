@@ -37,7 +37,8 @@ use crate::domain::vault::{
 use crate::storage::index::IndexedBlock;
 use crate::storage::source_mutation::{SourceFileWrite, SourceMutationError, StagedSourceMutation};
 use crate::storage::{
-    article_audio, db, derived_preview, files, index, media_refs, projection, reconcile, thumbnails,
+    article_audio, block_queries, db, derived_preview, files, index, media_refs, projection,
+    reconcile, thumbnails,
 };
 use crate::util::append_startup_trace;
 
@@ -156,6 +157,17 @@ pub struct DeleteBlockPlan {
     pub markdown_file: String,
     pub unused_media: Vec<DeleteBlockMedia>,
     pub shared_media: Vec<DeleteBlockMedia>,
+}
+
+/// What `delete_block` did (decision of 11.10.2026).
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct DeleteBlockOutcome {
+    /// Whether the card's index row went with its file.
+    pub removed: bool,
+    /// The card's media another note uses, as the deletion found the notes
+    /// on disk: they stayed in the space. Only a deletion asked to take the
+    /// media fills it; the window tells which of the files it offered stayed.
+    pub kept_media: Vec<DeleteBlockMedia>,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -2047,7 +2059,10 @@ pub fn check_block_rename(webview: tauri::Webview, state: State<'_, AppState>, o
     check_block_rename_inner(&vs.conn, &vs.vault, &old_slug, &new_stem)
 }
 
-/// Prepare a user-visible deletion plan for a block.
+/// Prepare the delete window's plan for a block, from the index alone
+/// (decision of 11.10.2026): the window waits for it and opens at its final
+/// width, so it has to come at once. No note is read from disk here; the
+/// deletion itself checks the notes on disk (`build_delete_block_plan`).
 #[tauri::command]
 pub async fn prepare_delete_block(
     webview: tauri::Webview,
@@ -2058,14 +2073,15 @@ pub async fn prepare_delete_block(
     validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
     let vault = tab_layout(&state, &webview)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let (block, blocks) = super::state::read_owned_projection(&app, &vault, |conn| {
-            Ok((index::get_block(conn, &slug)?, index::list_blocks(conn)?))
+        let (block, notes) = super::state::read_owned_projection(&app, &vault, |conn| {
+            Ok((
+                index::get_block(conn, &slug)?,
+                block_queries::list_note_file_mentions(conn, &slug)?,
+            ))
         })?;
         let block =
             block.ok_or_else(|| CommandError::Internal(format!("block not found: {slug}")))?;
-        Ok(build_delete_block_plan_from_blocks(
-            &vault, &slug, &block, blocks,
-        ))
+        Ok(delete_block_plan_from_index_rows(&vault, &block, &notes))
     })
     .await
     .map_err(|error| CommandError::Internal(format!("delete plan task failed: {error}")))?
@@ -2077,7 +2093,7 @@ fn delete_block_unannounced(
     state: State<'_, AppState>,
     slug: String,
     delete_unused_media: Option<bool>,
-) -> Result<bool, CommandError> {
+) -> Result<DeleteBlockOutcome, CommandError> {
     let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
     let vault_state = space
         .vault_state
@@ -2097,7 +2113,7 @@ fn delete_block_unannounced(
 /// [`delete_block_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async, rename_all = "snake_case")]
-pub fn delete_block(webview: tauri::Webview, state: State<'_, AppState>, slug: String, delete_unused_media: Option<bool>) -> Result<bool, CommandError> {
+pub fn delete_block(webview: tauri::Webview, state: State<'_, AppState>, slug: String, delete_unused_media: Option<bool>) -> Result<DeleteBlockOutcome, CommandError> {
     let announcing = webview.clone();
     let outcome = delete_block_unannounced(webview, state, slug, delete_unused_media);
     if outcome.is_ok() {
@@ -2189,18 +2205,26 @@ pub(crate) fn delete_blocks_inner(
     Ok(removed)
 }
 
+/// Delete one card and, when asked, the media only it uses. The media are
+/// checked against the notes on disk at this moment, whatever the window
+/// showed (decision of 11.10.2026): a file another note uses stays, and the
+/// outcome names it.
 pub(crate) fn delete_block_inner(
     state: Option<&AppState>,
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     slug: &str,
     delete_unused_media: Option<bool>,
-) -> Result<bool, CommandError> {
+) -> Result<DeleteBlockOutcome, CommandError> {
     validate_slug(slug).map_err(|e| CommandError::Internal(e.to_string()))?;
     // Retaining media needs no vault-wide media reference analysis.
     if delete_unused_media == Some(false) {
-        return delete_blocks_inner(state, conn, vault, vec![slug.to_string()])
-            .map(|removed| removed > 0);
+        return delete_blocks_inner(state, conn, vault, vec![slug.to_string()]).map(|removed| {
+            DeleteBlockOutcome {
+                removed: removed > 0,
+                kept_media: Vec::new(),
+            }
+        });
     }
     let plan = build_delete_block_plan(conn, vault, slug)?;
 
@@ -2255,7 +2279,15 @@ pub(crate) fn delete_block_inner(
         log::warn!("failed to delete article audio for {slug}: {e:#}");
     }
 
-    Ok(removed)
+    Ok(DeleteBlockOutcome {
+        removed,
+        // Only a deletion asked to take the media reports what it left.
+        kept_media: if delete_unused_media == Some(true) {
+            plan.shared_media
+        } else {
+            Vec::new()
+        },
+    })
 }
 
 /// Merge selected cards into one new article card while preserving media files
@@ -2320,16 +2352,17 @@ pub fn merge_blocks(webview: tauri::Webview, app: AppHandle, state: State<'_, Ap
     outcome
 }
 
+/// The plan the deletion acts on: the index's plan
+/// (`build_delete_block_plan_from_index`), with every file it calls unused
+/// checked against the notes on disk at this moment. The index may not have
+/// caught up with a note saved a moment ago; a file such a note uses moves to
+/// the shared media and stays (decision of 11.10.2026).
 pub(crate) fn build_delete_block_plan(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     slug: &str,
 ) -> Result<DeleteBlockPlan, CommandError> {
-    let block = index::get_block(conn, slug)?
-        .ok_or_else(|| CommandError::Internal(format!("block not found: {slug}")))?;
-    let mut plan = build_delete_block_plan_from_blocks(vault, slug, &block, index::list_blocks(conn)?);
-    // The index may not have caught up with a note saved a moment ago: media
-    // it calls unused is checked against the notes on disk before it may go.
+    let mut plan = build_delete_block_plan_from_index(conn, vault, slug)?;
     let candidates: Vec<PathBuf> = plan
         .unused_media
         .iter()
@@ -2347,25 +2380,93 @@ pub(crate) fn build_delete_block_plan(
     Ok(plan)
 }
 
+/// The plan of the delete window, from the index alone (decision of
+/// 11.10.2026): which notes use the card's media is read from what the index
+/// holds of each note, its frontmatter file and thumbnail and its body. No
+/// note is read from disk.
+pub(crate) fn build_delete_block_plan_from_index(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    slug: &str,
+) -> Result<DeleteBlockPlan, CommandError> {
+    let block = index::get_block(conn, slug)?
+        .ok_or_else(|| CommandError::Internal(format!("block not found: {slug}")))?;
+    let notes = block_queries::list_note_file_mentions(conn, slug)?;
+    Ok(delete_block_plan_from_index_rows(vault, &block, &notes))
+}
+
+/// `build_delete_block_plan_from_index` over rows already read: the card and
+/// every other indexed note. One resolver serves the card's own media and
+/// the notes that may use them, so the file list is walked at most once.
+fn delete_block_plan_from_index_rows(
+    vault: &VaultLayout,
+    block: &IndexedBlock,
+    notes: &[block_queries::NoteFileMentions],
+) -> DeleteBlockPlan {
+    let mut resolver = media_refs::MediaResolver::new(vault);
+    let media = collect_delete_media_for_block(vault, block, &mut resolver);
+    let candidates: Vec<PathBuf> = media
+        .values()
+        .map(|media| media.absolute_path.clone())
+        .collect();
+    let mut users = MediaUsers::new(&candidates);
+    if users.wanted() {
+        for note in notes {
+            if let Err(error) = validate_slug(&note.slug) {
+                log::warn!(
+                    "delete plan skipped invalid indexed block slug {:?}: {}",
+                    note.slug,
+                    error
+                );
+                continue;
+            }
+            let references = iter_file_references(&note.body);
+            users.add_note(
+                &mut resolver,
+                &NoteFiles {
+                    slug: &note.slug,
+                    file: note.media_file.as_deref(),
+                    thumbnail: note.thumbnail.as_deref(),
+                    references: &references,
+                },
+            );
+        }
+    }
+    let users = users.into_users();
+
+    let mut unused_media = Vec::new();
+    let mut shared_media = Vec::new();
+    for mut media in media.into_values() {
+        if let Some(refs) = users.get(&media.absolute_path) {
+            media.referenced_by = refs.iter().cloned().collect();
+            shared_media.push(media);
+        } else {
+            unused_media.push(media);
+        }
+    }
+
+    DeleteBlockPlan {
+        slug: block.slug.clone(),
+        markdown_file: format!("{}.md", block.slug),
+        unused_media,
+        shared_media,
+    }
+}
+
 /// The notes on disk that use each of `media`, by slug (SPEC_AUDIT_FIXES.md,
 /// Ф4). Every note is read and parsed, so a reference counts in whatever form
 /// the parser reads it: a percent-encoded Markdown path, an escaped YAML
 /// value, another Unicode normalization, and any link form Obsidian reads, not
-/// only an embed (`iter_file_references`, Г1.1). Path resolution, the
-/// expensive step, runs only for a note whose references hold a candidate's
-/// name. `skip` is a note that is going away with the media.
+/// only an embed (`iter_file_references`, Г1.1). `skip` is a note that is
+/// going away with the media.
 pub(crate) fn media_users_on_disk(
     vault: &VaultLayout,
     media: &[PathBuf],
     skip: Option<&Path>,
 ) -> anyhow::Result<BTreeMap<PathBuf, BTreeSet<String>>> {
-    let mut users: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
-    let names: Vec<(&PathBuf, String)> = media
-        .iter()
-        .filter_map(|path| Some((path, fold_media_name(path.file_name()?.to_str()?))))
-        .collect();
-    if names.is_empty() {
-        return Ok(users);
+    let mut users = MediaUsers::new(media);
+    if !users.wanted() {
+        return Ok(users.into_users());
     }
     let mut resolver = media_refs::MediaResolver::new(vault);
     for note in files::scan_md_files(vault)? {
@@ -2375,38 +2476,95 @@ pub(crate) fn media_users_on_disk(
         let (slug, content) = files::read_block_file(vault, &note)?;
         let block = parse_markdown_document(&slug, &content, file_saved_at(&note))?.block;
         let references = iter_file_references(&block.body);
-        let forms = media_reference_forms(&block, &references);
-        for (path, name) in &names {
+        users.add_note(&mut resolver, &NoteFiles::of_block(&block, &references));
+    }
+    Ok(users.into_users())
+}
+
+/// What one note says about files, wherever it was read: from disk
+/// (`media_users_on_disk`) or from the index
+/// (`build_delete_block_plan_from_index`).
+struct NoteFiles<'a> {
+    slug: &'a str,
+    file: Option<&'a str>,
+    thumbnail: Option<&'a str>,
+    references: &'a [FileReference],
+}
+
+impl<'a> NoteFiles<'a> {
+    /// A note parsed from disk, whose body makes `references`.
+    fn of_block(block: &'a Block, references: &'a [FileReference]) -> Self {
+        Self {
+            slug: &block.slug,
+            file: block.frontmatter.file.as_deref(),
+            thumbnail: block.frontmatter.thumbnail.as_deref(),
+            references,
+        }
+    }
+}
+
+/// The notes that use each of a set of media files, gathered one note at a
+/// time. Path resolution, the expensive step, runs only for a note whose
+/// references hold a candidate's name.
+struct MediaUsers<'m> {
+    names: Vec<(&'m PathBuf, String)>,
+    users: BTreeMap<PathBuf, BTreeSet<String>>,
+}
+
+impl<'m> MediaUsers<'m> {
+    fn new(media: &'m [PathBuf]) -> Self {
+        Self {
+            names: media
+                .iter()
+                .filter_map(|path| Some((path, fold_media_name(path.file_name()?.to_str()?))))
+                .collect(),
+            users: BTreeMap::new(),
+        }
+    }
+
+    /// Whether there is a file to look for at all: without one, no note
+    /// needs reading.
+    fn wanted(&self) -> bool {
+        !self.names.is_empty()
+    }
+
+    fn add_note(&mut self, resolver: &mut media_refs::MediaResolver<'_>, note: &NoteFiles<'_>) {
+        let forms = media_reference_forms(note);
+        for (path, name) in &self.names {
             if forms.iter().any(|form| form.contains(name.as_str()))
-                && note_uses_media(&mut resolver, &block, &references, path)
+                && note_uses_media(resolver, note, path)
             {
-                users.entry((*path).clone()).or_default().insert(slug.clone());
+                self.users
+                    .entry((*path).clone())
+                    .or_default()
+                    .insert(note.slug.to_string());
             }
         }
     }
-    Ok(users)
+
+    fn into_users(self) -> BTreeMap<PathBuf, BTreeSet<String>> {
+        self.users
+    }
 }
 
-/// Whether `block`, whose body makes `references`, names `media_path` in its
-/// file or thumbnail or in any reference of its body.
+/// Whether `note` names `media_path` in its file or thumbnail or in any
+/// reference of its body.
 fn note_uses_media(
     resolver: &mut media_refs::MediaResolver<'_>,
-    block: &Block,
-    references: &[FileReference],
+    note: &NoteFiles<'_>,
     media_path: &Path,
 ) -> bool {
-    let frontmatter = [&block.frontmatter.file, &block.frontmatter.thumbnail];
-    frontmatter
+    [note.file, note.thumbnail]
         .into_iter()
         .flatten()
         .any(|reference| {
             resolver
-                .resolve_indexed_media(&block.slug, reference)
+                .resolve_indexed_media(note.slug, reference)
                 .is_some_and(|path| same_path(&path, media_path))
         })
-        || references.iter().any(|reference| {
+        || note.references.iter().any(|reference| {
             resolver
-                .resolve_file_reference(&block.slug, reference)
+                .resolve_file_reference(note.slug, reference)
                 .is_some_and(|path| same_path(&path, media_path))
         })
 }
@@ -2418,64 +2576,19 @@ fn fold_media_name(text: &str) -> String {
     text.nfc().collect::<String>().to_lowercase()
 }
 
-/// Every reference of `block` that `note_uses_media` resolves (the
-/// frontmatter file and thumbnail, each of `references`), as written and
+/// Every reference of `note` that `note_uses_media` resolves (the
+/// frontmatter file and thumbnail, each body reference), as written and
 /// percent-decoded, folded by `fold_media_name`.
-fn media_reference_forms(block: &Block, references: &[FileReference]) -> Vec<String> {
-    block
-        .frontmatter
-        .file
-        .iter()
-        .chain(block.frontmatter.thumbnail.iter())
-        .map(String::as_str)
-        .chain(references.iter().map(|reference| reference.target.as_str()))
+fn media_reference_forms(note: &NoteFiles<'_>) -> Vec<String> {
+    note.file
+        .into_iter()
+        .chain(note.thumbnail)
+        .chain(note.references.iter().map(|reference| reference.target.as_str()))
         .flat_map(|reference| {
             let decoded = percent_encoding::percent_decode_str(reference).decode_utf8_lossy();
             [fold_media_name(reference), fold_media_name(&decoded)]
         })
         .collect()
-}
-
-fn build_delete_block_plan_from_blocks(
-    vault: &VaultLayout,
-    slug: &str,
-    block: &IndexedBlock,
-    blocks: Vec<IndexedBlock>,
-) -> DeleteBlockPlan {
-    let mut current_resolver = media_refs::MediaResolver::new(vault);
-    let current_media = collect_delete_media_for_block(vault, &block, &mut current_resolver);
-
-    let mut other_refs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut shared_resolver = media_refs::MediaResolver::new(vault);
-    for other in blocks {
-        if other.slug == slug {
-            continue;
-        }
-        for media in collect_used_media_for_block(vault, &other, &mut shared_resolver).values() {
-            other_refs
-                .entry(media.path.clone())
-                .or_default()
-                .insert(other.slug.clone());
-        }
-    }
-
-    let mut unused_media = Vec::new();
-    let mut shared_media = Vec::new();
-    for mut media in current_media.into_values() {
-        if let Some(refs) = other_refs.get(&media.path) {
-            media.referenced_by = refs.iter().cloned().collect();
-            shared_media.push(media);
-        } else {
-            unused_media.push(media);
-        }
-    }
-
-    DeleteBlockPlan {
-        slug: slug.to_string(),
-        markdown_file: format!("{slug}.md"),
-        unused_media,
-        shared_media,
-    }
 }
 
 pub(crate) fn merge_blocks_inner(
@@ -3083,14 +3196,16 @@ pub(crate) fn collect_delete_media_for_block(
         return media;
     }
 
+    // The caller's resolver answers bare names from its one walk of the file
+    // list; a resolver per lookup walked the space again for each.
     if let Some(file_name) = block.media_file.as_deref() {
-        if let Some(path) = media_refs::resolve_indexed_media(vault, &block.slug, file_name) {
+        if let Some(path) = resolver.resolve_indexed_media(&block.slug, file_name) {
             insert_delete_media(vault, &mut media, &block.slug, &path, true);
         }
     }
 
     if let Some(thumbnail) = block.thumbnail.as_deref() {
-        if let Some(path) = media_refs::resolve_indexed_media(vault, &block.slug, thumbnail) {
+        if let Some(path) = resolver.resolve_indexed_media(&block.slug, thumbnail) {
             insert_delete_media(vault, &mut media, &block.slug, &path, false);
         }
     }
@@ -5037,7 +5152,8 @@ fn build_planned_block_writes(
             note_before.clone()
         };
         let mut rewritten = rewrite_note_links(&block, &moves, &note_before, &note_after);
-        let mentions_moved_media = media_reference_forms(&block, &iter_file_references(&block.body))
+        let references = iter_file_references(&block.body);
+        let mentions_moved_media = media_reference_forms(&NoteFiles::of_block(&block, &references))
             .iter()
             .any(|form| moved_media_names.iter().any(|name| form.contains(name.as_str())));
         if mentions_moved_media {
@@ -5876,7 +5992,7 @@ mod tests {
         assert_eq!(plan.shared_media.len(), 1);
         assert_eq!(plan.shared_media[0].path, "photo.png");
         assert_eq!(plan.shared_media[0].referenced_by, vec!["Source Article"]);
-        assert!(delete_block_inner(None, &conn, &vault, &indexed.slug, Some(true)).unwrap());
+        assert!(delete_block_inner(None, &conn, &vault, &indexed.slug, Some(true)).unwrap().removed);
         assert!(!vault.block_path(&indexed.slug).exists());
         assert_eq!(
             std::fs::read(vault.root().join("photo.png")).unwrap(),
@@ -6719,7 +6835,7 @@ mod tests {
         assert_eq!(plan.shared_media[0].path, "shared.png");
 
         assert!(
-            delete_block_inner(Some(&state), &conn, &vault, "Source Article", Some(true)).unwrap()
+            delete_block_inner(Some(&state), &conn, &vault, "Source Article", Some(true)).unwrap().removed
         );
 
         assert!(!vault.block_path("Source Article").exists());
@@ -7966,7 +8082,7 @@ mod tests {
         assert_eq!(plan.shared_media.len(), 1);
         assert_eq!(plan.shared_media[0].referenced_by, vec!["Cards/Note".to_string()]);
 
-        assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap());
+        assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap().removed);
 
         assert!(!vault.block_path("Cards/Owner").exists());
         assert_eq!(std::fs::read(&photo).unwrap(), b"photo bytes");
@@ -8043,7 +8159,7 @@ mod tests {
                     vec![("Media/doc.pdf", vec!["Cards/Reader".to_string()])],
                     "{link} (indexed: {indexed})"
                 );
-                assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap());
+                assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap().removed);
                 assert_eq!(std::fs::read(&doc).unwrap(), b"pdf bytes", "{link} (indexed: {indexed})");
             }
         }
@@ -8074,8 +8190,8 @@ mod tests {
             plan.shared_media.iter().map(|media| media.path.as_str()).collect::<BTreeSet<_>>(),
             BTreeSet::from(["Media/a%20b.jpg", "Media/photo#tag.jpg"])
         );
-        assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap());
-        assert!(delete_block_inner(None, &conn, &vault, "Cards/Reader", Some(true)).unwrap());
+        assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap().removed);
+        assert!(delete_block_inner(None, &conn, &vault, "Cards/Reader", Some(true)).unwrap().removed);
         for name in ["photo#tag.jpg", "a%20b.jpg", "a b.jpg"] {
             assert!(vault.root().join("Media").join(name).is_file(), "{name}");
         }
@@ -8088,6 +8204,97 @@ mod tests {
             BTreeSet::from(["Media/a%20b.jpg", "Media/photo#tag.jpg"])
         );
         assert!(vault.root().join("Media/a b.jpg").is_file());
+    }
+
+    /// Decision of 11.10.2026: the delete window's plan comes from the index
+    /// alone. Who uses a file is what the index holds of each note, in every
+    /// form a note may name it; a note on disk the index has not seen, or a
+    /// note edited since it was indexed, does not change the window's plan.
+    #[test]
+    fn the_delete_window_plan_comes_from_the_index_alone() {
+        let (_root, _derived, vault, conn) = make_vault();
+        write_media(&vault, "Media/photo.jpg");
+        write_media(&vault, "Media/shared.jpg");
+        write_media(&vault, "Media/doc.pdf");
+        write_media(&vault, "Media/фото.jpg");
+        write_note(
+            &vault,
+            "Cards/Owner",
+            "---\nfile: \"[[photo.jpg]]\"\nsaved_at: 2026-04-22T00:00:00Z\n---\n![[shared.jpg]]\n\n![[doc.pdf]]\n\n![[фото.jpg]]\n",
+        );
+        // Each indexed reader names one file in another form: an embed, a
+        // plain link, a percent-encoded Markdown path.
+        write_note(&vault, "Cards/Embeds", "Same picture: ![[shared.jpg]]\n");
+        write_note(&vault, "Notes/Links", "Read [[doc.pdf|the paper]].\n");
+        write_note(&vault, "Notes/Encoded", &format!("{ENCODED_PHOTO_LINK}\n"));
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        // After indexing: a new note uses the primary file, and the plain
+        // link is edited away. The index has seen neither.
+        write_note(&vault, "Cards/Late", "![[photo.jpg]]\n");
+        write_note(&vault, "Notes/Links", "No link any more.\n");
+
+        let walks_before = media_refs::link_index_builds();
+        let plan = build_delete_block_plan_from_index(&conn, &vault, "Cards/Owner").unwrap();
+        assert!(
+            media_refs::link_index_builds() - walks_before <= 1,
+            "the plan walks the file list at most once"
+        );
+
+        assert_eq!(
+            plan.unused_media.iter().map(|media| media.path.as_str()).collect::<Vec<_>>(),
+            vec!["Media/photo.jpg"]
+        );
+        assert_eq!(
+            plan.shared_media
+                .iter()
+                .map(|media| (media.path.as_str(), media.referenced_by.clone()))
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                ("Media/doc.pdf", vec!["Notes/Links".to_string()]),
+                ("Media/shared.jpg", vec!["Cards/Embeds".to_string()]),
+                ("Media/фото.jpg", vec!["Notes/Encoded".to_string()]),
+            ])
+        );
+    }
+
+    /// Decision of 11.10.2026: Delete checks the files against the notes on
+    /// disk before any goes. A file the window offered, which a note the
+    /// index has not seen uses, stays; the outcome names it and the note.
+    /// What nothing uses goes.
+    #[test]
+    fn delete_keeps_a_file_the_stale_index_called_unused_and_names_it() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let photo = write_media(&vault, "Media/photo.jpg");
+        let lone = write_media(&vault, "Media/lone.jpg");
+        write_note(
+            &vault,
+            "Cards/Owner",
+            "---\nfile: \"[[photo.jpg]]\"\nsaved_at: 2026-04-22T00:00:00Z\n---\n![[lone.jpg]]\n",
+        );
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let window = build_delete_block_plan_from_index(&conn, &vault, "Cards/Owner").unwrap();
+        assert_eq!(
+            window.unused_media.iter().map(|media| media.path.as_str()).collect::<BTreeSet<_>>(),
+            BTreeSet::from(["Media/lone.jpg", "Media/photo.jpg"])
+        );
+        // Saved while the window was open: on disk, not yet in the index.
+        write_note(&vault, "Cards/Late", "![[photo.jpg]]\n");
+
+        let outcome = delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap();
+
+        assert!(outcome.removed);
+        assert!(!vault.block_path("Cards/Owner").exists());
+        assert_eq!(std::fs::read(&photo).unwrap(), b"Media/photo.jpg");
+        assert!(!lone.exists());
+        assert_eq!(
+            outcome
+                .kept_media
+                .iter()
+                .map(|media| (media.path.as_str(), media.referenced_by.clone()))
+                .collect::<Vec<_>>(),
+            vec![("Media/photo.jpg", vec!["Cards/Late".to_string()])]
+        );
     }
 
     #[test]
@@ -8476,7 +8683,7 @@ mod tests {
         let plan = build_delete_block_plan(&conn, &vault, "Cards/Owner").unwrap();
         assert!(plan.unused_media.is_empty(), "{:?}", plan.unused_media);
         assert_eq!(plan.shared_media.len(), TITLED_IMAGES.len());
-        assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap());
+        assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap().removed);
 
         for name in TITLED_IMAGES {
             let relative = format!("Media/{name}");

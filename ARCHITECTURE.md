@@ -1,6 +1,6 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_X_THREADS.md](SPEC_X_THREADS.md) | [SPEC_AUDIT_FIXES.md](SPEC_AUDIT_FIXES.md) | [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md) | [SPEC_TABS.md](SPEC_TABS.md) | [SPEC_CLIPPER_DRAFTS_REMOVAL.md](SPEC_CLIPPER_DRAFTS_REMOVAL.md) | [SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md) | [SPEC_CARD_UNIFIED.md](SPEC_CARD_UNIFIED.md) | [SPEC_CARD_ASSOCIATIONS.md](SPEC_CARD_ASSOCIATIONS.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_X_THREADS.md](SPEC_X_THREADS.md) | [SPEC_AUDIT_FIXES.md](SPEC_AUDIT_FIXES.md) | [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md) | [SPEC_TABS.md](SPEC_TABS.md) | [SPEC_CLIPPER_DRAFTS_REMOVAL.md](SPEC_CLIPPER_DRAFTS_REMOVAL.md) | [SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md) | [SPEC_CARD_UNIFIED.md](SPEC_CARD_UNIFIED.md) | [SPEC_CARD_ASSOCIATIONS.md](SPEC_CARD_ASSOCIATIONS.md) | [SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md)
 
 ## Context
 
@@ -307,6 +307,8 @@ watcher пропустил событие или native host сохранял cl
 `NoteMoves` применяет то же разрешение к переименованию и слиянию: ссылка переписывается, если до операции она разрешалась в перемещённую заметку, включая короткую форму `[[Foo]]` для `Cards/Foo.md`; новый текст ссылки выбирает `shortest_link`.
 
 [Патчер исходника](</Users/i_iii/Проекты/Личные проекты/local-arena/mine-core/src/domain/source_patch.rs>) единственный путь изменения существующей заметки: `apply_block_changes(исходный текст, прочитанная модель, изменённая модель)` переносит в текст только изменённые поля Mine и тело и сверяет результат повторным чтением. `serialize_block` собирает только новые заметки. Запись публикуется со сверкой байтов (SPEC_STORAGE.md, раздел Checked publication).
+
+[Определитель типа изображения](</Users/i_iii/Проекты/Личные проекты/local-arena/mine-core/src/domain/media_type.rs>) единственное место, где Mine узнаёт формат картинки по первым байтам: протокол `asset://` берёт из него MIME, конвейер превью решает с его помощью, что декодирует Rust и что лежит в файле превью, ядро сохранения выбирает расширение нового медиафайла. Имя файла и `Content-Type` используются, только когда байты ответа не дают (SPEC_SAVE_CORE.md, «Имя медиафайла по содержимому»; SPEC_THUMBNAILS.md, П7).
 
 Obsidian-ссылки сначала проверяются как существующий адрес от корня, затем как однозначный суффикс. Устаревший путь восстанавливается по имени только при единственной цели. Обычные Markdown-ссылки разрешаются относительно исходного документа. Каталог строится один раз на пакет обработки. Новые имена выбираются во всём пространстве, существующие одноимённые файлы не объединяются.
 
@@ -2484,3 +2486,31 @@ none`, и указатель не доходит ни до чего под ме�
 | Показывать имена из карточек без страницы отдельной частью списка (как было) | Не выбрано: коллекция без файла, которой нет в Obsidian; перестановка создавала ей страницу побочным действием |
 | Отбрасывать ссылки без страницы при индексации карточки | Не выбрано: появление страницы потребовало бы переиндексировать все карточки |
 | Удалять или переписывать ссылки без страницы | Не выбрано: Mine не трогает данные пользователя, которые не может показать; ссылка остаётся видимой в Obsidian |
+
+### 056: Конфликт iCloud определяют версии файла, а не имя
+
+Решение пользователя 11.10.2026. Контракт:
+[SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md). Реализация в Phase 45
+([PLAN.md](PLAN.md), этапы от 45.2 до 45.6), первым этапом живая проверка на
+iCloud.
+
+1. **Конфликт это версии одного файла.** Правку одного файла на двух
+   устройствах iCloud хранит как неразрешённые версии `NSFileVersion`; в папке
+   файл остаётся один. `Имя 2.md` это конфликт нового файла, два отдельных
+   файла, и оба законно видны как карточки (Apple TN2336).
+2. **Системный механизм читает Swift-помощник.** `icloud-conflicts-helper`
+   рядом с `icloud-progress-helper`, без прав iCloud, через
+   `NSFileCoordinator`: `scan`, `read`, `settle`. Rust владеет индексом,
+   записью файлов со сверкой байтов и Корзиной.
+3. **Путь, а не имя.** `vault_conflicts` хранит путь от корня с папками;
+   решение работает в любой раскладке.
+4. **Проигравшая версия видна и возвращается.** Она уходит в Корзину из папки
+   оригинала, Put Back возвращает её отдельной заметкой; служебного
+   `conflicts-archive` нет.
+
+| Вариант | Результат выбора |
+|---|---|
+| Версии `NSFileVersion` через помощник | Принято: ловит настоящие конфликты правок, которые сегодня не видны вовсе |
+| Угадывание по имени файла (как было) | Не выбрано: узнаёт только имена Dropbox; `Имя 2.md` это не правка, а второй файл; заметку с именем `Note 2` угадывание сочло бы конфликтом |
+| `NSMetadataQuery` по ключу конфликтов | Не выбрано: без прав iCloud ничего не возвращает (проверено на помощнике процента загрузки, SPEC_CLOUD_STORAGE.md, Х4) |
+| Хранить прежнюю версию в производном хранилище | Не выбрано: пользователь её не видит и не может вернуть |

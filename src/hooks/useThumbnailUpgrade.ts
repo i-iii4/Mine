@@ -16,7 +16,7 @@
 // retries a failed decode once per session. Both paths dedup the startup
 // backlog against live events so no target is processed twice.
 //
-// On success, writes decoded JPEG bytes back to Rust via `save_thumb` /
+// On success, writes the encoded picture (JPEG or PNG) back to Rust via `save_thumb` /
 // `save_tile_poster`, which in turn emit `thumb:updated` — the sidebar
 // cache-bust hook listens for that event. This keeps the data flow
 // one-directional (decode → Rust → event → UI) and means the hook itself

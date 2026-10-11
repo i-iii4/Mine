@@ -2459,6 +2459,16 @@
       "requirement": "DESIGN_SYSTEM.md### Окна",
       "tests": ["src/components/DeleteBlockDialog.test.tsx", "src/components/Detail.test.tsx", "src/App.test.tsx", "src/components/Grid.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "mine-core/src/domain/media_type.rs",
+        "src-tauri/src/asset_protocol.rs",
+        "src/workers/thumbWorker.ts"
+      ],
+      "requirement": "SPEC_SAVE_CORE.md## Имя медиафайла по содержимому",
+      "tests": ["mine-core/src/domain/media_type.rs", "src-tauri/src/storage/derived_preview.rs", "src-tauri/src/commands/thumbnails.rs"],
+      "command": "test:rust"
     }
   ],
   "release": null

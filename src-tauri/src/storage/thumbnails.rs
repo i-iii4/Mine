@@ -10,6 +10,8 @@ use ab_glyph::{FontArc, PxScale};
 use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView, RgbImage, Rgba, RgbaImage};
 use imageproc::drawing::draw_text_mut;
+use mine_core::domain::media_type::{sniff_image_type, ImageType};
+use std::io::Write as _;
 use std::path::Path;
 use std::sync::LazyLock;
 use std::time::{Duration, SystemTime};
@@ -109,11 +111,6 @@ where
 }
 
 // ─── Freshness check ────────────────────────────────────────────────────────
-
-/// JPEG magic bytes: `FF D8 FF`.
-const JPEG_MAGIC: [u8; 3] = [0xFF, 0xD8, 0xFF];
-/// PNG magic bytes: `89 50 4E` (89 P N) — first 3 bytes of `89 50 4E 47`.
-const PNG_MAGIC: [u8; 3] = [0x89, 0x50, 0x4E];
 
 /// Actual thumb file state on disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -413,21 +410,101 @@ pub fn thumb_disk_state(thumb_path: &Path) -> ThumbDiskState {
     if !thumb_path.exists() {
         return ThumbDiskState::Missing;
     }
-    match read_thumb_magic(thumb_path) {
-        Some(JPEG_MAGIC) => ThumbDiskState::Jpeg,
-        Some(PNG_MAGIC) => ThumbDiskState::Png,
-        Some(_) | None => ThumbDiskState::Invalid,
+    match files::image_type(thumb_path) {
+        Some(ImageType::Jpeg) => ThumbDiskState::Jpeg,
+        Some(ImageType::Png) => ThumbDiskState::Png,
+        _ => ThumbDiskState::Invalid,
     }
 }
 
-/// Peek first 3 bytes of the thumb file and return them. Returns None
-/// on I/O error or too-short file.
-fn read_thumb_magic(thumb_path: &Path) -> Option<[u8; 3]> {
-    use std::io::Read;
-    let mut file = std::fs::File::open(thumb_path).ok()?;
-    let mut buf = [0u8; 3];
-    file.read_exact(&mut buf).ok()?;
-    Some(buf)
+// ─── Provenance ─────────────────────────────────────────────────────────────
+
+/// What a derived preview on disk is (SPEC_THUMBNAILS.md, rule П7).
+///
+/// A preview is either a picture of the card's media (decoded by Rust, or by
+/// the browser when Rust cannot read the format) or the text placeholder that
+/// stands in until such a picture exists. Both may be PNG (rule П6), so the
+/// format cannot tell them apart, and neither can the source: an AVIF with
+/// transparency is undecodable here yet its browser picture is finished. The
+/// placeholder therefore records what it is inside its own file, and that
+/// record is the only thing "is this preview done" asks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewOrigin {
+    /// Decoded from the card's media, by Rust or by the browser.
+    Picture,
+    /// Baked from the card's text by [`generate_text_thumbnail`].
+    TextPlaceholder,
+}
+
+/// The record a text placeholder carries: a PNG `tEXt` chunk, keyword `Mine`.
+const PLACEHOLDER_RECORD: &[u8] = b"Mine\0text-placeholder";
+
+/// Where the record sits: the first chunk after the signature (8 bytes) and the
+/// header chunk, whose data is always 13 bytes (4 + 4 + 13 + 4).
+const PLACEHOLDER_RECORD_OFFSET: usize = 33;
+
+/// The provenance of the preview at `path`; `None` when there is no preview
+/// there: the file is missing, unreadable, or neither JPEG nor PNG.
+pub fn preview_origin(path: &Path) -> Option<PreviewOrigin> {
+    preview_origin_of(&files::read_media_head(path).ok()?)
+}
+
+/// [`preview_origin`] for the first bytes of a preview.
+pub fn preview_origin_of(head: &[u8]) -> Option<PreviewOrigin> {
+    match sniff_image_type(head)? {
+        ImageType::Jpeg => Some(PreviewOrigin::Picture),
+        ImageType::Png if carries_placeholder_record(head) => Some(PreviewOrigin::TextPlaceholder),
+        ImageType::Png => Some(PreviewOrigin::Picture),
+        _ => None,
+    }
+}
+
+/// Whether the preview at `path` is a finished picture: the one readiness
+/// question for a derived preview, whatever its format and whatever decoded it.
+pub fn is_finished_picture(path: &Path) -> bool {
+    preview_origin(path) == Some(PreviewOrigin::Picture)
+}
+
+fn carries_placeholder_record(png: &[u8]) -> bool {
+    let start = PLACEHOLDER_RECORD_OFFSET;
+    let Some(length) = png.get(start..start + 4) else {
+        return false;
+    };
+    usize::try_from(u32::from_be_bytes([length[0], length[1], length[2], length[3]]))
+        .is_ok_and(|length| length == PLACEHOLDER_RECORD.len())
+        && png.get(start + 4..start + 8) == Some(b"tEXt".as_slice())
+        && png.get(start + 8..start + 8 + PLACEHOLDER_RECORD.len()) == Some(PLACEHOLDER_RECORD)
+}
+
+/// Put the placeholder record right after the header chunk of an encoded PNG.
+fn with_placeholder_record(png: Vec<u8>) -> Result<Vec<u8>> {
+    anyhow::ensure!(
+        png.get(12..16) == Some(b"IHDR".as_slice()) && png.len() > PLACEHOLDER_RECORD_OFFSET,
+        "encoded text thumbnail is not a PNG with a leading header chunk"
+    );
+    let length = u32::try_from(PLACEHOLDER_RECORD.len()).context("placeholder record length")?;
+    let mut chunk = Vec::with_capacity(PLACEHOLDER_RECORD.len() + 12);
+    chunk.extend_from_slice(&length.to_be_bytes());
+    chunk.extend_from_slice(b"tEXt");
+    chunk.extend_from_slice(PLACEHOLDER_RECORD);
+    chunk.extend_from_slice(&png_crc(&chunk[4..]).to_be_bytes());
+    let mut marked = png;
+    marked.splice(PLACEHOLDER_RECORD_OFFSET..PLACEHOLDER_RECORD_OFFSET, chunk);
+    Ok(marked)
+}
+
+/// The CRC-32 a PNG chunk carries over its type and data (ISO 3309, as the
+/// PNG specification defines it).
+fn png_crc(bytes: &[u8]) -> u32 {
+    let mut crc = u32::MAX;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -627,8 +704,9 @@ const TITLE_COLOR: Rgba<u8> = Rgba([51, 51, 51, 255]);
 /// - Creates a 480x480 PNG with **transparent background**
 /// - Renders title in larger text, then body lines below
 /// - Strips markdown formatting before rendering
-/// - Saves as PNG; the app asset protocol sniffs image magic bytes because
-///   the stable thumbnail path is still `<slug>.jpg`
+/// - Saves as PNG carrying the placeholder record ([`PreviewOrigin`]); the
+///   app asset protocol sniffs the content because the stable thumbnail path
+///   is still `<slug>.jpg`
 /// - Sidebar wraps in `bg-background` div + `dark:invert` for theme adaptation
 pub fn generate_text_thumbnail(
     title: Option<&str>,
@@ -690,11 +768,17 @@ pub fn generate_text_thumbnail(
 
     // Save as PNG (transparent background, theme-adaptive via CSS). The file
     // may have a .jpg extension; the app asset protocol serves the MIME type
-    // from content magic bytes, not the extension.
+    // from the content, not the extension. The file records that it is a
+    // placeholder: a transparent picture is PNG too (rule П6), and only this
+    // record tells the two apart (rule П7).
+    let mut png = Vec::new();
+    img.write_with_encoder(image::codecs::png::PngEncoder::new(&mut png))
+        .with_context(|| format!("failed to encode text thumbnail: {}", dest.display()))?;
+    let png = with_placeholder_record(png)?;
     write_thumb_atomically(dest, |writer| {
-        let encoder = image::codecs::png::PngEncoder::new(writer);
-        img.write_with_encoder(encoder)
-            .with_context(|| format!("failed to encode text thumbnail: {}", dest.display()))
+        writer
+            .write_all(&png)
+            .with_context(|| format!("failed to write text thumbnail: {}", dest.display()))
     })?;
 
     PreviewDimensions::new(size, size)
@@ -1006,71 +1090,28 @@ fn ext_lower(path_str: &str) -> String {
     media_ext_lower(path_str).unwrap_or_default()
 }
 
-/// Sniff the first bytes of a file and check whether it is a raster image
-/// format that Rust's `image` crate (version 0.25, default features) can
-/// actually decode in production: **JPEG**, **PNG**, or **GIF**. All other
-/// formats (VP8 / VP8L / VP8X WebP, HEIC/HEIF, AVIF, BMP variants, TIFF,
-/// etc.) should go through the WebView upgrade path instead — Rust decode
-/// attempts will either fail outright (VP8X WebP) or produce wrong results.
+/// Whether Rust's `image` crate (version 0.25, default features) decodes the
+/// file: **JPEG**, **PNG**, **GIF** or a **still WebP** (lossy, lossless and
+/// the extended form without animation). Animated WebP, HEIC/HEIF, AVIF and
+/// everything else go through the WebView upgrade path instead.
 ///
 /// This is the critical gate for Phase 1 of the two-phase pipeline (see
-/// SPEC_THUMBNAILS.md): if the media file is not one of these three
-/// formats, `generate_for_block` must NOT call `generate_thumbnail` on it
-/// — instead it falls through the cascade to the text placeholder and the
-/// block gets queued for WebView upgrade in Phase 2.
+/// SPEC_THUMBNAILS.md): if the media file is not one of these formats,
+/// `generate_for_block` must NOT call `generate_thumbnail` on it; instead it
+/// falls through the cascade to the text placeholder and the block gets queued
+/// for WebView upgrade in Phase 2.
 ///
-/// We deliberately check content bytes rather than file extension because
-/// the clipper can save files with misleading extensions (e.g. a PNG
-/// served as `.jpg`), and because `is_image_ext` accepts formats our
-/// decoder cannot handle.
+/// The format is read from the bytes (`mine_core::domain::media_type`), never
+/// from the name: a server that negotiates formats sends AVIF for a URL ending
+/// in `.png`, and `is_image_ext` accepts formats this decoder cannot handle.
+/// Treating every WebP as undecodable once sent them all through the browser
+/// path, where gallery tiles then hit the poster-name guard and were never
+/// written at all.
 pub fn is_rust_decodable(path: &std::path::Path) -> bool {
-    use std::io::Read;
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let mut buf = [0u8; 6];
-    if file.read_exact(&mut buf).is_err() {
-        return false;
-    }
-    // JPEG: FF D8 FF
-    if buf[0] == 0xFF && buf[1] == 0xD8 && buf[2] == 0xFF {
-        return true;
-    }
-    // PNG: 89 50 4E 47 0D 0A (89 P N G \r \n), first 6 bytes are enough
-    if buf[0] == 0x89 && buf[1] == 0x50 && buf[2] == 0x4E && buf[3] == 0x47 {
-        return true;
-    }
-    // GIF: 47 49 46 38 (GIF8) — covers GIF87a and GIF89a
-    if buf[0] == 0x47 && buf[1] == 0x49 && buf[2] == 0x46 && buf[3] == 0x38 {
-        return true;
-    }
-    // WebP: RIFF????WEBP. The `image` crate decodes still WebP — lossy, lossless
-    // and the extended VP8X form — but not animation. Treating every WebP as
-    // undecodable sent them all through the browser path instead, where gallery
-    // tiles then hit the poster-name guard and were never written at all.
-    if &buf[0..4] == b"RIFF" {
-        let mut header = [0u8; 15];
-        if file.read_exact(&mut header).is_ok() && &header[2..6] == b"WEBP" {
-            return still_webp_chunk(&header[6..15]);
-        }
-    }
-    false
-}
-
-/// Whether a WebP's first chunk is a still image the `image` crate can read.
-///
-/// `chunk` starts at the fourcc that follows the `WEBP` tag: four bytes of
-/// fourcc, four of size, then the VP8X flags byte. Animation lives behind bit
-/// 0x02 of those flags and is the one form the crate cannot decode.
-fn still_webp_chunk(chunk: &[u8]) -> bool {
-    if chunk.len() < 4 {
-        return false;
-    }
-    match &chunk[0..4] {
-        b"VP8 " | b"VP8L" => true,
-        b"VP8X" => chunk.len() >= 9 && chunk[8] & 0x02 == 0,
-        _ => false,
-    }
+    matches!(
+        files::image_type(path),
+        Some(ImageType::Jpeg | ImageType::Png | ImageType::Gif | ImageType::WebP)
+    )
 }
 
 /// Outcome of `generate_for_block` — which source pipeline produced the thumb.
@@ -1229,15 +1270,14 @@ pub fn backfill_thumb_levels(vault: &VaultLayout) -> usize {
 /// evidence: a PNG source beside a non-PNG level is a level written by the old
 /// encoder, and the fix is to write it again.
 ///
-/// Costs one 3-byte read per thumbnail on startup, and a second one only for
-/// the text placeholders — media thumbnails fail the first check and stop
-/// there. Both reads sit inside a directory walk that already stats every
-/// file.
+/// Costs one header read per thumbnail on startup, and a second one only for
+/// the PNG thumbnails: JPEG thumbnails fail the first check and stop there.
+/// Both reads sit inside a directory walk that already stats every file.
 fn levels_dropped_alpha(full: &Path, micro: &Path) -> bool {
-    if read_thumb_magic(full) != Some(PNG_MAGIC) {
+    if files::image_type(full) != Some(ImageType::Png) {
         return false;
     }
-    read_thumb_magic(micro) != Some(PNG_MAGIC)
+    files::image_type(micro) != Some(ImageType::Png)
 }
 
 /// Remove the reduced levels for a slug, for when its thumbnail is discarded.
@@ -1442,33 +1482,6 @@ fn media_may_still_be_arriving(
         .unwrap_or(true)
 }
 
-/// Whether a block's own picture is one the Rust decoder handles.
-///
-/// The pipeline writes PNG for two very different reasons (rule П6): a picture
-/// that uses its alpha channel, and a text placeholder standing in for media
-/// this build cannot decode. The output format therefore says nothing about
-/// whether an artifact is finished — the source does. Callers deciding "is
-/// this preview done" ask here instead of reading the file's magic.
-///
-/// Takes the reference rather than a parsed block so the hot path can answer
-/// without reading the `.md` again. No own media means nothing is waiting on a
-/// decoder, which counts as decodable.
-///
-/// Resolves through the caller's `resolver`: the preview pass and the upgrade
-/// queue ask this for every card they visit.
-pub fn media_reference_is_rust_decodable(
-    resolver: &mut media_refs::MediaResolver<'_>,
-    slug: &str,
-    reference: Option<&str>,
-) -> bool {
-    let Some(reference) = reference else {
-        return true;
-    };
-    resolver
-        .resolve_indexed_media(slug, reference)
-        .is_some_and(|path| is_rust_decodable(&path))
-}
-
 fn resolve_block_media_path(
     block: &Block,
     resolver: &mut media_refs::MediaResolver<'_>,
@@ -1508,7 +1521,6 @@ mod tests {
     use super::*;
     use crate::domain::block::BlockType;
     use ab_glyph::Font;
-    use std::io::Write as _;
 
     /// Create a solid-color test image of given dimensions.
     fn create_test_image_with_color(path: &Path, width: u32, height: u32, color: [u8; 3]) {
@@ -1857,8 +1869,8 @@ mod tests {
         generate_thumbnail(&source, &dest, 64).unwrap();
 
         assert_eq!(
-            read_thumb_magic(&dest),
-            Some(PNG_MAGIC),
+            files::image_type(&dest),
+            Some(ImageType::Png),
             "a transparent source must not be encoded as JPEG"
         );
         let level = image::ImageReader::open(&dest)
@@ -1884,7 +1896,7 @@ mod tests {
         let dest = tmp.path().join("screenshot.micro.jpg");
         generate_thumbnail(&source, &dest, 64).unwrap();
 
-        assert_eq!(read_thumb_magic(&dest), Some(JPEG_MAGIC));
+        assert_eq!(files::image_type(&dest), Some(ImageType::Jpeg));
     }
 
     #[test]
@@ -1916,8 +1928,8 @@ mod tests {
             "the black level is repaired"
         );
         assert_eq!(
-            read_thumb_magic(&vault.thumb_level_path("Text", ThumbLevel::Micro)),
-            Some(PNG_MAGIC)
+            files::image_type(&vault.thumb_level_path("Text", ThumbLevel::Micro)),
+            Some(ImageType::Png)
         );
 
         assert_eq!(
@@ -2085,11 +2097,7 @@ mod tests {
         assert!(thumb_path.exists());
 
         // Verify thumb content is JPEG (not text PNG fallback)
-        let mut header = [0u8; 3];
-        use std::io::Read;
-        let mut f = std::fs::File::open(&thumb_path).unwrap();
-        f.read_exact(&mut header).unwrap();
-        assert_eq!(header, JPEG_MAGIC);
+        assert_eq!(files::image_type(&thumb_path), Some(ImageType::Jpeg));
     }
 
     /// A screenshot saved into the vault arrives as two filesystem events: the
@@ -2185,11 +2193,7 @@ mod tests {
         assert_eq!(source, ThumbSource::Image);
 
         let thumb_path = vault.thumb_path("multi-image");
-        let mut header = [0u8; 3];
-        use std::io::Read;
-        let mut f = std::fs::File::open(&thumb_path).unwrap();
-        f.read_exact(&mut header).unwrap();
-        assert_eq!(header, JPEG_MAGIC);
+        assert_eq!(files::image_type(&thumb_path), Some(ImageType::Jpeg));
 
         let thumb = image::open(&thumb_path).unwrap().to_rgb8();
         assert_eq!(thumb.dimensions(), (240, DEFAULT_MAX_SIZE));
@@ -2232,11 +2236,7 @@ mod tests {
         assert!(thumb_path.exists());
 
         // Text thumb is PNG — first 3 bytes are PNG magic
-        let mut header = [0u8; 3];
-        use std::io::Read;
-        let mut f = std::fs::File::open(&thumb_path).unwrap();
-        f.read_exact(&mut header).unwrap();
-        assert_eq!(header, PNG_MAGIC);
+        assert_eq!(files::image_type(&thumb_path), Some(ImageType::Png));
     }
 
     #[test]
@@ -2273,11 +2273,7 @@ mod tests {
         assert_eq!(source, ThumbSource::Image);
 
         let thumb_path = vault.thumb_path("mixed-article");
-        let mut header = [0u8; 3];
-        use std::io::Read;
-        let mut f = std::fs::File::open(&thumb_path).unwrap();
-        f.read_exact(&mut header).unwrap();
-        assert_eq!(header, JPEG_MAGIC);
+        assert_eq!(files::image_type(&thumb_path), Some(ImageType::Jpeg));
     }
 
     #[test]
@@ -2611,11 +2607,7 @@ mod tests {
         assert!(thumb_path.exists());
 
         // Text placeholder is PNG (transparent background for dark-mode invert)
-        let mut header = [0u8; 3];
-        use std::io::Read;
-        let mut f = std::fs::File::open(&thumb_path).unwrap();
-        f.read_exact(&mut header).unwrap();
-        assert_eq!(header, PNG_MAGIC);
+        assert_eq!(files::image_type(&thumb_path), Some(ImageType::Png));
     }
 
     #[test]
@@ -2632,11 +2624,7 @@ mod tests {
 
         let thumb_path = vault.thumb_path("Opal Camera");
         assert!(thumb_path.exists());
-        let mut header = [0u8; 3];
-        use std::io::Read;
-        let mut f = std::fs::File::open(&thumb_path).unwrap();
-        f.read_exact(&mut header).unwrap();
-        assert_eq!(header, PNG_MAGIC);
+        assert_eq!(files::image_type(&thumb_path), Some(ImageType::Png));
     }
 
     #[test]
@@ -2656,11 +2644,7 @@ mod tests {
         assert_eq!(source, ThumbSource::Image);
 
         let thumb_path = vault.thumb_path("Human Readable Title");
-        let mut header = [0u8; 3];
-        use std::io::Read;
-        let mut f = std::fs::File::open(&thumb_path).unwrap();
-        f.read_exact(&mut header).unwrap();
-        assert_eq!(header, JPEG_MAGIC);
+        assert_eq!(files::image_type(&thumb_path), Some(ImageType::Jpeg));
     }
 
     #[test]
@@ -2680,10 +2664,59 @@ mod tests {
         assert_eq!(source, ThumbSource::Image);
 
         let thumb_path = vault.thumb_path("Human Readable Title");
-        let mut header = [0u8; 3];
-        use std::io::Read;
-        let mut f = std::fs::File::open(&thumb_path).unwrap();
-        f.read_exact(&mut header).unwrap();
-        assert_eq!(header, JPEG_MAGIC);
+        assert_eq!(files::image_type(&thumb_path), Some(ImageType::Jpeg));
+    }
+
+    // ─── Provenance (rule П7) ──────────────────────────────────────────────
+
+    /// The placeholder records what it is, and the record is valid PNG: the
+    /// decoder that builds its levels still reads it.
+    #[test]
+    fn a_text_placeholder_records_that_it_is_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.jpg");
+        generate_text_thumbnail(Some("Note"), "Body text", &path).unwrap();
+
+        assert_eq!(files::image_type(&path), Some(ImageType::Png));
+        assert_eq!(preview_origin(&path), Some(PreviewOrigin::TextPlaceholder));
+        assert!(!is_finished_picture(&path));
+        image::ImageReader::open(&path)
+            .unwrap()
+            .with_guessed_format()
+            .unwrap()
+            .decode()
+            .expect("the placeholder record keeps the PNG valid");
+    }
+
+    /// A transparent picture is PNG too (rule П6), yet it is finished: the
+    /// format does not decide, the record does.
+    #[test]
+    fn a_png_or_jpeg_picture_is_finished_and_nothing_else_is_a_preview() {
+        let dir = tempfile::tempdir().unwrap();
+        let transparent = dir.path().join("logo.png");
+        image::RgbaImage::from_pixel(32, 32, image::Rgba([10, 20, 30, 0]))
+            .save_with_format(&transparent, image::ImageFormat::Png)
+            .unwrap();
+        let png = dir.path().join("logo.thumb.jpg");
+        generate_thumbnail(&transparent, &png, 64).unwrap();
+        assert_eq!(files::image_type(&png), Some(ImageType::Png));
+        assert_eq!(preview_origin(&png), Some(PreviewOrigin::Picture));
+        assert!(is_finished_picture(&png));
+
+        let jpeg = dir.path().join("photo.jpg");
+        create_test_image(&jpeg, 20, 20);
+        assert_eq!(preview_origin(&jpeg), Some(PreviewOrigin::Picture));
+
+        let gif = dir.path().join("anim.jpg");
+        std::fs::write(&gif, b"GIF89a\x01\x00\x01\x00").unwrap();
+        assert_eq!(preview_origin(&gif), None);
+        assert_eq!(preview_origin(&dir.path().join("missing.jpg")), None);
+        assert!(!is_finished_picture(&dir.path().join("missing.jpg")));
+    }
+
+    /// The record is the standard checksum PNG readers verify.
+    #[test]
+    fn the_png_checksum_matches_the_reference_value() {
+        assert_eq!(png_crc(b"IEND"), 0xAE42_6082);
     }
 }

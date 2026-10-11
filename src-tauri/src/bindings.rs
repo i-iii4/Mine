@@ -7,8 +7,8 @@ use specta::TypeCollection;
 use specta_typescript::{BigIntExportBehavior, Typescript};
 
 use crate::commands::blocks::{
-    CreateBlockParams, CreateMediaAssetCardParams, DeleteBlockMedia, DeleteBlockPlan,
-    DeleteMediaAssetKind, DeleteMediaAssetPlan, DeleteTextSelectionParams,
+    CreateBlockParams, CreateMediaAssetCardParams, DeleteBlockMedia, DeleteBlockOutcome,
+    DeleteBlockPlan, DeleteMediaAssetKind, DeleteMediaAssetPlan, DeleteTextSelectionParams,
     ExtractInlineMediaParams, ExtractTextSelectionParams, InlineMediaExtractError,
     MediaAssetActionError, MediaAssetMutationResult, MediaAssetReferenceBlock,
     MediaAssetReferenceKind, MergeBlocksError, MergeBlocksResult, RemoveMediaAssetFromCardParams,
@@ -145,6 +145,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<DeleteMediaAssetKind>()
         .register::<DeleteBlockMedia>()
         .register::<DeleteBlockPlan>()
+        .register::<DeleteBlockOutcome>()
         .register::<MergeBlocksResult>()
         .register::<MediaAssetMutationResult>()
         .register::<MediaAssetReferenceBlock>()
