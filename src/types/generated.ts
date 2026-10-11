@@ -214,6 +214,48 @@ kept_media: DeleteBlockMedia[] }
 
 export type DeleteBlockPlan = { slug: string; markdown_file: string; unused_media: DeleteBlockMedia[]; shared_media: DeleteBlockMedia[] }
 
+/**
+ * What `delete_blocks` did (decision of 11.10.2026).
+ */
+export type DeleteBlocksOutcome = {
+/**
+ * How many index rows went with their files.
+ */
+removed: number;
+/**
+ * Media of the selection that stayed because a note outside it uses
+ * them, as the deletion found the index and the notes on disk, as
+ * `DeleteBlockOutcome::kept_media`. Only a deletion asked to take the
+ * media fills it; the window tells which of the files it offered stayed.
+ */
+kept_media: DeleteBlockMedia[] }
+
+/**
+ * What deleting a whole selection would do, from the index alone
+ * (SPEC_GROUP_SELECTION.md, «Batch Delete», decision of 11.10.2026): the
+ * window waits for it and opens at its final width, as `Delete element?`.
+ */
+export type DeleteBlocksPlan = {
+/**
+ * The selected cards the index holds, in order, each once. A selected
+ * card the index no longer holds is already gone and is left out.
+ */
+slugs: string[];
+/**
+ * `{slug}.md` of each of `slugs`, in the same order.
+ */
+markdown_files: string[];
+/**
+ * Media no note uses once the whole selection is gone, each file once;
+ * `referenced_by` names the selected cards that use it.
+ */
+unused_media: DeleteBlockMedia[];
+/**
+ * Media of the selected cards at least one note outside the selection
+ * uses; `referenced_by` names those notes. Never offered for deletion.
+ */
+shared_media: DeleteBlockMedia[] }
+
 export type DeleteMediaAssetKind = "image" | "video" | "audio" | "document" | "file"
 
 export type DeleteMediaAssetPlan = { media_ref: string; media_kind: DeleteMediaAssetKind; referenced_by: MediaAssetReferenceBlock[] }

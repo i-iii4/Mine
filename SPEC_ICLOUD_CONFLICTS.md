@@ -315,7 +315,155 @@ iCloud (Mac или iPhone с Obsidian) и временное пространс�
 
 ## Результаты живой проверки
 
-Пока не проведена.
+Проверка 11.10.2026, этап 45.2: документация Apple и пробный помощник на этом
+Mac (macOS 27.2, сборка 26B5101f). **Второго устройства не было**: по решению
+пользователя проверка шла по коду и документации, вопросы, которым нужно
+второе устройство, остались открытыми.
+
+**Как проверяли.** Пробный помощник на Swift собран `swiftc` во временной папке
+вне рабочей копии, без прав iCloud (`codesign` не показывает ни одного права),
+как будущий `icloud-conflicts-helper`. Он только читал: `stat`, ключи
+`URLResourceValues`, `NSFileVersion.currentVersionOfItem`,
+`unresolvedConflictVersionsOfItem`, `otherVersionsOfItem` и байты версии в
+память. `settle`, удалений и записи версий не было. Проходы шли и без
+координации, и внутри `NSFileCoordinator` с `.immediatelyAvailableMetadataOnly`,
+как требует ВК5. В системном журнале у процесса пробы нет ни одной ошибки и ни
+одного отказа по правам.
+
+| Пространство (`config.json`) | Контейнер | Файлов `.md` | Без содержимого |
+|---|---|---|---|
+| `Mine. Длинное название. Прям вот легендарное ` | `com~apple~CloudDocs` | 739 | 0 |
+| `NSFV` | `com~apple~CloudDocs` | 99 | 0 |
+| `i_iii` | `iCloud~md~obsidian/Documents` | 1975 | 0 |
+
+**Документация Apple.** Ни одна страница не говорит, что `NSFileVersion` или
+ключу `ubiquitousItemHasUnresolvedConflictsKey` нужны права iCloud, и не
+описывает их поведение без прав. Права упоминаются только для собственного
+контейнера приложения: файлы кладутся в папку, которую отдаёт
+`URLForUbiquityContainerIdentifier:`. TN2336 (16.05.2016) о правах молчит,
+требует `NSFileCoordinator` для любого доступа к файлу вне `NSDocument` и
+описывает имя с числом (`abc 2.txt`) только для конфликта нового файла в папке
+`Documents`. Справка `otherVersionsOfItem(at:)` обещает для файлов в облаке
+только версии конфликта; проба это опровергла (вопрос 1). Вывод: документация
+вопрос о правах не решает, решает проба.
+
+**Вопрос 1. Видит ли процесс без прав версии конфликта.** Да. В пространстве
+`i_iii` проба нашла три настоящих неразрешённых конфликта от прежних устройств:
+
+| Файл | Устройство версии конфликта | Время версии (UTC) | Байт: текущая, версия |
+|---|---|---|---|
+| `Журнал/10.04.2025.md` | `i_iii’s MacBook Pro` | 10.04.2025 12:54 | 278, 325 |
+| `Журнал/20.02.2024.md` | `i_iii` | 20.02.2024 09:54 | 2093, 8 |
+| `3. Мысли и идеи/3 уровня опыта.md` | `MacBook Pro` | 31.12.2024 14:01 | 1773, 821 |
+
+- В папке у каждого лежит один файл, второго рядом нет: версия видна только
+  через `NSFileVersion`, как и пишет TN2336.
+- `currentVersionOfItem` вернул версию у каждого проверенного файла, но
+  `localizedNameOfSavingComputer` у текущей версии везде `null`. Окно по ВК11
+  покажет у текущей версии `Unknown device` в каждом конфликте.
+- У версии конфликта есть устройство, `isConflict = true`,
+  `isResolved = false`; содержимое лежит в
+  `/System/Volumes/Data/.DocumentRevisions-V100/PerUID/501/…/com.apple.ubiquity/`
+  и читается процессом без прав. Команда `read` из ВК5 выполнима.
+- Токен ВК5 работает: `persistentIdentifier` версии конфликта (массив) после
+  `NSKeyedArchiver` и base64 занимает 608 символов, а
+  `NSFileVersion.version(itemAt:forPersistentIdentifier:)` по раскодированному
+  токену находит ту же версию (та же дата, тот же адрес). У текущей версии
+  `persistentIdentifier` это пустой словарь, поэтому `token = None` у текущей
+  (ВК7) верно.
+- У файла без конфликта `unresolvedConflictVersionsOfItem` отдаёт пустой
+  массив, не `nil`.
+- `otherVersionsOfItem` отдаёт и обычную историю правок: у 45 файлов `i_iii` и
+  одного файла `Mine` есть версии с `isConflict = false` из
+  `com.apple.documentVersions`. Поэтому `scan` вызывает только
+  `unresolvedConflictVersionsOfItem`, а `settle` не вызывает
+  `removeOtherVersionsOfItem`: тот стёр бы эту историю. ВК5 так и требует.
+- Без второго устройства не проверено: когда виден свежий конфликт, какая
+  версия текущая на каждом устройстве (Apple Developer Forums, тема 804253) и
+  какое имя устройства придёт у свежей версии.
+
+**Вопрос 2. Конфликт нового файла.** Без второго устройства не проверить.
+Остаётся описание TN2336: пришедший файл получает имя `Same 2.md`.
+
+**Вопрос 3. Правдив ли ключ.** Да, на всех проверенных файлах.
+`ubiquitousItemHasUnresolvedConflictsKey` совпал с
+`unresolvedConflictVersionsOfItem` у каждого файла трёх пространств (2813), у
+2963 документов iCloud Drive, Desktop и Documents и у 206 файлов без
+содержимого: `true` ровно у трёх файлов с версиями конфликта, `false` у
+остальных, расхождений нет. Вне iCloud ключ даёт `nil`, не `false`. Без второго
+устройства не проверено, успевает ли ключ стать `true`, когда свежий конфликт
+только пришёл.
+
+**Вопрос 4. Признаки ВК3.** Оба правдивы, ни один не убирается.
+
+| Папка | `/Mobile Documents/` в пути | `isUbiquitousItem` |
+|---|---|---|
+| три пространства пользователя | да | да |
+| `~/Desktop`, `~/Documents` (синхронизация Desktop и Documents включена) | нет | да |
+| `~/Проекты`, `/tmp`, `~/Library/CloudStorage` | нет | нет |
+
+Пространств на Desktop у пользователя нет, поэтому второй признак проверен на
+самих папках. Справка `isUbiquitousItem(at:)` говорит, что он отражает только
+вызов `setUbiquitous`; на деле он отвечает `true` для всего iCloud Drive и
+папок Desktop и Documents.
+
+**Вопрос 5. Время и выгруженные файлы.** Самое большое пространство `i_iii`,
+1975 файлов `.md`:
+
+| Проход | Время |
+|---|---|
+| первый, холодный: под `NSFileCoordinator` у каждого файла `currentVersionOfItem`, `unresolvedConflictVersionsOfItem`, `otherVersionsOfItem` | 8,5 с |
+| под `NSFileCoordinator` у каждого файла только `unresolvedConflictVersionsOfItem` | от 4,1 до 5,3 с |
+| ключ у каждого файла, `NSFileVersion` только у трёх отмеченных | от 2,0 до 2,4 с |
+
+Полный проход с ключом и тремя вызовами `NSFileVersion`: `Mine` (739 файлов)
+3,8 с, `NSFV` (99 файлов) 0,4 с.
+
+Выгруженных `.md` в пространствах нет, поэтому `st_blocks` проверен ещё и на
+206 выгруженных заметках `com~apple~CloudDocs/Tracker`: ключи, три вызова
+`NSFileVersion` и координированное чтение с `.immediatelyAvailableMetadataOnly`.
+До и после у всех 206 ноль блоков: проход ни одного файла не скачал. В
+пространствах число блоков не изменилось ни у одного файла.
+
+**Вопрос 6. `settle`.** Не выполнялся: проверка только читала, а исчезновение
+конфликта на втором устройстве без него не увидеть.
+
+**Решение по правилам.**
+
+- Правило «вопрос 1 без версий в `scan`» не сработало: процесс без прав видит
+  версии конфликта, их устройства, время и содержимое. Появление свежего
+  конфликта (вопросы 1 и 3 в этой части), конфликт нового файла (вопрос 2) и
+  `settle` (вопрос 6) переходят в ручную приёмку со вторым устройством.
+- Вопрос 3 «правдив»: `scan` сначала читает ключ у каждого файла и вызывает
+  `NSFileVersion` только у отмеченных.
+- Срок `scan` по ВК5: удвоенные 8,5 с меньше 30 с, значит 30 с.
+- ВК3: оба признака остаются.
+- Открытый вопрос к ВК11: у текущей версии устройства нет никогда, подпись
+  будет `Current · Unknown device · {дата}`.
+- Пространство `i_iii` после реализации сразу покажет `3 iCloud sync
+  conflicts` по трём старым конфликтам.
+- Попутно: `ubiquitousItemDownloadingStatusKey` у всех 206 выгруженных заметок
+  ответил `NotDownloaded`, а Х4 в [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md)
+  записал, что такие ключи сообщают `current` у файла без содержимого. Помощник
+  процента на это не опирается: он читает `st_blocks`.
+
+Источники:
+
+- [TN2336: Handling version conflicts in the iCloud environment](https://developer.apple.com/library/content/technotes/tn2336/_index.html)
+- [NSFileVersion](https://developer.apple.com/documentation/foundation/nsfileversion),
+  [unresolvedConflictVersionsOfItem(at:)](https://developer.apple.com/documentation/foundation/nsfileversion/unresolvedconflictversionsofitem(at:)),
+  [currentVersionOfItem(at:)](https://developer.apple.com/documentation/foundation/nsfileversion/currentversionofitem(at:)),
+  [otherVersionsOfItem(at:)](https://developer.apple.com/documentation/foundation/nsfileversion/otherversionsofitem(at:)),
+  [isResolved](https://developer.apple.com/documentation/foundation/nsfileversion/isresolved)
+- [ubiquitousItemHasUnresolvedConflictsKey](https://developer.apple.com/documentation/foundation/urlresourcekey/ubiquitousitemhasunresolvedconflictskey),
+  [isUbiquitousItem(at:)](https://developer.apple.com/documentation/foundation/filemanager/isubiquitousitem(at:))
+- [File System Programming Guide: iCloud File Management](https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/FileSystemProgrammingGuide/iCloud/iCloud.html)
+- [Apple Developer Forums, тема 804253](https://developer.apple.com/forums/thread/804253):
+  текущая версия расходится между устройствами, пока версия второго не доехала
+- [Apple Developer Forums, тема 808133](https://developer.apple.com/forums/thread/808133):
+  ключ конфликта возвращал `nil` до сохранения файла, ответа нет
+- [Eclectic Light, 05.05.2025](https://eclecticlight.co/2025/05/05/how-document-versions-are-handled-in-icloud-drive/):
+  обычная история версий хранится на каждом Mac отдельно
 
 ## Что не входит
 

@@ -402,7 +402,7 @@ fn orphan_request_files(
 fn used_on_disk(vault: &VaultLayout, file_names: &[String]) -> Result<BTreeSet<String>, CommandError> {
     let paths: Vec<std::path::PathBuf> =
         file_names.iter().map(|name| vault.root().join(name)).collect();
-    let users = media_users_on_disk(vault, &paths, None)?;
+    let users = media_users_on_disk(vault, &paths, &BTreeSet::new())?;
     Ok(file_names
         .iter()
         .zip(&paths)

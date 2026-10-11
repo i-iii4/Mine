@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen } from "@testing-library/react";
 import { sourceVideoDownloadStatus } from "@/lib/commands";
 import { parseYoutubeSource } from "@/lib/youtubeSource";
-import { YoutubeSourcePlayer } from "./YoutubeSourcePlayer";
+import { DeleteSourceVideoDialog, YoutubeSourcePlayer } from "./YoutubeSourcePlayer";
 
 vi.mock("@/lib/commands", () => ({
   cancelSourceVideoDownload: vi.fn(async () => null),
@@ -71,5 +71,18 @@ describe("YoutubeSourcePlayer", () => {
     const { container } = renderPlayer();
     await act(async () => {});
     expect(container.querySelector("[data-source-video-download]")).toBeNull();
+  });
+});
+
+describe("DeleteSourceVideoDialog", () => {
+  // DESIGN_SYSTEM.md, «Тексты окон»: the link and the poster leave the
+  // element for good; the poster file goes to the Trash unless it is shared.
+  it("says what leaves the element for good and where the poster goes", () => {
+    render(<DeleteSourceVideoDialog open onOpenChange={vi.fn()} onDelete={vi.fn(async () => {})} />);
+
+    const dialog = screen.getByRole("alertdialog", { name: "Delete embed from element?" });
+    expect(dialog).toHaveAccessibleDescription(
+      "The video link and its poster are removed from this element and cannot be restored. The poster file goes to the Trash unless another element uses it.",
+    );
   });
 });

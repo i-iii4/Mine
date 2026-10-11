@@ -4,6 +4,22 @@ import { describe, expect, it, vi } from "vitest";
 import { RenameBlockDialog } from "./RenameBlockDialog";
 
 describe("RenameBlockDialog", () => {
+  // DESIGN_SYSTEM.md, «Тексты окон»: what the rename takes along.
+  it("says the media named after the element and the links follow it", () => {
+    render(
+      <RenameBlockDialog
+        open
+        currentSlug="Old Name"
+        onOpenChange={vi.fn()}
+        onRename={vi.fn(async () => {})}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "Rename file" })).toHaveAccessibleDescription(
+      "Media files named after this element are renamed with it, and links to it follow the new name.",
+    );
+  });
+
   it("submits the new filename stem", async () => {
     const onRename = vi.fn(async () => {});
 

@@ -15,7 +15,6 @@ import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import { useGroupSelectionMenuActions } from "@/hooks/useGroupSelectionMenuActions";
 import type { LightBlock, TagCount } from "@/types";
 import { selectedElementCountLabel } from "@/lib/groupSelection";
-import { DeleteSelectedCardsDialog } from "./DeleteSelectedCardsDialog";
 import {
   BatchCollectionPicker,
   COLLECTION_PICKER_CONTENT_CLASS,
@@ -29,7 +28,9 @@ interface GroupSelectionCardMenuProps {
   onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
   onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
   onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
-  onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
+  /** The feed's `requestDeleteSelection()`: the menu only asks; the window
+   *  is the feed's (SPEC_GROUP_SELECTION.md, «Точки входа»). */
+  onRequestDeleteSelection: () => void;
   onMergeSelectedBlocks: () => void;
   onClearSelection: () => void;
 }
@@ -42,7 +43,7 @@ export function GroupSelectionCardMenu({
   onLoadBlockTags,
   onBatchSetTag,
   onCreateAndAssignBatch,
-  onDeleteSelectedBlocks,
+  onRequestDeleteSelection,
   onMergeSelectedBlocks,
   onClearSelection,
 }: GroupSelectionCardMenuProps) {
@@ -56,7 +57,6 @@ export function GroupSelectionCardMenu({
   const [menuOpen, setMenuOpen] = useState(false);
   const menuOpenRef = useRef(false);
   const connectTriggerRef = useRef<HTMLDivElement>(null);
-  const [deleteOpen, setDeleteOpen] = useState(false);
   const lastOpenRequestSequenceRef = useRef(0);
 
   const updateMenuOpen = useCallback((open: boolean) => {
@@ -79,10 +79,9 @@ export function GroupSelectionCardMenu({
     onClearSelection();
   };
 
-  const handleConfirmDelete = async () => {
-    await onDeleteSelectedBlocks(actions.selectedSlugs);
+  const handleDelete = () => {
     updateMenuOpen(false);
-    onClearSelection();
+    onRequestDeleteSelection();
   };
 
   const handleMerge = () => {
@@ -156,13 +155,7 @@ export function GroupSelectionCardMenu({
               Merge
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem
-            variant="destructive"
-            onSelect={(event) => {
-              event.preventDefault();
-              setDeleteOpen(true);
-            }}
-          >
+          <DropdownMenuItem variant="destructive" onSelect={handleDelete}>
             <MenuIconSlot>
               <Trash2 className="size-[13px]" />
             </MenuIconSlot>
@@ -178,13 +171,6 @@ export function GroupSelectionCardMenu({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
-
-      <DeleteSelectedCardsDialog
-        open={deleteOpen}
-        selectedCount={selectedBlocks.length}
-        onOpenChange={setDeleteOpen}
-        onConfirm={handleConfirmDelete}
-      />
     </>
   );
 }

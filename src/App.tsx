@@ -81,6 +81,11 @@ import {
 import { arrayMove } from "@dnd-kit/sortable";
 import { applyPendingTagOrder } from "@/lib/collectionOrder";
 import { collectionRefLabel } from "@/lib/collections";
+import {
+  DELETE_COLLECTION_FAILED_TITLE,
+  DELETE_ELEMENT_FAILED_TITLE,
+  deleteCollectionFailureSummary,
+} from "@/lib/deleteFailure";
 import { reconcileBlocks } from "@/lib/blockIdentity";
 import { refreshPageLimit } from "@/lib/gridPaging";
 import { createPreviewRowQueue } from "@/lib/previewRowQueue";
@@ -161,6 +166,12 @@ function blockMarkdownPath(vaultPath: string, slug: string): string {
 
 /// Keys come from the command registry, the user's rebinding included: a
 /// rebound command no longer answers its old chord (SPEC_AUDIT_FIXES.md, Ф11).
+/** What a failed command says, for a notice: `Error.message`, which
+ *  `commandErrorMessage` composes for a `CommandError`. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 function commandPressed(id: string, e: KeyboardEvent): boolean {
   return commandById(id).matches?.(e) ?? false;
 }
@@ -223,6 +234,7 @@ import type {
   UnavailableVaultReason,
   DeleteBlockMedia,
   DeleteBlockPlan,
+  DeleteBlocksPlan,
   FeedOrder,
   IndexedBlock,
   LightBlock,
@@ -272,6 +284,7 @@ import {
   renameBlockFile,
   checkBlockRename,
   prepareDeleteBlock,
+  prepareDeleteBlocks,
   deleteTagFromAll,
   addTag,
   removeTag,
@@ -373,11 +386,9 @@ import {
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
 import { SearchOverlay } from "@/components/SearchOverlay";
 import { CreateCollectionDialog } from "@/components/CreateCollectionDialog";
-import {
-  DeleteBlockDialog,
-  DeleteKeptMediaNotice,
-  keptOfferedMedia,
-} from "@/components/DeleteBlockDialog";
+import { DeleteBlockDialog } from "@/components/DeleteBlockDialog";
+import { DeleteKeptMediaNotice, keptOfferedMedia } from "@/components/DeleteWindowParts";
+import type { DeleteSelectionAction } from "@/components/DeleteSelectedCardsDialog";
 import {
   ImagePreviewOverlay,
   type ImagePreviewRequest,
@@ -1080,6 +1091,15 @@ export function AppWithVault({
   // Files the delete window offered that the deletion left: another note
   // uses them, as the notes on disk showed.
   const [deleteKeptMedia, setDeleteKeptMedia] = useState<DeleteBlockMedia[] | null>(null);
+  // Why this tab's `Delete element?` deleted nothing: its window had closed
+  // on the press, so the failure is a notice (DESIGN_SYSTEM.md, «Сбой после
+  // закрытия окна»).
+  const [deleteBlockError, setDeleteBlockError] = useState<string | null>(null);
+  // Why this tab's `Delete collection?` stopped, and what it had changed.
+  const [deleteCollectionFailure, setDeleteCollectionFailure] = useState<{
+    summary: string;
+    error: string;
+  } | null>(null);
   const [detailChromeClosing, setDetailChromeClosing] = useState(false);
   const [closingDetailBlock, setClosingDetailBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [closingDetailTags, setClosingDetailTags] = useState<string[]>([]);
@@ -3203,16 +3223,25 @@ export function AppWithVault({
     [navigate, reloadAllSnapshots],
   );
 
+  // `Delete collection?` closes on the press; a failure is a notice of this
+  // tab naming what had changed (DESIGN_SYSTEM.md, «Сбой после закрытия
+  // окна», decision of 11.10.2026).
   const handleDeleteTagFromAll = useCallback(
     async (tag: string) => {
+      setDeleteCollectionFailure(null);
+      let connectionsRemoved = false;
       try {
         await deleteTagFromAll(tag);
-        await deleteChannel(tag).catch((err) => console.error("Failed to delete channel:", err));
+        connectionsRemoved = true;
+        await deleteChannel(tag);
         if (currentTag === tag) {
           navigate("/");
         }
       } catch (err) {
-        console.error("Failed to delete tag:", err);
+        setDeleteCollectionFailure({
+          summary: deleteCollectionFailureSummary(collectionRefLabel(tag), connectionsRemoved),
+          error: errorMessage(err),
+        });
       }
       await reloadAllSnapshots();
     },
@@ -4263,21 +4292,36 @@ export function AppWithVault({
     [handleBatchSetTag],
   );
 
-  const handleDeleteSelectedBlocks = useCallback(
-    async (slugs: string[]) => {
+  // The group delete window (SPEC_GROUP_SELECTION.md, «Batch Delete»): one
+  // batch, its media checked against the notes on disk. A failure rejects,
+  // and the window, still open, shows it.
+  const handleDeleteSelectedBlocks = useCallback<DeleteSelectionAction>(
+    async (slugs, deleteUnusedMedia, offeredMedia) => {
       if (slugs.length === 0) return;
-      setSelectedBlock(null);
-      setSelectedBlockAnchor(null);
+      // A new deletion hides the last one's notices.
+      setDeleteKeptMedia(null);
+      setDeleteBlockError(null);
       try {
-        await deleteBlocks(slugs);
-      } catch (err) {
-        console.error("Failed to delete selected blocks:", err);
-        throw err;
+        const outcome = await deleteBlocks(slugs, deleteUnusedMedia);
+        // The open card closes when it went with the selection.
+        if (selectedBlockRef.current && slugs.includes(selectedBlockRef.current.slug)) {
+          setSelectedBlock(null);
+          setSelectedBlockAnchor(null);
+        }
+        // A file the window offered that a note outside the selection uses
+        // after all stayed, and the reader hears of it (11.10.2026).
+        const kept = keptOfferedMedia(offeredMedia, outcome.kept_media);
+        if (kept.length > 0) setDeleteKeptMedia(kept);
       } finally {
         await reloadAllSnapshots();
       }
     },
     [reloadAllSnapshots],
+  );
+
+  const handlePrepareDeleteSelectedBlocks = useCallback(
+    (slugs: string[]): Promise<DeleteBlocksPlan> => prepareDeleteBlocks(slugs),
+    [],
   );
 
   const handleMergeSelectedBlocks = useCallback(
@@ -4303,6 +4347,7 @@ export function AppWithVault({
     setDeletePlan(null);
     setDeletePlanError(null);
     setDeleteKeptMedia(null);
+    setDeleteBlockError(null);
     setDeleteTargetSlug(slug);
   }, []);
 
@@ -4330,7 +4375,10 @@ export function AppWithVault({
         const kept = keptOfferedMedia(offeredMedia, outcome.kept_media);
         if (kept.length > 0) setDeleteKeptMedia(kept);
       } catch (err) {
-        console.error("Failed to delete block:", err);
+        // The window closed on the press, so the failure is a notice of this
+        // tab (DESIGN_SYSTEM.md, «Сбой после закрытия окна»). The reload
+        // below brings the element back to the feed and the search.
+        setDeleteBlockError(errorMessage(err));
       }
       await reloadAllSnapshots();
     },
@@ -4421,6 +4469,8 @@ export function AppWithVault({
   const showNotifications = feedErrorNotices.length > 0
     || selectionCardError !== null
     || deleteKeptMedia !== null
+    || deleteBlockError !== null
+    || deleteCollectionFailure !== null
     || showFirstCardMarker
     || showIndexingNotice;
 
@@ -4751,6 +4801,7 @@ export function AppWithVault({
                 onLoadBlockTags={handleLoadBlockTags}
                 onBatchSetTag={handleBatchSetTag}
                 onCreateAndAssignBatch={handleCreateTagFromBatchMenu}
+                onPrepareDeleteSelectedBlocks={handlePrepareDeleteSelectedBlocks}
                 onDeleteSelectedBlocks={handleDeleteSelectedBlocks}
                 onMergeSelectedBlocks={handleMergeSelectedBlocks}
                 onCardMenuOpenChange={handleCardMenuOpenChange}
@@ -4868,6 +4919,28 @@ export function AppWithVault({
                 media={deleteKeptMedia}
                 onClose={() => setDeleteKeptMedia(null)}
               />
+            )}
+            {deleteBlockError !== null && (
+              // The window closed on the press: the failure shows here, in
+              // the tab that deleted, lead or not.
+              <NotificationCard title={DELETE_ELEMENT_FAILED_TITLE} onClose={() => setDeleteBlockError(null)}>
+                <p className="text-sm text-destructive" data-delete-failed-notice="element">
+                  {deleteBlockError}
+                </p>
+              </NotificationCard>
+            )}
+            {deleteCollectionFailure !== null && (
+              <NotificationCard
+                title={DELETE_COLLECTION_FAILED_TITLE}
+                onClose={() => setDeleteCollectionFailure(null)}
+              >
+                <p className="text-sm text-muted-foreground" data-delete-failed-summary="collection">
+                  {deleteCollectionFailure.summary}
+                </p>
+                <p className="text-sm text-destructive" data-delete-failed-notice="collection">
+                  {deleteCollectionFailure.error}
+                </p>
+              </NotificationCard>
             )}
             {showIndexingNotice && indexingStep !== null && (
               // The opening counts out loud in the corner (О13): one card,
@@ -5227,7 +5300,8 @@ interface RouteContext {
   onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
   onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
   onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
-  onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
+  onPrepareDeleteSelectedBlocks: (slugs: string[]) => Promise<DeleteBlocksPlan>;
+  onDeleteSelectedBlocks: DeleteSelectionAction;
   onMergeSelectedBlocks: (orderedSlugs: string[]) => void | Promise<void>;
   onGroupSelectionStart?: () => void;
   onCardMenuOpenChange?: (slug: string, open: boolean) => void;

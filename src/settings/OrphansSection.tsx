@@ -271,7 +271,7 @@ export function DeleteOrphansDialog({
             Delete {count} {count === 1 ? "file" : "files"}?
           </AlertDialogTitle>
           <AlertDialogDescription>
-            Files are moved to the system Trash.
+            {count === 1 ? "The file goes to the Trash." : "The files go to the Trash."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

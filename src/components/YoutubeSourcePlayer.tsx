@@ -281,7 +281,7 @@ export function DeleteSourceVideoDialog({ open, onOpenChange, onDelete }: {
         <AlertDialogHeader>
           <AlertDialogTitle>Delete embed from element?</AlertDialogTitle>
           <AlertDialogDescription>
-            This removes the embedded video and its poster from this element. The poster file is deleted unless another element uses it. Text and collections stay.
+            The video link and its poster are removed from this element and cannot be restored. The poster file goes to the Trash unless another element uses it.
           </AlertDialogDescription>
         </AlertDialogHeader>
         {error && <p className={MODAL_ERROR_CLASS}>{error}</p>}

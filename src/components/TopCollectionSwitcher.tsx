@@ -386,7 +386,7 @@ export function CreateCollectionNameDialog({
         >
           <DialogHeader>
             <DialogTitle>New collection</DialogTitle>
-            <DialogDescription>{NEW_COLLECTION_DESCRIPTION}</DialogDescription>
+            <DialogDescription className="sr-only">{NEW_COLLECTION_DESCRIPTION}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
             <Input

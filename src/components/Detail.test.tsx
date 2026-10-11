@@ -5,6 +5,7 @@ import {
   Detail,
   MediaAssetCollectionPicker,
   computeHoverPreviewPosition,
+  deleteMediaFileDescription,
   detailContentFullWidth,
   detailLayoutIsStacked,
   hoverPreviewBounds,
@@ -380,6 +381,35 @@ function setViewportWidth(value: number) {
   });
 }
 
+describe("deleteMediaFileDescription", () => {
+  const reference = (kinds: string[]) => ({
+    slug: "Card",
+    title: "Card",
+    display_title: "Card",
+    fallback_label: "Card",
+    card_kind: "media" as const,
+    reference_kinds: kinds,
+  });
+  const cleared =
+    "The file goes to the Trash. Its references are removed from the elements below and do not come back if you restore the file.";
+
+  // DESIGN_SYSTEM.md, «Тексты окон», `Delete media file?`.
+  it("says only the Trash while the elements are unknown or absent", () => {
+    expect(deleteMediaFileDescription(null)).toBe("The file goes to the Trash.");
+    expect(deleteMediaFileDescription([])).toBe("The file goes to the Trash.");
+  });
+
+  it("says the references do not come back when elements use the file", () => {
+    expect(deleteMediaFileDescription([reference(["body_embed"]), reference(["frontmatter_thumbnail"])]))
+      .toBe(cleared);
+  });
+
+  it("warns that an element showing it as main media shows nothing", () => {
+    expect(deleteMediaFileDescription([reference(["body_embed"]), reference(["frontmatter_file", "body_embed"])]))
+      .toBe(`${cleared} Elements that show it as their main media will show nothing in its place.`);
+  });
+});
+
 describe("Detail", () => {
   const initialViewportWidth = window.innerWidth;
 
@@ -427,6 +457,8 @@ describe("Detail", () => {
       expect(onDelete).not.toHaveBeenCalled();
     } else {
       await waitFor(() => expect(within(dialog).getByRole("button", { name: "Delete media" })).toBeEnabled());
+      // No element uses the file: only its own fate is said.
+      expect(dialog).toHaveAccessibleDescription("The file goes to the Trash.");
       fireEvent.click(within(dialog).getByRole("button", { name: "Delete media" }));
       await waitFor(() => expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ media_ref: "Media/photo.jpg" })));
     }
@@ -2103,6 +2135,10 @@ describe("Detail", () => {
     const dialog = await screen.findByRole("alertdialog", { name: "Delete media file?" });
     const photoRow = await within(dialog).findByRole("button", { name: "Photo Card" });
     const sourceRow = within(dialog).getByRole("button", { name: "Source Article" });
+    // Photo Card shows the file as its main media: it will show nothing.
+    expect(dialog).toHaveAccessibleDescription(
+      "The file goes to the Trash. Its references are removed from the elements below and do not come back if you restore the file. Elements that show it as their main media will show nothing in its place.",
+    );
     expect(within(dialog).getByText("Connected elements")).toBeInTheDocument();
     const connectedCardsScroll = dialog.querySelector("[data-delete-media-connected-cards-scroll]");
     expect(connectedCardsScroll).toHaveAttribute("data-visible-card-count", "5");
@@ -2221,6 +2257,10 @@ describe("Detail", () => {
 
     const dialog = await screen.findByRole("alertdialog", { name: "Delete media file?" });
     const row = await within(dialog).findByRole("button", { name: longTitle });
+    // Only embedded in a body: no element loses its main media.
+    expect(dialog).toHaveAccessibleDescription(
+      "The file goes to the Trash. Its references are removed from the elements below and do not come back if you restore the file.",
+    );
     const scrollArea = dialog.querySelector("[data-delete-media-connected-cards-scroll]");
     const list = row.closest("[data-card-reference-list]");
     // The row also holds the thumbnail wrapper span, so match the label class

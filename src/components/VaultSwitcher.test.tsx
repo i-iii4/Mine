@@ -368,7 +368,11 @@ describe("VaultSwitcher", () => {
     // The whole point of the confirmation: removal here is about the list, and
     // the wording has to rule out the reading that files are being deleted.
     const dialog = await screen.findByRole("alertdialog");
-    expect(dialog).toHaveTextContent(/Nothing is deleted from your computer/i);
+    // DESIGN_SYSTEM.md, «Тексты окон»: the folder stays, and the open tabs
+    // of the space are the one thing that changes.
+    expect(dialog).toHaveAccessibleDescription(
+      "The folder and its files stay where they are. Open tabs of this space switch to choosing a space. You can add it back with Add space.",
+    );
     expect(commandMocks.forgetKnownVault).not.toHaveBeenCalled();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));

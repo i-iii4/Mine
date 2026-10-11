@@ -26,6 +26,8 @@ import type {
   LightBlock,
   DeleteBlockOutcome,
   DeleteBlockPlan,
+  DeleteBlocksOutcome,
+  DeleteBlocksPlan,
   RenameBlockError,
   RenameBlockResult,
   TagCount,
@@ -445,8 +447,16 @@ export const checkBlockRename = async (
 export const prepareDeleteBlock = (slug: string) =>
   invoke<DeleteBlockPlan>("prepare_delete_block", { slug });
 
-/** Delete the selection atomically, retaining all source media. */
-export const deleteBlocks = (slugs: string[]) => invoke<number>("delete_blocks", { slugs });
+/** The group delete window's plan, read from the index alone
+ *  (SPEC_GROUP_SELECTION.md, «Batch Delete», 11.10.2026). */
+export const prepareDeleteBlocks = (slugs: string[]) =>
+  invoke<DeleteBlocksPlan>("prepare_delete_blocks", { slugs });
+
+/** Delete the selection in one atomic batch; with its media, the files are
+ *  checked against the notes on disk first, and `kept_media` names the ones
+ *  a note outside the selection uses. */
+export const deleteBlocks = (slugs: string[], delete_unused_media: boolean) =>
+  invoke<DeleteBlocksOutcome>("delete_blocks", { slugs, delete_unused_media });
 
 /** Delete one card; with its media, the files are checked against the notes
  *  on disk first, and `kept_media` names the ones another note uses. */

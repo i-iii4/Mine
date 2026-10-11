@@ -187,6 +187,7 @@ pub fn run() {
             commands::blocks::rename_block_file,
             commands::blocks::check_block_rename,
             commands::blocks::prepare_delete_block,
+            commands::blocks::prepare_delete_blocks,
             commands::blocks::delete_block,
             commands::blocks::delete_blocks,
             commands::blocks::merge_blocks,

@@ -1,65 +1,59 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { DeleteBlockDialog, DeleteKeptMediaNotice, keptOfferedMedia } from "./DeleteBlockDialog";
+import { DeleteBlockDialog } from "./DeleteBlockDialog";
+import { DeleteKeptMediaNotice, keptOfferedMedia } from "./DeleteWindowParts";
 import type { DeleteBlockMedia, DeleteBlockPlan } from "@/types";
-
-const PLAN_NO_MEDIA = {
-  slug: "note",
-  unused_media: [],
-  shared_media: [],
-};
-
-describe("DeleteBlockDialog description", () => {
-  it("says nothing when the card has no media", () => {
-    render(
-      <DeleteBlockDialog
-        open
-        plan={PLAN_NO_MEDIA as never}
-        vaultPath="/vault"
-        error={null}
-        onOpenChange={() => {}}
-        onKeepMedia={() => {}}
-        onDeleteMedia={() => {}}
-      />,
-    );
-    // The old copy explained that only the element would be deleted, which
-    // answers a question nobody asked.
-    expect(screen.queryByText(/only the element/i)).not.toBeInTheDocument();
-  });
-
-  it("still explains what happens to media the card owns", () => {
-    render(
-      <DeleteBlockDialog
-        open
-        plan={{ slug: "note", unused_media: [{ file_name: "a.jpg", kind: "image" }], shared_media: [] } as never}
-        vaultPath="/vault"
-        error={null}
-        onOpenChange={() => {}}
-        onKeepMedia={() => {}}
-        onDeleteMedia={() => {}}
-      />,
-    );
-    expect(screen.getByText(/1 media file/i)).toBeInTheDocument();
-  });
-
-  it("still explains media shared with other cards", () => {
-    render(
-      <DeleteBlockDialog
-        open
-        plan={{ slug: "note", unused_media: [], shared_media: [{ file_name: "b.jpg", kind: "image" }] } as never}
-        vaultPath="/vault"
-        error={null}
-        onOpenChange={() => {}}
-        onKeepMedia={() => {}}
-        onDeleteMedia={() => {}}
-      />,
-    );
-    expect(screen.getByText(/used by other elements/i)).toBeInTheDocument();
-  });
-});
 
 const PHOTO: DeleteBlockMedia = { path: "Media/photo.jpg", file_name: "photo.jpg", kind: "image", referenced_by: [] };
 const PAPER: DeleteBlockMedia = { path: "Media/paper.pdf", file_name: "paper.pdf", kind: "document", referenced_by: [] };
+const COVER: DeleteBlockMedia = { path: "Media/cover.jpg", file_name: "cover.jpg", kind: "image", referenced_by: ["Other"] };
+
+function planWith(unused: DeleteBlockMedia[], shared: DeleteBlockMedia[]): DeleteBlockPlan {
+  return { slug: "note", markdown_file: "note.md", unused_media: unused, shared_media: shared };
+}
+
+function description(plan: DeleteBlockPlan): string | null {
+  render(
+    <DeleteBlockDialog
+      open
+      plan={plan}
+      vaultPath="/vault"
+      error={null}
+      onOpenChange={() => {}}
+      onKeepMedia={() => {}}
+      onDeleteMedia={() => {}}
+    />,
+  );
+  return screen.getByRole("alertdialog").querySelector("[data-slot='alert-dialog-description']")?.textContent
+    ?? null;
+}
+
+// DESIGN_SYSTEM.md, «Окна», «Тексты окон» (decision of 11.10.2026): the
+// description names the fate of every thing touched, the Trash first, and
+// does not retell the buttons.
+describe("Delete element? description", () => {
+  it("says the element goes to the Trash when it has no media", () => {
+    expect(description(planWith([], []))).toBe("The element goes to the Trash.");
+  });
+
+  it("adds the media other elements use, which stay", () => {
+    expect(description(planWith([], [COVER]))).toBe(
+      "The element goes to the Trash. 1 media file is used by other elements and will stay in the space.",
+    );
+  });
+
+  it("names the media only this element uses, which go with it", () => {
+    expect(description(planWith([PHOTO], []))).toBe(
+      "The element and the media files you delete with it go to the Trash. 1 media file is only used by this element.",
+    );
+  });
+
+  it("names both, its own media first", () => {
+    expect(description(planWith([PHOTO, PAPER], [COVER, { ...COVER, path: "Media/b.jpg" }]))).toBe(
+      "The element and the media files you delete with it go to the Trash. 2 media files are only used by this element. 2 media files are used by other elements and will stay in the space.",
+    );
+  });
+});
 
 // User's decision of 11.10.2026: the window waits for its plan, read from the
 // index at once, and opens already at its width.

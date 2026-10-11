@@ -370,17 +370,21 @@ pub struct NoteFileMentions {
     pub body: String,
 }
 
-/// Every indexed note but `except`, with what it says about files.
+/// Every indexed note but those in `except`, with what it says about files.
 ///
-/// The delete window asks the index which notes use the media of a card
-/// (decision of 11.10.2026): the four columns are all it reads, so the
-/// answer needs neither the notes on disk nor the rest of each row.
-pub fn list_note_file_mentions(conn: &Connection, except: &str) -> Result<Vec<NoteFileMentions>> {
+/// The delete window asks the index which notes use the media of a card, or
+/// of a whole selection (decision of 11.10.2026): the four columns are all it
+/// reads, so the answer needs neither the notes on disk nor the rest of each
+/// row. `except` is the card or the selection going away.
+pub fn list_note_file_mentions(
+    conn: &Connection,
+    except: &BTreeSet<String>,
+) -> Result<Vec<NoteFileMentions>> {
     let mut stmt = conn.prepare(
         "SELECT slug, media_file, thumbnail, COALESCE(body, '') FROM blocks
-         WHERE slug != ?1 AND slug != '' ORDER BY slug",
+         WHERE slug != '' ORDER BY slug",
     )?;
-    let rows = stmt.query_map([except], |row| {
+    let rows = stmt.query_map([], |row| {
         Ok(NoteFileMentions {
             slug: row.get(0)?,
             media_file: row.get(1)?,
@@ -388,7 +392,14 @@ pub fn list_note_file_mentions(conn: &Connection, except: &str) -> Result<Vec<No
             body: row.get(3)?,
         })
     })?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    let mut notes = Vec::new();
+    for note in rows {
+        let note = note?;
+        if !except.contains(&note.slug) {
+            notes.push(note);
+        }
+    }
+    Ok(notes)
 }
 
 /// Return the newest previewable blocks per collection, members only

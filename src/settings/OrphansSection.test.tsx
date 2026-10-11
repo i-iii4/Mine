@@ -8,7 +8,7 @@ import {
   spacesInTabs,
 } from "@/lib/commands";
 import type { OrphanMedia, SpaceEntry } from "@/types";
-import { OrphansSection } from "./OrphansSection";
+import { DeleteOrphansDialog, OrphansSection } from "./OrphansSection";
 
 vi.mock("@/lib/commands", () => ({
   listOrphanMedia: vi.fn(),
@@ -205,7 +205,7 @@ describe("OrphansSection", () => {
     // Confirm dialog: nothing deleted yet.
     expect(deleteOrphanMedia).not.toHaveBeenCalled();
     const dialog = await screen.findByRole("alertdialog");
-    expect(dialog).toHaveTextContent("Files are moved to the system Trash.");
+    expect(dialog).toHaveAccessibleDescription("The file goes to the Trash.");
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
 
@@ -213,5 +213,18 @@ describe("OrphansSection", () => {
       expect(deleteOrphanMedia).toHaveBeenCalledWith(SPACE, ["clip.mp4"]);
     });
     expect(await screen.findByText("Deleted 1, skipped 0")).toBeInTheDocument();
+  });
+});
+
+describe("DeleteOrphansDialog", () => {
+  // DESIGN_SYSTEM.md, «Тексты окон»: the files go to the Trash, in the
+  // number the title counts.
+  it.each([
+    [1, "Delete 1 file?", "The file goes to the Trash."],
+    [3, "Delete 3 files?", "The files go to the Trash."],
+  ])("says where %i file(s) go", (count, title, description) => {
+    render(<DeleteOrphansDialog open count={count} onOpenChange={vi.fn()} onConfirm={vi.fn()} />);
+
+    expect(screen.getByRole("alertdialog", { name: title })).toHaveAccessibleDescription(description);
   });
 });

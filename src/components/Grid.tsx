@@ -14,7 +14,13 @@ import {
   ContextMenu,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import type { LightBlock, ScrollAnchor as TabScrollAnchor, TabLocation, TagCount } from "@/types";
+import type {
+  DeleteBlocksPlan,
+  LightBlock,
+  ScrollAnchor as TabScrollAnchor,
+  TabLocation,
+  TagCount,
+} from "@/types";
 import { placeKey } from "@/lib/tabPage";
 import { useTabVisible } from "@/lib/tabVisibility";
 import { TopFadeScrim } from "./TopFadeScrim";
@@ -29,7 +35,11 @@ import { createPortal } from "react-dom";
 import { GroupSelectionCommands } from "./GroupSelectionCommands";
 import { GroupSelectionCardMenu } from "./GroupSelectionCardMenu";
 import { GroupSelectionContextMenu } from "./GroupSelectionContextMenu";
-import { DeleteSelectedCardsDialog } from "./DeleteSelectedCardsDialog";
+import {
+  DeleteSelectionWindow,
+  type DeleteSelectionAction,
+  type DeleteSelectionRequest,
+} from "./DeleteSelectedCardsDialog";
 import { prefersReducedMotion } from "@/lib/motion";
 import { MergeCardsDialog } from "./MergeCardsDialog";
 import {
@@ -250,7 +260,11 @@ interface GridProps {
   onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
   onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
   onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
-  onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
+  /// The group delete window's plan, read from the index alone
+  /// (SPEC_GROUP_SELECTION.md, «Batch Delete», «План»).
+  onPrepareDeleteSelectedBlocks: (slugs: string[]) => Promise<DeleteBlocksPlan>;
+  /// Deletes the selection in one batch; rejects when nothing was deleted.
+  onDeleteSelectedBlocks: DeleteSelectionAction;
   onMergeSelectedBlocks: (orderedSlugs: string[]) => void | Promise<void>;
   onGroupSelectionStart?: () => void;
   /// A card's action menu opened or closed. The feed above needs this to keep
@@ -314,7 +328,8 @@ interface GridContext {
   onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
   onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
   onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
-  onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
+  /** `requestDeleteSelection()` of the feed: the ⌘K menu's `Delete`. */
+  onRequestDeleteSelection: () => void;
   onMergeSelectedBlocks: () => void;
   onRequestRename: (block: LightBlock) => void;
   onRequestDelete: (slug: string) => void;
@@ -566,6 +581,7 @@ export function Grid({
   onLoadBlockTags,
   onBatchSetTag,
   onCreateAndAssignBatch,
+  onPrepareDeleteSelectedBlocks,
   onDeleteSelectedBlocks,
   onMergeSelectedBlocks,
   onGroupSelectionStart,
@@ -613,7 +629,13 @@ export function Grid({
   /// Decided when the menu is summoned, because that is the only moment the
   /// clicked card and the selection are both known.
   const [contextMenuScope, setContextMenuScope] = useState<"card" | "selection">("card");
-  const [deleteSelectionDialogOpen, setDeleteSelectionDialogOpen] = useState(false);
+  /// The group delete window: the request it answers, and whether it is open.
+  /// A closed window keeps its request while it leaves.
+  const [deleteSelection, setDeleteSelection] = useState<{
+    request: DeleteSelectionRequest;
+    open: boolean;
+  } | null>(null);
+  const deleteSelectionSequenceRef = useRef(0);
   const [focusedSlug, setFocusedSlug] = useState<string | null>(null);
 
   const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(() => new Set());
@@ -1689,6 +1711,31 @@ export function Grid({
     setMarqueeSelection(null);
   }, []);
 
+  const selectedBlocks = useMemo(
+    () => blocks.filter((block) => selectedSlugs.has(block.slug)),
+    [blocks, selectedSlugs],
+  );
+
+  /// Every `Delete` of the selection comes here: the selection bar's button,
+  /// the ⌘K menu, the right-click menu and Backspace (SPEC_GROUP_SELECTION.md,
+  /// «Точки входа»). One selected element opens its own `Delete element?`,
+  /// as the card's `Delete` does; the selection clears itself once the card
+  /// leaves the feed. Two or more open the one group delete window.
+  const requestDeleteSelection = useCallback(() => {
+    const slugs = selectedBlocks.map((block) => block.slug);
+    const [only, ...rest] = slugs;
+    if (only === undefined) return;
+    if (rest.length === 0) {
+      onRequestDelete(only);
+      return;
+    }
+    deleteSelectionSequenceRef.current += 1;
+    setDeleteSelection({
+      request: { slugs, sequence: deleteSelectionSequenceRef.current },
+      open: true,
+    });
+  }, [onRequestDelete, selectedBlocks]);
+
   useEffect(() => {
     if (selectedSlugs.size > 0) {
       onGroupSelectionStart?.();
@@ -2036,7 +2083,7 @@ export function Grid({
       if (selectedSlugs.size > 0 && deleteSelection.matches?.(event)) {
         event.preventDefault();
         event.stopPropagation();
-        setDeleteSelectionDialogOpen(true);
+        requestDeleteSelection();
         return;
       }
 
@@ -2161,6 +2208,7 @@ export function Grid({
     layout.positions,
     openFocusedElementMenu,
     renderReadyBlockIds,
+    requestDeleteSelection,
     selectedSlugs.size,
     scrollTop,
     toggleSelectedSlug,
@@ -2314,15 +2362,14 @@ export function Grid({
     onRequestDelete(slug);
   }, [onRequestDelete]);
 
-  const selectedBlocks = useMemo(
-    () => blocks.filter((block) => selectedSlugs.has(block.slug)),
-    [blocks, selectedSlugs],
-  );
+  const closeDeleteSelection = useCallback(() => {
+    setDeleteSelection((current) => current && { ...current, open: false });
+  }, []);
 
-  const handleConfirmDeleteSelection = useCallback(async () => {
-    await onDeleteSelectedBlocks(selectedBlocks.map((block) => block.slug));
+  const handleSelectionDeleted = useCallback(() => {
+    closeDeleteSelection();
     clearSelection();
-  }, [clearSelection, onDeleteSelectedBlocks, selectedBlocks]);
+  }, [clearSelection, closeDeleteSelection]);
 
   const openMergeDialog = useCallback(() => {
     if (selectedSlugs.size < 2) return;
@@ -2407,7 +2454,7 @@ export function Grid({
       onLoadBlockTags,
       onBatchSetTag,
       onCreateAndAssignBatch,
-      onDeleteSelectedBlocks,
+      onRequestDeleteSelection: requestDeleteSelection,
       onMergeSelectedBlocks: openMergeDialog,
       onRequestRename,
       onRequestDelete: handleRequestDelete,
@@ -2437,7 +2484,7 @@ export function Grid({
       onLoadBlockTags,
       onBatchSetTag,
       onCreateAndAssignBatch,
-      onDeleteSelectedBlocks,
+      requestDeleteSelection,
       openMergeDialog,
       onRequestRename,
       handleRequestDelete,
@@ -2539,7 +2586,7 @@ export function Grid({
             onLoadBlockTags={onLoadBlockTags}
             onBatchSetTag={onBatchSetTag}
             onCreateAndAssignBatch={onCreateAndAssignBatch}
-            onDeleteSelectedBlocks={onDeleteSelectedBlocks}
+            onRequestDeleteSelection={requestDeleteSelection}
             onMergeSelectedBlocks={openMergeDialog}
             onClearSelection={clearSelection}
           />
@@ -2549,12 +2596,20 @@ export function Grid({
           : commands;
       })()}
 
-      <DeleteSelectedCardsDialog
-        open={deleteSelectionDialogOpen}
-        selectedCount={selectedBlocks.length}
-        onOpenChange={setDeleteSelectionDialogOpen}
-        onConfirm={handleConfirmDeleteSelection}
-      />
+      {/* The feed's one group delete window, one instance per request. */}
+      {deleteSelection && (
+        <DeleteSelectionWindow
+          key={deleteSelection.request.sequence}
+          open={deleteSelection.open}
+          slugs={deleteSelection.request.slugs}
+          vaultPath={vaultPath}
+          thumbsRootPath={resolvedThumbsRootPath}
+          onPrepare={onPrepareDeleteSelectedBlocks}
+          onDelete={onDeleteSelectedBlocks}
+          onClose={closeDeleteSelection}
+          onDeleted={handleSelectionDeleted}
+        />
+      )}
 
       <MergeCardsDialog
         open={mergeDialogOpen}
@@ -2572,7 +2627,7 @@ export function Grid({
           onLoadBlockTags={onLoadBlockTags}
           onBatchSetTag={onBatchSetTag}
           onCreateAndAssignBatch={onCreateAndAssignBatch}
-          onRequestDeleteSelected={() => setDeleteSelectionDialogOpen(true)}
+          onRequestDeleteSelected={requestDeleteSelection}
           onMergeSelectedBlocks={openMergeDialog}
           onClearSelection={clearSelection}
         />
@@ -2832,7 +2887,7 @@ const GridItem = memo(function GridItem({
             onLoadBlockTags={context.onLoadBlockTags}
             onBatchSetTag={context.onBatchSetTag}
             onCreateAndAssignBatch={context.onCreateAndAssignBatch}
-            onDeleteSelectedBlocks={context.onDeleteSelectedBlocks}
+            onRequestDeleteSelection={context.onRequestDeleteSelection}
             onMergeSelectedBlocks={context.onMergeSelectedBlocks}
             onClearSelection={context.onClearSelection}
           />

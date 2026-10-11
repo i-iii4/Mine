@@ -54,7 +54,7 @@ export function RenameBlockDialog({
         <DialogHeader>
           <DialogTitle>Rename file</DialogTitle>
           <DialogDescription>
-            Change the Markdown filename without changing the article title.
+            Media files named after this element are renamed with it, and links to it follow the new name.
           </DialogDescription>
         </DialogHeader>
 

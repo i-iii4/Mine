@@ -2516,6 +2516,97 @@
       "requirement": "SPEC_THUMBNAILS.md#**П8. Смена версии генератора ничего не удаляет (11.10.2026).**",
       "tests": ["src-tauri/src/storage/thumbnails.rs", "src-tauri/src/storage/derived_preview.rs", "src-tauri/src/commands/thumbnails.rs"],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src-tauri/src/commands/blocks.rs",
+        "src-tauri/src/commands/settings.rs",
+        "src-tauri/src/commands/effects.rs",
+        "src-tauri/src/storage/block_queries.rs",
+        "src-tauri/src/bindings.rs",
+        "src-tauri/src/lib.rs",
+        "src/types/generated.ts"
+      ],
+      "requirement": "SPEC_GROUP_SELECTION.md#### Удаление",
+      "tests": ["src-tauri/src/commands/blocks.rs", "src-tauri/src/commands/effects.rs"],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/components/Grid.tsx",
+        "src/components/Grid.test.tsx",
+        "src/components/Grid.firstCards.test.tsx",
+        "src/components/Grid.emptySpace.test.tsx",
+        "src/components/Grid.wordMetrics.test.tsx",
+        "src/components/Grid.gridItemMemo.test.tsx",
+        "src/components/DeleteSelectedCardsDialog.tsx",
+        "src/components/DeleteSelectedCardsDialog.test.tsx",
+        "src/components/DeleteWindowParts.tsx",
+        "src/components/DeleteBlockDialog.tsx",
+        "src/components/DeleteBlockDialog.test.tsx",
+        "src/components/GroupSelectionCommands.tsx",
+        "src/components/GroupSelectionCardMenu.tsx",
+        "src/lib/commands.ts",
+        "src/App.tsx",
+        "src/App.test.tsx",
+        "src/dev/PopupsPage.tsx",
+        "src/dev/CloudOpenPage.tsx",
+        "src/dev/ColdSpaceAuditRoute.tsx",
+        "src/dev/FeedScrollAuditRoute.tsx",
+        "src/dev/OnboardingPage.tsx"
+      ],
+      "requirement": "SPEC_GROUP_SELECTION.md#### Точки входа",
+      "tests": ["src/components/Grid.test.tsx", "src/components/DeleteSelectedCardsDialog.test.tsx", "src/components/DeleteBlockDialog.test.tsx", "src/App.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/DeleteBlockDialog.tsx",
+        "src/components/DeleteSelectedCardsDialog.tsx",
+        "src/components/DeleteWindowParts.tsx",
+        "src/components/Sidebar.tsx",
+        "src/components/Sidebar.test.tsx",
+        "src/components/Detail.tsx",
+        "src/components/Detail.test.tsx",
+        "src/components/YoutubeSourcePlayer.tsx",
+        "src/components/YoutubeSourcePlayer.test.tsx",
+        "src/components/MergeCardsDialog.tsx",
+        "src/components/MergeCardsDialog.test.tsx",
+        "src/components/RenameBlockDialog.tsx",
+        "src/components/RenameBlockDialog.test.tsx",
+        "src/components/VaultSwitcher.tsx",
+        "src/components/VaultSwitcher.test.tsx",
+        "src/components/CreateCollectionDialog.tsx",
+        "src/components/CreateCollectionDialog.test.tsx",
+        "src/components/TopCollectionSwitcher.tsx",
+        "src/settings/OrphansSection.tsx",
+        "src/settings/OrphansSection.test.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#### Тексты окон",
+      "tests": [
+        "src/components/DeleteBlockDialog.test.tsx",
+        "src/components/DeleteSelectedCardsDialog.test.tsx",
+        "src/components/Sidebar.test.tsx",
+        "src/components/Detail.test.tsx",
+        "src/components/YoutubeSourcePlayer.test.tsx",
+        "src/components/MergeCardsDialog.test.tsx",
+        "src/components/RenameBlockDialog.test.tsx",
+        "src/components/VaultSwitcher.test.tsx",
+        "src/components/CreateCollectionDialog.test.tsx",
+        "src/settings/OrphansSection.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/deleteFailure.ts",
+        "src/lib/deleteFailure.test.ts",
+        "src/App.tsx",
+        "src/App.test.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#### Сбой после закрытия окна",
+      "tests": ["src/lib/deleteFailure.test.ts", "src/App.test.tsx"],
+      "command": "test:frontend"
     }
   ],
   "release": null

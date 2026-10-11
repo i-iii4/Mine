@@ -570,9 +570,9 @@ export function RemoveSpaceDialog({
             Remove {path ? vaultName(path) : "space"} from the list?
           </AlertDialogTitle>
           <AlertDialogDescription>
-            Nothing is deleted from your computer. The folder and everything in
-            it stay where they are — Mine just stops listing the space. You can
-            add it back later with Add space.
+            The folder and its files stay where they are. Open tabs of this
+            space switch to choosing a space. You can add it back with Add
+            space.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

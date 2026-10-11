@@ -31,7 +31,8 @@ import {
   setCollectionMemberships,
   setHoveredCollectionRow,
 } from "@/lib/collectionHover";
-import type { LightBlock } from "@/types";
+import type { ComponentProps } from "react";
+import type { DeleteBlockMedia, DeleteBlocksPlan, LightBlock } from "@/types";
 
 // These constants must match the ones in Grid.tsx. If Grid.tsx changes
 // them, this test must be updated in lockstep — but since the test's
@@ -410,6 +411,13 @@ function renderedTopOf(slug: string): number {
  * Drives the measurement pass (which awaits fonts) and any follow-up React
  * rerenders to completion.
  */
+/** Settles the promises a press started: a plan read, a deletion. */
+async function flushPromises(): Promise<void> {
+  await act(async () => {
+    for (let tick = 0; tick < 5; tick += 1) await Promise.resolve();
+  });
+}
+
 async function flushAsync(): Promise<void> {
   // Run any microtasks scheduled by React effects.
   await act(async () => {
@@ -449,7 +457,8 @@ const BASE_PROPS = {
   )),
   onBatchSetTag: vi.fn(),
   onCreateAndAssignBatch: vi.fn(),
-  onDeleteSelectedBlocks: vi.fn(),
+  onPrepareDeleteSelectedBlocks: vi.fn(async (slugs: string[]) => ({ slugs, markdown_files: [], unused_media: [], shared_media: [] })),
+  onDeleteSelectedBlocks: vi.fn(async () => undefined),
   onMergeSelectedBlocks: vi.fn(),
   onRequestRename: vi.fn(),
   onRequestDelete: vi.fn(),
@@ -1921,6 +1930,7 @@ describe("Grid — no collapse after add / revisit", () => {
     });
 
     fireEvent.keyDown(window, { key: "Backspace" });
+    await flushPromises();
 
     const dialog = screen.getByRole("alertdialog", {
       name: "Delete selected elements?",
@@ -1928,11 +1938,10 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(onDeleteSelectedBlocks).not.toHaveBeenCalled();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await flushPromises();
 
-    expect(onDeleteSelectedBlocks).toHaveBeenCalledWith(["block-9527", "block-9528"]);
+    // No media offered: no media analysis, as for one element.
+    expect(onDeleteSelectedBlocks).toHaveBeenCalledWith(["block-9527", "block-9528"], false, []);
   });
 
   it("uses Grid keyboard focus, not stale DOM focus, for Enter in group selection", async () => {
@@ -2107,19 +2116,15 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(within(menu).getByText("Delete")).toBeInTheDocument();
 
     fireEvent.click(within(menu).getByText("Delete"));
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await flushPromises();
 
     const dialog = document.querySelector("[role='alertdialog']") as HTMLElement;
     expect(dialog).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await flushPromises();
 
     // The whole point: the click landed on one card, the delete covers both.
-    expect(onDeleteSelectedBlocks).toHaveBeenCalledWith(["block-9541", "block-9542"]);
+    expect(onDeleteSelectedBlocks).toHaveBeenCalledWith(["block-9541", "block-9542"], false, []);
   });
 
   it("keeps the single-card menu when the right-clicked card is outside the selection", async () => {
@@ -3371,6 +3376,211 @@ describe("Grid — no collapse after add / revisit", () => {
         "[data-block-slug='block-1101'] [data-feed-video-surface='true']",
       ),
     ).toBeTruthy();
+  });
+});
+
+// SPEC_GROUP_SELECTION.md, «Batch Delete» (decision of 11.10.2026): every
+// `Delete` of the selection goes through `requestDeleteSelection()` to one
+// window of the feed.
+describe("Grid — group delete window", () => {
+  const PHOTO: DeleteBlockMedia = {
+    path: "Media/photo.jpg",
+    file_name: "photo.jpg",
+    kind: "image",
+    referenced_by: ["block-9601"],
+  };
+  const COVER: DeleteBlockMedia = {
+    path: "Media/cover.jpg",
+    file_name: "cover.jpg",
+    kind: "image",
+    referenced_by: ["Notes/Reader"],
+  };
+
+  function planWith(
+    slugs: string[],
+    unused: DeleteBlockMedia[] = [],
+    shared: DeleteBlockMedia[] = [],
+  ): DeleteBlocksPlan {
+    return {
+      slugs,
+      markdown_files: slugs.map((slug) => `${slug}.md`),
+      unused_media: unused,
+      shared_media: shared,
+    };
+  }
+
+  type DeleteEntry = "bar" | "command-k" | "right-click" | "backspace";
+
+  async function renderSelected(
+    ids: number[],
+    props: Partial<ComponentProps<typeof Grid>> = {},
+  ): Promise<void> {
+    vi.useFakeTimers();
+    const blocks = ids.map((id) => makeBlock(id));
+    ids.forEach((id, index) => setBlockHeight(id, 200 + index * 20));
+    render(<Grid {...BASE_PROPS} blocks={blocks} {...props} />);
+    await flushAsync();
+    // Select the cards from the keyboard, so the last one also holds the
+    // focus the ⌘K menu opens on.
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    for (let index = 0; index < ids.length; index += 1) {
+      if (index > 0) fireEvent.keyDown(window, { key: "ArrowRight" });
+      fireEvent.keyDown(window, { key: "Enter", shiftKey: true });
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+  }
+
+  async function pressDelete(entry: DeleteEntry, slug: string): Promise<void> {
+    if (entry === "bar") {
+      const bar = document.querySelector("[data-feed-selection-action-bar]") as HTMLElement;
+      fireEvent.click(within(bar).getByRole("button", { name: "Delete" }));
+    } else if (entry === "command-k") {
+      fireEvent.keyDown(window, { key: "k", metaKey: true });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const menu = document.querySelector("[data-feed-grid-batch-menu]") as HTMLElement;
+      fireEvent.click(within(menu).getByText("Delete"));
+    } else if (entry === "right-click") {
+      fireEvent.contextMenu(document.querySelector(`[data-block-slug="${slug}"]`) as HTMLElement);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const menu = document.querySelector("[data-feed-grid-selection-context-menu]") as HTMLElement;
+      fireEvent.click(within(menu).getByText("Delete"));
+    } else {
+      fireEvent.keyDown(window, { key: "Backspace" });
+    }
+    await flushPromises();
+  }
+
+  for (const entry of ["bar", "command-k", "right-click", "backspace"] as const) {
+    it(`opens the one group window from ${entry}`, async () => {
+      const onPrepareDeleteSelectedBlocks = vi.fn(async (slugs: string[]) => planWith(slugs));
+      await renderSelected([9601, 9602], { onPrepareDeleteSelectedBlocks });
+
+      await pressDelete(entry, "block-9601");
+
+      expect(onPrepareDeleteSelectedBlocks).toHaveBeenCalledWith(["block-9601", "block-9602"]);
+      expect(screen.getAllByRole("alertdialog")).toHaveLength(1);
+      expect(screen.getByRole("alertdialog", { name: "Delete selected elements?" })).toBeInTheDocument();
+    });
+
+    it(`opens Delete element? of the one selected element from ${entry}`, async () => {
+      const onRequestDelete = vi.fn();
+      const onPrepareDeleteSelectedBlocks = vi.fn(async (slugs: string[]) => planWith(slugs));
+      await renderSelected([9611], { onRequestDelete, onPrepareDeleteSelectedBlocks });
+
+      await pressDelete(entry, "block-9611");
+
+      expect(onRequestDelete).toHaveBeenCalledWith("block-9611");
+      expect(onPrepareDeleteSelectedBlocks).not.toHaveBeenCalled();
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    });
+  }
+
+  it("opens as a question without media to delete and never offers shared media", async () => {
+    await renderSelected([9621, 9622], {
+      onPrepareDeleteSelectedBlocks: async (slugs) => planWith(slugs, [], [COVER]),
+    });
+    await pressDelete("backspace", "block-9621");
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toHaveAttribute("data-modal-width", "question");
+    expect(within(dialog).queryByRole("button", { name: "Keep media" })).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(dialog.querySelector("[data-delete-media-previews]")).toBeNull();
+  });
+
+  it("shows the media to delete at content width; Delete takes them, Keep media keeps them", async () => {
+    const onDeleteSelectedBlocks = vi.fn(async () => undefined);
+    await renderSelected([9601, 9602], {
+      onPrepareDeleteSelectedBlocks: async (slugs) => planWith(slugs, [PHOTO], [COVER]),
+      onDeleteSelectedBlocks,
+    });
+    await pressDelete("backspace", "block-9601");
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toHaveAttribute("data-modal-width", "content");
+    const previews = dialog.querySelector("[data-delete-media-previews]") as HTMLElement;
+    expect(within(previews).getByText("photo.jpg")).toBeInTheDocument();
+    expect(within(previews).queryByText("cover.jpg")).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await flushPromises();
+    expect(onDeleteSelectedBlocks).toHaveBeenLastCalledWith(["block-9601", "block-9602"], true, [PHOTO]);
+
+    // Success closes the window and clears the selection.
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(document.querySelector("[data-feed-selection-action-bar]")).toBeNull();
+  });
+
+  it("deletes only the cards with Keep media", async () => {
+    const onDeleteSelectedBlocks = vi.fn(async () => undefined);
+    await renderSelected([9603, 9604], {
+      onPrepareDeleteSelectedBlocks: async (slugs) => planWith(slugs, [PHOTO]),
+      onDeleteSelectedBlocks,
+    });
+    await pressDelete("backspace", "block-9603");
+
+    const dialog = screen.getByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Keep media" }));
+    await flushPromises();
+
+    expect(onDeleteSelectedBlocks).toHaveBeenCalledWith(["block-9603", "block-9604"], false, []);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("stays open with Deleting… while the batch runs, and keeps the selection on failure", async () => {
+    let fail: (error: Error) => void = () => {};
+    const onDeleteSelectedBlocks = vi.fn(
+      () => new Promise<void>((_resolve, reject) => {
+        fail = reject;
+      }),
+    );
+    await renderSelected([9631, 9632], {
+      onPrepareDeleteSelectedBlocks: async (slugs) => planWith(slugs, [PHOTO]),
+      onDeleteSelectedBlocks,
+    });
+    await pressDelete("bar", "block-9631");
+
+    const dialog = screen.getByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await flushPromises();
+
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Deleting…" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Keep media" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+
+    await act(async () => {
+      fail(new Error("Permission denied (os error 13)"));
+      await Promise.resolve();
+    });
+    await flushPromises();
+
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(dialog.querySelector("[data-delete-selected-error]")).toHaveTextContent(
+      "Permission denied (os error 13)",
+    );
+    expect(within(dialog).getByRole("button", { name: "Delete" })).toBeEnabled();
+    expect(gridItemForSlug("block-9631")).toHaveAttribute("data-feed-grid-item-selected", "true");
+    expect(gridItemForSlug("block-9632")).toHaveAttribute("data-feed-grid-item-selected", "true");
+  });
+
+  it("shows the plan error and keeps Delete unavailable", async () => {
+    await renderSelected([9641, 9642], {
+      onPrepareDeleteSelectedBlocks: async () => {
+        throw new Error("index is busy");
+      },
+    });
+    await pressDelete("backspace", "block-9641");
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByText("Could not prepare delete plan: index is busy")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Delete" })).toBeDisabled();
   });
 });
 

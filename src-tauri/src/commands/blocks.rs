@@ -170,6 +170,36 @@ pub struct DeleteBlockOutcome {
     pub kept_media: Vec<DeleteBlockMedia>,
 }
 
+/// What deleting a whole selection would do, from the index alone
+/// (SPEC_GROUP_SELECTION.md, «Batch Delete», decision of 11.10.2026): the
+/// window waits for it and opens at its final width, as `Delete element?`.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct DeleteBlocksPlan {
+    /// The selected cards the index holds, in order, each once. A selected
+    /// card the index no longer holds is already gone and is left out.
+    pub slugs: Vec<String>,
+    /// `{slug}.md` of each of `slugs`, in the same order.
+    pub markdown_files: Vec<String>,
+    /// Media no note uses once the whole selection is gone, each file once;
+    /// `referenced_by` names the selected cards that use it.
+    pub unused_media: Vec<DeleteBlockMedia>,
+    /// Media of the selected cards at least one note outside the selection
+    /// uses; `referenced_by` names those notes. Never offered for deletion.
+    pub shared_media: Vec<DeleteBlockMedia>,
+}
+
+/// What `delete_blocks` did (decision of 11.10.2026).
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct DeleteBlocksOutcome {
+    /// How many index rows went with their files.
+    pub removed: usize,
+    /// Media of the selection that stayed because a note outside it uses
+    /// them, as the deletion found the index and the notes on disk, as
+    /// `DeleteBlockOutcome::kept_media`. Only a deletion asked to take the
+    /// media fills it; the window tells which of the files it offered stayed.
+    pub kept_media: Vec<DeleteBlockMedia>,
+}
+
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct MergeBlocksResult {
     pub block: IndexedBlock,
@@ -2073,10 +2103,11 @@ pub async fn prepare_delete_block(
     validate_slug(&slug).map_err(|e| CommandError::Internal(e.to_string()))?;
     let vault = tab_layout(&state, &webview)?;
     tauri::async_runtime::spawn_blocking(move || {
+        let except = BTreeSet::from([slug.clone()]);
         let (block, notes) = super::state::read_owned_projection(&app, &vault, |conn| {
             Ok((
                 index::get_block(conn, &slug)?,
-                block_queries::list_note_file_mentions(conn, &slug)?,
+                block_queries::list_note_file_mentions(conn, &except)?,
             ))
         })?;
         let block =
@@ -2122,8 +2153,49 @@ pub fn delete_block(webview: tauri::Webview, state: State<'_, AppState>, slug: S
     outcome
 }
 
-/// Delete a selection while retaining all media, in one rollback-safe batch.
-async fn delete_blocks_unannounced(webview: tauri::Webview, app: AppHandle, slugs: Vec<String>) -> Result<usize, CommandError> {
+/// The selected cards, each once and in order, every name checked.
+fn validated_slug_set(slugs: Vec<String>) -> Result<BTreeSet<String>, CommandError> {
+    let slugs: BTreeSet<String> = slugs.into_iter().collect();
+    for slug in &slugs {
+        validate_slug(slug).map_err(|error| CommandError::Internal(error.to_string()))?;
+    }
+    Ok(slugs)
+}
+
+/// Prepare the group delete window's plan, from the index alone, as
+/// `prepare_delete_block` for one card (SPEC_GROUP_SELECTION.md, «Batch
+/// Delete», decision of 11.10.2026). No note is read from disk here; the
+/// deletion itself checks the notes on disk (`build_delete_blocks_plan`).
+#[tauri::command]
+pub async fn prepare_delete_blocks(
+    webview: tauri::Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    slugs: Vec<String>,
+) -> Result<DeleteBlocksPlan, CommandError> {
+    let slugs = validated_slug_set(slugs)?;
+    let vault = tab_layout(&state, &webview)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let (blocks, notes) = super::state::read_owned_projection(&app, &vault, |conn| {
+            Ok((
+                indexed_blocks(conn, &slugs)?,
+                block_queries::list_note_file_mentions(conn, &slugs)?,
+            ))
+        })?;
+        Ok(delete_blocks_plan_from_index_rows(&vault, &blocks, &notes))
+    })
+    .await
+    .map_err(|error| CommandError::Internal(format!("delete plan task failed: {error}")))?
+}
+
+/// Delete a selection, and the media only it uses when asked, in one
+/// rollback-safe batch.
+async fn delete_blocks_unannounced(
+    webview: tauri::Webview,
+    app: AppHandle,
+    slugs: Vec<String>,
+    delete_unused_media: bool,
+) -> Result<DeleteBlocksOutcome, CommandError> {
     let expected_vault = tab_layout(&app.state::<AppState>(), &webview)?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
@@ -2138,7 +2210,7 @@ async fn delete_blocks_unannounced(webview: tauri::Webview, app: AppHandle, slug
                 "active space changed before deletion".into(),
             ));
         }
-        delete_blocks_inner(Some(&state), &vs.conn, &vs.vault, slugs)
+        delete_blocks_inner(Some(&state), &vs.conn, &vs.vault, slugs, delete_unused_media)
     })
     .await
     .map_err(|error| CommandError::Internal(error.to_string()))?
@@ -2146,30 +2218,54 @@ async fn delete_blocks_unannounced(webview: tauri::Webview, app: AppHandle, slug
 
 /// [`delete_blocks_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
-#[tauri::command]
-pub async fn delete_blocks(webview: tauri::Webview, app: AppHandle, slugs: Vec<String>) -> Result<usize, CommandError> {
+#[tauri::command(rename_all = "snake_case")]
+pub async fn delete_blocks(
+    webview: tauri::Webview,
+    app: AppHandle,
+    slugs: Vec<String>,
+    delete_unused_media: bool,
+) -> Result<DeleteBlocksOutcome, CommandError> {
     let announcing = webview.clone();
-    let outcome = delete_blocks_unannounced(webview, app, slugs).await;
+    let outcome = delete_blocks_unannounced(webview, app, slugs, delete_unused_media).await;
     if outcome.is_ok() {
         super::effects::space_changed_by_tab(&announcing, Vec::new());
     }
     outcome
 }
 
+/// Delete the selected cards in one batch (SPEC_GROUP_SELECTION.md, «Batch
+/// Delete»). With `delete_unused_media`, the plan is built again from the
+/// index and every file it calls unused is checked against the notes on disk
+/// at this moment, as for one card (`build_delete_blocks_plan`); the files
+/// left unused go to the Trash with the cards. Without it no media is
+/// touched and no note of the space is read. The files and the index rows go
+/// in one `StagedSourceMutation`: a failure leaves every one of them.
 pub(crate) fn delete_blocks_inner(
     state: Option<&AppState>,
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     slugs: Vec<String>,
-) -> Result<usize, CommandError> {
-    let slugs: BTreeSet<String> = slugs.into_iter().collect();
-    for slug in &slugs {
-        validate_slug(slug).map_err(|error| CommandError::Internal(error.to_string()))?;
-    }
+    delete_unused_media: bool,
+) -> Result<DeleteBlocksOutcome, CommandError> {
+    let slugs = validated_slug_set(slugs)?;
     if slugs.is_empty() {
-        return Ok(0);
+        return Ok(DeleteBlocksOutcome {
+            removed: 0,
+            kept_media: Vec::new(),
+        });
     }
-    let paths: Vec<PathBuf> = slugs.iter().map(|slug| vault.block_path(slug)).collect();
+    // Retaining media needs no vault-wide media reference analysis.
+    let plan = if delete_unused_media {
+        Some(build_delete_blocks_plan(conn, vault, &slugs)?)
+    } else {
+        None
+    };
+    let mut paths: BTreeSet<PathBuf> = slugs.iter().map(|slug| vault.block_path(slug)).collect();
+    if let Some(plan) = &plan {
+        paths.extend(plan.unused_media.iter().map(|media| media.absolute_path.clone()));
+    }
+    // No watcher lives in a CLI process; the app's own watcher must in fact
+    // see an out-of-process mutation, so suppression applies only in-app.
     if let Some(state) = state {
         state.suppress_paths(
             paths.iter().cloned(),
@@ -2202,7 +2298,11 @@ pub(crate) fn delete_blocks_inner(
             log::warn!("failed to clean deleted card audio for {slug}: {error:#}");
         }
     }
-    Ok(removed)
+    Ok(DeleteBlocksOutcome {
+        removed,
+        // Only a deletion asked to take the media reports what it left.
+        kept_media: plan.map(|plan| plan.shared_media).unwrap_or_default(),
+    })
 }
 
 /// Delete one card and, when asked, the media only it uses. The media are
@@ -2219,12 +2319,12 @@ pub(crate) fn delete_block_inner(
     validate_slug(slug).map_err(|e| CommandError::Internal(e.to_string()))?;
     // Retaining media needs no vault-wide media reference analysis.
     if delete_unused_media == Some(false) {
-        return delete_blocks_inner(state, conn, vault, vec![slug.to_string()]).map(|removed| {
-            DeleteBlockOutcome {
-                removed: removed > 0,
+        return delete_blocks_inner(state, conn, vault, vec![slug.to_string()], false).map(
+            |outcome| DeleteBlockOutcome {
+                removed: outcome.removed > 0,
                 kept_media: Vec::new(),
-            }
-        });
+            },
+        );
     }
     let plan = build_delete_block_plan(conn, vault, slug)?;
 
@@ -2363,21 +2463,71 @@ pub(crate) fn build_delete_block_plan(
     slug: &str,
 ) -> Result<DeleteBlockPlan, CommandError> {
     let mut plan = build_delete_block_plan_from_index(conn, vault, slug)?;
-    let candidates: Vec<PathBuf> = plan
-        .unused_media
+    check_unused_media_on_disk(
+        vault,
+        &mut plan.unused_media,
+        &mut plan.shared_media,
+        &BTreeSet::from([vault.block_path(slug)]),
+    )?;
+    Ok(plan)
+}
+
+/// The plan the group deletion acts on, as `build_delete_block_plan` for one
+/// card (SPEC_GROUP_SELECTION.md, «Batch Delete»): the index's plan of the
+/// whole selection, with every file it calls unused checked against the notes
+/// on disk at this moment, every selected note skipped since it goes too.
+pub(crate) fn build_delete_blocks_plan(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    slugs: &BTreeSet<String>,
+) -> Result<DeleteBlocksPlan, CommandError> {
+    let blocks = indexed_blocks(conn, slugs)?;
+    let notes = block_queries::list_note_file_mentions(conn, slugs)?;
+    let mut plan = delete_blocks_plan_from_index_rows(vault, &blocks, &notes);
+    let going: BTreeSet<PathBuf> = slugs.iter().map(|slug| vault.block_path(slug)).collect();
+    check_unused_media_on_disk(vault, &mut plan.unused_media, &mut plan.shared_media, &going)?;
+    Ok(plan)
+}
+
+/// Moves every file of `unused` that a note on disk uses to `shared`, with
+/// those notes as its `referenced_by`. The index may not have caught up with
+/// a note saved a moment ago; such a file stays (decision of 11.10.2026).
+/// `going` are the notes deleted with the media.
+fn check_unused_media_on_disk(
+    vault: &VaultLayout,
+    unused: &mut Vec<DeleteBlockMedia>,
+    shared: &mut Vec<DeleteBlockMedia>,
+    going: &BTreeSet<PathBuf>,
+) -> Result<(), CommandError> {
+    let candidates: Vec<PathBuf> = unused
         .iter()
         .map(|media| media.absolute_path.clone())
         .collect();
-    let users = media_users_on_disk(vault, &candidates, Some(&vault.block_path(slug)))?;
-    let (still_used, unused): (Vec<_>, Vec<_>) = std::mem::take(&mut plan.unused_media)
+    let users = media_users_on_disk(vault, &candidates, going)?;
+    let (still_used, left): (Vec<_>, Vec<_>) = std::mem::take(unused)
         .into_iter()
         .partition(|media| users.contains_key(&media.absolute_path));
-    plan.unused_media = unused;
+    *unused = left;
     for mut media in still_used {
         media.referenced_by = users[&media.absolute_path].iter().cloned().collect();
-        plan.shared_media.push(media);
+        shared.push(media);
     }
-    Ok(plan)
+    Ok(())
+}
+
+/// The selected cards the index holds, in the order of `slugs`. A card the
+/// index no longer holds is already gone: it is left out, not refused.
+fn indexed_blocks(
+    conn: &rusqlite::Connection,
+    slugs: &BTreeSet<String>,
+) -> anyhow::Result<Vec<IndexedBlock>> {
+    let mut blocks = Vec::with_capacity(slugs.len());
+    for slug in slugs {
+        if let Some(block) = index::get_block(conn, slug)? {
+            blocks.push(block);
+        }
+    }
+    Ok(blocks)
 }
 
 /// The plan of the delete window, from the index alone (decision of
@@ -2391,7 +2541,7 @@ pub(crate) fn build_delete_block_plan_from_index(
 ) -> Result<DeleteBlockPlan, CommandError> {
     let block = index::get_block(conn, slug)?
         .ok_or_else(|| CommandError::Internal(format!("block not found: {slug}")))?;
-    let notes = block_queries::list_note_file_mentions(conn, slug)?;
+    let notes = block_queries::list_note_file_mentions(conn, &BTreeSet::from([slug.to_string()]))?;
     Ok(delete_block_plan_from_index_rows(vault, &block, &notes))
 }
 
@@ -2405,6 +2555,61 @@ fn delete_block_plan_from_index_rows(
 ) -> DeleteBlockPlan {
     let mut resolver = media_refs::MediaResolver::new(vault);
     let media = collect_delete_media_for_block(vault, block, &mut resolver);
+    let (unused_media, shared_media) = split_media_by_index_users(&mut resolver, media, notes);
+    DeleteBlockPlan {
+        slug: block.slug.clone(),
+        markdown_file: format!("{}.md", block.slug),
+        unused_media,
+        shared_media,
+    }
+}
+
+/// The group delete window's plan over rows already read: the selected cards
+/// the index holds and every indexed note outside the selection
+/// (SPEC_GROUP_SELECTION.md, «Batch Delete»). The media of every selected
+/// card are joined by path, so a file several of them use is offered once,
+/// and `referenced_by` of an unused file names the selected cards that use
+/// it. One resolver serves the whole plan.
+fn delete_blocks_plan_from_index_rows(
+    vault: &VaultLayout,
+    blocks: &[IndexedBlock],
+    notes: &[block_queries::NoteFileMentions],
+) -> DeleteBlocksPlan {
+    let mut resolver = media_refs::MediaResolver::new(vault);
+    let mut media: BTreeMap<String, DeleteBlockMedia> = BTreeMap::new();
+    for block in blocks {
+        for (path, mut item) in collect_delete_media_for_block(vault, block, &mut resolver) {
+            match media.get_mut(&path) {
+                Some(existing) => {
+                    existing.slug_owned_primary |= item.slug_owned_primary;
+                    existing.referenced_by.push(block.slug.clone());
+                }
+                None => {
+                    item.referenced_by = vec![block.slug.clone()];
+                    media.insert(path, item);
+                }
+            }
+        }
+    }
+    let (unused_media, shared_media) = split_media_by_index_users(&mut resolver, media, notes);
+    let slugs: Vec<String> = blocks.iter().map(|block| block.slug.clone()).collect();
+    DeleteBlocksPlan {
+        markdown_files: slugs.iter().map(|slug| format!("{slug}.md")).collect(),
+        slugs,
+        unused_media,
+        shared_media,
+    }
+}
+
+/// Splits `media` by the indexed notes that use each file: a file no note of
+/// `notes` uses is unused and keeps its `referenced_by`; a file some note
+/// uses is shared, and `referenced_by` names those notes. Path resolution runs
+/// only for a note whose references hold a candidate's name.
+fn split_media_by_index_users(
+    resolver: &mut media_refs::MediaResolver<'_>,
+    media: BTreeMap<String, DeleteBlockMedia>,
+    notes: &[block_queries::NoteFileMentions],
+) -> (Vec<DeleteBlockMedia>, Vec<DeleteBlockMedia>) {
     let candidates: Vec<PathBuf> = media
         .values()
         .map(|media| media.absolute_path.clone())
@@ -2422,7 +2627,7 @@ fn delete_block_plan_from_index_rows(
             }
             let references = iter_file_references(&note.body);
             users.add_note(
-                &mut resolver,
+                resolver,
                 &NoteFiles {
                     slug: &note.slug,
                     file: note.media_file.as_deref(),
@@ -2444,25 +2649,19 @@ fn delete_block_plan_from_index_rows(
             unused_media.push(media);
         }
     }
-
-    DeleteBlockPlan {
-        slug: block.slug.clone(),
-        markdown_file: format!("{}.md", block.slug),
-        unused_media,
-        shared_media,
-    }
+    (unused_media, shared_media)
 }
 
 /// The notes on disk that use each of `media`, by slug (SPEC_AUDIT_FIXES.md,
 /// Ф4). Every note is read and parsed, so a reference counts in whatever form
 /// the parser reads it: a percent-encoded Markdown path, an escaped YAML
 /// value, another Unicode normalization, and any link form Obsidian reads, not
-/// only an embed (`iter_file_references`, Г1.1). `skip` is a note that is
-/// going away with the media.
+/// only an embed (`iter_file_references`, Г1.1). `skip` are the notes going
+/// away with the media: one card, or a whole selection.
 pub(crate) fn media_users_on_disk(
     vault: &VaultLayout,
     media: &[PathBuf],
-    skip: Option<&Path>,
+    skip: &BTreeSet<PathBuf>,
 ) -> anyhow::Result<BTreeMap<PathBuf, BTreeSet<String>>> {
     let mut users = MediaUsers::new(media);
     if !users.wanted() {
@@ -2470,7 +2669,7 @@ pub(crate) fn media_users_on_disk(
     }
     let mut resolver = media_refs::MediaResolver::new(vault);
     for note in files::scan_md_files(vault)? {
-        if skip == Some(note.as_path()) {
+        if skip.contains(&note) {
             continue;
         }
         let (slug, content) = files::read_block_file(vault, &note)?;
@@ -5347,9 +5546,11 @@ mod tests {
                 None,
                 &conn,
                 &vault,
-                vec!["one".into(), "two".into(), "one".into()]
+                vec!["one".into(), "two".into(), "one".into()],
+                false,
             )
-            .unwrap(),
+            .unwrap()
+            .removed,
             2
         );
         assert!(!vault.block_path("one").exists());
@@ -5357,9 +5558,215 @@ mod tests {
         assert!(vault.block_path("keep").exists());
         assert_eq!(std::fs::read(media).unwrap(), b"source bytes");
         assert_eq!(
-            delete_blocks_inner(None, &conn, &vault, vec!["one".into()]).unwrap(),
+            delete_blocks_inner(None, &conn, &vault, vec!["one".into()], false)
+                .unwrap()
+                .removed,
             0
         );
+    }
+
+    /// The group delete window's plan, read as `prepare_delete_blocks`
+    /// reads it: from the index alone.
+    fn group_window_plan(
+        conn: &rusqlite::Connection,
+        vault: &VaultLayout,
+        slugs: &[&str],
+    ) -> DeleteBlocksPlan {
+        let slugs: BTreeSet<String> = slugs.iter().map(|slug| (*slug).to_string()).collect();
+        let blocks = indexed_blocks(conn, &slugs).unwrap();
+        let notes = block_queries::list_note_file_mentions(conn, &slugs).unwrap();
+        delete_blocks_plan_from_index_rows(vault, &blocks, &notes)
+    }
+
+    fn media_paths(media: &[DeleteBlockMedia]) -> Vec<(&str, Vec<String>)> {
+        media
+            .iter()
+            .map(|media| (media.path.as_str(), media.referenced_by.clone()))
+            .collect()
+    }
+
+    /// SPEC_GROUP_SELECTION.md, «Batch Delete», «План»: a file only selected
+    /// cards use is offered once, naming them; a file a note outside the
+    /// selection uses is shared and never offered. Flat space.
+    #[test]
+    fn group_plan_offers_media_used_only_inside_the_selection_once() {
+        let (_root, _derived, vault, conn) = make_vault();
+        persist_block(&conn, &vault, &article("one", "![[both.jpg]]\n\n![[common.jpg]]"));
+        persist_block(&conn, &vault, &article("two", "![[both.jpg]]"));
+        persist_block(&conn, &vault, &image("three", "own.jpg"));
+        persist_block(&conn, &vault, &article("reader", "Same picture: ![[common.jpg]]"));
+        for name in ["both.jpg", "common.jpg", "own.jpg"] {
+            std::fs::write(vault.root().join(name), name.as_bytes()).unwrap();
+        }
+
+        let plan = group_window_plan(&conn, &vault, &["two", "one", "three", "one"]);
+
+        assert_eq!(plan.slugs, vec!["one", "three", "two"]);
+        assert_eq!(plan.markdown_files, vec!["one.md", "three.md", "two.md"]);
+        assert_eq!(
+            media_paths(&plan.unused_media),
+            vec![
+                ("both.jpg", vec!["one".to_string(), "two".to_string()]),
+                ("own.jpg", vec!["three".to_string()]),
+            ]
+        );
+        assert_eq!(
+            media_paths(&plan.shared_media),
+            vec![("common.jpg", vec!["reader".to_string()])]
+        );
+    }
+
+    /// Delete takes the cards and the media the plan calls unused; the shared
+    /// file stays. Flat space.
+    #[test]
+    fn group_delete_with_media_takes_unused_files_and_keeps_shared_ones() {
+        let (_root, _derived, vault, conn) = make_vault();
+        persist_block(&conn, &vault, &article("one", "![[both.jpg]]\n\n![[common.jpg]]"));
+        persist_block(&conn, &vault, &article("two", "![[both.jpg]]"));
+        persist_block(&conn, &vault, &article("reader", "![[common.jpg]]"));
+        for name in ["both.jpg", "common.jpg"] {
+            std::fs::write(vault.root().join(name), name.as_bytes()).unwrap();
+        }
+
+        let outcome =
+            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()], true)
+                .unwrap();
+
+        assert_eq!(outcome.removed, 2);
+        for slug in ["one", "two"] {
+            assert!(!vault.block_path(slug).exists());
+            assert!(index::get_block(&conn, slug).unwrap().is_none());
+        }
+        assert!(!vault.root().join("both.jpg").exists());
+        assert!(vault.root().join("common.jpg").is_file());
+        assert!(vault.block_path("reader").exists());
+        assert_eq!(
+            media_paths(&outcome.kept_media),
+            vec![("common.jpg", vec!["reader".to_string()])]
+        );
+    }
+
+    /// `Keep media`: the cards go, every file stays, and nothing is reported.
+    #[test]
+    fn group_delete_keeping_media_leaves_every_file() {
+        let (_root, _derived, vault, conn) = make_vault();
+        persist_block(&conn, &vault, &image("one", "one.jpg"));
+        persist_block(&conn, &vault, &article("two", "![[two.jpg]]"));
+        for name in ["one.jpg", "two.jpg"] {
+            std::fs::write(vault.root().join(name), name.as_bytes()).unwrap();
+        }
+
+        let outcome =
+            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()], false)
+                .unwrap();
+
+        assert_eq!(outcome.removed, 2);
+        assert!(outcome.kept_media.is_empty());
+        assert!(vault.root().join("one.jpg").is_file());
+        assert!(vault.root().join("two.jpg").is_file());
+    }
+
+    /// Delete checks the files against the notes on disk before any goes: a
+    /// file the window offered, which a note the index has not seen uses,
+    /// stays and comes back in `kept_media`. A selected note on disk does not
+    /// count as a user. Layout `Cards/` and `Media/`.
+    #[test]
+    fn group_delete_keeps_a_file_the_stale_index_called_unused() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let photo = write_media(&vault, "Media/photo.jpg");
+        let lone = write_media(&vault, "Media/lone.jpg");
+        write_note(&vault, "Cards/One", "![[photo.jpg]]\n\n![[lone.jpg]]\n");
+        write_note(&vault, "Cards/Two", "![[lone.jpg]]\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let window = group_window_plan(&conn, &vault, &["Cards/One", "Cards/Two"]);
+        assert_eq!(
+            window.unused_media.iter().map(|media| media.path.as_str()).collect::<Vec<_>>(),
+            vec!["Media/lone.jpg", "Media/photo.jpg"]
+        );
+        // Saved while the window was open: on disk, not yet in the index.
+        write_note(&vault, "Cards/Late", "![[photo.jpg]]\n");
+
+        let outcome = delete_blocks_inner(
+            None,
+            &conn,
+            &vault,
+            vec!["Cards/One".into(), "Cards/Two".into()],
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(outcome.removed, 2);
+        assert!(!vault.block_path("Cards/One").exists());
+        assert!(!vault.block_path("Cards/Two").exists());
+        assert!(!lone.exists());
+        assert_eq!(std::fs::read(&photo).unwrap(), b"Media/photo.jpg");
+        assert_eq!(
+            media_paths(&outcome.kept_media),
+            vec![("Media/photo.jpg", vec!["Cards/Late".to_string()])]
+        );
+    }
+
+    /// A selected card the index no longer holds is already gone: the plan
+    /// leaves it out without refusing, and the rest are deleted.
+    #[test]
+    fn group_plan_skips_a_card_the_index_no_longer_holds() {
+        let (_root, _derived, vault, conn) = make_vault();
+        persist_block(&conn, &vault, &image("one", "one.jpg"));
+        persist_block(&conn, &vault, &article("two", "Text"));
+        std::fs::write(vault.root().join("one.jpg"), b"one").unwrap();
+        index::remove_block(&conn, "gone").unwrap();
+
+        let plan = group_window_plan(&conn, &vault, &["one", "two", "gone"]);
+        assert_eq!(plan.slugs, vec!["one", "two"]);
+        assert_eq!(
+            media_paths(&plan.unused_media),
+            vec![("one.jpg", vec!["one".to_string()])]
+        );
+
+        let outcome = delete_blocks_inner(
+            None,
+            &conn,
+            &vault,
+            vec!["one".into(), "two".into(), "gone".into()],
+            true,
+        )
+        .unwrap();
+        assert_eq!(outcome.removed, 2);
+        assert!(!vault.block_path("one").exists());
+        assert!(!vault.block_path("two").exists());
+        assert!(!vault.root().join("one.jpg").exists());
+    }
+
+    /// A failure anywhere in the batch leaves every card and every media file
+    /// where it was, and the index rows too.
+    #[test]
+    fn group_delete_with_media_failure_restores_cards_and_media() {
+        let (_root, _derived, vault, conn) = make_vault();
+        persist_block(&conn, &vault, &image("one", "one.jpg"));
+        persist_block(&conn, &vault, &image("two", "two.jpg"));
+        for name in ["one.jpg", "two.jpg"] {
+            std::fs::write(vault.root().join(name), name.as_bytes()).unwrap();
+        }
+        conn.execute_batch(
+            "CREATE TRIGGER reject_batch_delete BEFORE DELETE ON blocks
+            WHEN OLD.slug = 'two' BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+        )
+        .unwrap();
+
+        assert!(
+            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()], true)
+                .is_err()
+        );
+
+        for slug in ["one", "two"] {
+            assert!(vault.block_path(slug).exists());
+            assert!(index::get_block(&conn, slug).unwrap().is_some());
+            assert_eq!(
+                std::fs::read(vault.root().join(format!("{slug}.jpg"))).unwrap(),
+                format!("{slug}.jpg").as_bytes()
+            );
+        }
     }
 
     #[test]
@@ -5374,7 +5781,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()]).is_err()
+            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()], false).is_err()
         );
         for slug in ["one", "two"] {
             assert!(vault.block_path(slug).exists());
@@ -5392,7 +5799,7 @@ mod tests {
         }
         std::fs::remove_file(vault.block_path("one")).unwrap();
         assert_eq!(
-            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()]).unwrap(),
+            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()], false).unwrap().removed,
             2
         );
         for slug in ["one", "two"] {
@@ -5412,7 +5819,7 @@ mod tests {
         let folder = vault.block_path("one").parent().unwrap().to_path_buf();
         let mode = std::fs::metadata(&folder).unwrap().permissions().mode();
         std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
-        let result = delete_blocks_inner(None, &conn, &vault, vec!["one".into()]);
+        let result = delete_blocks_inner(None, &conn, &vault, vec!["one".into()], false);
         std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(mode)).unwrap();
         let Err(CommandError::Internal(message)) = result else {
             panic!("a read-only folder refuses the delete: {result:?}");
@@ -8104,7 +8511,7 @@ mod tests {
         write_note(&vault, "Cards/Decomposed", &format!("![[{nfd}]]\n"));
         write_note(&vault, "Cards/Unrelated", "![](../Media/%D1%84.jpg) and фото elsewhere\n");
 
-        let users = media_users_on_disk(&vault, std::slice::from_ref(&photo), None).unwrap();
+        let users = media_users_on_disk(&vault, std::slice::from_ref(&photo), &BTreeSet::new()).unwrap();
 
         assert_eq!(
             users.get(&photo).cloned().unwrap_or_default(),

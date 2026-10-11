@@ -30,6 +30,7 @@ import { DeleteOrphansDialog } from "@/settings/OrphansSection";
 import type { VaultConflictItem } from "@/lib/commands";
 import type {
   DeleteBlockPlan,
+  DeleteBlocksPlan,
   DeleteMediaAssetPlan,
   LightBlock,
   MediaAssetRef,
@@ -98,6 +99,23 @@ const DELETE_PLAN_WITH_MEDIA: DeleteBlockPlan = {
   shared_media: [],
 };
 
+const DELETE_SELECTION_PLAN: DeleteBlocksPlan = {
+  slugs: ["popup-1", "popup-2", "popup-3"],
+  markdown_files: ["popup-1.md", "popup-2.md", "popup-3.md"],
+  unused_media: [],
+  shared_media: [
+    { path: "Media/cover.jpg", file_name: "cover.jpg", kind: "image", referenced_by: ["popup-4"] },
+  ],
+};
+
+const DELETE_SELECTION_PLAN_WITH_MEDIA: DeleteBlocksPlan = {
+  ...DELETE_SELECTION_PLAN,
+  unused_media: [
+    { path: "Media/tokyo-sunset.jpg", file_name: "tokyo-sunset.jpg", kind: "image", referenced_by: ["popup-1", "popup-2"] },
+    { path: "Media/interview.mp4", file_name: "interview.mp4", kind: "video", referenced_by: ["popup-3"] },
+  ],
+};
+
 const MEDIA_ASSET: MediaAssetRef = {
   media_ref: "Media/tokyo-sunset.jpg",
   media_kind: "image",
@@ -148,7 +166,9 @@ const POPUPS = [
   { id: "conflicts", title: "iCloud conflicts (VaultConflictsDialog)" },
   { id: "delete-element", title: "Delete element (DeleteBlockDialog)" },
   { id: "delete-element-media", title: "Delete element with its media (DeleteBlockDialog)" },
-  { id: "delete-selected", title: "Delete selected (DeleteSelectedCardsDialog, the selection bar's is the same)" },
+  { id: "delete-selected", title: "Delete selected (DeleteSelectedCardsDialog, one window for every entry)" },
+  { id: "delete-selected-media", title: "Delete selected with their media (DeleteSelectedCardsDialog)" },
+  { id: "delete-selected-deleting", title: "Delete selected while the batch runs (DeleteSelectedCardsDialog)" },
   { id: "delete-collection", title: "Delete collection (Sidebar, DeleteCollectionDialog)" },
   { id: "remove-space", title: "Remove space (VaultSwitcher, RemoveSpaceDialog)" },
   { id: "delete-embed", title: "Delete embed (YoutubeSourcePlayer)" },
@@ -222,7 +242,43 @@ function OnePopup({ id }: { id: PopupId }) {
           />
         )}
         {id === "delete-selected" && (
-          <DeleteSelectedCardsDialog open selectedCount={3} onOpenChange={noop} onConfirm={noop} />
+          <DeleteSelectedCardsDialog
+            open
+            vaultPath={VAULT_PATH}
+            plan={DELETE_SELECTION_PLAN}
+            error={null}
+            pending={null}
+            deleteError={null}
+            onOpenChange={noop}
+            onKeepMedia={noop}
+            onDelete={noop}
+          />
+        )}
+        {id === "delete-selected-media" && (
+          <DeleteSelectedCardsDialog
+            open
+            vaultPath={VAULT_PATH}
+            plan={DELETE_SELECTION_PLAN_WITH_MEDIA}
+            error={null}
+            pending={null}
+            deleteError={null}
+            onOpenChange={noop}
+            onKeepMedia={noop}
+            onDelete={noop}
+          />
+        )}
+        {id === "delete-selected-deleting" && (
+          <DeleteSelectedCardsDialog
+            open
+            vaultPath={VAULT_PATH}
+            plan={DELETE_SELECTION_PLAN_WITH_MEDIA}
+            error={null}
+            pending="delete"
+            deleteError={null}
+            onOpenChange={noop}
+            onKeepMedia={noop}
+            onDelete={noop}
+          />
         )}
         {id === "delete-collection" && (
           <DeleteCollectionDialog open label="Typography" onOpenChange={noop} onConfirm={noop} />

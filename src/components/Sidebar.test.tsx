@@ -13,7 +13,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Sidebar, SidebarTagRowDragPreview } from "./Sidebar";
+import { DeleteCollectionDialog, Sidebar, SidebarTagRowDragPreview } from "./Sidebar";
 import type { IndexedBlock, TagCount } from "@/types";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
@@ -2208,5 +2208,25 @@ describe("sidebar and the feed selection (SPEC_CARD_STATES.md, С6)", () => {
     act(() => setSelectedCards([]));
     expect(screen.queryByRole("button", { name: "Disconnect alpha" })).toBeNull();
     expect(screen.getByText("10")).toHaveClass("opacity-100");
+  });
+});
+
+describe("DeleteCollectionDialog", () => {
+  // DESIGN_SYSTEM.md, «Тексты окон»: the page goes to the Trash, the
+  // connections are cleared for good, the elements stay.
+  it("names the fate of the page, the elements and their connection", () => {
+    render(
+      <DeleteCollectionDialog
+        open
+        label="Красивый веб"
+        onOpenChange={vi.fn()}
+        onConfirm={vi.fn()}
+      />,
+    );
+    const dialog = screen.getByRole("alertdialog", { name: "Delete collection?" });
+    expect(dialog).toHaveAccessibleDescription(
+      "The collection page goes to the Trash. Its elements stay, but their connection to “Красивый веб” is removed and does not come back if you restore the page.",
+    );
+    expect(dialog).not.toHaveTextContent(/cannot be undone/i);
   });
 });

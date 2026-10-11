@@ -11,10 +11,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-/** What a new collection is, said the same in both windows that name one:
- *  this and the collection switcher's `Create collection`. */
-export const NEW_COLLECTION_DESCRIPTION =
-  "The collection appears in the sidebar and can be filled by dragging elements onto it.";
+/** The description of both windows that name a new collection, this and
+ *  the collection switcher's `Create collection`: hidden, for the screen
+ *  reader only. The title already says what is typed; the old visible text
+ *  pointed at the sidebar, and this window shows exactly when the sidebar is
+ *  closed (DESIGN_SYSTEM.md, «Тексты окон»). */
+export const NEW_COLLECTION_DESCRIPTION = "Name the new collection.";
 
 interface CreateCollectionDialogProps {
   open: boolean;
@@ -53,7 +55,7 @@ export function CreateCollectionDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New collection</DialogTitle>
-          <DialogDescription>{NEW_COLLECTION_DESCRIPTION}</DialogDescription>
+          <DialogDescription className="sr-only">{NEW_COLLECTION_DESCRIPTION}</DialogDescription>
         </DialogHeader>
         <Input
           autoFocus

@@ -1934,8 +1934,11 @@ export function DeleteCollectionDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Delete collection?</AlertDialogTitle>
+          {/* The fate of each thing the deletion touches (DESIGN_SYSTEM.md,
+              «Что вернуть нельзя»): the page goes to the Trash, the
+              connections are cleared from the elements for good. */}
           <AlertDialogDescription>
-            &ldquo;{label}&rdquo; is removed from all elements. This cannot be undone.
+            The collection page goes to the Trash. Its elements stay, but their connection to &ldquo;{label}&rdquo; is removed and does not come back if you restore the page.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

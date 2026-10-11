@@ -5,17 +5,6 @@ import {
   useState,
 } from "react";
 import { Plus } from "lucide-react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -43,7 +32,9 @@ interface GroupSelectionCommandsProps {
   onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
   onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
   onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
-  onDeleteSelectedBlocks: (slugs: string[]) => void | Promise<void>;
+  /** The feed's `requestDeleteSelection()`: the window is the feed's, not
+   *  the row's (SPEC_GROUP_SELECTION.md, «Точки входа»). */
+  onRequestDeleteSelection: () => void;
   onMergeSelectedBlocks: () => void;
   onClearSelection: () => void;
 }
@@ -55,7 +46,7 @@ export function GroupSelectionCommands({
   onLoadBlockTags,
   onBatchSetTag,
   onCreateAndAssignBatch,
-  onDeleteSelectedBlocks,
+  onRequestDeleteSelection,
   onMergeSelectedBlocks,
   onClearSelection,
 }: GroupSelectionCommandsProps) {
@@ -65,8 +56,6 @@ export function GroupSelectionCommands({
   );
   const [connectOpen, setConnectOpen] = useState(false);
   const [tagLookup, setTagLookup] = useState<Map<string, string[]>>(new Map());
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -118,20 +107,6 @@ export function GroupSelectionCommands({
     if (!currentTag) return;
     handleBatchSetTag(selectedSlugs, currentTag, false);
     onClearSelection();
-  };
-
-  const handleConfirmDelete = async () => {
-    setDeleting(true);
-    try {
-      await onDeleteSelectedBlocks(selectedSlugs);
-      setActionError(null);
-      setDeleteOpen(false);
-      onClearSelection();
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setDeleting(false);
-    }
   };
 
   if (selectedBlocks.length === 0) return null;
@@ -208,39 +183,15 @@ export function GroupSelectionCommands({
               </Button>
             )}
 
-            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-              <AlertDialogTrigger asChild>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="xs"
-                  className="shrink-0"
-                >
-                  Delete
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete selected elements?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This will delete {selectedElementCountLabel(selectedBlocks.length)}. Media files stay in the space.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    variant="destructive"
-                    disabled={deleting}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      void handleConfirmDelete();
-                    }}
-                  >
-                    Delete
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <Button
+              type="button"
+              variant="destructive"
+              size="xs"
+              className="shrink-0"
+              onClick={onRequestDeleteSelection}
+            >
+              Delete
+            </Button>
 
             <ChromeCloseButton
               label="Clear selection"

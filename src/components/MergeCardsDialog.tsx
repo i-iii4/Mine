@@ -103,7 +103,7 @@ export function MergeCardsDialog({
         <DialogHeader>
           <DialogTitle>{mergeDialogTitle(orderedBlocks.length)}</DialogTitle>
           <DialogDescription>
-            Drag elements to set the merge order.
+            Drag to set the order. These elements go to the Trash; links to them now lead to the new element, even if you restore them.
           </DialogDescription>
         </DialogHeader>
 

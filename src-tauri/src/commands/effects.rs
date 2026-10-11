@@ -90,6 +90,7 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("rename_block_file", Effect::ChangesSources),
     ("check_block_rename", Effect::Reads),
     ("prepare_delete_block", Effect::Reads),
+    ("prepare_delete_blocks", Effect::Reads),
     ("delete_block", Effect::ChangesSources),
     ("delete_blocks", Effect::ChangesSources),
     ("merge_blocks", Effect::ChangesSources),

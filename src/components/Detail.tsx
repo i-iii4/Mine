@@ -2847,6 +2847,25 @@ export function RemoveMediaAssetFromCardDialog({
   );
 }
 
+/** The description of `Delete media file?` (DESIGN_SYSTEM.md, «Тексты окон»):
+ *  the file goes to the Trash, and the references cleared from the elements
+ *  stay cleared even when the file comes back. An element that shows the file
+ *  as its main media (`frontmatter_file`) shows nothing in its place. Until the
+ *  plan names the elements, only what is true of every file is said. */
+export function deleteMediaFileDescription(
+  references: DeleteMediaAssetPlan["referenced_by"] | null,
+): string {
+  const trash = "The file goes to the Trash.";
+  if (references === null || references.length === 0) return trash;
+  const cleared = `${trash} Its references are removed from the elements below and do not come back if you restore the file.`;
+  const showsAsMain = references.some((reference) =>
+    reference.reference_kinds.includes("frontmatter_file"),
+  );
+  return showsAsMain
+    ? `${cleared} Elements that show it as their main media will show nothing in its place.`
+    : cleared;
+}
+
 export function DeleteMediaAssetDialog({
   asset,
   vaultPath,
@@ -2916,7 +2935,7 @@ export function DeleteMediaAssetDialog({
         <AlertDialogHeader className="min-w-0">
           <AlertDialogTitle>Delete media file?</AlertDialogTitle>
           <AlertDialogDescription>
-            This deletes the local media file and removes its references from every listed element. The elements stay in the space.
+            {deleteMediaFileDescription(plan?.referenced_by ?? null)}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="flex min-w-0">

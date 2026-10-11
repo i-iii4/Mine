@@ -330,7 +330,8 @@ export function FeedScrollAuditRoute() {
         onLoadBlockTags={async () => new Map()}
         onBatchSetTag={noop}
         onCreateAndAssignBatch={noop}
-        onDeleteSelectedBlocks={noop}
+        onPrepareDeleteSelectedBlocks={async (slugs) => ({ slugs, markdown_files: [], unused_media: [], shared_media: [] })}
+        onDeleteSelectedBlocks={async () => undefined}
         onMergeSelectedBlocks={noop}
         onRequestRename={noop}
         onRequestDelete={noop}
