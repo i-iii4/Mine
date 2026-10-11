@@ -257,9 +257,6 @@ export function CardRow({
             preview={preview}
             loading="lazy"
             draggable={false}
-            onError={(event) => {
-              event.currentTarget.style.display = "none";
-            }}
           />
         )}
       </div>

@@ -1273,9 +1273,10 @@ Image media expansion:
   The dropdown takes the one menu width rule (07.10.2026): the longest row
   within `128px` to `300px`, held while the search filters. The dropdown is
   anchored to the visible inner selector pill, not to the invisible root
-  layout slot: Radix `align="start"` with an `alignOffset` measured from the
-  pill on every opening (`useMenuAlignToPlate`), as the collection switcher's;
-  a copied `alignOffset=12` against the 8px inset opened it 4px adrift until
+  layout slot: Radix `align="start"`, and the `DropdownMenuContent` wrapper
+  measures both offsets from the pill on every opening (DESIGN_SYSTEM.md,
+  «Отступ от кнопки», 11.10.2026), as for every dropdown menu; a copied
+  `alignOffset=12` against the 8px inset opened it 4px adrift until
   07.10.2026.
 - Sidebar search renders as a `data-sidebar-top-search-surface` wrapper with a
   transparent `Input ghost` and an optional clear action. Подсказка
@@ -1342,8 +1343,8 @@ Image media expansion:
   `aria-activedescendant`, while the input remains focused.
   The dropdown takes the same one menu width rule as Space dropdown. It is
   anchored to the visible inner collection pill, not to the invisible root
-  layout slot: the `alignOffset` is measured from the pill on every opening
-  (`useMenuAlignToPlate`), shared with the space switcher.
+  layout slot: the `DropdownMenuContent` wrapper measures the offsets from the
+  pill on every opening, as for the space switcher and every dropdown menu.
 - Top chrome controls must remain usable as window drag handles. Interactive
   chrome controls use the shared `4px` pointer threshold: movement below the
   threshold is handled as normal click/focus/editing, movement at or above it

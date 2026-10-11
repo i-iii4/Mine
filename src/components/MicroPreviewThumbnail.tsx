@@ -1,6 +1,13 @@
-import { useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+} from "react";
 import { thumbnailLevelUrl } from "@/lib/assets";
 import { parsePreviewManifest } from "@/lib/cardLayout";
+import { listenPage } from "@/lib/pageEvents";
 import { cn } from "@/lib/utils";
 import type { IndexedBlock, LightBlock, PreviewCard } from "@/types";
 
@@ -31,10 +38,10 @@ export function microPreviewFromIndexedBlock(
     // right after a fresh clip, which would mis-flag a text thumb as media.
     // Fall back to thumb_format only for legacy blocks without a manifest.
     text: manifest ? manifest.kind === "text" : block.thumb_format === "png",
-    // The thumbnail pipeline guarantees a thumb file per block, so always
-    // attempt the image (matches microPreviewFromLightBlock). thumb_format
-    // being momentarily null must not hide an already-present thumbnail; the
-    // consumer's onError handles the rare brand-new-block-with-no-file case.
+    // Always attempt the image (matches microPreviewFromLightBlock):
+    // thumb_format being momentarily null must not hide an already-present
+    // thumbnail. A file that is not there yet is MicroPreviewThumbnail's own
+    // case: it shows the loading fill and asks again once the preview is ready.
     hasThumb: true,
   };
 }
@@ -62,10 +69,24 @@ export function microPreviewFromLightBlock(
   };
 }
 
+/** `thumb:updated` payload; only the slug matters here. */
+interface ThumbUpdatedPayload {
+  slug: string;
+}
+
+/// The address of a request made after a failed one. The retry mark makes the
+/// browser ask the file again instead of repeating the failure it may keep in
+/// its memory cache.
+function withRetry(url: string, retry: number): string {
+  if (retry <= 0) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}retry=${retry}`;
+}
+
 export function MicroPreviewThumbnail({
   preview,
   className,
   onLoad,
+  onError,
   ...imgProps
 }: Omit<ComponentPropsWithoutRef<"img">, "src"> & {
   preview: MicroPreviewModel;
@@ -74,6 +95,38 @@ export function MicroPreviewThumbnail({
   // Whether the picture is in. Stays true when the URL is cache-busted: the
   // browser keeps painting the old picture until the new one has loaded.
   const [loaded, setLoaded] = useState(false);
+  // A thumbnail file that is not there yet (a card saved a moment ago, a
+  // preview still being built) is not a broken picture. The slot keeps the
+  // loading fill instead of the browser's broken-image icon, and asks again
+  // when this card's preview is ready (`thumb:updated`). A caller that
+  // cache-busts its URL on that event (the sidebar) gets a new address, which
+  // clears the failure by itself.
+  const [retry, setRetry] = useState(0);
+  const src = withRetry(preview.url, retry);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const failed = failedSrc === src;
+  const slug = preview.slug;
+
+  useEffect(() => {
+    if (!failed || !slug) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    listenPage<ThumbUpdatedPayload>("thumb:updated", (event) => {
+      if (event.payload.slug === slug) setRetry((count) => count + 1);
+    }).then(
+      (stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      },
+      // Outside a Tauri page (a dev browser route) there is no event to wait
+      // for; the slot simply keeps its fill.
+      () => {},
+    );
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [failed, slug]);
 
   // A picture already in the memory cache can be complete before the first
   // paint; reading that here keeps such a tile from flashing the slot fill.
@@ -103,22 +156,29 @@ export function MicroPreviewThumbnail({
   return (
     <span
       className={cn("block size-8 overflow-hidden", preview.text && loaded && "bg-card")}
-      data-micro-preview-state={loaded ? "loaded" : "loading"}
+      data-micro-preview-state={failed ? "missing" : loaded ? "loaded" : "loading"}
     >
-      <img
-        {...imgProps}
-        ref={imageRef}
-        onLoad={(event) => {
-          setLoaded(true);
-          onLoad?.(event);
-        }}
-        src={preview.url}
-        className={cn(
-          "size-8 object-cover",
-          preview.text ? "dark:invert" : "rounded-none",
-          className,
-        )}
-      />
+      {!failed && (
+        <img
+          {...imgProps}
+          ref={imageRef}
+          onLoad={(event) => {
+            setLoaded(true);
+            onLoad?.(event);
+          }}
+          onError={(event) => {
+            setLoaded(false);
+            setFailedSrc(src);
+            onError?.(event);
+          }}
+          src={src}
+          className={cn(
+            "size-8 object-cover",
+            preview.text ? "dark:invert" : "rounded-none",
+            className,
+          )}
+        />
+      )}
     </span>
   );
 }

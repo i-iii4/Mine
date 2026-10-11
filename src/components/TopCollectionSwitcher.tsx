@@ -29,7 +29,6 @@ import { MenuTextTrigger } from "@/components/MenuTextTrigger";
 import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
-import { useMenuAlignToPlate } from "@/hooks/useMenuAlignToPlate";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import {
   filterAndRankChannelSearch,
@@ -92,8 +91,6 @@ export function TopCollectionSwitcher({
     deferPointerOpen: true,
     onPointerOpen: () => setOpen((current) => !current),
   });
-  // The menu lines up with the trigger's plate, not with its box.
-  const menuAlignOffset = useMenuAlignToPlate(topChromeTrigger.triggerProps.ref, open);
   const currentKey = currentPlaceKey(currentTag, currentAuthor);
   const label = currentPlaceLabel(currentTag, currentAuthor);
   const trimmedQuery = query.trim().replace(/\s+/g, " ");
@@ -282,14 +279,11 @@ export function TopCollectionSwitcher({
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="start"
-          alignOffset={menuAlignOffset}
           side="bottom"
-          sideOffset={4}
           widthRole="search"
           onCloseAutoFocus={topChromeTrigger.handleCloseAutoFocus}
           className="overflow-hidden p-0"
           data-top-collection-menu=""
-          data-top-collection-menu-align-offset={menuAlignOffset}
         >
           <SearchMenuInput
             ref={searchInputRef}

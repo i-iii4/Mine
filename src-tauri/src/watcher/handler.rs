@@ -21,7 +21,9 @@ use crate::domain::block::{
     derive_card_kind, parse_markdown_document, Block, BlockType, CardKind, DateTime,
 };
 use crate::domain::vault::VaultLayout;
-use crate::storage::preview_plan::{resolve_upgrade_media, PreviewUpgradeInput};
+use crate::storage::preview_plan::{
+    resolve_upgrade_media, resolve_upgrade_media_with, PreviewUpgradeInput,
+};
 use crate::storage::reconcile::{self, ReconcileReport};
 use crate::storage::{article_audio, db, files, index, media_refs, thumbnails};
 use crate::watcher::events::VaultEvent;
@@ -303,6 +305,7 @@ fn spawn_thumb_jobs_worker(
                 // whole vault for each. A media file that appears during the
                 // run is a watcher event that rebuilds its owners' previews.
                 let mut resolver = media_refs::MediaResolver::new(&vault);
+                let epoch = thumbnails::GeneratorEpoch::read(&vault);
                 for job in &thumb_jobs {
                     if !is_active_vault() {
                         cancelled = true;
@@ -310,12 +313,17 @@ fn spawn_thumb_jobs_worker(
                     }
                     let thumb_path = vault.thumb_path(&job.block.slug);
 
-                    if thumbnails::is_thumb_fresh_with_resolver(
+                    let fresh = thumbnails::is_thumb_fresh_with_resolver(
                         &thumb_path,
                         &job.source_path,
                         &job.block,
                         &mut resolver,
-                    ) {
+                    );
+                    // Fresh against its sources, but written by an earlier
+                    // generator: rebuilt below, and kept until a finished
+                    // successor replaces it (SPEC_THUMBNAILS.md, П8).
+                    let outdated = fresh && !epoch.wrote(&thumb_path);
+                    if fresh && !outdated {
                         skipped += 1;
                         if let Some(ref conn) = metadata_conn {
                             match index::sync_thumb_metadata(
@@ -359,13 +367,37 @@ fn spawn_thumb_jobs_worker(
                         continue;
                     }
 
-                    log::info!(
-                        "thumb-gen({label}): regenerating {} (type={:?})",
-                        job.block.slug,
-                        job.block.frontmatter.block_type
-                    );
-                    let source =
-                        thumbnails::generate_for_block_with_resolver(&job.block, &mut resolver);
+                    let source = if outdated {
+                        let upgrade = metadata_conn
+                            .as_ref()
+                            .and_then(|conn| {
+                                index::get_pending_thumb_upgrade_block(conn, &job.block.slug)
+                                    .ok()
+                                    .flatten()
+                            })
+                            .and_then(|pending| {
+                                resolve_upgrade_media_with(&mut resolver, pending.upgrade_input())
+                            });
+                        let source = thumbnails::rebuild_outdated_with_resolver(
+                            &job.block,
+                            &mut resolver,
+                            upgrade.as_ref(),
+                        );
+                        if source == thumbnails::ThumbSource::None {
+                            // Left for the browser queue, or the decode failed:
+                            // the outdated thumb stays on screen.
+                            skipped += 1;
+                            continue;
+                        }
+                        source
+                    } else {
+                        log::info!(
+                            "thumb-gen({label}): regenerating {} (type={:?})",
+                            job.block.slug,
+                            job.block.frontmatter.block_type
+                        );
+                        thumbnails::generate_for_block_with_resolver(&job.block, &mut resolver)
+                    };
                     if let Some(ref conn) = metadata_conn {
                         match index::sync_thumb_metadata(
                             conn,

@@ -254,6 +254,21 @@ pub struct PendingThumbUpgradeBlock {
     pub preview_manifest: Option<String>,
 }
 
+impl PendingThumbUpgradeBlock {
+    /// The fields `preview_plan::resolve_upgrade_media` chooses the browser's
+    /// source from.
+    pub fn upgrade_input(&self) -> crate::storage::preview_plan::PreviewUpgradeInput<'_> {
+        crate::storage::preview_plan::PreviewUpgradeInput {
+            slug: &self.slug,
+            media_file: self.media_file.as_deref(),
+            thumbnail: self.thumbnail.as_deref(),
+            media_urls: self.media_urls.as_deref(),
+            first_image: self.first_image.as_deref(),
+            preview_manifest: self.preview_manifest.as_deref(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum FeedPreviewKind {

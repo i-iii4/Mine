@@ -97,9 +97,6 @@ function CardReferenceRowContent({
             preview={preview}
             loading="lazy"
             draggable={false}
-            onError={(event) => {
-              event.currentTarget.style.display = "none";
-            }}
           />
         )}
       </div>

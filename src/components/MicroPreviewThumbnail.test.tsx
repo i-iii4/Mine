@@ -1,6 +1,26 @@
-import { describe, it, expect, vi } from "vitest";
-import { fireEvent, render } from "@testing-library/react";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+import { act, fireEvent, render } from "@testing-library/react";
 import { MicroPreviewThumbnail, microPreviewFromIndexedBlock } from "./MicroPreviewThumbnail";
+
+const pageEvents = vi.hoisted(() => ({
+  listeners: [] as Array<{ event: string; handler: (event: { payload: unknown }) => void }>,
+  unlisten: vi.fn(),
+}));
+
+vi.mock("@/lib/pageEvents", () => ({
+  listenPage: vi.fn(async (event: string, handler: (event: { payload: unknown }) => void) => {
+    pageEvents.listeners.push({ event, handler });
+    return pageEvents.unlisten;
+  }),
+}));
+
+function announceThumbUpdated(slug: string) {
+  act(() => {
+    for (const listener of pageEvents.listeners) {
+      if (listener.event === "thumb:updated") listener.handler({ payload: { path: "/vault", slug } });
+    }
+  });
+}
 
 const THUMBS = "/tmp/thumbs";
 
@@ -84,5 +104,61 @@ describe("MicroPreviewThumbnail", () => {
     fireEvent.load(container.querySelector("img") as HTMLImageElement);
 
     expect(onLoad).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("MicroPreviewThumbnail without its file", () => {
+  const mediaPreview = { slug: "photo", url: "/thumbs/photo.micro.jpg", text: false, hasThumb: true };
+  const textPreview = { slug: "note", url: "/thumbs/note.micro.jpg", text: true, hasThumb: true };
+
+  beforeEach(() => {
+    pageEvents.listeners.length = 0;
+    pageEvents.unlisten.mockClear();
+  });
+
+  it("keeps the loading fill instead of the browser's broken-image icon", () => {
+    const { container } = render(<MicroPreviewThumbnail preview={textPreview} />);
+    const slot = container.querySelector("[data-micro-preview-state]") as HTMLElement;
+
+    fireEvent.error(container.querySelector("img") as HTMLImageElement);
+
+    // No image element is left to draw the icon, and the slot carries neither
+    // the card fill nor anything else the loading state does not.
+    expect(container.querySelector("img")).toBeNull();
+    expect(slot).toHaveAttribute("data-micro-preview-state", "missing");
+    expect(slot).not.toHaveClass("bg-card");
+  });
+
+  it("loads again when this card's preview is ready, and not for another card", async () => {
+    const { container } = render(<MicroPreviewThumbnail preview={mediaPreview} />);
+    fireEvent.error(container.querySelector("img") as HTMLImageElement);
+    await act(async () => {});
+
+    announceThumbUpdated("another-card");
+    expect(container.querySelector("img")).toBeNull();
+
+    announceThumbUpdated("photo");
+    const image = container.querySelector("img") as HTMLImageElement;
+    expect(image).not.toBeNull();
+    // A new address: the browser asks the file again rather than repeating
+    // the failure from its memory cache.
+    expect(image.getAttribute("src")).toBe("/thumbs/photo.micro.jpg?retry=1");
+
+    fireEvent.load(image);
+    const slot = container.querySelector("[data-micro-preview-state]") as HTMLElement;
+    expect(slot).toHaveAttribute("data-micro-preview-state", "loaded");
+    // The wait ends with the failure: nothing listens any more.
+    expect(pageEvents.unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads again when the caller cache-busts the address", () => {
+    const { container, rerender } = render(<MicroPreviewThumbnail preview={mediaPreview} />);
+    fireEvent.error(container.querySelector("img") as HTMLImageElement);
+    expect(container.querySelector("img")).toBeNull();
+
+    // The sidebar bumps its own `?v=` on `thumb:updated`.
+    rerender(<MicroPreviewThumbnail preview={{ ...mediaPreview, url: `${mediaPreview.url}?v=1` }} />);
+
+    expect(container.querySelector("img")?.getAttribute("src")).toBe("/thumbs/photo.micro.jpg?v=1");
   });
 });

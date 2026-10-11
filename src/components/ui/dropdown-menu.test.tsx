@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { Button } from "./button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./dialog";
 import {
   DropdownMenu,
@@ -201,6 +202,122 @@ describe("DropdownMenu", () => {
       expect(menus[1]).toEqual(menus[0]);
     } finally {
       width.mockRestore();
+    }
+  });
+});
+
+// DESIGN_SYSTEM.md, «Всплывающие элементы», «Отступ от кнопки» (11.10.2026):
+// a menu opens 4px off the plate one sees and flush with its edge, wherever
+// the plate stands inside the trigger's box.
+describe("DropdownMenu off its button's plate", () => {
+  type Rect = { top: number; right: number; bottom: number; left: number };
+
+  // jsdom lays nothing out: floating-ui reads a 0×0 viewport and flips every
+  // menu. Give the page a window's size for these placements.
+  const viewport = { clientWidth: 1024, clientHeight: 768 };
+  beforeEach(() => {
+    for (const [key, value] of Object.entries(viewport)) {
+      Object.defineProperty(document.documentElement, key, { configurable: true, value });
+    }
+  });
+  afterEach(() => {
+    for (const key of Object.keys(viewport)) {
+      Reflect.deleteProperty(document.documentElement, key);
+    }
+  });
+
+  function placeBoxes(boxes: (element: HTMLElement) => Rect | null) {
+    const original = HTMLElement.prototype.getBoundingClientRect;
+    return vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const box = boxes(this);
+      if (!box) return original.call(this);
+      const { top, right, bottom, left } = box;
+      return { top, right, bottom, left, x: left, y: top, width: right - left, height: bottom - top, toJSON: () => ({}) } as DOMRect;
+    });
+  }
+
+  // Where Radix put the menu: the popper wrapper's translate.
+  function menuPosition(): { x: number; y: number } {
+    const wrapper = document.querySelector<HTMLElement>("[data-radix-popper-content-wrapper]");
+    const match = wrapper?.style.transform.match(/translate\((-?[\d.]+)px, (-?[\d.]+)px\)/);
+    if (!match) throw new Error(`menu is not placed: ${wrapper?.style.transform}`);
+    return { x: Number(match[1]), y: Number(match[2]) };
+  }
+
+  it("opens 4px under a chrome button's plate, not under its row-tall box, flush with the plate's right edge", async () => {
+    // A 40px chrome row: the button's box fills it, its 24px plate is centred.
+    const rect = placeBoxes((element) => {
+      if (element.hasAttribute("data-chrome-plate")) return { top: 8, right: 124, bottom: 32, left: 100 };
+      if (element.getAttribute("data-slot") === "dropdown-menu-trigger") return { top: 0, right: 124, bottom: 40, left: 100 };
+      return null;
+    });
+    try {
+      render(
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="chrome" size="chrome-icon" aria-label="Display options" tooltip={false}>
+              <span>icon</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem>Action item</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>,
+      );
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Display options" }), { button: 0, ctrlKey: false });
+      // The menu has no size in jsdom: its right edge is its x.
+      await waitFor(() => expect(menuPosition()).toEqual({ x: 124, y: 36 }));
+    } finally {
+      rect.mockRestore();
+    }
+  });
+
+  it("opens 4px under a button that is its own plate, flush with its left edge", async () => {
+    const rect = placeBoxes((element) => (
+      element.getAttribute("data-slot") === "dropdown-menu-trigger" ? { top: 10, right: 90, bottom: 42, left: 30 } : null
+    ));
+    try {
+      render(
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button>Connect</Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem>Action item</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>,
+      );
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Connect" }), { button: 0, ctrlKey: false });
+      await waitFor(() => expect(menuPosition()).toEqual({ x: 30, y: 46 }));
+    } finally {
+      rect.mockRestore();
+    }
+  });
+
+  it("opens 4px over a plate inside a taller box when it opens upward", async () => {
+    const rect = placeBoxes((element) => {
+      if (element.hasAttribute("data-chrome-plate")) return { top: 508, right: 224, bottom: 532, left: 200 };
+      if (element.getAttribute("data-slot") === "dropdown-menu-trigger") return { top: 500, right: 224, bottom: 540, left: 200 };
+      return null;
+    });
+    try {
+      render(
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="chrome" size="chrome-icon" aria-label="More" tooltip={false}>
+              <span>icon</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="start">
+            <DropdownMenuItem>Action item</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>,
+      );
+      fireEvent.pointerDown(screen.getByRole("button", { name: "More" }), { button: 0, ctrlKey: false });
+      // No height in jsdom: the menu's bottom edge is its y.
+      await waitFor(() => expect(menuPosition()).toEqual({ x: 200, y: 504 }));
+    } finally {
+      rect.mockRestore();
     }
   });
 });

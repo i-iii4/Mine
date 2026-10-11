@@ -5,8 +5,17 @@ import { CheckIcon, ChevronRightIcon } from "lucide-react"
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
 
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot"
-import { FLOATING_LAYER_EDGE_PX, type FloatingMenuWidth } from "@/lib/floatingLayer"
-import { useMenuSurface } from "@/lib/openMenus"
+import {
+  FLOATING_LAYER_EDGE_PX,
+  MENU_PLATE_GAP_PX,
+  menuPlateOf,
+  menuPlateOffsets,
+  type FloatingMenuWidth,
+  type MenuAlign,
+  type MenuPlateOffsets,
+  type MenuSide,
+} from "@/lib/floatingLayer"
+import { menuTriggerOf, useMenuSurface } from "@/lib/openMenus"
 import { cn } from "@/lib/utils"
 
 
@@ -85,28 +94,83 @@ function DropdownMenuTrigger({
   )
 }
 
+// Every dropdown menu opens MENU_PLATE_GAP_PX off the visible plate of its
+// button and flush with one of the plate's edges (user's decision of
+// 11.10.2026; DESIGN_SYSTEM.md, «Всплывающие элементы», «Отступ от кнопки»).
+// Radix anchors to the trigger's box, and a chrome button's box is the whole
+// row with its plate centred inside, so both offsets are measured from the
+// plate on every opening. A menu that flips to the other side keeps the gap:
+// the plate stands as far from the box's top as from its bottom.
+function useMenuPlateOffsets(
+  surface: HTMLElement | null,
+  side: MenuSide,
+  align: MenuAlign
+): MenuPlateOffsets {
+  const [offsets, setOffsets] = React.useState<MenuPlateOffsets>({
+    sideOffset: MENU_PLATE_GAP_PX,
+    alignOffset: 0,
+  })
+  React.useLayoutEffect(() => {
+    if (!surface) return
+    const trigger = menuTriggerOf(surface)
+    if (!trigger) return
+    const next = menuPlateOffsets(
+      trigger.getBoundingClientRect(),
+      menuPlateOf(trigger).getBoundingClientRect(),
+      side,
+      align
+    )
+    setOffsets((current) =>
+      current.sideOffset === next.sideOffset && current.alignOffset === next.alignOffset
+        ? current
+        : next
+    )
+  }, [surface, side, align])
+  return offsets
+}
+
 // The width is the role's: `action` unless the menu is a list under a search
-// field (src/lib/floatingLayer.ts). A call site never sets it in pixels.
+// field (src/lib/floatingLayer.ts). A call site never sets it in pixels, nor
+// the menu's distance from its button: it names the edge (`align`) alone.
 function DropdownMenuContent({
   className,
-  sideOffset = 4,
+  side = "bottom",
+  align = "start",
   collisionPadding = FLOATING_LAYER_EDGE_PX,
   widthRole = "action",
   ref,
   onPointerDownOutside,
   onCloseAutoFocus,
   ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Content> & {
+}: Omit<
+  React.ComponentProps<typeof DropdownMenuPrimitive.Content>,
+  "side" | "align" | "sideOffset" | "alignOffset"
+> & {
+  side?: MenuSide
+  align?: MenuAlign
   widthRole?: FloatingMenuWidth
 }) {
-  const surface = useMenuSurface("dropdown", ref, { onPointerDownOutside, onCloseAutoFocus })
+  const [surfaceNode, setSurfaceNode] = React.useState<HTMLDivElement | null>(null)
+  const ownRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      setSurfaceNode(node)
+      if (typeof ref === "function") ref(node)
+      else if (ref) ref.current = node
+    },
+    [ref]
+  )
+  const surface = useMenuSurface("dropdown", ownRef, { onPointerDownOutside, onCloseAutoFocus })
+  const offsets = useMenuPlateOffsets(surfaceNode, side, align)
   return (
     <DropdownMenuPortal>
       <DropdownMenuPrimitive.Content
         ref={surface.ref}
         data-slot="dropdown-menu-content"
         data-floating-menu={widthRole}
-        sideOffset={sideOffset}
+        side={side}
+        align={align}
+        sideOffset={offsets.sideOffset}
+        alignOffset={offsets.alignOffset}
         collisionPadding={collisionPadding}
         onPointerDownOutside={surface.onPointerDownOutside}
         onCloseAutoFocus={surface.onCloseAutoFocus}

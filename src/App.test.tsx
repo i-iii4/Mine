@@ -2769,19 +2769,6 @@ describe("AppWithVault", () => {
       expect(screen.getByRole("textbox", { name: "Search collections" })).toHaveFocus();
     });
 
-    // The menu is aligned to the trigger's label, so its offset must equal the
-    // trigger's own horizontal padding — a restated number drifted the moment
-    // the chrome inset changed. jsdom reports no padding for a class-only
-    // rule, which is exactly the fallback path.
-    const alignOffset = document
-      .querySelector("[data-top-collection-menu]")
-      ?.getAttribute("data-top-collection-menu-align-offset");
-    const triggerPadding = Number.parseFloat(
-      getComputedStyle(collectionSwitcher).paddingLeft,
-    );
-    expect(alignOffset).toBe(
-      String(Number.isFinite(triggerPadding) && triggerPadding > 0 ? triggerPadding : 0),
-    );
     expect(screen.getByRole("menuitem", { name: "Create collection" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Everything" })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "alpha" })).toBeInTheDocument();

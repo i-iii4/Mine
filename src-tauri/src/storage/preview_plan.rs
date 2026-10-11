@@ -149,6 +149,15 @@ pub fn resolve_upgrade_media(
     vault: &VaultLayout,
     input: PreviewUpgradeInput<'_>,
 ) -> Option<ResolvedPreviewMedia> {
+    resolve_upgrade_media_with(&mut media_refs::MediaResolver::new(vault), input)
+}
+
+/// [`resolve_upgrade_media`] through a pass's own `resolver`, so a pass over
+/// many cards walks the vault once in all.
+pub fn resolve_upgrade_media_with(
+    resolver: &mut media_refs::MediaResolver<'_>,
+    input: PreviewUpgradeInput<'_>,
+) -> Option<ResolvedPreviewMedia> {
     let mut candidates = Vec::<String>::new();
     if let Some(source) = input.media_file {
         candidates.push(source.to_string());
@@ -173,7 +182,6 @@ pub fn resolve_upgrade_media(
     }
 
     let mut seen = std::collections::HashSet::new();
-    let mut resolver = media_refs::MediaResolver::new(vault);
     for source in candidates {
         if !seen.insert(source.clone()) || is_remote_media(&source) {
             continue;

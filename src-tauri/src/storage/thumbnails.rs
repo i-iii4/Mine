@@ -20,7 +20,8 @@ use crate::domain::block::{derive_title_fields, strip_first_markdown_h1, Block};
 use crate::domain::vault::{ThumbLevel, VaultLayout};
 use crate::storage::media_dimensions::PreviewDimensions;
 use crate::storage::preview_plan::{
-    self, media_ext_lower, PreviewMediaKind, MICRO_PREVIEW_IMAGE_LIMIT, PREVIEW_TILE_LIMIT,
+    self, media_ext_lower, PreviewMediaKind, ResolvedPreviewMedia, MICRO_PREVIEW_IMAGE_LIMIT,
+    PREVIEW_TILE_LIMIT,
 };
 pub use crate::storage::preview_plan::{is_image_ext, is_video_ext};
 use crate::storage::{files, media_refs};
@@ -459,10 +460,171 @@ pub fn preview_origin_of(head: &[u8]) -> Option<PreviewOrigin> {
     }
 }
 
+/// How far the preview at a path is from done (SPEC_THUMBNAILS.md, П7, П8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewReadiness {
+    /// Nothing to draw: the file is missing, unreadable, or neither JPEG nor PNG.
+    Absent,
+    /// The text placeholder, waiting for a picture of the card's media.
+    Placeholder,
+    /// A picture an earlier generator version wrote. It is drawn until its
+    /// rebuild replaces it, and it is never done: a placeholder written before
+    /// the placeholder record existed reads as a picture too.
+    Outdated,
+    /// A picture the current generator wrote.
+    Finished,
+}
+
+/// Where the preview at `path` stands, against the generator `epoch`.
+pub fn preview_readiness(path: &Path, epoch: GeneratorEpoch) -> PreviewReadiness {
+    match preview_origin(path) {
+        None => PreviewReadiness::Absent,
+        Some(PreviewOrigin::TextPlaceholder) => PreviewReadiness::Placeholder,
+        Some(PreviewOrigin::Picture) if epoch.wrote(path) => PreviewReadiness::Finished,
+        Some(PreviewOrigin::Picture) => PreviewReadiness::Outdated,
+    }
+}
+
 /// Whether the preview at `path` is a finished picture: the one readiness
 /// question for a derived preview, whatever its format and whatever decoded it.
-pub fn is_finished_picture(path: &Path) -> bool {
-    preview_origin(path) == Some(PreviewOrigin::Picture)
+/// A picture an earlier generator wrote is not finished (П8).
+pub fn is_finished_picture(path: &Path, epoch: GeneratorEpoch) -> bool {
+    preview_readiness(path, epoch) == PreviewReadiness::Finished
+}
+
+/// Whether an outdated preview of `source` waits for the browser rather than
+/// for Rust (П8): a video frame, or a picture Rust cannot decode. The browser
+/// queue and every Rust rebuild ask this one question, so a preview is rebuilt
+/// by exactly one of them.
+pub fn browser_rebuilds(source: &Path, kind: PreviewMediaKind) -> bool {
+    kind == PreviewMediaKind::Video || !is_rust_decodable(source)
+}
+
+/// Whether the preview at `preview` waits for the browser to decode `source`:
+/// there is no picture yet, or there is an outdated one the browser rebuilds.
+pub fn waits_for_browser(
+    preview: &Path,
+    epoch: GeneratorEpoch,
+    source: &Path,
+    kind: PreviewMediaKind,
+) -> bool {
+    match preview_readiness(preview, epoch) {
+        PreviewReadiness::Finished => false,
+        PreviewReadiness::Absent | PreviewReadiness::Placeholder => true,
+        PreviewReadiness::Outdated => browser_rebuilds(source, kind),
+    }
+}
+
+// ─── Generator version ──────────────────────────────────────────────────────
+
+/// Version of the preview generator (SPEC_THUMBNAILS.md, П8). Bump it when the
+/// pipeline changes in a way that previews written before have to be built
+/// again (e.g. text placeholders switched from JPEG to PNG, or a new font).
+/// A bump deletes nothing: every preview written before it is outdated, stays
+/// on screen, and is replaced by its rebuild.
+///
+/// 8: a text placeholder records that it is one (П7), and readiness asks that
+/// record alone. A placeholder written before carries no record and would read
+/// as a finished picture, and the previews that failed because the browser's
+/// PNG picture was refused have to be built again.
+pub const GENERATOR_VERSION: &str = "8";
+
+/// The file in the preview cache recording the generator version and the
+/// moment it took over: `<version>\n<nanoseconds since the Unix epoch>\n`, or
+/// `<version>\n` alone when everything in the cache is current.
+const GENERATOR_MARKER: &str = ".format-version";
+
+/// Which previews of a cache the current generator wrote (П8).
+///
+/// Written by: a preview file's modification time, compared with the moment
+/// the version took over. The time lives in the file and changes with its
+/// bytes in the same atomic rename, so the answer needs neither SQLite nor a
+/// record inside each format, and the browser's pictures carry it as well as
+/// Rust's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GeneratorEpoch {
+    /// Every preview. There is no marker (a first cache: whatever is in it
+    /// was written by this build's clipper), or the marker names the current
+    /// version without a moment (the version-8 migration cleared the cache
+    /// and wrote the version alone, so everything in it was written since).
+    AllCurrent,
+    /// Previews written at or after this moment.
+    Since(SystemTime),
+    /// None. The marker names another version: the cache has not been
+    /// adopted by this generator yet.
+    NoneCurrent,
+}
+
+impl GeneratorEpoch {
+    /// The epoch recorded in `vault`'s preview cache.
+    pub fn read(vault: &VaultLayout) -> Self {
+        match std::fs::read_to_string(vault.thumbs_dir().join(GENERATOR_MARKER)) {
+            Ok(marker) => Self::parse(&marker),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::AllCurrent,
+            Err(error) => {
+                // An unreadable marker must not start a rebuild of everything.
+                log::warn!("failed to read the preview generator version: {error}");
+                Self::AllCurrent
+            }
+        }
+    }
+
+    fn parse(marker: &str) -> Self {
+        let mut lines = marker.lines().map(str::trim);
+        if lines.next() != Some(GENERATOR_VERSION) {
+            return Self::NoneCurrent;
+        }
+        match lines.next().filter(|line| !line.is_empty()) {
+            None => Self::AllCurrent,
+            Some(nanos) => nanos.parse::<u64>().map_or(Self::NoneCurrent, |nanos| {
+                Self::Since(SystemTime::UNIX_EPOCH + Duration::from_nanos(nanos))
+            }),
+        }
+    }
+
+    /// Whether the current generator wrote the file at `path`.
+    pub fn wrote(self, path: &Path) -> bool {
+        match self {
+            Self::AllCurrent => true,
+            Self::NoneCurrent => false,
+            Self::Since(since) => std::fs::metadata(path)
+                .and_then(|metadata| metadata.modified())
+                .is_ok_and(|modified| modified >= since),
+        }
+    }
+}
+
+/// Make the current generator version the one `vault`'s preview cache records.
+///
+/// On a version change the cache keeps every file: the previews already there
+/// become outdated from this moment and are rebuilt in the background, each
+/// replaced only by its finished successor (П8). Returns true when the marker
+/// was written: a first cache, a version change, or a moment ahead of the
+/// clock (a clock set back would otherwise leave every new preview outdated).
+pub fn adopt_generator_version(vault: &VaultLayout) -> bool {
+    let marker = vault.thumbs_dir().join(GENERATOR_MARKER);
+    let now = SystemTime::now();
+    let record = if marker.exists() {
+        match GeneratorEpoch::read(vault) {
+            GeneratorEpoch::AllCurrent => return false,
+            GeneratorEpoch::Since(since) if since <= now => return false,
+            GeneratorEpoch::Since(_) | GeneratorEpoch::NoneCurrent => {}
+        }
+        let nanos = now
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |elapsed| u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX));
+        log::info!("preview generator {GENERATOR_VERSION} adopts the cache; earlier previews are outdated");
+        format!("{GENERATOR_VERSION}\n{nanos}\n")
+    } else {
+        // A first cache: everything in it is current, as without a marker.
+        format!("{GENERATOR_VERSION}\n")
+    };
+    // If this fails, the next opening adopts again: earlier previews stay
+    // outdated either way, the moment only moves later.
+    if let Err(error) = files::write_atomically(&marker, record.as_bytes()) {
+        log::warn!("failed to record the preview generator version: {error:#}");
+    }
+    true
 }
 
 fn carries_placeholder_record(png: &[u8]) -> bool {
@@ -1172,9 +1334,58 @@ pub fn generate_for_block_with_resolver(
     let Ok(_write) = crate::storage::source_mutation::begin_write() else {
         return ThumbSource::None;
     };
-    let source = generate_for_block_inner(block, resolver);
+    let source = generate_for_block_inner(block, resolver, TextFallback::Always);
     generate_thumb_levels(resolver.vault(), &block.slug);
     source
+}
+
+/// Rebuild `<slug>.jpg` that an earlier generator version wrote (П8) and whose
+/// source has not changed since. `upgrade` is the block's browser upgrade media
+/// (`preview_plan::resolve_upgrade_media`).
+///
+/// The outdated file stays until a finished successor replaces it:
+/// - media the browser rebuilds ([`browser_rebuilds`]) is left to the browser
+///   queue, and nothing is written here;
+/// - media Rust decodes is rebuilt here, and if decoding fails the outdated
+///   picture stays rather than a text placeholder taking its place;
+/// - a card without media gets its text placeholder baked again: there the
+///   placeholder is the finished preview.
+///
+/// Returns [`ThumbSource::None`] when nothing was written.
+pub fn rebuild_outdated_with_resolver(
+    block: &Block,
+    resolver: &mut media_refs::MediaResolver<'_>,
+    upgrade: Option<&ResolvedPreviewMedia>,
+) -> ThumbSource {
+    let fallback = match upgrade {
+        Some(media) if browser_rebuilds(&media.path, media.kind) => return ThumbSource::None,
+        Some(_) => TextFallback::NotOverPicture,
+        None => TextFallback::Always,
+    };
+    let Ok(_write) = crate::storage::source_mutation::begin_write() else {
+        return ThumbSource::None;
+    };
+    let source = generate_for_block_inner(block, resolver, fallback);
+    if source != ThumbSource::None {
+        generate_thumb_levels(resolver.vault(), &block.slug);
+    }
+    source
+}
+
+/// Whether the cascade's last step, the text placeholder, may replace what is
+/// already at the destination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextFallback {
+    Always,
+    /// Not over a picture: rebuilding an outdated preview must never trade a
+    /// picture of the card's media for its text (П8).
+    NotOverPicture,
+}
+
+impl TextFallback {
+    fn allows(self, destination: &Path) -> bool {
+        self == Self::Always || preview_origin(destination) != Some(PreviewOrigin::Picture)
+    }
 }
 
 /// Write `micro` and `zoom` from the full thumbnail, replacing whatever was
@@ -1296,6 +1507,7 @@ pub fn remove_thumb_levels(vault: &VaultLayout, slug: &str) {
 fn generate_for_block_inner(
     block: &Block,
     resolver: &mut media_refs::MediaResolver<'_>,
+    text_fallback: TextFallback,
 ) -> ThumbSource {
     let vault = resolver.vault();
     let slug = &block.slug;
@@ -1389,6 +1601,9 @@ fn generate_for_block_inner(
         //    whose embedded media isn't Rust-decodable. In the latter case
         //    the placeholder is temporary: Phase 2 will overwrite it with
         //    a WebView-decoded JPEG.
+        if !text_fallback.allows(&thumb_path) {
+            return ThumbSource::None;
+        }
         let title = title_fields.display_title.as_deref();
         match generate_text_thumbnail(title, &preview_body, &thumb_path) {
             Ok(_) => return ThumbSource::Text,
@@ -1411,7 +1626,10 @@ fn generate_for_block_inner(
         || block.frontmatter.thumbnail.is_some()
         || title_fields.display_title.is_some()
         || !preview_body.is_empty();
-    if has_preview_intent && !media_may_still_be_arriving(block, resolver) {
+    if has_preview_intent
+        && text_fallback.allows(&thumb_path)
+        && !media_may_still_be_arriving(block, resolver)
+    {
         let title = title_fields
             .display_title
             .as_deref()
@@ -2679,7 +2897,7 @@ mod tests {
 
         assert_eq!(files::image_type(&path), Some(ImageType::Png));
         assert_eq!(preview_origin(&path), Some(PreviewOrigin::TextPlaceholder));
-        assert!(!is_finished_picture(&path));
+        assert!(!is_finished_picture(&path, GeneratorEpoch::AllCurrent));
         image::ImageReader::open(&path)
             .unwrap()
             .with_guessed_format()
@@ -2701,7 +2919,7 @@ mod tests {
         generate_thumbnail(&transparent, &png, 64).unwrap();
         assert_eq!(files::image_type(&png), Some(ImageType::Png));
         assert_eq!(preview_origin(&png), Some(PreviewOrigin::Picture));
-        assert!(is_finished_picture(&png));
+        assert!(is_finished_picture(&png, GeneratorEpoch::AllCurrent));
 
         let jpeg = dir.path().join("photo.jpg");
         create_test_image(&jpeg, 20, 20);
@@ -2711,12 +2929,243 @@ mod tests {
         std::fs::write(&gif, b"GIF89a\x01\x00\x01\x00").unwrap();
         assert_eq!(preview_origin(&gif), None);
         assert_eq!(preview_origin(&dir.path().join("missing.jpg")), None);
-        assert!(!is_finished_picture(&dir.path().join("missing.jpg")));
+        assert!(!is_finished_picture(&dir.path().join("missing.jpg"), GeneratorEpoch::AllCurrent));
     }
 
     /// The record is the standard checksum PNG readers verify.
     #[test]
     fn the_png_checksum_matches_the_reference_value() {
         assert_eq!(png_crc(b"IEND"), 0xAE42_6082);
+    }
+
+    // ── Generator version (П8) ───────────────────────────────────────────
+
+    /// Move a file an hour back, as if an earlier generator had written it.
+    fn backdate(path: &Path) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+    }
+
+    /// The cache as an earlier version left it: its marker names version 7
+    /// and every file in it was written before this generator took over.
+    fn written_by_version_7(vault: &VaultLayout, previews: &[&Path]) {
+        std::fs::write(vault.thumbs_dir().join(GENERATOR_MARKER), "7").unwrap();
+        for preview in previews {
+            backdate(preview);
+        }
+    }
+
+    fn transparent_png(path: &Path) {
+        image::RgbaImage::from_fn(32, 24, |x, _| {
+            image::Rgba([200, 40, 90, if x < 16 { 0 } else { 255 }])
+        })
+        .save_with_format(path, image::ImageFormat::Png)
+        .unwrap();
+    }
+
+    /// A placeholder from before the placeholder record: PNG ink on a
+    /// transparent ground and nothing to say what it is.
+    fn recordless_placeholder(path: &Path) {
+        transparent_png(path);
+        assert_eq!(preview_origin(path), Some(PreviewOrigin::Picture));
+    }
+
+    #[test]
+    fn a_version_change_deletes_no_preview_and_outdates_every_earlier_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let full = vault.thumb_path("photo");
+        let micro = vault.thumb_level_path("photo", ThumbLevel::Micro);
+        create_test_image(&full, 40, 30);
+        create_test_image(&micro, 8, 6);
+        let before = std::fs::read(&full).unwrap();
+        written_by_version_7(&vault, &[&full, &micro]);
+        assert_eq!(GeneratorEpoch::read(&vault), GeneratorEpoch::NoneCurrent);
+
+        assert!(adopt_generator_version(&vault));
+
+        assert_eq!(std::fs::read(&full).unwrap(), before, "the old preview stays");
+        assert!(micro.is_file(), "its levels stay too");
+        let epoch = GeneratorEpoch::read(&vault);
+        assert!(matches!(epoch, GeneratorEpoch::Since(_)));
+        assert_eq!(preview_readiness(&full, epoch), PreviewReadiness::Outdated);
+        assert!(!is_finished_picture(&full, epoch));
+
+        // Whatever is written from now on is the current generator's.
+        create_test_image(&full, 40, 30);
+        assert_eq!(preview_readiness(&full, epoch), PreviewReadiness::Finished);
+        assert!(!adopt_generator_version(&vault), "adopted once");
+    }
+
+    #[test]
+    fn a_first_cache_and_the_version_8_marker_count_every_preview_as_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let full = vault.thumb_path("photo");
+        create_test_image(&full, 40, 30);
+        backdate(&full);
+
+        assert_eq!(GeneratorEpoch::read(&vault), GeneratorEpoch::AllCurrent);
+        assert!(adopt_generator_version(&vault), "the first cache gets its marker");
+        assert_eq!(GeneratorEpoch::read(&vault), GeneratorEpoch::AllCurrent);
+        assert!(is_finished_picture(&full, GeneratorEpoch::read(&vault)));
+
+        // The version-8 migration emptied the cache and wrote "8" alone.
+        std::fs::write(vault.thumbs_dir().join(GENERATOR_MARKER), "8").unwrap();
+        assert_eq!(GeneratorEpoch::read(&vault), GeneratorEpoch::AllCurrent);
+        assert!(!adopt_generator_version(&vault));
+    }
+
+    #[test]
+    fn a_moment_ahead_of_the_clock_is_brought_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let ahead = SystemTime::now() + Duration::from_secs(86_400);
+        let nanos = ahead.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos();
+        std::fs::write(
+            vault.thumbs_dir().join(GENERATOR_MARKER),
+            format!("{GENERATOR_VERSION}\n{nanos}\n"),
+        )
+        .unwrap();
+
+        assert!(adopt_generator_version(&vault));
+
+        let GeneratorEpoch::Since(since) = GeneratorEpoch::read(&vault) else {
+            panic!("the marker keeps its moment");
+        };
+        assert!(since <= SystemTime::now());
+    }
+
+    /// Rust rebuilds an outdated picture of media it decodes, in place.
+    #[test]
+    fn an_outdated_picture_of_decodable_media_is_rebuilt_and_becomes_finished() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        create_test_image(&dir.path().join("photo.png"), 80, 60);
+        let block = make_media_block("photo", "photo.png");
+        let thumb = vault.thumb_path("photo");
+        recordless_placeholder(&thumb);
+        written_by_version_7(&vault, &[&thumb]);
+        adopt_generator_version(&vault);
+        let epoch = GeneratorEpoch::read(&vault);
+        let upgrade = preview_plan::resolve_upgrade_media(
+            &vault,
+            preview_plan::PreviewUpgradeInput {
+                slug: "photo",
+                media_file: Some("photo.png"),
+                thumbnail: None,
+                media_urls: None,
+                first_image: None,
+                preview_manifest: None,
+            },
+        );
+        assert_eq!(preview_readiness(&thumb, epoch), PreviewReadiness::Outdated);
+
+        let source = rebuild_outdated_with_resolver(
+            &block,
+            &mut media_refs::MediaResolver::new(&vault),
+            upgrade.as_ref(),
+        );
+
+        assert_eq!(source, ThumbSource::Image);
+        assert_eq!(preview_readiness(&thumb, epoch), PreviewReadiness::Finished);
+        assert!(vault.thumb_level_path("photo", ThumbLevel::Micro).is_file());
+    }
+
+    /// An outdated picture of media only the browser decodes is not Rust's to
+    /// rebuild, and a text placeholder must never take its place.
+    #[test]
+    fn an_outdated_picture_of_browser_only_media_stays_for_the_browser() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        std::fs::write(
+            dir.path().join("logo.avif"),
+            b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf",
+        )
+        .unwrap();
+        let block = make_media_block("logo", "logo.avif");
+        let thumb = vault.thumb_path("logo");
+        transparent_png(&thumb);
+        let before = std::fs::read(&thumb).unwrap();
+        written_by_version_7(&vault, &[&thumb]);
+        adopt_generator_version(&vault);
+        let epoch = GeneratorEpoch::read(&vault);
+        let mut resolver = media_refs::MediaResolver::new(&vault);
+        let upgrade = preview_plan::resolve_upgrade_media_with(
+            &mut resolver,
+            preview_plan::PreviewUpgradeInput {
+                slug: "logo",
+                media_file: Some("logo.avif"),
+                thumbnail: None,
+                media_urls: None,
+                first_image: None,
+                preview_manifest: None,
+            },
+        )
+        .expect("the AVIF is the browser's source");
+        assert!(waits_for_browser(&thumb, epoch, &upgrade.path, upgrade.kind));
+
+        let source = rebuild_outdated_with_resolver(&block, &mut resolver, Some(&upgrade));
+
+        assert_eq!(source, ThumbSource::None);
+        assert_eq!(std::fs::read(&thumb).unwrap(), before, "the outdated picture stays");
+        assert_eq!(preview_readiness(&thumb, epoch), PreviewReadiness::Outdated);
+    }
+
+    /// A Rust decode that fails leaves the outdated picture, not a placeholder.
+    #[test]
+    fn a_failed_rebuild_keeps_the_outdated_picture() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        std::fs::write(dir.path().join("broken.jpg"), b"\xff\xd8\xffnot a picture at all").unwrap();
+        let block = make_media_block("broken", "broken.jpg");
+        let thumb = vault.thumb_path("broken");
+        create_test_image(&thumb, 40, 30);
+        let before = std::fs::read(&thumb).unwrap();
+        written_by_version_7(&vault, &[&thumb]);
+        adopt_generator_version(&vault);
+        let mut resolver = media_refs::MediaResolver::new(&vault);
+        let upgrade = preview_plan::resolve_upgrade_media_with(
+            &mut resolver,
+            preview_plan::PreviewUpgradeInput {
+                slug: "broken",
+                media_file: Some("broken.jpg"),
+                thumbnail: None,
+                media_urls: None,
+                first_image: None,
+                preview_manifest: None,
+            },
+        );
+
+        let source = rebuild_outdated_with_resolver(&block, &mut resolver, upgrade.as_ref());
+
+        assert_eq!(source, ThumbSource::None);
+        assert_eq!(std::fs::read(&thumb).unwrap(), before);
+    }
+
+    /// The trap the version check exists for: a placeholder from before the
+    /// placeholder record reads as a picture. On a card without media it is
+    /// outdated, never finished, and is baked again with its record.
+    #[test]
+    fn a_recordless_placeholder_of_a_text_card_is_baked_again_with_its_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let block = make_article("note", "Some text");
+        let thumb = vault.thumb_path("note");
+        recordless_placeholder(&thumb);
+        written_by_version_7(&vault, &[&thumb]);
+        adopt_generator_version(&vault);
+        let epoch = GeneratorEpoch::read(&vault);
+        assert!(!is_finished_picture(&thumb, epoch));
+
+        let source =
+            rebuild_outdated_with_resolver(&block, &mut media_refs::MediaResolver::new(&vault), None);
+
+        assert_eq!(source, ThumbSource::Text);
+        assert_eq!(preview_readiness(&thumb, epoch), PreviewReadiness::Placeholder);
     }
 }

@@ -521,28 +521,40 @@ describe("VaultSwitcher", () => {
     });
   });
 
-  // The menu stands flush with the trigger's plate, as the collection
-  // switcher's: the offset is measured from the plate, never a copied number
-  // (a copied 12 against an 8px inset opened it 4px adrift, 07.10.2026).
-  it("lines its menu up with the trigger's plate in the top chrome", async () => {
+  // The menu opens 4px under the trigger's plate and flush with its left
+  // edge, not with the row-tall box round it (DESIGN_SYSTEM.md, «Отступ от
+  // кнопки»; a copied 12 against an 8px inset opened it 4px adrift,
+  // 07.10.2026). The wrapper measures it; this trigger brings the plate.
+  it("opens its menu off the trigger's plate in the top chrome", async () => {
     commandMocks.listKnownVaults.mockResolvedValue(["/tmp/Mine", "/tmp/Тест"]);
     commandMocks.listSpaces.mockResolvedValue([]);
+    // jsdom lays nothing out: floating-ui would read a 0×0 viewport.
+    const root = document.documentElement;
+    Object.defineProperty(root, "clientWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(root, "clientHeight", { configurable: true, value: 768 });
+    const original = HTMLElement.prototype.getBoundingClientRect;
     const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      const left = this.hasAttribute("data-chrome-plate") ? 8 : 0;
-      return { left, right: left + 80, top: 0, bottom: 24, width: 80, height: 24, x: left, y: 0, toJSON: () => ({}) } as DOMRect;
+      // A 40px row; the plate stands 8px in from the trigger's left edge.
+      const box = this.hasAttribute("data-chrome-plate")
+        ? { left: 8, right: 88, top: 8, bottom: 32 }
+        : this.hasAttribute("data-vault-switcher")
+          ? { left: 0, right: 96, top: 0, bottom: 40 }
+          : null;
+      if (!box) return original.call(this);
+      return { ...box, x: box.left, y: box.top, width: box.right - box.left, height: box.bottom - box.top, toJSON: () => ({}) } as DOMRect;
     });
     try {
       render(<VaultSwitcher currentPath="/tmp/Mine" onVaultSelected={vi.fn()} surface="topChrome" />);
       await waitFor(() => expect(commandMocks.listKnownVaults).toHaveBeenCalled());
       fireEvent.click(screen.getByRole("button", { name: /Switch space: Mine/ }));
       await waitFor(() => {
-        expect(document.querySelector("[data-vault-switcher-menu]")).toHaveAttribute(
-          "data-vault-switcher-menu-align-offset",
-          "8",
-        );
+        const wrapper = document.querySelector<HTMLElement>("[data-radix-popper-content-wrapper]");
+        expect(wrapper?.style.transform).toBe("translate(8px, 36px)");
       });
     } finally {
       rect.mockRestore();
+      Reflect.deleteProperty(root, "clientWidth");
+      Reflect.deleteProperty(root, "clientHeight");
     }
   });
 });

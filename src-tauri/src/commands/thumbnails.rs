@@ -16,7 +16,10 @@ use crate::commands::state::{
     read_owned_projection, schedule_preview_reconcile, AppState, CommandError,
 };
 use crate::domain::vault::validate_slug;
-use crate::storage::preview_plan::{resolve_upgrade_media, PreviewUpgradeInput};
+use crate::storage::media_refs::MediaResolver;
+use crate::storage::preview_plan::{
+    resolve_upgrade_media_with, PreviewMediaKind, ResolvedPreviewMedia,
+};
 use crate::storage::{db, files, index, thumbnails};
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -360,27 +363,19 @@ pub async fn list_pending_thumb_upgrades(
             let blocks =
                 read_owned_projection(&app, &vault, index::list_pending_thumb_upgrade_blocks)?;
 
+            let epoch = thumbnails::GeneratorEpoch::read(&vault);
+            let mut resolver = MediaResolver::new(&vault);
             let mut out: Vec<ThumbUpgradeRequest> = Vec::new();
             for block in &blocks {
                 // Block <slug>.jpg upgrade — only when the current thumb is not
                 // already a finished picture.
-                let slug_upgrade = resolve_upgrade_media(
-                    &vault,
-                    PreviewUpgradeInput {
-                        slug: &block.slug,
-                        media_file: block.media_file.as_deref(),
-                        thumbnail: block.thumbnail.as_deref(),
-                        media_urls: block.media_urls.as_deref(),
-                        first_image: block.first_image.as_deref(),
-                        preview_manifest: block.preview_manifest.as_deref(),
-                    },
-                )
-                .map(|media| (media.path, media.kind.as_str()))
-                .filter(|_| needs_browser_thumb_upgrade(&vault, block));
+                let slug_upgrade = resolve_upgrade_media_with(&mut resolver, block.upgrade_input())
+                    .filter(|media| needs_browser_thumb_upgrade(&vault, block, epoch, media))
+                    .map(|media| (media.path, media.kind.as_str()));
                 // Per-video gallery tile posters that are still missing. These
                 // are independent of the block thumb: a block can have a real
                 // <slug>.jpg yet still be missing its tile posters.
-                let tile_posters = resolve_tile_posters(&vault, block);
+                let tile_posters = resolve_tile_posters(&vault, block, epoch);
 
                 if slug_upgrade.is_none() && tile_posters.is_empty() {
                     continue;
@@ -414,19 +409,27 @@ pub async fn list_pending_thumb_upgrades(
 /// neither the format (a transparent picture is PNG, rule П6) nor whether Rust
 /// decodes the source (the browser's own picture of an AVIF is finished) says
 /// otherwise; the preview's recorded provenance does (rule П7).
+///
+/// A picture an earlier generator wrote waits for the browser only when the
+/// browser, not Rust, rebuilds it from `media` (rule П8); Rust rebuilds the
+/// rest in its own passes.
 fn needs_browser_thumb_upgrade(
     vault: &crate::domain::vault::VaultLayout,
     block: &index::PendingThumbUpgradeBlock,
+    epoch: thumbnails::GeneratorEpoch,
+    media: &ResolvedPreviewMedia,
 ) -> bool {
-    !thumbnails::is_finished_picture(&vault.thumb_path(&block.slug))
+    thumbnails::waits_for_browser(&vault.thumb_path(&block.slug), epoch, &media.path, media.kind)
 }
 
 /// Resolve every derived tile still missing for `block`. Rust handles formats
 /// supported by the `image` crate and common videos first; this queue is the
-/// decoder-independent fallback for any image or video still absent.
+/// decoder-independent fallback for any image or video still absent. An
+/// outdated tile waits here only when the browser rebuilds it (rule П8).
 fn resolve_tile_posters(
     vault: &crate::domain::vault::VaultLayout,
     block: &index::PendingThumbUpgradeBlock,
+    epoch: thumbnails::GeneratorEpoch,
 ) -> Vec<TilePosterUpgrade> {
     let Some(ref manifest_json) = block.preview_manifest else {
         return Vec::new();
@@ -440,10 +443,19 @@ fn resolve_tile_posters(
         let Some(poster_name) = tile.preview_path.clone() else {
             continue;
         };
-        if thumbnails::is_finished_picture(&vault.thumbs_dir().join(&poster_name)) {
+        let poster = vault.thumbs_dir().join(&poster_name);
+        if thumbnails::is_finished_picture(&poster, epoch) {
             continue;
         }
         if let Some(media_path) = resolve_block_reference(vault, &block.slug, &tile.source_path) {
+            let kind = if tile.is_video {
+                PreviewMediaKind::Video
+            } else {
+                PreviewMediaKind::Image
+            };
+            if !thumbnails::waits_for_browser(&poster, epoch, &media_path, kind) {
+                continue;
+            }
             out.push(TilePosterUpgrade {
                 poster_name,
                 media_path: media_path.to_string_lossy().into_owned(),
@@ -517,17 +529,13 @@ mod tests {
         vault: &VaultLayout,
         target: &index::PendingThumbUpgradeBlock,
     ) -> Option<crate::storage::preview_plan::ResolvedPreviewMedia> {
-        resolve_upgrade_media(
-            vault,
-            PreviewUpgradeInput {
-                slug: &target.slug,
-                media_file: target.media_file.as_deref(),
-                thumbnail: target.thumbnail.as_deref(),
-                media_urls: target.media_urls.as_deref(),
-                first_image: target.first_image.as_deref(),
-                preview_manifest: target.preview_manifest.as_deref(),
-            },
-        )
+        crate::storage::preview_plan::resolve_upgrade_media(vault, target.upgrade_input())
+    }
+
+    /// The startup queue's question for one block whose upgrade media exists.
+    fn needs_upgrade(vault: &VaultLayout, target: &index::PendingThumbUpgradeBlock) -> bool {
+        let media = resolve_target_upgrade(vault, target).expect("the block has upgrade media");
+        needs_browser_thumb_upgrade(vault, target, thumbnails::GeneratorEpoch::read(vault), &media)
     }
 
     // ── resolve_upgrade_media ────────────────────────────────────────────
@@ -618,7 +626,7 @@ mod tests {
         let media = resolve_target_upgrade(&vault, target).unwrap();
         assert_eq!(media.kind.as_str(), "image");
         assert_eq!(media.path, webp);
-        assert!(needs_browser_thumb_upgrade(&vault, target));
+        assert!(needs_upgrade(&vault, target));
     }
 
     #[test]
@@ -687,7 +695,7 @@ mod tests {
             preview_manifest: None,
         };
 
-        assert!(!needs_browser_thumb_upgrade(&vault, &block));
+        assert!(!needs_upgrade(&vault, &block));
     }
 
     /// A screenshot with rounded, transparent corners legitimately produces a
@@ -715,7 +723,7 @@ mod tests {
             preview_manifest: None,
         };
 
-        assert!(!needs_browser_thumb_upgrade(&vault, &block));
+        assert!(!needs_upgrade(&vault, &block));
     }
 
     /// The placeholder case still has to reach Phase 2: a PNG written for
@@ -737,7 +745,7 @@ mod tests {
             preview_manifest: None,
         };
 
-        assert!(needs_browser_thumb_upgrade(&vault, &block));
+        assert!(needs_upgrade(&vault, &block));
     }
 
     /// An AVIF with transparency under `.png` is decoded only by the browser,
@@ -763,7 +771,7 @@ mod tests {
             media_urls: None,
             preview_manifest: None,
         };
-        assert!(needs_browser_thumb_upgrade(&vault, &block));
+        assert!(needs_upgrade(&vault, &block));
 
         let picture = image::RgbaImage::from_fn(32, 24, |x, _| {
             image::Rgba([200, 40, 90, if x < 16 { 0 } else { 255 }])
@@ -775,7 +783,55 @@ mod tests {
         validate_thumb_write_request("logo", &png).expect("a PNG picture is accepted");
         files::write_atomically(&vault.thumb_path("logo"), &png).unwrap();
 
-        assert!(!needs_browser_thumb_upgrade(&vault, &block));
+        assert!(!needs_upgrade(&vault, &block));
+    }
+
+    /// SPEC_THUMBNAILS.md, П8: after a generator version change the browser
+    /// queue takes the outdated pictures only the browser rebuilds, and leaves
+    /// those of media Rust decodes to Rust's own passes.
+    #[test]
+    fn an_outdated_picture_waits_for_the_browser_only_when_rust_cannot_rebuild_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        std::fs::write(
+            dir.path().join("logo.avif"),
+            b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf",
+        )
+        .unwrap();
+        create_test_image(&dir.path().join("photo.png"), 64, 48);
+        let pending = |slug: &str, file: &str| index::PendingThumbUpgradeBlock {
+            slug: slug.into(),
+            media_file: Some(file.into()),
+            thumbnail: None,
+            first_image: None,
+            media_urls: None,
+            preview_manifest: None,
+        };
+        let logo = pending("logo", "logo.avif");
+        let photo = pending("photo", "photo.png");
+        for slug in ["logo", "photo"] {
+            create_test_image(&vault.thumb_path(slug), 32, 24);
+        }
+        assert!(!needs_upgrade(&vault, &logo));
+        assert!(!needs_upgrade(&vault, &photo));
+
+        std::fs::write(vault.thumbs_dir().join(".format-version"), "7").unwrap();
+        for slug in ["logo", "photo"] {
+            std::fs::File::options()
+                .write(true)
+                .open(vault.thumb_path(slug))
+                .unwrap()
+                .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+                .unwrap();
+        }
+        assert!(thumbnails::adopt_generator_version(&vault));
+
+        assert!(needs_upgrade(&vault, &logo), "only the browser decodes the AVIF");
+        assert!(!needs_upgrade(&vault, &photo), "Rust rebuilds the PNG's picture");
+
+        // The browser's new picture finishes it.
+        create_test_image(&vault.thumb_path("logo"), 32, 24);
+        assert!(!needs_upgrade(&vault, &logo));
     }
 
     #[test]
@@ -794,7 +850,7 @@ mod tests {
             preview_manifest: None,
         };
 
-        assert!(needs_browser_thumb_upgrade(&vault, &block));
+        assert!(needs_upgrade(&vault, &block));
     }
 
     #[test]
@@ -851,7 +907,7 @@ mod tests {
 
         assert_eq!(media.kind.as_str(), "image");
         assert_eq!(media.path, dir.path().join("poster.avif"));
-        assert!(needs_browser_thumb_upgrade(&vault, target));
+        assert!(needs_upgrade(&vault, target));
     }
 
     #[test]
@@ -1046,7 +1102,7 @@ mod tests {
             preview_manifest: Some(manifest),
         };
 
-        let posters = resolve_tile_posters(&vault, &block);
+        let posters = resolve_tile_posters(&vault, &block, thumbnails::GeneratorEpoch::read(&vault));
         assert_eq!(posters.len(), 3);
         assert_eq!(posters[0].poster_name, "g.preview-1.jpg");
         assert_eq!(posters[0].kind, "video");
@@ -1084,7 +1140,7 @@ mod tests {
             preview_manifest: Some(manifest),
         };
 
-        assert!(resolve_tile_posters(&vault, &block).is_empty());
+        assert!(resolve_tile_posters(&vault, &block, thumbnails::GeneratorEpoch::read(&vault)).is_empty());
     }
 
     /// A gallery tile the browser wrote as PNG (a transparent picture, rule
@@ -1121,6 +1177,6 @@ mod tests {
             preview_manifest: Some(manifest),
         };
 
-        assert!(resolve_tile_posters(&vault, &block).is_empty());
+        assert!(resolve_tile_posters(&vault, &block, thumbnails::GeneratorEpoch::read(&vault)).is_empty());
     }
 }

@@ -82,7 +82,7 @@ export function ClipperOverflowMenu({ canOpenApp, vaultPath, onRetryConnection, 
           <MoreHorizontal className="size-[13px]" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" side="bottom" sideOffset={4}>
+      <DropdownMenuContent align="end" side="bottom">
         {canOpenApp ? (
           <DropdownMenuItem
             onSelect={(event) => {

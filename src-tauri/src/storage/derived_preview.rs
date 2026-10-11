@@ -15,7 +15,10 @@ use std::path::{Component, Path, PathBuf};
 use crate::domain::block::{parse_markdown_document, Block, BlockType, CardKind, DateTime};
 use crate::domain::vault::VaultLayout;
 use crate::storage::index::{self, FeedPreviewKind, FeedPreviewManifest};
-use crate::storage::preview_plan::{is_image_media, is_video_media};
+use crate::storage::preview_plan::{
+    is_image_media, is_video_media, resolve_upgrade_media_with, PreviewMediaKind,
+};
+use crate::storage::thumbnails::PreviewReadiness;
 use crate::storage::{files, media_dimensions, media_refs, thumbnails};
 
 pub const PREVIEW_RECONCILE_BATCH_SIZE: usize = 24;
@@ -308,12 +311,13 @@ fn reconcile_slugs<'a>(
     on_settled: &mut dyn FnMut(),
 ) -> Result<PreviewReconcileReport> {
     let mut report = PreviewReconcileReport::default();
+    let epoch = thumbnails::GeneratorEpoch::read(resolver.vault());
     for slug in slugs {
         if !should_continue() {
             report.cancelled = true;
             break;
         }
-        let outcome = match reconcile_slug(conn, resolver, slug, cloud) {
+        let outcome = match reconcile_slug(conn, resolver, slug, cloud, epoch) {
             Ok(Some(outcome)) => outcome,
             Ok(None) => {
                 on_settled();
@@ -366,6 +370,7 @@ pub fn reconcile_preview_for_slug(
         &mut media_refs::MediaResolver::new(vault),
         slug,
         CloudSources::Fetch,
+        thumbnails::GeneratorEpoch::read(vault),
     )
 }
 
@@ -374,6 +379,7 @@ fn reconcile_slug(
     resolver: &mut media_refs::MediaResolver<'_>,
     slug: &str,
     cloud: CloudSources,
+    epoch: thumbnails::GeneratorEpoch,
 ) -> Result<Option<PreviewReconcileOutcome>> {
     let vault = resolver.vault();
     let Some(record) = load_preview_record(conn, slug)? else {
@@ -492,7 +498,12 @@ fn reconcile_slug(
         .source_stamp
         .as_deref()
         .is_some_and(|stamp| stamp != source_stamp);
-    if !source_changed && expected.iter().all(|path| thumbnails::is_finished_picture(path)) {
+    let readiness = |path: &Path| thumbnails::preview_readiness(path, epoch);
+    if !source_changed
+        && expected
+            .iter()
+            .all(|path| readiness(path) == PreviewReadiness::Finished)
+    {
         // Nothing to generate, but the artifacts are on disk and therefore
         // measurable. This is where previews written before the manifest
         // carried artifact geometry get their dimensions: they reach this
@@ -525,9 +536,33 @@ fn reconcile_slug(
         }
     };
 
+    // Outdated artifacts of an unchanged source keep a card that was drawn
+    // drawn while they are rebuilt (SPEC_THUMBNAILS.md, П8). They never make a
+    // card drawn that was not: a placeholder written before the placeholder
+    // record existed reads as an outdated picture, and the feed would paint
+    // that text as the card's media.
+    let keeps_drawn = !source_changed && record_was_drawn(&record);
+    let all_drawable = |expected: &[PathBuf]| {
+        expected.iter().all(|path| {
+            matches!(
+                readiness(path),
+                PreviewReadiness::Finished | PreviewReadiness::Outdated
+            )
+        })
+    };
+    if keeps_drawn
+        && all_drawable(&expected)
+        && source_waiting_for_cloud(resolver, slug, &block, &manifest, false, epoch)?.is_some()
+    {
+        // An outdated preview does not make iCloud download its source: it
+        // stays on screen and is rebuilt by a pass that finds the source local.
+        return publish_ready(conn, vault, slug, &record, &manifest, &source_stamp, false)
+            .map(Some);
+    }
+
     if cloud == CloudSources::Defer {
         if let Some(reference) =
-            source_waiting_for_cloud(resolver, slug, &block, &manifest, source_changed)?
+            source_waiting_for_cloud(resolver, slug, &block, &manifest, source_changed, epoch)?
         {
             record_cloud_wait(vault, slug);
             return mark_non_ready(
@@ -553,13 +588,22 @@ fn reconcile_slug(
         .transpose()?;
     if let Some(primary_path) = manifest.primary_preview_path.as_deref() {
         let primary = preview_disk_path(vault, primary_path)?;
-        if source_changed || !thumbnails::is_finished_picture(&primary) {
-            let source = thumbnails::generate_for_block_with_resolver(&block, resolver);
+        let primary_readiness = readiness(&primary);
+        if source_changed || primary_readiness != PreviewReadiness::Finished {
+            let source = if !source_changed && primary_readiness == PreviewReadiness::Outdated {
+                // The outdated picture stays until a finished one replaces it.
+                let upgrade = index::get_pending_thumb_upgrade_block(conn, slug)?.and_then(
+                    |pending| resolve_upgrade_media_with(resolver, pending.upgrade_input()),
+                );
+                thumbnails::rebuild_outdated_with_resolver(&block, resolver, upgrade.as_ref())
+            } else {
+                thumbnails::generate_for_block_with_resolver(&block, resolver)
+            };
             regenerated |= matches!(
                 source,
                 thumbnails::ThumbSource::Image | thumbnails::ThumbSource::Video
             );
-            if !thumbnails::is_finished_picture(&primary) {
+            if readiness(&primary) != PreviewReadiness::Finished {
                 // Distinguish "the file is not there" from "we cannot decode
                 // it here". Reporting a missing file as a decoding problem sent
                 // the reader looking for a format issue that does not exist.
@@ -594,7 +638,8 @@ fn reconcile_slug(
             continue;
         };
         let destination = preview_disk_path(vault, preview_path)?;
-        if !source_changed && thumbnails::is_finished_picture(&destination) {
+        let tile_readiness = readiness(&destination);
+        if !source_changed && tile_readiness == PreviewReadiness::Finished {
             continue;
         }
         let can_copy_primary = tile_index == 0
@@ -603,7 +648,7 @@ fn reconcile_slug(
             && generation_failure.is_none()
             && primary_disk_path
                 .as_deref()
-                .is_some_and(thumbnails::is_finished_picture);
+                .is_some_and(|primary| readiness(primary) == PreviewReadiness::Finished);
         if can_copy_primary {
             let primary = primary_disk_path
                 .as_deref()
@@ -630,6 +675,23 @@ fn reconcile_slug(
             ));
             continue;
         };
+        let tile_kind = if is_video_media(&tile.source_path) {
+            PreviewMediaKind::Video
+        } else {
+            PreviewMediaKind::Image
+        };
+        if !source_changed
+            && tile_readiness == PreviewReadiness::Outdated
+            && thumbnails::browser_rebuilds(&source, tile_kind)
+        {
+            // The browser queue rebuilds this tile; the outdated one stays
+            // drawn until then (П8).
+            generation_failure.get_or_insert((
+                PreviewErrorKind::BrowserDecodeRequired,
+                format!("outdated preview waits for the browser: {}", tile.source_path),
+            ));
+            continue;
+        }
         let generated = if is_video_media(&tile.source_path) {
             thumbnails::generate_video_thumbnail(
                 &source,
@@ -659,8 +721,16 @@ fn reconcile_slug(
         }
     }
 
-    let all_ready = expected.iter().all(|path| thumbnails::is_finished_picture(path));
+    let all_ready = expected
+        .iter()
+        .all(|path| readiness(path) == PreviewReadiness::Finished);
     if all_ready && (!source_changed || generation_failure.is_none()) {
+        return publish_ready(conn, vault, slug, &record, &manifest, &source_stamp, regenerated)
+            .map(Some);
+    }
+    if keeps_drawn && all_drawable(&expected) {
+        // Some artifacts are still outdated, waiting for the browser or for a
+        // decode that failed; the card goes on showing them.
         return publish_ready(conn, vault, slug, &record, &manifest, &source_stamp, regenerated)
             .map(Some);
     }
@@ -683,6 +753,14 @@ fn reconcile_slug(
         outcome.regenerated = regenerated;
         Some(outcome)
     })
+}
+
+/// Whether the feed draws this row's preview: the same rule as
+/// `block_queries::grid_row_columns_sql`, `ready`, or `stale` with the stamp of
+/// an artifact already on disk.
+fn record_was_drawn(record: &PreviewRecord) -> bool {
+    record.state == DerivedPreviewState::Ready.as_str()
+        || (record.state == DerivedPreviewState::Stale.as_str() && record.source_stamp.is_some())
 }
 
 fn load_preview_record(conn: &Connection, slug: &str) -> Result<Option<PreviewRecord>> {
@@ -878,10 +956,11 @@ fn source_waiting_for_cloud(
     block: &Block,
     manifest: &FeedPreviewManifest,
     source_changed: bool,
+    epoch: thumbnails::GeneratorEpoch,
 ) -> Result<Option<String>> {
     let needs = |resolver: &mut media_refs::MediaResolver<'_>, relative: &str| -> Result<bool> {
         let path = preview_disk_path(resolver.vault(), relative)?;
-        Ok(source_changed || !thumbnails::is_finished_picture(&path))
+        Ok(source_changed || !thumbnails::is_finished_picture(&path, epoch))
     };
     if let Some(primary) = manifest.primary_preview_path.as_deref() {
         if needs(resolver, primary)? {
@@ -1672,6 +1751,163 @@ mod tests {
         assert!(ready.failure.is_none());
     }
 
+    /// Every file of the preview cache, as an earlier generator version left
+    /// it: the marker names version 7 and each file is an hour old. Then this
+    /// generator adopts the cache, as opening the space does.
+    fn adopt_after_version_7(vault: &VaultLayout) {
+        std::fs::write(vault.thumbs_dir().join(".format-version"), "7").unwrap();
+        let mut stack = vec![vault.thumbs_dir()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    std::fs::File::options()
+                        .write(true)
+                        .open(&path)
+                        .unwrap()
+                        .set_modified(
+                            std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+                        )
+                        .unwrap();
+                }
+            }
+        }
+        assert!(thumbnails::adopt_generator_version(vault));
+    }
+
+    fn readiness_of(vault: &VaultLayout, path: &Path) -> PreviewReadiness {
+        thumbnails::preview_readiness(path, thumbnails::GeneratorEpoch::read(vault))
+    }
+
+    /// SPEC_THUMBNAILS.md, П8: a new generator version deletes no preview.
+    /// The old picture stays on screen, does not count as finished, and the
+    /// next pass replaces it with a rebuilt one.
+    #[test]
+    fn a_version_change_rebuilds_an_outdated_preview_in_place() {
+        let (_source, vault, conn) = setup();
+        image::RgbImage::from_pixel(64, 48, image::Rgb([10, 120, 200]))
+            .save(vault.root().join("photo.png"))
+            .unwrap();
+        files::write_block_file(&vault, &image_block("Photo", "photo.png")).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let first = reconcile_preview_for_slug(&conn, &vault, "Photo").unwrap().unwrap();
+        assert_eq!(first.state, DerivedPreviewState::Ready);
+        let primary = vault.thumb_path("Photo");
+
+        adopt_after_version_7(&vault);
+
+        assert!(primary.is_file(), "the version change deletes nothing");
+        assert_eq!(readiness_of(&vault, &primary), PreviewReadiness::Outdated);
+        let (manifest, state): (Option<String>, String) = conn
+            .query_row(
+                "SELECT preview_manifest, preview_state FROM blocks WHERE slug = 'Photo'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(manifest.is_some());
+        assert_eq!(state, "ready", "the old preview is still drawn");
+
+        let rebuilt = reconcile_preview_for_slug(&conn, &vault, "Photo").unwrap().unwrap();
+
+        assert_eq!(rebuilt.state, DerivedPreviewState::Ready, "{rebuilt:?}");
+        assert!(rebuilt.regenerated, "an outdated preview is not ready to keep");
+        assert_eq!(readiness_of(&vault, &primary), PreviewReadiness::Finished);
+        for tile in std::fs::read_dir(vault.thumbs_dir()).unwrap().flatten() {
+            let path = tile.path();
+            if path.to_string_lossy().contains(".preview-") {
+                assert_eq!(readiness_of(&vault, &path), PreviewReadiness::Finished);
+            }
+        }
+    }
+
+    /// The browser's own picture of an AVIF outlives a version change on
+    /// screen: no text placeholder is written over it, the card stays drawn,
+    /// and only the browser's new picture replaces it.
+    #[test]
+    fn an_outdated_browser_picture_stays_drawn_until_the_browser_replaces_it() {
+        let (_source, vault, conn) = setup();
+        std::fs::write(
+            vault.root().join("logo.png"),
+            b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf",
+        )
+        .unwrap();
+        files::write_block_file(&vault, &image_block("Logo", "logo.png")).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        reconcile_preview_for_slug(&conn, &vault, "Logo").unwrap();
+        let picture = image::RgbaImage::from_fn(32, 24, |x, _| {
+            image::Rgba([200, 40, 90, if x < 16 { 0 } else { 255 }])
+        });
+        let artifacts = [
+            vault.thumb_path("Logo"),
+            vault.thumbs_dir().join("Logo.preview-1.jpg"),
+        ];
+        for path in &artifacts {
+            picture.save_with_format(path, image::ImageFormat::Png).unwrap();
+        }
+        let drawn = reconcile_preview_for_slug(&conn, &vault, "Logo").unwrap().unwrap();
+        assert_eq!(drawn.state, DerivedPreviewState::Ready);
+        let before = std::fs::read(&artifacts[0]).unwrap();
+
+        adopt_after_version_7(&vault);
+        let kept = reconcile_preview_for_slug(&conn, &vault, "Logo").unwrap().unwrap();
+
+        assert_eq!(kept.state, DerivedPreviewState::Ready, "{kept:?}");
+        assert_eq!(std::fs::read(&artifacts[0]).unwrap(), before, "no placeholder over it");
+        for path in &artifacts {
+            assert_eq!(readiness_of(&vault, path), PreviewReadiness::Outdated);
+        }
+
+        // The browser writes its new pictures.
+        for path in &artifacts {
+            files::write_atomically(path, &std::fs::read(path).unwrap()).unwrap();
+        }
+        let replaced = reconcile_preview_for_slug(&conn, &vault, "Logo").unwrap().unwrap();
+        assert_eq!(replaced.state, DerivedPreviewState::Ready);
+        for path in &artifacts {
+            assert_eq!(readiness_of(&vault, path), PreviewReadiness::Finished);
+        }
+    }
+
+    /// An outdated file never makes a card drawn that was not: a placeholder
+    /// from before the placeholder record reads as a picture, and the feed
+    /// would paint that text as the card's media.
+    #[test]
+    fn an_outdated_file_does_not_make_a_failed_card_drawn() {
+        let (_source, vault, conn) = setup();
+        std::fs::write(
+            vault.root().join("modern.avif"),
+            b"\x00\x00\x00\x1cftypavif-not-decodable",
+        )
+        .unwrap();
+        files::write_block_file(&vault, &image_block("Modern", "modern.avif")).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        // Version 7 wrote recordless placeholders and left the card failed.
+        let ink = image::RgbaImage::from_pixel(32, 24, image::Rgba([80, 80, 80, 0]));
+        for path in [
+            vault.thumb_path("Modern"),
+            vault.thumbs_dir().join("Modern.preview-1.jpg"),
+        ] {
+            ink.save_with_format(&path, image::ImageFormat::Png).unwrap();
+        }
+        conn.execute(
+            "UPDATE blocks SET preview_state = 'failed' WHERE slug = 'Modern'",
+            [],
+        )
+        .unwrap();
+
+        adopt_after_version_7(&vault);
+        let outcome = reconcile_preview_for_slug(&conn, &vault, "Modern").unwrap().unwrap();
+
+        assert_eq!(outcome.state, DerivedPreviewState::Failed);
+        assert_eq!(
+            outcome.failure.unwrap().error_kind,
+            PreviewErrorKind::BrowserDecodeRequired
+        );
+    }
+
     #[test]
     fn legacy_primary_preview_materializes_single_tile_without_source_decode() {
         let (_source, vault, conn) = setup();
@@ -2045,7 +2281,7 @@ mod tests {
             let path = vault.thumbs_dir().join(relative);
             std::fs::write(&path, b"\xff\xd8\xffnot really a jpeg at all").unwrap();
             assert!(
-                thumbnails::is_finished_picture(&path),
+                thumbnails::is_finished_picture(&path, thumbnails::GeneratorEpoch::AllCurrent),
                 "the readiness check must still accept this file — that is the point"
             );
         }

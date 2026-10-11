@@ -1105,7 +1105,7 @@ function DetailActionRow({
             <Plus className="size-[13px]" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent widthRole="search" className={COLLECTION_PICKER_CONTENT_CLASS} align="start">
+        <DropdownMenuContent widthRole="search" className={COLLECTION_PICKER_CONTENT_CLASS} align="end">
           <CollectionPicker
             blockSlug={block.slug}
             selectedTags={selectedTags}

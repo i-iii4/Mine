@@ -1774,11 +1774,31 @@
       "paths": [
         "src/components/MenuTextTrigger.test.tsx",
         "src/components/TopCollectionSwitcher.tsx",
-        "src/components/VaultSwitcher.tsx",
-        "src/hooks/useMenuAlignToPlate.ts"
+        "src/components/VaultSwitcher.tsx"
       ],
       "requirement": "DESIGN_SYSTEM.md#Surface Search",
       "tests": ["src/components/MenuTextTrigger.test.tsx", "src/components/VaultSwitcher.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/floatingLayer.ts",
+        "src/lib/floatingLayer.test.ts",
+        "src/lib/openMenus.ts",
+        "src/hooks/useMenuAlignToPlate.ts",
+        "src/components/ui/dropdown-menu.tsx",
+        "src/components/ui/dropdown-menu.test.tsx",
+        "src/components/TopCollectionSwitcher.tsx",
+        "src/components/VaultSwitcher.tsx",
+        "src/components/VaultSwitcher.test.tsx",
+        "src/components/GroupSelectionCommands.tsx",
+        "src/components/Detail.tsx",
+        "src/App.test.tsx",
+        "extension/popup/components/ClipperOverflowMenu.tsx",
+        "extension/popup/components/VaultSelect.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Отступ от кнопки",
+      "tests": ["src/lib/floatingLayer.test.ts", "src/components/ui/dropdown-menu.test.tsx", "src/components/VaultSwitcher.test.tsx", "src/App.test.tsx"],
       "command": "test:frontend"
     },
     {
@@ -2468,6 +2488,30 @@
       ],
       "requirement": "SPEC_SAVE_CORE.md## Имя медиафайла по содержимому",
       "tests": ["mine-core/src/domain/media_type.rs", "src-tauri/src/storage/derived_preview.rs", "src-tauri/src/commands/thumbnails.rs"],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/components/MicroPreviewThumbnail.tsx",
+        "src/components/CardRow.tsx",
+        "src/components/CardReferenceRow.tsx"
+      ],
+      "requirement": "SPEC_THUMBNAILS.md#### Нет файла миниатюры (11.10.2026)",
+      "tests": ["src/components/MicroPreviewThumbnail.test.tsx", "src/components/Sidebar.test.tsx", "src/components/SearchOverlay.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/storage/thumbnails.rs",
+        "src-tauri/src/storage/derived_preview.rs",
+        "src-tauri/src/storage/preview_plan.rs",
+        "src-tauri/src/storage/index.rs",
+        "src-tauri/src/commands/thumbnails.rs",
+        "src-tauri/src/commands/vault.rs",
+        "src-tauri/src/watcher/handler.rs"
+      ],
+      "requirement": "SPEC_THUMBNAILS.md#**П8. Смена версии генератора ничего не удаляет (11.10.2026).**",
+      "tests": ["src-tauri/src/storage/thumbnails.rs", "src-tauri/src/storage/derived_preview.rs", "src-tauri/src/commands/thumbnails.rs"],
       "command": "test:rust"
     }
   ],

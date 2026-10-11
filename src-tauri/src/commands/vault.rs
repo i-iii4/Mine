@@ -1339,63 +1339,6 @@ fn layout_space_id(layout: &VaultLayout) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Current thumb cache format version. Bump this when the thumbnail
-/// pipeline changes in a way that makes old cached files incompatible
-/// (e.g. text placeholders switched from JPEG to PNG, or new font).
-///
-/// 8: a text placeholder records that it is one (SPEC_THUMBNAILS.md, П7), and
-/// readiness asks that record alone. A placeholder written before carries no
-/// record and would read as a finished picture, and the previews that failed
-/// because the browser's PNG picture was refused have to be built again; both
-/// need every cached preview rebuilt once.
-const THUMB_FORMAT_VERSION: &str = "8";
-
-/// If the thumb cache was written by an older format version, delete
-/// all cached thumbnails and let a background sync regenerate them fresh.
-/// Returns true when a migration actually ran.
-fn migrate_thumb_cache(vault: &VaultLayout) -> bool {
-    let marker = vault.thumbs_dir().join(".format-version");
-    let current = std::fs::read_to_string(&marker).unwrap_or_default();
-    if current.trim() == THUMB_FORMAT_VERSION {
-        return false;
-    }
-
-    log::info!(
-        "thumb cache migration: version {:?} → {}, clearing all thumbnails",
-        current.trim(),
-        THUMB_FORMAT_VERSION,
-    );
-
-    // Preview paths may become nested as the cache schema evolves. Walk
-    // directories without following symlinks so no stale JPEG can survive a
-    // format migration while non-preview sidecars remain untouched.
-    clear_cached_jpegs(&vault.thumbs_dir());
-
-    // Write the new version marker. If this fails, next startup will
-    // re-run the migration — safe, just slightly wasteful.
-    let _ = files::write_atomically(&marker, THUMB_FORMAT_VERSION.as_bytes());
-    true
-}
-
-fn clear_cached_jpegs(root: &Path) {
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            clear_cached_jpegs(&path);
-        } else if file_type.is_file()
-            && path.extension().and_then(|extension| extension.to_str()) == Some("jpg")
-        {
-            let _ = std::fs::remove_file(path);
-        }
-    }
-}
-
 /// Legacy derived stores may predate the current preview/feed metadata
 /// columns. Backfill `preview_manifest`, `thumb_format` / `thumb_mtime`, and
 /// `feed_playback` in the background so feed contracts recover without
@@ -1839,12 +1782,15 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                 }
             };
             let sync_state = app_for_thread.state::<AppState>();
-            if migrate_thumb_cache(&vault) {
+            // A new generator version deletes nothing: earlier previews stay
+            // on screen as outdated and the passes below rebuild them
+            // (SPEC_THUMBNAILS.md, П8).
+            if crate::storage::thumbnails::adopt_generator_version(&vault) {
                 append_startup_trace(
                     &app_for_thread,
                     "vault_sync_thread",
                     &format!(
-                        "thumb_cache_migrated path={} elapsed_ms={}",
+                        "thumb_generator_adopted path={} elapsed_ms={}",
                         path_for_thread,
                         total.elapsed().as_millis()
                     ),

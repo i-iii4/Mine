@@ -177,7 +177,8 @@ function focusedElement(node: HTMLElement): HTMLElement | null {
   return active instanceof HTMLElement && active !== node.ownerDocument.body ? active : null;
 }
 
-function triggerOf(surface: HTMLElement): HTMLElement | null {
+/** The button that opened a dropdown menu: Radix labels the menu by it. */
+export function menuTriggerOf(surface: HTMLElement): HTMLElement | null {
   const id = surface.getAttribute("aria-labelledby");
   const root = surface.getRootNode();
   if (!id || !(root instanceof Document || root instanceof ShadowRoot)) return null;
@@ -241,7 +242,7 @@ export function useMenuSurface<T extends HTMLElement>(
       focusAfterPressRef.current =
         kind === "context"
           ? focusBeforeRef.current
-          : surface && isPrimaryPress(original) ? triggerOf(surface) : null;
+          : surface && isPrimaryPress(original) ? menuTriggerOf(surface) : null;
     },
     [kind, onPointerDownOutside],
   );
