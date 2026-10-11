@@ -1,7 +1,8 @@
 // Feed responses and feed markup of X in the shape observed on live pages on
-// 10.10.2026 (SPEC_CLIPPER.md, «Кнопка Mine в ленте X»). No live sample of a
-// response was captured: the posts are the existing test posts of the X
-// thread and quote tests, placed in the ordinary timeline envelope of
+// 10.10.2026, the post header as measured again on 11.10.2026 (SPEC_CLIPPER.md,
+// «Кнопка Mine в ленте X»; «Доработки после живого просмотра», Р1). No live
+// sample of a response was captured: the posts are the existing test posts of
+// the X thread and quote tests, placed in the ordinary timeline envelope of
 // `ListLatestTweetsTimeline`.
 
 interface RawUser { id: string; handle: string; name: string }
@@ -119,21 +120,28 @@ function userName(user: RawUser, base: string, time = "") {
 /** X's header icons: "…", Grok and the stack header's buttons, 19 px. */
 const HEADER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" class="r-4qtqp9 r-yyyyoo r-dnmrzs r-bnwqim r-lrvibr"><g><path d="M3 12c0-1.1.9-2 2-2"></path></g></svg>';
 
-/** The box of "…" in a post's header, as X renders it. */
-function caretBox() {
-  return `<div class="css-175oi2r r-18u37iz r-1h0z5md">`
+/**
+ * "…" in a post's header as X renders it on 11.10.2026, with or without Grok
+ * beside it: a row, a column without classes, the box of "…" (a row) and the
+ * button. The first row of the right block holds this chain, Grok's box
+ * before it when the post has Grok.
+ */
+function caretChain() {
+  return `<div class="css-175oi2r r-1awozwy r-6koalj r-18u37iz"><div>`
+    + `<div class="css-175oi2r r-18u37iz r-1h0z5md">`
     + `<button aria-expanded="false" aria-haspopup="menu" aria-label="More" role="button" class="css-175oi2r r-1777fci r-bt1l66" data-testid="caret" type="button">`
     + `<div dir="ltr" class="css-146c3p1 r-bcqeeo r-1ttztb7" style="color: ${REST_COLOUR};">`
-    + `<div class="css-175oi2r r-xoduu5"><div class="css-175oi2r r-xoduu5 r-1p0dtai r-1niwhzg"></div>${HEADER_ICON}</div></div></button></div>`;
+    + `<div class="css-175oi2r r-xoduu5"><div class="css-175oi2r r-xoduu5 r-1p0dtai r-1niwhzg"></div>${HEADER_ICON}</div></div></button>`
+    + `</div></div></div>`;
 }
 
-/** The box of the Grok button; its label is in the interface language, `null` draws none. */
+/** The box of the Grok button, a row; its label is in the interface language, `null` draws none. */
 function grokBox(label: string | null) {
   const aria = label === null ? "" : ` aria-label="${label}"`;
-  return `<div class="css-175oi2r r-1awozwy r-6koalj r-18u37iz"><div class="css-175oi2r">`
+  return `<div class="css-175oi2r r-18u37iz r-grok-box">`
     + `<button${aria} role="button" class="css-175oi2r r-1777fci r-grok" type="button">`
     + `<div dir="ltr" class="css-146c3p1 r-grok-tint" style="color: ${REST_COLOUR};"><svg viewBox="0 0 33 32" aria-hidden="true" class="r-grok-icon"><g><path d="M12.7 19.4"></path></g></svg></div>`
-    + `</button></div></div>`;
+    + `</button></div>`;
 }
 
 /** The Follow button the main post of a post page shows in its header. */
@@ -143,7 +151,7 @@ function followBox(user: RawUser) {
 }
 
 interface CardOptions {
-  /** `""` for x.com's relative links, `https://x.com` for X Pro's absolute ones. */
+  /** `""` for x.com's relative links, `https://x.com` for X Pro's absolute ones and its own header classes. */
   base?: string;
   text?: string;
   social?: string;
@@ -172,10 +180,16 @@ export function card(user: RawUser, id: string, options: CardOptions = {}) {
     ? `<span><time datetime="2026-10-10T10:00:00.000Z">10:00 AM, Oct 10, 2026</time></span>`
     : `<a href="${statusPath}" role="link"><time datetime="2026-10-10T10:00:00.000Z">1h</time></a>`;
   const grok = options.grok === undefined ? (base ? false : "Grok actions") : options.grok;
-  const right = (options.follow ? followBox(user) : "") + (grok === false ? "" : grokBox(grok)) + caretBox();
+  const right = (options.follow ? followBox(user) : "") + (grok === false ? "" : grokBox(grok)) + caretChain();
+  // The header row: the author block and the right block (a column), whose
+  // first row holds Follow, Grok and "…". X Pro builds it the same way with
+  // classes of its own (measured on 11.10.2026).
+  const [rightBlock, firstRow] = base
+    ? ["r-2pydbh", "r-1awozwy r-18u37iz r-1ey881g r-1wtj0ep"]
+    : ["r-1kkk96v", "r-1awozwy r-18u37iz r-1cmwbt1 r-1wtj0ep"];
   const header = `<div class="css-175oi2r r-zl2h9q"><div class="css-175oi2r r-k4xj1c r-18u37iz r-1wtj0ep">`
     + `<div class="css-175oi2r r-1d09ksm r-18u37iz r-1wbh5a2"><div class="css-175oi2r r-1wbh5a2 r-dnmrzs">${userName(user, base, time)}</div></div>`
-    + `<div class="css-175oi2r r-1kkk96v"><div class="css-175oi2r r-1awozwy r-18u37iz r-1cmwbt1 r-1wtj0ep">${right}</div></div>`
+    + `<div class="css-175oi2r ${rightBlock}"><div class="css-175oi2r ${firstRow}">${right}</div></div>`
     + `</div></div>`;
   const openedLinks = options.opened
     ? (options.analyticsId ? `<a href="${base}/${user.handle}/status/${options.analyticsId}/analytics" role="link">Views</a>` : "")

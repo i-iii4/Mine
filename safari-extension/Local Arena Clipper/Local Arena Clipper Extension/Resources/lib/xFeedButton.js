@@ -164,8 +164,11 @@
     const header = headerRow(article);
     if (!header) return null;
     const { row, caret } = header;
-    let rightBlock = caret;
-    while (rightBlock.parentElement !== row) rightBlock = rightBlock.parentElement;
+    // The boxes from the right block, the header row's child with "…", down
+    // to "…" itself.
+    const path = [];
+    for (let node = caret; node !== row; node = node.parentElement) path.unshift(node);
+    const rightBlock = path[0];
     // The first level, from "…" up to the right block, where "…" has a
     // neighbour: Grok, or a box with text such as Follow.
     for (let node = caret; node !== rightBlock; node = node.parentElement) {
@@ -174,9 +177,13 @@
       if (!neighbour) continue;
       return { source: node, before: isIconControlBox(neighbour) ? neighbour : node, control: caret };
     }
-    // Nothing beside "…": the button stands just before the box of "…".
-    const source = caret.parentElement !== rightBlock && caret.parentElement !== row ? caret.parentElement : caret;
-    return { source, before: source, control: caret };
+    // Nothing beside "…": the button stands where Grok stands in a post with
+    // Grok, in the first row under the right block, before that row's box on
+    // the way to "…", and is copied from that box down to "…". The right
+    // block is a column and the boxes below the row's box may be columns too.
+    // When "…" sits right in the right block, the header row is the row left.
+    const before = path.length > 2 ? path[2] : path[0];
+    return { source: before, before, control: caret };
   }
 
   function isStackHeader(element) {

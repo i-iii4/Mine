@@ -14,7 +14,7 @@ import {
 import { switchStorage } from "./feedButtonSwitch.fixtures";
 
 // SPEC_CLIPPER.md, «Кнопка Mine в ленте X» and «Доработки после живого
-// просмотра» (10.10.2026), Р1 to Р4.
+// просмотра» (10.10.2026), Р1 to Р4; the post header as measured on 11.10.2026.
 
 type Activate = (article: Element, control: Element) => void;
 interface FeedButtonApi {
@@ -35,11 +35,34 @@ function feed(markup: string) {
   return [...document.querySelectorAll('article[data-testid="tweet"]')];
 }
 const caret = (article: Element) => article.querySelector('[data-testid="caret"]') as HTMLElement;
+/** The box of "…": the row that holds the button. */
 const caretBox = (article: Element) => caret(article).parentElement!;
-const rightRow = (article: Element) => caretBox(article).parentElement!;
+/** The boxes from the right block down to "…", found by build: the header
+ *  row is the nearest box holding "…" and the author block. */
+function caretPath(article: Element) {
+  const name = article.querySelector('[data-testid="User-Name"]')!;
+  const path: Element[] = [];
+  for (let node: Element = caret(article); !node.contains(name); node = node.parentElement!) path.unshift(node);
+  return path;
+}
+const rightBlock = (article: Element) => caretPath(article)[0]!;
+const headerRow = (article: Element) => rightBlock(article).parentElement!;
+/** The first row under the right block, where Grok and the Mine button stand. */
+const rightRow = (article: Element) => caretPath(article)[1]!;
+/** The box of that row on the way to "…". */
+const caretSlot = (article: Element) => caretPath(article)[2]!;
 const grok = (article: Element) => [...article.querySelectorAll("button")]
   .find((button) => button.className.includes("r-grok")) as HTMLElement | undefined;
-const grokBox = (article: Element) => grok(article)!.parentElement!.parentElement!;
+const grokBox = (article: Element) => grok(article)!.parentElement!;
+/** Tag and classes from `top` down its first children to a button. */
+function chain(top: Element) {
+  const links: string[] = [];
+  for (let node: Element | null = top; node; node = node.firstElementChild) {
+    links.push(`${node.localName}.${node.getAttribute("class") ?? ""}`);
+    if (node.localName === "button") break;
+  }
+  return links;
+}
 const box = (article: Element) => article.querySelector(OWNED) as HTMLElement;
 const mine = (article: Element) => article.querySelector(`${OWNED} button`) as HTMLButtonElement;
 const tint = (button: Element) => button.querySelector('[dir="ltr"]') as HTMLElement;
@@ -77,11 +100,40 @@ describe("the Mine button in a post's header (Р1)", () => {
     for (const article of articles) expect(box(article).nextElementSibling).toBe(grokBox(article));
   });
 
-  it("stands just before \"…\" when the post has no Grok, as in lists", () => {
+  it("stands where Grok would when the post has none: in the first row under the right block, not in the column above \"…\"", () => {
+    // Posts of «Вы читаете», «Больше твитов» and lists on x.com have no Grok.
     const [article] = feed(card(GASPR, VIDEO_POST_ID, { grok: false }));
     feedButton.scan(document, vi.fn());
+    expect(article.querySelectorAll(OWNED)).toHaveLength(1);
     expect(box(article).parentElement).toBe(rightRow(article));
-    expect(box(article).nextElementSibling).toBe(caretBox(article));
+    expect(box(article).nextElementSibling).toBe(caretSlot(article));
+    expect(caretSlot(article).contains(box(article))).toBe(false);
+    expect(box(article).parentElement).not.toBe(caretBox(article).parentElement);
+  });
+
+  it("stands in the first row under the right block in a column of X Pro, whose classes are its own", () => {
+    const [article] = feed(card(GASPR, "2103621844733714548", { base: "https://x.com" }));
+    feedButton.scan(document, vi.fn());
+    expect(article.querySelectorAll(OWNED)).toHaveLength(1);
+    expect(rightBlock(article).classList.contains("r-2pydbh")).toBe(true);
+    expect(box(article).parentElement).toBe(rightRow(article));
+    expect(box(article).nextElementSibling).toBe(caretSlot(article));
+    expect(box(article).nextElementSibling!.classList.contains("r-6koalj")).toBe(true);
+    expect(caretSlot(article).contains(box(article))).toBe(false);
+  });
+
+  it("stands in a row, not in a column, when the right block holds the box of \"…\" or \"…\" itself", () => {
+    const [inBox, bare] = feed([card(GASPR, "1001", { grok: false }), card(GASPR, "1002", { grok: false })].join(""));
+    rightBlock(inBox).replaceChildren(caretBox(inBox));
+    rightBlock(bare).replaceChildren(caret(bare));
+    feedButton.scan(document, vi.fn());
+    for (const article of [inBox, bare]) expect(article.querySelectorAll(OWNED)).toHaveLength(1);
+    // The box of "…" is a row: the button stands in it, before "…".
+    expect(box(inBox).parentElement).toBe(caretBox(inBox));
+    expect(box(inBox).nextElementSibling).toBe(caret(inBox));
+    // "…" right in the right block, a column: the header row is the row left.
+    expect(box(bare).parentElement).toBe(headerRow(bare));
+    expect(box(bare).nextElementSibling).toBe(rightBlock(bare));
   });
 
   it("keeps the same place beside Follow on the main post of a post page", () => {
@@ -91,7 +143,7 @@ describe("the Mine button in a post's header (Р1)", () => {
     ].join(""));
     feedButton.scan(document, vi.fn());
     const order = (article: Element) => [...rightRow(article).children].map((child) => child.matches(OWNED) ? "mine"
-      : child === caretBox(article) ? "caret" : child.textContent?.includes("Follow") ? "follow" : "grok");
+      : child === caretSlot(article) ? "caret" : child.textContent?.includes("Follow") ? "follow" : "grok");
     expect(order(withGrok)).toEqual(["follow", "mine", "grok", "caret"]);
     expect(order(withoutGrok)).toEqual(["follow", "mine", "caret"]);
   });
@@ -103,16 +155,17 @@ describe("the Mine button in a post's header (Р1)", () => {
       card(ARTIGNATEV, QUOTE_POST_ID, { quote: { user: ALEXIS, id: QUOTED_ID, text: "Quote text" } }),
     ].join(""));
     feedButton.scan(document, vi.fn());
-    expect(box(articles[0]!).nextElementSibling).toBe(caretBox(articles[0]!));
+    expect(box(articles[0]!).nextElementSibling).toBe(caretSlot(articles[0]!));
     for (const article of articles) expect(article.querySelectorAll(OWNED)).toHaveLength(1);
     // The quote has no header of its own and gets no button.
     expect(articles[2]!.querySelector('[role="link"]:not(a) [data-mine-x-post]')).toBeNull();
   });
 
-  it("copies the look of \"…\" and draws the Mine mark in its icon", () => {
-    const [article] = feed(card(GASPR, VIDEO_POST_ID));
+  it("copies the look of \"…\" from its row's box down, with Grok and without, and draws the Mine mark in its icon", () => {
+    const [article, withoutGrok] = feed([card(GASPR, VIDEO_POST_ID), card(GASPR, "1001", { grok: false })].join(""));
     feedButton.scan(document, vi.fn());
-    expect(box(article).className).toBe(caretBox(article).className);
+    expect(chain(box(article))).toEqual(chain(caretSlot(article)));
+    expect(chain(box(withoutGrok!))).toEqual(chain(caretSlot(withoutGrok!)));
     expect(mine(article).className).toBe(caret(article).className);
     expect(tint(mine(article)).getAttribute("style")).toBe(`color: ${REST_COLOUR};`);
     expect(halo(mine(article)).className).toBe(halo(caret(article)).className);
@@ -140,6 +193,26 @@ describe("the Mine button in a post's header (Р1)", () => {
     rightRow(article).replaceWith(redrawn);
     await vi.waitFor(() => expect(redrawn.querySelectorAll(OWNED)).toHaveLength(1));
     expect(box(article).nextElementSibling).toBe(grokBox(article));
+  });
+
+  it("stays one per post without Grok through repeated passes, and takes a button left above \"…\" into the row", async () => {
+    const articles = feed([card(GASPR, "1001", { grok: false }), card(GASPR, "1002", { base: "https://x.com" })].join(""));
+    stop = feedButton.watch(document, vi.fn());
+    const first = articles.map(box);
+    feedButton.scan(document, vi.fn());
+    feedButton.scan(document, vi.fn());
+    articles.forEach((article, index) => {
+      expect(article.querySelectorAll(OWNED)).toHaveLength(1);
+      expect(box(article)).toBe(first[index]);
+      expect(box(article).nextElementSibling).toBe(caretSlot(article));
+    });
+    // An earlier version put the button in the column above "…".
+    const [stale] = articles;
+    caretBox(stale!).before(box(stale!));
+    feedButton.scan(document, vi.fn());
+    expect(stale!.querySelectorAll(OWNED)).toHaveLength(1);
+    expect(box(stale!).parentElement).toBe(rightRow(stale!));
+    expect(box(stale!).nextElementSibling).toBe(caretSlot(stale!));
   });
 
   it("after the first pass looks only at the posts X added or whose header it redrew", async () => {
@@ -266,7 +339,8 @@ describe("the post X Pro opened over a column (Р2, Р3)", () => {
     feedButton.scan(document, vi.fn());
     expect(post(MAIN_ID).querySelectorAll(OWNED)).toHaveLength(0);
     for (const id of [REPLY_ID, "2108800000000000010"]) {
-      expect(box(post(id)).nextElementSibling).toBe(caretBox(post(id)));
+      expect(box(post(id)).parentElement).toBe(rightRow(post(id)));
+      expect(box(post(id)).nextElementSibling).toBe(caretSlot(post(id)));
     }
   });
 
