@@ -89,13 +89,13 @@ describe("VaultSwitcher", () => {
     expect(pill).not.toHaveClass("group-focus-visible:bg-component-fill-hover");
   });
 
-  it("drops its right outer padding when the next element is a pill with no line between", async () => {
+  it("keeps its right outer padding toward the line before the collection with the sidebar collapsed", async () => {
     render(
       <VaultSwitcher
         currentPath="/Users/test/Mine"
         onVaultSelected={vi.fn()}
         surface="topChrome"
-        joinsNext
+        topChromeCollapsed
       />,
     );
     await act(async () => {
@@ -103,8 +103,10 @@ describe("VaultSwitcher", () => {
       await Promise.resolve();
     });
 
+    // A line parts space and collection in both sidebar modes (11.10.2026).
     const trigger = screen.getByRole("button", { name: /Switch space: Mine/ });
-    expect(trigger).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-0");
+    expect(trigger).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-[var(--top-collection-pad-x)]");
+    expect(trigger).not.toHaveClass("pr-0");
   });
 
   it("takes the collapsed segment's whole cap, with no traffic-light reserve beside it", async () => {

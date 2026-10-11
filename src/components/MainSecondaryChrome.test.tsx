@@ -120,6 +120,57 @@ describe("MainSecondaryTopBar placement", () => {
     expect(document.querySelector("[data-main-secondary-note-meta]")).toBeNull();
   });
 
+  // In the path the open card's name stands past the line the sidebar segment
+  // draws between space and collection (11.10.2026).
+  for (const sidebarCollapsed of [false, true]) {
+    it(`draws the path's line before an open card's name only, sidebar ${sidebarCollapsed ? "collapsed" : "open"}`, () => {
+      const pathPart = (detailBlock: LightBlock | null) => (
+        <MainSecondaryTopBar
+          part="content"
+          placement="top"
+          sidebarCollapsed={sidebarCollapsed}
+          sidebarResizing={false}
+          stats={null}
+          detailBlock={detailBlock}
+          detailEntered
+          viewMode="grid"
+          onViewModeChange={vi.fn()}
+          vaultPath="/vault"
+          tags={[]}
+          currentTag={null}
+          onToggleTag={vi.fn()}
+          onCreateAndAssign={vi.fn()}
+          onRequestRename={vi.fn()}
+          onRenameFile={vi.fn()}
+          onCheckFileName={vi.fn(() => Promise.resolve(null))}
+          onRequestDelete={vi.fn()}
+          onDetailClose={vi.fn()}
+          detailMenuOpenRequestSequence={0}
+        />
+      );
+      const { rerender } = render(pathPart(null));
+      const segment = document.querySelector("[data-main-secondary-top-bar-content-segment]") as HTMLElement;
+      expect(segment).not.toHaveAttribute("data-path-card-line");
+      expect(segment).not.toHaveClass("border-l");
+      expect(segment).not.toHaveClass("ml-[var(--top-collection-pad-x)]");
+
+      rerender(pathPart(BLOCK));
+      expect(segment).toHaveAttribute("data-path-card-line", "");
+      expect(segment).toHaveClass("ml-[var(--top-collection-pad-x)]", "border-l", "border-sidebar-border");
+      const layer = document.querySelector("[data-secondary-detail-top-menu]") as HTMLElement;
+      expect(segment.contains(layer)).toBe(true);
+      expect(layer).toHaveClass("pl-[var(--top-collection-pad-x)]");
+      expect(layer).not.toHaveClass("pl-0");
+      expect(screen.getByTitle("nogal-house")).toHaveClass("px-2");
+      // One line: the moving layer draws none of its own.
+      expect(document.querySelectorAll(".border-sidebar-border")).toHaveLength(1);
+
+      rerender(pathPart(null));
+      expect(segment).not.toHaveAttribute("data-path-card-line");
+      expect(segment).not.toHaveClass("border-l");
+    });
+  }
+
   it("renames the card's file in place: leaving the field saves, Escape keeps the name", async () => {
     const onRenameFile = vi.fn<(block: LightBlock, newStem: string) => Promise<void>>()
       .mockResolvedValue(undefined);

@@ -281,7 +281,6 @@ function SpacePage({ path, blocks, totalBlocks, previews, indexing, previewsPend
                     onOpenInNewTab={noop}
                     surface="topChrome"
                     topChromeCollapsed={false}
-                    joinsNext={false}
                   />
                   <div aria-hidden="true" className="h-full w-px shrink-0 bg-border" />
                   <div className="flex h-full min-w-0 flex-1 items-center bg-chrome">
@@ -315,7 +314,6 @@ function SpacePage({ path, blocks, totalBlocks, previews, indexing, previewsPend
                   orderedTags={[]}
                   onNavigate={noop}
                   onCreateCollection={noop}
-                  joinsPrevious={false}
                   joinsNext
                 />
                 <MainSecondaryTopBar

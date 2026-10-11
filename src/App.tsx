@@ -1397,8 +1397,8 @@ export function AppWithVault({
   const topChromeSurfaceClass = "bg-chrome";
   const topChromeSurfaceToken: NativeWindowChromeSurfaceToken = "--chrome";
   // No third row: what it held over the feed joins the second row after the
-  // collection switcher; with the sidebar collapsed nothing parts space and
-  // collection (DESIGN_SYSTEM.md, «Верхние ряды»).
+  // collection switcher; a line parts each step of the path, the sidebar open
+  // or collapsed (DESIGN_SYSTEM.md, «Верхние ряды»).
   const foldedMetadataRow = !metadataRowAtBottom;
   // The open card is named by the shared visible title rule, without its
   // folder or extension (SPEC_DISPLAY_TITLE.md).
@@ -4466,9 +4466,12 @@ export function AppWithVault({
           data-tauri-drag-region
           data-app-top-sidebar-segment=""
           className={cn(
-            "flex h-full shrink-0 items-center overflow-hidden",
-            !sidebarCollapsed && "border-r border-sidebar-border",
-            sidebarCollapsed && "w-auto max-w-[240px]",
+            // Its line parts space and collection with the sidebar open or
+            // collapsed (11.10.2026). Collapsed, the space switcher alone sets
+            // the width and keeps its own cap: a cap here would take the
+            // line's pixel out of the switcher's padding.
+            "flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
+            sidebarCollapsed && "w-auto",
             !sidebarResizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
           )}
           style={sidebarCollapsed ? undefined : { width: "var(--sidebar-width)" }}
@@ -4494,7 +4497,6 @@ export function AppWithVault({
               onOpenInNewTab={tabPage ? openSpaceInNewTab : undefined}
               surface="topChrome"
               topChromeCollapsed={sidebarCollapsed}
-              joinsNext={sidebarCollapsed}
             />
             {!sidebarCollapsed && (
               <>
@@ -4586,7 +4588,6 @@ export function AppWithVault({
             orderedTags={orderedTags}
             onNavigate={handleTopCollectionNavigate}
             onCreateCollection={handleTopCollectionCreate}
-            joinsPrevious={sidebarCollapsed}
             joinsNext={foldedMetadataRow}
           />
           {compactDetailTopMenuActive && renderedDetailBlock ? (

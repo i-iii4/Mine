@@ -50,10 +50,10 @@ interface TopCollectionSwitcherProps {
   orderedTags: readonly TagCount[];
   onNavigate: (tag?: string) => void;
   onCreateCollection: (tag: string) => void | Promise<void>;
-  /// Pills on its left and right with no line between (interface version 2):
-  /// no outer padding on that side. Outer padding stands only toward a
-  /// boundary, a line or the end of the row.
-  joinsPrevious?: boolean;
+  /// The path goes on after it with no padding of its own: an open card's
+  /// name stands past a line the half over the feed draws, the feed's own
+  /// controls at the far right. Outer padding stands only toward a boundary,
+  /// a line or the end of the row; the line before it is always there.
   joinsNext?: boolean;
 }
 
@@ -73,7 +73,6 @@ export function TopCollectionSwitcher({
   orderedTags,
   onNavigate,
   onCreateCollection,
-  joinsPrevious = false,
   joinsNext = false,
 }: TopCollectionSwitcherProps) {
   const [open, setOpen] = useState(false);
@@ -270,9 +269,9 @@ export function TopCollectionSwitcher({
             className={cn(
               "max-w-[50%]",
               // Label text = this padding + 8px inner pill padding: 16 px
-              // from a line before it, like the space switcher's from the
-              // window edge; next to another pill no outer padding at all.
-              joinsPrevious ? "pl-0" : "pl-[var(--top-collection-pad-x)]",
+              // from the line before it, the sidebar open or collapsed
+              // (11.10.2026), like the space switcher's from the window edge.
+              "pl-[var(--top-collection-pad-x)]",
               joinsNext ? "pr-0" : "pr-[var(--top-collection-pad-x)]",
             )}
           />

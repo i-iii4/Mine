@@ -328,11 +328,22 @@ export function MainSecondaryTopBar({
       </div>
     </div>
   );
+  // In the path an open card's name stands past a line, the one the sidebar
+  // segment draws between space and collection (11.10.2026). The half itself
+  // draws it, 8 px past the collection's pill, so the collection switcher
+  // keeps its box when a card opens or closes. It lives as long as the name
+  // does, through the name's exit: the name fades where it stood, the line
+  // leaves with it. A structural line, it does not ride the layer's motion.
+  const pathCardLine = part === "content" && placement === "top" && Boolean(detailBlock);
   const contentSegment = (
     <div
       data-tauri-drag-region
       data-main-secondary-top-bar-content-segment=""
-      className="relative flex h-full min-w-0 flex-1 items-center overflow-hidden"
+      data-path-card-line={pathCardLine ? "" : undefined}
+      className={cn(
+        "relative flex h-full min-w-0 flex-1 items-center overflow-hidden",
+        pathCardLine && "ml-[var(--top-collection-pad-x)] border-l border-sidebar-border",
+      )}
     >
       {/* The selection replaces this half's ordinary content — the element
           count and the view switch — not the whole row: its commands sit
@@ -378,7 +389,9 @@ export function MainSecondaryTopBar({
         <div
           className={cn(
             "main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 flex-1 items-center gap-1",
-            part === "content" ? "pl-0" : "pl-[var(--chrome-edge-pad)]",
+            // Past the path's line the name's pill keeps the 8 px a
+            // switcher keeps from a line.
+            part === "content" ? "pl-[var(--top-collection-pad-x)]" : "pl-[var(--chrome-edge-pad)]",
           )}
           data-entered={detailLayerEntered ? "true" : "false"}
           data-secondary-detail-top-menu=""

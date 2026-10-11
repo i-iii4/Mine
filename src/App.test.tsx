@@ -217,13 +217,11 @@ vi.mock("@/components/VaultSwitcher", () => ({
     currentPath,
     surface = "actionBar",
     topChromeCollapsed = false,
-    joinsNext = false,
     onOpenInNewTab,
   }: {
     currentPath: string;
     surface?: string;
     topChromeCollapsed?: boolean;
-    joinsNext?: boolean;
     onOpenInNewTab?: (vaultId: string) => void;
   }) => (
     <>
@@ -232,7 +230,6 @@ vi.mock("@/components/VaultSwitcher", () => ({
         data-vault-switcher=""
         data-vault-switcher-surface={surface}
         data-vault-switcher-top-chrome-collapsed={String(topChromeCollapsed)}
-        data-vault-switcher-joins-next={String(joinsNext)}
       >
         {currentPath.split("/").pop() ?? currentPath}
       </button>
@@ -2205,37 +2202,91 @@ describe("AppWithVault", () => {
       expect(within(header).getByRole("tablist", { name: "View mode" })).toBeInTheDocument();
     });
 
-    it("joins space and collection into one path with the sidebar collapsed: no line, no padding between", async () => {
-      sidebarResizeState.width = 0;
-      sidebarResizeState.collapsed = true;
-      render(
-        <MemoryRouter initialEntries={["/"]}>
-          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-        </MemoryRouter>,
-      );
-      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+    // The path's lines (11.10.2026): one line between space and collection
+    // and one between collection and an open card's name, the sidebar open or
+    // collapsed. The space switcher's own padding is VaultSwitcher.test.tsx's
+    // to check.
+    for (const collapsed of [false, true]) {
+      const mode = collapsed ? "collapsed" : "open";
+      const renderPath = async () => {
+        sidebarResizeState.width = collapsed ? 0 : 300;
+        sidebarResizeState.collapsed = collapsed;
+        render(
+          <MemoryRouter initialEntries={["/"]}>
+            <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+          </MemoryRouter>,
+        );
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      };
+      const contentSegment = () =>
+        document.querySelector("[data-main-secondary-top-bar-content-segment]") as HTMLElement;
+      const pathLines = () =>
+        (document.querySelector("header.chrome-row") as HTMLElement).querySelectorAll(".border-sidebar-border");
 
-      const segment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement;
-      expect(segment).not.toHaveClass("border-r");
-      // The space switcher's own padding is VaultSwitcher.test.tsx's to check.
-      expect(document.querySelector("[data-vault-switcher]")).toHaveAttribute("data-vault-switcher-joins-next", "true");
-      const collection = screen.getByRole("button", { name: "Switch collection: Everything" });
-      expect(collection).toHaveClass("pl-0", "pr-0");
-    });
+      it(`parts space and collection by the segment's line with the sidebar ${mode}`, async () => {
+        await renderPath();
 
-    it("keeps outer padding toward the column line with the sidebar open", async () => {
-      render(
-        <MemoryRouter initialEntries={["/"]}>
-          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-        </MemoryRouter>,
-      );
-      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        const segment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement;
+        expect(segment).toHaveClass("border-r", "border-sidebar-border");
+        // The segment's line is the only one: nothing after it draws another.
+        const pathRest = segment.nextElementSibling as HTMLElement;
+        const collection = screen.getByRole("button", { name: "Switch collection: Everything" });
+        expect(pathRest.firstElementChild).toBe(collection);
+        expect(pathRest).not.toHaveClass("border-l");
+        expect(collection).not.toHaveClass("border-l");
+        // 8 px from the line, the path going on after it.
+        expect(collection).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-0");
+        // No card open: no line after the collection.
+        expect(contentSegment().previousElementSibling).toBe(collection);
+        expect(contentSegment()).not.toHaveAttribute("data-path-card-line");
+        expect(contentSegment()).not.toHaveClass("border-l");
+        expect(pathLines()).toHaveLength(1);
+      });
 
-      expect(document.querySelector("[data-vault-switcher]")).toHaveAttribute("data-vault-switcher-joins-next", "false");
-      const collection = screen.getByRole("button", { name: "Switch collection: Everything" });
-      // A line before it, the path going on after it.
-      expect(collection).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-0");
-    });
+      it(`parts collection and the open card's name by the same line with the sidebar ${mode}`, async () => {
+        await renderPath();
+
+        const collection = screen.getByRole("button", { name: "Switch collection: Everything" });
+        const collectionClass = collection.className;
+
+        fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+        await waitFor(() => {
+          expect(document.querySelector("[data-secondary-detail-top-menu]")).toHaveAttribute("data-entered", "true");
+        });
+        // The column's line, 8 px past the collection's pill.
+        expect(contentSegment()).toHaveAttribute("data-path-card-line", "");
+        expect(contentSegment()).toHaveClass(
+          "ml-[var(--top-collection-pad-x)]",
+          "border-l",
+          "border-sidebar-border",
+        );
+        const name = document.querySelector("[data-secondary-detail-card-name]") as HTMLElement;
+        expect(name).toHaveTextContent("alpha-block");
+        expect(contentSegment().contains(name)).toBe(true);
+        // The name's pill keeps 8 px from the line, as a switcher does; the
+        // moving layer draws no line of its own.
+        const detailLayer = document.querySelector("[data-secondary-detail-top-menu]") as HTMLElement;
+        expect(detailLayer).toHaveClass("pl-[var(--top-collection-pad-x)]");
+        expect(detailLayer).not.toHaveClass("border-l");
+        // Space and collection keep their places: the segment's line is still
+        // the one between them, the switcher keeps its box.
+        const segment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement;
+        expect(segment).toHaveClass("border-r", "border-sidebar-border");
+        expect(collection.className).toBe(collectionClass);
+        expect(pathLines()).toHaveLength(2);
+
+        fireEvent.click(screen.getByRole("button", { name: "Close" }));
+        // The line leaves with the name, once its exit is over.
+        await waitFor(() => {
+          expect(document.querySelector("[data-secondary-detail-top-menu]")).toBeNull();
+        });
+        expect(contentSegment()).not.toHaveAttribute("data-path-card-line");
+        expect(contentSegment()).not.toHaveClass("border-l");
+        expect(contentSegment()).not.toHaveClass("ml-[var(--top-collection-pad-x)]");
+        expect(collection.className).toBe(collectionClass);
+        expect(pathLines()).toHaveLength(1);
+      });
+    }
   });
 
   it("keeps space and collection controls while hiding channel search when the sidebar is collapsed", async () => {
@@ -2253,7 +2304,9 @@ describe("AppWithVault", () => {
     });
 
     const topSidebarSegment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement | null;
-    expect(topSidebarSegment).toHaveClass("w-auto", "max-w-[240px]");
+    // The space switcher keeps the cap; the segment adds only its line.
+    expect(topSidebarSegment).toHaveClass("w-auto", "border-r", "border-sidebar-border");
+    expect(topSidebarSegment).not.toHaveClass("max-w-[240px]");
     expect(topSidebarSegment).not.toHaveStyle({ width: "var(--sidebar-width)" });
     expect(topSidebarSegment).toHaveClass("transition-[width]", "duration-200", "ease-out");
     const spaceSwitcher = topSidebarSegment?.querySelector("[data-vault-switcher]") as HTMLElement | null;
@@ -2268,9 +2321,10 @@ describe("AppWithVault", () => {
     expect(document.querySelector("[data-top-chrome-space-measure]")).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Find or create collection" })).not.toBeInTheDocument();
     const collectionSwitcher = screen.getByRole("button", { name: "Switch collection: Everything" });
-    // Collapsed, space and collection are one path: no inset between them,
-    // none before the content that follows.
-    expect(collectionSwitcher).toHaveClass("pl-0", "pr-0");
+    // Collapsed, the segment's line still parts space and collection: the
+    // collection keeps its inset from it, none before the content that
+    // follows (11.10.2026).
+    expect(collectionSwitcher).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-0");
     expect(collectionSwitcher).not.toHaveClass("px-3");
   });
 
