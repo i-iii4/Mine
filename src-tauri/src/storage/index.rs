@@ -50,10 +50,6 @@ pub use crate::storage::channel_index::{
     upsert_channel_from_block_in_vault,
     upsert_channel_from_block_with_ref, upsert_channel_with_source,
 };
-pub use crate::storage::vault_conflicts::{
-    clear_vault_conflict, list_vault_conflicts, record_vault_conflict, vault_conflict_exists,
-    VaultConflict,
-};
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -5905,20 +5901,6 @@ mod tests {
 
         let after = list_blocks_light(&conn).unwrap();
         assert_eq!(after[0].feed_playback, None);
-    }
-
-    // ── vault_conflicts ─────────────────────────────────────────────────
-
-    #[test]
-    fn vault_conflict_exists_tracks_exact_pair() {
-        let conn = test_conn();
-        record_vault_conflict(&conn, "note", "note-conflicted").unwrap();
-
-        assert!(vault_conflict_exists(&conn, "note", "note-conflicted").unwrap());
-        assert!(!vault_conflict_exists(&conn, "note", "other-conflicted").unwrap());
-
-        clear_vault_conflict(&conn, "note", "note-conflicted").unwrap();
-        assert!(!vault_conflict_exists(&conn, "note", "note-conflicted").unwrap());
     }
 
     // ── resolve_unique_slug ─────────────────────────────────────────────

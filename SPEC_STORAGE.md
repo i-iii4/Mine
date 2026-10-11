@@ -26,11 +26,11 @@ open_memory() -> Result<Connection>                  // для тестов
 
 ### Поколения и восстановление индекса
 
-Общий выбор производной базы реализован в [db.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/storage/db.rs). Приложение, CLI, нативный обработчик и FFI выбирают индекс через `resolve_vault_index` или `open_vault_index`, а не копируют прежнюю базу. Номер схемы принадлежит [migrations.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/storage/migrations.rs). Чистый контракт `INDEX_GENERATION` находится в [vault.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/domain/vault.rs): `schema-6-semantics-1` (с 07.10.2026: схема 6, столбцы связей карточек, SPEC_CARD_ASSOCIATIONS.md). Его совместимость определяется схемой и смыслом проекции, а не версией приложения. База другой версии схемы в выбранном поколении не мигрирует, а откладывается, и строится новая; поэтому каждое изменение схемы меняет и этот ключ: сборки разных схем не делят одно поколение и не откладывают базы друг друга.
+Общий выбор производной базы реализован в [db.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/storage/db.rs). Приложение, CLI, нативный обработчик и FFI выбирают индекс через `resolve_vault_index` или `open_vault_index`, а не копируют прежнюю базу. Номер схемы принадлежит [migrations.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/storage/migrations.rs). Чистый контракт `INDEX_GENERATION` находится в [vault.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/domain/vault.rs): `schema-7-semantics-1` (с 11.10.2026: схема 7, таблица `vault_conflicts` по полному пути, SPEC_ICLOUD_CONFLICTS.md; до неё `schema-6-semantics-1`, столбцы связей карточек, SPEC_CARD_ASSOCIATIONS.md). Его совместимость определяется схемой и смыслом проекции, а не версией приложения. База другой версии схемы в выбранном поколении не мигрирует, а откладывается, и строится новая; поэтому каждое изменение схемы меняет и этот ключ: сборки разных схем не делят одно поколение и не откладывают базы друг друга.
 
 ```text
-<derived_root>/indexes/schema-6-semantics-1/index.db
-<derived_root>/indexes/schema-6-semantics-1/recovery-<slot>/index.db
+<derived_root>/indexes/schema-7-semantics-1/index.db
+<derived_root>/indexes/schema-7-semantics-1/recovery-<slot>/index.db
 ```
 
 `active-slot` хранит номер выбранной базы. Межпроцессная `selection.lock` защищает выбор. База неподдерживаемой версии, несовместимой структуры или с обнаруженным повреждением остаётся на месте вместе с WAL и SHM. Общая старая база в корне производного хранилища и база внутри `.arena` не открываются ради миграции или копирования. Повреждённый указатель сохраняется отдельно, затем выбирается новый свободный номер. При выборе проверяются метаданные схемы, без полного `quick_check`. Проверка существующих отвергнутых баз ограничена 16 попытками.

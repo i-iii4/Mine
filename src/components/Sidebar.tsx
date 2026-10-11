@@ -242,8 +242,6 @@ interface SidebarProps {
   keyboardNavigationFocus?: SidebarKeyboardNavigationFocus | null;
   keyboardNavigationFocusPersistent?: boolean;
   searchQuery?: string;
-  /** Optional slot for a header banner (e.g. iCloud conflict surface). */
-  headerSlot?: React.ReactNode;
   /** ⌘-click on a row opens its route in a new tab, ⇧⌘-click in a new window
    *  (SPEC_TABS.md, В82). Absent on a page that is not a tab. */
   onOpenElsewhere?: (to: string, newWindow: boolean) => void;
@@ -318,7 +316,6 @@ const SidebarCore = memo(function SidebarCore({
   keyboardNavigationFocus,
   keyboardNavigationFocusPersistent = false,
   searchQuery = "",
-  headerSlot,
   linkedBlockSlug,
   linkedTags = [],
   onToggleLinkedTag,
@@ -879,7 +876,6 @@ const SidebarCore = memo(function SidebarCore({
         onBlurCapture={handleSidebarBlurCapture}
       >
         <HoverIntentDragWatch intent={rowIntent} />
-        {!isLinkingBlock && headerSlot}
 
         <div className="relative" data-sidebar-rows>
           {!compact && (

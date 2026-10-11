@@ -13,6 +13,12 @@ fn main() {
     #[cfg(all(feature = "desktop", target_os = "macos"))]
     build_swift_helper("icloud_progress_helper.swift", "icloud-progress-helper");
 
+    // The unresolved iCloud conflict versions of a space's notes exist only
+    // as NSFileVersion records, which only Foundation reads and settles. See
+    // SPEC_ICLOUD_CONFLICTS.md, ВК5.
+    #[cfg(all(feature = "desktop", target_os = "macos"))]
+    build_swift_helper("icloud_conflicts_helper.swift", "icloud-conflicts-helper");
+
     // Download Media joins YouTube's separate video and audio streams without
     // ffmpeg, through AVFoundation. See SPEC_MEDIA_ASSET_ACTIONS.md.
     #[cfg(all(feature = "desktop", target_os = "macos"))]

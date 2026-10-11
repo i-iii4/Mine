@@ -41,6 +41,7 @@
     "resources": {
       "binaries/yt-dlp-onedir/": "binaries/yt-dlp-onedir/",
       "binaries/icloud-progress-helper": "binaries/icloud-progress-helper",
+      "binaries/icloud-conflicts-helper": "binaries/icloud-conflicts-helper",
       "binaries/video-mux-helper": "binaries/video-mux-helper",
       "../build/clipper-extension/": "clipper-extension/",
       "../build/clipper-runtime-manifest.json": "clipper-runtime-manifest.json"

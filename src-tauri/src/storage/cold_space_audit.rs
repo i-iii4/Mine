@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Instant, UNIX_EPOCH};
 
 use crate::domain::collection::collection_ref_from_slug;
-use crate::domain::vault::{detect_icloud_conflict, VaultLayout};
+use crate::domain::vault::VaultLayout;
 use crate::storage::derived_preview::PreviewReconcileReport;
 use crate::storage::reconcile::ReconcileReport;
 use crate::storage::{db, derived_preview, files, index, projection, reconcile};
@@ -447,14 +447,6 @@ fn capture_snapshot(
             .unwrap_or(path)
             .to_string_lossy()
             .into_owned();
-        let file_stem = path.file_stem().and_then(|value| value.to_str());
-        if let Some(conflict) = file_stem.and_then(detect_icloud_conflict) {
-            unsupported_sources.push(UnsupportedSource {
-                path: relative,
-                reason: format!("icloud_conflict:{conflict}"),
-            });
-            continue;
-        }
         let slug = match vault.slug_for_path(path) {
             Ok(slug) => slug,
             Err(error) => {

@@ -188,7 +188,7 @@ extractTextSelection(params: ExtractTextSelectionParams): Promise<IndexedBlock>
 prepareDeleteBlock(slug: string): Promise<DeleteBlockPlan>
 deleteBlock(slug: string, deleteUnusedMedia?: boolean): Promise<DeleteBlockOutcome>
 prepareDeleteBlocks(slugs: string[]): Promise<DeleteBlocksPlan>
-deleteBlocks(slugs: string[], deleteUnusedMedia: boolean): Promise<boolean>
+deleteBlocks(slugs: string[], deleteUnusedMedia: boolean): Promise<DeleteBlocksOutcome>
 mergeBlocks(orderedSlugs: string[]): Promise<MergeBlocksResult>
 renameBlockFile(oldSlug: string, newStem: string): Promise<RenameBlockResult>
 listTags(): Promise<TagCount[]>
@@ -198,7 +198,32 @@ listChannels(): Promise<ChannelDto[]>
 createChannel(tag: string): Promise<ChannelDto>
 deleteChannel(tag: string): Promise<boolean>
 getVaultStats(currentCollection?: string | null): Promise<VaultStats>
+listVaultConflictPaths(): Promise<string[]>
+listVaultConflicts(): Promise<VaultConflict[]>           // throws VaultConflictError
+resolveVaultConflict(path: string, choice: ConflictChoice, expectedTokens: string[]): Promise<void> // throws VaultConflictError
 ```
+
+## Конфликты iCloud
+
+Реализовано 11.10.2026 ([SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md),
+ВК10 по ВК12; команды в SPEC_INTEGRATION.md, «Конфликты iCloud»). Плашки в
+шапке бокового меню больше нет: `VaultConflictsBanner` удалён.
+
+- `VaultConflictsNotice` (`src/components/VaultConflictsNotice.tsx`, окно
+  `VaultConflictsDialog` в том же файле) стоит в стопке уведомлений App только
+  у ведущей вкладки готового пространства (`lead && vaultReady`), с ключом по
+  пути пространства.
+- Число конфликтов уведомление читает `listVaultConflictPaths()` (пути из
+  индекса, без запуска помощника) при открытии и по событию своей страницы
+  `vault-conflicts-changed { count }` (`listenPage`).
+- Крестик прячет уведомление, пока среди путей не появится новый; память
+  закрытия живёт только в странице. `Review` открывает окно, которое при
+  открытии читает версии `listVaultConflicts()`.
+- Решение идёт через `resolveVaultConflict(path, choice, expectedTokens)` с
+  версиями, которые показало окно; ошибки приходят типом
+  `VaultConflictError` (обёртка в `src/lib/commands.ts` приводит к нему любой
+  отказ). Тексты и вид окна в DESIGN_SYSTEM.md, «Окна», и в
+  SPEC_ICLOUD_CONFLICTS.md, ВК11.
 
 ## Страница вкладки
 
@@ -232,6 +257,35 @@ getVaultStats(currentCollection?: string | null): Promise<VaultStats>
   against the whole selected set, so media shared only among selected cards can
   be offered as `unused_media` once. Commit uses one `deleteBlocks(slugs,
   deleteUnusedMedia)` backend command instead of looping over `deleteBlock`.
+- Групповое удаление (реализовано 11.10.2026, SPEC_GROUP_SELECTION.md, «Batch
+  Delete»). Каждое `Delete` выделения (кнопка ряда команд, меню ⌘K, меню
+  правого щелчка, Backspace) вызывает одну функцию Grid
+  `requestDeleteSelection()`. Один выделенный элемент идёт в
+  `onRequestDelete(slug)`, то есть в `Delete element?` этого элемента; два и
+  более открывают окно группового удаления. Окно одно, у Grid:
+  `DeleteSelectionWindow` в `DeleteSelectedCardsDialog.tsx`, новое на каждый
+  запрос (ключ по номеру запроса). `GroupSelectionCommands` и
+  `GroupSelectionCardMenu` своих окон не держат и только вызывают
+  `requestDeleteSelection()`.
+- Общие части обоих окон удаления живут в одном модуле
+  `src/components/DeleteWindowParts.tsx`: описание `deleteWindowDescription`
+  (DESIGN_SYSTEM.md, «Тексты окон»), описание ошибки плана
+  `deletePlanErrorDescription`, сетка превью `DeleteMediaPreviewGrid`, выбор
+  оставленных предложенных файлов `keptOfferedMedia` и уведомление
+  `DeleteKeptMediaNotice` (`Media kept`).
+- Окно группового удаления, в отличие от `Delete element?`, остаётся открытым,
+  пока идёт пакет: нажатая кнопка показывает `Deleting…`, остальные
+  недоступны, сбой показывается в окне над кнопками, выделение сохраняется.
+  `Delete` передаёт `deleteUnusedMedia = true`, только когда окно предлагает
+  медиа; окно удаляет карточки своего плана (`plan.slugs`). Успех закрывает
+  окно, очищает выделение, закрывает открытую карточку, если она была в
+  выделении, и показывает `Media kept` по `keptOfferedMedia`.
+- Сбой удаления, чьё окно уже закрыто (DESIGN_SYSTEM.md, «Сбой после
+  закрытия окна»): `performDeleteBlock` показывает уведомление этой вкладки
+  `Could not delete the element`, `handleDeleteTagFromAll` уведомление
+  `Could not delete the collection` с тем, что успело измениться. Заголовки и
+  строка «что изменилось» (`deleteCollectionFailureSummary`) живут в
+  `src/lib/deleteFailure.ts`; вывод только в консоль запрещён.
 
 ## File drop overlay
 
@@ -695,6 +749,17 @@ preview strip, и только после этого начинает ужима
 
 **Event-driven previews.** Превью карточек в sidebar обновляются через Tauri events (`block:added`, `block:removed`, `thumb:updated`, `vault-changed`), а не через polling. Initial state и event refresh идут через `listChannelPreviews(20)`; `useChannelPreviewsEvents` коалесцирует события и фильтрует `has_thumb=false` как defense-in-depth. Cache-bust: initial load использует `?m=<mtime>` из SQLite `thumb_mtime`, real-time updates используют `?v=<counter>` (per-slug version counter, инкрементируется на `thumb:updated`). Два механизма дополняют друг друга: `?m=` покрывает межсессионные изменения (Phase 2 worker перезаписал PNG→JPEG), `?v=` покрывает live-обновления внутри сессии.
 
+**Нет файла превью** (11.10.2026, SPEC_THUMBNAILS.md, «Нет файла
+миниатюры»). Карточка сохранена только что или превью ещё собирается: ошибка
+загрузки прячет картинку, ячейка остаётся с заливкой загрузки, значка битой
+картинки нет. После `thumb:updated` своей карточки файл грузится снова с
+меткой `retry=<n>` (`withRetry` в `src/lib/assets.ts`). Случай принадлежит
+общему хуку `usePreviewFileRetry` (`src/hooks/usePreviewFileRetry.ts`), им
+пользуются `MicroPreviewThumbnail` (боковое меню, строки поиска, связанные
+заметки, окно слияния) и подложка превью открытой карточки
+(`data-detail-preview-backing` в `Detail.tsx`); своих обработчиков ошибки у
+вызывающих нет.
+
 **Sidebar hover preview.** С 06.10.2026 превью мини-карточки бокового меню
 показывает ту же карточку, что лента, в итоговом виде наведения и без
 активных элементов (SPEC_CARD_STATES.md, С10), с галереей из
@@ -976,10 +1041,22 @@ text+media paragraphs remain block `<div>` wrappers to avoid invalid
 - Overflow `…` dropdown and right-click context menu shells use the feed card
   surface (`bg-card text-card-foreground`), not `bg-popover`, so floating lists
   and hover preview cards sit on the same fill.
-- Overflow `…` menu, its `Connect` submenu and the bottom-row standalone
-  `Connect` dropdown take the one menu width rule (07.10.2026; DESIGN_SYSTEM.md,
-  «Всплывающие элементы», «Ширина»): as wide as the longest row, from `128px`
-  to `300px`, the opening width held while the picker is filtered.
+- Ширина меню задаётся ролью, а не строками (решение пользователя
+  11.10.2026; DESIGN_SYSTEM.md, «Всплывающие элементы», «Ширина»; правило
+  07.10.2026 «по самой длинной строке, от `128px` до `300px`» снято). Меню
+  `…` и правый клик карточки имеют роль `action` (`240px`); подменю
+  `Connect` в них и отдельная кнопка `Connect` нижнего ряда открывают список
+  под полем поиска с ролью `search` (`300px`). Роль передаётся свойством
+  `widthRole` обёртки, ширину держит только `global.css`; не помещающаяся
+  строка режется многоточием, при фильтрации ширина не меняется.
+- Каждое выпадающее меню открывается в `4px` от видимой плашки своей кнопки и
+  вровень с её краем (решение пользователя 11.10.2026; DESIGN_SYSTEM.md,
+  «Всплывающие элементы», «Отступ от кнопки» и «Выравнивание»). Оба сдвига
+  Radix считает обёртка `DropdownMenuContent` при каждом открытии из рамок
+  кнопки и её плашки (`menuPlateOffsets`, `menuPlateOf` и `MENU_PLATE_GAP_PX`
+  в `src/lib/floatingLayer.ts`). Свойств `sideOffset` и `alignOffset` у
+  обёртки нет: место вызова называет только сторону (`side`) и край
+  (`align`, `start` или `end`). Контекстные меню и подменю правило не трогает.
 - Overflow/right-click menu icon policy is conservative: only `Connect` and
   `Source` render icons. `Reveal in Finder`, `Copy Path`, `Rename…`,
   `Disconnect…` and `Delete` reserve the same leading icon slot but render it
@@ -1048,10 +1125,11 @@ Image media expansion:
 для связи карточки с каналами. Он не использует checkbox UI. Строка канала сама
 по себе не toggles membership; toggle делает только правая action button.
 
-- Host dropdown/submenu content takes the one menu width rule (07.10.2026):
-  the longest row (collection label beside the fixed action slot) within
-  `128px` to `300px`, the opening width held while the search filters the
-  rows. The scrollable list height is owned by
+- Host dropdown/submenu content takes the `search` width role (`300px`,
+  11.10.2026; DESIGN_SYSTEM.md, «Ширина»): the width does not depend on the
+  rows and does not change while the search filters them; a collection label
+  that does not fit beside the fixed action slot is cut with an ellipsis.
+  The scrollable list height is owned by
   `QuantizedMenuScrollArea`, not by raw `max-h-*` classes: visible height is
   `list padding + N × rowHeight` after subtracting the fixed search header and
   footer/create action from `--floating-menu-available-height`. This is the
@@ -1270,8 +1348,8 @@ Image media expansion:
 - Space dropdown renders a `Search spaces` input, only destination spaces and a
   pinned `Add space` action. The current space is omitted entirely, with no
   checkmark/selected/disabled duplicate row. `Add space` is plain and iconless.
-  The dropdown takes the one menu width rule (07.10.2026): the longest row
-  within `128px` to `300px`, held while the search filters. The dropdown is
+  The dropdown takes the `search` width role (`300px`, 11.10.2026;
+  DESIGN_SYSTEM.md, «Ширина»), the same while the search filters. The dropdown is
   anchored to the visible inner selector pill, not to the invisible root
   layout slot: Radix `align="start"`, and the `DropdownMenuContent` wrapper
   measures both offsets from the pill on every opening (DESIGN_SYSTEM.md,
@@ -1341,7 +1419,7 @@ Image media expansion:
   `Search collections` and `Search spaces` use the same input-owned keyboard
   model as Sidebar search: `ArrowUp`/`ArrowDown` change
   `aria-activedescendant`, while the input remains focused.
-  The dropdown takes the same one menu width rule as Space dropdown. It is
+  The dropdown takes the same `search` width role as Space dropdown. It is
   anchored to the visible inner collection pill, not to the invisible root
   layout slot: the `DropdownMenuContent` wrapper measures the offsets from the
   pill on every opening, as for the space switcher and every dropdown menu.
@@ -1787,26 +1865,36 @@ Image media expansion:
   as the source of truth and ignores stale DOM focus on another card. Pointer
   mode can still toggle a committed pointer-hovered or DOM-focused feed card.
   `Enter` must not fall through to Card activation. The macOS `Delete` key
-  (`⌫`, DOM `Backspace`) opens the shared batch delete confirmation for the
-  selected set. `Cmd+K` opens a contextual
+  (`⌫`, DOM `Backspace`) goes through `requestDeleteSelection()`, as every
+  `Delete` of the selection: один выделенный элемент открывает `Delete
+  element?`, два и более общее окно группового удаления (раздел «Delete
+  confirmation»). `Cmd+K` opens a contextual
   batch menu anchored to the focused card's top-right overflow action; the menu
   contains a muted selected-count header plus `Connect`, collection-scoped
   `Disconnect` outside Everything, `Merge` when at least two cards are
   selected, and `Delete`. Its icon policy matches the card menu: icon only for
   `Connect`, empty leading slots for `Disconnect`, `Merge` and `Delete`. The
-  menu shell and its `Connect` submenu take the one menu width rule
-  (07.10.2026).
-- When at least one card is selected, Grid renders a bottom floating action
-  island centered inside the main/right content pane at `bottom-s3` (`16px`
-  above the `h-8` app bottom bar), fixed
-  `h-8`, opaque theme-surface `bg-accent text-foreground`, no internal
-  separators, horizontal overflow when needed, gray Russian count text using
-  Detail-top-bar typography
-  (`font-mono text-sm text-muted-foreground`, regular weight) and direct
-  standard Button actions: `Connect`, text-only collection-scoped
-  `Disconnect`, text-only `Merge` for two or more selected cards, text-only
-  destructive `Delete`; the icon-only `X` clear button is the rightmost
-  control.
+  menu shell takes the `action` width role (`240px`) and its `Connect`
+  submenu the `search` role (`300px`) (11.10.2026; DESIGN_SYSTEM.md,
+  «Ширина»).
+- Команды выделения стоят в ряду вторичного хрома, а не в плавающем
+  островке внизу ленты (островок снят 23.08.2026, место уточнено 26.08.2026;
+  SPEC_GROUP_SELECTION.md, «Selection Commands Row»). Пока выделение есть,
+  `GroupSelectionCommands` занимает только половину ряда над лентой
+  (`MainSecondaryTopBar`, слой `data-secondary-selection-bar`) вместо счётчика
+  элементов и переключателя вида; статистика над боковым меню остаётся.
+  Выделением и всеми обработчиками владеет Grid: он переносит команды в слот
+  ряда через `createPortal`, без слота (в модульных тестах) команды стоят на
+  месте; слот смонтирован всегда, а на время перетаскивания карточек команд
+  нет. Слева счётчик `{n} element(s) selected` (`selectedElementCountLabel`,
+  `font-mono text-sm text-muted-foreground`), при сужении ряда он обрезается
+  первым; справа в одной `ChromeActions` (`data-feed-selection-actions`)
+  кнопки `Connect` (`default`, меню `search` с краем `end`), `Disconnect`
+  только внутри коллекции (`default`, `text-detach`), `Merge` при двух и более
+  (`default`), `Delete` (`destructive`) и последним крестик `Clear selection`
+  (`ChromeCloseButton`). Ряд прокручивается по горизонтали, только когда не
+  помещаются сами команды. Ошибка действия стоит строкой под рядом; ошибку
+  удаления показывает окно удаления.
 - `Merge` opens the reorder-first dialog from
   [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md). The dialog reuses the shared
   card-reference row (`CardReferenceRow`), lets the user reorder
@@ -1815,9 +1903,10 @@ Image media expansion:
   create-plus-N-deletes.
 - Batch Delete opens a plan-first destructive dialog equivalent to single-card
   deletion. It calls `prepareDeleteBlocks(selectedSlugs)`, shows eligible
-  unused media when present, offers `Keep media` and `Delete media`, and commits
+  unused media when present, offers `Keep media` and `Delete`, and commits
   through one backend `deleteBlocks` command. Media still referenced by
-  non-selected cards/notes is never offered for deletion.
+  non-selected cards/notes is never offered for deletion. Точки входа, одно
+  окно у Grid и ход пакета в окне: раздел «Delete confirmation».
 - Selection clears on plain empty-Grid click, route/channel change, plain card
   opening and any App-level Detail open from Sidebar/related surfaces.
 - After single-card or batch card deletion, Grid preserves the approximate

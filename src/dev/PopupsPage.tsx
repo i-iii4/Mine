@@ -23,17 +23,17 @@ import { MergeCardsDialog } from "@/components/MergeCardsDialog";
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
 import { DeleteCollectionDialog } from "@/components/Sidebar";
 import { CreateCollectionNameDialog } from "@/components/TopCollectionSwitcher";
-import { VaultConflictsDialog } from "@/components/VaultConflictsBanner";
+import { KEEP_ALL, VaultConflictsDialog } from "@/components/VaultConflictsNotice";
 import { RemoveSpaceDialog } from "@/components/VaultSwitcher";
 import { DeleteSourceVideoDialog } from "@/components/YoutubeSourcePlayer";
 import { DeleteOrphansDialog } from "@/settings/OrphansSection";
-import type { VaultConflictItem } from "@/lib/commands";
 import type {
   DeleteBlockPlan,
   DeleteBlocksPlan,
   DeleteMediaAssetPlan,
   LightBlock,
   MediaAssetRef,
+  VaultConflict,
 } from "@/types";
 
 const VAULT_PATH = "/Users/me/References";
@@ -132,12 +132,44 @@ const MEDIA_PLAN: DeleteMediaAssetPlan = {
   ],
 };
 
-const CONFLICTS: VaultConflictItem[] = [
-  { baseSlug: "Local-first software", conflictSlug: "Local-first software 2", detectedAt: "2026-10-11T09:00:00.000Z" },
-  { baseSlug: "CRDTs explained", conflictSlug: "CRDTs explained 2", detectedAt: "2026-10-10T18:30:00.000Z" },
+// Three conflicts with fixed versions: one at rest, one being resolved, one
+// refused. The version in the folder never names its device (live check of
+// 11.10.2026, SPEC_ICLOUD_CONFLICTS.md).
+const CONFLICT_BEING_KEPT = "Notes/A very long note name that does not fit on one line of the window.md";
+const CONFLICT_REFUSED = "Journal/20.02.2026.md";
+
+const CONFLICTS: VaultConflict[] = [
+  {
+    path: "Cards/Local-first software.md",
+    name: "Local-first software",
+    detected_at: "2026-10-11T09:00:00Z",
+    current: { token: null, modified: "2026-10-10T15:00:00Z", device: null },
+    versions: [{ token: "popup-a", modified: "2026-10-10T12:54:13Z", device: "Anna’s MacBook Pro" }],
+  },
+  {
+    path: CONFLICT_BEING_KEPT,
+    name: "A very long note name that does not fit on one line of the window",
+    detected_at: "2026-10-10T18:30:00Z",
+    current: { token: null, modified: "2026-01-26T11:43:53Z", device: null },
+    versions: [
+      { token: "popup-b", modified: "2025-12-31T14:01:00Z", device: "MacBook Pro" },
+      { token: "popup-c", modified: "2025-12-30T08:20:00Z", device: null },
+    ],
+  },
+  {
+    path: CONFLICT_REFUSED,
+    name: "20.02.2026",
+    detected_at: "2026-10-09T08:00:00Z",
+    current: { token: null, modified: "2026-02-20T15:00:00Z", device: null },
+    versions: [{ token: "popup-d", modified: "2026-02-20T09:54:18Z", device: "iPhone" }],
+  },
 ];
 
-const conflictKey = (item: VaultConflictItem) => `${item.baseSlug}::${item.conflictSlug}`;
+const CONFLICTS_BUSY = { [CONFLICT_BEING_KEPT]: KEEP_ALL };
+
+const CONFLICTS_ERRORS = {
+  [CONFLICT_REFUSED]: "“20.02.2026” changed outside Mine; nothing was changed. Try again.",
+};
 
 // Delete media file asks which elements use the file, and each row for its
 // element, as it opens.
@@ -212,11 +244,11 @@ function OnePopup({ id }: { id: PopupId }) {
           <VaultConflictsDialog
             open
             conflicts={CONFLICTS}
-            resolvingKey={null}
-            error={null}
-            keyFor={conflictKey}
+            busy={CONFLICTS_BUSY}
+            errors={CONFLICTS_ERRORS}
             onOpenChange={noop}
-            onResolve={noop}
+            onKeep={noop}
+            onKeepAll={noop}
           />
         )}
         {id === "delete-element" && (

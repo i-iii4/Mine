@@ -808,15 +808,10 @@ describe("Sidebar", () => {
     expect(onTextSelectionDrop).not.toHaveBeenCalled();
   });
 
-  it("keeps the main sidebar inset on the scroll container without a fixed empty header slot", () => {
-    function EmptySlot() {
-      return null;
-    }
-
-    const { container } = renderSidebar({
-      ...defaultProps,
-      headerSlot: <EmptySlot />,
-    });
+  it("keeps the main sidebar inset on the scroll container with nothing above it", () => {
+    // The iCloud conflicts are a notice now, never a header of the menu
+    // (SPEC_ICLOUD_CONFLICTS.md, ВК10).
+    const { container } = renderSidebar(defaultProps);
 
     const nav = container.querySelector("[data-sidebar-scroll]");
     expect(nav).toHaveClass("pt-[var(--sidebar-nav-pad-top)]");

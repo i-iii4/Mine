@@ -212,6 +212,7 @@ pub fn run() {
             commands::thumbnails::save_thumb,
             commands::thumbnails::save_tile_poster,
             commands::thumbnails::list_pending_thumb_upgrades,
+            commands::conflicts::list_vault_conflict_paths,
             commands::conflicts::list_vault_conflicts,
             commands::conflicts::resolve_vault_conflict,
             commands::settings::open_settings_window,

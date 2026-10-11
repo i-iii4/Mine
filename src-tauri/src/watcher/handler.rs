@@ -473,37 +473,10 @@ pub fn index_md_file(
     path: &Path,
     app: Option<&AppHandle>,
 ) -> Result<bool> {
+    // A file of any name is a note: an iCloud conflict is found by the
+    // system's versions of the file, never by its name
+    // (SPEC_ICLOUD_CONFLICTS.md, ВК1).
     let path = canonicalize_channel_file(vault, path)?;
-
-    // Divert iCloud sync-conflict files into the vault_conflicts surface
-    // instead of indexing them as independent blocks. Phase 18.G.3: the
-    // UI surfaces unresolved conflicts; the user picks a resolution
-    // explicitly instead of silently ending up with two duplicate blocks.
-    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-        if let Some(base_slug) = crate::domain::vault::detect_icloud_conflict(&stem) {
-            if let Err(e) = index::record_vault_conflict(conn, &base_slug, &stem) {
-                log::warn!("failed to record vault conflict for {}: {}", stem, e);
-            } else {
-                log::info!(
-                    "iCloud conflict detected: {} (base slug: {})",
-                    stem,
-                    base_slug
-                );
-                if let Some(app) = app {
-                    let _ = crate::commands::space_events::emit_to_vault(
-                        app,
-                        vault,
-                        "vault-conflict-detected",
-                        VaultConflictPayload {
-                            base_slug,
-                            conflict_slug: stem.to_string(),
-                        },
-                    );
-                }
-            }
-            return Ok(false);
-        }
-    }
 
     let outcome = index_md_file_inner(conn, vault, &path)?;
 
@@ -1146,12 +1119,6 @@ fn commit_deferred_removal(
 struct BlockRenamedPayload {
     old_slug: String,
     new_slug: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct VaultConflictPayload {
-    base_slug: String,
-    conflict_slug: String,
 }
 
 /// Commit a rename-match: update DB slug, migrate derived artifacts, and
@@ -2163,90 +2130,42 @@ mod tests {
         assert!(index::get_block(&conn, "fresh").unwrap().is_some());
     }
 
+    /// ВК1: a name never makes a conflict. `Note 2.md`, the name iCloud
+    /// gives a second new file, and `(conflicted copy)`, the name other
+    /// services give, are notes like any other, from an event and from both
+    /// scans, and leave no conflict rows.
     #[test]
-    fn icloud_conflict_file_not_indexed_as_block() {
-        // A Finder/iCloud-style conflict file must not become a second
-        // block — it lands in vault_conflicts and waits for user
-        // resolution.
-        let dir = tempfile::tempdir().unwrap();
-        let vault = VaultLayout::new(dir.path().to_path_buf());
-        let conn = test_conn();
-
-        // Original block
-        write_md_file_with_body(&vault, "Hello World", "link", &[], "body A");
-        let original_path = vault.block_path("Hello World");
-        index_md_file(&conn, &vault, &original_path, None).unwrap();
-        assert!(index::get_block(&conn, "Hello World").unwrap().is_some());
-
-        // Simulate iCloud creating a conflict copy alongside
-        write_md_file_with_body(
-            &vault,
-            "Hello World (conflicted copy)",
-            "link",
-            &[],
-            "body B",
-        );
-        let conflict_path = vault.block_path("Hello World (conflicted copy)");
-
-        handle_event(
-            &conn,
-            &vault,
-            &VaultEvent::BlockChanged(conflict_path),
-            None,
-        )
-        .unwrap();
-
-        // Conflict file must NOT be indexed as a separate block
-        assert!(index::get_block(&conn, "Hello World (conflicted copy)")
+    fn conflict_like_names_are_ordinary_notes() {
+        let names = ["Note 2", "Note (conflicted copy)", "Doc (MacBook Pro conflicted copy)"];
+        let event_dir = tempfile::tempdir().unwrap();
+        let event_vault = VaultLayout::new(event_dir.path().to_path_buf());
+        let event_conn = test_conn();
+        for name in names {
+            write_md_file_with_body(&event_vault, name, "link", &[], "body");
+            let path = event_vault.block_path(name);
+            handle_event(&event_conn, &event_vault, &VaultEvent::BlockChanged(path), None).unwrap();
+            assert!(index::get_block(&event_conn, name).unwrap().is_some(), "{name}");
+        }
+        assert!(crate::storage::vault_conflicts::list_conflict_paths(&event_conn)
             .unwrap()
-            .is_none());
-        // Original remains untouched
-        assert!(index::get_block(&conn, "Hello World").unwrap().is_some());
+            .is_empty());
 
-        // And the conflict is recorded for the UI to surface
-        let conflicts = index::list_vault_conflicts(&conn).unwrap();
-        assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].base_slug, "Hello World");
-        assert_eq!(conflicts[0].conflict_slug, "Hello World (conflicted copy)");
-    }
-
-    #[test]
-    fn full_scan_diverts_icloud_conflict_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = VaultLayout::new(dir.path().to_path_buf());
-        let conn = test_conn();
-
-        write_md_file_with_body(&vault, "Doc", "link", &[], "body");
-        write_md_file_with_body(&vault, "Doc (conflicted copy)", "link", &[], "body");
-
-        full_scan(&conn, &vault, None, None).unwrap();
-
-        assert!(index::get_block(&conn, "Doc").unwrap().is_some());
-        assert!(index::get_block(&conn, "Doc (conflicted copy)")
-            .unwrap()
-            .is_none());
-        assert_eq!(index::list_vault_conflicts(&conn).unwrap().len(), 1);
-    }
-
-    #[test]
-    fn incremental_scan_diverts_icloud_conflict_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = VaultLayout::new(dir.path().to_path_buf());
-        let conn = test_conn();
-
-        write_md_file_with_body(&vault, "Doc", "link", &[], "body");
-        write_md_file_with_body(&vault, "Doc (conflicted copy)", "link", &[], "body");
-
-        incremental_scan(&conn, &vault, None, None).unwrap();
-
-        assert!(index::get_block(&conn, "Doc").unwrap().is_some());
-        assert!(index::get_block(&conn, "Doc (conflicted copy)")
-            .unwrap()
-            .is_none());
-        let conflicts = index::list_vault_conflicts(&conn).unwrap();
-        assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].base_slug, "Doc");
-        assert_eq!(conflicts[0].conflict_slug, "Doc (conflicted copy)");
+        for scan in [full_scan, incremental_scan] {
+            let dir = tempfile::tempdir().unwrap();
+            let vault = VaultLayout::new(dir.path().to_path_buf());
+            let conn = test_conn();
+            write_md_file_with_body(&vault, "Note", "link", &[], "body");
+            for name in names {
+                write_md_file_with_body(&vault, name, "link", &[], "body");
+            }
+            scan(&conn, &vault, None, None).unwrap();
+            for name in ["Note"].into_iter().chain(names) {
+                assert!(index::get_block(&conn, name).unwrap().is_some(), "{name}");
+            }
+            assert!(crate::storage::vault_conflicts::list_conflict_paths(&conn)
+                .unwrap()
+                .is_empty());
+        }
     }
 
     /// A vault laid out in folders keeps the picture in `Media/` and its card

@@ -358,7 +358,7 @@ import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
 import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
 import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
-import { VaultConflictsBanner } from "@/components/VaultConflictsBanner";
+import { VaultConflictsNotice } from "@/components/VaultConflictsNotice";
 import { Grid } from "@/components/Grid";
 import { GraphView } from "@/components/GraphView";
 import { DragCardStackPreview } from "@/components/Card";
@@ -4466,7 +4466,12 @@ export function AppWithVault({
   // a tab's errors are its own and show wherever they happened.
   const showIndexingNotice = lead && indexingNoticeVisible && indexingStep !== null;
   const showFirstCardMarker = lead && firstCardSlug !== null;
-  const showNotifications = feedErrorNotices.length > 0
+  // The space's iCloud conflicts are told by its lead tab, whatever the state
+  // of the side menu (SPEC_ICLOUD_CONFLICTS.md, ВК10); the notice decides
+  // itself whether it shows.
+  const showConflictsNotice = lead && vaultReady;
+  const showNotifications = showConflictsNotice
+    || feedErrorNotices.length > 0
     || selectionCardError !== null
     || deleteKeptMedia !== null
     || deleteBlockError !== null
@@ -4726,9 +4731,6 @@ export function AppWithVault({
         }
         keyboardNavigationFocusPersistent={sidebarSearchKeyboardNavigationFocus !== null}
         searchQuery={sidebarSearchQuery}
-        headerSlot={
-          <VaultConflictsBanner vaultReady={vaultReady} />
-        }
         linkedBlockSlug={renderedLinkedBlockSlug}
         linkedTags={renderedLinkedTags}
         onToggleLinkedTag={handleToggleTag}
@@ -4941,6 +4943,10 @@ export function AppWithVault({
                   {deleteCollectionFailure.error}
                 </p>
               </NotificationCard>
+            )}
+            {showConflictsNotice && (
+              // A new space starts with a notice that was never closed.
+              <VaultConflictsNotice key={vaultPath} vaultReady={vaultReady} />
             )}
             {showIndexingNotice && indexingStep !== null && (
               // The opening counts out loud in the corner (О13): one card,

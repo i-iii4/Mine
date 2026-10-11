@@ -2607,6 +2607,56 @@
       "requirement": "DESIGN_SYSTEM.md#### Сбой после закрытия окна",
       "tests": ["src/lib/deleteFailure.test.ts", "src/App.test.tsx"],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "mine-core/src/domain/vault.rs",
+        "src-tauri/native/icloud_conflicts_helper.swift",
+        "src-tauri/build.rs",
+        "src-tauri/tauri.conf.json",
+        "src-tauri/src/tool_process.rs",
+        "src-tauri/src/storage/icloud_conflicts.rs",
+        "src-tauri/src/storage/icloud_conflicts/tests.rs",
+        "src-tauri/src/storage/vault_conflicts.rs",
+        "src-tauri/src/storage/migrations.rs",
+        "src-tauri/src/storage/reconcile.rs",
+        "src-tauri/src/storage/cold_space_audit.rs",
+        "src-tauri/src/watcher/handler.rs",
+        "src-tauri/src/watcher/watch.rs",
+        "src-tauri/src/commands/conflicts.rs",
+        "src-tauri/src/commands/freshness.rs",
+        "src-tauri/src/commands/icloud_progress.rs",
+        "src-tauri/src/commands/vault.rs"
+      ],
+      "requirement": "SPEC_ICLOUD_CONFLICTS.md#**ВК8. Решение.**",
+      "tests": [
+        "src-tauri/src/storage/icloud_conflicts/tests.rs",
+        "src-tauri/src/storage/vault_conflicts.rs",
+        "src-tauri/src/storage/migrations.rs",
+        "src-tauri/src/commands/conflicts.rs",
+        "src-tauri/src/watcher/handler.rs",
+        "src-tauri/src/tool_process.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/components/VaultConflictsNotice.tsx",
+        "src/components/VaultConflictsNotice.test.tsx",
+        "src/components/Sidebar.tsx",
+        "src/components/Sidebar.test.tsx",
+        "src/lib/commands.ts",
+        "src/dev/PopupsPage.tsx",
+        "src/App.tsx",
+        "src/App.test.tsx"
+      ],
+      "requirement": "SPEC_ICLOUD_CONFLICTS.md#**ВК10. Уведомление вместо плашки.**",
+      "tests": [
+        "src/components/VaultConflictsNotice.test.tsx",
+        "src/components/Sidebar.test.tsx",
+        "src/App.test.tsx"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

@@ -2271,9 +2271,9 @@ physics и не является отдельным интерактивным �
 | `Rename media` | Dialog | `content` | нет | `Detail.tsx`, `RenameMediaAssetDialog` |
 | `New collection` | Dialog | `content` | нет | `CreateCollectionDialog.tsx`; из пути `TopCollectionSwitcher.tsx`, `CreateCollectionNameDialog`, тот же текст |
 | `Merge N elements` | Dialog | `content` | нет | `MergeCardsDialog.tsx` |
-| `Resolve iCloud sync conflicts` | Dialog | `content` | есть, `Cancel` нет, внизу `Close` (решение 11.10.2026: `Close` убрать, кнопок внизу нет; окно по SPEC_ICLOUD_CONFLICTS.md, ВК11) | `VaultConflictsBanner.tsx`, `VaultConflictsDialog`; в каждом конфликте главная `Keep original` (`default`), `Keep conflict version` и `I'll merge manually` `secondary`; по решению 11.10.2026 строка на каждую версию с кнопкой `Keep`, у текущей `default`, и `Keep all` |
+| `Resolve iCloud sync conflicts` | Dialog | `content` | есть, `Cancel` нет, кнопок внизу нет (SPEC_ICLOUD_CONFLICTS.md, ВК11) | `VaultConflictsNotice.tsx`, `VaultConflictsDialog`; группа на конфликт: строка на каждую версию (`In the folder · {дата}`, `Hidden version · {устройство} · {дата}`) с кнопкой `Keep`, у версии в папке `default`, у скрытых `secondary`; под строками `Keep all` (`secondary`); открывает его `Review` в уведомлении ведущей вкладки |
 | `Delete element?` | AlertDialog | без медиа к удалению `question`, с ними `content` | нет | `DeleteBlockDialog.tsx`; при медиа превью файлов и кнопки `Cancel`, `Keep media` (`secondary`), `Delete` |
-| `Delete selected elements?` | AlertDialog | `question`; по решению 11.10.2026 как у `Delete element?`: без медиа к удалению `question`, с ними `content` | нет | `DeleteSelectedCardsDialog.tsx`, копия в `GroupSelectionCommands.tsx`; по решению 11.10.2026 один экземпляр у Grid, копия удаляется, превью и `Keep media` как у `Delete element?` (SPEC_GROUP_SELECTION.md, «Batch Delete») |
+| `Delete selected elements?` | AlertDialog | как у `Delete element?`: без медиа к удалению `question`, с ними `content` | нет | `DeleteSelectedCardsDialog.tsx`, один экземпляр у Grid (`DeleteSelectionWindow`) для всех точек входа; общие с `Delete element?` части в `DeleteWindowParts.tsx`; при медиа превью файлов и кнопки `Cancel`, `Keep media` (`secondary`), `Delete`; пока идёт пакет, окно открыто и нажатая кнопка показывает `Deleting…` (SPEC_GROUP_SELECTION.md, «Batch Delete») |
 | `Delete collection?` | AlertDialog | `question` | нет | `Sidebar.tsx`, `DeleteCollectionDialog` |
 | `Remove … from the list?` | AlertDialog | `question` | нет | `VaultSwitcher.tsx`, `RemoveSpaceDialog` |
 | `Delete embed from element?` | AlertDialog | `question` | нет | `YoutubeSourcePlayer.tsx`, `DeleteSourceVideoDialog` |
@@ -2289,8 +2289,8 @@ physics и не является отдельным интерактивным �
 #### Что вернуть нельзя
 
 Решение пользователя 11.10.2026 после проверки всех окон по коду: одно правило
-для всех разрушительных окон (главная кнопка `destructive`). Реализация в
-Phase 45 ([PLAN.md](PLAN.md), этап 45.9). Проверка показала: только
+для всех разрушительных окон (главная кнопка `destructive`). Реализовано
+11.10.2026 в Phase 45 ([PLAN.md](PLAN.md), этап 45.9). Проверка показала: только
 `Delete collection?` писало «This cannot be undone», и верно это было лишь про
 связи: страница уходит в Корзину, а связи с карточками вычищаются безвозвратно.
 Так же безвозвратно `Delete media file?` вычищает ссылки на файл из всех
@@ -2314,8 +2314,9 @@ Phase 45 ([PLAN.md](PLAN.md), этап 45.9). Проверка показала:
 Решение пользователя 11.10.2026: тексты по фактическому поведению, без
 пересказа очевидного. Описание окна это английский текст интерфейса; `{U}` и
 `{S}` это `1 media file is` или `N media files are`, `{N elements}` это
-`selectedElementCountLabel(n)`. Строки `Delete element?` вводятся после правок
-окна удаления элемента, которые идут параллельно (PLAN.md, этап 45.9).
+`selectedElementCountLabel(n)`. Реализовано 11.10.2026 (PLAN.md, этап 45.9):
+описания `Delete element?` и `Delete selected elements?` собирает одна функция
+`deleteWindowDescription` в `src/components/DeleteWindowParts.tsx`.
 
 | Окно | Описание | Что было не так |
 |---|---|---|
@@ -2351,10 +2352,11 @@ Phase 45 ([PLAN.md](PLAN.md), этап 45.9). Проверка показала:
 
 Решение пользователя 11.10.2026. `Delete element?` закрывается по нажатию до
 ответа команды: открытая карточка закрывается, строка поиска исчезает сразу.
-Показать ошибку в окне поэтому нельзя. Сейчас сбой уходит только в консоль
-(`App.tsx`, `performDeleteBlock`), и пользователь не узнаёт, что элемент не
-удалён: строка поиска тихо возвращается при перечитывании снимков. Реализация
-в Phase 45 ([PLAN.md](PLAN.md), этап 45.10).
+Показать ошибку в окне поэтому нельзя. До 11.10.2026 сбой уходил только в
+консоль (`App.tsx`, `performDeleteBlock`), и пользователь не узнавал, что
+элемент не удалён: строка поиска тихо возвращалась при перечитывании снимков.
+Реализовано 11.10.2026 в Phase 45 ([PLAN.md](PLAN.md), этап 45.10); заголовки
+обоих уведомлений живут в `src/lib/deleteFailure.ts`.
 
 Правило: сбой действия, чьё окно уже закрыто, показывает уведомление той
 вкладки, где действие начато (не только ведущей), так же, как
@@ -2368,9 +2370,9 @@ Phase 45 ([PLAN.md](PLAN.md), этап 45.9). Проверка показала:
 - ленту и поиск выправляет перечитывание снимков, которое и так идёт после
   удаления. Вывод только в консоль запрещён.
 
-То же правило у `Delete collection?` (решение пользователя 11.10.2026): сбой
-удаления коллекции сейчас уходит только в консоль (`App.tsx`,
-`handleDeleteTagFromAll`), а удаление идёт двумя вызовами (связи из карточек,
+То же правило у `Delete collection?` (решение пользователя 11.10.2026): до
+11.10.2026 сбой удаления коллекции уходил только в консоль (`App.tsx`,
+`handleDeleteTagFromAll`). Удаление идёт двумя вызовами (связи из карточек,
 затем страница), и при сбое второго связи уже сняты, а пустая коллекция
 остаётся в меню. Уведомление с заголовком `Could not delete the collection`
 называет, что успело измениться.
@@ -2395,7 +2397,8 @@ Phase 45 ([PLAN.md](PLAN.md), этап 45.9). Проверка показала:
 
 С решением пользователя 11.10.2026 (раздел «Окна», «Тексты окон») описание
 есть всегда: первая фраза говорит, что элемент уходит в Корзину, а фразы о
-медиа не повторяют кнопки. Написанное ниже действует до этапа 45.9 Phase 45.
+медиа не повторяют кнопки. Написанное ниже действовало до этапа 45.9 Phase 45
+(реализован 11.10.2026) и осталось как история решения.
 
 Описание в `Delete element?` объясняет судьбу медиафайлов: какие удалятся вместе
 с карточкой, какие останутся, потому что их используют другие карточки.
@@ -3617,9 +3620,9 @@ CSS.
 text получает `translate-x-px`, а правый count text получает `-translate-x-px`;
 это не меняет layout box и не влияет на preview-strip ширину.
 Top inset 32px должен жить на scroll-container (`data-sidebar-scroll`), а не в
-отдельной фиксированной header-плашке: если header slot (например iCloud
-conflict banner) ничего не рендерит, он не должен оставлять пустой блок над
-списком.
+отдельной фиксированной header-плашке над списком. Слота шапки (`headerSlot`)
+у `Sidebar` с 11.10.2026 нет: плашка конфликтов iCloud, которая в нём стояла,
+стала уведомлением ведущей вкладки (SPEC_ICLOUD_CONFLICTS.md, ВК10).
 
 Превью-карточки: `size-8 object-cover`, `gap-1` (4px). У миниатюр своя ячейка
 строки (решение пользователя 07.10.2026): от левой направляющей до правой, с

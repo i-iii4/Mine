@@ -129,6 +129,7 @@ route-facing snapshots.
 | `block:renamed` | `{ old_slug: string, new_slug: string }` | watcher external rename path и `rename_block_file` |
 | `thumb:updated` | `{ slug: string }` | `save_thumb` command и фоновая генерация |
 | `thumb:upgrade-requested` | `{ slug: string, media_path: string, kind: "image" \| "video" }` | `index_md_file` когда Rust cascade дал text placeholder для block с embedded media |
+| `vault-conflicts-changed` | `{ count: number }` (`VaultConflictsChanged`) | вкладкам пространства: проход проверки конфликтов iCloud, изменивший множество путей; `list_vault_conflicts`, убравший путь; каждый `resolve_vault_conflict` (раздел «Конфликты iCloud») |
 
 ## commands/freshness coordinator
 
@@ -313,11 +314,10 @@ enum CommandError {
 #[tauri::command] remove_media_asset_from_card(state, params: RemoveMediaAssetFromCardParams) -> Result<MediaAssetMutationResult, MediaAssetActionError>
 #[tauri::command] extract_text_selection(state, params: ExtractTextSelectionParams) -> Result<IndexedBlock, TextSelectionExtractError>
 #[tauri::command] delete_text_selection(state, params: DeleteTextSelectionParams) -> Result<IndexedBlock, TextSelectionExtractError>
-#[tauri::command] extract_text_selection(state, ...) -> Result<IndexedBlock, TextSelectionExtractError>
 #[tauri::command] prepare_delete_block(state, slug: String) -> Result<DeleteBlockPlan, CommandError>
 #[tauri::command] delete_block(state, slug: String, delete_unused_media: Option<bool>) -> Result<DeleteBlockOutcome, CommandError>
 #[tauri::command] prepare_delete_blocks(state, slugs: Vec<String>) -> Result<DeleteBlocksPlan, CommandError>
-#[tauri::command] delete_blocks(state, slugs: Vec<String>, delete_unused_media: bool) -> Result<bool, CommandError>
+#[tauri::command] delete_blocks(state, slugs: Vec<String>, delete_unused_media: bool) -> Result<DeleteBlocksOutcome, CommandError>
 #[tauri::command] merge_blocks(state, ordered_slugs: Vec<String>) -> Result<MergeBlocksResult, MergeBlocksError>
 #[tauri::command] rename_block_file(state, old_slug: String, new_stem: String) -> Result<RenameBlockResult, RenameBlockError>
 ```
@@ -337,17 +337,48 @@ enum CommandError {
 8. Проиндексировать
 9. Вернуть `IndexedBlock`
 
-### Поведение vault conflict resolution
+### Конфликты iCloud (commands/conflicts)
 
-`resolve_vault_conflict(base_slug, conflict_slug, action)` принимает только
-валидные slugs и выполняет файловые операции только если exact pair всё ещё
-существует в `vault_conflicts`. Команда не является произвольным
-rename/delete API: stale или несуществующая conflict-запись должна вернуть
-ошибку без изменения файлов.
+Реализовано 11.10.2026 (PLAN.md, этапы от 45.3 до 45.6); полный контракт в
+[SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md). Конфликт это заметка с
+неразрешёнными версиями `NSFileVersion`, а не имя файла: угадывания по имени
+нет, файл с любым именем индексируется как обычная заметка (ВК1).
 
-Incremental scan обязан обрабатывать iCloud-style conflict filenames так же,
-как full scan: conflict file записывается в `vault_conflicts` и не индексируется
-как обычный блок.
+```rust
+#[tauri::command] list_vault_conflict_paths(state) -> Result<Vec<String>, CommandError>
+#[tauri::command] list_vault_conflicts(state) -> Result<Vec<VaultConflict>, VaultConflictError>
+#[tauri::command] resolve_vault_conflict(state, path: String, choice: ConflictChoice, expected_tokens: Vec<String>) -> Result<(), VaultConflictError>
+```
+
+1. `list_vault_conflict_paths` отдаёт пути пространства вкладки из таблицы
+   `vault_conflicts`, новые первыми, без запуска помощника: по ним считает
+   уведомление (ВК7, ВК10).
+2. `list_vault_conflicts` одним запуском `scan` помощника
+   `icloud-conflicts-helper` читает версии этих путей заново. Путь, у
+   которого версий больше нет (конфликт решили на другом устройстве), уходит
+   из таблицы, и вкладки получают новое число (ВК7).
+3. `resolve_vault_conflict` принимает путь от корня с папками
+   (`Cards/Note.md`), выбор `ConflictChoice` (`keep_version` с `token`, где
+   `null` значит версия в папке, или `keep_all`) и версии, которые показало
+   окно. Другой набор версий отказывает `versions_changed`, изменённый на
+   диске файл `source_changed`; в обоих случаях ничего не меняется. Запись
+   идёт одной `StagedSourceMutation` с подавлением наблюдателя, отвергнутые
+   версии при `keep_version` уходят в Корзину из папки заметки; если Корзина
+   отказала, они остаются отдельными заметками и команда возвращает
+   `trash_failed { paths }` (ВК8, ВК9, ВК12). После решения пространство
+   ставит проверку этого пути, а другие вкладки узнают об изменении
+   (SPEC_TABS.md, В15).
+4. Проверка идёт в фоне и только для пространства в iCloud (ВК3, ВК4): после
+   каждого прохода сверки и после пачки событий наблюдателя по `.md`, одна на
+   пространство, запрос во время неё ставит один повтор. Число путей
+   пространство сообщает своим вкладкам событием
+   `vault-conflicts-changed { count }` (`VaultConflictsChanged`): после
+   прохода, изменившего множество путей, после `list_vault_conflicts`,
+   убравшего путь, и после каждого `resolve_vault_conflict`; прежних
+   событий `vault-conflict-detected` и `vault-conflict-resolved` нет.
+5. Отказы типизированы `VaultConflictError`: `no_vault`, `invalid_path`,
+   `not_pending`, `versions_changed`, `source_changed`, `helper_failed`,
+   `trash_failed`, `internal`.
 
 ### Поведение extract_text_selection
 
@@ -449,28 +480,65 @@ targets:
 
 ### Поведение batch delete
 
-1. `prepare_delete_blocks(slugs)` строит один aggregate `DeleteBlocksPlan` для
-   всего выбранного множества.
-2. План резолвит media refs тем же backend resolver, что single delete:
-   `frontmatter.file`, `thumbnail`, Obsidian wikilinks, legacy Markdown image
-   URLs, nested/relative/basename lookup.
-3. `unused_media` считается после мысленного удаления всех `slugs`: media,
-   referenced only by selected cards, попадает в план один раз даже если его
-   используют несколько выбранных карточек.
-4. `shared_media` — media, у которого остаётся хотя бы одна parseable reference
-   из невыбранной карточки/заметки; batch command никогда не удаляет такие
-   файлы.
-5. `delete_blocks(..., delete_unused_media=false)` удаляет `.md` выбранных
-   карточек и derived artifacts, но оставляет все media files.
-6. `delete_blocks(..., delete_unused_media=true)` удаляет `.md` выбранных
-   карточек и только eligible `unused_media` из свежего batch plan; shared media
-   остаётся на диске.
-7. Commit command должен пересобрать или валидировать план внутри backend перед
-   file mutation, чтобы stale frontend plan не удалил media, которая стала
-   shared после открытия dialog.
-8. Frontend не должен выполнять batch delete как N вызовов `delete_block`.
-   Один backend command нужен для единого плана, дедупликации media, одного
-   refresh path и понятного failure surface.
+Решение пользователя 11.10.2026, реализовано 11.10.2026 (PLAN.md, этап 45.7):
+групповое удаление ведёт себя как удаление одного элемента. Окно и точки
+входа описаны в [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md), «Batch
+Delete».
+
+1. Обе команды сводят `slugs` в множество без повторов и проверяют каждое имя
+   (`validated_slug_set`); план идёт по алфавиту.
+2. `prepare_delete_blocks(slugs)` строит один `DeleteBlocksPlan` только из
+   индекса, как `prepare_delete_block`: строки выбранных карточек
+   (`indexed_blocks`) и для каждой невыбранной заметки её `media_file`,
+   `thumbnail` и тело (`block_queries::list_note_file_mentions` с множеством
+   исключаемых имён). Заметки с диска не читаются. Выбранной карточки нет в
+   индексе: она не попадает в `slugs` плана, отказа нет.
+3. Медиа каждой выбранной карточки собирает тот же сборщик, что у одного
+   элемента (`collect_delete_media_for_block`), и они объединяются по пути;
+   ссылки разрешает один `MediaResolver` на весь план, с теми же формами
+   ссылок, что у одного элемента.
+4. `unused_media`: файлы, которыми после удаления всего выделения не
+   пользуется ни одна заметка; каждый файл один раз, даже если им пользуются
+   несколько выбранных карточек; `referenced_by` называет выбранные карточки.
+   `shared_media`: файлы, которыми пользуется хотя бы одна невыбранная
+   заметка; `referenced_by` называет её; к удалению они не предлагаются
+   никогда.
+5. `delete_blocks(..., delete_unused_media=true)` строит план заново
+   (`build_delete_blocks_plan`): план из индекса, затем каждый файл, который
+   индекс считает неиспользуемым, сверяется с заметками на диске
+   (`media_users_on_disk`, все выбранные `.md` пропускаются). Файл, которым
+   пользуется заметка на диске, переходит в shared media и остаётся.
+6. `delete_blocks(..., delete_unused_media=false)` медиа не трогает: план не
+   строится, ни одна заметка пространства не читается. Этим же путём
+   (`delete_blocks_inner` с одним именем) идёт удаление одного элемента с
+   `Keep media`.
+7. `.md` выбранных карточек и подходящие медиа уходят в Корзину одной
+   `StagedSourceMutation` с подавлением наблюдателя; строки индекса удаляются
+   в той же фиксации (`commit_with_index`). Сбой откатывает пакет целиком: ни
+   один файл не тронут. После фиксации убираются миниатюры и звук статей
+   удалённых карточек.
+8. Команда работает вне потока интерфейса (`spawn_blocking`) и отказывает, если
+   пространство вкладки сменилось до удаления. После успеха другие вкладки
+   пространства узнают об изменении (SPEC_TABS.md, В15).
+9. `delete_blocks` возвращает `DeleteBlocksOutcome { removed, kept_media }`:
+   `removed` это число удалённых строк индекса, `kept_media` это shared media
+   свежего плана, то есть медиа выделения, которыми пользуется заметка вне
+   него по индексу или по диску. Список заполняется только при
+   `delete_unused_media=true`; окно само выбирает из него предложенные им
+   файлы (`keptOfferedMedia`) для уведомления `Media kept`.
+10. Фронтенд не выполняет групповое удаление как N вызовов `delete_block`: одна
+    команда даёт единый план, медиа без повторов, одно перечитывание и один
+    понятный сбой.
+
+Проверки в `commands/blocks.rs`:
+`group_plan_offers_media_used_only_inside_the_selection_once`,
+`group_delete_with_media_takes_unused_files_and_keeps_shared_ones`,
+`group_delete_keeping_media_leaves_every_file`,
+`group_delete_keeps_a_file_the_stale_index_called_unused`,
+`group_plan_skips_a_card_the_index_no_longer_holds`,
+`group_delete_with_media_failure_restores_cards_and_media`; окно в
+`DeleteSelectedCardsDialog.test.tsx`, точки входа в `Grid.test.tsx`,
+уведомление в `App.test.tsx`.
 
 ### Поведение rename_block_file
 
@@ -557,12 +625,12 @@ query fingerprint устарел, сбрасывается на offset zero.
 
 ## Пакетное удаление карточек
 
-`delete_blocks(slugs: Vec<String>) -> Result<usize, CommandError>` удаляет
-выделение одной транзакцией исходников и индекса, возвращая число удалённых
-записей. Повторяющиеся пути обрабатываются один раз; при ошибке пакет
-откатывается целиком. Медиа остаются, поэтому обход ссылок всего пространства
-не выполняется. Команда работает вне потока интерфейса. Одиночное удаление
-с сохранением медиа использует тот же путь.
+Контракт в разделе «Поведение batch delete» выше. До 11.10.2026 здесь была
+временная версия: `delete_blocks(slugs: Vec<String>) -> Result<usize,
+CommandError>` удаляла только `.md` выбранных карточек одной транзакцией
+исходников и индекса и никогда не трогала медиа. Её быстрый путь остался
+режимом `delete_unused_media=false`: медиа остаются, ссылки пространства не
+разбираются, одиночное удаление с `Keep media` идёт тем же путём.
 
 ## commands/channels
 

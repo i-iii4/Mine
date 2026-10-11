@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
-pub const CURRENT_SCHEMA_VERSION: i64 = 6;
+pub const CURRENT_SCHEMA_VERSION: i64 = 7;
 pub const GRAPH_LINK_INDEX_VERSION: i64 = 2;
 
 const BLOCK_COLUMNS: &[(&str, &str)] = &[
@@ -110,12 +110,7 @@ const SEARCH_EMBEDDING_COLUMNS: &[(&str, &str)] = &[
     ("text_hash", "TEXT"),
     ("updated_at", "TEXT"),
 ];
-const VAULT_CONFLICT_COLUMNS: &[(&str, &str)] = &[
-    ("id", "INTEGER"),
-    ("base_slug", "TEXT"),
-    ("conflict_slug", "TEXT"),
-    ("detected_at", "TEXT"),
-];
+const VAULT_CONFLICT_COLUMNS: &[(&str, &str)] = &[("path", "TEXT"), ("detected_at", "TEXT")];
 
 const REQUIRED_TABLE_COLUMNS: &[(&str, &[(&str, &str)])] = &[
     ("blocks", BLOCK_COLUMNS),
@@ -142,7 +137,6 @@ const REQUIRED_INDEXES: &[&str] = &[
     "idx_search_chunks_block",
     "idx_search_chunks_slug",
     "idx_search_embeddings_model",
-    "idx_vault_conflicts_base_slug",
     "idx_blocks_note_name",
     "idx_blocks_extraction_source_name",
     "idx_blocks_association_author",
@@ -205,6 +199,7 @@ pub fn migrate_and_validate(conn: &Connection) -> Result<()> {
                     )
                     .context("failed to create index build state")?,
                 6 => migrate_v5_to_v6(conn)?,
+                7 => migrate_v6_to_v7(conn)?,
                 _ => bail!("missing SQLite migration implementation for version {target}"),
             }
             conn.pragma_update(None, "user_version", target)
@@ -656,6 +651,22 @@ fn migrate_v5_to_v6(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Conflicts are the notes the system holds conflict versions of, by their
+/// full path from the space root (SPEC_ICLOUD_CONFLICTS.md, ВК6). The rows of
+/// the former guess by file name are derived data and are dropped; the next
+/// check finds the real conflicts again.
+fn migrate_v6_to_v7(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS vault_conflicts;
+         CREATE TABLE vault_conflicts (
+             path TEXT PRIMARY KEY,
+             detected_at TEXT NOT NULL
+         );",
+    )
+    .context("failed to replace vault_conflicts")?;
+    Ok(())
+}
+
 fn add_column_if_missing(conn: &Connection, name: &str, declaration: &str) -> Result<bool> {
     if block_columns(conn)?.contains_key(name) {
         return Ok(false);
@@ -929,6 +940,54 @@ mod tests {
             )
             .unwrap();
         assert_eq!((author, version), (None, None));
+    }
+
+    /// ВК6, ВК13: version 7 replaces the guessed pairs with conflict paths;
+    /// the former rows go, the new table is empty.
+    #[test]
+    fn version_seven_replaces_guessed_conflict_pairs_with_an_empty_path_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE")
+            .unwrap();
+        migrate_v0_to_v1(&conn).unwrap();
+        migrate_v1_to_v2(&conn).unwrap();
+        migrate_v2_to_v3(&conn).unwrap();
+        migrate_v3_to_v4(&conn).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE index_build_state (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                ready INTEGER NOT NULL DEFAULT 0 CHECK (ready IN (0, 1))
+            );
+            INSERT INTO index_build_state (singleton, ready) VALUES (1, 1);",
+        )
+        .unwrap();
+        migrate_v5_to_v6(&conn).unwrap();
+        conn.pragma_update(None, "user_version", 6).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+        conn.execute(
+            "INSERT INTO vault_conflicts (base_slug, conflict_slug) VALUES ('Note', 'Note (conflicted copy)')",
+            [],
+        )
+        .unwrap();
+
+        migrate_and_validate(&conn).unwrap();
+
+        assert_eq!(user_version(&conn).unwrap(), CURRENT_SCHEMA_VERSION);
+        let columns: Vec<String> = table_columns(&conn, "vault_conflicts")
+            .unwrap()
+            .into_keys()
+            .collect();
+        assert_eq!(columns, vec!["detected_at".to_string(), "path".to_string()]);
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vault_conflicts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 0);
+        assert!(validate_schema_object(&conn, "index", "idx_vault_conflicts_base_slug").is_err());
+        conn.execute(
+            "INSERT INTO vault_conflicts (path, detected_at) VALUES ('Cards/Note.md', '2026-10-11T09:00:00Z')",
+            [],
+        )
+        .unwrap();
     }
 
     #[test]

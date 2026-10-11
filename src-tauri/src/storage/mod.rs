@@ -13,6 +13,7 @@ pub mod derived_preview;
 pub mod files;
 pub mod file_identity;
 pub mod graph;
+pub mod icloud_conflicts;
 pub mod icloud_downloads;
 pub mod index;
 pub mod media_dimensions;

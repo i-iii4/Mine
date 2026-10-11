@@ -130,7 +130,7 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 
 | Группа | События | Получатели |
 |---|---|---|
-| Данные пространства | `block:*`, `thumb:updated`, `vault-changed`, `vault-sync-*`, `vault-freshness-changed`, `derived-preview-queued`, `derived-preview-progress`, `derived-preview-finished`, `derived-preview-changed`, `space-unavailable`, `watcher-*`, `vault-conflict-*`, `article-audio-updated`, `import-progress`, `source-video-download`, `vault-write-layout-changed` | живые вкладки пространства; `vault-changed` от команды без вызвавшей (В15) |
+| Данные пространства | `block:*`, `thumb:updated`, `vault-changed`, `vault-sync-*`, `vault-freshness-changed`, `derived-preview-queued`, `derived-preview-progress`, `derived-preview-finished`, `derived-preview-changed`, `space-unavailable`, `watcher-*`, `vault-conflicts-changed` (до 11.10.2026 `vault-conflict-*`, SPEC_ICLOUD_CONFLICTS.md, ВК6), `article-audio-updated`, `import-progress`, `source-video-download`, `vault-write-layout-changed` | живые вкладки пространства; `vault-changed` от команды без вызвавшей (В15) |
 | Работа пространства в странице | `thumb:upgrade-requested`, `derived-preview-pending` | ведущая вкладка пространства |
 | Роль вкладки | `space-lead-changed` (новое) | вкладки, у которых сменилась роль |
 | Выбор пространства | `vault-selected` | вкладка, где выбрали, и окно настроек |

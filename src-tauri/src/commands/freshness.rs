@@ -425,6 +425,15 @@ fn publish_freshness_outcome(
                     },
                 );
             }
+            // Every reconciliation pass is followed by a conflict check of the
+            // whole space (SPEC_ICLOUD_CONFLICTS.md, ВК4).
+            if outcome.ran_reconcile {
+                super::conflicts::schedule_conflict_check(
+                    app,
+                    &preview_vault,
+                    crate::storage::icloud_conflicts::CheckScope::Full,
+                );
+            }
             if !report.is_fresh() {
                 log::warn!(
                     "vault freshness degraded for {}: {} source error(s); serving last-good snapshot",

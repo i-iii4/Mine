@@ -47,6 +47,8 @@ pub struct AppState {
     thumbnail_sweeps: ThumbnailSweepCoordinator,
     pub freshness: FreshnessCoordinator,
     pub(crate) preview_reconcile: PreviewReconcileCoordinator,
+    /// The iCloud conflict checks of the open spaces (SPEC_ICLOUD_CONFLICTS.md, ВК4).
+    pub(crate) conflict_checks: super::conflicts::ConflictChecks,
 }
 
 impl AppState {
@@ -60,6 +62,7 @@ impl AppState {
             thumbnail_sweeps: ThumbnailSweepCoordinator::default(),
             freshness: FreshnessCoordinator::default(),
             preview_reconcile: PreviewReconcileCoordinator::default(),
+            conflict_checks: super::conflicts::ConflictChecks::default(),
         }
     }
 

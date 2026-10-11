@@ -33,7 +33,7 @@
 - `SPEC_CARD_MEDIA_GEOMETRY.md` — геометрия медиа-карточки: размеры артефакта пишет генератор превью, размеры источника остаются у autoplay/Resolution, кламп пропорции как единственная точка обрезки; видеокарточка с 30.09.2026 тоже берёт форму постера
 - `SPEC_FEED_VIDEO.md` — desktop feed video contract: четыре surfaces, `feed_playback` descriptor, autoplay gating standard/heavy
 - `SPEC_GRAPH_VIEW.md` — спецификация Graph View: Canvas force-directed graph на базе решения Longevity Landscape, graph snapshot read model, коллекции/wikilinks/related notes, физика, UX и проверки; панель графа на кнопке Display включает и выключает дополнительные связи, коллекции видны всегда (11.10.2026)
-- `SPEC_GROUP_SELECTION.md` — групповое выделение в Grid: marquee/keyboard selection, batch card actions, selection-scoped меню; полное групповое удаление (одно окно, медиа как у удаления одного элемента) решено 11.10.2026, реализация в Phase 45
+- `SPEC_GROUP_SELECTION.md` — групповое выделение в Grid: marquee/keyboard selection, batch card actions, selection-scoped меню; полное групповое удаление (одно окно, медиа как у удаления одного элемента) решено и реализовано 11.10.2026 (Phase 45, этапы 45.7 и 45.8), живая приёмка за пользователем
 - [SPEC_AUDIT_FIXES.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_AUDIT_FIXES.md>): исправления по повторному аудиту 29.09.2026: контракты сохранения исходного текста, записи со сверкой, привязки операций клиппера, каталог находок А2 по А10 и то, что не делаем; этапы 1 по 12 реализованы 30.09.2026 и 01.10.2026 (этап 9: третий аудит по 836a00c, этапы 10, 11, 12: приёмки по 1f2766e, 792e3de, 8cfb1f34), живая приёмка за пользователем
 - [SPEC_CARD_UNIFIED.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_UNIFIED.md>): одна карточка: вид задаёт только содержимое, два способа отображения (с содержимым и без), положения ленты `Cards` и `Media`, своих форматов у ссылки, файла и соцпоста нет; реализовано 06.10.2026
 - `SPEC_CARD_STATES.md`: единые состояния карточки (наведение, фокус, выделение) и связи карточки с коллекциями в боковом меню; реализовано 28.09.2026
@@ -61,7 +61,7 @@
 - [SPEC_TABS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_TABS.md>): вкладки пространств: своя полоса и отдельная страница на вкладку, несколько открытых пространств в одном процессе, сессия между запусками, перестановка и отрыв в новое окно; реализовано 03.10.2026 (этапы Э0 по Э4), живая приёмка за пользователем
 - [SPEC_CLIPPER_DRAFTS_REMOVAL.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CLIPPER_DRAFTS_REMOVAL.md>): удаление черновиков клиппера: клип живёт только в открытом клиппере, журнал операции Save остаётся, уборка старых данных; анализ случая 04.10.2026, контракт и план; реализовано и установлено 04.10.2026, живая проверка пройдена
 - `SPEC_CLOUD_STORAGE.md` — хранилище в iCloud: неблокирующий интерфейс, честный прогресс, индикаторы загрузки и индексации, встроенная рекомендация вместо форума
-- [SPEC_ICLOUD_CONFLICTS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_ICLOUD_CONFLICTS.md>): конфликты синхронизации iCloud по версиям файла (`NSFileVersion`), а не по имени: Swift-помощник, таблица по пути, проигравшая версия в Корзину, уведомление и окно; решено 11.10.2026, реализация в Phase 45 после живой проверки на iCloud
+- [SPEC_ICLOUD_CONFLICTS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_ICLOUD_CONFLICTS.md>): конфликты синхронизации iCloud по версиям файла (`NSFileVersion`), а не по имени: Swift-помощник, таблица по пути, проигравшая версия в Корзину, уведомление и окно; решено 11.10.2026, живая проверка и реализация 11.10.2026 (Phase 45, этапы от 45.2 до 45.6), живая приёмка за пользователем
 - `AUDIT_ACTIVATION.md` — аудит активации: юзер-джорни первой сессии до первой ценности, работы пользователя, вердикты и рекомендации (12.08.2026)
 - `AUDIT_VAULT_RESILIENCE.md` — аудит устойчивости хранилищ: полный перебор сценариев структуры/конфликтов/потерь, «сейчас/проблема/целевое» (12.08.2026)
 - `AUDIT_PERFORMANCE.md` — аудит производительности и план оптимизации
@@ -169,7 +169,8 @@ local-arena/
 │   │   │   ├── block_queries.rs # Block read models + row hydration
 │   │   │   ├── card_associations.rs # Столбцы связей, унаследованный автор, группы открытой карточки
 │   │   │   ├── channel_index.rs # Collection persistence owner
-│   │   │   ├── vault_conflicts.rs # Vault filename conflict queries
+│   │   │   ├── vault_conflicts.rs # Таблица vault_conflicts: пути заметок с конфликтом iCloud и время находки, уборка conflicts-archive
+│   │   │   ├── icloud_conflicts.rs # Конфликты iCloud (SPEC_ICLOUD_CONFLICTS.md): какие пространства, помощник, проход проверки, список окна, решение
 │   │   │   ├── projection.rs   # ProjectionRevision + atomic route snapshots
 │   │   │   ├── search_projection.rs # SearchRevision + revision-safe cursor
 │   │   │   ├── search_engine.rs # Hybrid Search: FTS5 + chunks + fastembed + fusion
@@ -211,7 +212,7 @@ local-arena/
 │   │       ├── blocks.rs       # → вызывает domain + storage
 │   │       ├── card_associations.rs # list_card_associations: связи открытой карточки
 │   │       ├── channels.rs     # list/create/delete/reorder channels
-│   │       ├── conflicts.rs    # Vault conflict resolution
+│   │       ├── conflicts.rs    # Конфликты iCloud: list_vault_conflict_paths, list_vault_conflicts, resolve_vault_conflict, проверки в фоне, событие vault-conflicts-changed
 │   │       ├── clipper_recovery.rs # Recovery pending uploads расширения
 │   │       ├── clipper_setup.rs # Установка помощника клиппера и его самопочинка во время работы
 │   │       ├── icloud_progress.rs # Процент загрузки файла из iCloud (Swift-помощник)
@@ -227,6 +228,7 @@ local-arena/
 │   │       └── import.rs       # list_arena_channels, import_arena_channels
 │   ├── native/                 # Нативные помощники, собираются build.rs
 │   │   ├── icloud_progress_helper.swift # Честные сигналы iCloud: dataless-флаг + Progress
+│   │   ├── icloud_conflicts_helper.swift # Версии конфликта iCloud (NSFileVersion): scan, read, settle через NSFileCoordinator
 │   │   ├── video_mux_helper.swift # Склейка видео и звука YouTube без перекодирования (AVFoundation)
 │   │   └── article_audio_helper.swift   # AVSpeechSynthesizer (feature article-audio)
 │   ├── build.rs                # Сборка Swift-помощников, ресурсы бандла
@@ -264,19 +266,22 @@ local-arena/
 │   │   ├── VaultPicker.tsx     # Выбор vault через нативный диалог
 │   │   ├── DropZone.tsx        # Drag-and-drop файлов для создания блоков
 │   │   ├── CardContextMenu.tsx # Контекстное меню карточки: коллекции, удаление
+│   │   ├── DeleteBlockDialog.tsx, DeleteSelectedCardsDialog.tsx # Окна Delete element? и Delete selected elements? (одно у Grid)
+│   │   ├── DeleteWindowParts.tsx # Общее у окон удаления: описание, превью медиа, уведомление Media kept
 │   │   ├── SidebarResizeHandle.tsx # Линия между меню и лентой как ручка ширины (вид рельса shadcn SidebarRail)
 │   │   ├── NotificationCard.tsx # Единый вид уведомления: правый нижний угол, bg-popover
 │   │   ├── FirstCardMarker.tsx # Одноразовая пометка первой карточки (О19)
 │   │   ├── CloudRecommendation.tsx # Рекомендация Keep Downloaded по журналу ожиданий
+│   │   ├── VaultConflictsNotice.tsx # Уведомление ведущей вкладки о конфликтах iCloud и окно Resolve iCloud sync conflicts
 │   │   ├── CloudBadge.tsx      # Метка «содержимое в iCloud» в левом верхнем углу карточки
 │   │   ├── IndexingProgress.tsx # Уведомление о ходе индексации в правом нижнем углу
 │   │   ├── SpaceUnavailable.tsx # Экран недоступной папки: missing и access_denied
 │   │   ├── ScreenState.tsx     # Общая раскладка полноэкранных состояний: колонка, заголовок, текст, кнопки
 │   │   ├── EmptySpaceOnboarding.tsx # Два пути наполнения пустого пространства
 │   │   └── EdgeStatesSection.tsx # Витрина краевых состояний (гейт test:edge-states)
-│   ├── hooks/                  # useSidebarResize, useGridScroll, useChannelPreviewsEvents, useProjectionRevisionOwner, useThumbnailUpgrade и др.
+│   ├── hooks/                  # useSidebarResize, useGridScroll, useChannelPreviewsEvents, useProjectionRevisionOwner, useThumbnailUpgrade, usePreviewFileRetry (нет файла превью: заливка вместо битой картинки, повтор по thumb:updated) и др.
 │   ├── types/                  # generated.ts from Rust/Specta + frontend-owned index.ts
-│   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()), pageEvents.ts (события своей страницы), tabPage.ts (память вкладки), tabVisibility.ts (показ и пауза медиа), chromeHeight.ts (высота хрома окна), controlCharGuard.ts и др.
+│   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()), pageEvents.ts (события своей страницы), tabPage.ts (память вкладки), tabVisibility.ts (показ и пауза медиа), chromeHeight.ts (высота хрома окна), controlCharGuard.ts, floatingLayer.ts (ширина меню, зазор от плашки кнопки), deleteFailure.ts (уведомления о сбое удаления) и др.
 │   ├── workers/                # fontMetrics.worker.ts (Canvas measureText), thumbWorker.ts
 │   ├── dev/                    # Dev-only Feed, Graph, ColdSpace and SidebarReorder acceptance routes; страницы сравнения на dev-сервере: /__buttons (кнопки shadcn), /__cloud-open (первое открытие пространства из облака), /__onboarding (онбординг по экранам), /__popups (модальные окна приложения по кнопкам)
 │   ├── test/                   # Vitest setup
@@ -409,7 +414,8 @@ local-arena/
 - Bun: >= 1.2
 - Tauri CLI: `cargo install tauri-cli`
 - Xcode Command Line Tools (`swiftc`): обязательны — сборка компилирует
-  iCloud-progress helper (`src-tauri/native/icloud_progress_helper.swift`)
+  iCloud-progress helper (`src-tauri/native/icloud_progress_helper.swift`) и
+  помощник конфликтов iCloud (`src-tauri/native/icloud_conflicts_helper.swift`)
   безусловно; без них не пройдёт даже `cargo check`
 - yt-dlp: ставить не нужно, приложение везёт распакованную сборку с собой
   (`bun run fetch:ytdlp` кладёт её в `src-tauri/binaries/yt-dlp-onedir/`,

@@ -14,7 +14,7 @@ use thiserror::Error;
 use crate::domain::block::{
     iter_inline_media_references, parse_markdown_document, Block, BlockType, DateTime,
 };
-use crate::domain::vault::{detect_icloud_conflict, VaultLayout};
+use crate::domain::vault::VaultLayout;
 use crate::storage::{article_audio, db, file_identity, files, index, media_refs};
 use mine_core::links::LinkIndex;
 
@@ -285,14 +285,6 @@ fn source_inventory_matches(conn: &Connection, vault: &VaultLayout) -> Result<bo
     let paths = files::scan_md_files(vault)?;
     let mut live = BTreeSet::new();
     for path in paths {
-        if path
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .and_then(detect_icloud_conflict)
-            .is_some()
-        {
-            continue;
-        }
         let slug = vault.slug_for_path(&path)?;
         live.insert(slug.clone());
         let Some(state) = stored.get(&slug) else {
@@ -372,22 +364,15 @@ fn reconcile_source_pass(
         ));
     }
     let mut content_reads = 0usize;
-    let mut conflicts = Vec::new();
 
     for (path_index, path) in paths.iter().enumerate() {
         on_progress(path_index + 1, total_paths);
-        let Some(file_stem) = path.file_stem().and_then(|value| value.to_str()) else {
+        if path.file_stem().and_then(|value| value.to_str()).is_none() {
             errors.push(file_error(
                 path,
                 ReconcileFileErrorKind::Metadata,
                 "Markdown filename is not valid UTF-8",
             ));
-            continue;
-        };
-        if detect_icloud_conflict(file_stem).is_some() {
-            if let Some(base_slug) = detect_icloud_conflict(file_stem) {
-                conflicts.push((base_slug, file_stem.to_string()));
-            }
             continue;
         }
         let slug = match vault.slug_for_path(path) {
@@ -496,13 +481,6 @@ fn reconcile_source_pass(
                 .with_context(|| format!("preserve moved source identity {old_slug} -> {new_slug}"))
                 .map_err(ReconcileError::Commit)?;
         }
-    }
-
-    for (base_slug, conflict_slug) in conflicts {
-        index::record_vault_conflict(&tx, &base_slug, &conflict_slug)
-            .with_context(|| format!("record vault conflict {conflict_slug}"))
-            .map_err(ReconcileError::Commit)?;
-        database_writes += 1;
     }
 
     for source in prepared {

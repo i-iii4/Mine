@@ -7,13 +7,13 @@ use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
 pub use mine_core::domain::vault::{
-    detect_icloud_conflict, normalize_filename_stem, normalize_path_slug, resolve_slug_conflict,
+    normalize_filename_stem, normalize_path_slug, resolve_slug_conflict,
     validate_slug, VaultError, VaultWriteLayout,
 };
 
 /// Compatibility of the complete derived read model, independent of app version.
 /// Change this key when schema or projection semantics cease to be compatible.
-pub const INDEX_GENERATION: &str = "schema-6-semantics-1";
+pub const INDEX_GENERATION: &str = "schema-7-semantics-1";
 
 /// A reduced size of a block's thumbnail.
 ///
@@ -564,7 +564,7 @@ mod tests {
     fn index_db_path() {
         assert_eq!(
             layout().index_db_path(),
-            PathBuf::from("/vault/.mine/indexes/schema-6-semantics-1/index.db")
+            PathBuf::from("/vault/.mine/indexes/schema-7-semantics-1/index.db")
         );
     }
 
@@ -639,7 +639,7 @@ mod tests {
         assert_eq!(layout.derived_root(), Path::new("/local-derived/vault-123"));
         assert_eq!(
             layout.index_db_path(),
-            PathBuf::from("/local-derived/vault-123/indexes/schema-6-semantics-1/index.db")
+            PathBuf::from("/local-derived/vault-123/indexes/schema-7-semantics-1/index.db")
         );
         assert_eq!(
             layout.legacy_index_db_path(),
@@ -980,84 +980,5 @@ mod tests {
         let nfc = normalize_filename_stem(nfd);
         // Expected composed: "caf" + "é" (U+00E9)
         assert_eq!(nfc, "caf\u{00E9}");
-    }
-
-    // ── iCloud conflict detection ───────────────────────────────────────
-
-    #[test]
-    fn detect_conflict_basic() {
-        assert_eq!(
-            detect_icloud_conflict("Hello World (conflicted copy)"),
-            Some("Hello World".to_string())
-        );
-    }
-
-    #[test]
-    fn detect_conflict_numbered() {
-        assert_eq!(
-            detect_icloud_conflict("Note (conflicted copy 2)"),
-            Some("Note".to_string())
-        );
-    }
-
-    #[test]
-    fn detect_conflict_with_device_name() {
-        assert_eq!(
-            detect_icloud_conflict("Doc (MacBook Pro conflicted copy)"),
-            Some("Doc".to_string())
-        );
-    }
-
-    #[test]
-    fn detect_conflict_short_form() {
-        assert_eq!(
-            detect_icloud_conflict("Note (conflict)"),
-            Some("Note".to_string())
-        );
-    }
-
-    #[test]
-    fn detect_conflict_case_insensitive_marker() {
-        assert_eq!(
-            detect_icloud_conflict("Thing (Conflicted Copy)"),
-            Some("Thing".to_string())
-        );
-    }
-
-    #[test]
-    fn detect_conflict_preserves_unicode_base() {
-        assert_eq!(
-            detect_icloud_conflict("Закат (conflicted copy)"),
-            Some("Закат".to_string())
-        );
-    }
-
-    #[test]
-    fn detect_conflict_preserves_user_parentheses_in_base() {
-        // "Note (draft)" is the real base; the trailing paren group is
-        // the conflict marker only.
-        assert_eq!(
-            detect_icloud_conflict("Note (draft) (conflicted copy)"),
-            Some("Note (draft)".to_string())
-        );
-    }
-
-    #[test]
-    fn detect_conflict_rejects_ordinary_parenthetical() {
-        // Mine's own collision suffix (Phase 18.D) is not a conflict.
-        assert_eq!(detect_icloud_conflict("Hello World (2)"), None);
-        assert_eq!(detect_icloud_conflict("Note (draft)"), None);
-    }
-
-    #[test]
-    fn detect_conflict_rejects_plain_filename() {
-        assert_eq!(detect_icloud_conflict("sunset-tokyo"), None);
-        assert_eq!(detect_icloud_conflict("Hello World"), None);
-    }
-
-    #[test]
-    fn detect_conflict_rejects_empty_base() {
-        assert_eq!(detect_icloud_conflict("(conflicted copy)"), None);
-        assert_eq!(detect_icloud_conflict(" (conflict)"), None);
     }
 }

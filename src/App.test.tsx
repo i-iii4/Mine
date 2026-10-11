@@ -112,6 +112,9 @@ const webClipboardWriteText = vi.fn<(text: string) => Promise<void>>();
 vi.mock("@/lib/commands", () => ({
   cloudRecommendationState: vi.fn(async () => ({ due: false })),
   dismissCloudRecommendation: vi.fn(async () => null),
+  listVaultConflictPaths: vi.fn(async (): Promise<string[]> => []),
+  listVaultConflicts: vi.fn(async () => []),
+  resolveVaultConflict: vi.fn(async () => undefined),
   firstCardMarkerPending: vi.fn(async () => false),
   spaceOnboardingPending: vi.fn(async () => true),
   completeFirstCardMarker: vi.fn(async () => null),
@@ -4700,6 +4703,30 @@ describe("AppWithVault", () => {
       } finally {
         vi.useRealTimers();
         vi.mocked(commands.firstCardMarkerPending).mockResolvedValue(false);
+      }
+    });
+
+    it("tells the space's iCloud conflicts in the lead tab only, with the side menu collapsed (ВК10)", async () => {
+      const commands = await import("@/lib/commands");
+      vi.mocked(commands.listVaultConflictPaths).mockResolvedValue(["Cards/Note.md"]);
+      sidebarResizeState.collapsed = true;
+      const view = (lead: boolean) => (
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} tabPage lead={lead} />
+        </MemoryRouter>
+      );
+      try {
+        const { rerender } = render(view(false));
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        expect(screen.queryByText("iCloud sync conflict")).toBeNull();
+
+        rerender(view(true));
+        expect(await screen.findByText("iCloud sync conflict")).toBeInTheDocument();
+        expect(screen.getByText("“Note” has versions from more than one device.")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Review" })).toBeInTheDocument();
+      } finally {
+        vi.mocked(commands.listVaultConflictPaths).mockResolvedValue([]);
+        sidebarResizeState.collapsed = false;
       }
     });
 

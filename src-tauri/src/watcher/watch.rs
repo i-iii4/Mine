@@ -201,6 +201,13 @@ pub fn start_watching(app: &AppHandle, vault: &VaultLayout) -> Result<VaultWatch
                     .unwrap_or_else(|error| error.into_inner())
                     .record_success();
             }
+            // The notes of this batch are checked for iCloud conflicts by
+            // one helper run (SPEC_ICLOUD_CONFLICTS.md, ВК4).
+            crate::commands::conflicts::schedule_paths_check(
+                &app_clone,
+                &vault_clone,
+                vault_events.iter().map(events::VaultEvent::path),
+            );
             if !any_changed {
                 return;
             }
@@ -433,6 +440,11 @@ fn record_watcher_error(
                 },
             );
             if fresh {
+                crate::commands::conflicts::schedule_conflict_check(
+                    &app_for_recovery,
+                    &vault_for_recovery,
+                    crate::storage::icloud_conflicts::CheckScope::Full,
+                );
                 crate::commands::space_events::emit_to_space_path(
                     &app_for_recovery,
                     &path.clone(),

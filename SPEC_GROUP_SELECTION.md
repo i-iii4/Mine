@@ -2,11 +2,12 @@
 
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
-Status: implemented, кроме полного группового удаления. Временная версия
-удаляет только `.md` выбранных карточек и никогда не трогает медиа; решение
-пользователя 11.10.2026 заменить её полной версией из раздела «Batch Delete»
-(одно окно, поведение как у удаления одного элемента), реализация в Phase 45
-([PLAN.md](PLAN.md), этапы 45.7 и 45.8).
+Status: implemented. Полное групповое удаление из раздела «Batch Delete»
+(одно окно, поведение как у удаления одного элемента) по решению пользователя
+11.10.2026 реализовано 11.10.2026 в Phase 45 ([PLAN.md](PLAN.md), этапы 45.7
+и 45.8) и заменило временную версию, которая удаляла только `.md` выбранных
+карточек и никогда не трогала медиа. Живая приёмка за пользователем (этап
+45.12).
 
 ## Goal
 
@@ -481,7 +482,8 @@ arrives ([SPEC_KEYBOARD.md](SPEC_KEYBOARD.md)).
 Решение пользователя 11.10.2026: полная версия вместо временной, одно окно,
 поведение как у удаления одного элемента (`Delete element?`,
 [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md), «Поведение delete_block»).
-Реализация в Phase 45 ([PLAN.md](PLAN.md), этапы 45.7 и 45.8). Тексты окна в
+Реализовано 11.10.2026 в Phase 45 ([PLAN.md](PLAN.md), этапы 45.7 и 45.8);
+контракт команд в SPEC_INTEGRATION.md, «Поведение batch delete». Тексты окна в
 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), «Окна», «Тексты окон».
 
 ### Что было (проверка по коду 11.10.2026)
@@ -510,9 +512,9 @@ arrives ([SPEC_KEYBOARD.md](SPEC_KEYBOARD.md)).
 - выделено два и более: открывается окно группового удаления.
 
 Окно группового удаления одно: `DeleteSelectedCardsDialog`, один экземпляр у
-Grid. Своё окно в `GroupSelectionCommands` и экземпляр в
-`GroupSelectionCardMenu` удаляются; меню и ряд только вызывают
-`requestDeleteSelection()`.
+Grid (`DeleteSelectionWindow`, новый на каждый запрос). Своё окно в
+`GroupSelectionCommands` и экземпляр в `GroupSelectionCardMenu` удалены
+11.10.2026; меню и ряд только вызывают `requestDeleteSelection()`.
 
 ### План
 
@@ -580,8 +582,8 @@ CommandError>`, одна команда вне потока интерфейса
    пользуется заметка на диске, переходит в `kept_media` и остаётся. Так же
    поступает удаление одного элемента (`build_delete_block_plan`).
 2. `delete_unused_media = false`: медиа не трогаются, разбор ссылок всего
-   пространства не выполняется (нынешний быстрый путь
-   `delete_blocks_inner`).
+   пространства не выполняется (быстрый путь `delete_blocks_inner`, прежде
+   единственный путь временной версии).
 3. Все `.md` выбранных карточек и подходящие медиа уходят в Корзину одной
    `StagedSourceMutation` с подавлением наблюдателя; строки индекса
    удаляются в той же фиксации. Сбой откатывает пакет целиком: ни один файл
@@ -595,8 +597,9 @@ CommandError>`, одна команда вне потока интерфейса
 `DeleteSelectedCardsDialog` повторяет `DeleteBlockDialog` и берёт у него части:
 сетку превью медиа (`DeleteMediaPreviewGrid`; постер видео берётся у первой
 карточки из `referenced_by`), счёт файлов и уведомление `Media kept`
-(`DeleteKeptMediaNotice`, `keptOfferedMedia`). Общие части выносятся в один
-модуль, копий разметки нет.
+(`DeleteKeptMediaNotice`, `keptOfferedMedia`). Общие части, вместе с
+описанием окна `deleteWindowDescription`, живут в одном модуле
+`src/components/DeleteWindowParts.tsx`, копий разметки нет.
 
 - Заголовок `Delete selected elements?`.
 - Окно ждёт план и открывается сразу в своей ширине: без медиа к удалению
@@ -736,7 +739,8 @@ Frontend tests must cover:
 - окно без медиа к удалению: ширина `question`, кнопки `Cancel` и `Delete`;
   с медиа: ширина `content`, превью, `Keep media`; общие медиа к удалению не
   предлагаются;
-- `Delete` передаёт `deleteUnusedMedia = true`, `Keep media` передаёт `false`;
+- `Delete` передаёт `deleteUnusedMedia = true`, когда окно предлагает медиа, и
+  `false` без них (раздел «Решения реализации»); `Keep media` передаёт `false`;
 - пока команда идёт, окно открыто и показывает `Deleting…`; сбой оставляет окно
   открытым с ошибкой в окне и выделение целым;
 - непустой `kept_media` показывает уведомление `Media kept`.

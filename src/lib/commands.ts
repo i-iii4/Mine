@@ -64,6 +64,9 @@ import type {
   NativeShellSmokeReport,
   CommandError,
   IcloudDownloadProgress,
+  ConflictChoice,
+  VaultConflict,
+  VaultConflictError,
   CloudRecommendationState,
   UpdateStatus,
 } from "@/types";
@@ -679,31 +682,51 @@ export const setVaultWriteLayout = (layout: VaultWriteLayoutDto, vaultId?: strin
 export const organizeVaultLayout = (vaultId?: string) =>
   invoke<VaultWriteLayoutDto>("organize_vault_layout", { vaultId: vaultId ?? null });
 
-// Vault conflicts (Phase 18.G.4 — see SPEC_IDENTITY_ROBUSTNESS.md)
-export interface VaultConflictItem {
-  baseSlug: string;
-  conflictSlug: string;
-  detectedAt: string;
+// iCloud sync conflicts (SPEC_ICLOUD_CONFLICTS.md)
+
+/** The conflict paths of this tab's space, newest first, read from the index
+ *  alone: what the notice counts (ВК7, ВК10). */
+export const listVaultConflictPaths = () =>
+  invoke<string[]>("list_vault_conflict_paths");
+
+/** A conflict command's typed refusal, whatever shape the failure took. */
+function normalizeVaultConflictError(error: unknown): VaultConflictError {
+  if (error && typeof error === "object" && "kind" in error) {
+    return error as VaultConflictError;
+  }
+  if (error instanceof Error) {
+    return { kind: "internal", message: error.message };
+  }
+  return { kind: "internal", message: String(error) };
 }
 
-export type VaultConflictResolveAction =
-  | "keep_original"
-  | "keep_conflict"
-  | "dismiss_for_manual_merge";
+/** This tab's conflicts with their versions, read again from iCloud (ВК7).
+ *  Throws a `VaultConflictError`. */
+export const listVaultConflicts = async () => {
+  try {
+    return await tauriInvoke<VaultConflict[]>("list_vault_conflicts");
+  } catch (error) {
+    throw normalizeVaultConflictError(error);
+  }
+};
 
-export const listVaultConflicts = () =>
-  invoke<VaultConflictItem[]>("list_vault_conflicts");
-
-export const resolveVaultConflict = (
-  baseSlug: string,
-  conflictSlug: string,
-  action: VaultConflictResolveAction,
-) =>
-  invoke<void>("resolve_vault_conflict", {
-    base_slug: baseSlug,
-    conflict_slug: conflictSlug,
-    action: { action },
-  });
+/** Resolve the conflict of one note (ВК8); `expectedTokens` are the versions
+ *  the window showed. Throws a `VaultConflictError`. */
+export const resolveVaultConflict = async (
+  path: string,
+  choice: ConflictChoice,
+  expectedTokens: string[],
+) => {
+  try {
+    await tauriInvoke<null>("resolve_vault_conflict", {
+      path,
+      choice,
+      expected_tokens: expectedTokens,
+    });
+  } catch (error) {
+    throw normalizeVaultConflictError(error);
+  }
+};
 
 // Clipper recovery
 // Settings window

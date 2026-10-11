@@ -72,7 +72,7 @@ pub fn icloud_download_progress(
         return Ok(UNKNOWN);
     };
 
-    let helper = resolve_helper_path(&app)?;
+    let helper = bundled_helper(&app, PROGRESS_HELPER)?;
     let output = Command::new(&helper)
         .arg(&path)
         .output()
@@ -121,26 +121,26 @@ fn resolve_media_path(vault_root: &std::path::Path, media_ref: &str) -> Option<P
     canonical.starts_with(&canonical_root).then_some(canonical)
 }
 
-/// The helper travels as a bundle resource, like yt-dlp; in development it
-/// sits in `binaries/` where the build script put it.
-fn resolve_helper_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
+/// The executable name of the download progress helper.
+const PROGRESS_HELPER: &str = "icloud-progress-helper";
+
+/// A bundled Swift helper by its executable name. Helpers travel as bundle
+/// resources, like yt-dlp; in development they sit in `binaries/` where the
+/// build script put them.
+pub(crate) fn bundled_helper(app: &AppHandle, name: &str) -> Result<PathBuf, CommandError> {
     let mut candidates = Vec::new();
     if let Ok(resource_dir) = app.path().resource_dir() {
-        candidates.push(resource_dir.join("binaries").join("icloud-progress-helper"));
-        candidates.push(resource_dir.join("icloud-progress-helper"));
+        candidates.push(resource_dir.join("binaries").join(name));
+        candidates.push(resource_dir.join(name));
     }
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("binaries")
-            .join("icloud-progress-helper"),
-    );
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries").join(name));
     candidates
         .into_iter()
         .find(|candidate| candidate.is_file())
         .ok_or_else(|| {
-            CommandError::Internal(
-                "iCloud progress helper binary not found in expected runtime locations".into(),
-            )
+            CommandError::Internal(format!(
+                "the helper {name} is not in any of its runtime locations"
+            ))
         })
 }
 

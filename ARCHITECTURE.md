@@ -252,7 +252,7 @@ pages; членство берётся из `Mine Collections` и считает
 ```
 ~/Library/Application Support/com.mine.app/vaults/<vault-id>/
 ├── indexes/
-│   └── schema-6-semantics-1/
+│   └── schema-7-semantics-1/
 │       ├── index.db                 ← производный индекс
 │       ├── recovery-<slot>/index.db  ← база после восстановления
 │       ├── active-slot              ← выбранный номер базы
@@ -435,7 +435,8 @@ Frontend feed-video runtime теперь использует единый poste
 │                           │  └── image crate       │  │
 │                           │                        │  │
 │                           │  Native helpers (Swift)│  │
-│                           │  └── icloud progress   │  │
+│                           │  ├── icloud progress   │  │
+│                           │  └── icloud conflicts  │  │
 │                           │                        │  │
 │                           │  Import (Are.na)       │  │
 │                           │  └── ureq HTTP client  │  │
@@ -816,8 +817,9 @@ iOS UI contract:
   Empty-body media clips с AVIF/HEIC/VP8X WebP получают PNG placeholder из
   `fallback_label`, а не пустую preview slot.
 - Thumbnail path остаётся стабильным `<slug>.jpg`, но content может быть JPEG
-  или PNG. Custom `asset://` protocol обязан выставлять MIME по magic bytes,
-  а не только по расширению, иначе transparent text thumbnails отдаются как
+  или PNG. Custom `asset://` protocol обязан выставлять MIME по magic bytes
+  (единственный определитель `mine_core::domain::media_type`), а не только по
+  расширению, иначе transparent text thumbnails отдаются как
   `image/jpeg` и WKWebView показывает broken-image `?`.
 - `src-tauri/src/storage/preview_plan.rs` хранит общий contract для
   `preview_manifest` и thumbnail pipeline: стабильный `primary_preview_path =
@@ -833,6 +835,12 @@ iOS UI contract:
   а строит micro-preview из тех же подтверждённых metadata, что и sidebar.
   Frontend-компонент `MicroPreviewThumbnail` общий для sidebar strip и Related
   Notes row.
+- Нет файла превью (11.10.2026): карточка сохранена только что или превью ещё
+  собирается. Ошибка загрузки прячет картинку, ячейка остаётся с заливкой
+  загрузки, и после `thumb:updated` своей карточки файл грузится снова. Случай
+  держит один общий хук `usePreviewFileRetry` (`src/hooks/usePreviewFileRetry.ts`),
+  им пользуются `MicroPreviewThumbnail` и подложка превью открытой карточки
+  (`Detail.tsx`); подробности в SPEC_THUMBNAILS.md, «Нет файла миниатюры».
 - Превью по наведению на мини-карточку бокового меню с 06.10.2026 рисует ту
   же карточку, что лента, с галереей из `preview_manifest.tiles`, в итоговом
   виде наведения без активных элементов (SPEC_CARD_STATES.md, С10). Сама
@@ -1380,11 +1388,23 @@ into O(vault size).
 | Grid-owned selection by slug + `layout.positions` geometry (chosen) | Grid already owns layout, committed range and current route; selection remains stable across virtualization and follows what the user sees |
 
 Rationale: group selection is a feed-level interaction, not a card-level
-property. `Cmd+click` and `Shift+click` both toggle only the clicked card.
-Broader selection uses empty-area marquee drag, and Grid computes selected slugs
-from `layout.positions` rectangle intersection. The selected visual is rendered
-by GridItem as a layout-neutral overlay, while batch actions live in a bottom
-floating island. When a selected card is dragged, Grid exports the selected
+property. `Shift+click` toggles only the clicked card. `Cmd+click` toggles it
+only on a page that is not a tab: с 03.10.2026 в странице вкладки `Cmd+click`
+открывает карточку в новой вкладке, а `Cmd+Shift+click` в новом окне
+(`onOpenBlockElsewhere`, SPEC_TABS.md, В82), и выделение там остаётся за
+`Shift+click` и рамкой. Broader selection uses empty-area marquee drag, and
+Grid computes selected slugs from `layout.positions` rectangle intersection.
+Выделение рисуется по собственному краю карточки, без рамки снаружи (с
+28.09.2026, SPEC_CARD_STATES.md, С2): GridItem несёт
+`data-feed-grid-item-selected="true"`, CSS красит линию рамки карточки в
+`--feed-selection-frame` через `--card-frame-color` и затеняет картинку;
+текстовая карточка получает только границу. Batch actions live in the secondary
+chrome row (`MainSecondaryTopBar`), не в нижнем плавающем островке: островок
+снят 23.08.2026, место уточнено 26.08.2026. Пока выделение есть, команды
+`GroupSelectionCommands` занимают только половину ряда над лентой вместо
+счётчика и переключателя вида; Grid владеет выделением и обработчиками и
+переносит команды в слот ряда через `createPortal`
+(SPEC_GROUP_SELECTION.md, «Selection Commands Row»). When a selected card is dragged, Grid exports the selected
 slug set through the draggable Card payload; App applies channel drops to every
 dragged slug and renders a capped macOS-style DragOverlay stack. The stack keeps
 each visible item as a real frozen card preview, not an interactive `Card` and
@@ -1446,6 +1466,21 @@ order once the reload confirms it or the write fails. `reorder_channels` пиш�
 `position` только в существующие страницы коллекций и файлов не создаёт
 (решение 055). Waiting for the round trip
 before moving the row made every drop read as a snap-back followed by a jump.
+
+Групповое удаление (решение пользователя 11.10.2026, реализовано 11.10.2026 в
+этапах 45.7 и 45.8 Phase 45) ведёт себя как удаление одного элемента. Каждое
+`Delete` выделения (кнопка ряда команд, меню ⌘K, меню правого щелчка,
+Backspace) идёт в одну функцию Grid `requestDeleteSelection()`: один
+выделенный элемент открывает `Delete element?`, два и более единственное окно
+группового удаления у Grid (`DeleteSelectionWindow` в
+`DeleteSelectedCardsDialog.tsx`). Части, общие с `Delete element?` (описание,
+превью медиа, уведомление `Media kept`), живут в одном модуле
+`src/components/DeleteWindowParts.tsx`. Бэкенд строит план всего выделения
+только из индекса (`prepare_delete_blocks`), а удаление (`delete_blocks`)
+строит его заново и сверяет предложенные медиа с заметками на диске; файлы и
+строки индекса уходят одной `StagedSourceMutation`, сбой не трогает ни одного
+файла. Пакет никогда не выполняется как N вызовов `delete_block`
+(SPEC_INTEGRATION.md, «Поведение batch delete»).
 
 Детальная спецификация: [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md).
 
@@ -1552,6 +1587,16 @@ wrapper writes it to `data-floating-menu`, and `global.css` alone maps each
 role to its width, narrowed only by the window's room. A row that does not
 fit is cut with an ellipsis. With a fixed width a filtered list cannot
 narrow, so `useHeldMenuWidth` is gone.
+
+Отступ от кнопки (решение пользователя 11.10.2026): каждое выпадающее меню
+стоит в `4px` (`--spacing-surface`) от видимой плашки своей кнопки и вровень с
+её краем. Оба сдвига Radix считает обёртка `DropdownMenuContent` при каждом
+открытии из рамок кнопки и её плашки (`menuPlateOffsets`, `menuPlateOf` и
+`MENU_PLATE_GAP_PX` в `src/lib/floatingLayer.ts`). У обёртки нет свойств
+`sideOffset` и `alignOffset`: место вызова называет только сторону и край
+(`start` или `end`). Хук `useMenuAlignToPlate`, который мерил от плашки
+только сдвиг вдоль края у переключателей пространства и коллекции, удалён.
+Подробности: DESIGN_SYSTEM.md, «Отступ от кнопки» и «Выравнивание».
 
 ### 021: Feed canvas feel requires media readiness, not only DOM overscan
 
@@ -2490,9 +2535,15 @@ none`, и указатель не доходит ни до чего под ме�
 ### 056: Конфликт iCloud определяют версии файла, а не имя
 
 Решение пользователя 11.10.2026. Контракт:
-[SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md). Реализация в Phase 45
-([PLAN.md](PLAN.md), этапы от 45.2 до 45.6), первым этапом живая проверка на
-iCloud.
+[SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md). Живая проверка на
+iCloud и реализация 11.10.2026 в Phase 45 ([PLAN.md](PLAN.md), этапы от 45.2
+до 45.6): помощник `src-tauri/native/icloud_conflicts_helper.swift`, проверка,
+список и решение в `src-tauri/src/storage/icloud_conflicts.rs`, таблица в
+`storage/vault_conflicts.rs` (схема 7, поколение `schema-7-semantics-1`),
+команды `list_vault_conflict_paths`, `list_vault_conflicts` и
+`resolve_vault_conflict` в `commands/conflicts.rs`, событие
+`vault-conflicts-changed { count }`, уведомление ведущей вкладки и окно в
+`src/components/VaultConflictsNotice.tsx`. Живая приёмка за пользователем.
 
 1. **Конфликт это версии одного файла.** Правку одного файла на двух
    устройствах iCloud хранит как неразрешённые версии `NSFileVersion`; в папке

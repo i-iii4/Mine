@@ -167,6 +167,40 @@ export type CommandError = { kind: "no_vault" } |
 { kind: "collection_not_found"; message: { collection: string } } | { kind: "internal"; message: string }
 
 /**
+ * How the person resolves a conflict (ВК8).
+ */
+export type ConflictChoice =
+/**
+ * Keep one version in the note; `None` is the version in the folder.
+ * The others go to the Trash as separate notes.
+ */
+{ kind: "keep_version"; token: string | null } |
+/**
+ * Keep the note as it is and every other version as a separate note.
+ */
+{ kind: "keep_all" }
+
+/**
+ * One version of a note in conflict.
+ */
+export type ConflictVersion = {
+/**
+ * The helper's handle of a conflict version; `None` for the version in
+ * the folder (ВК7).
+ */
+token?: string | null;
+/**
+ * When it was saved, ISO 8601 with a zone; `None` when the system names
+ * no date.
+ */
+modified?: string | null;
+/**
+ * The device that saved it; `None` when the system names none, which it
+ * does for every version in the folder (live check of 11.10.2026).
+ */
+device?: string | null }
+
+/**
  * Commands supported by the JSON/WASM bridge, generated into TypeScript.
  */
 export type CoreCommand = { op: "capture"; request: CaptureRequest } | { op: "name"; title: string | null; url: string | null; layout: VaultWriteLayout; existing: string[] } | { op: "unique_file_name"; name: string; extension: string; existing: string[] } | { op: "shortest_link"; target: string; paths: string[]; omit_md_ext: boolean } | { op: "layout"; layout: VaultWriteLayout } | { op: "detect_layout"; stored: VaultWriteLayout | null; empty: boolean; cards: boolean; media: boolean; collections: boolean } | { op: "collection"; slug: string; saved_at: string } | { op: "inspect"; slug: string; markdown: string } |
@@ -875,6 +909,58 @@ export type UpdateStatus = { stage: UpdateStage; version: string | null; notes: 
  * lists what a command renamed; the watcher's news carries none.
  */
 export type VaultChangedPayload = { path: string; renames: SpaceRename[] }
+
+/**
+ * A note in conflict, as the window shows it (ВК7).
+ */
+export type VaultConflict = {
+/**
+ * From the space root, with folders: `Cards/Note.md`.
+ */
+path: string;
+/**
+ * The note's name: `Note`.
+ */
+name: string; detected_at: string;
+/**
+ * The version in the folder.
+ */
+current: ConflictVersion;
+/**
+ * The hidden conflict versions.
+ */
+versions: ConflictVersion[] }
+
+/**
+ * Why a conflict was not listed or resolved (ВК12).
+ */
+export type VaultConflictError = { kind: "no_vault" } |
+/**
+ * The path is not a note of the space.
+ */
+{ kind: "invalid_path"; path: string } |
+/**
+ * No conflict is recorded for the path any more.
+ */
+{ kind: "not_pending"; path: string } |
+/**
+ * The versions differ from those the window showed. Nothing changed.
+ */
+{ kind: "versions_changed"; path: string } |
+/**
+ * The note changed on disk after it was read. Nothing changed.
+ */
+{ kind: "source_changed"; path: string } | { kind: "helper_failed"; message: string } |
+/**
+ * The conflict is resolved, but the Trash refused the other versions:
+ * they stay next to the note as separate notes, `paths`.
+ */
+{ kind: "trash_failed"; paths: string[] } | { kind: "internal"; message: string }
+
+/**
+ * `vault-conflicts-changed`: how many notes of the space are in conflict now.
+ */
+export type VaultConflictsChanged = { count: number }
 
 export type VaultOpenResult = { indexed: number; errors: number; sync_in_progress: boolean;
 /**

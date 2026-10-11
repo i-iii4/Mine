@@ -174,6 +174,17 @@ pub fn classify_failure(stderr: &str) -> ToolFailure {
     }
 }
 
+/// How a tool that ran to its end ended: whether it succeeded, and what it
+/// wrote. A tool that tells its own failures on stdout, in its own protocol,
+/// is read here rather than through [`run_with_deadline`], which keeps only
+/// stderr of a failed run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolExit {
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
 /// Run `command` to its end within `deadline`.
 ///
 /// The tool leads a process group of its own, listed in `running` while it
@@ -185,8 +196,34 @@ pub fn run_with_deadline(
     deadline: Duration,
     running: &RunningTools,
 ) -> Result<ToolOutput, ToolFailure> {
+    let exit = run_to_exit(command, None, deadline, running)?;
+    if exit.success {
+        Ok(ToolOutput {
+            stdout: exit.stdout,
+            stderr: exit.stderr,
+        })
+    } else {
+        Err(classify_failure(&exit.stderr))
+    }
+}
+
+/// Run `command` to its end within `deadline`, as [`run_with_deadline`]
+/// does, with `input` written to its stdin (none: an empty stdin), and tell
+/// how it ended. Only a tool that did not run to its end is a failure here:
+/// missing, killed on the deadline, or lost while waited on.
+pub fn run_to_exit(
+    command: &mut Command,
+    input: Option<Vec<u8>>,
+    deadline: Duration,
+    running: &RunningTools,
+) -> Result<ToolExit, ToolFailure> {
+    let stdin = if input.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    };
     let mut child = command
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0)
@@ -198,6 +235,15 @@ pub fn run_with_deadline(
         return Err(ToolFailure::Failed("process id out of range".into()));
     };
     running.add(group);
+    // The input is written on a thread of its own: a tool that answers while
+    // it reads would otherwise fill its stdout pipe and wait on us forever.
+    // The writer ends when the input is written or the tool is gone.
+    if let (Some(input), Some(mut pipe)) = (input, child.stdin.take()) {
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = pipe.write_all(&input);
+        });
+    }
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let stdout = std::thread::spawn(move || stdout.map(read_all).unwrap_or_default());
@@ -224,11 +270,11 @@ pub fn run_with_deadline(
     let stdout = stdout.join().unwrap_or_default();
     let stderr = stderr.join().unwrap_or_default();
     let status = status?;
-    if status.success() {
-        Ok(ToolOutput { stdout, stderr })
-    } else {
-        Err(classify_failure(&stderr))
-    }
+    Ok(ToolExit {
+        success: status.success(),
+        stdout,
+        stderr,
+    })
 }
 
 #[cfg(test)]
@@ -305,6 +351,26 @@ mod tests {
             failed,
             ToolFailure::Failed("ERROR: [twitter] 1: No video could be found in this tweet".into())
         );
+    }
+
+    #[test]
+    fn a_tool_reads_its_input_and_tells_a_failure_on_stdout() {
+        let running = RunningTools::new();
+        // More input than a pipe holds, answered line by line while read.
+        let input: String = (0..20_000).map(|n| format!("/space/Note {n}.md\n")).collect();
+        let exit = run_to_exit(
+            &mut shell("while read -r line; do echo \"$line\"; done; echo '{\"error\":\"x\"}'; exit 3"),
+            Some(input.clone().into_bytes()),
+            Duration::from_secs(20),
+            &running,
+        )
+        .expect("the tool runs to its end");
+        assert!(!exit.success);
+        let mut lines: Vec<&str> = exit.stdout.lines().collect();
+        assert_eq!(lines.pop(), Some("{\"error\":\"x\"}"));
+        assert_eq!(lines.len(), 20_000);
+        assert_eq!(lines[19_999], "/space/Note 19999.md");
+        assert_eq!(running.count(), 0);
     }
 
     #[test]

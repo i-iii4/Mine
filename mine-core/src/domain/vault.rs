@@ -161,58 +161,6 @@ impl VaultWriteLayout {
     }
 }
 
-// ─── iCloud conflict detection ──────────────────────────────────────────────
-
-/// Check whether a filename stem looks like an iCloud sync conflict.
-///
-/// iCloud Drive appends one of several conflict markers to the base
-/// filename when it cannot merge concurrent edits:
-///
-/// - `<name> (conflicted copy).md`
-/// - `<name> (conflicted copy 2).md`
-/// - `<name> (user-name's MacBook Pro conflicted copy).md`
-/// - `<name> (conflict).md`
-///
-/// If the stem matches one of those patterns, returns the inferred
-/// `base_slug` (the original name before the conflict suffix). Returns
-/// `None` for ordinary filenames.
-///
-/// Contract: Phase 18.G watcher uses this to divert conflict files into
-/// the `vault_conflicts` surface instead of indexing them as new blocks.
-pub fn detect_icloud_conflict(stem: &str) -> Option<String> {
-    // Patterns are parenthetical and case-insensitive. We match from the end
-    // so the base includes any user-authored parens earlier in the title.
-    // Minimum signal: a parenthetical group ending with "conflict" or
-    // "conflicted copy" (optionally followed by a number).
-    let trimmed = stem.trim_end();
-    let close = trimmed.rfind(')')?;
-    // The closing paren must be at (or very near) the end of the stem.
-    if close + 1 < trimmed.len() {
-        return None;
-    }
-    // Find the matching opening paren (last ' (' before close).
-    let before_close = &trimmed[..close];
-    let open = before_close.rfind(" (")?;
-    let inside = trimmed[open + 2..close].to_lowercase();
-
-    let is_conflict = inside == "conflict"
-        || inside == "conflicted copy"
-        || inside.starts_with("conflicted copy ")
-        || inside.ends_with(" conflicted copy")
-        || inside.contains("conflicted copy");
-
-    if !is_conflict {
-        return None;
-    }
-
-    let base = trimmed[..open].trim_end();
-    if base.is_empty() {
-        None
-    } else {
-        Some(base.to_string())
-    }
-}
-
 // ─── Unicode normalization ──────────────────────────────────────────────────
 
 /// Normalize a filename stem to NFC form.
@@ -444,12 +392,7 @@ mod tests {
     }
 
     #[test]
-    fn unicode_and_cloud_conflicts_are_platform_independent() {
+    fn unicode_normalization_is_platform_independent() {
         assert_eq!(normalize_path_slug("Cards/cafe\u{301}"), "Cards/café");
-        assert_eq!(
-            detect_icloud_conflict("Note (conflicted copy)"),
-            Some("Note".into())
-        );
-        assert_eq!(detect_icloud_conflict("Note (2)"), None);
     }
 }

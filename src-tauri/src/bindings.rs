@@ -40,7 +40,9 @@ use crate::tabs::{
 };
 use crate::updater::{UpdateError, UpdateStage, UpdateStatus};
 use crate::commands::cloud_recommendation::CloudRecommendationState;
+use crate::commands::conflicts::VaultConflictsChanged;
 use crate::commands::icloud_progress::{IcloudDownloadProgress, IcloudDownloadStatus};
+use crate::storage::icloud_conflicts::{ConflictChoice, ConflictVersion, VaultConflict, VaultConflictError};
 use crate::commands::vault::{SpaceEntry, UnavailableVault, UnavailableVaultReason, VaultOpenResult, VaultWriteLayoutDto};
 use crate::import::importer::{ImportChannelResult, ImportProgress};
 use crate::storage::article_audio::{ArticleAudioState, ArticleAudioStatus};
@@ -168,6 +170,11 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<CloudRecommendationState>()
         .register::<IcloudDownloadProgress>()
         .register::<IcloudDownloadStatus>()
+        .register::<ConflictVersion>()
+        .register::<VaultConflict>()
+        .register::<ConflictChoice>()
+        .register::<VaultConflictError>()
+        .register::<VaultConflictsChanged>()
         .register::<ArenaChannelInfo>()
         .register::<ImportChannelRequest>()
         .register::<ImportChannelResult>()

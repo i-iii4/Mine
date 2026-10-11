@@ -1035,6 +1035,14 @@ fn initialize_vault(
         }
     }
     let bootstrapped_thumbs_from_legacy = bootstrap_local_thumbs_from_legacy(&vault)?;
+    // The former conflict resolution kept replaced notes in a folder of the
+    // derived store nobody saw: they go to the Trash, where the person can
+    // see them (SPEC_ICLOUD_CONFLICTS.md, ВК8). Best effort.
+    match crate::storage::vault_conflicts::retire_conflicts_archive(vault.derived_root()) {
+        Ok(0) => {}
+        Ok(count) => log::info!("moved {count} former conflict archive entries to the Trash"),
+        Err(error) => log::warn!("the former conflict archive stays: {error:#}"),
+    }
 
     // Create the synced vault metadata dir and the local derived caches.
     std::fs::create_dir_all(vault.thumbs_dir())
@@ -1876,6 +1884,13 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                             log::warn!("thumb_sweep failed for {}: {:#}", path_for_thread, err)
                         }
                     }
+                    // The opening's pass is followed by a conflict check of
+                    // the whole space (SPEC_ICLOUD_CONFLICTS.md, ВК4).
+                    super::conflicts::schedule_conflict_check(
+                        &app_for_thread,
+                        &vault,
+                        crate::storage::icloud_conflicts::CheckScope::Full,
+                    );
                     if let Err(error) = schedule_preview_reconcile(
                         &app_for_thread,
                         vault.clone(),
