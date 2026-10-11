@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Dialog,
+  DialogCancel,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -79,6 +80,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { MODAL_DETAIL_CLASS, MODAL_ERROR_CLASS } from "@/components/ui/modal-window";
 import type {
   CardAssociationGroup,
   DeleteMediaAssetPlan,
@@ -2693,7 +2695,7 @@ function CreateCardCollectionPicker<TPayload>({
   );
 }
 
-function RenameMediaAssetDialog({
+export function RenameMediaAssetDialog({
   asset,
   open,
   onOpenChange,
@@ -2736,26 +2738,19 @@ function RenameMediaAssetDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Rename media</DialogTitle>
           <DialogDescription>
-            Rename only the media file. Cards and notes keep their filenames.
+            Rename only the media file. Elements and notes keep their filenames.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-1">
-            <div className="text-sm font-medium text-foreground">Current</div>
-            <div className="font-mono text-sm text-muted-foreground">
-              {asset.media_ref}
-            </div>
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground" htmlFor="rename-media-input">
-              Filename
-            </label>
+        {/* As Rename file: the field opens on the current name and the
+            extension, which stays, stands after it. */}
+        <div className="grid gap-2">
+          <div className="flex items-center gap-2">
             <Input
-              id="rename-media-input"
+              aria-label="Filename"
               value={value}
               onChange={(event) => setValue(event.target.value)}
               autoFocus
@@ -2768,18 +2763,16 @@ function RenameMediaAssetDialog({
                 }
               }}
             />
-            <div className="text-sm text-muted-foreground">
-              Extension stays <span className="font-mono">.{extension}</span>
-            </div>
+            {extension && (
+              <span className="shrink-0 text-base text-muted-foreground">.{extension}</span>
+            )}
           </div>
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <p className={MODAL_ERROR_CLASS}>{error}</p>}
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
-            Cancel
-          </Button>
+          <DialogCancel disabled={submitting}>Cancel</DialogCancel>
           <Button onClick={() => void submit()} disabled={!value.trim() || submitting}>
-            {submitting ? "Renaming..." : "Rename"}
+            {submitting ? "Renaming…" : "Rename"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -2787,7 +2780,7 @@ function RenameMediaAssetDialog({
   );
 }
 
-function RemoveMediaAssetFromCardDialog({
+export function RemoveMediaAssetFromCardDialog({
   asset,
   open,
   onOpenChange,
@@ -2812,18 +2805,20 @@ function RemoveMediaAssetFromCardDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent className="min-w-0 overflow-hidden">
         <AlertDialogHeader className="min-w-0">
-          <AlertDialogTitle>Remove media from card?</AlertDialogTitle>
+          <AlertDialogTitle>Remove media from element?</AlertDialogTitle>
           <AlertDialogDescription>
-            This removes only this media reference from the current card. The media file stays in the vault.
+            This removes only this media reference from the current element. The media file stays in the space.
           </AlertDialogDescription>
+          <div className={MODAL_DETAIL_CLASS}>{asset.media_ref}</div>
         </AlertDialogHeader>
-        <div className="font-mono text-sm text-muted-foreground">
-          {asset.media_ref}
-        </div>
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <p className={MODAL_ERROR_CLASS}>{error}</p>}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
+          {/* Breaks a link and keeps the file: the detach colour, as the
+              menu item that opened this (DESIGN_SYSTEM.md, «Два уровня
+              опасных действий»). */}
           <AlertDialogAction
+            className="text-detach"
             disabled={submitting}
             onClick={(event) => {
               event.preventDefault();
@@ -2841,7 +2836,7 @@ function RemoveMediaAssetFromCardDialog({
               })();
             }}
           >
-            {submitting ? "Removing..." : "Remove from Element"}
+            {submitting ? "Removing…" : "Remove from Element"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -2849,7 +2844,7 @@ function RemoveMediaAssetFromCardDialog({
   );
 }
 
-function DeleteMediaAssetDialog({
+export function DeleteMediaAssetDialog({
   asset,
   vaultPath,
   open,
@@ -2914,11 +2909,11 @@ function DeleteMediaAssetDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent className="min-w-0 overflow-hidden" data-delete-media-dialog="">
+      <AlertDialogContent widthRole="content" className="min-w-0 overflow-hidden" data-delete-media-dialog="">
         <AlertDialogHeader className="min-w-0">
           <AlertDialogTitle>Delete media file?</AlertDialogTitle>
           <AlertDialogDescription>
-            This deletes the local media file and removes its references from every listed card. Markdown cards stay in the vault.
+            This deletes the local media file and removes its references from every listed element. The elements stay in the space.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="flex min-w-0">
@@ -2937,13 +2932,15 @@ function DeleteMediaAssetDialog({
                 preload="metadata"
               />
             ) : (
-              <span className="px-3 text-center text-xs text-muted-foreground">
+              <span className="px-3 text-center text-sm text-muted-foreground">
                 Media file
               </span>
             )}
           </div>
         </div>
-        <div className="min-w-0 space-y-1">
+        {/* A label over what it names, 8px apart, as a title over its
+            description. */}
+        <div className="grid min-w-0 gap-2">
           <div className={METADATA_LABEL_CLASSES}>Connected elements</div>
           <div
             className="min-w-0 overflow-y-auto pr-1"
@@ -2952,8 +2949,8 @@ function DeleteMediaAssetDialog({
             data-visible-card-count={DELETE_MEDIA_CONNECTED_CARDS_VISIBLE_COUNT}
           >
             {planLoading ? (
-              <div className="px-3 py-2 text-sm text-muted-foreground">
-                Checking cards...
+              <div className="text-sm text-muted-foreground">
+                Checking elements…
               </div>
             ) : planError ? null : references.length > 0 ? (
               <MediaAssetReferenceCards
@@ -2963,14 +2960,14 @@ function DeleteMediaAssetDialog({
                 onOpenRelatedNote={onOpenRelatedNote}
               />
             ) : (
-              <div className="px-3 py-2 text-sm text-muted-foreground">
-                No cards currently reference this file.
+              <div className="text-sm text-muted-foreground">
+                No elements use this file.
               </div>
             )}
           </div>
         </div>
-        {planError && <p className="text-sm text-destructive">{planError}</p>}
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {planError && <p className={MODAL_ERROR_CLASS}>{planError}</p>}
+        {error && <p className={MODAL_ERROR_CLASS}>{error}</p>}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
           <AlertDialogAction
@@ -2993,7 +2990,7 @@ function DeleteMediaAssetDialog({
               })();
             }}
           >
-            {submitting ? "Deleting..." : "Delete media"}
+            {submitting ? "Deleting…" : "Delete media"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

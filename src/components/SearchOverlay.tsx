@@ -553,6 +553,9 @@ export function SearchOverlay({
       <DialogContent
         ref={setMenuContainer}
         showCloseButton={false}
+        // Search is a panel, not a window: it keeps its own dimming while
+        // the windows dim to the tertiary step (DESIGN_SYSTEM.md, «Окна»).
+        overlayClassName="bg-black/50"
         aria-describedby={undefined}
         onOpenAutoFocus={(event) => {
           event.preventDefault();

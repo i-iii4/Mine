@@ -1906,25 +1906,48 @@ const TagNavItem = memo(function TagNavItem({
         </ContextMenuContent>
       </ContextMenu>
 
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <AlertDialogContent size="sm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete channel</AlertDialogTitle>
-            <AlertDialogDescription>
-              Remove tag &ldquo;{label}&rdquo; from all cards. This cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={deleteTag}>
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DeleteCollectionDialog
+        open={deleteOpen}
+        label={label}
+        onOpenChange={setDeleteOpen}
+        onConfirm={deleteTag}
+      />
     </>
   );
 });
+
+/** The question before a collection is deleted from the sidebar's right
+ *  click. */
+export function DeleteCollectionDialog({
+  open,
+  label,
+  onOpenChange,
+  onConfirm,
+}: {
+  open: boolean;
+  label: string;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete collection?</AlertDialogTitle>
+          <AlertDialogDescription>
+            &ldquo;{label}&rdquo; is removed from all elements. This cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={onConfirm}>
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
 
 function NewChannelRow({
   compact,

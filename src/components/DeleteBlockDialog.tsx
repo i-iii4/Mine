@@ -39,11 +39,9 @@ export function DeleteBlockDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent
-        size="default"
-        className={hasUnusedMedia ? "sm:max-w-2xl" : "sm:max-w-md"}
-      >
-        <AlertDialogHeader className="place-items-start text-left">
+      {/* A question, until it shows the media that go with the element. */}
+      <AlertDialogContent widthRole={hasUnusedMedia ? "content" : "question"}>
+        <AlertDialogHeader>
           <AlertDialogTitle>
             Delete element?
           </AlertDialogTitle>
@@ -65,18 +63,16 @@ export function DeleteBlockDialog({
             blockSlug={plan.slug}
           />
         ) : null}
-        <AlertDialogFooter className={hasUnusedMedia ? "sm:justify-between" : undefined}>
+        {/* One row at the bottom right, as in every window: Cancel, the
+            alternative, and Delete, the one primary, last. */}
+        <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          {hasUnusedMedia ? (
-            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <AlertDialogAction onClick={onKeepMedia}>
-                Keep media
-              </AlertDialogAction>
-              <DeleteAction disabled={!plan || Boolean(error)} onClick={onDeleteMedia} />
-            </div>
-          ) : (
-            <DeleteAction disabled={!plan || Boolean(error)} onClick={onDeleteMedia} />
+          {hasUnusedMedia && (
+            <AlertDialogAction variant="secondary" onClick={onKeepMedia}>
+              Keep media
+            </AlertDialogAction>
           )}
+          <DeleteAction disabled={!plan || Boolean(error)} onClick={onDeleteMedia} />
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -98,13 +94,13 @@ function deleteDialogDescription(
   if (error) return `Could not prepare delete plan: ${error}`;
   if (!plan) return "Checking media references before deleting.";
   if (unusedCount > 0 && sharedCount > 0) {
-    return `${mediaCountLabel(unusedCount)} ${mediaCountVerb(unusedCount)} only used by this element. ${mediaCountLabel(sharedCount)} ${mediaCountVerb(sharedCount)} used by other cards and will stay in the vault.`;
+    return `${mediaCountLabel(unusedCount)} ${mediaCountVerb(unusedCount)} only used by this element. ${mediaCountLabel(sharedCount)} ${mediaCountVerb(sharedCount)} used by other elements and will stay in the space.`;
   }
   if (unusedCount > 0) {
-    return `${mediaCountLabel(unusedCount)} ${mediaCountVerb(unusedCount)} only used by this element. Delete ${mediaObjectPronoun(unusedCount)} too, or keep ${mediaObjectPronoun(unusedCount)} in the vault.`;
+    return `${mediaCountLabel(unusedCount)} ${mediaCountVerb(unusedCount)} only used by this element. Delete ${mediaObjectPronoun(unusedCount)} too, or keep ${mediaObjectPronoun(unusedCount)} in the space.`;
   }
   if (sharedCount > 0) {
-    return `${mediaCountLabel(sharedCount)} ${mediaCountVerb(sharedCount)} used by other cards and will stay in the vault. Only this card will be deleted.`;
+    return `${mediaCountLabel(sharedCount)} ${mediaCountVerb(sharedCount)} used by other elements and will stay in the space. Only this element will be deleted.`;
   }
   return null;
 }
@@ -182,7 +178,7 @@ function DeleteMediaPreviewGrid({
               {item.kind.toUpperCase()}
             </div>
           )}
-          <div className="absolute inset-x-0 bottom-0 truncate bg-background/80 px-1 py-0.5 text-xs text-muted-foreground">
+          <div className="absolute inset-x-0 bottom-0 truncate bg-background/80 px-1 py-0.5 text-sm text-muted-foreground">
             {item.file_name}
           </div>
         </div>

@@ -1,8 +1,7 @@
-// A label of a chrome strip: one line that dissolves at its right edge when it
-// does not fit, instead of ending in an ellipsis (DESIGN_SYSTEM.md,
-// «Растворение кромок»; user's decision of 11.10.2026: one surface, one way).
-// The tab bar's tabs, the path of the top row and the clipper's header use it;
-// menus, search results and lists keep their ellipsis.
+// A tab's label: one line that dissolves at its right edge when it does not
+// fit, instead of ending in an ellipsis (DESIGN_SYSTEM.md, «Растворение
+// кромок»; user's decision of 11.10.2026: the tabs dissolve, the path, the
+// clipper's header, menus, search results and lists keep their ellipsis).
 //
 // Whether the text fits is measured, since the dissolve must not eat the end
 // of a label that does. The mask itself is global.css's `[data-fade-text]`

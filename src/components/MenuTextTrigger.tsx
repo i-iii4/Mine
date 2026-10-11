@@ -2,13 +2,12 @@ import * as React from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChromeControl, ChromePlate } from "./ui/chrome-control";
-import { FadeText } from "./ui/fade-text";
 
 type MenuTextTriggerSurface = "topChrome" | "clipperHeader" | "actionBar";
 
 interface MenuTextTriggerProps
   extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "children"> {
-  label: string;
+  label: React.ReactNode;
   surface?: MenuTextTriggerSurface;
   hotkey?: string;
   keyboardFocus?: boolean;
@@ -60,9 +59,6 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
             "action-button inline-flex h-6 shrink-0 items-center overflow-hidden rounded-1 p-[2px] font-mono text-sm hover:state-active",
           className,
         )}
-        // In a chrome strip the name may dissolve: the whole of it shows on
-        // hover, as a tab's does (DESIGN_SYSTEM.md, «Растворение кромок»).
-        title={surface === "actionBar" ? undefined : label}
         {...props}
       >
         {surface === "actionBar" ? (
@@ -80,10 +76,10 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
           <>
             <Plate
               className={cn(
-                // The name dissolves before the chevron, as in the top
-                // chrome: it shrinks only as a flex item, so the clipper's
-                // plain plate is the flex box ChromePlate is. An inline name
-                // ignored its box, ran over the chevron and was cut
+                // The name ends in an ellipsis before the chevron, as in the
+                // top chrome: `truncate` needs the name to be a flex item, so
+                // the clipper's plain plate is the flex box ChromePlate is.
+                // An inline name ignored it, ran over the chevron and was cut
                 // mid-letter at the button's edge, flush with "…" (11.10.2026).
                 isClipperHeader
                   ? "inline-flex min-w-0 max-w-full items-center"
@@ -95,11 +91,9 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
                 keyboardFocus && "state-active text-foreground",
               )}
             >
-              {/* A name that does not fit dissolves with the tab's mask, not
-                  an ellipsis; the mask is on the text alone, so the plate
-                  and the chevron stay whole (DESIGN_SYSTEM.md, «Растворение
-                  кромок», 11.10.2026). */}
-              <FadeText text={label} className="text-left" />
+              <span className="min-w-0 truncate text-left">
+                {label}
+              </span>
               {/* In the top chrome the chevron sits inside the pill, right
                   after the name, and lights up with it. Closed it points
                   right and turns down as the menu opens, as in the clipper. */}

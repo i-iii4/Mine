@@ -241,24 +241,46 @@ function SpaceOrphans({ space, selector }: { space: OpenSpace; selector: ReactNo
         </div>
       )}
 
-      <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
-        <AlertDialogContent size="sm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Delete {selected.size} {selected.size === 1 ? "file" : "files"}?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              Files are moved to the system Trash.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => void handleDelete()}>
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DeleteOrphansDialog
+        open={confirmDeleteOpen}
+        count={selected.size}
+        onOpenChange={setConfirmDeleteOpen}
+        onConfirm={() => void handleDelete()}
+      />
     </section>
+  );
+}
+
+/** The question before the chosen orphan files go to the Trash. */
+export function DeleteOrphansDialog({
+  open,
+  count,
+  onOpenChange,
+  onConfirm,
+}: {
+  open: boolean;
+  count: number;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Delete {count} {count === 1 ? "file" : "files"}?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            Files are moved to the system Trash.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={onConfirm}>
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

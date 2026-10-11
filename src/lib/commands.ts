@@ -39,9 +39,6 @@ import type {
   ClipboardPayload,
   ShortcutBinding,
   CreateBlockParams,
-  ArenaChannelInfo,
-  ImportChannelRequest,
-  ImportChannelResult,
   ArticleAudioState,
   CreateMediaAssetCardParams,
   DeleteMediaAssetPlan,
@@ -533,13 +530,6 @@ export const deleteChannel = (tag: string) =>
 
 export const listChannelPreviews = (limit: number) =>
   invoke<ChannelPreviewsSnapshot>("list_channel_previews", { limit });
-
-// Are.na import
-export const listArenaChannels = (username: string) =>
-  invoke<ArenaChannelInfo[]>("list_arena_channels", { username });
-
-export const importArenaChannels = (channels: ImportChannelRequest[]) =>
-  invoke<ImportChannelResult[]>("import_arena_channels", { channels });
 
 // Thumbnails (Phase 2 pipeline — see SPEC_THUMBNAILS.md)
 export interface TilePosterUpgrade {

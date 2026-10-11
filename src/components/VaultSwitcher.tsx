@@ -545,16 +545,37 @@ export function VaultSwitcher({
       </DropdownMenuContent>
     </DropdownMenu>
 
+    <RemoveSpaceDialog
+      path={pendingForget}
+      onCancel={() => setPendingForget(null)}
+      onConfirm={(path) => void handleForget(path)}
+    />
+    </TooltipProvider>
+  );
+}
+
+/** The question before a space leaves the list: open while `path` names
+ *  the space. */
+export function RemoveSpaceDialog({
+  path,
+  onCancel,
+  onConfirm,
+}: {
+  path: string | null;
+  onCancel: () => void;
+  onConfirm: (path: string) => void;
+}) {
+  return (
     <AlertDialog
-      open={pendingForget !== null}
+      open={path !== null}
       onOpenChange={(next) => {
-        if (!next) setPendingForget(null);
+        if (!next) onCancel();
       }}
     >
-      <AlertDialogContent size="default" className="sm:max-w-md">
-        <AlertDialogHeader className="place-items-start text-left">
+      <AlertDialogContent>
+        <AlertDialogHeader>
           <AlertDialogTitle>
-            Remove {pendingForget ? vaultName(pendingForget) : "space"} from the list?
+            Remove {path ? vaultName(path) : "space"} from the list?
           </AlertDialogTitle>
           <AlertDialogDescription>
             Nothing is deleted from your computer. The folder and everything in
@@ -566,11 +587,14 @@ export function VaultSwitcher({
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           {/* Deliberately not destructive: red would say "data is about to be
               lost", which is the exact misreading this dialog exists to
-              prevent. The menu item carries the detach colour instead. */}
+              prevent. It breaks a link and keeps the folder, so it takes the
+              detach colour, as the menu item that opened it (DESIGN_SYSTEM.md,
+              «Два уровня опасных действий»). */}
           <AlertDialogAction
             variant="default"
+            className="text-detach"
             onClick={() => {
-              if (pendingForget) void handleForget(pendingForget);
+              if (path) onConfirm(path);
             }}
           >
             Remove
@@ -578,7 +602,6 @@ export function VaultSwitcher({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-    </TooltipProvider>
   );
 }
 

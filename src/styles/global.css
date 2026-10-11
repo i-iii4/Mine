@@ -898,6 +898,9 @@ body {
   --color-accent-foreground: var(--accent-foreground);
   --color-chrome: var(--chrome);
   --color-destructive: var(--destructive);
+  --color-destructive-fill: var(--destructive-fill);
+  --color-destructive-fill-hover: var(--destructive-fill-hover);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-detach: var(--detach);
   --color-border: var(--border);
   --color-border-accent: var(--border-accent);
@@ -1035,6 +1038,15 @@ body {
      from Element). The search marker is macOS's, the same in both themes. */
   --destructive: oklch(0.596 0.232 28.7);
   --detach: oklch(0.577 0.132 62.6);
+  /* The destructive button (user's decision of 11.10.2026): a flat fill of
+     the destructive colour over the surface under it, the shares that reach
+     2 s and, under the pointer, 3 s on the canvas (area form). Its text keeps
+     the hue, the chroma cut to sRGB, and reaches K5 (4.5:1) on the hover
+     fill over level 1, where windows and the chrome stand; the dark text by
+     the line form (SPEC_COLOR_RULES.md, 3.8). */
+  --destructive-fill-alpha: 11.66%;
+  --destructive-fill-hover-alpha: 17.57%;
+  --destructive-foreground: oklch(0.5176 0.212 28.7);
   --search-mark: rgb(255 255 0);
   --search-mark-foreground: oklch(0.145 0 0);
   /* Dimming: the canvas at 1 minus the tertiary share. */
@@ -1098,6 +1110,9 @@ body {
     --graphic-card-focus-overlay: color-mix(in srgb, oklch(0.985 0 0) 16.93%, transparent);
     --destructive: oklch(0.717 0.177 28.7);
     --detach: oklch(0.744 0.17 62.6);
+    --destructive-fill-alpha: 17.75%;
+    --destructive-fill-hover-alpha: 27.16%;
+    --destructive-foreground: oklch(0.8758 0.0662 28.7);
     --search-mark: rgb(255 255 0);
     --search-mark-foreground: oklch(0.145 0 0);
     --glass-bg: oklch(0.14 0 0 / 72.08%);
@@ -1157,6 +1172,9 @@ body {
   --graphic-card-focus-overlay: color-mix(in srgb, oklch(0.985 0 0) 16.93%, transparent);
   --destructive: oklch(0.717 0.177 28.7);
   --detach: oklch(0.744 0.17 62.6);
+  --destructive-fill-alpha: 17.75%;
+  --destructive-fill-hover-alpha: 27.16%;
+  --destructive-foreground: oklch(0.8758 0.0662 28.7);
   --search-mark: rgb(255 255 0);
   --search-mark-foreground: oklch(0.145 0 0);
   --glass-bg: oklch(0.14 0 0 / 72.08%);
@@ -1208,6 +1226,9 @@ body {
   --graphic-card-focus-overlay: color-mix(in srgb, oklch(0.145 0 0) 12.21%, transparent);
   --destructive: oklch(0.596 0.232 28.7);
   --detach: oklch(0.577 0.132 62.6);
+  --destructive-fill-alpha: 11.66%;
+  --destructive-fill-hover-alpha: 17.57%;
+  --destructive-foreground: oklch(0.5176 0.212 28.7);
   --search-mark: rgb(255 255 0);
   --search-mark-foreground: oklch(0.145 0 0);
   --glass-bg: oklch(1 0 0 / 74%);
@@ -1402,6 +1423,10 @@ body {
   --component-fill-hover: oklch(from var(--surface) calc(l + var(--elevation-hover)) 0 0);
   --inert-frame: oklch(from var(--surface) calc(l + var(--inert-frame-elevation)) 0 0);
   --muted-foreground-opaque: color-mix(in srgb, var(--surface), var(--foreground) var(--muted-alpha));
+  /* The destructive button's flat fill and its fill under the pointer: the
+     destructive colour over the surface at its shares (theme blocks). */
+  --destructive-fill: color-mix(in srgb, var(--surface), var(--destructive) var(--destructive-fill-alpha));
+  --destructive-fill-hover: color-mix(in srgb, var(--surface), var(--destructive) var(--destructive-fill-hover-alpha));
 }
 
 /* A highlight (hover, selection, an open menu, a focused item) is a state

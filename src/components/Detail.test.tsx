@@ -422,7 +422,7 @@ describe("Detail", () => {
     const dialog = await screen.findByRole("alertdialog");
     if (failure) {
       expect(await within(dialog).findByText("Media file was not found.")).toBeInTheDocument();
-      expect(within(dialog).queryByText("No cards currently reference this file.")).not.toBeInTheDocument();
+      expect(within(dialog).queryByText("No elements use this file.")).not.toBeInTheDocument();
       expect(within(dialog).getByRole("button", { name: "Delete media" })).toBeDisabled();
       expect(onDelete).not.toHaveBeenCalled();
     } else {

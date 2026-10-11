@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { RenameBlockError } from "@/types";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogCancel, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { MODAL_ERROR_CLASS } from "@/components/ui/modal-window";
 
 interface RenameBlockDialogProps {
   open: boolean;
@@ -19,9 +20,9 @@ export function renameErrorMessage(error: RenameBlockError): string {
     case "invalid_filename":
       return error.reason;
     case "block_not_found":
-      return `Block "${error.slug}" no longer exists.`;
+      return `Element "${error.slug}" no longer exists.`;
     case "no_vault":
-      return "No vault is currently open.";
+      return "No space is currently open.";
     case "internal":
       return error.message;
   }
@@ -47,14 +48,9 @@ export function RenameBlockDialog({
     setError(null);
   }, [currentSlug, open]);
 
-  const previewName = useMemo(() => {
-    const trimmed = value.trim();
-    return trimmed ? `${trimmed}.md` : "—";
-  }, [value]);
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Rename file</DialogTitle>
           <DialogDescription>
@@ -62,20 +58,12 @@ export function RenameBlockDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="space-y-1">
-            <div className="text-sm font-medium text-foreground">Current</div>
-            <div className="font-mono text-sm text-muted-foreground">
-              {currentSlug ? `${currentSlug}.md` : "—"}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground" htmlFor="rename-block-input">
-              Filename
-            </label>
+        {/* The field opens on the current name; the extension stands after
+            it, as Finder shows it, so the final name reads in one line. */}
+        <div className="grid gap-2">
+          <div className="flex items-center gap-2">
             <Input
-              id="rename-block-input"
+              aria-label="Filename"
               value={value}
               onChange={(event) => setValue(event.target.value)}
               autoFocus
@@ -99,24 +87,16 @@ export function RenameBlockDialog({
                 }
               }}
             />
-            <div className="text-sm text-muted-foreground">
-              Final file: <span className="font-mono">{previewName}</span>
-            </div>
+            <span className="shrink-0 text-base text-muted-foreground">.md</span>
           </div>
 
           {error && (
-            <p className="text-sm text-destructive">{renameErrorMessage(error)}</p>
+            <p className={MODAL_ERROR_CLASS}>{renameErrorMessage(error)}</p>
           )}
         </div>
 
         <DialogFooter>
-          <Button
-            variant="secondary"
-            onClick={() => onOpenChange(false)}
-            disabled={submitting}
-          >
-            Cancel
-          </Button>
+          <DialogCancel disabled={submitting}>Cancel</DialogCancel>
           <Button
             onClick={async () => {
               if (!currentSlug || !value.trim()) {

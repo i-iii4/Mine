@@ -9,6 +9,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { MODAL_ERROR_CLASS } from "@/components/ui/modal-window";
 import { selectedElementCountLabel } from "@/lib/groupSelection";
 
 interface DeleteSelectedCardsDialogProps {
@@ -54,15 +55,15 @@ export function DeleteSelectedCardsDialog({
         onOpenChange(next);
       }}
     >
-      <AlertDialogContent size="sm">
-        <AlertDialogHeader className="place-items-start text-left">
+      <AlertDialogContent>
+        <AlertDialogHeader>
           <AlertDialogTitle>Delete selected elements?</AlertDialogTitle>
           <AlertDialogDescription>
-            This will delete {selectedElementCountLabel(selectedCount)}. Media files stay in the vault.
+            This will delete {selectedElementCountLabel(selectedCount)}. Media files stay in the space.
           </AlertDialogDescription>
         </AlertDialogHeader>
         {error && (
-          <div className="text-sm text-destructive" data-delete-selected-error="">
+          <div className={MODAL_ERROR_CLASS} data-delete-selected-error="">
             {error}
           </div>
         )}

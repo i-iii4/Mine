@@ -298,10 +298,9 @@ async function checkOverlayAcrossPages(worker) {
 // that travels past 4 px moves the panel and opens nothing, a press without
 // it and a click open the space menu. The space comes from the kept
 // destination; Mine need not answer for the header to show it. The name is
-// the one of the live acceptance of 11.10.2026: in a 360 px panel it
-// dissolves before its chevron, short of "…", with the tab's mask on the text
-// alone and no ellipsis (DESIGN_SYSTEM.md, «Растворение кромок»), and a drag
-// to the window's edge leaves the panel 16 px in from it.
+// the one of the live acceptance of 11.10.2026: in a 360 px panel it ends in
+// an ellipsis before its chevron, short of "…", and a drag to the window's
+// edge leaves the panel 16 px in from it.
 const LONG_SPACE = '/Users/worker/Spaces/Mine. Длинное название. Прям вот легендарное';
 
 /** The header's parts with a long name, measured in the page. */
@@ -310,42 +309,18 @@ async function headerLayout(page) {
     const root = document.querySelector('[data-mine-clipper-overlay]').shadowRoot;
     const row = root.querySelector('[data-clipper-space-row]');
     const name = row.querySelector('[data-clipper-space-switcher]');
-    const label = name.querySelector('[data-fade-text]');
-    const chevron = name.querySelector('svg');
-    const more = row.querySelector('[data-clipper-overflow-trigger]');
-    const close = row.querySelector('[aria-label="Close"]');
+    const label = name.firstElementChild.firstElementChild;
     const box = (element) => {
       const { left, right, width } = element.getBoundingClientRect();
       return { left, right, width };
     };
-    const mask = (element) => {
-      const style = getComputedStyle(element);
-      return style.maskImage || style.webkitMaskImage || 'none';
-    };
-    // Every element from a part up to the row: none but the text may carry
-    // a dissolve, a mask that changes along the line, or the part dissolves
-    // with it. An icon's own mask is even, the alpha of its colour
-    // (global.css, «svg.lucide»), and is not a dissolve.
-    const masksUp = (element) => {
-      const masks = [];
-      for (let node = element; node && node !== row.parentElement; node = node.parentElement) {
-        if (/to right/.test(mask(node))) masks.push(node.tagName);
-      }
-      return masks;
-    };
     return {
-      name: box(name), label: box(label), chevron: box(chevron), more: box(more), close: box(close),
+      name: box(name), label: box(label), chevron: box(name.querySelector('svg')),
+      more: box(row.querySelector('[data-clipper-overflow-trigger]')),
+      close: box(row.querySelector('[aria-label="Close"]')),
       text: label.textContent,
-      title: name.getAttribute('title'),
       cut: label.scrollWidth > label.clientWidth,
-      overflow: label.getAttribute('data-overflow'),
       textOverflow: getComputedStyle(label).textOverflow,
-      labelMask: mask(label),
-      fadeElements: row.querySelectorAll('[data-fade-text]').length,
-      plateMasks: masksUp(label.parentElement),
-      chevronMasks: masksUp(chevron),
-      moreMasks: masksUp(more),
-      closeMasks: masksUp(close),
     };
   });
 }
@@ -378,20 +353,11 @@ async function checkHeaderDragBySpaceName(worker) {
     assert.ok(nameBox.width > header.width / 2, `the name does not fill the header: ${JSON.stringify({ header, nameBox })}`);
     const centre = { x: nameBox.x + nameBox.width / 2, y: nameBox.y + nameBox.height / 2 };
 
-    // The long name dissolves, then its chevron, then "…" and the close
-    // button: it runs over none of them. The mask is on the text alone, and
-    // the whole name is in the hover hint.
+    // The long name ends in an ellipsis, then its chevron, then "…" and the
+    // close button: it runs over none of them.
     const layout = await headerLayout(page);
     assert.equal(layout.text, 'Mine. Длинное название. Прям вот легендарное');
-    assert.equal(layout.title, 'Mine. Длинное название. Прям вот легендарное');
-    assert.ok(layout.cut && layout.overflow === 'true', `the long name is not measured as overflowing: ${JSON.stringify(layout)}`);
-    assert.notEqual(layout.textOverflow, 'ellipsis', `the long name ends in an ellipsis: ${JSON.stringify(layout)}`);
-    assert.ok(/^linear-gradient\(/.test(layout.labelMask) && /24px/.test(layout.labelMask),
-      `the long name does not dissolve over 24 px: ${JSON.stringify(layout)}`);
-    assert.equal(layout.fadeElements, 1, `more than the name is masked: ${JSON.stringify(layout)}`);
-    for (const part of ['plateMasks', 'chevronMasks', 'moreMasks', 'closeMasks']) {
-      assert.deepEqual(layout[part], [], `${part}: a part of the header beside the text is masked: ${JSON.stringify(layout)}`);
-    }
+    assert.ok(layout.cut && layout.textOverflow === 'ellipsis', `the long name is not cut with an ellipsis: ${JSON.stringify(layout)}`);
     assert.ok(layout.label.right < layout.more.left, `the name runs into "…": ${JSON.stringify(layout)}`);
     assert.ok(layout.label.right <= layout.chevron.left + 0.5 && layout.chevron.width > 0
       && layout.chevron.right <= layout.name.right + 0.5, `the name runs over its chevron: ${JSON.stringify(layout)}`);

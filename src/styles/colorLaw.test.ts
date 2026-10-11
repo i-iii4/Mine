@@ -3,13 +3,17 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   alphaForDelta,
+  alphaOverForDelta,
   compositeLightness,
   contrastRatio,
   darkSignalDelta,
   FORM_RATIO,
+  gamutChroma,
   greyFromOklch,
   oklabLightness,
   over,
+  rgbFromOklch,
+  type Rgb,
 } from "@/lib/colorLaw";
 
 // The colour rules (SPEC_COLOR_RULES.md): every theme token of global.css
@@ -192,6 +196,63 @@ describe("tokens follow the colour rules", () => {
     expect(lightness(DARK["--border-accent"])).toBeCloseTo(CANVAS.dark + darkSignalDelta(CANVAS.light - focusLight, "line"), 2);
     expect(percent(LIGHT["--graphic-card-focus-overlay"])).toBeCloseTo(alphaForDelta(FG.light, CANVAS.light, 3 * QUIET) * 100, 1);
     expect(percent(DARK["--graphic-card-focus-overlay"])).toBeCloseTo(alphaForDelta(FG.dark, CANVAS.dark, darkSignalDelta(3 * QUIET, "area")) * 100, 1);
+  });
+
+  it("derives the destructive button: a flat fill of 2 s and 3 s, its text K5 on the hover fill (3.8)", () => {
+    // K12: the hue and chroma of systemRed; the chroma is cut to sRGB.
+    const RED = { hue: 28.7, chroma: 0.232 };
+    const parts = (value: string | undefined): [number, number, number] => {
+      const match = /oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)/.exec(value ?? "");
+      return [Number(match?.[1]), Number(match?.[2]), Number(match?.[3])];
+    };
+    const ink = (tokens: Tokens) => {
+      const [l, c, h] = parts(tokens["--destructive"]);
+      return rgbFromOklch(l, c, h);
+    };
+    const share = {
+      light: {
+        rest: alphaOverForDelta(ink(LIGHT), CANVAS.light, 2 * QUIET),
+        hover: alphaOverForDelta(ink(LIGHT), CANVAS.light, 3 * QUIET),
+      },
+      dark: {
+        rest: alphaOverForDelta(ink(DARK), CANVAS.dark, darkSignalDelta(2 * QUIET, "area")),
+        hover: alphaOverForDelta(ink(DARK), CANVAS.dark, darkSignalDelta(3 * QUIET, "area")),
+      },
+    };
+    expect(percent(LIGHT["--destructive-fill-alpha"])).toBeCloseTo(share.light.rest * 100, 1);
+    expect(percent(LIGHT["--destructive-fill-hover-alpha"])).toBeCloseTo(share.light.hover * 100, 1);
+    expect(percent(DARK["--destructive-fill-alpha"])).toBeCloseTo(share.dark.rest * 100, 1);
+    expect(percent(DARK["--destructive-fill-hover-alpha"])).toBeCloseTo(share.dark.hover * 100, 1);
+
+    // The text is measured on the hover fill over level 1, where windows
+    // (floating layers) and the chrome stand: the darker fill of the two
+    // the button stands on in light, the brighter in dark.
+    const hoverFill = (theme: "light" | "dark", tokens: Tokens): Rgb =>
+      over(ink(tokens), share[theme].hover, greyFromOklch(zone(theme, FLOATING_LEVEL)));
+    const red = (lightness: number) => rgbFromOklch(lightness, gamutChroma(lightness, RED.hue, RED.chroma), RED.hue);
+    const lightFill = hoverFill("light", LIGHT);
+    let low = 0;
+    let high = oklabLightness(lightFill);
+    for (let step = 0; step < 60; step += 1) {
+      const middle = (low + high) / 2;
+      if (contrastRatio(red(middle), lightFill) >= 4.5) low = middle;
+      else high = middle;
+    }
+    const lightText = low;
+    const [lightL, lightC, lightH] = parts(LIGHT["--destructive-foreground"]);
+    expect(lightL).toBeCloseTo(lightText, 3);
+    expect(lightC).toBeCloseTo(gamutChroma(lightText, RED.hue, RED.chroma), 3);
+    expect(lightH).toBe(RED.hue);
+    // Dark by the line form: as far from its fill as the light text is.
+    const darkText = oklabLightness(hoverFill("dark", DARK))
+      + darkSignalDelta(oklabLightness(lightFill) - lightText, "line");
+    const [darkL, darkC, darkH] = parts(DARK["--destructive-foreground"]);
+    expect(darkL).toBeCloseTo(darkText, 3);
+    expect(darkC).toBeCloseTo(gamutChroma(darkText, RED.hue, RED.chroma), 3);
+    expect(darkH).toBe(RED.hue);
+    // Both reach K5 on the hover fill as written.
+    expect(contrastRatio(rgbFromOklch(lightL, lightC, lightH), lightFill)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(rgbFromOklch(darkL, darkC, darkH), hoverFill("dark", DARK))).toBeGreaterThanOrEqual(4.5);
   });
 
   it("dims to the tertiary step", () => {

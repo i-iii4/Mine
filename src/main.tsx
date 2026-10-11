@@ -114,7 +114,7 @@ const buttonsDecisionRoute = import.meta.env.DEV && window.location.pathname ===
 const cloudOpenRoute = import.meta.env.DEV && window.location.pathname === "/__cloud-open";
 // The onboarding screen by screen: first launch, opening a folder, an empty one.
 const onboardingRoute = import.meta.env.DEV && window.location.pathname === "/__onboarding";
-// Every modal window of the app, one button each.
+// Every modal window of the app open at once, one frame each.
 const popupsRoute = import.meta.env.DEV && window.location.pathname === "/__popups";
 const nativeShellSmokeRoute = new URLSearchParams(window.location.search)
   .has("mine-native-shell-smoke");

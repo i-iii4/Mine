@@ -173,66 +173,6 @@ describe("MainSecondaryTopBar placement", () => {
     });
   }
 
-  // One surface, one way (DESIGN_SYSTEM.md, «Растворение кромок»,
-  // 11.10.2026): the open card's name in the path dissolves as the space's
-  // and the collection's do; its plate, menu and close control stay whole.
-  it("dissolves the open card's name in the path only when it does not fit", () => {
-    const long = "Cards/A card name far too long for the path of the top row";
-    const longName = "A card name far too long for the path of the top row";
-    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (this: HTMLElement) {
-      return this.textContent === longName ? 500 : 0;
-    });
-    try {
-      const pathPart = (detailBlock: LightBlock) => (
-        <MainSecondaryTopBar
-          part="content"
-          placement="top"
-          sidebarCollapsed={false}
-          sidebarResizing={false}
-          stats={null}
-          detailBlock={detailBlock}
-          detailEntered
-          viewMode="grid"
-          onViewModeChange={vi.fn()}
-          vaultPath="/vault"
-          tags={[]}
-          currentTag={null}
-          onToggleTag={vi.fn()}
-          onCreateAndAssign={vi.fn()}
-          onRequestRename={vi.fn()}
-          onRenameFile={vi.fn()}
-          onCheckFileName={vi.fn(() => Promise.resolve(null))}
-          onRequestDelete={vi.fn()}
-          onDetailClose={vi.fn()}
-          detailMenuOpenRequestSequence={0}
-        />
-      );
-      const { rerender } = render(pathPart(BLOCK));
-      const shortText = within(screen.getByTitle("nogal-house")).getByText("nogal-house");
-      expect(shortText).toHaveAttribute("data-fade-text");
-      expect(shortText).not.toHaveAttribute("data-overflow");
-
-      rerender(pathPart({ ...BLOCK, slug: long }));
-      // The whole name in the hover hint, on the plate that lights.
-      const plate = screen.getByTitle(longName);
-      expect(plate).toHaveAttribute("data-secondary-detail-card-name");
-      expect(plate).toHaveClass("hover:state-active", "px-2");
-      expect(plate).not.toHaveAttribute("data-fade-text");
-      const text = within(plate).getByText(longName);
-      expect(text).toHaveAttribute("data-overflow", "true");
-      expect(text).not.toHaveClass("truncate");
-      expect(plate.querySelectorAll("[data-fade-text]")).toHaveLength(1);
-      // The card's menu and close control are not under the mask.
-      const layer = document.querySelector("[data-secondary-detail-top-menu]") as HTMLElement;
-      for (const button of within(layer).getAllByRole("button")) {
-        expect(button.closest("[data-fade-text]")).toBeNull();
-        expect(button.querySelector("[data-fade-text]")).toBeNull();
-      }
-    } finally {
-      vi.restoreAllMocks();
-    }
-  });
-
   it("renames the card's file in place: leaving the field saves, Escape keeps the name", async () => {
     const onRenameFile = vi.fn<(block: LightBlock, newStem: string) => Promise<void>>()
       .mockResolvedValue(undefined);

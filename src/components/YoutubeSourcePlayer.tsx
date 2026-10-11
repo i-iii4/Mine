@@ -21,6 +21,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
+import { MODAL_ERROR_CLASS } from "@/components/ui/modal-window";
 import { Progress } from "@/components/ui/progress";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import {
@@ -259,7 +260,7 @@ function SourceVideoDownloadRow({ download, onCancel }: {
   );
 }
 
-function DeleteSourceVideoDialog({ open, onOpenChange, onDelete }: {
+export function DeleteSourceVideoDialog({ open, onOpenChange, onDelete }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onDelete: () => Promise<void>;
@@ -283,7 +284,7 @@ function DeleteSourceVideoDialog({ open, onOpenChange, onDelete }: {
             This removes the embedded video and its poster from this element. The poster file is deleted unless another element uses it. Text and collections stay.
           </AlertDialogDescription>
         </AlertDialogHeader>
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <p className={MODAL_ERROR_CLASS}>{error}</p>}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
           <AlertDialogAction
@@ -305,7 +306,7 @@ function DeleteSourceVideoDialog({ open, onOpenChange, onDelete }: {
               })();
             }}
           >
-            {submitting ? "Deleting..." : "Delete embed"}
+            {submitting ? "Deleting…" : "Delete embed"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

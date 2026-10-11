@@ -19,12 +19,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogCancel,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { MODAL_ERROR_CLASS } from "@/components/ui/modal-window";
 import { thumbnailUrl } from "@/lib/assets";
 import { getNavigationLabel } from "@/lib/displayTitle";
 import { cn } from "@/lib/utils";
@@ -97,11 +99,11 @@ export function MergeCardsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>{mergeDialogTitle(orderedBlocks.length)}</DialogTitle>
           <DialogDescription>
-            Drag cards to set the merge order.
+            Drag elements to set the merge order.
           </DialogDescription>
         </DialogHeader>
 
@@ -121,21 +123,10 @@ export function MergeCardsDialog({
           </SortableContext>
         </DndContext>
 
-        {error && (
-          <p className="rounded-1 border border-destructive bg-background px-3 py-2 text-sm text-destructive">
-            {error}
-          </p>
-        )}
+        {error && <p className={MODAL_ERROR_CLASS}>{error}</p>}
 
         <DialogFooter>
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={submitting}
-            onClick={() => onOpenChange(false)}
-          >
-            Cancel
-          </Button>
+          <DialogCancel disabled={submitting}>Cancel</DialogCancel>
           <Button
             type="button"
             disabled={submitting || orderedSlugs.length < 2}
@@ -208,7 +199,7 @@ function mergeErrorMessage(error: unknown): string {
     if (kind === "too_few_cards") return "Select at least two elements.";
     if (kind === "duplicate_slug") return "The merge list contains the same element twice.";
     if (kind === "block_not_found") return "One of the selected elements no longer exists.";
-    if (kind === "block_not_mergeable") return "Channels cannot be merged.";
+    if (kind === "block_not_mergeable") return "Collections cannot be merged.";
     if (kind === "source_changed") {
       return "An element changed outside Mine while merging. Nothing was merged; try again.";
     }

@@ -14,13 +14,17 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Dialog,
+  DialogCancel,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MODAL_ERROR_CLASS } from "@/components/ui/modal-window";
+import { NEW_COLLECTION_DESCRIPTION } from "@/components/CreateCollectionDialog";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
 import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
@@ -340,50 +344,79 @@ export function TopCollectionSwitcher({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-        <DialogContent className="sm:max-w-sm" aria-describedby={undefined}>
-          <form
-            className="grid gap-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void handleCreateSubmit();
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle>Create collection</DialogTitle>
-            </DialogHeader>
-            <div className="grid gap-2">
-              <Input
-                aria-label="Channel name"
-                autoFocus
-                variant="default"
-                value={createName}
-                onChange={(event) => {
-                  setCreateName(event.target.value);
-                  setCreateNameError(null);
-                }}
-              />
-              {createNameError && (
-                <p role="alert" className="text-sm text-destructive">
-                  {createNameError}
-                </p>
-              )}
-            </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setCreateDialogOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={creating}>
-                Create
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <CreateCollectionNameDialog
+        open={createDialogOpen}
+        name={createName}
+        error={createNameError}
+        creating={creating}
+        onOpenChange={setCreateDialogOpen}
+        onNameChange={(name) => {
+          setCreateName(name);
+          setCreateNameError(null);
+        }}
+        onSubmit={() => void handleCreateSubmit()}
+      />
     </>
+  );
+}
+
+/** Naming the collection `Create collection` makes: the same window as the
+ *  sidebar's New collection (CreateCollectionDialog), with the refusal of an
+ *  empty or taken name under the field. */
+export function CreateCollectionNameDialog({
+  open,
+  name,
+  error,
+  creating,
+  onOpenChange,
+  onNameChange,
+  onSubmit,
+}: {
+  open: boolean;
+  name: string;
+  error: string | null;
+  creating: boolean;
+  onOpenChange: (open: boolean) => void;
+  onNameChange: (name: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>New collection</DialogTitle>
+            <DialogDescription>{NEW_COLLECTION_DESCRIPTION}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Input
+              aria-label="Collection name"
+              placeholder="Collection name"
+              autoFocus
+              variant="default"
+              value={name}
+              onChange={(event) => onNameChange(event.target.value)}
+            />
+            {error && (
+              <p role="alert" className={MODAL_ERROR_CLASS}>
+                {error}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <DialogCancel>Cancel</DialogCancel>
+            <Button type="submit" disabled={creating}>
+              Create
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

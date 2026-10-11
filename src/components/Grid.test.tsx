@@ -1656,15 +1656,7 @@ describe("Grid — no collapse after add / revisit", () => {
       "px-[var(--main-secondary-pad-x,0.5rem)]",
     );
     const selectionCount = actionBar?.querySelector("[data-feed-selection-count]");
-    expect(selectionCount).toHaveClass("w-0", "min-w-0", "flex-1", "px-2");
-    // A text of the path's row: it dissolves when it does not fit, no
-    // ellipsis (DESIGN_SYSTEM.md, «Растворение кромок»), the whole count in
-    // the hover hint.
-    const selectionCountText = screen.getByText("1 element selected");
-    expect(selectionCountText.parentElement).toBe(selectionCount);
-    expect(selectionCountText).toHaveAttribute("data-fade-text");
-    expect(selectionCountText).toHaveAttribute("title", "1 element selected");
-    expect(selectionCount).not.toHaveClass("truncate");
+    expect(selectionCount).toHaveClass("w-0", "min-w-0", "flex-1", "truncate");
     expect(selectionRow?.firstElementChild).toBe(selectionCount);
     const selectionActions = actionBar?.querySelector<HTMLElement>(
       "[data-feed-selection-actions]",
@@ -1707,9 +1699,13 @@ describe("Grid — no collapse after add / revisit", () => {
       "data-variant",
       "destructive",
     );
+    // A flat destructive fill under destructive text, no depth
+    // (SPEC_COLOR_RULES.md, 3.8).
     expect(actionBarQueries.getByRole("button", { name: /Delete/i })).toHaveClass(
-      "text-destructive",
+      "bg-destructive-fill",
+      "text-destructive-foreground",
     );
+    expect(actionBarQueries.getByRole("button", { name: /Delete/i })).not.toHaveClass("button-depth");
     expect(actionBarQueries.getByRole("button", { name: /Delete/i }).querySelector("svg")).toBeNull();
     expect(screen.queryByRole("button", { name: /Remove from Collection/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Source/i })).not.toBeInTheDocument();

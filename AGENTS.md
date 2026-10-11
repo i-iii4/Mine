@@ -230,11 +230,10 @@ local-arena/
 │   │   ├── MainSecondaryChrome.tsx # Main route secondary chrome
 │   │   ├── FeedDisplayMenu.tsx # Кнопка Display и панель: Sort, Show, Spacing (SPEC_FEED_DISPLAY)
 │   │   ├── Card.tsx            # Адаптивная карточка по типу блока (5 типов)
-│   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация, кнопка импорта
+│   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация
 │   │   ├── Detail.tsx          # Lightbox: просмотр, коллекции, навигация стрелками
 │   │   ├── VaultPicker.tsx     # Выбор vault через нативный диалог
 │   │   ├── DropZone.tsx        # Drag-and-drop файлов для создания блоков
-│   │   ├── ImportDialog.tsx    # 4-шаговый импорт из Are.na
 │   │   ├── CardContextMenu.tsx # Контекстное меню карточки: коллекции, удаление
 │   │   ├── SidebarResizeHandle.tsx # Ресайз-ручка сайдбара (pill-стиль)
 │   │   ├── NotificationCard.tsx # Единый вид уведомления: правый нижний угол, bg-popover

@@ -45,7 +45,12 @@ const buttonVariants = cva(
         // Secondary action: transparent body, permanent border. Text action
         // buttons are never borderless — ghost is reserved for icon controls.
         secondary: "bg-transparent outline-1 -outline-offset-1 outline-border hover:outline-component-fill-hover disabled:outline-inert-frame",
-        destructive: "button-depth bg-depth-fill text-destructive",
+        // Destructive command: a flat fill of the destructive colour under
+        // destructive text, no depth (user's decision of 11.10.2026). The
+        // fill is 2 s over the surface and 3 s under the pointer, the text
+        // reaches 4.5:1 on either (SPEC_COLOR_RULES.md, 3.8). Disabled, it
+        // keeps only the frame (DESIGN_SYSTEM.md, «Недоступно»).
+        destructive: "bg-destructive-fill text-destructive-foreground hover:bg-destructive-fill-hover disabled:bg-transparent disabled:outline-1 disabled:-outline-offset-1 disabled:outline-inert-frame",
         // Something that reports and cannot be pressed (a keystroke the bottom
         // bar names, the Connected plaque): the frame every unpressable control
         // shares, from the surface under it, and the secondary step, since what
@@ -133,7 +138,11 @@ function Button({
       // hover, a raised plate's included (SPEC_COLOR_RULES.md, 3.6; user's
       // report of 07.10.2026: a dimmed glyph on a lit raised plate read
       // weaker than a plain chrome button's).
-      className={buttonVariants({ variant, size, className })}
+      // Merged, so a variant's or the caller's class replaces the base one
+      // it contradicts instead of leaving the stylesheet's order to decide:
+      // unmerged, the base `text-foreground` beat `text-destructive` and
+      // `text-detach`, and the `h-6` of `xs` beat a caller's `h-5`.
+      className={cn(buttonVariants({ variant, size }), className)}
       {...props}
     >
       {size === "chrome-icon" && !asChild ? (

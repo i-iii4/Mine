@@ -145,42 +145,6 @@ describe("VaultSwitcher", () => {
     expect(screen.getByRole("button", { name: "Forget NSFV" })).toBeInTheDocument();
   });
 
-  // One surface, one way (DESIGN_SYSTEM.md, «Растворение кромок»,
-  // 11.10.2026): in the path the name dissolves, as a tab's does; in the
-  // menu below it the rows keep their ellipsis.
-  it("dissolves a space's name in the path only when it does not fit, the menu's rows keep their ellipsis", async () => {
-    const long = "Mine. Длинное название. Прям вот легендарное";
-    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (this: HTMLElement) {
-      return this.textContent === long ? 500 : 0;
-    });
-    try {
-      commandMocks.listKnownVaults.mockResolvedValue([`/tmp/${long}`, "/tmp/Тест"]);
-      const { rerender } = render(<VaultSwitcher currentPath="/tmp/Тест" onVaultSelected={vi.fn()} surface="topChrome" />);
-      const short = screen.getByRole("button", { name: "Switch space: Тест" });
-      expect(within(short).getByText("Тест")).toHaveAttribute("data-fade-text");
-      expect(within(short).getByText("Тест")).not.toHaveAttribute("data-overflow");
-      expect(short).toHaveAttribute("title", "Тест");
-
-      rerender(<VaultSwitcher currentPath={`/tmp/${long}`} onVaultSelected={vi.fn()} surface="topChrome" />);
-      const trigger = screen.getByRole("button", { name: `Switch space: ${long}` });
-      const label = within(trigger).getByText(long);
-      expect(label).toHaveAttribute("data-overflow", "true");
-      expect(label).not.toHaveClass("truncate");
-      expect(trigger).toHaveAttribute("title", long);
-      // The mask is on the text alone: the plate and the chevron stay whole.
-      expect(trigger.querySelectorAll("[data-fade-text]")).toHaveLength(1);
-      expect(label.parentElement).toHaveAttribute("data-chrome-plate");
-      expect(trigger.querySelector("[data-menu-chevron]")?.closest("[data-fade-text]")).toBeNull();
-
-      fireEvent.click(trigger);
-      const row = await screen.findByRole("menuitem", { name: "Тест" });
-      expect(within(row).getByText("Тест")).toHaveClass("truncate");
-      expect(row.querySelector("[data-fade-text]")).toBeNull();
-    } finally {
-      vi.restoreAllMocks();
-    }
-  });
-
   it("omits the current space and keeps space rows free of icon markers", async () => {
     commandMocks.listKnownVaults.mockResolvedValue([
       "/Users/i_iii/Library/Mobile Documents/com~apple~CloudDocs/Mine",

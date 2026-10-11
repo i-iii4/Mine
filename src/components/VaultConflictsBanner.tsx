@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { listenPage } from "@/lib/pageEvents";
-import { AlertTriangle, Check, Edit3, Trash2, X } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import {
   listVaultConflicts,
   resolveVaultConflict,
@@ -14,10 +14,13 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { MODAL_DETAIL_CLASS, MODAL_ERROR_CLASS } from "@/components/ui/modal-window";
 
 interface VaultConflictsBannerProps {
   vaultReady: boolean;
@@ -92,10 +95,12 @@ export function VaultConflictsBanner({ vaultReady }: VaultConflictsBannerProps) 
 
   return (
     <>
+      {/* The destructive button's flat fill and text (SPEC_COLOR_RULES.md,
+          3.8): the banner is pressed like it and says the same alarm. */}
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="mb-4 flex w-full items-center gap-2 rounded-1 border border-destructive/40 bg-destructive/10 px-3 py-2 text-left text-sm text-destructive-foreground hover:bg-destructive/15"
+        className="mb-4 flex w-full items-center gap-2 rounded-1 bg-destructive-fill px-3 py-2 text-left text-sm text-destructive-foreground hover:bg-destructive-fill-hover"
       >
         <AlertTriangle className="size-[13px] shrink-0" />
         <span className="flex-1 truncate">
@@ -103,83 +108,105 @@ export function VaultConflictsBanner({ vaultReady }: VaultConflictsBannerProps) 
             ? "1 iCloud sync conflict"
             : `${count} iCloud sync conflicts`}
         </span>
-        <span className="text-xs opacity-60">Review</span>
+        <span>Review</span>
       </button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Resolve iCloud sync conflicts</DialogTitle>
-          </DialogHeader>
-          <div className="mt-2 text-sm text-muted-foreground">
-            iCloud detected parallel edits to these blocks on different devices.
-            Choose how to resolve each one. Files on disk are moved or archived
-            according to your choice; the index updates accordingly.
-          </div>
-
-          {error && (
-            <div className="mt-3 rounded-1 border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive-foreground">
-              {error}
-            </div>
-          )}
-
-          <div className="mt-4 flex max-h-[60vh] flex-col gap-3 overflow-y-auto">
-            {sortedConflicts.map((item) => {
-              const key = keyFor(item);
-              const busy = resolvingKey === key;
-              return (
-                <div
-                  key={key}
-                  className="rounded-1 border border-border bg-card p-3"
-                >
-                  <div className="text-sm font-medium">{item.baseSlug}</div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    conflict file: {item.conflictSlug}.md
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button
-                      size="xs"
-                      variant="default"
-                      disabled={busy}
-                      onClick={() => handleResolve(item, "keep_original")}
-                    >
-                      <Trash2 className="mr-1 size-[13px]" />
-                      Keep original
-                    </Button>
-                    <Button
-                      size="xs"
-                      variant="default"
-                      disabled={busy}
-                      onClick={() => handleResolve(item, "keep_conflict")}
-                    >
-                      <Check className="mr-1 size-[13px]" />
-                      Keep conflict version
-                    </Button>
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      disabled={busy}
-                      onClick={() =>
-                        handleResolve(item, "dismiss_for_manual_merge")
-                      }
-                    >
-                      <Edit3 className="mr-1 size-[13px]" />
-                      I'll merge manually
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="mt-4 flex justify-end">
-            <Button variant="secondary" onClick={() => setOpen(false)}>
-              <X className="mr-1 size-[13px]" />
-              Close
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <VaultConflictsDialog
+        open={open}
+        conflicts={sortedConflicts}
+        resolvingKey={resolvingKey}
+        error={error}
+        keyFor={keyFor}
+        onOpenChange={setOpen}
+        onResolve={(item, action) => void handleResolve(item, action)}
+      />
     </>
+  );
+}
+
+/** One window per conflicting file pair: its two names and the three ways
+ *  out, newest first. */
+export function VaultConflictsDialog({
+  open,
+  conflicts,
+  resolvingKey,
+  error,
+  keyFor,
+  onOpenChange,
+  onResolve,
+}: {
+  open: boolean;
+  conflicts: readonly VaultConflictItem[];
+  resolvingKey: string | null;
+  error: string | null;
+  keyFor: (item: VaultConflictItem) => string;
+  onOpenChange: (open: boolean) => void;
+  onResolve: (item: VaultConflictItem, action: VaultConflictResolveAction) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Resolve iCloud sync conflicts</DialogTitle>
+          <DialogDescription>
+            iCloud detected parallel edits to these elements on different
+            devices. Choose how to resolve each one. Files on disk are moved or
+            archived according to your choice; the index updates accordingly.
+          </DialogDescription>
+        </DialogHeader>
+
+        {error && <p className={MODAL_ERROR_CLASS}>{error}</p>}
+
+        {/* A framed group per conflict: its text 12px inside the frame (4
+            and 8, as text without a plate), the names 4px apart, the
+            buttons 8px under them. */}
+        <div className="flex max-h-[60vh] min-w-0 flex-col gap-2 overflow-y-auto">
+          {conflicts.map((item) => {
+            const key = keyFor(item);
+            const busy = resolvingKey === key;
+            return (
+              <div key={key} className="grid min-w-0 gap-2 rounded-1 border border-border p-3">
+                <div className="grid min-w-0 gap-1">
+                  <div className="min-w-0 truncate text-base text-foreground">{item.baseSlug}</div>
+                  <div className={MODAL_DETAIL_CLASS}>Conflict copy: {item.conflictSlug}.md</div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="xs"
+                    variant="default"
+                    disabled={busy}
+                    onClick={() => onResolve(item, "keep_original")}
+                  >
+                    Keep original
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => onResolve(item, "keep_conflict")}
+                  >
+                    Keep conflict version
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => onResolve(item, "dismiss_for_manual_merge")}
+                  >
+                    I'll merge manually
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => onOpenChange(false)}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -17,10 +17,13 @@ function Input({
       type={type}
       data-slot="input"
       className={cn(
-        "placeholder:text-tertiary-foreground selection:bg-primary selection:text-primary-foreground w-full min-w-0 rounded-1 px-3 py-2 text-base text-foreground outline-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
+        // Disabled, a field looks as every unavailable control does: the
+        // tertiary step and, for the framed one, the inert frame instead of
+        // the whole field at half opacity (DESIGN_SYSTEM.md, «Недоступно»).
+        "placeholder:text-tertiary-foreground selection:bg-primary selection:text-primary-foreground w-full min-w-0 rounded-1 px-3 py-2 text-base text-foreground outline-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:text-tertiary-foreground",
         controlSize === "clipper" ? "h-10" : "h-8",
         variant === "default" && [
-          "border-input border bg-background",
+          "border-input border bg-background disabled:border-inert-frame",
           "focus-visible:border-foreground",
           "aria-invalid:border-destructive",
           "file:text-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-base file:font-normal",

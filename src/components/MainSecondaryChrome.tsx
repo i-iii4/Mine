@@ -21,7 +21,6 @@ import { renameErrorMessage } from "./RenameBlockDialog";
 import { FeedDisplayMenu } from "./FeedDisplayMenu";
 import { GraphDisplayMenu } from "./GraphDisplayMenu";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
-import { FadeText } from "./ui/fade-text";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 
@@ -48,7 +47,6 @@ function MainSecondaryStatsLeft({
   sidebarCollapsed: boolean;
 }) {
   if (sidebarCollapsed) return null;
-  const collectionCountLabel = formatPluralCount(collectionCount, "collection", "collections");
 
   return (
     <div
@@ -62,14 +60,9 @@ function MainSecondaryStatsLeft({
         !onCreateCollection && "pr-[var(--chrome-edge-pad)]",
       )}
     >
-      {/* A chrome row: a count that does not fit dissolves, as the path's
-          names do (DESIGN_SYSTEM.md, «Растворение кромок»). */}
-      <FadeText
-        data-main-secondary-collection-count=""
-        text={collectionCountLabel}
-        title={collectionCountLabel}
-      />
-
+      <span data-main-secondary-collection-count="" className="min-w-0 truncate whitespace-nowrap">
+        {formatPluralCount(collectionCount, "collection", "collections")}
+      </span>
       {onCreateCollection && (
         // 8px from the column's edge, the inset the sidebar rows give their
         // Connect button, and the filter's clear button above.
@@ -144,7 +137,11 @@ function MainSecondaryStatsRight({
         "pl-[var(--main-secondary-pad-x)]",
       )}
     >
-      {stats && <FadeText text={cardCount} title={cardCount} />}
+      {stats && (
+        <span className="min-w-0 truncate whitespace-nowrap" title={cardCount}>
+          {cardCount}
+        </span>
+      )}
       {viewModeSwitch && (
         <div className="flex shrink-0 items-center gap-2" data-main-view-mode-switcher="">
           <span className="shrink-0 font-mono text-sm text-tertiary-foreground">View:</span>
@@ -553,13 +550,10 @@ function DetailCardFileName({
               onBlur={(event) => edit.leave(event.currentTarget.value)}
             />
           ) : (
-            // The plate lights on hover; the name inside it dissolves when it
-            // does not fit, as the path's other names do (DESIGN_SYSTEM.md,
-            // «Растворение кромок»): the mask is on the text, not the plate.
             <div
               onDoubleClick={startEditing}
               className={cn(
-                "flex min-w-0 select-none font-mono text-sm text-muted-foreground",
+                "min-w-0 select-none truncate font-mono text-sm text-muted-foreground",
                 inPath
                   ? "h-6 rounded-1 px-2 leading-6 hover:state-active hover:text-foreground"
                   : "flex-1",
@@ -567,7 +561,7 @@ function DetailCardFileName({
               title={fileName}
               data-secondary-detail-card-name=""
             >
-              <FadeText text={fileName} />
+              {fileName}
             </div>
           )}
         </div>
@@ -622,15 +616,13 @@ function CompactDetailCardTitle({
   onRequestRename: (block: LightBlock | IndexedBlock) => void;
 }) {
   return (
-    // The title dissolves when it does not fit, as the path's names do
-    // (DESIGN_SYSTEM.md, «Растворение кромок»).
     <div
       onDoubleClick={() => onRequestRename(block)}
-      className="flex min-w-0 flex-1 select-none pl-0 pr-3 font-mono text-sm text-muted-foreground"
+      className="min-w-0 flex-1 select-none truncate pl-0 pr-3 font-mono text-sm text-muted-foreground"
       title={cardTitle}
       data-compact-detail-card-title=""
     >
-      <FadeText text={cardTitle} />
+      {cardTitle}
     </div>
   );
 }

@@ -436,10 +436,6 @@ vi.mock("@/components/Detail", () => ({
   ),
 }));
 
-vi.mock("@/components/ImportDialog", () => ({
-  ImportDialog: () => null,
-}));
-
 vi.mock("@/components/DropZone", () => ({
   DropZone: () => null,
 }));
@@ -2955,7 +2951,7 @@ describe("AppWithVault", () => {
     const search = await screen.findByRole("textbox", { name: "Search collections" });
     fireEvent.change(search, { target: { value: "gamma" } });
     fireEvent.click(screen.getByRole("menuitem", { name: "Create collection" }));
-    const channelName = await screen.findByRole("textbox", { name: "Channel name" });
+    const channelName = await screen.findByRole("textbox", { name: "Collection name" });
     expect(channelName).toHaveValue("gamma");
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 

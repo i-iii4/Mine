@@ -1,10 +1,30 @@
 import * as React from "react"
-import { XIcon } from "lucide-react"
 import { Dialog as DialogPrimitive } from "radix-ui"
 
+import { ChromeCloseButton } from "@/components/ChromeCloseButton"
 import { isMenuDismissPress } from "@/lib/openMenus"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import {
+  MODAL_DESCRIPTION_CLASS,
+  MODAL_FOOTER_CLASS,
+  MODAL_HEADER_CLASS,
+  MODAL_OVERLAY_CLASS,
+  MODAL_SURFACE_CLASS,
+  MODAL_TITLE_CLASS,
+  MODAL_WIDTH_CLASS,
+  type ModalWidth,
+} from "@/components/ui/modal-window"
+
+/** What the content of a window tells its wrapper: whether it holds a
+ *  `DialogCancel`, and so whether the close button stands in the title's
+ *  line (DESIGN_SYSTEM.md, «Окна»). */
+type DialogCancelSlot = {
+  showsClose: boolean
+  setHasCancel: (hasCancel: boolean) => void
+}
+
+const DialogCancelSlotContext = React.createContext<DialogCancelSlot | null>(null)
 
 function Dialog({
   ...props
@@ -37,31 +57,38 @@ function DialogOverlay({
   return (
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
-      className={cn(
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50",
-        className
-      )}
+      className={cn(MODAL_OVERLAY_CLASS, className)}
       {...props}
     />
   )
 }
 
+// A window with content by default (DESIGN_SYSTEM.md, «Окна»): every Dialog
+// holds a field, a list or a choice. The close button stands only in a
+// window without Cancel: Cancel and Escape close the rest, as a macOS sheet.
+// `showCloseButton={false}` is the search panel's alone, which is no window.
 function DialogContent({
   className,
   children,
+  widthRole = "content",
   showCloseButton = true,
   overlayClassName,
   onPointerDownOutside,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
+  widthRole?: ModalWidth
   showCloseButton?: boolean
   overlayClassName?: string
 }) {
+  const [hasCancel, setHasCancel] = React.useState(false)
+  const showsClose = showCloseButton && !hasCancel
+  const slot = React.useMemo(() => ({ showsClose, setHasCancel }), [showsClose])
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay className={overlayClassName} />
       <DialogPrimitive.Content
         data-slot="dialog-content"
+        data-modal-width={widthRole}
         onPointerDownOutside={(event) => {
           // A press outside a menu open over the dialog closes the menu only.
           if (isMenuDismissPress(event.detail.originalEvent)) {
@@ -70,24 +97,49 @@ function DialogContent({
           }
           onPointerDownOutside?.(event)
         }}
-        className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-32px)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-1 border p-6 shadow-lg duration-200 outline-none sm:max-w-lg",
-          className
-        )}
+        className={cn(MODAL_SURFACE_CLASS, MODAL_WIDTH_CLASS[widthRole], className)}
         {...props}
       >
-        {children}
-        {showCloseButton && (
-          <DialogPrimitive.Close
-            data-slot="dialog-close"
-            className="data-[state=open]:bg-accent text-muted-foreground hover:text-foreground absolute top-4 right-4 rounded-1 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[13px]"
-          >
-            <XIcon />
-            <span className="sr-only">Close</span>
-          </DialogPrimitive.Close>
+        <DialogCancelSlotContext.Provider value={slot}>
+          {children}
+        </DialogCancelSlotContext.Provider>
+        {showsClose && (
+          // The chrome's close button (DESIGN_SYSTEM.md, «Окна»), in the
+          // title's line: its 24px plate centred on the title's 24px line,
+          // its right edge on the window field like every other right edge.
+          // Last in the DOM, so opening the window still focuses its first
+          // field or button, not this.
+          <div className="absolute top-6 right-6 flex h-6 items-center">
+            <DialogPrimitive.Close asChild>
+              <ChromeCloseButton />
+            </DialogPrimitive.Close>
+          </div>
         )}
       </DialogPrimitive.Content>
     </DialogPortal>
+  )
+}
+
+// A text action always has a body (DESIGN_SYSTEM.md, «Закон текстовой
+// кнопки»): Cancel is `secondary`, framed, as `AlertDialogCancel`. Its
+// presence takes the close button out of the window before the first paint.
+function DialogCancel({
+  className,
+  variant = "secondary",
+  size = "default",
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Close> &
+  Pick<React.ComponentProps<typeof Button>, "variant" | "size">) {
+  const setHasCancel = React.useContext(DialogCancelSlotContext)?.setHasCancel
+  React.useLayoutEffect(() => {
+    if (!setHasCancel) return
+    setHasCancel(true)
+    return () => setHasCancel(false)
+  }, [setHasCancel])
+  return (
+    <Button variant={variant} size={size} className={className} asChild>
+      <DialogPrimitive.Close data-slot="dialog-cancel" {...props} />
+    </Button>
   )
 }
 
@@ -95,7 +147,7 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-header"
-      className={cn("flex flex-col gap-2 text-center sm:text-left", className)}
+      className={cn(MODAL_HEADER_CLASS, className)}
       {...props}
     />
   )
@@ -112,10 +164,7 @@ function DialogFooter({
   return (
     <div
       data-slot="dialog-footer"
-      className={cn(
-        "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
-        className
-      )}
+      className={cn(MODAL_FOOTER_CLASS, className)}
       {...props}
     >
       {children}
@@ -132,10 +181,13 @@ function DialogTitle({
   className,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Title>) {
+  const showsClose = React.useContext(DialogCancelSlotContext)?.showsClose ?? false
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn("text-lg leading-none font-semibold", className)}
+      // Room for the close button in the title's line, while it stands
+      // there: its 24px plate and the 8px between them.
+      className={cn(MODAL_TITLE_CLASS, showsClose && "pr-8", className)}
       {...props}
     />
   )
@@ -148,7 +200,7 @@ function DialogDescription({
   return (
     <DialogPrimitive.Description
       data-slot="dialog-description"
-      className={cn("text-muted-foreground text-base", className)}
+      className={cn(MODAL_DESCRIPTION_CLASS, className)}
       {...props}
     />
   )
@@ -156,6 +208,7 @@ function DialogDescription({
 
 export {
   Dialog,
+  DialogCancel,
   DialogClose,
   DialogContent,
   DialogDescription,

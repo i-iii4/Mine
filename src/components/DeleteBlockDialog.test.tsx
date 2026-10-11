@@ -53,6 +53,6 @@ describe("DeleteBlockDialog description", () => {
         onDeleteMedia={() => {}}
       />,
     );
-    expect(screen.getByText(/used by other cards/i)).toBeInTheDocument();
+    expect(screen.getByText(/used by other elements/i)).toBeInTheDocument();
   });
 });

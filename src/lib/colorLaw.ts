@@ -32,6 +32,46 @@ function decodeSrgb(channel: number): number {
   return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
 }
 
+/** The linear sRGB channels of `oklch(L C h)`, unclipped: outside the gamut
+ *  a channel leaves 0..1. */
+function linearFromOklch(lightness: number, chroma: number, hue: number): [number, number, number] {
+  const a = chroma * Math.cos((hue * Math.PI) / 180);
+  const b = chroma * Math.sin((hue * Math.PI) / 180);
+  const l = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (lightness - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ];
+}
+
+/** `oklch(L C h)` in sRGB, gamma-encoded and clipped to the gamut, as the
+ *  browser paints it. */
+export function rgbFromOklch(lightness: number, chroma: number, hue: number): Rgb {
+  const [r, g, b] = linearFromOklch(lightness, chroma, hue);
+  return { r: encodeSrgb(r), g: encodeSrgb(g), b: encodeSrgb(b) };
+}
+
+const GAMUT_EPSILON = 1e-6;
+
+/** The most chroma, up to `cap`, that `oklch(L _ h)` keeps inside sRGB: a
+ *  semantic colour's chroma cut to the gamut (SPEC_COLOR_RULES.md, 3.8). */
+export function gamutChroma(lightness: number, hue: number, cap: number): number {
+  const inside = (chroma: number) =>
+    linearFromOklch(lightness, chroma, hue).every((channel) => channel >= -GAMUT_EPSILON && channel <= 1 + GAMUT_EPSILON);
+  if (inside(cap)) return cap;
+  let low = 0;
+  let high = cap;
+  for (let step = 0; step < BISECTION_STEPS; step += 1) {
+    const middle = (low + high) / 2;
+    if (inside(middle)) low = middle;
+    else high = middle;
+  }
+  return low;
+}
+
 /** An achromatic `oklch(L 0 0)` in sRGB: with no chroma the OKLab matrices
  *  give L³ in every linear channel. */
 export function greyFromOklch(lightness: number): Rgb {
@@ -87,7 +127,14 @@ const BISECTION_STEPS = 60;
  *  foreground stays closer. The difference grows with alpha, so bisection
  *  finds the one answer. */
 export function alphaForDelta(foreground: number, surface: number, delta: number): number {
-  const reach = (alpha: number) => Math.abs(compositeLightness(foreground, alpha, surface) - surface);
+  return alphaOverForDelta(greyFromOklch(foreground), surface, delta);
+}
+
+/** As `alphaForDelta`, for any colour `top` over the grey `surface`: the
+ *  share of a semantic colour in a flat fill (`color-mix(in srgb, …)`). */
+export function alphaOverForDelta(top: Rgb, surface: number, delta: number): number {
+  const under = greyFromOklch(surface);
+  const reach = (alpha: number) => Math.abs(oklabLightness(over(top, alpha, under)) - surface);
   if (reach(1) <= delta) return 1;
   let low = 0;
   let high = 1;

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Dialog,
+  DialogCancel,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -9,6 +10,11 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+
+/** What a new collection is, said the same in both windows that name one:
+ *  this and the collection switcher's `Create collection`. */
+export const NEW_COLLECTION_DESCRIPTION =
+  "The collection appears in the sidebar and can be filled by dragging elements onto it.";
 
 interface CreateCollectionDialogProps {
   open: boolean;
@@ -44,13 +50,10 @@ export function CreateCollectionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader className="place-items-start text-left">
+      <DialogContent>
+        <DialogHeader>
           <DialogTitle>New collection</DialogTitle>
-          <DialogDescription>
-            The collection appears in the sidebar and can be filled by dragging
-            cards onto it.
-          </DialogDescription>
+          <DialogDescription>{NEW_COLLECTION_DESCRIPTION}</DialogDescription>
         </DialogHeader>
         <Input
           autoFocus
@@ -65,9 +68,7 @@ export function CreateCollectionDialog({
           }}
         />
         <DialogFooter>
-          <Button variant="secondary" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
+          <DialogCancel>Cancel</DialogCancel>
           <Button onClick={submit} disabled={!trimmed}>
             Create
           </Button>

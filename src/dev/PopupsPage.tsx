@@ -1,24 +1,39 @@
-// Every modal window of the app, one button each, for a look at them.
+// Every modal window of the app open at once, for a look at their design
+// (DESIGN_SYSTEM.md, «Окна»).
 //
-// The windows are the production components with props written here; their
-// handlers do nothing. A window whose host keeps the open state to itself is
-// opened through the host's own control, drawn here as it is.
+// The page lays out one frame per window; each frame loads this page with
+// `?popup=<id>` and shows that one window open over an empty page, as the app
+// shows it. The windows are the production components with props written
+// here; their handlers do nothing. The two calls a window makes on opening
+// get fixed answers.
 
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { DndContext } from "@dnd-kit/core";
 import { MemoryRouter } from "react-router";
+import { mockIPC } from "@tauri-apps/api/mocks";
 import { CreateCollectionDialog } from "@/components/CreateCollectionDialog";
 import { DeleteBlockDialog } from "@/components/DeleteBlockDialog";
 import { DeleteSelectedCardsDialog } from "@/components/DeleteSelectedCardsDialog";
-import { GroupSelectionCommands } from "@/components/GroupSelectionCommands";
-import { ImportDialog } from "@/components/ImportDialog";
+import {
+  DeleteMediaAssetDialog,
+  RemoveMediaAssetFromCardDialog,
+  RenameMediaAssetDialog,
+} from "@/components/Detail";
 import { MergeCardsDialog } from "@/components/MergeCardsDialog";
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
-import { SearchOverlay } from "@/components/SearchOverlay";
-import { Sidebar } from "@/components/Sidebar";
-import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
-import { Button } from "@/components/ui/button";
-import type { DeleteBlockPlan, LightBlock, PreviewCard, TagCount } from "@/types";
+import { DeleteCollectionDialog } from "@/components/Sidebar";
+import { CreateCollectionNameDialog } from "@/components/TopCollectionSwitcher";
+import { VaultConflictsDialog } from "@/components/VaultConflictsBanner";
+import { RemoveSpaceDialog } from "@/components/VaultSwitcher";
+import { DeleteSourceVideoDialog } from "@/components/YoutubeSourcePlayer";
+import { DeleteOrphansDialog } from "@/settings/OrphansSection";
+import type { VaultConflictItem } from "@/lib/commands";
+import type {
+  DeleteBlockPlan,
+  DeleteMediaAssetPlan,
+  LightBlock,
+  MediaAssetRef,
+} from "@/types";
 
 const VAULT_PATH = "/Users/me/References";
 
@@ -28,10 +43,6 @@ function noop() {
 
 async function noopAsync() {
   return undefined;
-}
-
-async function noTags() {
-  return new Map<string, string[]>();
 }
 
 function block(id: number, title: string): LightBlock {
@@ -69,13 +80,6 @@ const BLOCKS: LightBlock[] = [
   block(3, "Designing calm interfaces"),
 ];
 
-const TAGS: TagCount[] = [
-  { tag: "Красивый веб", count: 12 },
-  { tag: "Typography", count: 5 },
-];
-
-const CHANNEL_PREVIEWS = new Map<string, PreviewCard[]>(TAGS.map((tag) => [tag.tag, []]));
-
 const DELETE_PLAN: DeleteBlockPlan = {
   slug: "popup-1",
   markdown_file: "Cards/popup-1.md",
@@ -83,137 +87,195 @@ const DELETE_PLAN: DeleteBlockPlan = {
   shared_media: [],
 };
 
-type DialogId =
-  | "rename"
-  | "merge"
-  | "delete-selected"
-  | "create-collection"
-  | "delete-block"
-  | "import"
-  | "search";
+const DELETE_PLAN_WITH_MEDIA: DeleteBlockPlan = {
+  slug: "popup-1",
+  markdown_file: "Cards/popup-1.md",
+  unused_media: [
+    { path: "Media/tokyo-sunset.jpg", file_name: "tokyo-sunset.jpg", kind: "image", referenced_by: [] },
+    { path: "Media/interview.mp4", file_name: "interview.mp4", kind: "video", referenced_by: [] },
+    { path: "Media/notes.pdf", file_name: "notes.pdf", kind: "document", referenced_by: [] },
+  ],
+  shared_media: [],
+};
 
-function Row({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+const MEDIA_ASSET: MediaAssetRef = {
+  media_ref: "Media/tokyo-sunset.jpg",
+  media_kind: "image",
+  source_slug: "popup-1",
+  reference_kind: "frontmatter_file",
+};
+
+const MEDIA_PLAN: DeleteMediaAssetPlan = {
+  media_ref: "Media/tokyo-sunset.jpg",
+  media_kind: "image",
+  referenced_by: [
+    { slug: "popup-1", title: "Local-first software", display_title: "Local-first software", fallback_label: "Local-first software", card_kind: "article", reference_kinds: ["frontmatter_file"] },
+    { slug: "popup-2", title: "CRDTs explained", display_title: "CRDTs explained", fallback_label: "CRDTs explained", card_kind: "article", reference_kinds: ["body_embed"] },
+  ],
+};
+
+const CONFLICTS: VaultConflictItem[] = [
+  { baseSlug: "Local-first software", conflictSlug: "Local-first software 2", detectedAt: "2026-10-11T09:00:00.000Z" },
+  { baseSlug: "CRDTs explained", conflictSlug: "CRDTs explained 2", detectedAt: "2026-10-10T18:30:00.000Z" },
+];
+
+const conflictKey = (item: VaultConflictItem) => `${item.baseSlug}::${item.conflictSlug}`;
+
+// Delete media file asks which elements use the file, and each row for its
+// element, as it opens.
+mockIPC((command) => {
+  if (command === "prepare_delete_media_asset") return MEDIA_PLAN;
+  return null;
+});
+
+// Files of the space become the dev server's sample pictures, so the
+// windows that show media show a picture rather than an empty frame.
+const tauriWindow = window as unknown as {
+  __TAURI_INTERNALS__: { convertFileSrc?: (filePath: string, protocol?: string) => string };
+};
+tauriWindow.__TAURI_INTERNALS__.convertFileSrc = (filePath) => {
+  let hash = 0;
+  for (const char of filePath) hash = (hash * 31 + char.charCodeAt(0)) % 6;
+  return `/feed-scroll-audit/audit-${hash}.svg`;
+};
+
+const POPUPS = [
+  { id: "rename", title: "Rename file (RenameBlockDialog)" },
+  { id: "rename-media", title: "Rename media (Detail, RenameMediaAssetDialog)" },
+  { id: "create-collection", title: "New collection (CreateCollectionDialog)" },
+  { id: "create-collection-switcher", title: "New collection from the path (TopCollectionSwitcher)" },
+  { id: "merge", title: "Merge (MergeCardsDialog)" },
+  { id: "conflicts", title: "iCloud conflicts (VaultConflictsDialog)" },
+  { id: "delete-element", title: "Delete element (DeleteBlockDialog)" },
+  { id: "delete-element-media", title: "Delete element with its media (DeleteBlockDialog)" },
+  { id: "delete-selected", title: "Delete selected (DeleteSelectedCardsDialog, the selection bar's is the same)" },
+  { id: "delete-collection", title: "Delete collection (Sidebar, DeleteCollectionDialog)" },
+  { id: "remove-space", title: "Remove space (VaultSwitcher, RemoveSpaceDialog)" },
+  { id: "delete-embed", title: "Delete embed (YoutubeSourcePlayer)" },
+  { id: "remove-media", title: "Remove media from element (Detail)" },
+  { id: "delete-media", title: "Delete media file (Detail)" },
+  { id: "delete-orphans", title: "Delete orphan files (Settings, OrphansSection)" },
+] as const;
+
+type PopupId = (typeof POPUPS)[number]["id"];
+
+function OnePopup({ id }: { id: PopupId }) {
+  const [collectionName, setCollectionName] = useState("Typography");
   return (
-    <section className="flex flex-col gap-2 border-b border-border py-4">
-      <div className="text-sm font-medium text-foreground">{title}</div>
-      {hint && <div className="text-sm text-muted-foreground">{hint}</div>}
-      <div>{children}</div>
-    </section>
+    <MemoryRouter initialEntries={["/"]}>
+      <DndContext>
+        <div className="min-h-screen bg-background" />
+        {id === "rename" && (
+          <RenameBlockDialog open currentSlug="Local-first software" onOpenChange={noop} onRename={noopAsync} />
+        )}
+        {id === "rename-media" && (
+          <RenameMediaAssetDialog asset={MEDIA_ASSET} open onOpenChange={noop} onRename={noopAsync} />
+        )}
+        {id === "create-collection" && (
+          <CreateCollectionDialog open onOpenChange={noop} onCreate={noop} />
+        )}
+        {id === "create-collection-switcher" && (
+          <CreateCollectionNameDialog
+            open
+            name={collectionName}
+            error={null}
+            creating={false}
+            onOpenChange={noop}
+            onNameChange={setCollectionName}
+            onSubmit={noop}
+          />
+        )}
+        {id === "merge" && (
+          <MergeCardsDialog open selectedBlocks={BLOCKS} onOpenChange={noop} onConfirm={noopAsync} />
+        )}
+        {id === "conflicts" && (
+          <VaultConflictsDialog
+            open
+            conflicts={CONFLICTS}
+            resolvingKey={null}
+            error={null}
+            keyFor={conflictKey}
+            onOpenChange={noop}
+            onResolve={noop}
+          />
+        )}
+        {id === "delete-element" && (
+          <DeleteBlockDialog
+            open
+            vaultPath={VAULT_PATH}
+            plan={DELETE_PLAN}
+            error={null}
+            onOpenChange={noop}
+            onKeepMedia={noop}
+            onDeleteMedia={noop}
+          />
+        )}
+        {id === "delete-element-media" && (
+          <DeleteBlockDialog
+            open
+            vaultPath={VAULT_PATH}
+            plan={DELETE_PLAN_WITH_MEDIA}
+            error={null}
+            onOpenChange={noop}
+            onKeepMedia={noop}
+            onDeleteMedia={noop}
+          />
+        )}
+        {id === "delete-selected" && (
+          <DeleteSelectedCardsDialog open selectedCount={3} onOpenChange={noop} onConfirm={noop} />
+        )}
+        {id === "delete-collection" && (
+          <DeleteCollectionDialog open label="Typography" onOpenChange={noop} onConfirm={noop} />
+        )}
+        {id === "remove-space" && (
+          <RemoveSpaceDialog path={VAULT_PATH} onCancel={noop} onConfirm={noop} />
+        )}
+        {id === "delete-embed" && (
+          <DeleteSourceVideoDialog open onOpenChange={noop} onDelete={noopAsync} />
+        )}
+        {id === "remove-media" && (
+          <RemoveMediaAssetFromCardDialog asset={MEDIA_ASSET} open onOpenChange={noop} onRemove={noopAsync} />
+        )}
+        {id === "delete-media" && (
+          <DeleteMediaAssetDialog
+            asset={MEDIA_ASSET}
+            vaultPath={VAULT_PATH}
+            open
+            onOpenChange={noop}
+            onDelete={noopAsync}
+            onOpenRelatedNote={noop}
+          />
+        )}
+        {id === "delete-orphans" && (
+          <DeleteOrphansDialog open count={4} onOpenChange={noop} onConfirm={noop} />
+        )}
+      </DndContext>
+    </MemoryRouter>
   );
 }
 
 export function PopupsPage() {
-  const [open, setOpen] = useState<DialogId | null>(null);
-  const [query, setQuery] = useState("");
-  const openChange = (id: DialogId) => (next: boolean) => setOpen(next ? id : null);
-  const show = (id: DialogId, label: string) => (
-    <Button variant="secondary" onClick={() => setOpen(id)}>{label}</Button>
-  );
+  const only = new URLSearchParams(window.location.search).get("popup");
+  const single = POPUPS.find((popup) => popup.id === only);
+  if (single) return <OnePopup id={single.id} />;
 
   return (
-    <MemoryRouter initialEntries={["/"]}>
-      <DndContext>
-        <div className="min-h-screen bg-background px-6 py-6 text-foreground">
-          <h1 className="text-lg font-medium">Popups</h1>
-
-          <Row title="RenameBlockDialog">{show("rename", "Rename file")}</Row>
-          <Row title="MergeCardsDialog">{show("merge", "Merge cards")}</Row>
-          <Row title="DeleteSelectedCardsDialog">{show("delete-selected", "Delete selected")}</Row>
-          <Row title="CreateCollectionDialog">{show("create-collection", "New collection")}</Row>
-          <Row title="DeleteBlockDialog">{show("delete-block", "Delete element")}</Row>
-          <Row title="ImportDialog">{show("import", "Import from Are.na")}</Row>
-          <Row title="SearchOverlay" hint="Results come from the backend: here the list stays empty.">
-            {show("search", "Search")}
-          </Row>
-          <Row title="TopCollectionSwitcher: Create collection" hint="Open the menu, then Create collection.">
-            <div className="flex h-10 items-center">
-              <TopCollectionSwitcher
-                orderedTags={TAGS}
-                onNavigate={noop}
-                onCreateCollection={noop}
-              />
-            </div>
-          </Row>
-          <Row title="GroupSelectionCommands: Delete selected elements" hint="Delete in the selection bar.">
-            <GroupSelectionCommands
-              selectedBlocks={BLOCKS.slice(0, 2)}
-              tags={TAGS}
-              onLoadBlockTags={noTags}
-              onBatchSetTag={noop}
-              onCreateAndAssignBatch={noop}
-              onDeleteSelectedBlocks={noop}
-              onMergeSelectedBlocks={noop}
-              onClearSelection={noop}
+    // The app locks the document's scroll, so the page scrolls itself; the
+    // frames take no pointer, so the wheel over them scrolls the page.
+    <div className="h-screen overflow-y-auto bg-background px-6 py-6 text-foreground">
+      <h1 className="mb-4 text-lg font-semibold">Windows</h1>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(640px,1fr))] gap-6">
+        {POPUPS.map((popup) => (
+          <figure key={popup.id} className="flex flex-col gap-2">
+            <figcaption className="text-sm text-muted-foreground">{popup.title}</figcaption>
+            <iframe
+              title={popup.title}
+              src={`/__popups?popup=${popup.id}`}
+              className="pointer-events-none h-[560px] w-full border border-border"
             />
-          </Row>
-          <Row title="Sidebar: Delete channel" hint="Right-click a collection row, then Delete.">
-            <div className="relative flex h-80 overflow-hidden border border-border">
-              <Sidebar
-                width={300}
-                collapsed={false}
-                isResizing={false}
-                vaultPath={VAULT_PATH}
-                tags={TAGS}
-                orderedTags={TAGS}
-                channelPreviews={CHANNEL_PREVIEWS}
-                totalBlocks={BLOCKS.length}
-                isDropDragging={false}
-                isCreatingChannel={false}
-                onSetCreatingChannel={noop}
-                onDeleteTag={noop}
-                onRenameTag={noop}
-                onCreateChannel={noop}
-              />
-            </div>
-          </Row>
-
-          <RenameBlockDialog
-            open={open === "rename"}
-            currentSlug="popup-1"
-            onOpenChange={openChange("rename")}
-            onRename={noopAsync}
-          />
-          <MergeCardsDialog
-            open={open === "merge"}
-            selectedBlocks={BLOCKS}
-            onOpenChange={openChange("merge")}
-            onConfirm={noopAsync}
-          />
-          <DeleteSelectedCardsDialog
-            open={open === "delete-selected"}
-            selectedCount={3}
-            onOpenChange={openChange("delete-selected")}
-            onConfirm={noop}
-          />
-          <CreateCollectionDialog
-            open={open === "create-collection"}
-            onOpenChange={openChange("create-collection")}
-            onCreate={noop}
-          />
-          <DeleteBlockDialog
-            open={open === "delete-block"}
-            vaultPath={VAULT_PATH}
-            plan={DELETE_PLAN}
-            error={null}
-            onOpenChange={openChange("delete-block")}
-            onKeepMedia={noop}
-            onDeleteMedia={noop}
-          />
-          <ImportDialog
-            open={open === "import"}
-            onClose={() => setOpen(null)}
-            onImportComplete={noop}
-          />
-          <SearchOverlay
-            open={open === "search"}
-            query={query}
-            vaultPath={VAULT_PATH}
-            onQueryChange={setQuery}
-            onClose={() => setOpen(null)}
-            onOpenBlock={noop}
-          />
-        </div>
-      </DndContext>
-    </MemoryRouter>
+          </figure>
+        ))}
+      </div>
+    </div>
   );
 }
