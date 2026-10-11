@@ -84,7 +84,8 @@ Settings и `Cmd+,` сохраняются. Прежняя условная те
 
 1. **Appearance** — отображение контента (тема и режимы интерфейса; сюда
    переезжают пункты нынешнего Settings-дропдауна).
-2. **Graph** — видимость collection, wikilink и related-note слоёв графа.
+2. **Graph** — видимость wikilink и related-note связей графа; коллекции
+   видны всегда (11.10.2026).
 3. **Spaces** — список пространств: добавить новое, забыть старое.
 4. **Orphans** — все медиа-файлы vault, на которые не ссылается ни один
    элемент, с групповыми действиями: перемещение в системную Корзину или превращение
@@ -212,20 +213,24 @@ WebKit, запись одного окна доходит до хранилищ�
 
 ## Graph
 
-Graph View не содержит собственного поиска, scope switcher или settings menu.
-Оставшиеся persisted-параметры находятся только здесь:
+Graph View не содержит собственного поиска, scope switcher или settings menu
+внутри холста. Те же переключатели с 11.10.2026 стоят и в панели графа на
+кнопке `Display` во втором ряду хрома
+([SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md), «Панель графа»):
 
 | Настройка | Контрол | Значение по умолчанию |
 |---|---|---|
-| Collections | `Checkbox` + подпись | `true` |
 | Wikilinks | `Checkbox` + подпись | `true` |
 | Related notes | `Checkbox` + подпись | `true` |
 
-Все три значения хранятся одним объектом под ключом
-`mine.graphPreferences`. Settings использует общий
-`getStoredGraphPreferences` / `storeGraphPreferences` контракт и эмитит один
-`settings-changed` с этим ключом. Главное окно перечитывает объект и передаёт
-его в Graph View; Graph View не владеет второй persisted-копией.
+Строки `Collections` нет с 11.10.2026: коллекции на графе видны всегда, а
+сохранённое прежде `include_collections: false` ни на что не влияет. Оба
+значения хранятся одним объектом под ключом `mine.graphPreferences`. Раздел и
+панель меняют его одной функцией `setGraphPreference` (запись, применение на
+своей странице, один `settings-changed` с ключом и значением). Страницы
+вкладок и окно настроек принимают значение из события и перечитывают его
+(`reloadGraphPreferences`), поэтому раздел и панель видят изменения друг
+друга сразу; Graph View не владеет второй persisted-копией.
 
 ## Spaces
 
@@ -442,8 +447,9 @@ Frontend (vitest):
   строка `bg-active`;
 - Appearance: смена темы вызывает `applyTheme` + emit `settings-changed`;
   чекбоксы пишут свои ключи;
-- Graph: три checkbox читают/пишут единый `mine.graphPreferences`, сохраняют
-  `Related notes` и эмитят один `settings-changed`;
+- Graph: два checkbox (`Wikilinks`, `Related notes`) читают и пишут единый
+  `mine.graphPreferences`, эмитят один `settings-changed` и следуют
+  изменению из панели графа; строки `Collections` нет;
 - Spaces: список рендерится мгновенно, статистика догружается per-row
   (`N elements · … · N files · size`); `element_count: null` → `—`; каждая
   строка пространства, открытого во вкладке, получает `bg-active`, текстовой

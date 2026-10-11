@@ -657,8 +657,11 @@ iOS UI contract:
   direction и duplicate count. Route автоматически выбирает `current_route`
   для коллекции или `library` для Everything; пользовательского scope switcher
   и graph-local search нет. Backend владеет large-vault truncation, Canvas —
-  одним слоем paint/hit-test/physics/selection, а три relation-layer preference
-  приходят из общего Settings через один `mine.graphPreferences` контракт.
+  одним слоем paint/hit-test/physics/selection. С 11.10.2026 две
+  relation-layer preference (`Wikilinks`, `Related notes`) меняют панель
+  графа на кнопке `Display` и раздел Graph окна настроек через один
+  `mine.graphPreferences` контракт (`src/lib/graphPreferences.ts`); коллекции
+  строятся всегда, в запросе графа поля для них нет.
   `wikilinks` содержит только plain note links; media embeds остаются в media
   pipeline, а отсутствующие targets не материализуются как узлы или edges.
   Полный контракт:

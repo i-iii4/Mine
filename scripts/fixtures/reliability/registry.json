@@ -2361,6 +2361,51 @@
         "extension/popup/hooks/useClipperState.standalone.test.tsx"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/graphPreferences.ts",
+        "src/lib/graphPreferences.test.ts",
+        "src/components/DisplayMenu.tsx",
+        "src/components/FeedDisplayMenu.tsx",
+        "src/components/GraphDisplayMenu.tsx",
+        "src/components/GraphDisplayMenu.test.tsx",
+        "src/components/ui/dropdown-menu.tsx",
+        "src/components/MainSecondaryChrome.tsx",
+        "src/components/MainSecondaryChrome.test.tsx",
+        "src/components/GraphView.tsx",
+        "src/components/GraphView.test.tsx",
+        "src/dev/GraphAuditRoute.tsx",
+        "src/settings/GraphSection.tsx",
+        "src/settings/GraphSection.test.tsx",
+        "src/settings/SettingsApp.tsx",
+        "src/settings/SettingsApp.test.tsx",
+        "src/test/setup.ts",
+        "src/App.tsx",
+        "src/App.test.tsx",
+        "scripts/fixtures/reliability/registry.json"
+      ],
+      "requirement": "SPEC_GRAPH_VIEW.md#**ГП1.**",
+      "tests": [
+        "src/lib/graphPreferences.test.ts",
+        "src/components/GraphDisplayMenu.test.tsx",
+        "src/components/FeedDisplayMenu.test.tsx",
+        "src/components/MainSecondaryChrome.test.tsx",
+        "src/components/GraphView.test.tsx",
+        "src/settings/GraphSection.test.tsx",
+        "src/settings/SettingsApp.test.tsx",
+        "src/App.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/storage/graph.rs",
+        "src/types/generated.ts"
+      ],
+      "requirement": "SPEC_GRAPH_VIEW.md#**ГП5.**",
+      "tests": ["src-tauri/src/storage/graph.rs"],
+      "command": "test:rust"
     }
   ],
   "release": null

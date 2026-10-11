@@ -2253,6 +2253,11 @@ text-muted-foreground`; группы разделены `DropdownMenuSeparator`.
 выбор применяется сразу, остаётся открытым (`onSelect` с `preventDefault`).
 Первое такое меню: `Display` ленты.
 
+Флажок в меню (`DropdownMenuCheckboxItem`) устроен так же, как пункт выбора:
+у включённого пункта галочка `Check` 13px в `MenuIconSlot`, у выключенного
+слот пуст, сдвига `pl-8` нет (11.10.2026). Первое такое меню: панель графа на
+той же кнопке `Display` (SPEC_GRAPH_VIEW.md, «Панель графа»).
+
 Trigger ignores modified opening keys: `Cmd`/`Ctrl`/`Alt` +
 `ArrowDown`/`ArrowUp`/`Enter`/`Space` must not open a dropdown. Those
 combinations remain app/global shortcut candidates even when DOM focus is on a
@@ -3828,12 +3833,15 @@ SPEC_SETTINGS_WINDOW.md § Design decisions.
 (`applyTheme(getStoredTheme())` до первого рендера) — модуль
 `src/lib/themeMode.ts`.
 
-Graph имеет отдельный пункт в левой навигации Settings. Три стандартные
-`SettingRow` с `Checkbox` управляют `Collections`, `Wikilinks` и
-`Related notes`; все значения сохраняются одним объектом
-`mine.graphPreferences`. В самом Graph View нет дублирующего settings trigger,
-search field или scope selector. Текущий route автоматически определяет
-collection/library snapshot.
+Graph имеет отдельный пункт в левой навигации Settings. Две стандартные
+`SettingRow` с `Checkbox` управляют `Wikilinks` и `Related notes`; значения
+сохраняются одним объектом `mine.graphPreferences`. Те же два переключателя
+стоят в панели графа на кнопке `Display` во втором ряду (с 11.10.2026,
+SPEC_GRAPH_VIEW.md, «Панель графа»); панель и Settings видят изменения друг
+друга сразу. Переключателя `Collections` нет нигде: коллекции на графе видны
+всегда. Внутри холста Graph View нет своих settings trigger, search field или
+scope selector. Текущий route автоматически определяет collection/library
+snapshot.
 
 ### Сетка
 

@@ -217,10 +217,16 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     kind: currentCollection ? "current_route" : "library",
     collection_ref: currentCollection ?? null,
   }), [currentCollection]);
+  // Named field by field: the request carries the two link switches and
+  // nothing else a preference object might hold. Collections are always
+  // drawn, whatever was stored (SPEC_GRAPH_VIEW.md, «Панель графа»).
+  const { include_wikilinks: includeWikilinks, include_related_notes: includeRelatedNotes } =
+    graphPreferences;
   const requestOptions = useMemo<GraphOptions>(() => ({
-    ...graphPreferences,
+    include_wikilinks: includeWikilinks,
+    include_related_notes: includeRelatedNotes,
     materialize_large_library: materializeLargeLibrary,
-  }), [graphPreferences, materializeLargeLibrary]);
+  }), [includeWikilinks, includeRelatedNotes, materializeLargeLibrary]);
 
   const acceptRevision = useCallback((revision: ProjectionRevision) => {
     if (acceptSnapshotRevision) return acceptSnapshotRevision(revision);

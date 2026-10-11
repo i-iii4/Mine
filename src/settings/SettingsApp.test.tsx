@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { emit } from "@tauri-apps/api/event";
 import { setCommandOverrides } from "@/lib/commandRegistry";
+import { GRAPH_PREFERENCES_STORAGE_KEY, reloadGraphPreferences } from "@/lib/graphPreferences";
 import { SettingsApp } from "./SettingsApp";
 
 vi.mock("@/lib/commands", () => ({
@@ -56,6 +58,36 @@ describe("SettingsApp", () => {
     expect(screen.getByRole("heading", { name: "Graph" })).toBeInTheDocument();
     act(() => window.dispatchEvent(new CustomEvent("settings-section", { detail: { payload: "unknown" } })));
     expect(screen.getByRole("heading", { name: "Graph" })).toBeInTheDocument();
+  });
+
+  it("shows a change made through the graph's Display panel in a tab at once (SPEC_GRAPH_VIEW.md, «Панель графа»)", async () => {
+    window.history.replaceState(null, "", "/settings.html?section=graph");
+    renderSettings();
+    expect(screen.getByRole("checkbox", { name: "Wikilinks" })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Collections" })).not.toBeInTheDocument();
+
+    // The tab's page stored the value and announced it; this window's own
+    // storage may still hold the old one, so the announcement carries it.
+    const value = JSON.stringify({ include_wikilinks: false, include_related_notes: true });
+    act(() => window.dispatchEvent(new CustomEvent("settings-changed", {
+      detail: { payload: { key: GRAPH_PREFERENCES_STORAGE_KEY, value } },
+    })));
+
+    try {
+      expect(screen.getByRole("checkbox", { name: "Wikilinks" })).not.toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Related notes" })).toBeChecked();
+      expect(localStorage.getItem(GRAPH_PREFERENCES_STORAGE_KEY)).toBe(value);
+      // Switching it back here is heard by the tab through the same event.
+      fireEvent.click(screen.getByRole("checkbox", { name: "Wikilinks" }));
+      expect(screen.getByRole("checkbox", { name: "Wikilinks" })).toBeChecked();
+      expect(vi.mocked(emit)).toHaveBeenLastCalledWith("settings-changed", {
+        key: GRAPH_PREFERENCES_STORAGE_KEY,
+        value: JSON.stringify({ include_wikilinks: true, include_related_notes: true }),
+      });
+    } finally {
+      localStorage.clear();
+      reloadGraphPreferences();
+    }
   });
 
   it("falls back to Appearance for an unknown deep link", () => {

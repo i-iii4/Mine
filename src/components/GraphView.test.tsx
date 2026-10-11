@@ -10,7 +10,10 @@ import type {
   IndexedBlock,
   LightBlock,
 } from "@/types";
+import userEvent from "@testing-library/user-event";
 import { GraphView, type GraphViewHandle } from "./GraphView";
+import { GraphDisplayMenu } from "./GraphDisplayMenu";
+import { reloadGraphPreferences, useGraphPreferences } from "@/lib/graphPreferences";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { HOVER_PREVIEW_COLD_OPEN_DELAY_MS, HOVER_PREVIEW_WARM_WINDOW_MS } from "@/lib/hoverPreviewTiming";
 
@@ -466,7 +469,6 @@ function renderGraph(props: Partial<Parameters<typeof GraphView>[0]> = {}) {
       loadedBlocks={[]}
       thumbVersions={new Map()}
       graphPreferences={{
-        include_collections: true,
         include_wikilinks: true,
         include_related_notes: true,
       }}
@@ -487,7 +489,6 @@ function renderGraph(props: Partial<Parameters<typeof GraphView>[0]> = {}) {
           loadedBlocks={[]}
           thumbVersions={new Map()}
           graphPreferences={{
-            include_collections: true,
             include_wikilinks: true,
             include_related_notes: true,
           }}
@@ -975,7 +976,6 @@ describe("GraphView", () => {
         collection_ref: null,
       },
       {
-        include_collections: true,
         include_wikilinks: true,
         include_related_notes: true,
         materialize_large_library: false,
@@ -1519,7 +1519,6 @@ describe("GraphView", () => {
 
     rerenderGraph({
       graphPreferences: {
-        include_collections: true,
         include_wikilinks: false,
         include_related_notes: true,
       },
@@ -1531,6 +1530,74 @@ describe("GraphView", () => {
         expect.objectContaining({ include_wikilinks: false }),
       );
     });
+  });
+
+  it("always asks for collections, whatever an older preference object still holds (Панель графа)", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    // Saved before 11.10.2026, when collections had a switch.
+    const legacy = { include_collections: false, include_wikilinks: true, include_related_notes: true };
+
+    renderGraph({ graphPreferences: legacy });
+    await screen.findByRole("button", { name: "Alpha card" });
+
+    const options = commandMocks.listGraphSnapshot.mock.lastCall?.[1];
+    expect(options).toEqual({
+      include_wikilinks: true,
+      include_related_notes: true,
+      materialize_large_library: false,
+    });
+    expect(options).not.toHaveProperty("include_collections");
+  });
+
+  it("asks for the graph again as soon as a switch in the Display panel changes (Панель графа)", async () => {
+    commandMocks.listGraphSnapshot.mockResolvedValue(
+      makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
+    );
+    // How App wires them: the page's preferences go straight into the graph.
+    function GraphWithPanel() {
+      const graphPreferences = useGraphPreferences();
+      return (
+        <>
+          <GraphDisplayMenu />
+          <GraphView
+            vaultPath="/vault"
+            loadedBlocks={[]}
+            thumbVersions={new Map()}
+            graphPreferences={graphPreferences}
+            onOpenBlock={vi.fn()}
+            onOpenCardMenu={vi.fn()}
+            onNavigateCollection={vi.fn()}
+          />
+        </>
+      );
+    }
+    try {
+      render(<GraphWithPanel />);
+      await screen.findByRole("button", { name: "Alpha card" });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "Display options" }));
+
+      await user.click(screen.getByRole("menuitemcheckbox", { name: "Wikilinks" }));
+      await waitFor(() => {
+        expect(commandMocks.listGraphSnapshot).toHaveBeenLastCalledWith(
+          expect.any(Object),
+          { include_wikilinks: false, include_related_notes: true, materialize_large_library: false },
+        );
+      });
+
+      await user.click(screen.getByRole("menuitemcheckbox", { name: "Related notes" }));
+      await waitFor(() => {
+        expect(commandMocks.listGraphSnapshot).toHaveBeenLastCalledWith(
+          expect.any(Object),
+          { include_wikilinks: false, include_related_notes: false, materialize_large_library: false },
+        );
+      });
+    } finally {
+      localStorage.clear();
+      reloadGraphPreferences();
+    }
   });
 
   it("has no keyboard surface: the graph is pointer-only", async () => {
@@ -1621,7 +1688,6 @@ describe("GraphView", () => {
     rerenderGraph({
       ref: graph,
       graphPreferences: {
-        include_collections: true,
         include_wikilinks: false,
         include_related_notes: true,
       },

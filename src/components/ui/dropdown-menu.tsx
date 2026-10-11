@@ -147,6 +147,9 @@ function DropdownMenuItem({
   )
 }
 
+// Same row as DropdownMenuRadioItem: an item that is on carries a check in
+// the leading icon slot, and the text column stays where every other menu
+// row puts it (DESIGN_SYSTEM.md, «DropdownMenu»).
 function DropdownMenuCheckboxItem({
   className,
   children,
@@ -157,17 +160,17 @@ function DropdownMenuCheckboxItem({
     <DropdownMenuPrimitive.CheckboxItem
       data-slot="dropdown-menu-checkbox-item"
       className={cn(
-        "focus:state-active focus:text-foreground relative flex cursor-default items-center gap-2 min-h-row rounded-1 pr-plate pl-8 text-base outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:text-tertiary-foreground data-[disabled]:[&_svg:not([class*='text-'])]:text-tertiary-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[13px]",
+        "focus:state-active focus:text-foreground relative flex cursor-default items-center gap-2 min-h-row rounded-1 px-plate text-base outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:text-tertiary-foreground data-[disabled]:[&_svg:not([class*='text-'])]:text-tertiary-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0",
         className
       )}
       checked={checked}
       {...props}
     >
-      <span className="pointer-events-none absolute left-plate flex size-3.5 items-center justify-center">
-        <DropdownMenuPrimitive.ItemIndicator>
+      <MenuIconSlot>
+        <DropdownMenuPrimitive.ItemIndicator className="flex">
           <CheckIcon className="size-[13px]" />
         </DropdownMenuPrimitive.ItemIndicator>
-      </span>
+      </MenuIconSlot>
       {children}
     </DropdownMenuPrimitive.CheckboxItem>
   )

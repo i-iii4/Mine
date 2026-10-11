@@ -2,6 +2,12 @@ import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { ChromeRow, ChromeShell } from "@/components/ChromeRow";
 import { SETTINGS_SECTIONS, isSettingsSection, type SettingsSection } from "@/lib/settingsSections";
+import { GRAPH_PREFERENCES_STORAGE_KEY, reloadGraphPreferences } from "@/lib/graphPreferences";
+import {
+  adoptSettingsChange,
+  SETTINGS_CHANGED_EVENT,
+  type SettingsChangedPayload,
+} from "@/lib/settingsChanged";
 import { useNativeWindowChromeSurface } from "@/lib/nativeWindowChromeSurface";
 import { AppearanceSection } from "./AppearanceSection";
 import { GraphSection } from "./GraphSection";
@@ -27,6 +33,18 @@ export function SettingsApp() {
       if (isSettingsSection(event.payload)) {
         setSection(event.payload);
       }
+    });
+    return () => { void unlisten.then((stop) => stop()); };
+  }, []);
+
+  // The graph's Display panel in a tab changes the same links as the Graph
+  // section (SPEC_GRAPH_VIEW.md, «Панель графа»): adopt the value it stored
+  // and re-read it, so the section shows what the graph draws.
+  useEffect(() => {
+    const unlisten = listen<SettingsChangedPayload>(SETTINGS_CHANGED_EVENT, (event) => {
+      if (event.payload.key !== GRAPH_PREFERENCES_STORAGE_KEY) return;
+      adoptSettingsChange(event.payload);
+      reloadGraphPreferences();
     });
     return () => { void unlisten.then((stop) => stop()); };
   }, []);

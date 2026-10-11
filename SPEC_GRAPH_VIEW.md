@@ -22,6 +22,9 @@ The verified boundary includes:
 - persisted edge visibility in the common Settings window, selected-node
   synchronization, conditional centering, keyboard navigation and an
   `aria-live` status model;
+- с 11.10.2026 панель графа на кнопке `Display` и в окне настроек включает и
+  выключает только дополнительные связи между карточками (`Wikilinks`,
+  `Related notes`), коллекции показываются всегда (раздел «Панель графа»);
 - Rust/unit coverage and dark/light real-browser Canvas pixel, hover, resize,
   request-bound and interaction-performance acceptance.
 
@@ -258,7 +261,8 @@ interface GraphScope {
 }
 
 interface GraphOptions {
-  include_collections: boolean;
+  // No include_collections since 11.10.2026: collections are always built
+  // («Панель графа», ГП5).
   include_wikilinks: boolean;
   include_related_notes: boolean;
   materialize_large_library: boolean;
@@ -420,6 +424,8 @@ These dependencies are part of the M1 implementation.
 
 ```text
 src/components/GraphView.tsx
+src/components/GraphDisplayMenu.tsx
+src/lib/graphPreferences.ts
 src/lib/commands.ts
 src-tauri/src/commands/graph.rs
 src-tauri/src/storage/graph.rs
@@ -890,15 +896,108 @@ active route determines the snapshot automatically:
 - Everything → `library`;
 - collection route → `current_route`.
 
-The common Settings window owns the persisted `Collections`, `Wikilinks`, and
-`Related notes` switches under a dedicated `Graph` section. Defaults are `true`.
-Settings writes one versionless local preference object and emits the existing
-`settings-changed` event; the main window re-reads it and passes one immutable
-preference value into Graph View. The Canvas does not read or persist settings.
+Видимость связей меняют два места с одним значением: панель графа на кнопке
+`Display` во втором ряду хрома и раздел `Graph` окна настроек (раздел
+«Панель графа», 11.10.2026). Обе поверхности снаружи холста; страница
+вкладки передаёт в Graph View одно неизменяемое значение. Холст настройки не
+читает и не сохраняет. До 11.10.2026 переключатели были только в окне
+настроек, и среди них был `Collections`.
 
 `Show all` remains a contextual action, shown only for a truncated library
 snapshot with `can_materialize_full = true`. It is session-local and resets when
 Graph View remounts; it is not a general preference.
+
+## Панель графа
+
+Требование пользователя 11.10.2026: «в граф добавь панель настроек. Сделай
+возможность включать и выключать дополнительные связи между карточками.
+Коллекции скрывать нельзя». Пользователь показал кнопку настроек справа от
+переключателя `Grid | Graph` во втором ряду. Реализовано 11.10.2026, живая
+приёмка за пользователем.
+
+Где живёт: панель в [GraphDisplayMenu.tsx](src/components/GraphDisplayMenu.tsx)
+на общей кнопке и панели [DisplayMenu.tsx](src/components/DisplayMenu.tsx);
+значение в [graphPreferences.ts](src/lib/graphPreferences.ts); раздел Graph
+окна настроек в [GraphSection.tsx](src/settings/GraphSection.tsx) и его
+слушатель в [SettingsApp.tsx](src/settings/SettingsApp.tsx); запрос в
+`GraphOptions` ([graph.rs](src-tauri/src/storage/graph.rs)).
+
+**ГП1.** Кнопка. В режиме Graph кнопка `Display` (иконка Lucide `Settings2`,
+имя для чтения с экрана «Display options») стоит там же, где в режиме Grid: во
+втором ряду хрома справа от `Grid | Graph`, на оси кнопки Mine. Это одна и та
+же кнопка ([SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md), Д1 и Д4): в Grid она
+открывает панель ленты, в Graph панель графа. В Graph панель ленты не
+открывается, в Grid панель графа не открывается. Смена вида закрывает
+открытую панель. В ленте автора графа нет, и кнопка там всегда открывает
+панель ленты.
+
+**ГП2.** Вид. Панель графа собрана из тех же компонентов, что панель ленты, и
+выглядит так же: штатное меню `DropdownMenu` ширины по содержимому (от 128 до
+300px), выровненное по правому краю кнопки, подпись группы как у групп ленты
+(`px-plate py-1.5 font-mono text-sm text-muted-foreground`). Новых размеров,
+цветов и токенов нет.
+
+**ГП3.** Состав. Одна группа `Links` с двумя переключателями: `Wikilinks`
+(ссылки `[[…]]` из текста заметки на другую карточку или на страницу
+коллекции) и `Related notes` (связи происхождения, которые записывает Mine).
+Переключатель это пункт-флажок меню (`DropdownMenuCheckboxItem`): у
+включённого галочка `Check` 13px в обычном слоте иконки, у выключенного слот
+пуст, текст стоит на общей колонке меню, как у пунктов выбора ленты.
+
+**ГП4.** Действие. Переключатель срабатывает сразу, без подтверждения,
+панель остаётся открытой. Граф запрашивает новый снимок без перезагрузки
+страницы и без пересоздания холста: позиции узлов переносятся между снимками
+(раздел «Rearranging Around An Opened Collection»), линии выключенного вида
+уходят, включённого появляются. В Everything все карточки и коллекции
+остаются на месте. В коллекции соседи, попавшие в граф только по связи
+выключенного вида, уходят вместе с ней (раздел «Scope Semantics»). Escape и
+щелчок снаружи закрывают панель, клавиатура работает как в остальных меню,
+фокус после закрытия клавиатурой возвращается на кнопку.
+
+**ГП5.** Коллекции. Узлы коллекций и рёбра членства показываются всегда.
+Переключателя для них нет ни в панели, ни в окне настроек. Поле
+`include_collections` удалено из сохранённых настроек и из запроса графа
+(`GraphOptions`): ядро строит коллекции безусловно, а это поле в запросе от
+старой страницы пропускается как неизвестное. Сохранённое до 11.10.2026
+значение `include_collections: false` не читается и ни на что не влияет;
+чтение хранилище не переписывает, поле пропадает при следующей записи.
+Ссылка `[[…]]` на страницу коллекции остаётся связью вида `Wikilinks` и
+выключается вместе с ним: скрывается линия, а не коллекция.
+
+**ГП6.** Хранение. Одно значение на всё приложение: объект
+`mine.graphPreferences` в `localStorage` с полями `include_wikilinks` и
+`include_related_notes`, по умолчанию оба `true`. Повреждённое или неполное
+значение читается как значение по умолчанию для того, чего в нём нет. Выбор
+переживает перезапуск и общий для всех вкладок, окон и пространств.
+
+**ГП7.** Синхронизация. Панель и раздел Graph окна настроек меняют одно
+значение одной функцией `setGraphPreference`: запись в хранилище, применение
+на своей странице сразу и событие `settings-changed` с ключом и значением.
+Страница вкладки и окно настроек, получив событие, принимают переданное
+значение и перечитывают его (`reloadGraphPreferences`). Поэтому открытая
+панель, граф в другой вкладке и раздел Graph показывают изменение сразу, в
+какую бы сторону оно ни шло. Равное значение не публикуется: собственное
+событие страницы, вернувшись к ней, не запрашивает снимок повторно.
+
+**ГП8.** Внутри холста графа своих элементов управления по-прежнему нет
+(раздел «Controls And Settings»): панель живёт в хроме, как панель ленты.
+
+### Решения сверх требования
+
+Требование их не называло; приняты 11.10.2026 как самые консервативные.
+
+1. Та же кнопка `Display` с тем же именем «Display options» и той же иконкой
+   в обоих видах; меняется только содержимое панели.
+2. Подпись группы `Links`; порядок пунктов как в окне настроек: `Wikilinks`,
+   затем `Related notes`.
+3. Переключатель это пункт-флажок меню с галочкой в слоте иконки.
+   `DropdownMenuCheckboxItem` приведён к виду `DropdownMenuRadioItem`: до
+   11.10.2026 он нигде не использовался и сдвигал текст на `pl-8`.
+4. Раздел Graph окна настроек остаётся с двумя флажками, строка
+   `Collections` убрана.
+5. Ссылка на страницу коллекции считается связью `Wikilinks`, а не частью
+   коллекций (ГП5).
+6. Смена вида закрывает открытую панель (ГП1).
 
 ## Display Mode Integration
 
@@ -973,6 +1072,10 @@ neighbor count for assistive technology.
   graph-link-index backfill.
 - Related-note block references resolve by base slug while preserving fragments
   outside graph identity.
+- Запрос от старой страницы с `include_collections: false` читается без этого
+  поля и получает узлы коллекций и рёбра членства (ГП5).
+- Выключение `Wikilinks`, `Related notes` или обоих убирает только рёбра
+  своего вида: все карточки, коллекции и рёбра членства остаются (ГП4, ГП5).
 - Duplicate links increment `count`.
 - `current_route` scope includes collection members and 1-hop related neighbors.
 - Large vault thresholds set `truncated` and exact `visible_nodes`.
@@ -989,6 +1092,12 @@ neighbor count for assistive technology.
 - Graph View renders no graph-local search, scope selector, or settings trigger.
 - persisted graph preferences are forwarded unchanged to the graph snapshot
   request and a settings change reloads the projection.
+- Панель графа (от ГП1 до ГП7): в Graph кнопка `Display` открывает панель графа,
+  в Grid панель ленты; одна группа `Links` с флажками `Wikilinks` и
+  `Related notes`, без `Collections`; флажок срабатывает сразу, панель
+  остаётся открытой, граф запрашивает снимок с новыми связями; значение
+  сохраняется; старое `include_collections: false` не доходит до запроса;
+  изменение в панели видно в окне настроек и наоборот.
 - collection-membership links are straight and solid; wikilink/related-note
   links are curved and dashed with deterministic pair-stable curvature.
 - reference dash segments preserve the `4px / 4px` visual rhythm across zoom.

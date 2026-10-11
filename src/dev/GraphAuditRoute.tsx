@@ -43,7 +43,6 @@ const AUDIT_COLLECTIONS = [
 const AUDIT_VAULT_PATH = "/tmp/mine-graph-audit";
 const AUDIT_THUMBS_PATH = "/graph-audit/thumbs";
 const AUDIT_GRAPH_PREFERENCES = {
-  include_collections: true,
   include_wikilinks: true,
   include_related_notes: true,
 } as const;
@@ -164,8 +163,10 @@ function graphAuditSnapshot(
     ...blocks.map(auditCardNode),
     ...AUDIT_COLLECTIONS.map(auditCollectionNode),
   ];
+  // Membership is always drawn, as the backend draws it (SPEC_GRAPH_VIEW.md,
+  // «Панель графа»).
   const allLinks = auditLinks(blocks).filter((link) => {
-    if (link.kind === "collection_membership") return options.include_collections;
+    if (link.kind === "collection_membership") return true;
     if (link.kind === "wikilink") return options.include_wikilinks;
     return options.include_related_notes;
   });
@@ -176,12 +177,6 @@ function graphAuditSnapshot(
     selected = new Set([collectionId]);
     for (const link of allLinks) {
       if (link.source === collectionId) selected.add(link.target);
-    }
-  }
-
-  if (!options.include_collections) {
-    for (const node of allNodes) {
-      if (node.kind === "collection") selected.delete(node.id);
     }
   }
 

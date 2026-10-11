@@ -359,8 +359,9 @@ import {
   DESIGN_STORAGE_KEY,
 } from "@/lib/designMode";
 import {
-  getStoredGraphPreferences,
   GRAPH_PREFERENCES_STORAGE_KEY,
+  reloadGraphPreferences,
+  useGraphPreferences,
   type GraphPreferences,
 } from "@/lib/graphPreferences";
 import {
@@ -941,9 +942,9 @@ export function AppWithVault({
   const [bottomActionBarHidden, setBottomActionBarHidden] = useState(
     getStoredBottomActionBarHidden,
   );
-  const [graphPreferences, setGraphPreferences] = useState(
-    getStoredGraphPreferences,
-  );
+  // The graph's Display panel on this page and the Settings window change
+  // the same value (SPEC_GRAPH_VIEW.md, «Панель графа»).
+  const graphPreferences = useGraphPreferences();
   const [scrollEdgeFade, setScrollEdgeFade] = useState(getStoredScrollEdgeFade);
   // Grid or Graph is the tab's own (SPEC_TABS.md, В78).
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>(() => restoreView?.mode ?? "grid");
@@ -2968,7 +2969,7 @@ export function AppWithVault({
       } else if (key === BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY) {
         setBottomActionBarHidden(getStoredBottomActionBarHidden());
       } else if (key === GRAPH_PREFERENCES_STORAGE_KEY) {
-        setGraphPreferences(getStoredGraphPreferences());
+        reloadGraphPreferences();
       } else if (key === SCROLL_EDGE_FADE_STORAGE_KEY) {
         setScrollEdgeFade(getStoredScrollEdgeFade());
       } else if (key === CARD_RADIUS_STORAGE_KEY) {

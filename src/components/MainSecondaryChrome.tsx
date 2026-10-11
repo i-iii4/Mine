@@ -19,6 +19,7 @@ import { CardMoreMenu } from "./CardHoverMenu";
 import { ChromeCloseButton } from "./ChromeCloseButton";
 import { renameErrorMessage } from "./RenameBlockDialog";
 import { FeedDisplayMenu } from "./FeedDisplayMenu";
+import { GraphDisplayMenu } from "./GraphDisplayMenu";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -104,8 +105,10 @@ function MainSecondaryStatsRight({
   const cardCount = stats
     ? `${formatPluralCount(stats.currentCollectionCardCount, "element", "elements")}${inCollection ? " in collection" : ""}`
     : "";
-  // The Display options belong to the feed only (SPEC_FEED_DISPLAY.md, Д4).
-  const feedDisplay = viewMode === "grid";
+  // The Display button serves the view on screen: the feed's options in
+  // Grid, the graph's links in Graph (SPEC_FEED_DISPLAY.md, Д4). The two are
+  // different components, so switching the view closes an open panel.
+  const displayMenu = viewMode === "graph" ? <GraphDisplayMenu /> : <FeedDisplayMenu />;
 
   // Interface version 2: no count and no `View:` prefix; the view switch
   // stands at the right with the Display button, on a permanent plate as
@@ -116,9 +119,9 @@ function MainSecondaryStatsRight({
         data-main-secondary-stats-right=""
         className="flex h-full min-w-0 items-center justify-end font-mono text-sm leading-none text-tertiary-foreground"
       >
-        <ChromeActions data-main-view-mode-switcher="" data-feed-display={feedDisplay ? "" : undefined}>
+        <ChromeActions data-main-view-mode-switcher="" data-display-actions="">
           {viewModeSwitch && <MainViewModeTabs value={viewMode} onChange={onViewModeChange} />}
-          {feedDisplay && <FeedDisplayMenu />}
+          {displayMenu}
         </ChromeActions>
       </div>
     );
@@ -129,9 +132,9 @@ function MainSecondaryStatsRight({
       data-main-secondary-stats-right=""
       className={cn(
         "flex h-full min-w-0 items-center justify-start gap-5 overflow-hidden font-mono text-sm leading-none text-tertiary-foreground",
+        // The Display button ends the row in every view, so ChromeActions
+        // owns the right edge inset.
         "pl-[var(--main-secondary-pad-x)]",
-        // With actions at the end, ChromeActions owns the right edge inset.
-        !feedDisplay && "pr-[var(--main-secondary-pad-x)]",
       )}
     >
       {stats && (
@@ -147,11 +150,9 @@ function MainSecondaryStatsRight({
       )}
       {/* On the Mine button's axis: the same icon button and edge inset as
           the logo in the row above (SPEC_FEED_DISPLAY.md, Д1). */}
-      {feedDisplay && (
-        <ChromeActions className="ml-auto" data-feed-display="">
-          <FeedDisplayMenu />
-        </ChromeActions>
-      )}
+      <ChromeActions className="ml-auto" data-display-actions="">
+        {displayMenu}
+      </ChromeActions>
     </div>
   );
 }

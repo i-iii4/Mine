@@ -86,6 +86,11 @@ vi.mock("@tauri-apps/api/event", () => ({
     window.addEventListener(event, wrapped);
     return () => window.removeEventListener(event, wrapped);
   }),
+  // A broadcast reaches every listener, the sender's own page included, as a
+  // Tauri `emit` does; the detail carries the Tauri event envelope.
+  emit: vi.fn(async (event: string, payload?: unknown) => {
+    window.dispatchEvent(new CustomEvent(event, { detail: { event, payload } }));
+  }),
   // An event addressed to one page: tests assert on the mock.
   emitTo: vi.fn(async () => {}),
 }));

@@ -1,10 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { getGraphPreferences, reloadGraphPreferences } from "@/lib/graphPreferences";
 import { MainSecondaryTopBar } from "./MainSecondaryChrome";
-import type { LightBlock, RenameBlockError } from "@/types";
+import type { LightBlock, MainViewMode, RenameBlockError } from "@/types";
 
 vi.mock("@tauri-apps/api/event", () => ({
-  emit: vi.fn(),
+  emit: vi.fn(() => Promise.resolve()),
   listen: vi.fn(() => Promise.resolve(() => {})),
 }));
 
@@ -285,25 +287,95 @@ describe("MainSecondaryTopBar placement", () => {
   });
 });
 
-describe("Display options (SPEC_FEED_DISPLAY.md, Д1, Д4)", () => {
-  it("sit on the Mine button's axis: chrome actions own the right edge inset", () => {
-    const { container } = renderBar("top", null, "grid");
-    expect(screen.getByRole("button", { name: "Display options" })).toBeInTheDocument();
-    const actions = container.querySelector("[data-feed-display]");
-    expect(actions).toHaveAttribute("data-chrome-actions");
-    expect(actions).toHaveClass("ml-auto", "mr-[var(--chrome-edge-pad)]");
-    const row = container.querySelector("[data-main-secondary-stats-right]");
-    expect(row).toHaveClass("pl-[var(--main-secondary-pad-x)]");
-    expect(row).not.toHaveClass("pr-[var(--main-secondary-pad-x)]");
+describe("Display options (SPEC_FEED_DISPLAY.md, Д1, Д4; SPEC_GRAPH_VIEW.md, «Панель графа»)", () => {
+  afterEach(() => {
+    localStorage.clear();
+    reloadGraphPreferences();
   });
 
-  it("are absent in Graph, where none of them applies", () => {
-    const { container } = renderBar("top", null, "graph");
-    expect(screen.queryByRole("button", { name: "Display options" })).not.toBeInTheDocument();
-    expect(container.querySelector("[data-main-secondary-stats-right]")).toHaveClass(
-      "pl-[var(--main-secondary-pad-x)]",
-      "pr-[var(--main-secondary-pad-x)]",
+  function pathPart(viewMode: MainViewMode) {
+    return (
+      <MainSecondaryTopBar
+        part="content"
+        placement="top"
+        sidebarCollapsed={false}
+        sidebarResizing={false}
+        stats={null}
+        detailBlock={null}
+        detailEntered
+        viewMode={viewMode}
+        onViewModeChange={vi.fn()}
+        vaultPath="/vault"
+        tags={[]}
+        currentTag={null}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRenameFile={vi.fn()}
+        onCheckFileName={vi.fn(() => Promise.resolve(null))}
+        onRequestDelete={vi.fn()}
+        onDetailClose={vi.fn()}
+        detailMenuOpenRequestSequence={0}
+      />
     );
+  }
+
+  for (const viewMode of ["grid", "graph"] as const) {
+    it(`sit on the Mine button's axis in ${viewMode}: chrome actions own the right edge inset`, () => {
+      const { container } = renderBar("top", null, viewMode);
+      expect(screen.getByRole("button", { name: "Display options" })).toBeInTheDocument();
+      const actions = container.querySelector("[data-display-actions]");
+      expect(actions).toHaveAttribute("data-chrome-actions");
+      expect(actions).toHaveClass("ml-auto", "mr-[var(--chrome-edge-pad)]");
+      const row = container.querySelector("[data-main-secondary-stats-right]");
+      expect(row).toHaveClass("pl-[var(--main-secondary-pad-x)]");
+      expect(row).not.toHaveClass("pr-[var(--main-secondary-pad-x)]");
+    });
+
+    it(`stand right of Grid | Graph in the path's row in ${viewMode}`, () => {
+      render(pathPart(viewMode));
+      const actions = document.querySelector("[data-main-view-mode-switcher]") as HTMLElement;
+      const trigger = within(actions).getByRole("button", { name: "Display options" });
+      expect(actions.lastElementChild).toBe(trigger);
+      expect(within(actions).getByRole("tab", { name: "Graph" })).toBeInTheDocument();
+    });
+  }
+
+  it("open the feed's panel in Grid, never the graph's", async () => {
+    const user = userEvent.setup();
+    render(pathPart("grid"));
+    await user.click(screen.getByRole("button", { name: "Display options" }));
+
+    expect(screen.getByRole("menu")).toHaveAttribute("data-display-panel", "feed");
+    expect(screen.getByRole("group", { name: "Sort" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Links" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitemcheckbox")).not.toBeInTheDocument();
+  });
+
+  it("open the graph's panel in Graph, in place of the feed's, and its switches apply at once", async () => {
+    const user = userEvent.setup();
+    render(pathPart("graph"));
+    await user.click(screen.getByRole("button", { name: "Display options" }));
+
+    expect(screen.getByRole("menu")).toHaveAttribute("data-display-panel", "graph");
+    expect(screen.getByRole("group", { name: "Links" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Sort" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitemradio")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Related notes" }));
+    expect(getGraphPreferences()).toEqual({ include_wikilinks: true, include_related_notes: false });
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+  });
+
+  it("close an open panel when the view switches", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(pathPart("graph"));
+    await user.click(screen.getByRole("button", { name: "Display options" }));
+    expect(screen.getByRole("menu")).toHaveAttribute("data-display-panel", "graph");
+
+    rerender(pathPart("grid"));
+
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 });
 

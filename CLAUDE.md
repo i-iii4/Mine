@@ -32,7 +32,7 @@
 - `SPEC_GRID_LAYOUT_READINESS.md` — deterministic live geometry: render-ready gate, committed prefix, skeleton envelope, deep fast-scroll acceptance
 - `SPEC_CARD_MEDIA_GEOMETRY.md` — геометрия медиа-карточки: размеры артефакта пишет генератор превью, размеры источника остаются у autoplay/Resolution, кламп пропорции как единственная точка обрезки; видеокарточка с 30.09.2026 тоже берёт форму постера
 - `SPEC_FEED_VIDEO.md` — desktop feed video contract: четыре surfaces, `feed_playback` descriptor, autoplay gating standard/heavy
-- `SPEC_GRAPH_VIEW.md` — спецификация Graph View: Canvas force-directed graph на базе решения Longevity Landscape, graph snapshot read model, коллекции/wikilinks/related notes, физика, UX и проверки
+- `SPEC_GRAPH_VIEW.md` — спецификация Graph View: Canvas force-directed graph на базе решения Longevity Landscape, graph snapshot read model, коллекции/wikilinks/related notes, физика, UX и проверки; панель графа на кнопке Display включает и выключает дополнительные связи, коллекции видны всегда (11.10.2026)
 - `SPEC_GROUP_SELECTION.md` — групповое выделение в Grid: marquee/keyboard selection, batch card actions, selection-scoped меню
 - [SPEC_AUDIT_FIXES.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_AUDIT_FIXES.md>): исправления по повторному аудиту 29.09.2026: контракты сохранения исходного текста, записи со сверкой, привязки операций клиппера, каталог находок А2 по А10 и то, что не делаем; этапы 1 по 12 реализованы 30.09.2026 и 01.10.2026 (этап 9: третий аудит по 836a00c, этапы 10, 11, 12: приёмки по 1f2766e, 792e3de, 8cfb1f34), живая приёмка за пользователем
 - [SPEC_CARD_UNIFIED.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_UNIFIED.md>): одна карточка: вид задаёт только содержимое, два способа отображения (с содержимым и без), положения ленты `Cards` и `Media`, своих форматов у ссылки, файла и соцпоста нет; реализовано 06.10.2026
@@ -253,7 +253,9 @@ local-arena/
 │   │   ├── graph/              # Canvas paint, physics, contracts, interactions
 │   │   ├── grid/               # Grid interaction geometry/controllers
 │   │   ├── MainSecondaryChrome.tsx # Main route secondary chrome
-│   │   ├── FeedDisplayMenu.tsx # Кнопка Display и панель: Sort, Show, Spacing (SPEC_FEED_DISPLAY)
+│   │   ├── DisplayMenu.tsx     # Кнопка Display и её панель, общие для Grid и Graph
+│   │   ├── FeedDisplayMenu.tsx # Панель ленты: Sort, Show, Spacing (SPEC_FEED_DISPLAY)
+│   │   ├── GraphDisplayMenu.tsx # Панель графа: Wikilinks, Related notes; коллекции всегда (SPEC_GRAPH_VIEW, «Панель графа»)
 │   │   ├── Card.tsx            # Одна карточка для всех видов записей: слот медиа и текстовая часть (SPEC_CARD_UNIFIED.md)
 │   │   ├── CardRow.tsx         # Карточка одной строкой списка: строки поиска и Related notes; команды строки в CardRowActions.tsx
 │   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация, кнопка импорта

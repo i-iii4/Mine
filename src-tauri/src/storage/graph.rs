@@ -62,11 +62,17 @@ impl Default for GraphScope {
     }
 }
 
+/// What a graph request may vary. Collection nodes and membership edges are
+/// the graph's skeleton and always present: there is no option to hide them
+/// (SPEC_GRAPH_VIEW.md, «Панель графа», 11.10.2026). A request from an older
+/// page that still names `include_collections` is read without it, because
+/// unknown fields are ignored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(default)]
 pub struct GraphOptions {
-    pub include_collections: bool,
+    /// Body wikilinks between cards, and from a card to a collection page.
     pub include_wikilinks: bool,
+    /// Related-note provenance links recorded by Mine.
     pub include_related_notes: bool,
     pub materialize_large_library: bool,
 }
@@ -74,7 +80,6 @@ pub struct GraphOptions {
 impl Default for GraphOptions {
     fn default() -> Self {
         Self {
-            include_collections: true,
             include_wikilinks: true,
             include_related_notes: true,
             materialize_large_library: false,
@@ -300,34 +305,32 @@ fn build_graph_model(conn: &Connection, options: &GraphOptions) -> Result<GraphM
         );
     }
 
-    if options.include_collections {
-        // Collection nodes come from the pages alone, and a membership edge
-        // only reaches one of them: a link whose name has no page makes
-        // neither node nor edge (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К9).
-        for channel in index::list_channels(conn)? {
-            model.collection_refs.insert(channel.tag.clone());
-            insert_collection_node(&mut model.nodes, &channel.tag);
+    // Collections are always drawn (SPEC_GRAPH_VIEW.md, «Панель графа»).
+    // Collection nodes come from the pages alone, and a membership edge only
+    // reaches one of them: a link whose name has no page makes neither node
+    // nor edge (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К9).
+    for channel in index::list_channels(conn)? {
+        model.collection_refs.insert(channel.tag.clone());
+        insert_collection_node(&mut model.nodes, &channel.tag);
+    }
+    for (slug, collection_ref) in load_memberships(conn)? {
+        if !model.card_slugs.contains(&slug) {
+            continue;
         }
-        for (slug, collection_ref) in load_memberships(conn)? {
-            if !model.card_slugs.contains(&slug) {
-                continue;
-            }
-            insert_or_increment_edge(
-                &mut model.links,
-                GraphLinkKind::CollectionMembership,
-                collection_node_id(&collection_ref),
-                card_node_id(&slug),
-                false,
-                Some(collection_ref),
-            );
-        }
+        insert_or_increment_edge(
+            &mut model.links,
+            GraphLinkKind::CollectionMembership,
+            collection_node_id(&collection_ref),
+            card_node_id(&slug),
+            false,
+            Some(collection_ref),
+        );
     }
 
     if options.include_wikilinks {
         for (source, target_ref) in load_reference_links(conn, GraphLinkKind::Wikilink)? {
             insert_reference_edge(
                 &mut model,
-                options,
                 &link_index,
                 &collection_sources,
                 GraphLinkKind::Wikilink,
@@ -340,7 +343,6 @@ fn build_graph_model(conn: &Connection, options: &GraphOptions) -> Result<GraphM
         for (source, target_ref) in load_reference_links(conn, GraphLinkKind::RelatedNote)? {
             insert_reference_edge(
                 &mut model,
-                options,
                 &link_index,
                 &collection_sources,
                 GraphLinkKind::RelatedNote,
@@ -355,7 +357,6 @@ fn build_graph_model(conn: &Connection, options: &GraphOptions) -> Result<GraphM
 
 fn insert_reference_edge(
     model: &mut GraphModel,
-    options: &GraphOptions,
     link_index: &LinkIndex,
     collection_sources: &BTreeMap<String, String>,
     kind: GraphLinkKind,
@@ -381,10 +382,9 @@ fn insert_reference_edge(
 
     let target = if model.card_slugs.contains(target_slug) {
         card_node_id(target_slug)
-    } else if options.include_collections
-        && collection_sources
-            .get(target_slug)
-            .is_some_and(|reference| model.collection_refs.contains(reference))
+    } else if collection_sources
+        .get(target_slug)
+        .is_some_and(|reference| model.collection_refs.contains(reference))
     {
         collection_node_id(&collection_sources[target_slug])
     } else {
@@ -888,6 +888,105 @@ mod tests {
             .any(|link| link.kind == GraphLinkKind::Wikilink
                 && link.source == "card:Cards/Source"
                 && link.target == "collection:Design"));
+    }
+
+    /// Collections have no switch (SPEC_GRAPH_VIEW.md, «Панель графа»): a
+    /// request from an older page that still asks to hide them is read
+    /// without that field and gets them all the same.
+    #[test]
+    fn a_stale_request_to_hide_collections_still_gets_them() {
+        let conn = db::open_memory().unwrap();
+        insert_block(&conn, "first", "", &[]);
+        seed_collection(&conn, "Design");
+        attach(&conn, "first", "Design");
+
+        let stale: GraphOptions = serde_json::from_value(serde_json::json!({
+            "include_collections": false,
+            "include_wikilinks": true,
+            "include_related_notes": true,
+            "materialize_large_library": false,
+        }))
+        .unwrap();
+        assert_eq!(stale, options());
+
+        let snapshot = graph_snapshot(&conn, &library_scope(), &stale).unwrap();
+        assert!(snapshot
+            .nodes
+            .iter()
+            .any(|node| node.id == "collection:Design"));
+        assert!(snapshot
+            .links
+            .iter()
+            .any(|link| link.kind == GraphLinkKind::CollectionMembership
+                && link.source == "collection:Design"
+                && link.target == "card:first"));
+    }
+
+    /// The panel's switches take away only the extra links between cards:
+    /// every card, every collection and every membership edge stays.
+    #[test]
+    fn switching_extra_links_off_keeps_collections_and_cards() {
+        let conn = db::open_memory().unwrap();
+        insert_block(&conn, "source", "See [[target]]", &["origin"]);
+        insert_block(&conn, "target", "", &[]);
+        insert_block(&conn, "origin", "", &[]);
+        seed_collection(&conn, "Design");
+        attach(&conn, "source", "Design");
+        let read = |options: &GraphOptions| {
+            let snapshot = graph_snapshot(&conn, &library_scope(), options).unwrap();
+            let nodes = snapshot
+                .nodes
+                .iter()
+                .map(|node| node.id.clone())
+                .collect::<BTreeSet<_>>();
+            let kinds = snapshot
+                .links
+                .iter()
+                .map(|link| link.kind)
+                .collect::<BTreeSet<_>>();
+            (nodes, kinds)
+        };
+        let every_node = ["card:origin", "card:source", "card:target", "collection:Design"]
+            .map(str::to_string)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+
+        let (nodes, kinds) = read(&options());
+        assert_eq!(nodes, every_node);
+        assert_eq!(
+            kinds,
+            BTreeSet::from([
+                GraphLinkKind::CollectionMembership,
+                GraphLinkKind::Wikilink,
+                GraphLinkKind::RelatedNote,
+            ])
+        );
+
+        let (nodes, kinds) = read(&GraphOptions {
+            include_wikilinks: false,
+            ..options()
+        });
+        assert_eq!(nodes, every_node);
+        assert!(!kinds.contains(&GraphLinkKind::Wikilink));
+        assert!(kinds.contains(&GraphLinkKind::CollectionMembership));
+        assert!(kinds.contains(&GraphLinkKind::RelatedNote));
+
+        let (nodes, kinds) = read(&GraphOptions {
+            include_related_notes: false,
+            ..options()
+        });
+        assert_eq!(nodes, every_node);
+        assert!(!kinds.contains(&GraphLinkKind::RelatedNote));
+        assert!(kinds.contains(&GraphLinkKind::CollectionMembership));
+        assert!(kinds.contains(&GraphLinkKind::Wikilink));
+
+        let (nodes, kinds) = read(&GraphOptions {
+            include_wikilinks: false,
+            include_related_notes: false,
+            ..options()
+        });
+        assert_eq!(nodes, every_node);
+        assert_eq!(kinds, BTreeSet::from([GraphLinkKind::CollectionMembership]));
     }
 
     #[test]

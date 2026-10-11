@@ -1,5 +1,10 @@
 import { commandById, setCommandOverrides } from "@/lib/commandRegistry";
 import { reloadFeedDisplay, setFeedSort } from "@/lib/feedDisplay";
+import {
+  GRAPH_PREFERENCES_STORAGE_KEY,
+  reloadGraphPreferences,
+  type GraphPreferences,
+} from "@/lib/graphPreferences";
 import { reportCardsRendered } from "@/lib/startup";
 import { isTabVisible, setTabVisible } from "@/lib/tabVisibility";
 import { TAB_VIEW_REPORT_DEBOUNCE_MS } from "@/lib/tabPage";
@@ -377,8 +382,16 @@ vi.mock("@/components/Grid", async () => {
 });
 
 vi.mock("@/components/GraphView", () => ({
-  GraphView: ({ currentCollection }: { currentCollection?: string }) => (
-    <div data-testid="graph-view">{currentCollection ?? "__all__"}</div>
+  GraphView: ({
+    currentCollection,
+    graphPreferences,
+  }: {
+    currentCollection?: string;
+    graphPreferences: GraphPreferences;
+  }) => (
+    <div data-testid="graph-view" data-graph-preferences={JSON.stringify(graphPreferences)}>
+      {currentCollection ?? "__all__"}
+    </div>
   ),
 }));
 
@@ -1390,6 +1403,116 @@ describe("AppWithVault", () => {
 
     expect(localStorage.getItem("mine.mainViewMode")).toBeNull();
     expect(await screen.findByTestId("grid")).toHaveTextContent("__all__:2");
+  });
+
+  describe("the graph's Display panel (SPEC_GRAPH_VIEW.md, «Панель графа»)", () => {
+    afterEach(() => {
+      localStorage.clear();
+      reloadGraphPreferences();
+    });
+
+    function graphPreferencesShown(): unknown {
+      return JSON.parse(screen.getByTestId("graph-view").getAttribute("data-graph-preferences") ?? "null");
+    }
+
+    async function openDisplayPanel(): Promise<HTMLElement> {
+      fireEvent.keyDown(screen.getByRole("button", { name: "Display options" }), { key: "ArrowDown" });
+      return screen.findByRole("menu");
+    }
+
+    async function closeDisplayPanel(menu: HTMLElement) {
+      fireEvent.keyDown(menu, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    }
+
+    function switchView(name: "Grid" | "Graph") {
+      const switcher = document.querySelector("[data-main-view-mode-switcher]") as HTMLElement;
+      fireEvent.mouseDown(within(switcher).getByRole("tab", { name }), { button: 0 });
+    }
+
+    it("opens the feed's panel in Grid and the graph's in Graph, and a switch reaches the graph at once", async () => {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+      });
+
+      let menu = await openDisplayPanel();
+      expect(menu).toHaveAttribute("data-display-panel", "feed");
+      expect(within(menu).getByRole("group", { name: "Sort" })).toBeInTheDocument();
+      expect(within(menu).queryByRole("menuitemcheckbox")).not.toBeInTheDocument();
+      await closeDisplayPanel(menu);
+
+      switchView("Graph");
+      expect(await screen.findByTestId("graph-view")).toBeInTheDocument();
+      expect(graphPreferencesShown()).toEqual({ include_wikilinks: true, include_related_notes: true });
+
+      menu = await openDisplayPanel();
+      expect(menu).toHaveAttribute("data-display-panel", "graph");
+      expect(within(menu).getByRole("group", { name: "Links" })).toBeInTheDocument();
+      expect(within(menu).queryByRole("group", { name: "Sort" })).not.toBeInTheDocument();
+      expect(within(menu).queryByText("Collections")).not.toBeInTheDocument();
+
+      fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "Wikilinks" }));
+
+      // The page's own announcement comes back to it and changes nothing.
+      await waitFor(() => {
+        expect(graphPreferencesShown()).toEqual({ include_wikilinks: false, include_related_notes: true });
+      });
+      expect(screen.getByRole("menu")).toBe(menu);
+      expect(JSON.parse(localStorage.getItem(GRAPH_PREFERENCES_STORAGE_KEY) ?? "null")).toEqual({
+        include_wikilinks: false,
+        include_related_notes: true,
+      });
+
+      await closeDisplayPanel(menu);
+      switchView("Grid");
+      expect(await screen.findByTestId("grid")).toBeInTheDocument();
+      menu = await openDisplayPanel();
+      expect(menu).toHaveAttribute("data-display-panel", "feed");
+    });
+
+    it("hands the graph what another window switched, and never a stored wish to hide collections", async () => {
+      localStorage.setItem(
+        GRAPH_PREFERENCES_STORAGE_KEY,
+        JSON.stringify({ include_collections: false, include_wikilinks: true, include_related_notes: false }),
+      );
+      reloadGraphPreferences();
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+      });
+      switchView("Graph");
+      expect(await screen.findByTestId("graph-view")).toBeInTheDocument();
+      expect(graphPreferencesShown()).toEqual({ include_wikilinks: true, include_related_notes: false });
+
+      // The Settings window switched both; its write may reach this page's
+      // storage after the event, so the event carries the value.
+      act(() => {
+        window.dispatchEvent(new CustomEvent("settings-changed", {
+          detail: {
+            payload: {
+              key: GRAPH_PREFERENCES_STORAGE_KEY,
+              value: JSON.stringify({ include_wikilinks: false, include_related_notes: true }),
+            },
+          },
+        }));
+      });
+
+      expect(graphPreferencesShown()).toEqual({ include_wikilinks: false, include_related_notes: true });
+      const menu = await openDisplayPanel();
+      expect(within(menu).getByRole("menuitemcheckbox", { name: "Wikilinks" }))
+        .toHaveAttribute("aria-checked", "false");
+      expect(within(menu).getByRole("menuitemcheckbox", { name: "Related notes" }))
+        .toHaveAttribute("aria-checked", "true");
+    });
   });
 
   it("narrows the bar to selection commands while a selection exists", async () => {

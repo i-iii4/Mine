@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import {
   GRAPH_PREFERENCES_STORAGE_KEY,
-  storeGraphPreferences,
+  reloadGraphPreferences,
+  setGraphPreference,
 } from "@/lib/graphPreferences";
 import { GraphSection } from "./GraphSection";
 
@@ -12,35 +13,50 @@ vi.mock("@tauri-apps/api/event", () => ({
   emit: emitMock,
 }));
 
-describe("GraphSection", () => {
+describe("GraphSection (SPEC_GRAPH_VIEW.md, «Панель графа»)", () => {
   beforeEach(() => {
     localStorage.clear();
+    reloadGraphPreferences();
     emitMock.mockClear();
   });
 
-  it("keeps all graph relation layers enabled by default", () => {
-    render(<GraphSection />);
-
-    expect(screen.getByRole("checkbox", { name: "Collections" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Wikilinks" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Related notes" })).toBeChecked();
+  afterEach(() => {
+    localStorage.clear();
+    reloadGraphPreferences();
   });
 
-  it("updates one shared preference object and broadcasts its key", () => {
-    storeGraphPreferences({
-      include_collections: true,
-      include_wikilinks: true,
-      include_related_notes: true,
-    });
+  it("offers the two extra links, both on by default, and no switch for collections", () => {
+    render(<GraphSection />);
+
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    expect(screen.getByRole("checkbox", { name: "Wikilinks" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Related notes" })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Collections" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Collections")).not.toBeInTheDocument();
+  });
+
+  it("updates the one shared preference object and broadcasts its key", () => {
     render(<GraphSection />);
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Wikilinks" }));
 
+    expect(screen.getByRole("checkbox", { name: "Wikilinks" })).not.toBeChecked();
     expect(JSON.parse(localStorage.getItem(GRAPH_PREFERENCES_STORAGE_KEY)!)).toEqual({
-      include_collections: true,
       include_wikilinks: false,
       include_related_notes: true,
     });
-    expect(emitMock).toHaveBeenCalledWith("settings-changed", expect.objectContaining({ key: GRAPH_PREFERENCES_STORAGE_KEY }));
+    expect(emitMock).toHaveBeenCalledWith(
+      "settings-changed",
+      expect.objectContaining({ key: GRAPH_PREFERENCES_STORAGE_KEY }),
+    );
+  });
+
+  it("follows a change made through the graph's panel at once", () => {
+    render(<GraphSection />);
+
+    act(() => setGraphPreference("include_related_notes", false));
+
+    expect(screen.getByRole("checkbox", { name: "Related notes" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Wikilinks" })).toBeChecked();
   });
 });

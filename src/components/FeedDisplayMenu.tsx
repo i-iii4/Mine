@@ -1,18 +1,13 @@
-// The feed's Display options: order, card presentation and spacing. A standard command menu with one radio group per option; new options
-// arrive as new groups (SPEC_FEED_DISPLAY.md, Д1 to Д3, Д19).
+// The feed's Display options: order, card presentation and spacing. The
+// standard Display panel (DisplayMenu.tsx) with one radio group per option;
+// new options arrive as new groups (SPEC_FEED_DISPLAY.md, Д1 to Д3, Д19).
 
-import { Settings2 } from "lucide-react";
 import { useId } from "react";
-import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import {
   DENSITY_STEPS,
   DENSITY_STORAGE_KEY,
@@ -28,6 +23,7 @@ import {
 } from "@/lib/feedDisplay";
 import { broadcastSettingsChange } from "@/lib/settingsChanged";
 import type { FeedOrder } from "@/types";
+import { DisplayGroupCaption, DisplayMenu } from "./DisplayMenu";
 
 interface DisplayChoice<T extends string> {
   value: T;
@@ -75,10 +71,7 @@ function DisplayGroup<T extends string>({
   const labelId = useId();
   return (
     <>
-      {/* Same caption as the selection menu's count header. */}
-      <div id={labelId} className="px-plate py-1.5 font-mono text-sm text-muted-foreground">
-        {label}
-      </div>
+      <DisplayGroupCaption id={labelId}>{label}</DisplayGroupCaption>
       <DropdownMenuRadioGroup
         aria-labelledby={labelId}
         value={value}
@@ -103,41 +96,23 @@ function DisplayGroup<T extends string>({
   );
 }
 
+/** The feed's panel of the Display button, shown in Grid (Д1 to Д4). */
 export function FeedDisplayMenu() {
   const { sort, show } = useFeedDisplay();
   const spacing = useDensity();
-  const { triggerProps, handleCloseAutoFocus } =
-    useTopChromeTriggerInteraction({ dragDisabled: true });
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          {...triggerProps}
-          aria-label="Display options"
-          variant="chrome"
-          size="chrome-icon"
-          data-feed-display-trigger=""
-        >
-          <Settings2 aria-hidden="true" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="end"
-        onCloseAutoFocus={handleCloseAutoFocus}
-        data-feed-display-panel=""
-      >
-        <DisplayGroup label="Sort" value={sort} choices={SORT_CHOICES} onChange={setFeedSort} />
-        <DropdownMenuSeparator />
-        <DisplayGroup label="Show" value={show} choices={SHOW_CHOICES} onChange={setFeedShow} />
-        <DropdownMenuSeparator />
-        <DisplayGroup
-          label="Spacing"
-          value={String(spacing)}
-          choices={SPACING_CHOICES}
-          onChange={applySpacing}
-        />
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <DisplayMenu panel="feed">
+      <DisplayGroup label="Sort" value={sort} choices={SORT_CHOICES} onChange={setFeedSort} />
+      <DropdownMenuSeparator />
+      <DisplayGroup label="Show" value={show} choices={SHOW_CHOICES} onChange={setFeedShow} />
+      <DropdownMenuSeparator />
+      <DisplayGroup
+        label="Spacing"
+        value={String(spacing)}
+        choices={SPACING_CHOICES}
+        onChange={applySpacing}
+      />
+    </DisplayMenu>
   );
 }

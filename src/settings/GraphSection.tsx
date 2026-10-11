@@ -1,42 +1,19 @@
-import { useState } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  getStoredGraphPreferences,
-  GRAPH_PREFERENCES_STORAGE_KEY,
-  storeGraphPreferences,
-  type GraphPreferences,
+  setGraphPreference,
+  useGraphPreferences,
 } from "@/lib/graphPreferences";
-import { broadcastSettingsChange } from "@/lib/settingsChanged";
 import { SettingRow } from "./SettingRow";
 
-type GraphPreferenceKey = keyof GraphPreferences;
-
+// The same two switches as the graph's Display panel, on the same value
+// (SPEC_GRAPH_VIEW.md, «Панель графа»). Collections are always drawn and have
+// no switch here either.
 export function GraphSection() {
-  const [preferences, setPreferences] = useState(getStoredGraphPreferences);
-
-  const updatePreference = (key: GraphPreferenceKey, checked: boolean) => {
-    const next = { ...preferences, [key]: checked };
-    setPreferences(next);
-    storeGraphPreferences(next);
-    broadcastSettingsChange(GRAPH_PREFERENCES_STORAGE_KEY);
-  };
+  const preferences = useGraphPreferences();
 
   return (
     <section className="flex flex-col gap-s3">
       <h1 className="text-base font-semibold">Graph</h1>
-
-      <SettingRow
-        label="Collections"
-        caption="Show collection nodes and membership links"
-      >
-        <Checkbox
-          aria-label="Collections"
-          checked={preferences.include_collections}
-          onCheckedChange={(checked) => (
-            updatePreference("include_collections", checked === true)
-          )}
-        />
-      </SettingRow>
 
       <SettingRow
         label="Wikilinks"
@@ -46,7 +23,7 @@ export function GraphSection() {
           aria-label="Wikilinks"
           checked={preferences.include_wikilinks}
           onCheckedChange={(checked) => (
-            updatePreference("include_wikilinks", checked === true)
+            setGraphPreference("include_wikilinks", checked === true)
           )}
         />
       </SettingRow>
@@ -59,7 +36,7 @@ export function GraphSection() {
           aria-label="Related notes"
           checked={preferences.include_related_notes}
           onCheckedChange={(checked) => (
-            updatePreference("include_related_notes", checked === true)
+            setGraphPreference("include_related_notes", checked === true)
           )}
         />
       </SettingRow>

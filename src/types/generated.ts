@@ -258,7 +258,22 @@ export type GraphNode = { id: string; kind: GraphNodeKind; label: string; slug: 
 
 export type GraphNodeKind = "card" | "collection"
 
-export type GraphOptions = { include_collections: boolean; include_wikilinks: boolean; include_related_notes: boolean; materialize_large_library: boolean }
+/**
+ * What a graph request may vary. Collection nodes and membership edges are
+ * the graph's skeleton and always present: there is no option to hide them
+ * (SPEC_GRAPH_VIEW.md, «Панель графа», 11.10.2026). A request from an older
+ * page that still names `include_collections` is read without it, because
+ * unknown fields are ignored.
+ */
+export type GraphOptions = {
+/**
+ * Body wikilinks between cards, and from a card to a collection page.
+ */
+include_wikilinks: boolean;
+/**
+ * Related-note provenance links recorded by Mine.
+ */
+include_related_notes: boolean; materialize_large_library: boolean }
 
 export type GraphScope = { kind: GraphScopeKind; collection_ref: string | null }
 
