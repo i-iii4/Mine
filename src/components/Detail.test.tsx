@@ -2944,6 +2944,53 @@ describe("Detail", () => {
     expect(frame.querySelector('[data-detail-preview-backing]')).not.toBeNull();
   });
 
+  // A preview file that is not there yet is not a broken picture
+  // (SPEC_THUMBNAILS.md, «Нет файла миниатюры»).
+  function announceThumbUpdated(slug: string) {
+    act(() => {
+      window.dispatchEvent(new CustomEvent("thumb:updated", {
+        detail: { event: "thumb:updated", payload: { path: "/tmp/test-vault", slug } },
+      }));
+    });
+  }
+
+  it("keeps the loading look instead of a broken image when the preview file is missing", () => {
+    const props = cloudImageProps(false);
+    props.block.width = 1600;
+    props.block.height = 1200;
+    const { container } = render(<Detail {...props} />);
+    const frame = container.querySelector('[data-detail-image]') as HTMLElement;
+    const geometry = frame.getAttribute('style');
+    const original = frame.querySelector('img:not([data-detail-preview-backing])') as HTMLImageElement;
+
+    fireEvent.error(frame.querySelector('[data-detail-preview-backing]') as HTMLImageElement);
+
+    // No backing element is left to draw the icon; the original keeps loading
+    // unseen and the frame keeps its box, exactly as while loading.
+    expect(frame.querySelector('[data-detail-preview-backing]')).toBeNull();
+    expect(original).toHaveStyle({ opacity: '0' });
+    expect(frame.getAttribute('style')).toBe(geometry);
+  });
+
+  it("loads the backing again when this card's preview is ready, and not for another card", async () => {
+    const props = cloudImageProps(false);
+    const { container } = render(<Detail {...props} />);
+    const frame = container.querySelector('[data-detail-image]') as HTMLElement;
+    const backingSrc = (frame.querySelector('[data-detail-preview-backing]') as HTMLImageElement).getAttribute('src');
+    fireEvent.error(frame.querySelector('[data-detail-preview-backing]') as HTMLImageElement);
+    await act(async () => {});
+
+    announceThumbUpdated('another-card');
+    expect(frame.querySelector('[data-detail-preview-backing]')).toBeNull();
+
+    announceThumbUpdated(props.block.slug);
+    const backing = frame.querySelector('[data-detail-preview-backing]') as HTMLImageElement;
+    expect(backing).not.toBeNull();
+    // A new address: the browser asks the file again rather than repeating
+    // the failure from its memory cache.
+    expect(backing.getAttribute('src')).toBe(`${backingSrc}${backingSrc?.includes('?') ? '&' : '?'}retry=1`);
+  });
+
   it("names the file's state when its contents cannot be fetched from iCloud", () => {
     const { container } = render(<Detail {...cloudImageProps(true)} />);
 

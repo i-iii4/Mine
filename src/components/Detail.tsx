@@ -99,6 +99,7 @@ import {
   domainFromUrl,
   isSafeUrl,
   fallbackThumbsRoot,
+  withRetry,
 } from "@/lib/assets";
 import { safeMarkdownUrl } from "@/lib/markdownUrl";
 import {
@@ -108,6 +109,7 @@ import {
 } from "@/lib/cloudContent";
 import { cn } from "@/lib/utils";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
+import { usePreviewFileRetry } from "@/hooks/usePreviewFileRetry";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset, resolveNoteLink } from "@/lib/commands";
@@ -1933,6 +1935,7 @@ function BlockContent({
                   previewManifest,
                   thumbsRootPath: resolvedThumbsRoot,
                 })}
+                previewSlug={block.slug}
                 contentInCloud={isContentInCloud(block)}
                 mediaRef={block.media_file}
                 alt={navigationLabel}
@@ -3497,6 +3500,7 @@ function ArticleBody({
               sourceWidth={previewTile?.width}
               sourceHeight={previewTile?.height}
               previewSrc={previewSrc}
+              previewSlug={sourceSlug}
               alt={alt ?? ""}
               className="rounded-0"
               {...props}
@@ -3827,9 +3831,37 @@ function textSelectionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Could not complete this action. Please try again.";
 }
 
-function withRetryToken(src: string, attempt: number): string {
-  if (attempt === 0) return src;
-  return `${src}${src.includes("?") ? "&" : "?"}retry=${attempt}`;
+/// The small preview drawn under the original while the original loads. Its
+/// file may not be there yet (a card saved a moment ago): the backing then
+/// hides and the frame keeps its loading look instead of the browser's
+/// broken-image icon, and loads again once this card's preview is ready
+/// (SPEC_THUMBNAILS.md, «Нет файла миниатюры»).
+function DetailPreviewBacking({
+  src: previewSrc,
+  slug,
+  className,
+  onLoad,
+}: {
+  src: string;
+  slug: string | null | undefined;
+  className: string;
+  onLoad: (image: HTMLImageElement) => void;
+}) {
+  const { src, missing, markMissing } = usePreviewFileRetry(previewSrc, slug);
+  if (missing) return null;
+  return (
+    <img
+      src={src}
+      alt=""
+      className={className}
+      onLoad={event => onLoad(event.currentTarget)}
+      onError={markMissing}
+      loading="eager"
+      draggable={false}
+      aria-hidden="true"
+      data-detail-preview-backing=""
+    />
+  );
 }
 
 function DetailImage({
@@ -3837,6 +3869,7 @@ function DetailImage({
   sourceWidth,
   sourceHeight,
   previewSrc,
+  previewSlug = null,
   contentInCloud = false,
   mediaRef = null,
   alt,
@@ -3847,6 +3880,9 @@ function DetailImage({
   sourceWidth?: number | null;
   sourceHeight?: number | null;
   previewSrc: string | null;
+  /// The card whose preview `previewSrc` is: a missing preview file loads
+  /// again when this card's preview is ready.
+  previewSlug?: string | null;
   /// Whether this file's contents are held in iCloud rather than on this Mac.
   contentInCloud?: boolean;
   /// The card's media reference, for asking the system about its download.
@@ -3893,7 +3929,7 @@ function DetailImage({
     return () => window.clearTimeout(timer);
   }, [contentInCloud, originalReady, attempt, src]);
 
-  const requestedSrc = withRetryToken(src, attempt);
+  const requestedSrc = withRetry(src, attempt);
   const showDownloading = contentInCloud && !originalReady && !failed && waited;
   const showOffline = contentInCloud && failed;
 
@@ -3923,15 +3959,11 @@ function DetailImage({
   return (
     <div className="relative max-w-full overflow-hidden leading-none" style={frameStyle} data-detail-image="">
       {previewSrc && !originalReady && (
-        <img
+        <DetailPreviewBacking
           src={previewSrc}
-          alt=""
+          slug={previewSlug}
           className={cn("block max-w-full rounded-0", className, size && "absolute inset-0 size-full object-contain")}
-          onLoad={event => rememberSize(event.currentTarget)}
-          loading="eager"
-          draggable={false}
-          aria-hidden="true"
-          data-detail-preview-backing=""
+          onLoad={rememberSize}
         />
       )}
       <img

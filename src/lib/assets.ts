@@ -31,6 +31,14 @@ export function previewAssetUrl(thumbsRootPath: string, previewPath: string): st
   return convertFileSrc(`${thumbsRootPath}/${previewPath}`);
 }
 
+/// The address of a request made after a failed one. The retry mark makes the
+/// browser ask the file again instead of repeating the failure it may keep in
+/// its memory cache.
+export function withRetry(url: string, retry: number): string {
+  if (retry <= 0) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}retry=${retry}`;
+}
+
 export function mediaUrl(vaultPath: string, fileName: string): string {
   return convertFileSrc(`${vaultPath}/${fileName}`);
 }

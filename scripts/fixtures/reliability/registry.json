@@ -2494,10 +2494,13 @@
       "paths": [
         "src/components/MicroPreviewThumbnail.tsx",
         "src/components/CardRow.tsx",
-        "src/components/CardReferenceRow.tsx"
+        "src/components/CardReferenceRow.tsx",
+        "src/hooks/usePreviewFileRetry.ts",
+        "src/lib/assets.ts",
+        "src/components/Detail.tsx"
       ],
       "requirement": "SPEC_THUMBNAILS.md#### Нет файла миниатюры (11.10.2026)",
-      "tests": ["src/components/MicroPreviewThumbnail.test.tsx", "src/components/Sidebar.test.tsx", "src/components/SearchOverlay.test.tsx"],
+      "tests": ["src/components/MicroPreviewThumbnail.test.tsx", "src/components/Detail.test.tsx", "src/components/Sidebar.test.tsx", "src/components/SearchOverlay.test.tsx"],
       "command": "test:frontend"
     },
     {

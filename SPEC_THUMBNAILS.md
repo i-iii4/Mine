@@ -881,6 +881,12 @@ Cache-buster заставляет browser refetch thumb from disk (new JPEG cont
 `CardRow` и `CardReferenceRow` прятали картинку навсегда через `display: none`)
 убраны: случай принадлежит компоненту.
 
+Превью-подложка под оригиналом в открытой карточке (`data-detail-preview-backing`
+в `Detail.tsx`) следует тому же правилу через общий хук `usePreviewFileRetry`
+(`src/hooks/usePreviewFileRetry.ts`): нет файла, значит подложка прячется и
+рамка остаётся такой же, как при загрузке, а `thumb:updated` этой карточки
+загружает подложку снова.
+
 ### Initial load
 
 At app startup, frontend still calls `listChannelPreviews(20)` once to populate initial state. After that, updates happen via events. Initial call needed because startup may load a vault with existing blocks that have no pending events.
