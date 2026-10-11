@@ -153,6 +153,10 @@ async function startSite() {
   return { server, origin: `http://127.0.0.1:${server.address().port}` };
 }
 
+// Wherever the panel stands, it keeps 16 px from every edge of the window
+// (Р10, 11.10.2026).
+const OVERLAY_INSET = 16;
+
 async function panelBox(page) {
   const box = await page.locator('[data-mine-clipper-panel]').boundingBox();
   assert.ok(box, 'the overlay panel is not on the page');
@@ -216,12 +220,14 @@ async function checkOverlayAcrossPages(worker) {
       && Math.abs(sized.y + sized.height - (grown.y + grown.height)) <= 1, JSON.stringify({ grown, sized }));
     const kept = await worker.evaluate(async () => (await chrome.storage.local.get('mineOverlayBounds')).mineOverlayBounds);
     assert.ok(Math.abs(kept.left - sized.x) <= 1 && Math.abs(kept.top - sized.y) <= 1 && Math.abs(kept.width - sized.width) <= 1, JSON.stringify(kept));
-    // The window shrinks: the panel stays whole in it; it grows back: the panel returns.
+    // The window shrinks: the panel stays whole in it, 16 px in from its
+    // edges; it grows back: the panel returns.
     await page.setViewportSize({ width: 640, height: 500 });
-    await page.waitForFunction(() => {
+    await page.waitForFunction((inset) => {
       const box = document.querySelector('[data-mine-clipper-overlay]')?.shadowRoot?.querySelector('[data-mine-clipper-panel]')?.getBoundingClientRect();
-      return box && box.left >= 0 && box.top >= 0 && box.right <= window.innerWidth + 0.5 && box.bottom <= window.innerHeight + 0.5;
-    });
+      return box && box.left >= inset - 0.5 && box.top >= inset - 0.5
+        && box.right <= window.innerWidth - inset + 0.5 && box.bottom <= window.innerHeight - inset + 0.5;
+    }, OVERLAY_INSET);
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.waitForFunction((expected) => {
       const box = document.querySelector('[data-mine-clipper-overlay]')?.shadowRoot?.querySelector('[data-mine-clipper-panel]')?.getBoundingClientRect();
@@ -291,14 +297,41 @@ async function checkOverlayAcrossPages(worker) {
 // included. A long name leaves no empty part of the header; a press on it
 // that travels past 4 px moves the panel and opens nothing, a press without
 // it and a click open the space menu. The space comes from the kept
-// destination; Mine need not answer for the header to show it.
-const LONG_SPACE = '/Users/worker/Spaces/A space whose name fills the whole header of the clipper';
+// destination; Mine need not answer for the header to show it. The name is
+// the one of the live acceptance of 11.10.2026: in a 360 px panel it ends in
+// an ellipsis before its chevron, short of "…", and a drag to the window's
+// edge leaves the panel 16 px in from it.
+const LONG_SPACE = '/Users/worker/Spaces/Mine. Длинное название. Прям вот легендарное';
+
+/** The header's parts with a long name, measured in the page. */
+async function headerLayout(page) {
+  return page.evaluate(() => {
+    const root = document.querySelector('[data-mine-clipper-overlay]').shadowRoot;
+    const row = root.querySelector('[data-clipper-space-row]');
+    const name = row.querySelector('[data-clipper-space-switcher]');
+    const label = name.firstElementChild.firstElementChild;
+    const box = (element) => {
+      const { left, right, width } = element.getBoundingClientRect();
+      return { left, right, width };
+    };
+    return {
+      name: box(name), label: box(label), chevron: box(name.querySelector('svg')),
+      more: box(row.querySelector('[data-clipper-overflow-trigger]')),
+      close: box(row.querySelector('[aria-label="Close"]')),
+      text: label.textContent,
+      cut: label.scrollWidth > label.clientWidth,
+      textOverflow: getComputedStyle(label).textOverflow,
+    };
+  });
+}
 
 async function checkHeaderDragBySpaceName(worker) {
   const { server, origin } = await startSite();
   const page = await context.newPage();
   try {
+    // The panel opens in its default place at 360 px, where the name does not fit.
     await worker.evaluate(async (space) => {
+      await chrome.storage.local.remove('mineOverlayBounds');
       await chrome.storage.local.set({
         mineSaveDestination: { executor: 'native', vaultPath: space, bindingId: null },
         mineKnownVaults: [space, '/Users/worker/Spaces/Journal'],
@@ -320,13 +353,24 @@ async function checkHeaderDragBySpaceName(worker) {
     assert.ok(nameBox.width > header.width / 2, `the name does not fill the header: ${JSON.stringify({ header, nameBox })}`);
     const centre = { x: nameBox.x + nameBox.width / 2, y: nameBox.y + nameBox.height / 2 };
 
+    // The long name ends in an ellipsis, then its chevron, then "…" and the
+    // close button: it runs over none of them.
+    const layout = await headerLayout(page);
+    assert.equal(layout.text, 'Mine. Длинное название. Прям вот легендарное');
+    assert.ok(layout.cut && layout.textOverflow === 'ellipsis', `the long name is not cut with an ellipsis: ${JSON.stringify(layout)}`);
+    assert.ok(layout.label.right < layout.more.left, `the name runs into "…": ${JSON.stringify(layout)}`);
+    assert.ok(layout.label.right <= layout.chevron.left + 0.5 && layout.chevron.width > 0
+      && layout.chevron.right <= layout.name.right + 0.5, `the name runs over its chevron: ${JSON.stringify(layout)}`);
+    assert.ok(layout.name.right <= layout.more.left + 0.5 && layout.more.right <= layout.close.left + 0.5,
+      `the name's button runs into the header's buttons: ${JSON.stringify(layout)}`);
+
     // Past the threshold: the panel follows the pointer, the menu stays shut.
     const before = await panelBox(page);
     await dragBy(page, centre, -200, 30);
     const after = await panelBox(page);
     const expected = {
-      x: Math.min(Math.max(before.x - 200, 0), 1280 - before.width),
-      y: Math.min(Math.max(before.y + 30, 0), 900 - before.height),
+      x: Math.min(Math.max(before.x - 200, OVERLAY_INSET), 1280 - OVERLAY_INSET - before.width),
+      y: Math.min(Math.max(before.y + 30, OVERLAY_INSET), 900 - OVERLAY_INSET - before.height),
     };
     assert.ok(Math.abs(after.x - expected.x) <= 1 && Math.abs(after.y - expected.y) <= 1, JSON.stringify({ before, after, expected }));
     assert.equal(await search.count(), 0, 'the space menu opened after a drag by the name');
@@ -353,9 +397,29 @@ async function checkHeaderDragBySpaceName(worker) {
     assert.equal(await name.getAttribute('aria-expanded'), 'true');
     await page.keyboard.press('Escape');
     await search.waitFor({ state: 'detached', timeout: 5_000 });
+
+    // Dragged by the name to the window's top left corner and then to its
+    // bottom right one, the panel stops 16 px from the edges, as its default
+    // place stands, and that place is kept.
+    const toTopLeft = await name.boundingBox();
+    await dragBy(page, { x: toTopLeft.x + toTopLeft.width / 2, y: toTopLeft.y + toTopLeft.height / 2 },
+      2 - (toTopLeft.x + toTopLeft.width / 2), 2 - (toTopLeft.y + toTopLeft.height / 2));
+    const topLeft = await panelBox(page);
+    assert.ok(Math.abs(topLeft.x - OVERLAY_INSET) <= 0.5 && Math.abs(topLeft.y - OVERLAY_INSET) <= 0.5,
+      `the panel does not stand 16 px from the top left edges: ${JSON.stringify(topLeft)}`);
+    const toBottomRight = await name.boundingBox();
+    await dragBy(page, { x: toBottomRight.x + toBottomRight.width / 2, y: toBottomRight.y + toBottomRight.height / 2 },
+      1278 - (toBottomRight.x + toBottomRight.width / 2), 898 - (toBottomRight.y + toBottomRight.height / 2));
+    const bottomRight = await panelBox(page);
+    assert.ok(Math.abs(bottomRight.x + bottomRight.width - (1280 - OVERLAY_INSET)) <= 0.5
+      && Math.abs(bottomRight.y + bottomRight.height - (900 - OVERLAY_INSET)) <= 0.5,
+      `the panel does not stand 16 px from the bottom right edges: ${JSON.stringify(bottomRight)}`);
+    assert.equal(await search.count(), 0, 'the space menu opened after a drag to the edge');
+    const keptAtEdge = await worker.evaluate(async () => (await chrome.storage.local.get('mineOverlayBounds')).mineOverlayBounds);
+    assert.ok(Math.abs(keptAtEdge.left - bottomRight.x) <= 1 && Math.abs(keptAtEdge.top - bottomRight.y) <= 1, JSON.stringify(keptAtEdge));
   } finally {
     await page.close();
-    await worker.evaluate(async () => chrome.storage.local.remove(['mineSaveDestination', 'mineKnownVaults']));
+    await worker.evaluate(async () => chrome.storage.local.remove(['mineSaveDestination', 'mineKnownVaults', 'mineOverlayBounds']));
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   }

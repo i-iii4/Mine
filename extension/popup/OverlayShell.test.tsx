@@ -93,8 +93,18 @@ describe("the overlay's place and size (Р10)", () => {
     press(header, panel, -300, 200);
     expect(box(panel)).toMatchObject({ left: 1440 - 16 - 360 - 300, top: 216 });
     expect(stored.mineOverlayBounds).toEqual({ left: 764, top: 216, width: 360, height: null });
+    // At the window's edge it keeps the 16 px of its default place.
     press(header, panel, 5000, -5000);
-    expect(box(panel)).toMatchObject({ left: 1440 - 360, top: 0 });
+    expect(box(panel)).toMatchObject({ left: 1440 - 16 - 360, top: 16 });
+  });
+
+  it("keeps 16 px from every edge of the window when dragged to it", () => {
+    const { panel, header } = open({ left: 400, top: 200, width: 400, height: 500 });
+    press(header, panel, -5000, 5000);
+    expect(box(panel)).toEqual({ left: 16, top: 900 - 16 - 500, width: 400, height: 500 });
+    expect(stored.mineOverlayBounds).toEqual({ left: 16, top: 900 - 16 - 500, width: 400, height: 500 });
+    press(header, panel, 5000, -5000);
+    expect(box(panel)).toEqual({ left: 1440 - 16 - 400, top: 16, width: 400, height: 500 });
   });
 
   it("moves by the space's name past 4 px, and the menu stays shut", () => {
@@ -150,24 +160,25 @@ describe("the overlay's place and size (Р10)", () => {
     expect(stored.mineOverlayBounds).toEqual(expected);
   });
 
-  it("keeps the opposite corner still at the size limits and at the window's edge", () => {
+  it("keeps the opposite corner still at the size limits and 16 px from the window's edge", () => {
     const { panel, corner } = open({ left: 400, top: 200, width: 400, height: 500 });
     press(corner("top-left"), panel, 5000, 5000);
     expect(box(panel)).toEqual({ left: 800 - 360, top: 700 - 430, width: 360, height: 430 });
     press(corner("top-left"), panel, -5000, -5000);
-    expect(box(panel)).toEqual({ left: 800 - 640, top: 0, width: 640, height: 700 });
+    expect(box(panel)).toEqual({ left: 800 - 640, top: 16, width: 640, height: 700 - 16 });
+    // The tallest panel is the window's height less 32 px.
     press(corner("bottom-right"), panel, 5000, 5000);
-    expect(box(panel)).toEqual({ left: 160, top: 0, width: 640, height: 900 });
+    expect(box(panel)).toEqual({ left: 160, top: 16, width: 640, height: 900 - 32 });
     press(corner("bottom-right"), panel, -5000, -5000);
-    expect(box(panel)).toEqual({ left: 160, top: 0, width: 360, height: 430 });
+    expect(box(panel)).toEqual({ left: 160, top: 16, width: 360, height: 430 });
   });
 
-  it("stays whole in a smaller window and comes back to what was set when there is room", () => {
-    const { panel } = open({ left: 700, top: 300, width: 600, height: 600 });
+  it("stays whole in a smaller window, 16 px in from its edges, and comes back to what was set when there is room", () => {
+    const { panel } = open({ left: 700, top: 280, width: 600, height: 600 });
     setWindow(800, 500);
-    expect(box(panel)).toEqual({ left: 200, top: 0, width: 600, height: 500 });
+    expect(box(panel)).toEqual({ left: 800 - 16 - 600, top: 16, width: 600, height: 500 - 32 });
     setWindow(1440, 900);
-    expect(box(panel)).toEqual({ left: 700, top: 300, width: 600, height: 600 });
+    expect(box(panel)).toEqual({ left: 700, top: 280, width: 600, height: 600 });
     expect(stored.mineOverlayBounds).toBeUndefined();
   });
 });

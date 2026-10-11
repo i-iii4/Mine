@@ -54,11 +54,17 @@ describe("MenuTextTrigger", () => {
     );
 
     const trigger = screen.getByRole("button", { name: "Switch space: Mine" });
-    expect(trigger).toHaveClass("h-6", "rounded-1", "gap-0", "pl-2", "pr-1", "text-base", "text-foreground");
+    expect(trigger).toHaveClass("h-6", "min-w-0", "rounded-1", "gap-0", "pl-2", "pr-1", "text-base", "text-foreground");
     expect(trigger).not.toHaveClass("w-full", "border-b", "bg-accent");
     const icon = trigger.querySelector("svg");
     expect(icon).toBeTruthy();
-    expect(icon).toHaveClass("group-data-[state=open]:rotate-90");
+    expect(icon).toHaveClass("group-data-[state=open]:rotate-90", "shrink-0");
+    // The name is a flex item of a flex plate, as in the top chrome's
+    // ChromePlate, so a long one ends in an ellipsis before the chevron.
+    const label = screen.getByText("Mine");
+    expect(label).toHaveClass("min-w-0", "truncate");
+    expect(label.parentElement).toHaveClass("inline-flex", "min-w-0", "max-w-full", "items-center");
+    expect(label.parentElement?.nextElementSibling).toBe(icon);
   });
 
   it("uses the shared active surface in the action bar", () => {

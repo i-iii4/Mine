@@ -52,7 +52,7 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
             "inline-flex min-w-0 flex-none items-center overflow-hidden rounded-0 font-mono text-sm text-muted-foreground focus-visible:outline-none",
           surface === "clipperHeader" &&
             cn(
-              "inline-flex h-6 max-w-full items-center overflow-hidden rounded-1 text-base text-foreground hover:state-active data-[state=open]:state-active",
+              "inline-flex h-6 min-w-0 max-w-full items-center overflow-hidden rounded-1 text-base text-foreground hover:state-active data-[state=open]:state-active",
               chevronPadding,
             ),
           surface === "actionBar" &&
@@ -76,8 +76,13 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
           <>
             <Plate
               className={cn(
+                // The name ends in an ellipsis before the chevron, as in the
+                // top chrome: `truncate` needs the name to be a flex item, so
+                // the clipper's plain plate is the flex box ChromePlate is.
+                // An inline name ignored it, ran over the chevron and was cut
+                // mid-letter at the button's edge, flush with "…" (11.10.2026).
                 isClipperHeader
-                  ? "min-w-0 max-w-full"
+                  ? "inline-flex min-w-0 max-w-full items-center"
                   : cn(
                     "min-w-0 max-w-full rounded-1 group-hover:state-active group-hover:text-foreground group-data-[state=open]:state-active group-data-[state=open]:text-foreground",
                     chevronPadding,

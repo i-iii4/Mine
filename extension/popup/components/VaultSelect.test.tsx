@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { VaultSelect } from "./VaultSelect";
 
@@ -54,6 +54,41 @@ describe("VaultSelect", () => {
     pointerClick(trigger());
     await waitFor(() => expect(screen.queryByRole("menuitem", { name: "Journal" })).not.toBeInTheDocument());
     expect(trigger()).toHaveAttribute("aria-expanded", "false");
+  });
+
+  // A long name is cut as the app's space switcher cuts it: an ellipsis
+  // before the chevron, short of "…" and the close button (SPEC_CLIPPER.md,
+  // Р10, 11.10.2026). The layout itself is measured in the built extension
+  // (clipper-worker-smoke.mjs); here the markup that gives it.
+  it("cuts a long name with an ellipsis before its chevron, short of the header's buttons", () => {
+    const long = "/Users/x/Spaces/Mine. Длинное название. Прям вот легендарное";
+    renderSelect({ value: long, options: [long, OTHER], onClose: vi.fn() });
+    const name = screen.getByRole("button", { name: "Switch space: Mine. Длинное название. Прям вот легендарное" });
+    const label = screen.getByText("Mine. Длинное название. Прям вот легендарное");
+    const row = name.closest<HTMLElement>("[data-clipper-space-row]")!;
+
+    // The name gives up width in the row and clips what does not fit.
+    expect(name.parentElement).toBe(row);
+    expect(name).toHaveClass("min-w-0", "max-w-full", "overflow-hidden");
+    // The text is a flex item of a flex plate that shrinks too, so
+    // `truncate` cuts it with an ellipsis; an inline text ignores it.
+    expect(label).toHaveClass("min-w-0", "truncate");
+    expect(label.parentElement).toHaveClass("inline-flex", "min-w-0", "max-w-full");
+    expect(label.parentElement).not.toHaveClass("shrink-0");
+    // The chevron follows the plate and never shrinks.
+    const chevron = name.querySelector("svg");
+    expect(label.parentElement?.nextElementSibling).toBe(chevron);
+    expect(chevron).toHaveClass("lucide-chevron-right", "shrink-0");
+
+    // The buttons follow the name in the row's flow, not over it.
+    const more = within(row).getByRole("button", { name: "More" });
+    const close = within(row).getByRole("button", { name: "Close" });
+    const buttons = more.parentElement!;
+    expect(name.nextElementSibling).toBe(buttons);
+    expect(buttons).toContainElement(close);
+    expect(buttons).toHaveClass("ml-auto", "flex");
+    expect(buttons.className).not.toMatch(/(^|\s)(absolute|fixed)(\s|$)/);
+    expect(more).toHaveClass("shrink-0");
   });
 
   it.each(["Enter", " ", "ArrowDown"])("opens from the keyboard with %j, as before", async (key) => {

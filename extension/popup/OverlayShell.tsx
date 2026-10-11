@@ -69,8 +69,9 @@ interface ResizeGesture extends GestureStart {
  *
  * Place and size: the top right corner at the width of the detached popup
  * (360px) until the person drags the header or a corner; then where they put
- * it, kept between openings and fitted into the window (SPEC_CLIPPER.md,
- * «Доработки после живого просмотра», Р10). The header moves the panel by the
+ * it, kept between openings and fitted into the window. Wherever it stands it
+ * keeps the 16 px of its default place from every edge of the window
+ * (SPEC_CLIPPER.md, «Доработки после живого просмотра», Р10). The header moves the panel by the
  * window chrome's rule of the app (usePressDragGesture.ts, the core of
  * useChromeDragGesture.ts): a press anywhere in it, the space's name
  * included, drags past 4 px and stays a click without it. A corner resizes
@@ -221,8 +222,9 @@ export function OverlayShell({ portalContainer, edits, restored = null, initialB
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        // The panel stays inside the window: by content up to the window's
-        // height less the 16px margins, or at the height the person set. The
+        // The panel stays inside the window, 16px in from its edges: by
+        // content up to the window's height less those margins, or at the
+        // height the person set, no taller than that either. The
         // flex column lets the elastic previews compress while buttons,
         // picker and the save stack keep their heights; below the sum of the
         // hard minimums (~430px) the inner column scrolls as a whole instead
