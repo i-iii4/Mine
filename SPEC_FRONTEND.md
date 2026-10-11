@@ -786,7 +786,8 @@ future backend path emits `vault:stats-updated`, the payload must be a complete
 bar keeps its fixed geometry and renders empty text slots.
 
 Responsive behavior: ряд не переносится и не меняет высоту. Число коллекций
-обрезается многоточием как единый блок, кнопка `+` не сжимается. Правый count
+растворяется у правого края как единый блок, без многоточия (11.10.2026,
+DESIGN_SYSTEM.md, «Растворение кромок»), кнопка `+` не сжимается. Правый count
 остаётся видимым, пока есть содержательная ширина. Когда Sidebar свёрнут, левая
 ячейка не рендерится; её segment остаётся пустой областью перетаскивания окна.
 
@@ -1211,8 +1212,10 @@ Image media expansion:
   segment capped by `max-w-[240px]`. Space selector остаётся видимым, channel
   search скрывается, а правая часть top chrome начинается сразу после compact
   collapsed segment. Hidden measurement/probe и вычисление ширины по visible
-  `[data-vault-switcher]` запрещены. Короткие имена пространства не получают
-  ellipsis; truncation допустим только для длинных имён, превышающих cap.
+  `[data-vault-switcher]` запрещены. Короткие имена пространства не гаснут;
+  растворение у правого края включается только у длинных имён, превышающих
+  cap (11.10.2026, DESIGN_SYSTEM.md, «Растворение кромок»: замер `FadeText`
+  ставит только `data-overflow` и ширину не задаёт).
 - Space selector показывает текущую папку, открывает searchable dropdown
   известных vaults и заменяет старый bottom-bar vault switcher.
   `Cmd+Shift+O` продолжает открывать native folder picker.
@@ -1251,8 +1254,9 @@ Image media expansion:
   readiness into the final subtree. The final visible Grid must contain only
   the latest selected space even when earlier IPC responses resolve later.
 - Space selector подстраивается под имя текущей папки, но ограничен половиной
-  доступной ширины после traffic-light зоны (`max-w-[50%]`). Имя папки режется
-  end ellipsis. Root trigger остаётся прозрачным, использует `px-3` и не
+  доступной ширины после traffic-light зоны (`max-w-[50%]`). Имя папки, которое
+  не помещается, растворяется у правого края маской `24px`, без многоточия, с
+  полным именем в `title` (11.10.2026, DESIGN_SYSTEM.md, «Растворение кромок»). Root trigger остаётся прозрачным, использует `px-3` и не
   содержит dropdown chevron. Текст использует тот же typography mode, что
   Detail top bar: `font-mono text-sm text-muted-foreground`, regular weight.
   Hover/open/focus рисует только inner pill вокруг имени (`h-6 rounded-1 px-2
@@ -1399,7 +1403,8 @@ Image media expansion:
   selected Detail state is cleared, so exit uses the same animated path as
   enter and does not jump to the normal top chrome.
 - Responsive priority in Compact Detail top chrome: card title shrinks first
-  (`min-w-0 flex-1 truncate`), current collection switcher shrinks second
+  (`min-w-0 flex-1`, its text in `FadeText`, dissolving at the right edge
+  instead of an ellipsis since 11.10.2026), current collection switcher shrinks second
   through its own compact trigger constraints, Sidebar search shrinks third
   through its existing flex slot. Overflow and close stay
   non-shrinking and visible.

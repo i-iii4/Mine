@@ -440,7 +440,10 @@ Layout order (выравнивание вправо по решению поль
 - счётчик слева: `font-mono text-sm text-muted-foreground`,
   `{n} element(s) selected` (English plural helper
   `selectedElementCountLabel`, not string concatenation); он занимает место
-  между краем и командами и обрезается (`w-0 min-w-0 flex-1 truncate`);
+  между краем и командами (`w-0 min-w-0 flex-1`) и, если не помещается,
+  растворяется у правого края, как прочие тексты пути, без многоточия, с
+  полным текстом в `title` (`FadeText`, решение пользователя 11.10.2026,
+  DESIGN_SYSTEM.md, «Растворение кромок»);
 - команды справа, в одной `ChromeActions` (`data-feed-selection-actions`)
   вместе с крестиком, по правилу «Иконочные кнопки хрома» (DESIGN_SYSTEM.md),
   как меню и закрытие открытой карточки: между кнопками `4px` (`gap-1`), от

@@ -25,6 +25,7 @@ import { ChromeActions, ChromeRow } from "@/components/ChromeRow";
 import { MineLogo } from "@/components/MineLogo";
 import { SidebarToggleButton } from "@/components/SidebarToggleButton";
 import { Button } from "@/components/ui/button";
+import { FadeText } from "@/components/ui/fade-text";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
 import {
   activateAdjacentTab,
@@ -130,28 +131,6 @@ function orderedTabs(source: TabBarTab[], local: LocalOrder | null): TabBarTab[]
   const byId = new Map(source.map((tab) => [tab.id, tab]));
   const ordered = local.ids.flatMap((id) => byId.get(id) ?? []);
   return ordered.length === source.length ? ordered : source;
-}
-
-/** A tab's label: one line that dissolves at the right edge when it does
- *  not fit (В46). Whether it fits is measured, since the dissolve must not
- *  eat the end of a label that does. */
-function TabTitle({ text, width }: { text: string; width: number }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const [overflow, setOverflow] = useState(false);
-  useLayoutEffect(() => {
-    const node = ref.current;
-    if (node) setOverflow(node.scrollWidth > node.clientWidth);
-  }, [text, width]);
-  return (
-    <span
-      ref={ref}
-      data-tab-label=""
-      data-overflow={overflow ? "true" : undefined}
-      className="min-w-0 flex-1 overflow-hidden whitespace-nowrap font-mono text-sm leading-none"
-    >
-      {text}
-    </span>
-  );
 }
 
 interface TabBarProps {
@@ -687,7 +666,13 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
                   openMenu(tab.id);
                 }}
               >
-                <TabTitle text={label} width={width} />
+                {/* One line that dissolves at the right edge when it does
+                    not fit (В46), by the chrome's shared rule. */}
+                <FadeText
+                  text={label}
+                  data-tab-label=""
+                  className="flex-1 font-mono text-sm leading-none"
+                />
                 {/* Shown on hover only, over the label's dissolved end; a
                     chrome button like the rest of the row (В46), its plate
                     8px from the tab's line, as from any boundary. */}

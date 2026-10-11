@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MenuTextTrigger } from "./MenuTextTrigger";
 
 function renderChevronTrigger(menuState: "open" | "closed", surface: "topChrome" | "clipperHeader" = "topChrome") {
@@ -60,9 +60,11 @@ describe("MenuTextTrigger", () => {
     expect(icon).toBeTruthy();
     expect(icon).toHaveClass("group-data-[state=open]:rotate-90", "shrink-0");
     // The name is a flex item of a flex plate, as in the top chrome's
-    // ChromePlate, so a long one ends in an ellipsis before the chevron.
+    // ChromePlate, so a long one dissolves before the chevron.
     const label = screen.getByText("Mine");
-    expect(label).toHaveClass("min-w-0", "truncate");
+    expect(label).toHaveAttribute("data-fade-text");
+    expect(label).toHaveClass("min-w-0", "overflow-hidden", "whitespace-nowrap");
+    expect(label).not.toHaveClass("truncate");
     expect(label.parentElement).toHaveClass("inline-flex", "min-w-0", "max-w-full", "items-center");
     expect(label.parentElement?.nextElementSibling).toBe(icon);
   });
@@ -80,6 +82,60 @@ describe("MenuTextTrigger", () => {
     expect(trigger).toHaveClass("hover:state-active");
     expect(trigger).not.toHaveClass("hover:bg-component-fill-hover");
   });
+});
+
+// One surface, one way (DESIGN_SYSTEM.md, «Растворение кромок», 11.10.2026):
+// the path of the top row and the clipper's header dissolve a name that does
+// not fit, as a tab does, with the whole of it in the hover hint.
+describe("MenuTextTrigger in a chrome strip with a name that does not fit", () => {
+  const LONG = "Mine. Длинное название. Прям вот легендарное";
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function renderNames(surface: "topChrome" | "clipperHeader") {
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.textContent === LONG ? 500 : 0;
+    });
+    render(
+      <>
+        <MenuTextTrigger label="Mine" aria-label="Switch space: Mine" surface={surface} showChevron />
+        <MenuTextTrigger label={LONG} aria-label={`Switch space: ${LONG}`} surface={surface} showChevron />
+      </>,
+    );
+    return {
+      short: screen.getByRole("button", { name: "Switch space: Mine" }),
+      long: screen.getByRole("button", { name: `Switch space: ${LONG}` }),
+    };
+  }
+
+  for (const surface of ["topChrome", "clipperHeader"] as const) {
+    it(`dissolves only the name that does not fit (${surface})`, () => {
+      const { short, long } = renderNames(surface);
+      expect(within(short).getByText("Mine")).not.toHaveAttribute("data-overflow");
+      expect(within(long).getByText(LONG)).toHaveAttribute("data-overflow", "true");
+    });
+
+    it(`keeps the mask on the text: the plate and the chevron stay whole (${surface})`, () => {
+      const { long } = renderNames(surface);
+      const masked = long.querySelectorAll("[data-fade-text]");
+      expect(masked).toHaveLength(1);
+      expect(masked[0]).toHaveTextContent(LONG);
+      expect(masked[0]?.children).toHaveLength(0);
+      expect(long).not.toHaveAttribute("data-fade-text");
+      expect(masked[0]?.parentElement).not.toHaveAttribute("data-fade-text");
+      const chevron = long.querySelector("svg");
+      expect(chevron).not.toBeNull();
+      expect(chevron?.closest("[data-fade-text]")).toBeNull();
+    });
+
+    it(`shows the whole name in the hover hint, as a tab does (${surface})`, () => {
+      const { short, long } = renderNames(surface);
+      expect(short).toHaveAttribute("title", "Mine");
+      expect(long).toHaveAttribute("title", LONG);
+    });
+  }
 });
 
 describe("MenuTextTrigger in the top chrome with its menu open", () => {

@@ -1605,7 +1605,8 @@
     {
       "paths": [
         "src/dev/CloudOpenPage.tsx",
-        "src/dev/OnboardingPage.tsx"
+        "src/dev/OnboardingPage.tsx",
+        "src/dev/PopupsPage.tsx"
       ],
       "requirement": "SPEC_CLOUD_STORAGE.md#Первое открытие пространства из облака",
       "tests": ["src/components/IndexingProgress.test.tsx", "src/components/Grid.test.tsx"],
@@ -2406,6 +2407,36 @@
       "requirement": "SPEC_GRAPH_VIEW.md#**ГП5.**",
       "tests": ["src-tauri/src/storage/graph.rs"],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/components/ui/fade-text.tsx",
+        "src/components/ui/fade-text.test.tsx",
+        "src/styles/global.css",
+        "src/tabbar/TabBar.tsx",
+        "src/tabbar/tabbar.css",
+        "src/components/MenuTextTrigger.tsx",
+        "src/components/MenuTextTrigger.test.tsx",
+        "src/components/VaultSwitcher.test.tsx",
+        "src/components/TopCollectionSwitcher.test.tsx",
+        "src/components/MainSecondaryChrome.tsx",
+        "src/components/MainSecondaryChrome.test.tsx",
+        "src/components/GroupSelectionCommands.tsx",
+        "src/components/Grid.test.tsx",
+        "extension/popup/components/VaultSelect.test.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Одна поверхность, один способ",
+      "tests": ["src/components/ui/fade-text.test.tsx", "src/components/MenuTextTrigger.test.tsx", "src/components/VaultSwitcher.test.tsx", "src/components/TopCollectionSwitcher.test.tsx", "src/components/MainSecondaryChrome.test.tsx", "src/components/Grid.test.tsx", "src/tabbar/TabBar.test.tsx", "extension/popup/components/VaultSelect.test.tsx"],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "extension/popup/components/VaultSelect.tsx",
+        "scripts/clipper-worker-smoke.mjs"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#Одна поверхность, один способ",
+      "tests": ["scripts/clipper-worker-smoke.mjs"],
+      "command": "test:clipper-worker"
     }
   ],
   "release": null

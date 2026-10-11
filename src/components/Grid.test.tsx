@@ -1656,7 +1656,15 @@ describe("Grid — no collapse after add / revisit", () => {
       "px-[var(--main-secondary-pad-x,0.5rem)]",
     );
     const selectionCount = actionBar?.querySelector("[data-feed-selection-count]");
-    expect(selectionCount).toHaveClass("w-0", "min-w-0", "flex-1", "truncate");
+    expect(selectionCount).toHaveClass("w-0", "min-w-0", "flex-1", "px-2");
+    // A text of the path's row: it dissolves when it does not fit, no
+    // ellipsis (DESIGN_SYSTEM.md, «Растворение кромок»), the whole count in
+    // the hover hint.
+    const selectionCountText = screen.getByText("1 element selected");
+    expect(selectionCountText.parentElement).toBe(selectionCount);
+    expect(selectionCountText).toHaveAttribute("data-fade-text");
+    expect(selectionCountText).toHaveAttribute("title", "1 element selected");
+    expect(selectionCount).not.toHaveClass("truncate");
     expect(selectionRow?.firstElementChild).toBe(selectionCount);
     const selectionActions = actionBar?.querySelector<HTMLElement>(
       "[data-feed-selection-actions]",

@@ -25,39 +25,19 @@ html[data-tab-bar-page] {
   display: none;
 }
 
-/* A label longer than its tab dissolves at the right edge, and the close
-   button, shown on hover, takes its room from the label: the dissolve slides
-   left to clear it (В46). Registered lengths so the mask can move. */
-@property --tab-fade {
-  syntax: "<length>";
-  inherits: true;
-  initial-value: 0px;
-}
-
-@property --tab-close-room {
-  syntax: "<length>";
-  inherits: true;
-  initial-value: 0px;
-}
-
+/* A label longer than its tab dissolves at the right edge by the chrome's
+   shared rule (global.css, `[data-fade-text]`), and the close button, shown
+   on hover, takes its room from the label: the dissolve slides left to clear
+   it (В46). */
 [data-tab-label] {
-  mask-image: linear-gradient(
-    to right,
-    #000 calc(100% - var(--tab-close-room) - var(--tab-fade)),
-    transparent calc(100% - var(--tab-close-room))
-  );
-  transition: --tab-close-room 100ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-[data-tab-label][data-overflow="true"] {
-  --tab-fade: 24px;
+  transition: --fade-text-room 100ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 [role="tab"]:hover [data-tab-label],
 [role="tab"]:focus-visible [data-tab-label] {
   /* The plate 8px from the tab's line, the label ending 4px before it:
      28px of the label lie under the plate, 2px more keep them apart. */
-  --tab-close-room: 30px;
+  --fade-text-room: 30px;
 }
 
 [data-tab-close] {

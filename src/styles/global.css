@@ -1455,6 +1455,42 @@ body {
   height: var(--chrome-control-plate-height);
 }
 
+/* One surface, one way to end a text that does not fit (DESIGN_SYSTEM.md,
+   «Растворение кромок»; user's decision of 11.10.2026). In a chrome strip
+   (the tab bar, the path of the top row, the clipper's header) a label
+   dissolves at its right edge over 24px (EDGE_FADE_WIDTH), the tab label's
+   mask; menus, search results and lists keep their ellipsis. `FadeText`
+   (src/components/ui/fade-text.tsx) measures whether the text fits and sets
+   `data-overflow`: a label that fits keeps its end. The mask is on the text
+   alone, so a hover plate, a chevron or a button beside it stays whole.
+   `--fade-text-room` keeps clear room past the dissolve: a tab's close
+   button takes it on hover (tabbar.css). Registered so that room can move;
+   a shadow root ignores the registration (the clipper's overlay), and the
+   fallbacks keep the mask valid there. */
+@property --fade-text-ramp {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --fade-text-room {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+[data-fade-text] {
+  mask-image: linear-gradient(
+    to right,
+    #000 calc(100% - var(--fade-text-room, 0px) - var(--fade-text-ramp, 0px)),
+    transparent calc(100% - var(--fade-text-room, 0px))
+  );
+}
+
+[data-fade-text][data-overflow="true"] {
+  --fade-text-ramp: 24px;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

@@ -114,6 +114,8 @@ const buttonsDecisionRoute = import.meta.env.DEV && window.location.pathname ===
 const cloudOpenRoute = import.meta.env.DEV && window.location.pathname === "/__cloud-open";
 // The onboarding screen by screen: first launch, opening a folder, an empty one.
 const onboardingRoute = import.meta.env.DEV && window.location.pathname === "/__onboarding";
+// Every modal window of the app, one button each.
+const popupsRoute = import.meta.env.DEV && window.location.pathname === "/__popups";
 const nativeShellSmokeRoute = new URLSearchParams(window.location.search)
   .has("mine-native-shell-smoke");
 const auditRoute = feedScrollAuditRoute
@@ -255,6 +257,14 @@ function Root() {
     );
   }
 
+  if (popupsRoute) {
+    return (
+      <React.Suspense fallback={null}>
+        <PopupsPage />
+      </React.Suspense>
+    );
+  }
+
   if (auditRoute) {
     return AuditRoute ? <AuditRoute /> : null;
   }
@@ -300,6 +310,11 @@ const CloudOpenPage = React.lazy(async () => {
 const OnboardingPage = React.lazy(async () => {
   const mod = await import("./dev/OnboardingPage");
   return { default: mod.OnboardingPage };
+});
+
+const PopupsPage = React.lazy(async () => {
+  const mod = await import("./dev/PopupsPage");
+  return { default: mod.PopupsPage };
 });
 
 function NativeShellSmokeRoute() {

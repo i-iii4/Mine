@@ -17,6 +17,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { FadeText } from "@/components/ui/fade-text";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -135,6 +136,7 @@ export function GroupSelectionCommands({
   };
 
   if (selectedBlocks.length === 0) return null;
+  const selectionCountLabel = `${selectedElementCountLabel(selectedBlocks.length)} selected`;
 
   return (
     <div
@@ -144,18 +146,24 @@ export function GroupSelectionCommands({
       {/* The count holds the left; the commands and the close control stand
           at the right in ChromeActions, which owns the right edge inset as in
           every chrome row (DESIGN_SYSTEM.md, «Иконочные кнопки хрома»). When
-          the row narrows, the count truncates (`w-0` keeps its text out of the
-          row's min-content) while the commands keep their size; the row
-          scrolls only once the commands alone outgrow it. The pads live on
-          the scrolled content, not the scrollport: a scroll container's end
-          padding never renders past its content. */}
+          the row narrows, the count gives up its width first (`w-0` keeps its
+          text out of the row's min-content) and dissolves at its right edge,
+          as every text of the path's row does (DESIGN_SYSTEM.md, «Растворение
+          кромок»), while the commands keep their size; the row scrolls only
+          once the commands alone outgrow it. The pads live on the scrolled
+          content, not the scrollport: a scroll container's end padding never
+          renders past its content. */}
       <div className="h-full max-w-full overflow-x-auto overflow-y-hidden">
         <div className="flex h-full w-full min-w-min items-center gap-1 pl-[var(--main-secondary-pad-x,0.5rem)]">
           <div
-            className="w-0 min-w-0 flex-1 truncate px-2 font-mono text-sm text-muted-foreground"
+            className="flex w-0 min-w-0 flex-1 px-2"
             data-feed-selection-count=""
           >
-            {`${selectedElementCountLabel(selectedBlocks.length)} selected`}
+            <FadeText
+              text={selectionCountLabel}
+              title={selectionCountLabel}
+              className="font-mono text-sm text-muted-foreground"
+            />
           </div>
 
           <ChromeActions data-feed-selection-actions="">

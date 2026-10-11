@@ -56,39 +56,69 @@ describe("VaultSelect", () => {
     expect(trigger()).toHaveAttribute("aria-expanded", "false");
   });
 
-  // A long name is cut as the app's space switcher cuts it: an ellipsis
-  // before the chevron, short of "…" and the close button (SPEC_CLIPPER.md,
-  // Р10, 11.10.2026). The layout itself is measured in the built extension
-  // (clipper-worker-smoke.mjs); here the markup that gives it.
-  it("cuts a long name with an ellipsis before its chevron, short of the header's buttons", () => {
+  // A long name dissolves as the app's space switcher and a tab's label do:
+  // the tab's mask on the text alone, before the chevron, short of "…" and
+  // the close button (SPEC_CLIPPER.md, Р10; DESIGN_SYSTEM.md, «Растворение
+  // кромок», 11.10.2026). The layout itself is measured in the built
+  // extension (clipper-worker-smoke.mjs); here the markup that gives it.
+  it("dissolves a long name before its chevron, short of the header's buttons", () => {
     const long = "/Users/x/Spaces/Mine. Длинное название. Прям вот легендарное";
-    renderSelect({ value: long, options: [long, OTHER], onClose: vi.fn() });
-    const name = screen.getByRole("button", { name: "Switch space: Mine. Длинное название. Прям вот легендарное" });
-    const label = screen.getByText("Mine. Длинное название. Прям вот легендарное");
-    const row = name.closest<HTMLElement>("[data-clipper-space-row]")!;
+    const longName = "Mine. Длинное название. Прям вот легендарное";
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.textContent === longName ? 500 : 0;
+    });
+    try {
+      renderSelect({ value: long, options: [long, OTHER], onClose: vi.fn() });
+      const name = screen.getByRole("button", { name: `Switch space: ${longName}` });
+      const label = screen.getByText(longName);
+      const row = name.closest<HTMLElement>("[data-clipper-space-row]")!;
 
-    // The name gives up width in the row and clips what does not fit.
-    expect(name.parentElement).toBe(row);
-    expect(name).toHaveClass("min-w-0", "max-w-full", "overflow-hidden");
-    // The text is a flex item of a flex plate that shrinks too, so
-    // `truncate` cuts it with an ellipsis; an inline text ignores it.
-    expect(label).toHaveClass("min-w-0", "truncate");
-    expect(label.parentElement).toHaveClass("inline-flex", "min-w-0", "max-w-full");
-    expect(label.parentElement).not.toHaveClass("shrink-0");
-    // The chevron follows the plate and never shrinks.
-    const chevron = name.querySelector("svg");
-    expect(label.parentElement?.nextElementSibling).toBe(chevron);
-    expect(chevron).toHaveClass("lucide-chevron-right", "shrink-0");
+      // The name gives up width in the row and clips what does not fit.
+      expect(name.parentElement).toBe(row);
+      expect(name).toHaveClass("min-w-0", "max-w-full", "overflow-hidden");
+      // The text is a flex item of a flex plate that shrinks too; what does
+      // not fit dissolves, no ellipsis. The whole name is in the hover hint.
+      expect(label).toHaveAttribute("data-fade-text");
+      expect(label).toHaveAttribute("data-overflow", "true");
+      expect(label).toHaveClass("min-w-0", "overflow-hidden", "whitespace-nowrap");
+      expect(label).not.toHaveClass("truncate");
+      expect(name).toHaveAttribute("title", longName);
+      expect(label.parentElement).toHaveClass("inline-flex", "min-w-0", "max-w-full");
+      expect(label.parentElement).not.toHaveClass("shrink-0");
+      // The chevron follows the plate and never shrinks.
+      const chevron = name.querySelector("svg");
+      expect(label.parentElement?.nextElementSibling).toBe(chevron);
+      expect(chevron).toHaveClass("lucide-chevron-right", "shrink-0");
 
-    // The buttons follow the name in the row's flow, not over it.
-    const more = within(row).getByRole("button", { name: "More" });
-    const close = within(row).getByRole("button", { name: "Close" });
-    const buttons = more.parentElement!;
-    expect(name.nextElementSibling).toBe(buttons);
-    expect(buttons).toContainElement(close);
-    expect(buttons).toHaveClass("ml-auto", "flex");
-    expect(buttons.className).not.toMatch(/(^|\s)(absolute|fixed)(\s|$)/);
-    expect(more).toHaveClass("shrink-0");
+      // The buttons follow the name in the row's flow, not over it.
+      const more = within(row).getByRole("button", { name: "More" });
+      const close = within(row).getByRole("button", { name: "Close" });
+      const buttons = more.parentElement!;
+      expect(name.nextElementSibling).toBe(buttons);
+      expect(buttons).toContainElement(close);
+      expect(buttons).toHaveClass("ml-auto", "flex");
+      expect(buttons.className).not.toMatch(/(^|\s)(absolute|fixed)(\s|$)/);
+      expect(more).toHaveClass("shrink-0");
+
+      // The mask is on the text alone: the button's hover plate, the chevron
+      // and the header's buttons stay whole.
+      expect(row.querySelectorAll("[data-fade-text]")).toHaveLength(1);
+      expect(name).not.toHaveAttribute("data-fade-text");
+      expect(label.parentElement).not.toHaveAttribute("data-fade-text");
+      for (const part of [chevron!, more, close]) {
+        expect(part.closest("[data-fade-text]")).toBeNull();
+      }
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("leaves a name that fits whole: no dissolve", () => {
+    renderSelect();
+    const label = within(trigger()).getByText("Mine");
+    expect(label).toHaveAttribute("data-fade-text");
+    expect(label).not.toHaveAttribute("data-overflow");
+    expect(trigger()).toHaveAttribute("title", "Mine");
   });
 
   it.each(["Enter", " ", "ArrowDown"])("opens from the keyboard with %j, as before", async (key) => {
