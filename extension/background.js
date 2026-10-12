@@ -20,8 +20,9 @@
 // Standalone writing engine (О1–О4): saves clips straight to the granted
 // folder when the native host is not there. Classic script, attaches to
 // globalThis — the same convention every lib/ file follows. youtubeSource
-// answers the channel of a YouTube clip.
-importScripts("generated/save-core/mine_core.js", "lib/mineCore.js", "lib/saveProtocol.js", "lib/standaloneVault.js", "lib/youtubeSource.js");
+// answers the channel of a YouTube clip. dist/build-identity.js is the build
+// this worker's code belongs to, written by the extension build (К4).
+importScripts("dist/build-identity.js", "generated/save-core/mine_core.js", "lib/mineCore.js", "lib/saveProtocol.js", "lib/standaloneVault.js", "lib/youtubeSource.js");
 
 const HOST_NAME = "com.mine.clipper.v1";
 // Must match extension/popup/popup-layout.css body { width: 360px }
@@ -766,20 +767,25 @@ function getNativePort() {
 // no save is waiting for an answer. One reload per installed build: if the
 // browser loads another folder than the one updated, the extension does not
 // reload in a loop.
-let ownRuntimeIdentity = null;
-
-function runtimeIdentity() {
-  ownRuntimeIdentity ??= fetch(chrome.runtime.getURL("dist/runtime-identity.json"))
-    .then((response) => (response.ok ? response.json() : null))
-    .catch(() => null);
-  return ownRuntimeIdentity;
+//
+// The running build is the one written into this worker's code: the extension
+// build puts it into dist/build-identity.js, imported when the worker starts.
+// The browser keeps a worker's code, imported files included, until the
+// extension reloads, even across worker restarts. A file read now (fetch)
+// answers the copy on disk, which an update has already replaced, so it would
+// name the new build and the update would never apply (12.10.2026).
+function runningBuild() {
+  const identity = globalThis.MineBuildIdentity;
+  return typeof identity?.buildId === "string" && identity.buildId.length > 0 && typeof identity.commit === "string"
+    ? identity
+    : null;
 }
 
 async function noteInstalledExtension(status) {
   const installed = status?.extension_build_id;
   if (typeof installed !== "string" || installed.length === 0) return;
-  const own = await runtimeIdentity();
-  if (typeof own?.buildId !== "string" || own.buildId === installed) return;
+  const own = runningBuild();
+  if (own === null || own.buildId === installed) return;
   const { mineReloadedFor } = await chrome.storage.local.get("mineReloadedFor");
   if (mineReloadedFor === installed) return;
   await chrome.storage.session.set({ mineReloadPending: installed });
@@ -1327,21 +1333,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "clipperHandshake") {
     const supported = Array.isArray(msg.save_protocols) && msg.save_protocols.includes(1)
       && !globalThis.MineSaveProtocol.validate({ required_capabilities: msg.required_capabilities });
-    Promise.resolve().then(async () => {
-      let identity = { buildId: "unbuilt", commit: "unknown" };
-      try {
-        const response = await fetch(chrome.runtime.getURL("dist/runtime-identity.json"));
-        if (!response.ok) throw new Error("runtime identity is unavailable");
-        const value = await response.json();
-        if (typeof value.buildId === "string" && typeof value.commit === "string") identity = value;
-      } catch (error) {
-        console.warn("[Mine] runtime identity unavailable:", String(error.message ?? error));
-      }
-      sendResponse({ ok: supported, save_protocols: [1], features: ["save_operation_v1", "operation_lookup_v1"],
-        build_id: identity.buildId, commit: identity.commit,
-        ...(supported ? {} : { code: "incompatible_protocol", error: "This Mine widget uses an unsupported protocol. Reload the page to open the current widget." }) });
-    }).catch(error => sendResponse(extensionBackgroundFailure(error)));
-    return true;
+    // The build of the running worker, not of the copy on disk (К4).
+    const identity = runningBuild() ?? { buildId: "unbuilt", commit: "unknown" };
+    sendResponse({ ok: supported, save_protocols: [1], features: ["save_operation_v1", "operation_lookup_v1"],
+      build_id: identity.buildId, commit: identity.commit,
+      ...(supported ? {} : { code: "incompatible_protocol", error: "This Mine widget uses an unsupported protocol. Reload the page to open the current widget." }) });
+    return false;
   }
 
   if (msg.action === "nativeMessage") {

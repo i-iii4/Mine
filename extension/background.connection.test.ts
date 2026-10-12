@@ -153,10 +153,14 @@ describe("helper replaced during a session (SPEC_CLIPPER.md, К4)", () => {
 });
 
 describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
+  // `ownBuild` is the build written into the worker's code
+  // (dist/build-identity.js); `onDisk` is what a file read now would answer:
+  // the copy an update has already replaced.
   function updatableTransport(
-    ownBuild: string,
+    ownBuild: string | null,
     stored: Record<string, unknown> = {},
     open: { pages?: number; overlays?: boolean[] } = {},
+    onDisk: string | null = ownBuild,
   ) {
     let respond: (message: NativeResponse) => void = () => undefined;
     const local = { ...stored };
@@ -172,6 +176,7 @@ describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
       onDisconnect: { addListener: () => undefined },
       postMessage: vi.fn<(message: NativeResponse) => void>(),
     };
+    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ buildId: onDisk, commit: "c" }) }));
     const context = createContext({
       HOST_NAME: "test.mine",
       chrome: {
@@ -191,7 +196,8 @@ describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
           },
         },
       },
-      fetch: async () => ({ ok: true, json: async () => ({ buildId: ownBuild, commit: "c" }) }),
+      MineBuildIdentity: ownBuild === null ? undefined : { buildId: ownBuild, commit: "c" },
+      fetch,
       console: { warn: vi.fn() },
       crypto: { randomUUID: () => checkId },
       setTimeout, clearTimeout,
@@ -202,7 +208,7 @@ describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
     const closed = (): Promise<void> => runInContext("reloadIfUpdated()", context);
     const browserWrite = (work: () => Promise<unknown>): Promise<unknown> =>
       (runInContext("trackBrowserWrite", context) as (w: () => Promise<unknown>) => Promise<unknown>)(work);
-    return { send, closed, browserWrite, respond: (message: NativeResponse) => respond(message), reload, local, session };
+    return { send, closed, browserWrite, respond: (message: NativeResponse) => respond(message), reload, local, session, fetch };
   }
 
   async function statusFrom(host: ReturnType<typeof updatableTransport>, installed: string) {
@@ -220,6 +226,25 @@ describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
     await host.closed();
     expect(host.reload).toHaveBeenCalledOnce();
     expect(host.local.mineReloadedFor).toBe("new-build");
+  });
+
+  it("compares the build written into the worker, not the copy on disk the update replaced", async () => {
+    // After the files were replaced a file read answers the new build; the
+    // worker still runs the old code and must reload into the new one.
+    const host = updatableTransport("old-build", {}, {}, "new-build");
+    await statusFrom(host, "new-build");
+    expect(host.session.mineReloadPending).toBe("new-build");
+    await host.closed();
+    expect(host.reload).toHaveBeenCalledOnce();
+    expect(host.fetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps a worker whose code carries no build", async () => {
+    const host = updatableTransport(null, {}, {}, "old-build");
+    await statusFrom(host, "new-build");
+    await host.closed();
+    expect(host.session.mineReloadPending).toBeUndefined();
+    expect(host.reload).not.toHaveBeenCalled();
   });
 
   it("does nothing when the running build is the installed one", async () => {

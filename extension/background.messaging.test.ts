@@ -87,7 +87,9 @@ function background(apiMode: BrowserApiMode, options: { standaloneVault?: Record
     },
   };
 
-  const fetch = vi.fn(options.fetch ?? (async () => ({ ok: true, json: async () => ({ buildId: "worker-build", commit: "worker-commit" }) })));
+  // A file read answers the copy on disk; an update may have replaced it.
+  const importScripts = vi.fn();
+  const fetch = vi.fn(options.fetch ?? (async () => ({ ok: true, json: async () => ({ buildId: "disk-build", commit: "disk-commit" }) })));
   const context = createContext({
     AbortController,
     MineStandaloneVault: options.standaloneVault,
@@ -96,7 +98,9 @@ function background(apiMode: BrowserApiMode, options: { standaloneVault?: Record
     chrome,
     console,
     crypto: { randomUUID: () => "bcb8f719-aa35-44f5-9a47-17b4d52f530f" },
-    importScripts: vi.fn(),
+    importScripts,
+    // What dist/build-identity.js, the worker's first import, defines.
+    MineBuildIdentity: { buildId: "worker-build", commit: "worker-commit" },
     setTimeout,
     clearTimeout,
     fetch,
@@ -122,6 +126,7 @@ function background(apiMode: BrowserApiMode, options: { standaloneVault?: Record
     dispatch,
     disconnectNative,
     fetch,
+    importScripts,
     nativePort,
     receiveNativeMessage: (message: Message) => receiveNativeMessage(message),
   };
@@ -307,6 +312,14 @@ describe("widget and background compatibility", () => {
     const request = worker.dispatch({ target: "background", action: "clipperHandshake", build_id: "old-widget", save_protocols: [1] });
     await expect(request.response).resolves.toMatchObject({ ok: true, save_protocols: [1], build_id: "worker-build", commit: "worker-commit" });
     expect(worker.nativePort.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("names the build of the running worker, not of the copy on disk (К4)", async () => {
+    const worker = background("promise");
+    expect(worker.importScripts.mock.calls[0]?.[0]).toBe("dist/build-identity.js");
+    const request = worker.dispatch({ target: "background", action: "clipperHandshake", save_protocols: [1] });
+    await expect(request.response).resolves.toMatchObject({ build_id: "worker-build", commit: "worker-commit" });
+    expect(worker.fetch).not.toHaveBeenCalled();
   });
 
   it("rejects an unsupported widget before native calls", async () => {
