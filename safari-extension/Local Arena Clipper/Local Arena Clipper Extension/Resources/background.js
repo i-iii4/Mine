@@ -70,9 +70,6 @@ async function resolveClipperTarget(tab, fallbackUrl = null) {
   return { tabId, tabUrl };
 }
 
-// The frame of a Save link clip must show the link, never the page it was
-// clicked on (SPEC_AUDIT_FIXES.md, В4.2).
-const CAPTURE_PAGE_CHANGED = "This tab shows another page than the one Mine opened for. Open Mine again on the page you want to capture.";
 const CAPTURE_PAGE_MOVED = "The page changed while the screenshot was taken. Retake it.";
 
 /// Whether two addresses name the same document. The address compares whole,
@@ -89,13 +86,12 @@ function showsCaptureDocument(tabUrl, documentUrl) {
 /// Capture the viewport of `tabId` only while it is the tab in front of its
 /// window: `captureVisibleTab` takes whatever tab is in front (SPEC_AUDIT_FIXES.md,
 /// Ф6). The frame is the page the tab shows now and goes with the clip,
-/// whichever page the clip was opened on (SPEC_CLIPPER.md, «Доработки после
-/// живого просмотра», Р9); a frame taken while the tab changed address is
-/// dropped. `requiredUrl` is the link of a Save link clip: another page is
-/// refused (В4.2).
-async function captureTabViewport(tabId, requiredUrl) {
+/// whichever page or link the clip was opened for, a Save link clip included
+/// (SPEC_CLIPPER.md, «Доработки после живого просмотра», Р9, 12.10.2026); a
+/// frame taken while the tab changed address is dropped. An address a clipper
+/// of an earlier build still sends with the request is not read.
+async function captureTabViewport(tabId) {
   const tab = await chrome.tabs.get(tabId);
-  if (typeof requiredUrl === "string" && !showsCaptureDocument(tab?.url, requiredUrl)) throw new Error(CAPTURE_PAGE_CHANGED);
   if (!tab.active) {
     throw new Error("The page is not in front of its window. Bring it forward and retake the screenshot.");
   }
@@ -118,16 +114,13 @@ async function captureTabViewport(tabId, requiredUrl) {
   return dataUrl;
 }
 
-/// Start the crop overlay in `tabId`, on the page it shows now (Р9); a Save
-/// link clip names its link, and another page is refused (В4.2). `cropId`
-/// names the crop of the editor that asked, and the crop reports under it:
-/// only that editor takes the result (SPEC_AUDIT_FIXES.md, Г3.3).
-async function startCropInTab(tabId, requiredUrl, cropId) {
-  const tab = await chrome.tabs.get(tabId);
-  const documentUrl = typeof requiredUrl === "string" ? requiredUrl : null;
-  if (documentUrl !== null && !showsCaptureDocument(tab?.url, documentUrl)) return { ok: false, error: CAPTURE_PAGE_CHANGED };
+/// Start the crop overlay in `tabId`, on the page it shows now, for any clip
+/// (Р9). `cropId` names the crop of the editor that asked, and the crop
+/// reports under it: only that editor takes the result (SPEC_AUDIT_FIXES.md,
+/// Г3.3).
+function startCropInTab(tabId, cropId) {
   return new Promise((resolve) => {
-    chrome.tabs.sendMessage(tabId, { action: "startCropOverlay", documentUrl, cropId }, (resp) => {
+    chrome.tabs.sendMessage(tabId, { action: "startCropOverlay", cropId }, (resp) => {
       if (chrome.runtime.lastError) {
         resolve({ ok: false, error: "Could not reach the page. Reload the tab after updating the extension." });
         return;
@@ -1519,7 +1512,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
     }
     const cropId = typeof msg.cropId === "string" ? msg.cropId : null;
-    startCropInTab(tabId, msg.documentUrl, cropId).then(sendResponse,
+    startCropInTab(tabId, cropId).then(sendResponse,
       (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
     return true; // async
   }
@@ -1527,15 +1520,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // A clipper asks background to capture its page's viewport (content scripts
   // cannot call chrome.tabs.captureVisibleTab directly). An overlay captures
   // its own tab; the clipper window names its source tab. The frame is the
-  // page the tab shows now (SPEC_CLIPPER.md, Р9); a Save link clip names its
-  // link, and another page is refused (В4.2).
+  // page the tab shows now, for any clip (SPEC_CLIPPER.md, Р9).
   if (msg.action === "captureForCrop") {
     const tabId = isExtensionPage(sender) && typeof msg.tabId === "number" ? msg.tabId : sender.tab?.id;
     if (typeof tabId !== "number") {
       sendResponse({ ok: false, error: "No page to capture" });
       return true;
     }
-    captureTabViewport(tabId, msg.documentUrl).then((dataUrl) => {
+    captureTabViewport(tabId).then((dataUrl) => {
       const cached = cacheScreenshotUpload(dataUrl);
       sendResponse(cached.ok ? { ok: true, dataUrl, screenshotId: cached.screenshotId } : cached);
     }, (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));

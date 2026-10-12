@@ -85,7 +85,8 @@ describe("a crop belongs to the editor that started it (SPEC_AUDIT_FIXES.md, Г3
   async function startCrop(editor: Awaited<ReturnType<typeof openEditor>>): Promise<string> {
     await act(async () => { await editor.result.current.startCropMode(); });
     const call = crop.start.mock.calls.at(-1);
-    // The crop takes the page shown now; only a Save link clip names a page (Р9).
+    // The crop takes the page shown now for any clip and names no page (Р9);
+    // the id comes second for a content script of an earlier build.
     expect(call?.[0]).toBeNull();
     expect(typeof call?.[1]).toBe("string");
     return call?.[1] as string;
@@ -108,7 +109,7 @@ describe("a crop belongs to the editor that started it (SPEC_AUDIT_FIXES.md, Г3
 
     cropEnds({ cropId: "another editor's crop", dataUrl: frameOther, screenshotId: "crop-x" });
     cropEnds({ dataUrl: frameOther, screenshotId: "crop-y" });
-    cropEnds({ cropId: "another editor's crop", error: "This tab shows another page than the one Mine opened for." });
+    cropEnds({ cropId: "another editor's crop", error: "The page changed while the screenshot was taken. Retake it." });
     expect(editor.result.current.screenshotDataUrl).toBeNull();
     expect(editor.result.current.captureError).toBeNull();
 

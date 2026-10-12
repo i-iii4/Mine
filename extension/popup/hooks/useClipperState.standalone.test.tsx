@@ -1234,7 +1234,7 @@ describe("screenshots in the editor (SPEC_AUDIT_FIXES.md, Б4.5, Б4.6)", () => 
   });
 
   it("keeps the editor when the page refuses a crop from the window, and says why", async () => {
-    const refusal = "This tab shows another page than the one Mine opened for. Open Mine again on the page you want to capture.";
+    const refusal = "Could not reach the page. Reload the tab after updating the extension.";
     const { captures, sent } = answerLater({ startCropMode: { ok: false, error: refusal } });
     (chrome.storage.session as unknown as Record<string, unknown>).set = vi.fn(async () => undefined);
     const { result } = renderHook(() => useClipperState());
@@ -1245,7 +1245,7 @@ describe("screenshots in the editor (SPEC_AUDIT_FIXES.md, Б4.5, Б4.6)", () => 
     await act(async () => { await result.current.startCropMode(); });
 
     expect(sent.find((message) => message.action === "startCropMode"))
-      .toEqual({ target: "background", action: "startCropMode", tabId: 7, documentUrl: null, cropId: null });
+      .toEqual({ target: "background", action: "startCropMode", tabId: 7, cropId: null });
     expect(result.current.state).toBe("main");
     expect(result.current.screenshotDataUrl).toBe(first);
     expect(result.current.captureError).toBe(refusal);
@@ -1401,11 +1401,24 @@ describe("Save link clips the link, not the page it was clicked on (SPEC_AUDIT_F
     });
   });
 
-  it("names link B for a screenshot, so the tab showing page A is refused rather than saved as B", async () => {
+  // Screenshot chosen takes the page the tab shows and goes with the clip of
+  // link B, as for any clip (SPEC_CLIPPER.md, «Доработки после живого
+  // просмотра», Р9, 12.10.2026).
+  it("takes the page shown for a screenshot of link B, naming no page", async () => {
+    const frame = "data:image/jpeg;base64,AQID";
+    vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: Record<string, unknown>, callback?: (response: unknown) => void) => {
+      if (message.action === "captureForCrop") callback?.({ ok: true, dataUrl: frame, screenshotId: "shot-a" });
+    }) as unknown as typeof chrome.runtime.sendMessage);
     const { result } = renderHook(() => useClipperState());
     await settled(result);
     act(() => result.current.setCurrentType("screenshot"));
-    expect(sentMessages().find((message) => message.action === "captureForCrop")).toMatchObject({ documentUrl: linkB });
+
+    expect(sentMessages().find((message) => message.action === "captureForCrop"))
+      .toEqual({ target: "background", action: "captureForCrop", tabId: 7 });
+    expect(result.current.currentType).toBe("screenshot");
+    expect(result.current.screenshotDataUrl).toBe(frame);
+    expect(result.current.captureError).toBeNull();
+    expect(result.current.metadata).toMatchObject({ url: linkB });
   });
 });
 

@@ -433,7 +433,7 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
     chrome.tabs.captureVisibleTab = vi.fn((_windowId: unknown, _options: unknown, callback: (url: string) => void) => callback("data:image/jpeg;base64,AA"));
     const fromWindow = { url: "chrome-extension://test/dist/index.html", tab: { id: 900, windowId: 77 } };
     const page = "https://a.example/";
-    const capture = () => worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5, documentUrl: page }, fromWindow).response;
+    const capture = () => worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5 }, fromWindow).response;
 
     chrome.tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: false, url: page });
     await expect(capture()).resolves.toMatchObject({ ok: false });
@@ -486,13 +486,15 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       expect(reply).not.toHaveProperty("dataUrl");
     });
 
-    it("refuses the frame of a Save link clip when the tab shows another page than the link (В4.2)", async () => {
+    // A Save link clip takes the page shown too (12.10.2026). A clipper of an
+    // earlier build still names the link; the address is not read.
+    it("captures the page shown for a Save link clip, whatever address the request names", async () => {
       const { worker, tabs } = captureWorker();
       tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: pageA });
       tabs.query.mockResolvedValue([{ id: 5, url: pageA }]);
       const reply = await worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5, documentUrl: pageB }, fromWindow).response;
-      expect(reply).toMatchObject({ ok: false, error: expect.stringContaining("another page") });
-      expect(tabs.captureVisibleTab).not.toHaveBeenCalled();
+      expect(reply).toMatchObject({ ok: true, dataUrl: "data:image/jpeg;base64,AA" });
+      expect(tabs.captureVisibleTab).toHaveBeenCalledOnce();
     });
   });
 
@@ -511,7 +513,7 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       const { worker, tabs } = cropWorker(page);
       const reply = await worker.dispatch({ target: "background", action: "startCropMode", tabId: 5 }, fromWindow).response;
       expect(reply).toEqual({ ok: true });
-      expect(tabs.sendMessage).toHaveBeenCalledWith(5, { action: "startCropOverlay", documentUrl: null, cropId: null }, expect.any(Function));
+      expect(tabs.sendMessage).toHaveBeenCalledWith(5, { action: "startCropOverlay", cropId: null }, expect.any(Function));
       expect(tabs.sendMessage).not.toHaveBeenCalledWith(900, expect.anything(), expect.anything());
     });
 
@@ -522,18 +524,18 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       expect(tabs.sendMessage).toHaveBeenCalledWith(5, expect.objectContaining({ action: "startCropOverlay" }), expect.any(Function));
     });
 
-    it("does not start the crop of a Save link clip on another page than the link (В4.2)", async () => {
+    it("starts the crop of a Save link clip on the page shown, whatever address the request names (12.10.2026)", async () => {
       const { worker, tabs } = cropWorker("https://b.example/other");
       const reply = await worker.dispatch({ target: "background", action: "startCropMode", tabId: 5, documentUrl: page }, fromWindow).response;
-      expect(reply).toMatchObject({ ok: false, error: expect.stringContaining("another page") });
-      expect(tabs.sendMessage).not.toHaveBeenCalled();
+      expect(reply).toEqual({ ok: true });
+      expect(tabs.sendMessage).toHaveBeenCalledWith(5, { action: "startCropOverlay", cropId: null }, expect.any(Function));
     });
 
     it("keeps an overlay's crop in the overlay's own tab, under the overlay's crop id (Г3.3)", async () => {
       const { worker, tabs } = cropWorker(page);
       const reply = await worker.dispatch({ target: "background", action: "startCropMode", tabId: -1, cropId: "crop-1" }, { url: page, tab: { id: 5 } }).response;
       expect(reply).toEqual({ ok: true });
-      expect(tabs.sendMessage).toHaveBeenCalledWith(5, { action: "startCropOverlay", documentUrl: null, cropId: "crop-1" }, expect.any(Function));
+      expect(tabs.sendMessage).toHaveBeenCalledWith(5, { action: "startCropOverlay", cropId: "crop-1" }, expect.any(Function));
     });
   });
 

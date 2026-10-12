@@ -40,7 +40,7 @@ export interface OpenClip {
   articleExtractionState: ArticleExtractionState;
   /** The post an X button brought, still to be assembled. */
   launchedArticle: ArticleData | null;
-  /** The link of a Save link clip: its screenshot must show that page (В4.2). */
+  /** The link of a Save link clip: its content is never read from the page shown (В4.2). */
   linkTarget: string | null;
   title: string;
   selectedTags: string[];

@@ -283,12 +283,11 @@ export function useClipperState() {
     }).catch(cause => console.warn("Screenshot cache unavailable; captured bytes retained", cause));
   }, [setScreenshotUploadId]);
 
-  // A screenshot and a crop take the page the tab shows now and go with this
-  // clip, whichever page it was opened on (SPEC_CLIPPER.md, «Доработки после
-  // живого просмотра», Р9). Only a Save link clip names a page: its frame
-  // must show the link, never the page it was clicked on (В4.2).
+  // The link of a Save link clip: its content is never read from the page
+  // the tab shows (SPEC_AUDIT_FIXES.md, В4.2). A screenshot and a crop take
+  // the page the tab shows now and go with any clip, this one included
+  // (SPEC_CLIPPER.md, «Доработки после живого просмотра», Р9).
   const linkTargetRef = useRef<string | null>(null);
-  const captureDocumentUrl = useCallback(() => linkTargetRef.current, []);
   // The page this clip was opened on: a launch on another address starts a
   // new clip (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч11).
   const pageUrlRef = useRef<string>(IS_CONTENT_SCRIPT_CONTEXT ? window.location.href : "");
@@ -330,7 +329,6 @@ export function useClipperState() {
       __mineOverlay?: { hide: () => void; show: () => void };
     }).__mineOverlay;
     const request = ++captureRequestRef.current;
-    const documentUrl = captureDocumentUrl();
     const isLatest = () => mountedRef.current && request === captureRequestRef.current;
     setCapturing(true);
     setCaptureError(null);
@@ -366,27 +364,33 @@ export function useClipperState() {
     };
 
     if (IS_CONTENT_SCRIPT_CONTEXT) {
-      overlay?.hide();
-      // Wait two animation frames: one for the host display:none to
-      // apply, one for the browser to paint without the overlay. Only
-      // then does captureVisibleTab see a clean viewport.
+      // The overlay hides in the next frame, not inside the event that asked
+      // for the frame: a press on the Screenshot segment moves the keyboard
+      // to that segment once its handlers return, and the arrows move it
+      // there themselves. Hidden at once, the overlay would remember the
+      // segment chosen before and give the keyboard back to it after the
+      // capture (overlay-entry.tsx, Б4.9), which picks that type again
+      // (SPEC_CLIPPER.md, «Доработки после живого просмотра», 12.10.2026).
+      // Then two animation frames: one for the host display:none to apply,
+      // one for the browser to paint without the overlay. Only then does
+      // captureVisibleTab see a clean viewport.
       requestAnimationFrame(() => {
+        // Replaced before it began: the latest request hides and captures.
+        if (!isLatest()) return;
+        overlay?.hide();
         requestAnimationFrame(() => {
           // Replaced before it was sent: one capture less against the
           // browser's limit of two per second.
           if (!isLatest()) return;
-          chrome.runtime.sendMessage({ target: "background", action: "captureForCrop", ...(documentUrl ? { documentUrl } : {}) }, settle);
+          chrome.runtime.sendMessage({ target: "background", action: "captureForCrop" }, settle);
         });
       });
       return;
     }
     // The detached window captures the page it was opened for, and only
     // while that page is in front (SPEC_AUDIT_FIXES.md, Ф6).
-    chrome.runtime.sendMessage(
-      { target: "background", action: "captureForCrop", tabId: tabIdRef.current, ...(documentUrl ? { documentUrl } : {}) },
-      settle,
-    );
-  }, [cacheCapturedScreenshot, captureDocumentUrl, setCapturing, setScreenshotDataUrl, setScreenshotUploadId]);
+    chrome.runtime.sendMessage({ target: "background", action: "captureForCrop", tabId: tabIdRef.current }, settle);
+  }, [cacheCapturedScreenshot, setCapturing, setScreenshotDataUrl, setScreenshotUploadId]);
 
   const retakeScreenshot = useCallback(() => {
     if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
@@ -943,13 +947,11 @@ export function useClipperState() {
     if (operationRef.current || preparedOperationRef.current || savingRef.current) return;
     if (!cropSupported || tabIdRef.current === null) return;
 
-    // The crop takes the page the tab shows now; a Save link clip names its
-    // link, and background refuses another page (Р9, В4.2). A refusal is
-    // shown in the editor.
-    const documentUrl = captureDocumentUrl();
+    // The crop takes the page the tab shows now, for any clip (Р9). A refusal
+    // is shown in the editor.
     const requestCrop = (cropId: string | null) => new Promise<{ ok: true } | { ok: false; error: string }>((resolve) => {
       chrome.runtime.sendMessage(
-        { target: "background", action: "startCropMode", tabId: tabIdRef.current, documentUrl, cropId },
+        { target: "background", action: "startCropMode", tabId: tabIdRef.current, cropId },
         (resp?: { ok?: boolean; error?: string }) => {
           const transportError = chrome.runtime.lastError;
           if (transportError) {
@@ -979,7 +981,7 @@ export function useClipperState() {
       overlay?.hide();
       const crop = pageCrop();
       if (crop) {
-        crop.start(documentUrl, cropId);
+        crop.start(null, cropId);
         return;
       }
       const response = await requestCrop(cropId);
@@ -994,7 +996,7 @@ export function useClipperState() {
     await chrome.storage.session.set({
       cropPendingState: {
         tabId: tabIdRef.current,
-        documentUrl,
+        linkTarget: linkTargetRef.current,
         metadata,
         articleData,
         selectedTags,
@@ -1017,7 +1019,6 @@ export function useClipperState() {
     window.close();
   }, [
     cropSupported,
-    captureDocumentUrl,
     metadata,
     articleData,
     selectedTags,
@@ -1112,7 +1113,7 @@ export function useClipperState() {
       if (cropData.cropPendingState && cropData.cropResult) {
         const pending = cropData.cropPendingState as {
           tabId: number;
-          documentUrl?: string | null;
+          linkTarget?: string | null;
           metadata: PageMetadata | null;
           articleData: ArticleData | null;
           selectedTags: string[];
@@ -1132,7 +1133,7 @@ export function useClipperState() {
         chrome.storage.session.remove(["cropPendingState", "cropResult"]);
 
         tabIdRef.current = pending.tabId;
-        linkTargetRef.current = pending.documentUrl ?? null;
+        linkTargetRef.current = pending.linkTarget ?? null;
         vaultRef.current = pending.selectedVault;
         setSelectedVault(pending.selectedVault);
         setMetadataValue(pending.metadata);
@@ -1254,7 +1255,8 @@ export function useClipperState() {
       //   image      → Image-only view (TypeSwitcher hidden in PopupApp)
       //   article    → Content
       //   video      → Content (video block, transcript in body)
-      //   Save link  → Link, with no screenshot: the tab shows another page
+      //   Save link  → Link, with no screenshot at opening: the tab shows
+      //                another page; Screenshot chosen takes it (Р9)
       //   link/other → Screenshot (default visual clip for everything else)
       let detected: ClipType;
       const dt = meta.detectedType;
@@ -1971,7 +1973,11 @@ interface ResolveTwitterMediaResponse {
 
 /** The crop of content.js in this page; the overlay shares its world. */
 interface PageCrop {
-  start: (documentUrl: string | null, cropId: string) => void;
+  /** The crop id comes second. The first argument named the page of a Save
+   *  link clip until 12.10.2026; the content script, kept from when the
+   *  extension loaded, may be of that build and reads the id second, so the
+   *  overlay passes `null` first. */
+  start: (unused: null, cropId: string) => void;
   /** Absent in a page whose content script predates named crops. */
   cancel?: (cropId: string) => void;
 }

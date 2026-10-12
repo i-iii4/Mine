@@ -231,3 +231,50 @@ describe("the page changes under an open overlay without a new document (Р6, Р
     expect(result.current.articleData?.content).toBe("Text of A");
   });
 });
+
+// A Save link clip takes the page shown for its screenshot like any clip, and
+// a type chosen in the overlay stays chosen across the capture it starts
+// (SPEC_CLIPPER.md, «Доработки после живого просмотра», 12.10.2026).
+describe("Screenshot in the overlay for any clip, in any order of types (12.10.2026)", () => {
+  const linkB = "https://b.example/linked";
+
+  it("takes the page shown for a Save link clip kept across a new document, naming no page", async () => {
+    Object.assign(page, { documentUrl: pageB, captureGeneration: "b:1" });
+    const { result } = reopen(keptClip({
+      linkTarget: linkB, currentType: "link", screenshot: null,
+      metadata: { url: linkB, documentUrl: linkB, title: "", description: "", image: null, author: null, ogType: null,
+        favicon: null, selection: "", detectedType: "link", isArticle: false },
+    }));
+    await waitFor(() => expect(result.current.state).toBe("main"));
+    answers.capture = (_message, reply) => reply({ ok: true, dataUrl: frameB, screenshotId: "shot-b" });
+
+    act(() => result.current.setCurrentType("screenshot"));
+
+    await waitFor(() => expect(result.current.screenshotDataUrl).toBe(frameB));
+    expect(sent.find((message) => message.action === "captureForCrop")).toEqual({ target: "background", action: "captureForCrop" });
+    expect(result.current.captureError).toBeNull();
+    expect(result.current.currentType).toBe("screenshot");
+    expect(result.current.metadata?.url).toBe(linkB);
+  });
+
+  // The keyboard moves to the pressed segment, or the arrows move it, once
+  // the event that chose the type is over. The overlay hides after that, so
+  // the keyboard it gives back after the capture is on the chosen segment.
+  it("hides the overlay after the event that chose Screenshot, then captures", async () => {
+    const order: string[] = [];
+    (globalThis as unknown as { __mineOverlay: unknown }).__mineOverlay = {
+      hide: () => order.push("hide"), show: () => order.push("show"),
+    };
+    answers.capture = (_message, reply) => { order.push("capture"); reply({ ok: true, dataUrl: frameB, screenshotId: "shot-b" }); };
+    const { result } = reopen(keptClip({ currentType: "content", screenshot: null }));
+    await waitFor(() => expect(result.current.state).toBe("main"));
+
+    act(() => result.current.setCurrentType("screenshot"));
+    expect(order).toEqual([]);
+    expect(result.current.capturing).toBe(true);
+
+    await waitFor(() => expect(order).toEqual(["hide", "capture", "show"]));
+    expect(result.current.currentType).toBe("screenshot");
+    expect(result.current.screenshotDataUrl).toBe(frameB);
+  });
+});

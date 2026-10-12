@@ -17,8 +17,13 @@ export function TypeSwitcher({ current, onChange }: TypeSwitcherProps) {
     const type = TYPES.find((option) => option.value === next);
     if (type) onChange(type.value);
   };
+  // A press, Enter or Space picks a type; the arrows pick it in PopupApp.
+  // Focus alone never does: a type change takes a screenshot or reads the
+  // page, and the keyboard returned to a segment after the overlay was
+  // hidden for a capture must not pick that segment's type again
+  // (SPEC_CLIPPER.md, «Доработки после живого просмотра», 12.10.2026).
   return (
-    <Tabs value={current} onValueChange={choose} className="gap-0">
+    <Tabs value={current} onValueChange={choose} activationMode="manual" className="gap-0">
       <TabsList
         variant="chrome"
         size="panel"

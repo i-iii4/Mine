@@ -293,6 +293,20 @@ describe("clipper keyboard (А6.9)", () => {
     expect(screen.getByRole("tab", { name: "Screenshot" })).toHaveFocus();
   });
 
+  // The overlay gives the keyboard back to the segment that had it before it
+  // was hidden for a capture; that must not pick the segment's type again
+  // (SPEC_CLIPPER.md, «Доработки после живого просмотра», 12.10.2026).
+  it("never picks a type by focus alone; a press picks it", () => {
+    state.currentType = "screenshot";
+    render(<PopupApp />);
+    const content = screen.getByRole("tab", { name: "Content" });
+    content.focus();
+    expect(content).toHaveFocus();
+    expect(state.setCurrentType).not.toHaveBeenCalled();
+    fireEvent.mouseDown(content, { button: 0 });
+    expect(state.setCurrentType).toHaveBeenLastCalledWith("content");
+  });
+
   it("keeps the arrows for the caret in a text field", () => {
     render(<PopupApp />);
     const field = document.createElement("input");

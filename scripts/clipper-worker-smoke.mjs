@@ -293,6 +293,72 @@ async function checkOverlayAcrossPages(worker) {
   }
 }
 
+// Р9 for any clip, the types in any order (SPEC_CLIPPER.md, «Доработки после
+// живого просмотра», 12.10.2026). A right click on a link offers only Save
+// link of Mine; that clip opens as Link, and Screenshot chosen after Content
+// stays chosen and takes the page shown for the clip of the link.
+async function checkScreenshotForAnyClip(worker) {
+  const { server, origin } = await startSite();
+  const page = await context.newPage();
+  try {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(`${origin}/a`);
+    // The browser takes two captures a second; the previous check's last one
+    // must not count against this one.
+    await page.waitForTimeout(1_100);
+    await worker.evaluate(async ({ url, link }) => {
+      const tab = (await chrome.tabs.query({})).find((candidate) => candidate.url === url);
+      if (!tab) throw new Error('No tab for the local page');
+      await chrome.tabs.update(tab.id, { active: true });
+      await handleContextMenuClick({ menuItemId: 'save-link', linkUrl: link, pageUrl: url }, tab);
+    }, { url: `${origin}/a`, link: `${origin}/b` });
+    const type = (name) => page.getByRole('tab', { name, exact: true });
+    await type('Link').waitFor({ timeout: 15_000 });
+    assert.equal(await type('Link').getAttribute('aria-selected'), 'true');
+
+    // Content takes the keyboard to its segment; Screenshot then hides the
+    // overlay for the capture and gives the keyboard back.
+    await type('Content').click();
+    assert.equal(await type('Content').getAttribute('aria-selected'), 'true');
+    await type('Screenshot').click();
+    const preview = page.locator('[data-clipper-preview] img');
+    await preview.waitFor({ state: 'visible', timeout: 15_000 });
+    assert.equal(await type('Screenshot').getAttribute('aria-selected'), 'true', 'Screenshot chosen after Content went back to Content');
+    const error = page.locator('[data-clipper-capture-error]');
+    assert.equal(await error.count(), 0, `the screenshot of a Save link clip was refused: ${await error.allTextContents()}`);
+
+    // The frame is of page A, the page shown; the clip stays the one of link B.
+    const colour = await preview.evaluate(async (image) => {
+      await image.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const draw = canvas.getContext('2d');
+      draw.drawImage(image, 0, 0);
+      const [red, green, blue] = draw.getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data;
+      return { red, green, blue };
+    });
+    assert.ok(colour.red > 200 && colour.blue < 60, `the screenshot is not of page A: ${JSON.stringify(colour)}`);
+    const kept = await worker.evaluate(async () => {
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const session = await chrome.storage.session.get(null);
+        const clip = Object.entries(session).find(([key, value]) => key.startsWith('mineOpenClip:') && value.currentType === 'screenshot')?.[1];
+        if (clip?.screenshot) return { linkTarget: clip.linkTarget, url: clip.metadata.url, framed: clip.screenshot.dataUrl.startsWith('data:image/') };
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      return null;
+    });
+    assert.deepEqual(kept, { linkTarget: `${origin}/b`, url: `${origin}/b`, framed: true });
+
+    await page.locator('[data-mine-clipper-overlay]').getByRole('button', { name: 'Close', exact: true }).first().click();
+    await page.locator('[data-mine-clipper-panel]').waitFor({ state: 'detached', timeout: 5_000 });
+  } finally {
+    await page.close();
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
 // Р10: the header drags by the window chrome's rule, the space's name
 // included. A long name leaves no empty part of the header; a press on it
 // that travels past 4 px moves the panel and opens nothing, a press without
@@ -698,6 +764,7 @@ try {
   assert.deepEqual(finalCapture.names, ['Worker UI article.md', 'Worker image.md']);
   assert.deepEqual(finalCapture.pending, []);
   await checkOverlayAcrossPages(worker);
+  await checkScreenshotForAnyClip(worker);
   await checkHeaderDragBySpaceName(worker);
   await checkCollectionsArePages(worker);
   Object.assign(report, { ok: true, scope: 'chromium-extension-worker-wasm',
@@ -707,6 +774,7 @@ try {
     savedFileStableAfterBrowserReopen: true,
     standaloneSetupTransport: true, nativeStatusTransport: true, serviceWorkerRestarts: 2,
     overlayLeavesPageWorking: true, overlayClipAcrossNewDocument: true, screenshotOfShownPageForOriginalCard: true,
+    screenshotOfShownPageForSaveLinkClip: true, screenshotStaysChosenAfterContent: true,
     overlayMovedResizedKeptAndFitted: true, overlayResizedByTopLeftCorner: true,
     overlayDraggedBySpaceName: true, spaceMenuOpensOnClickNotDrag: true, openClipClearedAfterSave: true,
     collectionsListedAsPagesOnly: true, saveIntoCollectionWithoutPageWritesNothing: true,

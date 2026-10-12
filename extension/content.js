@@ -1527,10 +1527,6 @@
 
   let cropOverlayHost = null;
   let cropToastHost = null;
-  // The link of a Save link clip: the crop's capture names it, and background
-  // refuses another page (SPEC_AUDIT_FIXES.md, В4.2). Any other crop takes the
-  // page shown now (SPEC_CLIPPER.md, «Доработки после живого просмотра», Р9).
-  let cropDocumentUrl = null;
   // The crop under way, from its start until its result is handed over,
   // capture included. One at a time: another start meanwhile is ignored
   // (SPEC_AUDIT_FIXES.md, В4.3). It carries the id the clipper named it with:
@@ -1662,7 +1658,9 @@
     // Ask background for a full viewport capture
     const captureResp = await new Promise((resolve) => {
       chrome.runtime.sendMessage(
-        { target: "background", action: "captureForCrop", ...(cropDocumentUrl ? { documentUrl: cropDocumentUrl } : {}) },
+        // The page shown now, for any clip (SPEC_CLIPPER.md, «Доработки после
+        // живого просмотра», Р9).
+        { target: "background", action: "captureForCrop" },
         (resp) => resolve(resp || { ok: false, error: "No response" }),
       );
     });
@@ -1713,11 +1711,9 @@
   }
 
   /// `cropId` is the clipper's name for this crop; the result carries it.
-  function startCropOverlay(documentUrl, cropId) {
+  function startCropOverlay(cropId) {
     // A crop already under way, its capture included, is not started again.
     if (activeCrop) return;
-    // No address named: the crop takes the page shown now (Р9).
-    cropDocumentUrl = typeof documentUrl === "string" ? documentUrl : null;
     const crop = { id: typeof cropId === "string" ? cropId : null, cancel: () => undefined };
 
     const host = document.createElement("div");
@@ -1924,10 +1920,14 @@
     if (activeCrop !== null && typeof cropId === "string" && activeCrop.id === cropId) activeCrop.cancel();
   }
 
-  // The overlay clipper starts a crop directly, naming its page address and
-  // the crop, and cancels it when it closes.
+  // The overlay clipper starts a crop directly, naming the crop, and cancels
+  // it when it closes. The crop id comes second: the first argument named the
+  // page of a Save link clip until 12.10.2026 and is not read. The overlay is
+  // read from disk at every opening, this script only when the extension
+  // loads, so an overlay of a later build keeps the same order of arguments
+  // for a script of an earlier one.
   window.__mineCrop = {
-    start: startCropOverlay,
+    start: (_page, cropId) => startCropOverlay(cropId),
     cancel: cancelCropOverlay,
   };
 
@@ -1941,7 +1941,7 @@
 
     if (msg.action === "startCropOverlay") {
       try {
-        startCropOverlay(msg.documentUrl, msg.cropId);
+        startCropOverlay(msg.cropId);
         sendResponse({ ok: true });
       } catch (e) {
         sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) });
