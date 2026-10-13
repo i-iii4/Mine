@@ -12,6 +12,7 @@
     "activeTab",
     "nativeMessaging",
     "storage",
+    "unlimitedStorage",
     "scripting",
     "tabs",
     "cookies"
@@ -99,7 +100,8 @@
       ],
       "matches": [
         "http://*/*",
-        "https://*/*"
+        "https://*/*",
+        "file:///*"
       ]
     }
   ]

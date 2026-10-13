@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { requestXSyndication, requestYoutubeChannel, sendToNative, waitForYoutubeChannel, YOUTUBE_CHANNEL_TIMEOUT_MS } from "./messaging";
+import {
+  CONTENT_SCRIPT_CONTEXT, extractMetadata, requestXSyndication, requestYoutubeChannel, sendToNative, waitForYoutubeChannel,
+  YOUTUBE_CHANNEL_TIMEOUT_MS,
+} from "./messaging";
 
 beforeEach(() => {
   const runtime = {
@@ -11,6 +14,20 @@ beforeEach(() => {
     }),
   };
   (globalThis as Record<string, unknown>).chrome = { runtime };
+});
+
+// SPEC_DEEP_AUDIT.md, Е3.4: the clipper fills the address and title of a page
+// whose content script did not answer into the metadata it gets. The next
+// opening on another page must not find them there.
+describe("metadata of a page without its content script", () => {
+  it("gives every opening empty metadata of its own", async () => {
+    const first = await extractMetadata(CONTENT_SCRIPT_CONTEXT);
+    first.url = "https://a.example/first";
+    first.title = "First page";
+    const second = await extractMetadata(CONTENT_SCRIPT_CONTEXT);
+    expect(second.url).toBe("");
+    expect(second.title).toBe("");
+  });
 });
 
 describe("popup runtime transport", () => {

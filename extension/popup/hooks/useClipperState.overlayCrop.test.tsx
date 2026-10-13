@@ -130,4 +130,25 @@ describe("a crop belongs to the editor that started it (SPEC_AUDIT_FIXES.md, Г3
     cropEnds({ cropId, dataUrl: frameA, screenshotId: "crop-a" });
     expect(second.result.current.screenshotDataUrl).toBeNull();
   });
+
+  // SPEC_DEEP_AUDIT.md, Е3.9: what a clipper window left for its crop in
+  // session storage is that window's; an overlay never opens with it.
+  it("opens with its own page, not with the clip a window left for its crop", async () => {
+    const session = chrome.storage.session as unknown as { get: unknown };
+    const ownGet = session.get;
+    session.get = async () => ({
+      cropPendingState: { tabId: 7, pageUrl: "https://old.example/page", createdAt: Date.now(), linkTarget: null,
+        metadata: { url: "https://old.example/page", title: "Old clip", selection: "", detectedType: "link" },
+        articleData: null, selectedTags: [], title: "Old clip", currentType: "screenshot", selectedVault: null,
+        screenshotDataUrl: null, screenshotUploadId: null },
+      cropResult: { status: "done", dataUrl: frameOther, screenshotId: "shot-old" },
+    });
+    try {
+      const editor = await openEditor();
+      expect(editor.result.current.metadata?.url).toBe(window.location.href);
+      expect(editor.result.current.screenshotDataUrl).not.toBe(frameOther);
+    } finally {
+      session.get = ownGet;
+    }
+  });
 });

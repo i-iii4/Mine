@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import "./xThread.js";
 import {
@@ -216,5 +217,55 @@ describe("posts of an X feed response", () => {
     expect(api.feed({ data: { list: { tweets_timeline: { timeline: { instructions: [{ type: "TimelineAddEntries", entries: [
       { content: { itemContent: { itemType: "TimelineTweet", tweet_results: { result: { __typename: "TweetTombstone" } } } } },
     ] }] } } } } })).toEqual([]);
+  });
+});
+
+describe("the address of an X post (Е3.15)", () => {
+  it("names the post of X, X Pro and Twitter, photo pages included", () => {
+    expect(api.postAddress("https://x.com/artist/status/123")).toEqual({ handle: "artist", id: "123" });
+    expect(api.postAddress("https://pro.x.com/artist/status/123?s=20")).toEqual({ handle: "artist", id: "123" });
+    expect(api.postAddress("https://twitter.com/artist/status/123/photo/2")).toEqual({ handle: "artist", id: "123" });
+    expect(api.postAddress("https://www.x.com/i/status/123")).toEqual({ handle: "i", id: "123" });
+  });
+
+  it("names no post on a host that merely ends in x.com, or outside a status path", () => {
+    expect(api.postAddress("https://www.dropbox.com/team/status/123")).toBeNull();
+    expect(api.postAddress("https://netflix.com/user/status/123")).toBeNull();
+    expect(api.postAddress("https://example.com/?u=https://x.com/a/status/1")).toBeNull();
+    expect(api.postAddress("https://x.com/artist")).toBeNull();
+    expect(api.postAddress("not an address")).toBeNull();
+    expect(api.isXPage("https://pro.x.com/i/decks/1")).toBe(true);
+    expect(api.isXPage("https://box.com/x.com/")).toBe(false);
+  });
+});
+
+// Answers of X itself, written down 13.10.2026 (xPost.live.test.json):
+// GraphQL TweetResultByRestId and the syndication service for the same posts.
+describe("the text of an X post as X answers it (Е3.6)", () => {
+  const live = JSON.parse(readFileSync("extension/lib/xPost.live.test.json", "utf8")) as {
+    graphql: Record<string, { data: { tweetResult: { result: unknown } } }>;
+    syndication: Record<string, { text: string; display_text_range: [number, number] }>;
+  };
+  const graphql = (id: string) => live.graphql[id]!.data.tweetResult.result;
+  const REPLY_TEXT = "To clarify, this is a legacy integration. We've reached out to explore new integrations including live-streaming. Stay tuned!";
+
+  it("decodes what X escapes in legacy text and keeps the text of a long post as written", () => {
+    expect(api.post(graphql("1778833124643983615"))?.text).toBe("To an exciting & inspiring future!");
+    // The legacy text of this long post says `&amp;`; its note text says `&`.
+    const note = api.post(graphql("1985444208627392799"))?.text ?? "";
+    expect(note).toContain("Python & TypeScript");
+    expect(note).not.toContain("&amp;");
+  });
+
+  it("leaves out the mentions a reply starts with, the part X does not show", () => {
+    expect(api.post(graphql("1724511614206898410"))?.text).toBe(REPLY_TEXT);
+    expect(api.post(graphql("1959996732173058433"))?.text).toBe(
+      "Hi there! Let’s fix this. We provide Emergency/Weather bots elevated access for free. Please DM us or @chrisparkX directly.");
+  });
+
+  it("reads the text a syndication answer shows by the same rules", () => {
+    expect(api.syndicationText(live.syndication["1724511614206898410"])).toBe(REPLY_TEXT);
+    expect(api.syndicationText(live.syndication["1778833124643983615"])).toBe("To an exciting & inspiring future!");
+    expect(api.syndicationText(live.syndication["1985444208627392799"])).toContain("Python & TypeScript");
   });
 });

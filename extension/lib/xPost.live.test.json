@@ -1,0 +1,1841 @@
+{
+ "_captured": "2026-10-13",
+ "_how": "graphql: answers of X's TweetResultByRestId to a guest token, written by the bundled yt-dlp with --write-pages; syndication: answers of https://cdn.syndication.twimg.com/tweet-result?id=<id>&token=0 read with curl. Unchanged.",
+ "graphql": {
+  "1724511614206898410": {
+   "data": {
+    "tweetResult": {
+     "result": {
+      "__typename": "Tweet",
+      "core": {
+       "user_results": {
+        "result": {
+         "__typename": "User",
+         "affiliates_highlighted_label": {
+          "label": {
+           "badge": {
+            "url": "https://pbs.twimg.com/profile_images/1955359038532653056/OSHY3ewP_bigger.jpg"
+           },
+           "description": "X",
+           "url": {
+            "url": "https://twitter.com/X",
+            "urlType": "DeepLink"
+           },
+           "userLabelDisplayType": "Badge",
+           "userLabelType": "BusinessLabel"
+          }
+         },
+         "has_graduated_access": true,
+         "has_nft_avatar": false,
+         "id": "VXNlcjoyMjQ0OTk0OTQ1",
+         "is_blue_verified": true,
+         "legacy": {
+          "blocked_by": false,
+          "blocking": false,
+          "can_dm": false,
+          "can_media_tag": false,
+          "created_at": "Sat Dec 14 04:35:55 +0000 2013",
+          "default_profile": false,
+          "default_profile_image": false,
+          "description": "The voice of the X Dev team and your official source for updates, news, and events, related to the X API.",
+          "entities": {
+           "description": {},
+           "url": {
+            "urls": [
+             {
+              "display_url": "docs.x.com",
+              "expanded_url": "https://docs.x.com/",
+              "indices": [
+               0,
+               23
+              ],
+              "url": "https://t.co/NIwHVIVyrN"
+             }
+            ]
+           }
+          },
+          "fast_followers_count": 0,
+          "favourites_count": 2758,
+          "follow_request_sent": false,
+          "followed_by": false,
+          "followers_count": 700756,
+          "following": false,
+          "friends_count": 770,
+          "has_custom_timelines": true,
+          "is_translator": false,
+          "listed_count": 2974,
+          "location": "127.0.0.1",
+          "media_count": 832,
+          "muting": false,
+          "name": "Developers",
+          "needs_phone_verification": false,
+          "normal_followers_count": 700756,
+          "notifications": false,
+          "pinned_tweet_ids_str": [
+           "2019881223666233717"
+          ],
+          "possibly_sensitive": false,
+          "profile_banner_url": "https://pbs.twimg.com/profile_banners/2244994945/1690213128",
+          "profile_image_url_https": "https://pbs.twimg.com/profile_images/1683501992314798080/xl1POYLw_normal.jpg",
+          "profile_interstitial_type": "",
+          "protected": false,
+          "screen_name": "XDevelopers",
+          "statuses_count": 4376,
+          "time_zone": "",
+          "translator_type": "regular",
+          "url": "https://t.co/NIwHVIVyrN",
+          "utc_offset": 0,
+          "verified": false,
+          "verified_type": "Business",
+          "withheld_description": "",
+          "withheld_scope": ""
+         },
+         "professional": {
+          "category": [
+           {
+            "icon_name": "IconBriefcaseStroke",
+            "id": 1009,
+            "name": "Community"
+           }
+          ],
+          "professional_type": "Business",
+          "rest_id": "1516891231749517312"
+         },
+         "profile_image_shape": "Square",
+         "rest_id": "2244994945",
+         "super_follow_eligible": false,
+         "super_followed_by": false,
+         "super_following": false
+        }
+       }
+      },
+      "edit_control": {
+       "edit_tweet_ids": [
+        "1724511614206898410"
+       ],
+       "editable_until_msecs": "1699994183000",
+       "edits_remaining": "5",
+       "is_edit_eligible": false
+      },
+      "is_translatable": false,
+      "legacy": {
+       "bookmark_count": 32,
+       "bookmarked": false,
+       "conversation_id_str": "1724387618761351637",
+       "created_at": "Tue Nov 14 19:36:23 +0000 2023",
+       "display_text_range": [
+        8,
+        133
+       ],
+       "entities": {
+        "user_mentions": [
+         {
+          "id_str": "752567226",
+          "indices": [
+           0,
+           7
+          ],
+          "name": "X Daily News",
+          "screen_name": "xDaily"
+         }
+        ]
+       },
+       "favorite_count": 794,
+       "favorited": false,
+       "full_text": "@xDaily To clarify, this is a legacy integration. We've reached out to explore new integrations including live-streaming. Stay tuned!",
+       "id_str": "1724511614206898410",
+       "in_reply_to_screen_name": "xDaily",
+       "in_reply_to_status_id_str": "1724387618761351637",
+       "in_reply_to_user_id_str": "752567226",
+       "is_quote_status": false,
+       "lang": "en",
+       "quote_count": 98,
+       "reply_count": 56,
+       "retweet_count": 115,
+       "retweeted": false,
+       "user_id_str": "2244994945"
+      },
+      "rest_id": "1724511614206898410",
+      "unmention_data": {},
+      "views": {
+       "count": "1189912",
+       "state": "EnabledWithCount"
+      }
+     }
+    }
+   }
+  },
+  "1778833124643983615": {
+   "data": {
+    "tweetResult": {
+     "result": {
+      "__typename": "Tweet",
+      "core": {
+       "user_results": {
+        "result": {
+         "__typename": "User",
+         "affiliates_highlighted_label": {
+          "label": {
+           "badge": {
+            "url": "https://pbs.twimg.com/profile_images/1955359038532653056/OSHY3ewP_bigger.jpg"
+           },
+           "description": "X",
+           "url": {
+            "url": "https://twitter.com/X",
+            "urlType": "DeepLink"
+           },
+           "userLabelDisplayType": "Badge",
+           "userLabelType": "BusinessLabel"
+          }
+         },
+         "has_graduated_access": true,
+         "has_nft_avatar": false,
+         "id": "VXNlcjo0NDE5NjM5Nw==",
+         "is_blue_verified": true,
+         "legacy": {
+          "blocked_by": false,
+          "blocking": false,
+          "can_dm": false,
+          "can_media_tag": false,
+          "created_at": "Tue Jun 02 20:12:29 +0000 2009",
+          "default_profile": false,
+          "default_profile_image": false,
+          "description": "https://t.co/ZdBx5WABYx",
+          "entities": {
+           "description": {
+            "urls": [
+             {
+              "display_url": "Terafab.AI",
+              "expanded_url": "http://Terafab.AI",
+              "indices": [
+               0,
+               23
+              ],
+              "url": "https://t.co/ZdBx5WABYx"
+             }
+            ]
+           }
+          },
+          "fast_followers_count": 0,
+          "favourites_count": 252616,
+          "follow_request_sent": false,
+          "followed_by": false,
+          "followers_count": 241508293,
+          "following": false,
+          "friends_count": 1420,
+          "has_custom_timelines": true,
+          "is_translator": false,
+          "listed_count": 170905,
+          "location": "",
+          "media_count": 4737,
+          "muting": false,
+          "name": "Elon Musk",
+          "needs_phone_verification": false,
+          "normal_followers_count": 241508293,
+          "notifications": false,
+          "pinned_tweet_ids_str": [
+           "2109461555066671311"
+          ],
+          "possibly_sensitive": false,
+          "profile_banner_url": "https://pbs.twimg.com/profile_banners/44196397/1774145451",
+          "profile_image_url_https": "https://pbs.twimg.com/profile_images/2103567689515954176/aR-Kjpp4_normal.jpg",
+          "profile_interstitial_type": "",
+          "protected": false,
+          "screen_name": "elonmusk",
+          "statuses_count": 110064,
+          "time_zone": "",
+          "translator_type": "none",
+          "url": "",
+          "utc_offset": 0,
+          "verified": false,
+          "withheld_description": "",
+          "withheld_scope": ""
+         },
+         "professional": {
+          "category": [],
+          "professional_type": "Creator",
+          "rest_id": "1679729435447275522"
+         },
+         "profile_image_shape": "Circle",
+         "rest_id": "44196397",
+         "super_follow_eligible": false,
+         "super_followed_by": false,
+         "super_following": false
+        }
+       }
+      },
+      "edit_control": {
+       "edit_tweet_ids": [
+        "1778833124643983615"
+       ],
+       "editable_until_msecs": "1712945440000",
+       "edits_remaining": "5",
+       "is_edit_eligible": true
+      },
+      "is_translatable": false,
+      "legacy": {
+       "bookmark_count": 15731,
+       "bookmarked": false,
+       "conversation_id_str": "1778833124643983615",
+       "created_at": "Fri Apr 12 17:10:40 +0000 2024",
+       "display_text_range": [
+        0,
+        38
+       ],
+       "entities": {
+        "media": [
+         {
+          "display_url": "pic.x.com/WUIqN7B2F6",
+          "expanded_url": "https://x.com/elonmusk/status/1778833124643983615/photo/1",
+          "ext_media_availability": {
+           "status": "Available"
+          },
+          "features": {
+           "large": {
+            "faces": [
+             {
+              "h": 134,
+              "w": 134,
+              "x": 432,
+              "y": 423
+             },
+             {
+              "h": 134,
+              "w": 134,
+              "x": 713,
+              "y": 351
+             },
+             {
+              "h": 319,
+              "w": 319,
+              "x": 718,
+              "y": 1341
+             }
+            ]
+           },
+           "medium": {
+            "faces": [
+             {
+              "h": 93,
+              "w": 93,
+              "x": 300,
+              "y": 294
+             },
+             {
+              "h": 93,
+              "w": 93,
+              "x": 496,
+              "y": 244
+             },
+             {
+              "h": 222,
+              "w": 222,
+              "x": 500,
+              "y": 934
+             }
+            ]
+           },
+           "orig": {
+            "faces": [
+             {
+              "h": 134,
+              "w": 134,
+              "x": 432,
+              "y": 423
+             },
+             {
+              "h": 134,
+              "w": 134,
+              "x": 713,
+              "y": 351
+             },
+             {
+              "h": 319,
+              "w": 319,
+              "x": 718,
+              "y": 1341
+             }
+            ]
+           },
+           "small": {
+            "faces": [
+             {
+              "h": 52,
+              "w": 52,
+              "x": 170,
+              "y": 167
+             },
+             {
+              "h": 52,
+              "w": 52,
+              "x": 281,
+              "y": 138
+             },
+             {
+              "h": 125,
+              "w": 125,
+              "x": 283,
+              "y": 529
+             }
+            ]
+           }
+          },
+          "id_str": "1778833117698306051",
+          "indices": [
+           39,
+           62
+          ],
+          "media_key": "3_1778833117698306051",
+          "media_url_https": "https://pbs.twimg.com/media/GK-vS78bsAMEmWJ.jpg",
+          "original_info": {
+           "focus_rects": [
+            {
+             "h": 740,
+             "w": 1322,
+             "x": 0,
+             "y": 188
+            },
+            {
+             "h": 1322,
+             "w": 1322,
+             "x": 0,
+             "y": 0
+            },
+            {
+             "h": 1507,
+             "w": 1322,
+             "x": 0,
+             "y": 0
+            },
+            {
+             "h": 1722,
+             "w": 861,
+             "x": 42,
+             "y": 0
+            },
+            {
+             "h": 1722,
+             "w": 1322,
+             "x": 0,
+             "y": 0
+            }
+           ],
+           "height": 1722,
+           "width": 1322
+          },
+          "sizes": {
+           "large": {
+            "h": 1722,
+            "resize": "fit",
+            "w": 1322
+           },
+           "medium": {
+            "h": 1200,
+            "resize": "fit",
+            "w": 921
+           },
+           "small": {
+            "h": 680,
+            "resize": "fit",
+            "w": 522
+           },
+           "thumb": {
+            "h": 150,
+            "resize": "crop",
+            "w": 150
+           }
+          },
+          "type": "photo",
+          "url": "https://t.co/WUIqN7B2F6"
+         }
+        ]
+       },
+       "extended_entities": {
+        "media": [
+         {
+          "display_url": "pic.x.com/WUIqN7B2F6",
+          "expanded_url": "https://x.com/elonmusk/status/1778833124643983615/photo/1",
+          "ext_media_availability": {
+           "status": "Available"
+          },
+          "features": {
+           "large": {
+            "faces": [
+             {
+              "h": 134,
+              "w": 134,
+              "x": 432,
+              "y": 423
+             },
+             {
+              "h": 134,
+              "w": 134,
+              "x": 713,
+              "y": 351
+             },
+             {
+              "h": 319,
+              "w": 319,
+              "x": 718,
+              "y": 1341
+             }
+            ]
+           },
+           "medium": {
+            "faces": [
+             {
+              "h": 93,
+              "w": 93,
+              "x": 300,
+              "y": 294
+             },
+             {
+              "h": 93,
+              "w": 93,
+              "x": 496,
+              "y": 244
+             },
+             {
+              "h": 222,
+              "w": 222,
+              "x": 500,
+              "y": 934
+             }
+            ]
+           },
+           "orig": {
+            "faces": [
+             {
+              "h": 134,
+              "w": 134,
+              "x": 432,
+              "y": 423
+             },
+             {
+              "h": 134,
+              "w": 134,
+              "x": 713,
+              "y": 351
+             },
+             {
+              "h": 319,
+              "w": 319,
+              "x": 718,
+              "y": 1341
+             }
+            ]
+           },
+           "small": {
+            "faces": [
+             {
+              "h": 52,
+              "w": 52,
+              "x": 170,
+              "y": 167
+             },
+             {
+              "h": 52,
+              "w": 52,
+              "x": 281,
+              "y": 138
+             },
+             {
+              "h": 125,
+              "w": 125,
+              "x": 283,
+              "y": 529
+             }
+            ]
+           }
+          },
+          "id_str": "1778833117698306051",
+          "indices": [
+           39,
+           62
+          ],
+          "media_key": "3_1778833117698306051",
+          "media_url_https": "https://pbs.twimg.com/media/GK-vS78bsAMEmWJ.jpg",
+          "original_info": {
+           "focus_rects": [
+            {
+             "h": 740,
+             "w": 1322,
+             "x": 0,
+             "y": 188
+            },
+            {
+             "h": 1322,
+             "w": 1322,
+             "x": 0,
+             "y": 0
+            },
+            {
+             "h": 1507,
+             "w": 1322,
+             "x": 0,
+             "y": 0
+            },
+            {
+             "h": 1722,
+             "w": 861,
+             "x": 42,
+             "y": 0
+            },
+            {
+             "h": 1722,
+             "w": 1322,
+             "x": 0,
+             "y": 0
+            }
+           ],
+           "height": 1722,
+           "width": 1322
+          },
+          "sizes": {
+           "large": {
+            "h": 1722,
+            "resize": "fit",
+            "w": 1322
+           },
+           "medium": {
+            "h": 1200,
+            "resize": "fit",
+            "w": 921
+           },
+           "small": {
+            "h": 680,
+            "resize": "fit",
+            "w": 522
+           },
+           "thumb": {
+            "h": 150,
+            "resize": "crop",
+            "w": 150
+           }
+          },
+          "type": "photo",
+          "url": "https://t.co/WUIqN7B2F6"
+         }
+        ]
+       },
+       "favorite_count": 1037637,
+       "favorited": false,
+       "full_text": "To an exciting &amp; inspiring future! https://t.co/WUIqN7B2F6",
+       "id_str": "1778833124643983615",
+       "is_quote_status": false,
+       "lang": "en",
+       "possibly_sensitive": false,
+       "possibly_sensitive_editable": true,
+       "quote_count": 14602,
+       "reply_count": 39302,
+       "retweet_count": 91922,
+       "retweeted": false,
+       "user_id_str": "44196397"
+      },
+      "rest_id": "1778833124643983615",
+      "unmention_data": {},
+      "views": {
+       "count": "105091156",
+       "state": "EnabledWithCount"
+      }
+     }
+    }
+   }
+  },
+  "1959996732173058433": {
+   "data": {
+    "tweetResult": {
+     "result": {
+      "__typename": "Tweet",
+      "core": {
+       "user_results": {
+        "result": {
+         "__typename": "User",
+         "affiliates_highlighted_label": {
+          "label": {
+           "badge": {
+            "url": "https://pbs.twimg.com/profile_images/1955359038532653056/OSHY3ewP_bigger.jpg"
+           },
+           "description": "X",
+           "url": {
+            "url": "https://twitter.com/X",
+            "urlType": "DeepLink"
+           },
+           "userLabelDisplayType": "Badge",
+           "userLabelType": "BusinessLabel"
+          }
+         },
+         "has_graduated_access": true,
+         "has_nft_avatar": false,
+         "id": "VXNlcjoyMjQ0OTk0OTQ1",
+         "is_blue_verified": true,
+         "legacy": {
+          "blocked_by": false,
+          "blocking": false,
+          "can_dm": false,
+          "can_media_tag": false,
+          "created_at": "Sat Dec 14 04:35:55 +0000 2013",
+          "default_profile": false,
+          "default_profile_image": false,
+          "description": "The voice of the X Dev team and your official source for updates, news, and events, related to the X API.",
+          "entities": {
+           "description": {},
+           "url": {
+            "urls": [
+             {
+              "display_url": "docs.x.com",
+              "expanded_url": "https://docs.x.com/",
+              "indices": [
+               0,
+               23
+              ],
+              "url": "https://t.co/NIwHVIVyrN"
+             }
+            ]
+           }
+          },
+          "fast_followers_count": 0,
+          "favourites_count": 2758,
+          "follow_request_sent": false,
+          "followed_by": false,
+          "followers_count": 700756,
+          "following": false,
+          "friends_count": 770,
+          "has_custom_timelines": true,
+          "is_translator": false,
+          "listed_count": 2974,
+          "location": "127.0.0.1",
+          "media_count": 832,
+          "muting": false,
+          "name": "Developers",
+          "needs_phone_verification": false,
+          "normal_followers_count": 700756,
+          "notifications": false,
+          "pinned_tweet_ids_str": [
+           "2019881223666233717"
+          ],
+          "possibly_sensitive": false,
+          "profile_banner_url": "https://pbs.twimg.com/profile_banners/2244994945/1690213128",
+          "profile_image_url_https": "https://pbs.twimg.com/profile_images/1683501992314798080/xl1POYLw_normal.jpg",
+          "profile_interstitial_type": "",
+          "protected": false,
+          "screen_name": "XDevelopers",
+          "statuses_count": 4376,
+          "time_zone": "",
+          "translator_type": "regular",
+          "url": "https://t.co/NIwHVIVyrN",
+          "utc_offset": 0,
+          "verified": false,
+          "verified_type": "Business",
+          "withheld_description": "",
+          "withheld_scope": ""
+         },
+         "professional": {
+          "category": [
+           {
+            "icon_name": "IconBriefcaseStroke",
+            "id": 1009,
+            "name": "Community"
+           }
+          ],
+          "professional_type": "Business",
+          "rest_id": "1516891231749517312"
+         },
+         "profile_image_shape": "Square",
+         "rest_id": "2244994945",
+         "super_follow_eligible": false,
+         "super_followed_by": false,
+         "super_following": false
+        }
+       }
+      },
+      "edit_control": {
+       "edit_tweet_ids": [
+        "1959996732173058433"
+       ],
+       "editable_until_msecs": "1756138210000",
+       "edits_remaining": "5",
+       "is_edit_eligible": false
+      },
+      "is_translatable": false,
+      "legacy": {
+       "bookmark_count": 7,
+       "bookmarked": false,
+       "conversation_id_str": "1959943249465876656",
+       "created_at": "Mon Aug 25 15:10:10 +0000 2025",
+       "display_text_range": [
+        31,
+        154
+       ],
+       "entities": {
+        "user_mentions": [
+         {
+          "id_str": "19133833",
+          "indices": [
+           0,
+           13
+          ],
+          "name": "Ryan Hall, Y’all",
+          "screen_name": "ryanhallyall"
+         },
+         {
+          "id_str": "1890125368645836800",
+          "indices": [
+           14,
+           30
+          ],
+          "name": "YallBot",
+          "screen_name": "OfficialYallbot"
+         },
+         {
+          "id_str": "2533341854",
+          "indices": [
+           133,
+           144
+          ],
+          "name": "Chris Park",
+          "screen_name": "chrisparkX"
+         }
+        ]
+       },
+       "favorite_count": 373,
+       "favorited": false,
+       "full_text": "@ryanhallyall @OfficialYallbot Hi there! Let’s fix this. We provide Emergency/Weather bots elevated access for free. Please DM us or @chrisparkX directly.",
+       "id_str": "1959996732173058433",
+       "in_reply_to_screen_name": "ryanhallyall",
+       "in_reply_to_status_id_str": "1959996201140637901",
+       "in_reply_to_user_id_str": "19133833",
+       "is_quote_status": false,
+       "lang": "en",
+       "quote_count": 9,
+       "reply_count": 15,
+       "retweet_count": 7,
+       "retweeted": false,
+       "user_id_str": "2244994945"
+      },
+      "rest_id": "1959996732173058433",
+      "unmention_data": {},
+      "views": {
+       "count": "23084",
+       "state": "EnabledWithCount"
+      }
+     }
+    }
+   }
+  },
+  "1985444208627392799": {
+   "data": {
+    "tweetResult": {
+     "result": {
+      "__typename": "Tweet",
+      "card": {
+       "legacy": {
+        "binding_values": [
+         {
+          "key": "thumbnail_image",
+          "value": {
+           "image_value": {
+            "height": 144,
+            "url": "https://pbs.twimg.com/card_img/2108239276353998848/lSBYX7VS?format=png&name=144x144_2",
+            "width": 144
+           },
+           "type": "IMAGE"
+          }
+         },
+         {
+          "key": "description",
+          "value": {
+           "string_value": "We’re delighted to introduce our official, first-party XDKs (X Developer Kit) in Python and Typescript designed to streamline your development workflow with the X API. Whether you’re exploring...",
+           "type": "STRING"
+          }
+         },
+         {
+          "key": "domain",
+          "value": {
+           "string_value": "devcommunity.x.com",
+           "type": "STRING"
+          }
+         },
+         {
+          "key": "thumbnail_image_large",
+          "value": {
+           "image_value": {
+            "height": 420,
+            "url": "https://pbs.twimg.com/card_img/2108239276353998848/lSBYX7VS?format=png&name=420x420_2",
+            "width": 420
+           },
+           "type": "IMAGE"
+          }
+         },
+         {
+          "key": "thumbnail_image_original",
+          "value": {
+           "image_value": {
+            "height": 2453,
+            "url": "https://pbs.twimg.com/card_img/2108239276353998848/lSBYX7VS?format=png&name=orig",
+            "width": 2400
+           },
+           "type": "IMAGE"
+          }
+         },
+         {
+          "key": "thumbnail_image_small",
+          "value": {
+           "image_value": {
+            "height": 100,
+            "url": "https://pbs.twimg.com/card_img/2108239276353998848/lSBYX7VS?format=png&name=100x100_2",
+            "width": 100
+           },
+           "type": "IMAGE"
+          }
+         },
+         {
+          "key": "thumbnail_image_x_large",
+          "value": {
+           "image_value": {
+            "height": 2048,
+            "url": "https://pbs.twimg.com/card_img/2108239276353998848/lSBYX7VS?format=png&name=2048x2048_2_exp",
+            "width": 2004
+           },
+           "type": "IMAGE"
+          }
+         },
+         {
+          "key": "vanity_url",
+          "value": {
+           "scribe_key": "vanity_url",
+           "string_value": "devcommunity.x.com",
+           "type": "STRING"
+          }
+         },
+         {
+          "key": "thumbnail_image_color",
+          "value": {
+           "image_color_value": {
+            "palette": [
+             {
+              "percentage": 24.36,
+              "rgb": {
+               "blue": 0,
+               "green": 0,
+               "red": 0
+              }
+             },
+             {
+              "percentage": 0.73,
+              "rgb": {
+               "blue": 105,
+               "green": 105,
+               "red": 105
+              }
+             }
+            ]
+           },
+           "type": "IMAGE_COLOR"
+          }
+         },
+         {
+          "key": "title",
+          "value": {
+           "string_value": "Announcing the Python and Typescript XDKs for the X API v2",
+           "type": "STRING"
+          }
+         },
+         {
+          "key": "card_url",
+          "value": {
+           "scribe_key": "card_url",
+           "string_value": "https://t.co/kWqAAZjSnC",
+           "type": "STRING"
+          }
+         }
+        ],
+        "card_platform": {
+         "platform": {
+          "audience": {
+           "name": "production"
+          },
+          "device": {
+           "name": "Swift",
+           "version": "12"
+          }
+         }
+        },
+        "name": "summary",
+        "url": "https://t.co/kWqAAZjSnC",
+        "user_refs_results": []
+       },
+       "rest_id": "https://t.co/kWqAAZjSnC"
+      },
+      "core": {
+       "user_results": {
+        "result": {
+         "__typename": "User",
+         "affiliates_highlighted_label": {
+          "label": {
+           "badge": {
+            "url": "https://pbs.twimg.com/profile_images/1955359038532653056/OSHY3ewP_bigger.jpg"
+           },
+           "description": "X",
+           "url": {
+            "url": "https://twitter.com/X",
+            "urlType": "DeepLink"
+           },
+           "userLabelDisplayType": "Badge",
+           "userLabelType": "BusinessLabel"
+          }
+         },
+         "has_graduated_access": true,
+         "has_nft_avatar": false,
+         "id": "VXNlcjoyMjQ0OTk0OTQ1",
+         "is_blue_verified": true,
+         "legacy": {
+          "blocked_by": false,
+          "blocking": false,
+          "can_dm": false,
+          "can_media_tag": false,
+          "created_at": "Sat Dec 14 04:35:55 +0000 2013",
+          "default_profile": false,
+          "default_profile_image": false,
+          "description": "The voice of the X Dev team and your official source for updates, news, and events, related to the X API.",
+          "entities": {
+           "description": {},
+           "url": {
+            "urls": [
+             {
+              "display_url": "docs.x.com",
+              "expanded_url": "https://docs.x.com/",
+              "indices": [
+               0,
+               23
+              ],
+              "url": "https://t.co/NIwHVIVyrN"
+             }
+            ]
+           }
+          },
+          "fast_followers_count": 0,
+          "favourites_count": 2758,
+          "follow_request_sent": false,
+          "followed_by": false,
+          "followers_count": 700756,
+          "following": false,
+          "friends_count": 770,
+          "has_custom_timelines": true,
+          "is_translator": false,
+          "listed_count": 2974,
+          "location": "127.0.0.1",
+          "media_count": 832,
+          "muting": false,
+          "name": "Developers",
+          "needs_phone_verification": false,
+          "normal_followers_count": 700756,
+          "notifications": false,
+          "pinned_tweet_ids_str": [
+           "2019881223666233717"
+          ],
+          "possibly_sensitive": false,
+          "profile_banner_url": "https://pbs.twimg.com/profile_banners/2244994945/1690213128",
+          "profile_image_url_https": "https://pbs.twimg.com/profile_images/1683501992314798080/xl1POYLw_normal.jpg",
+          "profile_interstitial_type": "",
+          "protected": false,
+          "screen_name": "XDevelopers",
+          "statuses_count": 4376,
+          "time_zone": "",
+          "translator_type": "regular",
+          "url": "https://t.co/NIwHVIVyrN",
+          "utc_offset": 0,
+          "verified": false,
+          "verified_type": "Business",
+          "withheld_description": "",
+          "withheld_scope": ""
+         },
+         "professional": {
+          "category": [
+           {
+            "icon_name": "IconBriefcaseStroke",
+            "id": 1009,
+            "name": "Community"
+           }
+          ],
+          "professional_type": "Business",
+          "rest_id": "1516891231749517312"
+         },
+         "profile_image_shape": "Square",
+         "rest_id": "2244994945",
+         "super_follow_eligible": false,
+         "super_followed_by": false,
+         "super_following": false
+        }
+       }
+      },
+      "edit_control": {
+       "edit_tweet_ids": [
+        "1985444208627392799"
+       ],
+       "editable_until_msecs": "1762205361000",
+       "edits_remaining": "5",
+       "is_edit_eligible": true
+      },
+      "is_translatable": false,
+      "legacy": {
+       "bookmark_count": 89,
+       "bookmarked": false,
+       "conversation_id_str": "1985444208627392799",
+       "created_at": "Mon Nov 03 20:29:21 +0000 2025",
+       "display_text_range": [
+        0,
+        278
+       ],
+       "entities": {},
+       "favorite_count": 370,
+       "favorited": false,
+       "full_text": "Launching new X Developer Kit (XDK) for Python &amp; TypeScript for the X API v2 🚀\n\nWith support for OAuth, pagination and streaming, developers can get started with our API quickly and focus on building and scaling their apps.\n\nThis highlights our continued commitment to our X",
+       "id_str": "1985444208627392799",
+       "is_quote_status": false,
+       "lang": "en",
+       "quote_count": 16,
+       "reply_count": 53,
+       "retweet_count": 64,
+       "retweeted": false,
+       "user_id_str": "2244994945"
+      },
+      "note_tweet": {
+       "is_expandable": true,
+       "note_tweet_results": {
+        "result": {
+         "entity_set": {
+          "hashtags": [],
+          "symbols": [],
+          "urls": [
+           {
+            "display_url": "devcommunity.x.com/t/announcing-t…",
+            "expanded_url": "https://devcommunity.x.com/t/announcing-the-python-and-typescript-xdks-for-the-x-api-v2/250860",
+            "indices": [
+             329,
+             352
+            ],
+            "url": "https://t.co/kWqAAZjSnC"
+           }
+          ],
+          "user_mentions": []
+         },
+         "id": "Tm90ZVR3ZWV0OjE5ODU0NDQyMDg0ODQ3NjU2OTY=",
+         "media": {
+          "inline_media": []
+         },
+         "richtext": {
+          "richtext_tags": []
+         },
+         "text": "Launching new X Developer Kit (XDK) for Python & TypeScript for the X API v2 🚀\n\nWith support for OAuth, pagination and streaming, developers can get started with our API quickly and focus on building and scaling their apps.\n\nThis highlights our continued commitment to our X developer community.\n\nLearn more about the XDKs here: https://t.co/kWqAAZjSnC"
+        }
+       }
+      },
+      "rest_id": "1985444208627392799",
+      "unmention_data": {},
+      "views": {
+       "count": "156590",
+       "state": "EnabledWithCount"
+      }
+     }
+    }
+   }
+  }
+ },
+ "syndication": {
+  "1724511614206898410": {
+   "__typename": "Tweet",
+   "favorite_count": 794,
+   "in_reply_to_screen_name": "xDaily",
+   "in_reply_to_status_id_str": "1724387618761351637",
+   "in_reply_to_user_id_str": "752567226",
+   "lang": "en",
+   "created_at": "2023-11-14T19:36:23.000Z",
+   "display_text_range": [
+    8,
+    133
+   ],
+   "entities": {
+    "user_mentions": [
+     {
+      "id_str": "752567226",
+      "indices": [
+       0,
+       7
+      ],
+      "name": "X Daily News",
+      "screen_name": "xDaily"
+     }
+    ]
+   },
+   "id_str": "1724511614206898410",
+   "text": "@xDaily To clarify, this is a legacy integration. We've reached out to explore new integrations including live-streaming. Stay tuned!",
+   "user": {
+    "id_str": "2244994945",
+    "name": "Developers",
+    "screen_name": "XDevelopers",
+    "is_blue_verified": true,
+    "profile_image_shape": "Square",
+    "verified": false,
+    "verified_type": "Business",
+    "profile_image_url_https": "https://pbs.twimg.com/profile_images/1683501992314798080/xl1POYLw_normal.jpg",
+    "highlighted_label": {
+     "badge": {
+      "url": "https://pbs.twimg.com/profile_images/1955359038532653056/OSHY3ewP_bigger.jpg"
+     },
+     "description": "X",
+     "url": {
+      "url": "https://twitter.com/X",
+      "url_type": "DeepLink"
+     },
+     "user_label_display_type": "Badge",
+     "user_label_type": "BusinessLabel"
+    }
+   },
+   "edit_control": {
+    "edit_tweet_ids": [
+     "1724511614206898410"
+    ],
+    "editable_until_msecs": "1699994183000",
+    "edits_remaining": "5",
+    "is_edit_eligible": false
+   },
+   "conversation_count": 56,
+   "news_action_type": "conversation",
+   "parent": {
+    "favorite_count": 601,
+    "lang": "en",
+    "possibly_sensitive": false,
+    "reply_count": 99,
+    "retweet_count": 91,
+    "created_at": "2023-11-14T11:23:40.000Z",
+    "display_text_range": [
+     0,
+     198
+    ],
+    "entities": {
+     "media": [
+      {
+       "display_url": "pic.x.com/BaoAhjRdDB",
+       "expanded_url": "https://x.com/xDaily/status/1724387618761351637/photo/1",
+       "indices": [
+        198,
+        221
+       ],
+       "url": "https://t.co/BaoAhjRdDB"
+      }
+     ]
+    },
+    "id_str": "1724387618761351637",
+    "text": "NEWS: 𝕏's integration with Playstation consoles has now gone offline.\n\nIt seems whatever issue Sony has with X hasn't been resolved yet, though Elon stated last week he would look into the problem. https://t.co/BaoAhjRdDB",
+    "user": {
+     "id_str": "752567226",
+     "name": "X Daily News",
+     "screen_name": "xDaily",
+     "is_blue_verified": true,
+     "profile_image_shape": "Circle",
+     "verified": false,
+     "profile_image_url_https": "https://pbs.twimg.com/profile_images/1515124606583152648/4bZaW28-_normal.jpg"
+    },
+    "edit_control": {
+     "edit_tweet_ids": [
+      "1724387618761351637"
+     ],
+     "editable_until_msecs": "1699964620000",
+     "edits_remaining": "5",
+     "is_edit_eligible": true
+    },
+    "mediaDetails": [
+     {
+      "display_url": "pic.x.com/BaoAhjRdDB",
+      "expanded_url": "https://x.com/xDaily/status/1724387618761351637/photo/1",
+      "ext_media_availability": {
+       "status": "Available"
+      },
+      "indices": [
+       198,
+       221
+      ],
+      "media_url_https": "https://pbs.twimg.com/media/F-5BZouacAAhRGQ.jpg",
+      "original_info": {
+       "focus_rects": [
+        {
+         "h": 364,
+         "w": 650,
+         "x": 0,
+         "y": 0
+        },
+        {
+         "h": 366,
+         "w": 366,
+         "x": 255,
+         "y": 0
+        },
+        {
+         "h": 366,
+         "w": 321,
+         "x": 278,
+         "y": 0
+        },
+        {
+         "h": 366,
+         "w": 183,
+         "x": 347,
+         "y": 0
+        },
+        {
+         "h": 366,
+         "w": 650,
+         "x": 0,
+         "y": 0
+        }
+       ],
+       "height": 366,
+       "width": 650
+      },
+      "sizes": {
+       "large": {
+        "h": 366,
+        "resize": "fit",
+        "w": 650
+       },
+       "medium": {
+        "h": 366,
+        "resize": "fit",
+        "w": 650
+       },
+       "small": {
+        "h": 366,
+        "resize": "fit",
+        "w": 650
+       },
+       "thumb": {
+        "h": 150,
+        "resize": "crop",
+        "w": 150
+       }
+      },
+      "type": "photo",
+      "url": "https://t.co/BaoAhjRdDB"
+     }
+    ],
+    "photos": [
+     {
+      "backgroundColor": {
+       "red": 204,
+       "green": 214,
+       "blue": 221
+      },
+      "cropCandidates": [
+       {
+        "h": 364,
+        "w": 650,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "h": 366,
+        "w": 366,
+        "x": 255,
+        "y": 0
+       },
+       {
+        "h": 366,
+        "w": 321,
+        "x": 278,
+        "y": 0
+       },
+       {
+        "h": 366,
+        "w": 183,
+        "x": 347,
+        "y": 0
+       },
+       {
+        "h": 366,
+        "w": 650,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "expandedUrl": "https://x.com/xDaily/status/1724387618761351637/photo/1",
+      "url": "https://pbs.twimg.com/media/F-5BZouacAAhRGQ.jpg",
+      "width": 650,
+      "height": 366
+     }
+    ],
+    "isEdited": false,
+    "isStaleEdit": false
+   },
+   "isEdited": false,
+   "isStaleEdit": false
+  },
+  "1985444208627392799": {
+   "__typename": "Tweet",
+   "favorite_count": 370,
+   "lang": "en",
+   "created_at": "2025-11-03T20:29:21.000Z",
+   "display_text_range": [
+    0,
+    279
+   ],
+   "entities": {},
+   "id_str": "1985444208627392799",
+   "text": "Launching new X Developer Kit (XDK) for Python &amp; TypeScript for the X API v2 🚀\n\nWith support for OAuth, pagination and streaming, developers can get started with our API quickly and focus on building and scaling their apps.\n\nThis highlights our continued commitment to our X",
+   "user": {
+    "id_str": "2244994945",
+    "name": "Developers",
+    "screen_name": "XDevelopers",
+    "is_blue_verified": true,
+    "profile_image_shape": "Square",
+    "verified": false,
+    "verified_type": "Business",
+    "profile_image_url_https": "https://pbs.twimg.com/profile_images/1683501992314798080/xl1POYLw_normal.jpg",
+    "highlighted_label": {
+     "badge": {
+      "url": "https://pbs.twimg.com/profile_images/1955359038532653056/OSHY3ewP_bigger.jpg"
+     },
+     "description": "X",
+     "url": {
+      "url": "https://twitter.com/X",
+      "url_type": "DeepLink"
+     },
+     "user_label_display_type": "Badge",
+     "user_label_type": "BusinessLabel"
+    }
+   },
+   "edit_control": {
+    "edit_tweet_ids": [
+     "1985444208627392799"
+    ],
+    "editable_until_msecs": "1762205361000",
+    "edits_remaining": "5",
+    "is_edit_eligible": true
+   },
+   "conversation_count": 53,
+   "news_action_type": "conversation",
+   "card": {
+    "card_platform": {
+     "platform": {
+      "audience": {
+       "name": "production"
+      },
+      "device": {
+       "name": "iPhone",
+       "version": "13"
+      }
+     }
+    },
+    "name": "summary",
+    "url": "https://t.co/kWqAAZjSnC",
+    "binding_values": {
+     "thumbnail_image": {
+      "image_value": {
+       "height": 144,
+       "url": "https://pbs.twimg.com/card_img/2108239276353998848/lSBYX7VS?format=png&name=144x144_2",
+       "width": 144
+      },
+      "type": "IMAGE"
+     },
+     "description": {
+      "string_value": "We’re delighted to introduce our official, first-party XDKs (X Developer Kit) in Python and Typescript designed to streamline your development workflow with the X API. Whether you’re exploring...",
+      "type": "STRING"
+     },
+     "domain": {
+      "string_value": "devcommunity.x.com",
+      "type": "STRING"
+     },
+     "thumbnail_image_large": {
+      "image_value": {
+       "height": 420,
+       "url": "https://pbs.twimg.com/card_img/2108239276353998848/lSBYX7VS?format=png&name=420x420_2",
+       "width": 420
+      },
+      "type": "IMAGE"
+     },
+     "thumbnail_image_original": {
+      "image_value": {
+       "height": 2453,
+       "url": "https://pbs.twimg.com/card_img/2108239276353998848/lSBYX7VS?format=png&name=orig",
+       "width": 2400
+      },
+      "type": "IMAGE"
+     },
+     "thumbnail_image_small": {
+      "image_value": {
+       "height": 100,
+       "url": "https://pbs.twimg.com/card_img/2108239276353998848/lSBYX7VS?format=png&name=100x100_2",
+       "width": 100
+      },
+      "type": "IMAGE"
+     },
+     "thumbnail_image_x_large": {
+      "image_value": {
+       "height": 2048,
+       "url": "https://pbs.twimg.com/card_img/2108239276353998848/lSBYX7VS?format=png&name=2048x2048_2_exp",
+       "width": 2004
+      },
+      "type": "IMAGE"
+     },
+     "vanity_url": {
+      "scribe_key": "vanity_url",
+      "string_value": "devcommunity.x.com",
+      "type": "STRING"
+     },
+     "thumbnail_image_color": {
+      "image_color_value": {
+       "palette": [
+        {
+         "percentage": 24.36,
+         "rgb": {
+          "blue": 0,
+          "green": 0,
+          "red": 0
+         }
+        },
+        {
+         "percentage": 0.73,
+         "rgb": {
+          "blue": 105,
+          "green": 105,
+          "red": 105
+         }
+        }
+       ]
+      },
+      "type": "IMAGE_COLOR"
+     },
+     "title": {
+      "string_value": "Announcing the Python and Typescript XDKs for the X API v2",
+      "type": "STRING"
+     },
+     "card_url": {
+      "scribe_key": "card_url",
+      "string_value": "https://t.co/kWqAAZjSnC",
+      "type": "STRING"
+     }
+    }
+   },
+   "isEdited": false,
+   "isStaleEdit": false,
+   "note_tweet": {
+    "id": "Tm90ZVR3ZWV0UmVzdWx0czoxOTg1NDQ0MjA4NDg0NzY1Njk2"
+   }
+  },
+  "1959996732173058433": {
+   "__typename": "Tweet",
+   "favorite_count": 373,
+   "in_reply_to_screen_name": "ryanhallyall",
+   "in_reply_to_status_id_str": "1959996201140637901",
+   "in_reply_to_user_id_str": "19133833",
+   "lang": "en",
+   "created_at": "2025-08-25T15:10:10.000Z",
+   "display_text_range": [
+    31,
+    154
+   ],
+   "entities": {
+    "user_mentions": [
+     {
+      "id_str": "19133833",
+      "indices": [
+       0,
+       13
+      ],
+      "name": "Ryan Hall, Y’all",
+      "screen_name": "ryanhallyall"
+     },
+     {
+      "id_str": "1890125368645836800",
+      "indices": [
+       14,
+       30
+      ],
+      "name": "YallBot",
+      "screen_name": "OfficialYallbot"
+     },
+     {
+      "id_str": "2533341854",
+      "indices": [
+       133,
+       144
+      ],
+      "name": "Chris Park",
+      "screen_name": "chrisparkX"
+     }
+    ]
+   },
+   "id_str": "1959996732173058433",
+   "text": "@ryanhallyall @OfficialYallbot Hi there! Let’s fix this. We provide Emergency/Weather bots elevated access for free. Please DM us or @chrisparkX directly.",
+   "user": {
+    "id_str": "2244994945",
+    "name": "Developers",
+    "screen_name": "XDevelopers",
+    "is_blue_verified": true,
+    "profile_image_shape": "Square",
+    "verified": false,
+    "verified_type": "Business",
+    "profile_image_url_https": "https://pbs.twimg.com/profile_images/1683501992314798080/xl1POYLw_normal.jpg",
+    "highlighted_label": {
+     "badge": {
+      "url": "https://pbs.twimg.com/profile_images/1955359038532653056/OSHY3ewP_bigger.jpg"
+     },
+     "description": "X",
+     "url": {
+      "url": "https://twitter.com/X",
+      "url_type": "DeepLink"
+     },
+     "user_label_display_type": "Badge",
+     "user_label_type": "BusinessLabel"
+    }
+   },
+   "edit_control": {
+    "edit_tweet_ids": [
+     "1959996732173058433"
+    ],
+    "editable_until_msecs": "1756138210000",
+    "edits_remaining": "5",
+    "is_edit_eligible": false
+   },
+   "conversation_count": 15,
+   "news_action_type": "conversation",
+   "parent": {
+    "favorite_count": 244,
+    "in_reply_to_screen_name": "ryanhallyall",
+    "in_reply_to_status_id_str": "1959943249465876656",
+    "in_reply_to_user_id_str": "19133833",
+    "lang": "en",
+    "reply_count": 7,
+    "retweet_count": 5,
+    "created_at": "2025-08-25T15:08:03.000Z",
+    "display_text_range": [
+     17,
+     118
+    ],
+    "entities": {
+     "user_mentions": [
+      {
+       "id_str": "1890125368645836800",
+       "indices": [
+        0,
+        16
+       ],
+       "name": "YallBot",
+       "screen_name": "OfficialYallbot"
+      },
+      {
+       "id_str": "2244994945",
+       "indices": [
+        17,
+        29
+       ],
+       "name": "Developers",
+       "screen_name": "XDevelopers"
+      }
+     ]
+    },
+    "id_str": "1959996201140637901",
+    "text": "@OfficialYallbot @XDevelopers why are the only 2 options 100 posts/day @ $200 or 100 posts per 15 minutes at $5000 lol",
+    "user": {
+     "id_str": "19133833",
+     "name": "Ryan Hall, Y’all",
+     "screen_name": "ryanhallyall",
+     "is_blue_verified": true,
+     "profile_image_shape": "Circle",
+     "verified": false,
+     "profile_image_url_https": "https://pbs.twimg.com/profile_images/2043009319789035520/s9p77Q5h_normal.jpg"
+    },
+    "edit_control": {
+     "edit_tweet_ids": [
+      "1959996201140637901"
+     ],
+     "editable_until_msecs": "1756138083000",
+     "edits_remaining": "5",
+     "is_edit_eligible": false
+    },
+    "isEdited": false,
+    "isStaleEdit": false
+   },
+   "isEdited": false,
+   "isStaleEdit": false
+  },
+  "1778833124643983615": {
+   "__typename": "Tweet",
+   "favorite_count": 1037637,
+   "lang": "en",
+   "possibly_sensitive": false,
+   "created_at": "2024-04-12T17:10:40.000Z",
+   "display_text_range": [
+    0,
+    38
+   ],
+   "entities": {
+    "media": [
+     {
+      "display_url": "pic.x.com/WUIqN7B2F6",
+      "expanded_url": "https://x.com/elonmusk/status/1778833124643983615/photo/1",
+      "indices": [
+       39,
+       62
+      ],
+      "url": "https://t.co/WUIqN7B2F6"
+     }
+    ]
+   },
+   "id_str": "1778833124643983615",
+   "text": "To an exciting &amp; inspiring future! https://t.co/WUIqN7B2F6",
+   "user": {
+    "id_str": "44196397",
+    "name": "Elon Musk",
+    "screen_name": "elonmusk",
+    "is_blue_verified": true,
+    "profile_image_shape": "Circle",
+    "verified": false,
+    "profile_image_url_https": "https://pbs.twimg.com/profile_images/2103567689515954176/aR-Kjpp4_normal.jpg",
+    "highlighted_label": {
+     "badge": {
+      "url": "https://pbs.twimg.com/profile_images/1955359038532653056/OSHY3ewP_bigger.jpg"
+     },
+     "description": "X",
+     "url": {
+      "url": "https://twitter.com/X",
+      "url_type": "DeepLink"
+     },
+     "user_label_display_type": "Badge",
+     "user_label_type": "BusinessLabel"
+    }
+   },
+   "edit_control": {
+    "edit_tweet_ids": [
+     "1778833124643983615"
+    ],
+    "editable_until_msecs": "1712945440000",
+    "edits_remaining": "5",
+    "is_edit_eligible": true
+   },
+   "mediaDetails": [
+    {
+     "display_url": "pic.x.com/WUIqN7B2F6",
+     "expanded_url": "https://x.com/elonmusk/status/1778833124643983615/photo/1",
+     "ext_media_availability": {
+      "status": "Available"
+     },
+     "indices": [
+      39,
+      62
+     ],
+     "media_url_https": "https://pbs.twimg.com/media/GK-vS78bsAMEmWJ.jpg",
+     "original_info": {
+      "focus_rects": [
+       {
+        "h": 740,
+        "w": 1322,
+        "x": 0,
+        "y": 188
+       },
+       {
+        "h": 1322,
+        "w": 1322,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "h": 1507,
+        "w": 1322,
+        "x": 0,
+        "y": 0
+       },
+       {
+        "h": 1722,
+        "w": 861,
+        "x": 42,
+        "y": 0
+       },
+       {
+        "h": 1722,
+        "w": 1322,
+        "x": 0,
+        "y": 0
+       }
+      ],
+      "height": 1722,
+      "width": 1322
+     },
+     "sizes": {
+      "large": {
+       "h": 1722,
+       "resize": "fit",
+       "w": 1322
+      },
+      "medium": {
+       "h": 1200,
+       "resize": "fit",
+       "w": 921
+      },
+      "small": {
+       "h": 680,
+       "resize": "fit",
+       "w": 522
+      },
+      "thumb": {
+       "h": 150,
+       "resize": "crop",
+       "w": 150
+      }
+     },
+     "type": "photo",
+     "url": "https://t.co/WUIqN7B2F6"
+    }
+   ],
+   "photos": [
+    {
+     "backgroundColor": {
+      "red": 204,
+      "green": 214,
+      "blue": 221
+     },
+     "cropCandidates": [
+      {
+       "h": 740,
+       "w": 1322,
+       "x": 0,
+       "y": 188
+      },
+      {
+       "h": 1322,
+       "w": 1322,
+       "x": 0,
+       "y": 0
+      },
+      {
+       "h": 1507,
+       "w": 1322,
+       "x": 0,
+       "y": 0
+      },
+      {
+       "h": 1722,
+       "w": 861,
+       "x": 42,
+       "y": 0
+      },
+      {
+       "h": 1722,
+       "w": 1322,
+       "x": 0,
+       "y": 0
+      }
+     ],
+     "expandedUrl": "https://x.com/elonmusk/status/1778833124643983615/photo/1",
+     "url": "https://pbs.twimg.com/media/GK-vS78bsAMEmWJ.jpg",
+     "width": 1322,
+     "height": 1722
+    }
+   ],
+   "conversation_count": 39302,
+   "news_action_type": "conversation",
+   "isEdited": false,
+   "isStaleEdit": false
+  }
+ }
+}

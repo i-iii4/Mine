@@ -494,6 +494,124 @@ Reveal молчал из-за вложенного `params.path`; помощни
 принадлежность новому пути нечем. Такое сохранение показывается как
 недоступное пространство, запись журнала операции сохраняется.
 
+## Расширение после глубокого аудита (13.10.2026)
+
+Основание: [SPEC_DEEP_AUDIT.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_DEEP_AUDIT.md>),
+каталог Е3, находки Е3.3 по Е3.19. Правила ниже дополняют разделы, на
+которые ссылаются.
+
+- **Е3.3. Без помощника папка браузера.** Браузер не может запустить
+  помощника (`native_disconnected`, `native_unavailable`: помощник не
+  зарегистрирован или сразу завершился), а пространство Mine раньше не
+  выбрано: клиппер показывает экран выбора папки по
+  [SPEC_ONBOARDING.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_ONBOARDING.md>),
+  О1 и О2, со строкой о связи и автоматическим повтором. Выбранное раньше
+  пространство Mine остаётся назначением (О4). Помощник, который запустился,
+  но не ответил в срок (`native_timeout`), и остановившийся фон расширения
+  первоначальную настройку не запускают (раздел «Исправление целостности»,
+  пункт 3). До 13.10.2026 любой ответ с `outcome: unknown` оставлял клиппер в
+  режиме приложения, и без Mine папку браузера выбрать было нельзя: фон
+  отвечает так на незарегистрированного помощника
+  (`Specified native messaging host not found.`, проверено в Chromium 148
+  без окна).
+- **Е3.4. Пустые метаданные.** Страница без content script даёт каждому
+  открытию свою пустую запись; адрес и название прошлой страницы в
+  следующее открытие не попадают.
+- **Е3.6. Текст поста X.** Проверено на живых ответах X 13.10.2026: GraphQL
+  `TweetResultByRestId` и syndication для одних и тех же постов
+  ([xPost.live.test.json](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/lib/xPost.live.test.json>)).
+  В `legacy.full_text` и в `text` syndication X экранирует `&`, `<`, `>`
+  как `&amp;`, `&lt;`, `&gt;`; текст длинного поста (`note_tweet`) приходит
+  без экранирования. Упоминания, с которых начинается ответ, и ссылка медиа
+  в конце лежат вне `display_text_range`. GraphQL считает его в кодовых
+  точках, syndication в единицах UTF-16, оба по экранированному тексту.
+  Клиппер берёт видимую часть по `display_text_range` и раскодирует три
+  сущности одним проходом (`MineXThread.post`, `MineXThread.syndicationText`);
+  текст `note_tweet` не меняется. Длинный ответ, текст которого начинается с
+  упоминаний, живым образцом не проверен.
+- **Е3.7. Доступ к папке вернулся.** После `Allow access` на странице
+  настройки фон рассылает `mineStandaloneAccessRestored` с привязкой папки.
+  Клиппер, сохранение которого ждёт этой папки (незавершённая операция или
+  прежний клип), убирает строку отказа и показывает `Folder access restored.`;
+  сохраняет он только по нажатию. Выбранная папка, потерявшая доступ,
+  проверяется заново.
+- **Е3.8, Е3.12. Оверлей отвечает исходом.** Оверлей отвечает фону на
+  открытие после монтирования: `{ok:true}`, когда редактор на странице,
+  `{ok:false, code:"overlay_unavailable"}`, когда открыть не вышло, и фон
+  открывает окно клиппера. Оверлей не открывается на странице без
+  HTML-тела (SVG, XML) и без своей таблицы стилей; неудачное чтение стилей
+  не запоминается. `dist/assets/popup.css` доступна и страницам `file://`
+  (`web_accessible_resources`): без этого content script страницы на диске
+  получал отказ `Failed to fetch` (проверено в Chromium 148 без окна), и
+  оверлей открывался без стилей.
+- **Е3.9. Клип обрезки из окна.** Клип, который окно клиппера оставило для
+  обрезки (`cropPendingState` и `cropResult` в хранилище сеанса), вместе с
+  адресом страницы и временем, открывается только в окне той же вкладки на
+  той же странице и не позже 10 минут. Оверлей его не берёт. Устаревший
+  клип и клип этой вкладки с другой страницей удаляются при открытии.
+- **Е3.10. Папка браузера читается по изменениям (Н5).** Список коллекций
+  помнит для каждой заметки время изменения и размер, с которыми её
+  прочитал (IndexedDB `mine-standalone-notes`, производные данные), и при
+  следующем открытии читает только изменившиеся. Сохранение обходит дерево
+  папки один раз: тот же список имён служит именованию и проверкам того же
+  сохранения; продолжение после перезапуска обходит его заново.
+- **Е3.11. Клип оверлея не помещается в хранилище сеанса.** Хранилище
+  сеанса держит 10 МБ на все клипы вместе (проверено в Chromium 148 без
+  окна). Не поместившийся клип хранится без снимка, клиппер пишет
+  `If the page changes, this clip comes back without its screenshot.`
+  Клип, который не помещается и без снимка, не хранится, прежняя копия
+  удаляется, клиппер пишет
+  `This clip is too large to keep if the page changes. Save it before you leave this page.`
+- **Е3.13. Снимок без кнопок Mine.** На время снимка страница прячет кнопки
+  Mine на постах X и Instagram и возвращает их, когда фон сообщает
+  `finishViewportCapture`, и не позже чем через 5 секунд.
+- **Е3.15. Адрес X.** Пост X определяет одно правило `MineXThread.postAddress`:
+  хосты `x.com`, `www.x.com`, `pro.x.com`, `twitter.com`, `www.twitter.com` и
+  путь `/<handle>/status/<id>`. Хост, который только оканчивается на `x.com`,
+  не X. Пост со страницы X Pro сохраняется со ссылкой
+  `https://x.com/<handle>/status/<id>`.
+- **Е3.16. Кнопка Instagram.** Instagram не отдал пост: клиппер открывается с
+  адресом поста и причиной
+  `Mine couldn't read this Instagram post. Save it as Screenshot or Link.`
+  Клиппер не открылся: кнопка краснеет, её подсказка называет причину.
+- **Е3.17. Content у клипа Save link.** Вкладка показывает страницу, на
+  которой была ссылка, и для содержимого ссылки не читается; Content пишет
+  `Mine can't read the linked page from here. Open the link and save it from its page.`
+- **Е3.18. Ленты вне кэша.** Список операций кэша (правило 6 раздела
+  «Кнопка Mine в ленте X») не расширен: живых ответов X с именами операций
+  закладок, отметок «нравится», медиа и ответов профиля нет, а выдумывать их
+  нельзя. Посты таких лент читаются запасным путём через syndication. Пост
+  с возрастным ограничением syndication не отдаёт, поэтому для таких лент
+  кэш нужен; операции добавляются по записи живых ответов X (Е7.5).
+- **Е3.19. Квота хранилища расширения.** `chrome.storage.local` без
+  `unlimitedStorage` держит 10 МБ и отказывает
+  `Resource::kQuotaBytes quota exceeded` (проверено в Chromium 148 без
+  окна), а журнал сохранения в папку браузера хранит снимок экрана в самом
+  запросе. Расширение объявляет `unlimitedStorage`; хранилище сеанса
+  остаётся ограниченным 10 МБ.
+
+Проверки:
+[xThread.test.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/lib/xThread.test.ts>)
+(живые ответы X: сущности, упоминания ответа, текст syndication; адрес
+поста X),
+[xFeedButton.test.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/lib/xFeedButton.test.ts>)
+(запасной путь кнопки X на живом ответе syndication),
+[captureSource.test.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/lib/captureSource.test.ts>)
+(хост, оканчивающийся на x.com; пост X Pro; кнопки Mine на время снимка),
+[instagramFeedButton.test.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/lib/instagramFeedButton.test.ts>),
+[standaloneVault.test.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/lib/standaloneVault.test.ts>)
+(чтение заметок по изменениям, один обход при сохранении),
+[background.messaging.test.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/background.messaging.test.ts>)
+(квота хранилища сеанса, `finishViewportCapture`),
+[overlay-entry.mount.test.tsx](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/popup/overlay-entry.mount.test.tsx>),
+[messaging.test.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/popup/lib/messaging.test.ts>),
+[socialContent.test.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/popup/lib/socialContent.test.ts>),
+[PopupApp.test.tsx](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/popup/PopupApp.test.tsx>),
+тесты `useClipperState` (папка без помощника, доступ вернулся, клип
+обрезки, Content у Save link, клип не помещается); `test:clipper-worker` в
+Chromium без окна: оверлей со стилями на странице `file://`, окно клиппера
+на странице SVG, запись больше 10 МБ в `chrome.storage.local`.
+
 ## Overview
 
 Браузерное расширение для сохранения контента из веба в Mine vault. Нативный
@@ -3061,7 +3179,7 @@ Native host читает путь к vault из файла конфигурац�
 | Situation | Behavior |
 |---|---|
 | Vault not configured | Status: `ok:true, connected:true, vaultConfigured:false, folder_state:unconfigured`; UI предлагает выбор папки |
-| Native host not found | Строка «Mine isn't connected to this browser. Open Mine and the clipper connects on its own.» Пока клиппер открыт, он сам повторяет проверку раз в 3 секунды и подключается без нажатий, как только Mine починит регистрацию (SPEC_ONBOARDING.md, О5). Кнопки повтора под строкой нет. Не диагноз «приложение отсутствует» |
+| Native host not found | Пространство Mine раньше не выбрано: экран выбора папки браузера (`Choose folder…`, SPEC_ONBOARDING.md, О1, О2) со строкой «Mine isn't connected to this browser. Open Mine and the clipper connects on its own.» и `Retry connection`. Пространство Mine выбрано раньше: оно остаётся назначением, та же строка стоит над Save, кнопки повтора под ней нет, папка браузера вместо пространства не подставляется (О4). В обоих случаях, пока клиппер открыт, он сам повторяет проверку раз в 3 секунды и подключается без нажатий, как только Mine починит регистрацию (SPEC_ONBOARDING.md, О5). Не диагноз «приложение отсутствует» (раздел «Расширение после глубокого аудита», Е3.3) |
 | Helper not answering | Строка «Mine isn't answering. The clipper keeps trying.» и тот же автоматический повтор |
 | Incompatible host | Нет обязательных save/lookup capabilities: новый Save не отправляется. Строка «This clipper needs a newer Mine. Open the updated Mine and the clipper connects on its own.» и тот же автоматический повтор |
 | Folder missing / access denied | `folder_state` / browser permission и конкретная причина; выбор папки либо восстановление исходного binding |
@@ -3151,20 +3269,37 @@ surface: данные поста предзагружаются в `chrome.stora
 
 ## Manifest V3
 
+Исходный `extension/manifest.json` без ключа `key`:
+
 ```json
 {
   "manifest_version": 3,
-  "name": "Mine Clipper",
+  "name": "Mine",
   "version": "0.1.0",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
   "description": "Save links, articles, and images to Mine",
   "permissions": [
     "contextMenus",
     "activeTab",
     "nativeMessaging",
-    "storage"
+    "storage",
+    "unlimitedStorage",
+    "scripting",
+    "tabs",
+    "cookies"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "https://x.com/*",
+    "https://pro.x.com/*",
+    "https://twitter.com/*",
+    "https://public.api.bsky.app/*",
+    "<all_urls>"
   ],
   "action": {
-    "default_popup": "dist/index.html",
+    "default_title": "Mine",
     "default_icon": {
       "16": "icons/icon-16.png",
       "24": "icons/icon-24.png",
@@ -3178,18 +3313,47 @@ surface: данные поста предзагружаются в `chrome.stora
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["lib/readerable.js", "lib/readability.js", "lib/turndown.browser.umd.js", "content.js"],
-      "run_at": "document_idle"
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "icons/icon-32.png",
-        "icons/clipper-overlay-32.png"
+      "matches": [
+        "https://x.com/*",
+        "https://pro.x.com/*",
+        "https://twitter.com/*"
       ],
-      "matches": ["<all_urls>"]
+      "js": [
+        "lib/xThread.js",
+        "lib/xThreadPage.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ],
+      "js": [
+        "lib/xThread.js",
+        "lib/twitterThreadSelection.js",
+        "lib/twitterTweetContent.js",
+        "lib/xLongformArticleExtraction.js",
+        "lib/extractionDocumentSanitizer.js",
+        "lib/productExtraction.js",
+        "lib/tweetTextCompletion.js",
+        "lib/youtubeSource.js",
+        "lib/xFeedButton.js",
+        "lib/feedButtonSettings.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.instagram.com/*"
+      ],
+      "js": [
+        "dist/overlay.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "commands": {
@@ -3198,7 +3362,7 @@ surface: данные поста предзагружаются в `chrome.stora
         "default": "Alt+A",
         "mac": "Alt+A"
       },
-      "description": "Open Mine Clipper"
+      "description": "Open Mine"
     }
   },
   "icons": {
@@ -3206,12 +3370,29 @@ surface: данные поста предзагружаются в `chrome.stora
     "32": "icons/icon-32.png",
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "icons/icon-32.png",
+        "icons/clipper-overlay-32.png",
+        "dist/assets/popup.css"
+      ],
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ]
+    }
+  ]
 }
 ```
 
 В полезной нагрузке сборки `version` и `background.service_worker` свои у
 каждой сборки (К4, «Своя версия и свой файл фона у каждой сборки»).
+Разрешение `unlimitedStorage` и страницы `file:///*` в
+`web_accessible_resources` объяснены в разделе «Расширение после глубокого
+аудита» (Е3.19, Е3.12).
 
 ## Testing
 

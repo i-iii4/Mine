@@ -59,6 +59,19 @@ export const DESTINATION_CHANGED_DURING_SAVE = "The folder changed before this c
  *  gone and its text was never read (SPEC_CLIPPER.md, «Доработки после живого
  *  просмотра», Р8). */
 export const SOURCE_PAGE_LEFT = "Mine can't read the original page after leaving it. Save it as Screenshot or Link.";
+/** Content of a Save link clip: the tab shows the page the link was on, not
+ *  the linked page, and is not read for it (SPEC_DEEP_AUDIT.md, Е3.17). */
+export const LINKED_PAGE_NOT_READ = "Mine can't read the linked page from here. Open the link and save it from its page.";
+/** The open clip did not fit session storage: a page change would lose it
+ *  (SPEC_DEEP_AUDIT.md, Е3.11). */
+export const OPEN_CLIP_NOT_KEPT = "This clip is too large to keep if the page changes. Save it before you leave this page.";
+/** The open clip was kept without its screenshot (Е3.11). */
+export const OPEN_CLIP_SCREENSHOT_NOT_KEPT = "If the page changes, this clip comes back without its screenshot.";
+/** How long the clip a window left for its crop waits for that window: the
+ *  same span as a clipper launch in background (CLIPPER_LAUNCH_TTL_MS). */
+const CROP_CLIP_TTL_MS = 10 * 60 * 1000;
+/** Access to the folder of a waiting save came back (SPEC_DEEP_AUDIT.md, Е3.7). */
+export const FOLDER_ACCESS_RESTORED = "Folder access restored.";
 
 import { resolveCaptureAuthor, resolveCaptureResult, youtubeCaptureSourceUrl } from "../lib/captureResult";
 import {
@@ -73,6 +86,7 @@ import {
 } from "../lib/articleExtractionState";
 import { applySaveImageContextMenu, linkTargetMetadata } from "../lib/contextMenuMetadata";
 import { pickImageCardUrl } from "../lib/postSourceUrl";
+import { isTwitterStatusUrl, isXPageUrl, syndicationShownText, xPostAddress } from "../lib/socialContent";
 import {
   parseTwitterPhotoUrl,
   fetchTweetPhotoByIndex,
@@ -183,6 +197,12 @@ export function useClipperState() {
   const [pendingOperation, setPendingOperation] = useState(false);
   const [savePrepared, setSavePrepared] = useState(false);
   const [previousOperation, setPreviousOperation] = useState<PinnedSaveOperation | null>(null);
+  // Read by the message listener, which outlives a render.
+  const previousOperationRef = useRef<PinnedSaveOperation | null>(null);
+  useEffect(() => { previousOperationRef.current = previousOperation; }, [previousOperation]);
+  // Access to the folder of a waiting save came back (Е3.7); the next Save
+  // or check clears it.
+  const [folderAccessNotice, setFolderAccessNotice] = useState<string | null>(null);
   const [allowDifferentClip, setAllowDifferentClip] = useState(false);
   const [connectionChecking, setConnectionChecking] = useState(false);
   // Mine is out of reach or too old: the clipper keeps asking by itself.
@@ -401,7 +421,8 @@ export function useClipperState() {
 
   const ensureArticleLoaded = useCallback(async (): Promise<ArticleData | null> => {
     const existing = articleDataRef.current;
-    const needsThread = /https:\/\/(?:x\.com|twitter\.com)\/[^/]+\/status\/\d+/.test(metadataRef.current?.url || "")
+    // X, X Pro and Twitter by one rule (SPEC_DEEP_AUDIT.md, Е3.15).
+    const needsThread = isTwitterStatusUrl(metadataRef.current?.url)
       && !existing?.content.trim() && existing?.threadPostCount === undefined;
     if (!needsThread && articleHasSaveableContent(metadataRef.current, existing)) {
       setArticleExtractionStateValue("ready");
@@ -420,10 +441,17 @@ export function useClipperState() {
     }
 
     const launched = launchedArticleRef.current;
+    // A Save link clip is the link, never the page it was clicked on: the
+    // tab, which shows that page, is not read for it, and Content says why
+    // (SPEC_CLIPPER.md, «Шаг 1», `save-link`; SPEC_DEEP_AUDIT.md, Е3.17).
+    if (!launched && linkTargetRef.current) {
+      setArticleDataValue({ ...(existing ?? { title: "", content: "", byline: null, excerpt: "" }), unavailableReason: LINKED_PAGE_NOT_READ });
+      setArticleExtractionStateValue("empty");
+      return articleDataRef.current;
+    }
     // The overlay's page changed since the clip was opened: the original
-    // page is gone, and this page is not the clip's (Р8). A Save link clip
-    // keeps its own refusal: its page was never this one.
-    if (IS_CONTENT_SCRIPT_CONTEXT && !launched && !linkTargetRef.current) {
+    // page is gone, and this page is not the clip's (Р8).
+    if (IS_CONTENT_SCRIPT_CONTEXT && !launched) {
       const shown = currentCaptureDocument();
       if (shown && meta.documentUrl !== undefined && (shown.documentUrl !== meta.documentUrl
         || (meta.captureGeneration !== undefined && shown.captureGeneration !== meta.captureGeneration))) {
@@ -699,7 +727,13 @@ export function useClipperState() {
           // Out of reach or too old repairs itself in Mine; a folder to choose
           // is the person's decision and waits for them.
           setReconnecting(!status.ok || !compatible);
-          const uncertain = status.outcome === "unknown" || status.code === "native_timeout" || status.code === "extension_transport" || status.code === "extension_background_error";
+          // Without a helper the clipper saves into a folder of the browser
+          // (SPEC_ONBOARDING.md, О1): a helper the browser cannot start offers
+          // that folder at once (SPEC_DEEP_AUDIT.md, Е3.3). A space of Mine
+          // chosen before stays the destination, and a helper that started
+          // but does not answer, or a worker that stopped, starts no setup
+          // (SPEC_CLIPPER.md, «Исправление целостности», 3).
+          const uncertain = status.code === "native_timeout" || status.code === "extension_transport" || status.code === "extension_background_error";
           saveModeRef.current = destinationRef.current === "native" || uncertain ? "app" : "unconfigured";
           setSaveMode(saveModeRef.current);
           // Without a reachable space there is nothing to load: the picker
@@ -803,7 +837,7 @@ export function useClipperState() {
   }, [ensureNativeStatus]);
 
   useEffect(() => {
-    const onMessage = (msg: { action?: string }) => {
+    const onMessage = (msg: { action?: string; binding_id?: unknown }) => {
       if (msg?.action === "mineChannelsChanged") {
         void refreshChannels();
       }
@@ -811,6 +845,23 @@ export function useClipperState() {
         destinationGenerationRef.current += 1;
         destinationRef.current = "browser";
         void ensureNativeStatus(true);
+      }
+      // Access to a folder came back on the setup page (SPEC_ONBOARDING.md,
+      // О1): the save that waits for that folder says so instead of the
+      // refusal it showed, and a selected folder that had lost access is
+      // checked again. Nothing is saved without the person's press
+      // (SPEC_DEEP_AUDIT.md, Е3.7).
+      if (msg?.action === "mineStandaloneAccessRestored" && typeof msg.binding_id === "string") {
+        const operation = operationRef.current;
+        const waiting = (operation?.executor === "browser" && operation.bindingId === msg.binding_id)
+          || (!operation && previousOperationRef.current?.executor === "browser"
+            && previousOperationRef.current.bindingId === msg.binding_id);
+        if (waiting) setFolderAccessNotice(FOLDER_ACCESS_RESTORED);
+        if (!operation && !preparedOperationRef.current && !savingRef.current
+          && destinationRef.current === "browser" && bindingIdRef.current === msg.binding_id) {
+          destinationGenerationRef.current += 1;
+          void ensureNativeStatus(true);
+        }
       }
     };
     chrome.runtime.onMessage.addListener(onMessage);
@@ -828,12 +879,37 @@ export function useClipperState() {
   const openClipPendingRef = useRef<OpenClipWrite | null>(null);
   // The screenshot background has; `undefined` until the first message.
   const sentScreenshotRef = useRef<OpenClipScreenshot | null | undefined>(undefined);
+  // The writes of the clip, the last one counts; whether background holds
+  // the clip without its frame (Е3.11).
+  const openClipWriteRef = useRef(0);
+  const screenshotNotKeptRef = useRef(false);
+  const [openClipNotice, setOpenClipNotice] = useState<string | null>(null);
   const flushOpenClip = useCallback(() => {
     if (openClipTimerRef.current !== null) clearTimeout(openClipTimerRef.current);
     openClipTimerRef.current = null;
     const clip = openClipPendingRef.current;
     openClipPendingRef.current = null;
-    if (clip && !clipEndedRef.current) writeOpenClip(clip);
+    if (!clip || clipEndedRef.current) return;
+    // What did not fit session storage is said in the editor: a page change
+    // would lose it (SPEC_DEEP_AUDIT.md, Е3.11). Only the answer to the last
+    // write counts, and an editor already gone shows nothing.
+    const write = ++openClipWriteRef.current;
+    const carriesScreenshot = "screenshot" in clip;
+    void writeOpenClip(clip).then((kept) => {
+      if (!mountedRef.current || write !== openClipWriteRef.current || kept === "unknown") return;
+      if (kept === "not_kept") {
+        // Background keeps nothing of this clip now: the next write sends
+        // all of it, the frame included.
+        sentScreenshotRef.current = undefined;
+        setOpenClipNotice(OPEN_CLIP_NOT_KEPT);
+        return;
+      }
+      // A frame background could not hold stays missing there until a new
+      // frame is kept.
+      if (kept === "kept_without_screenshot") screenshotNotKeptRef.current = true;
+      else if (carriesScreenshot) screenshotNotKeptRef.current = false;
+      setOpenClipNotice(screenshotNotKeptRef.current ? OPEN_CLIP_SCREENSHOT_NOT_KEPT : null);
+    });
   }, []);
   /// The clip is saved: nothing of it stays for the tab.
   const endOpenClip = useCallback(() => {
@@ -922,6 +998,7 @@ export function useClipperState() {
     if (!previousOperation || savingRef.current) return null;
     savingRef.current = true;
     setSaving(true);
+    setFolderAccessNotice(null);
     try {
       const result = await executePinnedSave(previousOperation);
       if (result.ok || result.outcome === "committed") {
@@ -994,9 +1071,13 @@ export function useClipperState() {
     }
 
     // Window-entry fallback: persist state + close popup + rehydrate on return.
+    // The page and the moment name the window this clip comes back in: the
+    // next window of the same tab on the same page, soon (Е3.9).
     await chrome.storage.session.set({
       cropPendingState: {
         tabId: tabIdRef.current,
+        pageUrl: pageUrlRef.current,
+        createdAt: Date.now(),
         linkTarget: linkTargetRef.current,
         metadata,
         articleData,
@@ -1109,11 +1190,25 @@ export function useClipperState() {
         return;
       }
 
-      // Check for crop mode result — popup was reopened after user finished cropping
-      const cropData = await chrome.storage.session.get(["cropPendingState", "cropResult"]);
-      if (cropData.cropPendingState && cropData.cropResult) {
+      // Check for crop mode result — the window reopened after its crop. The
+      // clip it left is that window's: the overlay never takes it, and a
+      // window takes it only for the same tab on the same page, within
+      // CROP_CLIP_TTL_MS. Left by this tab otherwise, it goes; one of another
+      // tab waits for that tab's window (SPEC_DEEP_AUDIT.md, Е3.9).
+      const cropData: Record<string, unknown> = IS_CONTENT_SCRIPT_CONTEXT
+        ? {} : await chrome.storage.session.get(["cropPendingState", "cropResult"]);
+      const cropClip = cropData.cropPendingState as { tabId?: unknown; pageUrl?: unknown; createdAt?: unknown } | undefined;
+      const cropClipFresh = typeof cropClip?.createdAt === "number" && Date.now() - cropClip.createdAt <= CROP_CLIP_TTL_MS;
+      const cropClipOfThisTab = cropClip?.tabId === launch?.sourceTabId;
+      const cropClipHere = cropClipFresh && cropClipOfThisTab && typeof cropClip?.pageUrl === "string"
+        && cropClip.pageUrl === launch?.sourceUrl;
+      if (cropClip && !cropClipHere && (cropClipOfThisTab || !cropClipFresh)) {
+        void chrome.storage.session.remove(["cropPendingState", "cropResult"]);
+      }
+      if (cropClipHere && cropData.cropResult) {
         const pending = cropData.cropPendingState as {
           tabId: number;
+          pageUrl: string;
           linkTarget?: string | null;
           metadata: PageMetadata | null;
           articleData: ArticleData | null;
@@ -1134,6 +1229,7 @@ export function useClipperState() {
         chrome.storage.session.remove(["cropPendingState", "cropResult"]);
 
         tabIdRef.current = pending.tabId;
+        pageUrlRef.current = pending.pageUrl;
         linkTargetRef.current = pending.linkTarget ?? null;
         vaultRef.current = pending.selectedVault;
         setSelectedVault(pending.selectedVault);
@@ -1383,33 +1479,31 @@ export function useClipperState() {
         meta.detectedType = "selection";
         meta.selection = ctx.selectionText ?? meta.selection;
         break;
-      case "save-link":
+      case "save-link": {
         // The metadata is already the link's own (linkTargetMetadata).
         // Twitter/X tweet links: fetch full tweet (text + images) via
         // syndication API, asked of background: no content script needed,
         // works even when current page is the feed, not the tweet page.
-        if (ctx.linkUrl && /(?:twitter\.com|x\.com)\/(\w+)\/status\/(\d+)/i.test(ctx.linkUrl)) {
+        const linkedPost = xPostAddress(ctx.linkUrl);
+        if (linkedPost) {
           meta.detectedType = "article";
-          const tweetMatch = ctx.linkUrl.match(/(?:twitter\.com|x\.com)\/(\w+)\/status\/(\d+)/i);
-          if (tweetMatch) {
-            const [, handle, tweetId] = tweetMatch;
-            try {
-              const tweet = await fetchTweetBySyndicationApi(tweetId!, `@${handle}`);
-              if (tweet) {
-                deferredArticleRef.current = { ...tweet, sourceUrl: meta.url };
-              }
-            } catch {
-              // Fall through — save as article without media
+          try {
+            const tweet = await fetchTweetBySyndicationApi(linkedPost.id, `@${linkedPost.handle}`);
+            if (tweet) {
+              deferredArticleRef.current = { ...tweet, sourceUrl: meta.url };
             }
+          } catch {
+            // Fall through — save as article without media
           }
         }
         break;
+      }
       case "save-page": {
         // Twitter lightbox: user right-clicked on the overlay image but
         // Chrome didn't detect an <img> context (transparent element on
         // top). Check if a lightbox is open and extract the image URL.
         const pageUrl = meta.url || "";
-        if (pageUrl.includes("x.com/") || pageUrl.includes("twitter.com/")) {
+        if (isXPageUrl(pageUrl)) {
           try {
             const lightbox = await detectTwitterLightbox(tabId);
             if (lightbox?.src) {
@@ -1518,8 +1612,10 @@ export function useClipperState() {
 
     savingRef.current = true;
     setSaving(true);
-    // A refusal shown under the collections belongs to the Save before.
+    // A refusal shown under the collections belongs to the Save before, and
+    // so does the news that its folder's access came back.
     setCollectionError(null);
+    setFolderAccessNotice(null);
     // Folder moves seen when Save was pressed. A move before the clip is
     // written takes the collections away from it: the Save stops and the
     // editor names both folders, as В4.4 has it (Г3.2).
@@ -1926,6 +2022,10 @@ export function useClipperState() {
       && !(saveMode === "app" && folderStateBlocksSave(nativeFolderState)),
     /** Where the clip was made and where Save now puts it, when they differ. */
     destinationNotice,
+    /** Access to the folder of the waiting save came back (Е3.7). */
+    folderAccessNotice,
+    /** What of the open clip a page change would lose (Е3.11). */
+    openClipNotice,
     connectionChecking,
     reconnecting,
     articleExtractionState,
@@ -1996,10 +2096,6 @@ function movedClipNotice(previousLabel: string | null, folderName: string): stri
   return previous
     ? `This clip was made for “${previous}”. It will be saved to “${folderName}”.`
     : `This clip was made for another folder. It will be saved to “${folderName}”.`;
-}
-
-function isTwitterStatusUrl(url: string | null | undefined): boolean {
-  return /(?:twitter\.com|x\.com)\/[^/]+\/status\/\d+/i.test(url ?? "");
 }
 
 function firstEmbeddedVideoCurrentTime(article: ArticleData): number {
@@ -2221,7 +2317,9 @@ async function fetchTweetBySyndicationApi(
   // The service's own shape, read as before.
   const mediaDetails = (Array.isArray(data.mediaDetails) ? data.mediaDetails : []) as SyndicationMedia[];
 
-  const text = stripSyndicationMediaLinks(typeof data.text === "string" ? data.text : "", mediaDetails);
+  // The part X shows: a reply's leading mentions left out, what X escapes
+  // decoded (SPEC_DEEP_AUDIT.md, Е3.6).
+  const text = stripSyndicationMediaLinks(syndicationShownText(data), mediaDetails);
   const media: string[] = [];
 
   for (const m of mediaDetails) {

@@ -399,8 +399,11 @@ describe("the post X Pro opened over a column (Р2, Р3)", () => {
 const libs = ["youtubeSource", "xThread", "twitterThreadSelection", "twitterTweetContent", "tweetTextCompletion", "xFeedButton", "feedButtonSettings"]
   .map((name) => readFileSync(`extension/lib/${name}.js`, "utf8")).join("\n");
 const contentScript = readFileSync("extension/content.js", "utf8");
+// In the page's world `window` is the global object. Here the libraries that
+// attach to `globalThis` are shared with `window`; one that attaches to
+// `window` itself (tweetTextCompletion.js) keeps what it put there.
 const shareWithWindow = ["MineXThread", "MineTwitterThreadSelection", "MineTwitterTweetContent", "MineTweetTextCompletion", "MineXFeedButton", "MineFeedButtonSettings"]
-  .map((name) => `window.${name} = globalThis.${name};`).join("\n");
+  .map((name) => `if (globalThis.${name}) window.${name} = globalThis.${name};`).join("\n");
 
 type Message = Record<string, unknown> & { action?: string; preloaded?: { metadata: Record<string, unknown>; article: Record<string, unknown> } };
 const knownPosts = new Map((globalThis as unknown as { MineXThread: { feed(data: unknown): Array<{ id: string }> } })
@@ -513,6 +516,22 @@ describe("pressing the Mine button of an X post", () => {
     expect(page.fetch).not.toHaveBeenCalled();
     expect(opened.preloaded?.article.content).toBe("Fallback text\n\n![](https://pbs.twimg.com/media/fallback.jpg?name=large)");
     expect(opened.preloaded?.article.unavailableReason).toBeUndefined();
+  });
+
+  // The service's own answers, written down 13.10.2026 (xPost.live.test.json):
+  // a reply starts with the mentions X does not show, and `&` comes as `&amp;`
+  // (SPEC_DEEP_AUDIT.md, Е3.6).
+  it("saves from syndication the text X shows: no reply mentions, nothing escaped", async () => {
+    const live = JSON.parse(readFileSync("extension/lib/xPost.live.test.json", "utf8")) as { syndication: Record<string, unknown> };
+    const developers = { id: "2244994945", handle: "XDevelopers", name: "Developers" };
+    const reply = xPage("https://x.com/home", card(developers, "1724511614206898410", { text: "" }),
+      { cached: false, syndication: live.syndication["1724511614206898410"] });
+    expect((await reply.press(reply.articles[0])).preloaded?.article.content).toBe(
+      "To clarify, this is a legacy integration. We've reached out to explore new integrations including live-streaming. Stay tuned!");
+    const musk = { id: "44196397", handle: "elonmusk", name: "Elon Musk" };
+    const amp = xPage("https://x.com/home", card(musk, "1778833124643983615", { text: "" }),
+      { cached: false, syndication: live.syndication["1778833124643983615"] });
+    expect(String((await amp.press(amp.articles[0])).preloaded?.article.content)).toMatch(/^To an exciting & inspiring future!\n\n!\[\]\(/);
   });
 
   it("opens the clipper with the reason when neither the feeds nor syndication give the post", async () => {

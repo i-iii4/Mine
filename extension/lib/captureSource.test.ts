@@ -6,15 +6,18 @@ import type { ArticleData, PageMetadata } from "../popup/lib/messaging";
 
 const script = readFileSync("extension/content.js", "utf8");
 const youtubeScript = readFileSync("extension/lib/youtubeSource.js", "utf8");
+// The manifest puts lib/xThread.js before content.js in the page's world.
+const xThreadScript = readFileSync("extension/lib/xThread.js", "utf8");
 function page(url: string, head = "", Defuddle?: unknown) {
   const dom = new JSDOM(`<html><head>${head}</head><body><p>Post content</p></body></html>`, { url });
   const fetch = vi.fn();
   const addListener = vi.fn();
-  runInNewContext(`${youtubeScript}\n${script}`, {
+  runInNewContext(`${xThreadScript}\n${youtubeScript}\n${script}`, {
     window: dom.window, document: dom.window.document, URL,
     chrome: { runtime: { onMessage: { addListener } } },
     Defuddle,
     fetch, console, setTimeout, clearTimeout, Node: dom.window.Node,
+    requestAnimationFrame: (callback: () => void) => setTimeout(callback, 0),
   });
   const api = (dom.window as unknown as { __mineClipper: {
     extractMetadata(): PageMetadata;
@@ -38,6 +41,36 @@ describe("actual content-script capture source", () => {
     expect(article.content).toContain("Saved post");
     expect(article.content).toContain("https://cdn.bsky.app/picture.webp");
     expect(fetch.mock.calls[0]?.[0]).toContain(encodeURIComponent("at://did:plc:author/app.bsky.feed.post/123"));
+  });
+
+  // SPEC_DEEP_AUDIT.md, Е3.13: a screenshot shows the page, not the Mine
+  // buttons the content script put on X posts and Instagram posts.
+  it("hides the Mine buttons of X and Instagram for a screenshot and shows them again after it", async () => {
+    const { dom, addListener } = page("https://x.com/home");
+    const document = dom.window.document;
+    document.body.insertAdjacentHTML("beforeend",
+      '<div data-mine-x-post="post"><button type="button">Mine</button></div><button type="button" data-la-clip="">Mine</button>');
+    const receive = addListener.mock.calls[0]![0] as (message: unknown, sender: unknown, reply: (answer: unknown) => void) => unknown;
+    const shown = () => [...document.querySelectorAll("[data-mine-x-post], [data-la-clip]")]
+      .map((button) => dom.window.getComputedStyle(button).visibility);
+
+    await new Promise((resolve) => receive({ action: "prepareViewportCapture" }, {}, resolve));
+    expect(shown()).toEqual(["hidden", "hidden"]);
+    receive({ action: "finishViewportCapture" }, {}, () => undefined);
+    expect(shown()).toEqual(["visible", "visible"]);
+  });
+
+  // SPEC_DEEP_AUDIT.md, Е3.15: X by its host, not by a substring "x.com/".
+  it("does not take a page of a host that ends in x.com for a post of X", () => {
+    const meta = page("https://www.dropbox.com/team/status/123", "<title>Status</title>").api.extractMetadata();
+    expect(meta.author).toBeNull();
+    expect(meta.detectedType).not.toBe("article");
+  });
+
+  it("reads a post page of X Pro as the post of X it is", () => {
+    const meta = page("https://pro.x.com/artist/status/123").api.extractMetadata();
+    expect(meta.author).toBe("@artist");
+    expect(meta.url).toBe("https://x.com/artist/status/123");
   });
 
   it("keeps the X post source for a second-photo overlay", () => {

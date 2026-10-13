@@ -13,13 +13,16 @@ type Reply = (response: unknown) => void;
 // The overlay runs in the page's content-script world: no chrome.tabs.
 const { sent, answers, local } = vi.hoisted(() => {
   const sent: Message[] = [];
-  const answers: { capture: (message: Message, reply: Reply) => void } = { capture: () => undefined };
+  const answers: { capture: (message: Message, reply: Reply) => void; openClipWrite: (message: Message) => unknown } = {
+    capture: () => undefined, openClipWrite: () => undefined,
+  };
   const local: Record<string, unknown> = {};
   (globalThis as Record<string, unknown>).chrome = {
     runtime: {
       sendMessage: (message: Message, callback?: Reply) => {
         sent.push(message);
         if (message.action === "captureForCrop") answers.capture(message, (response) => callback?.(response));
+        else if (message.action === "openClipWrite") callback?.(answers.openClipWrite(message));
         else callback?.(undefined);
       },
       onMessage: { addListener: () => undefined, removeListener: () => undefined },
@@ -75,7 +78,7 @@ vi.mock("../lib/protocol", async (importOriginal) => ({
   negotiateWidgetProtocol: async () => undefined,
 }));
 
-import { SOURCE_PAGE_LEFT, useClipperState } from "./useClipperState";
+import { OPEN_CLIP_NOT_KEPT, OPEN_CLIP_SCREENSHOT_NOT_KEPT, SOURCE_PAGE_LEFT, useClipperState } from "./useClipperState";
 import { OpenClipContext, type OpenClip } from "../lib/openClip";
 
 const frameA = "data:image/jpeg;base64,AQID";
@@ -107,6 +110,7 @@ beforeEach(() => {
   for (const key of Object.keys(local)) delete local[key];
   Object.assign(page, { documentUrl: pageA, captureGeneration: "a:1" });
   answers.capture = (_message, reply) => reply({ ok: true, dataUrl: frameA, screenshotId: "shot-a" });
+  answers.openClipWrite = () => undefined;
   standaloneSave.mockReset();
   standaloneSave.mockResolvedValue({ ok: true, outcome: "committed", slug: "Cards/Story" });
   (globalThis as unknown as { __mineOverlay?: unknown }).__mineOverlay = { hide: () => undefined, show: () => undefined };
@@ -146,6 +150,31 @@ describe("the open overlay hands its clip to background (Р7, Ч12)", () => {
     act(() => result.current.setTitle("Typed just before the link"));
     unmount();
     expect(lastWrite()).toMatchObject({ title: "Typed just before the link" });
+  });
+
+  // Background answers what session storage could hold (SPEC_DEEP_AUDIT.md,
+  // Е3.11); the editor says what a page change would lose.
+  it("says when background cannot keep the clip, or keeps it without its frame", async () => {
+    answers.openClipWrite = () => ({ ok: false, code: "open_clip_too_large", error: "This clip is too large to keep while the page changes." });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.openClipNotice).toBe(OPEN_CLIP_NOT_KEPT));
+
+    // Background keeps nothing now: the next write carries the frame again.
+    answers.openClipWrite = () => ({ ok: true, screenshotKept: false });
+    act(() => result.current.setTitle("Shorter"));
+    await waitFor(() => expect(result.current.openClipNotice).toBe(OPEN_CLIP_SCREENSHOT_NOT_KEPT));
+    expect(lastWrite()?.screenshot).toMatchObject({ dataUrl: frameA });
+
+    // A change without a new frame leaves background without the frame.
+    answers.openClipWrite = () => ({ ok: true });
+    act(() => result.current.setTitle("Renamed again"));
+    await waitFor(() => expect(lastWrite()).toMatchObject({ title: "Renamed again" }));
+    expect(result.current.openClipNotice).toBe(OPEN_CLIP_SCREENSHOT_NOT_KEPT);
+
+    // A new frame kept whole clears it.
+    answers.capture = (_message, reply) => reply({ ok: true, dataUrl: frameB, screenshotId: "shot-b" });
+    act(() => result.current.retakeScreenshot());
+    await waitFor(() => expect(result.current.openClipNotice).toBeNull());
   });
 
   it("forgets the clip after a Save and writes nothing more", async () => {

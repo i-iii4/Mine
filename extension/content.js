@@ -120,10 +120,9 @@
     const youtube = youtubeSource(pageUrl);
     if (youtube) return youtube.sourceUrl;
     const page = new URL(pageUrl);
-    if (/^(www\.)?(x\.com|twitter\.com)$/.test(page.hostname)) {
-      const post = page.pathname.match(/^\/([^/]+)\/status\/(\d+)(?:\/|$)/);
-      if (post) return `https://x.com/${post[1]}/status/${post[2]}`;
-    }
+    // X, X Pro and Twitter by one rule (SPEC_DEEP_AUDIT.md, Е3.15).
+    const post = xPostAddress(pageUrl);
+    if (post) return `https://x.com/${post.handle}/status/${post.id}`;
     if (page.hostname === "bsky.app" && /^\/profile\/[^/]+\/post\/[^/]+/.test(page.pathname)) {
       return `${page.origin}${page.pathname.replace(/\/$/, "")}`;
     }
@@ -436,12 +435,8 @@
     let author = getMeta("author") || getMeta("article:author") || null;
 
     // Twitter/X: author from URL, title left as og:title (overridden by extractTwitterThread later)
-    if (isTwitterUrl(pageUrl)) {
-      const handleMatch = pageUrl.match(/(?:twitter\.com|x\.com)\/([^/]+)\/status/i);
-      if (handleMatch) {
-        author = `@${handleMatch[1]}`;
-      }
-    }
+    const xPost = xPostAddress(pageUrl);
+    if (xPost) author = `@${xPost.handle}`;
 
     return {
       url: capturePageSource(pageUrl),
@@ -501,12 +496,14 @@
 
   // ── Twitter/X thread extraction ──────────────────────────────────────────
 
+  /// The post an address of X names, by the one rule of lib/xThread.js: a
+  /// host that merely ends in "x.com" is not X (SPEC_DEEP_AUDIT.md, Е3.15).
+  function xPostAddress(url) {
+    return globalThis.MineXThread?.postAddress?.(url) ?? null;
+  }
+
   function isTwitterUrl(url) {
-    const lc = url.toLowerCase();
-    return (
-      (lc.includes("twitter.com/") || lc.includes("x.com/")) &&
-      lc.includes("/status/")
-    );
+    return xPostAddress(url) !== null;
   }
 
   function extractTweetContentParts(article) {
@@ -526,8 +523,11 @@
       ?? String(domText || "").trim();
   }
 
-  function cleanSyndicationText(text, mediaDetails) {
-    let cleaned = String(text || "");
+  /// The text a syndication answer shows, without the links of its media: a
+  /// reply's leading mentions left out and what X escapes decoded
+  /// (lib/xThread.js, SPEC_DEEP_AUDIT.md, Е3.6).
+  function cleanSyndicationText(data, mediaDetails) {
+    let cleaned = globalThis.MineXThread?.syndicationText?.(data) ?? String(data?.text || "");
     for (const media of mediaDetails || []) {
       if (media.shortUrl) cleaned = cleaned.replace(media.shortUrl, "");
     }
@@ -586,7 +586,7 @@
           const entry = syndicationMediaEntry(m);
           if (entry) quoteMedia.push(entry);
         }
-        const quoteText = cleanSyndicationText(data.quoted_tweet.text || "", quoteMedia);
+        const quoteText = cleanSyndicationText(data.quoted_tweet, quoteMedia);
         if (quoteText || quoteMedia.length > 0) {
           quotedTweet = {
             tweetId: data.quoted_tweet.id_str || null,
@@ -602,7 +602,7 @@
       return {
         mediaDetails: media,
         quotedTweet,
-        text: cleanSyndicationText(data.text || "", media),
+        text: cleanSyndicationText(data, media),
       };
     } catch {
       return { mediaDetails: [], quotedTweet: null, text: "" };
@@ -628,10 +628,10 @@
     const url = window.location.href;
 
     // Extract author handle and tweet ID from URL
-    const urlMatch = url.match(/(?:twitter\.com|x\.com)\/([^/]+)\/status\/(\d+)/i);
-    if (!urlMatch) return null;
-    const authorHandle = urlMatch[1];
-    const tweetId = urlMatch[2];
+    const address = xPostAddress(url);
+    if (!address) return null;
+    const authorHandle = address.handle;
+    const tweetId = address.id;
 
     const snapshot = await new Promise(resolve => {
       chrome.runtime.sendMessage({ target: "background", action: "collectXThread", tweetId }, result => {
@@ -775,8 +775,8 @@
   function extractXLongformArticle() {
     const extractor = window.MineXLongformArticleExtraction;
     if (!extractor?.extractXLongformArticle) return null;
-    const urlMatch = window.location.href.match(/(?:twitter\.com|x\.com)\/([^/]+)\/status\/(\d+)/i);
-    const fallbackByline = urlMatch ? `@${urlMatch[1]}` : null;
+    const address = xPostAddress(window.location.href);
+    const fallbackByline = address ? `@${address.handle}` : null;
     return extractor.extractXLongformArticle({
       document,
       locationHref: window.location.href,
@@ -1116,6 +1116,7 @@
 
     const BUTTON_ATTR = "data-la-clip";
     const BUTTON_VERSION = "3";
+    const INSTAGRAM_POST_UNAVAILABLE = "Mine couldn't read this Instagram post. Save it as Screenshot or Link.";
 
     function findShortcode(article) {
       for (const a of article.querySelectorAll('a[href*="/p/"], a[href*="/reel/"]')) {
@@ -1160,104 +1161,132 @@
       return btn;
     }
 
+    /// The clipper opens for the post, read through Instagram's API, or with
+    /// the reason it could not be read; a clipper that does not open says why
+    /// on the button. Nothing fails only in the console (SPEC_DEEP_AUDIT.md,
+    /// Е3.16, the way of the X button, SPEC_CLIPPER.md, «Кнопка Mine в ленте
+    /// X», rule 7).
     async function clipPost(shortcode, btn) {
       btn.style.opacity = "0.5";
       btn.style.pointerEvents = "none";
-
+      const postUrl = `https://www.instagram.com/p/${shortcode}/`;
+      let preloadData;
       try {
-        const mediaId = shortcodeToMediaId(shortcode);
-        const resp = await fetch(`https://i.instagram.com/api/v1/media/${mediaId}/info/`, {
-          headers: { "X-IG-App-ID": "936619743392459" },
-          credentials: "include",
-        });
-        if (!resp.ok) throw new Error(`API ${resp.status}`);
-        const json = await resp.json();
-
-        const item = (json.items || [])[0];
-        if (!item) throw new Error("No items");
-
-        const caption = item.caption?.text || "";
-        const author = item.user?.username || "";
-
-        const mediaEntries = [];
-        const carousel = item.carousel_media || [];
-        if (carousel.length > 0) {
-          for (const slide of carousel) {
-            const poster = slide.image_versions2?.candidates?.[0]?.url || null;
-            if (slide.video_versions?.length > 0) {
-              mediaEntries.push({ kind: "video", url: slide.video_versions[0].url, poster });
-            } else if (slide.image_versions2?.candidates?.length > 0) {
-              mediaEntries.push({ kind: "image", url: slide.image_versions2.candidates[0].url, poster });
-            }
-          }
-        } else {
-          const poster = item.image_versions2?.candidates?.[0]?.url || null;
-          if (item.video_versions?.length > 0) {
-            mediaEntries.push({ kind: "video", url: item.video_versions[0].url, poster });
-          } else if (item.image_versions2?.candidates?.length > 0) {
-            mediaEntries.push({ kind: "image", url: item.image_versions2.candidates[0].url, poster });
-          }
-        }
-        const mediaUrls = mediaEntries.map((entry) => entry.url);
-        const embeddedVideos = [];
-        for (const entry of mediaEntries) {
-          if (entry.kind === "video") {
-            pushVideoUrlPreview(embeddedVideos, entry.url, entry.poster, "Instagram video preview");
-          }
-        }
-
-        const parts = [];
-        if (caption) parts.push(caption);
-        for (const url of mediaUrls) {
-          parts.push(`![](${url})`);
-        }
-
-        const titleText = caption.replace(/\n/g, " ").trim().slice(0, 80) || `@${author}`;
-        const postUrl = `https://www.instagram.com/p/${shortcode}/`;
-
-        // Store pre-extracted data and open popup
-        const preloadData = {
-          metadata: {
-            url: postUrl,
-            title: titleText,
-            description: caption.slice(0, 200),
-            image: mediaUrls[0] || null,
-            author: `@${author}`,
-            ogType: null,
-            favicon: null,
-            selection: "",
-            detectedType: "article",
-            isArticle: true,
-          },
-          article: {
-            title: titleText,
-            content: parts.join("\n\n"),
-            byline: `@${author}`,
-            excerpt: caption.slice(0, 200),
-            embeddedVideos,
-          },
-        };
-
+        preloadData = await readInstagramPost(shortcode, postUrl);
+      } catch (e) {
+        console.warn("[Mine] Instagram post unavailable:", e);
+        preloadData = instagramPostUnavailable(postUrl);
+      }
+      let response;
+      try {
         // The post read here travels with this opening only: background keeps
         // it for this tab, and the overlay that opens here reads it once.
         // Instagram preloads overlay.js as a static content script because
         // this page-injected button does not grant activeTab permission for
         // executeScript.
-        await chrome.runtime.sendMessage({
+        response = await chrome.runtime.sendMessage({
           target: "background",
           action: "showOverlayInThisTab",
           pageUrl: window.location.href,
           preloaded: preloadData,
         });
-
-        btn.style.opacity = "1";
-        btn.style.pointerEvents = "auto";
       } catch (e) {
-        console.error("[Mine] Instagram feed clip failed:", e);
-        btn.style.opacity = "1";
-        btn.style.background = "rgba(239,68,68,0.8)";
-        btn.style.pointerEvents = "auto";
+        response = { ok: false, error: String(e?.message ?? e) };
       }
+      btn.style.opacity = "1";
+      btn.style.pointerEvents = "auto";
+      // `deferred`: the clipper opens after the extension's reload into the
+      // build on disk (К4).
+      if (response?.ok || response?.mode === "deferred") {
+        btn.style.background = "rgba(255,255,255,0.92)";
+        btn.title = "Save to Mine";
+        return;
+      }
+      btn.style.background = "rgba(239,68,68,0.8)";
+      btn.title = `Mine could not open: ${response?.error ?? "the extension did not answer"}`;
+    }
+
+    function instagramPostUnavailable(postUrl) {
+      return {
+        metadata: {
+          url: postUrl, title: "", description: "", image: null, author: null, ogType: null, favicon: null,
+          selection: "", detectedType: "article", isArticle: true,
+        },
+        article: { title: "", content: "", byline: null, excerpt: "", embeddedVideos: [], unavailableReason: INSTAGRAM_POST_UNAVAILABLE },
+      };
+    }
+
+    async function readInstagramPost(shortcode, postUrl) {
+      const mediaId = shortcodeToMediaId(shortcode);
+      const resp = await fetch(`https://i.instagram.com/api/v1/media/${mediaId}/info/`, {
+        headers: { "X-IG-App-ID": "936619743392459" },
+        credentials: "include",
+      });
+      if (!resp.ok) throw new Error(`API ${resp.status}`);
+      const json = await resp.json();
+
+      const item = (json.items || [])[0];
+      if (!item) throw new Error("No items");
+
+      const caption = item.caption?.text || "";
+      const author = item.user?.username || "";
+
+      const mediaEntries = [];
+      const carousel = item.carousel_media || [];
+      if (carousel.length > 0) {
+        for (const slide of carousel) {
+          const poster = slide.image_versions2?.candidates?.[0]?.url || null;
+          if (slide.video_versions?.length > 0) {
+            mediaEntries.push({ kind: "video", url: slide.video_versions[0].url, poster });
+          } else if (slide.image_versions2?.candidates?.length > 0) {
+            mediaEntries.push({ kind: "image", url: slide.image_versions2.candidates[0].url, poster });
+          }
+        }
+      } else {
+        const poster = item.image_versions2?.candidates?.[0]?.url || null;
+        if (item.video_versions?.length > 0) {
+          mediaEntries.push({ kind: "video", url: item.video_versions[0].url, poster });
+        } else if (item.image_versions2?.candidates?.length > 0) {
+          mediaEntries.push({ kind: "image", url: item.image_versions2.candidates[0].url, poster });
+        }
+      }
+      const mediaUrls = mediaEntries.map((entry) => entry.url);
+      const embeddedVideos = [];
+      for (const entry of mediaEntries) {
+        if (entry.kind === "video") {
+          pushVideoUrlPreview(embeddedVideos, entry.url, entry.poster, "Instagram video preview");
+        }
+      }
+
+      const parts = [];
+      if (caption) parts.push(caption);
+      for (const url of mediaUrls) {
+        parts.push(`![](${url})`);
+      }
+
+      const titleText = caption.replace(/\n/g, " ").trim().slice(0, 80) || `@${author}`;
+
+      return {
+        metadata: {
+          url: postUrl,
+          title: titleText,
+          description: caption.slice(0, 200),
+          image: mediaUrls[0] || null,
+          author: `@${author}`,
+          ogType: null,
+          favicon: null,
+          selection: "",
+          detectedType: "article",
+          isArticle: true,
+        },
+        article: {
+          title: titleText,
+          content: parts.join("\n\n"),
+          byline: `@${author}`,
+          excerpt: caption.slice(0, 200),
+          embeddedVideos,
+        },
+      };
     }
 
     // The buttons this script put. A button of the current version that
@@ -1658,9 +1687,38 @@
     if (cropToastHost) {
       cropToastHost.style.visibility = "hidden";
     }
+    hideFeedButtonsForCapture();
 
     afterViewportPaint(() => sendResponse({ ok: true }));
   }
+
+  // The Mine buttons on X and Instagram posts are part of the page, not of
+  // what the person saves: a screenshot is taken without them, and they come
+  // back once background has the frame (SPEC_DEEP_AUDIT.md, Е3.13). A frame
+  // background never reports still brings them back after
+  // FEED_BUTTONS_HIDDEN_AT_MOST_MS.
+  const FEED_BUTTONS_HIDDEN_AT_MOST_MS = 5_000;
+  let feedButtonsHidden = null;
+
+  function hideFeedButtonsForCapture() {
+    if (!feedButtonsHidden) {
+      const style = document.createElement("style");
+      style.setAttribute("data-mine-capture", "");
+      style.textContent = "[data-mine-x-post], [data-la-clip] { visibility: hidden !important; }";
+      (document.head ?? document.documentElement).appendChild(style);
+      feedButtonsHidden = { style, timer: null };
+    }
+    clearTimeout(feedButtonsHidden.timer);
+    feedButtonsHidden.timer = setTimeout(showFeedButtonsAfterCapture, FEED_BUTTONS_HIDDEN_AT_MOST_MS);
+  }
+
+  function showFeedButtonsAfterCapture() {
+    if (!feedButtonsHidden) return;
+    clearTimeout(feedButtonsHidden.timer);
+    feedButtonsHidden.style.remove();
+    feedButtonsHidden = null;
+  }
+  onRetire(showFeedButtonsAfterCapture);
 
   function destroyCropOverlay() {
     if (cropOverlayHost) {
@@ -2043,6 +2101,11 @@
     if (msg.action === "prepareViewportCapture") {
       prepareViewportCapture(sendResponse);
       return true;
+    }
+
+    if (msg.action === "finishViewportCapture") {
+      showFeedButtonsAfterCapture();
+      return false;
     }
 
     if (msg.action === "startCropOverlay") {

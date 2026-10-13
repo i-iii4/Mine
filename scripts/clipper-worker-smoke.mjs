@@ -584,6 +584,59 @@ process.stdin.on('data', (chunk) => {
 });
 `;
 
+// Pages on disk and a record past 10 MB (SPEC_DEEP_AUDIT.md, Е3.8, Е3.12,
+// Е3.19). The overlay on an HTML page on disk has its stylesheet: the page
+// may read it. An SVG page cannot hold the overlay, and the clipper opens as
+// its window instead of not at all. Local storage keeps a record past its
+// 10 MB quota: the journal of a save keeps the screenshot it sends.
+async function checkPagesOnDiskAndLargeRecords(worker) {
+  const pages = mkdtempSync(join(tmpdir(), 'mine-clipper-pages-on-disk-'));
+  try {
+    writeFileSync(join(pages, 'page.html'), '<!doctype html><html><head><meta charset="utf-8"><title>Page on disk</title></head><body><p>A page on disk.</p></body></html>');
+    writeFileSync(join(pages, 'drawing.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="100" height="100" fill="red"/></svg>');
+    const open = (name) => worker.evaluate(async (fileName) => {
+      const tab = (await chrome.tabs.query({})).find((candidate) => candidate.url?.startsWith('file://') && candidate.url.endsWith(`/${fileName}`));
+      if (!tab) throw new Error(`No tab for ${fileName}`);
+      await chrome.tabs.update(tab.id, { active: true });
+      return openClipperUi(tab);
+    }, name);
+
+    const page = await context.newPage();
+    await page.goto(`file://${join(pages, 'page.html')}`);
+    assert.equal(await open('page.html'), 'overlay');
+    await page.locator('[data-mine-clipper-panel]').waitFor({ state: 'visible', timeout: 15_000 });
+    const css = await page.evaluate(() => document.querySelector('[data-mine-clipper-overlay]')?.shadowRoot?.querySelector('style')?.textContent ?? '');
+    assert.ok(css.includes('--foreground'), 'the overlay on a page on disk opened without its stylesheet');
+    await page.locator('[data-mine-clipper-overlay]').getByRole('button', { name: 'Close', exact: true }).first().click();
+    await page.close();
+
+    const drawing = await context.newPage();
+    await drawing.goto(`file://${join(pages, 'drawing.svg')}`);
+    const clipperWindow = context.waitForEvent('page', { timeout: 15_000 });
+    assert.equal(await open('drawing.svg'), 'window');
+    const popup = await clipperWindow;
+    await popup.waitForURL(/\/dist\/index\.html/, { timeout: 15_000 });
+    await popup.close();
+    await drawing.close();
+
+    const large = await worker.evaluate(async () => {
+      const key = 'mineSmokeLargeRecord';
+      try {
+        await chrome.storage.local.set({ [key]: 'x'.repeat(11 * 1024 * 1024) });
+        return { ok: true, bytes: await chrome.storage.local.getBytesInUse(key) };
+      } catch (error) {
+        return { ok: false, error: String(error?.message ?? error) };
+      } finally {
+        await chrome.storage.local.remove(key);
+      }
+    });
+    assert.equal(large.ok, true, `local storage refused a record past 10 MB: ${large.error}`);
+    assert.ok(large.bytes > 10 * 1024 * 1024);
+  } finally {
+    rmSync(pages, { recursive: true, force: true });
+  }
+}
+
 // A feed of X with two posts, in the markup of a list feed as measured on
 // 11.10.2026 (extension/lib/xFeed.fixtures.ts), served in place of x.com: the
 // page's content script puts the Mine button in each post's header
@@ -1281,6 +1334,7 @@ try {
   await checkHeaderDragBySpaceName(worker);
   await checkCollectionsArePages(worker);
   await checkXPostWithoutPageCache(worker);
+  await checkPagesOnDiskAndLargeRecords(worker);
   await context.close();
   context = undefined;
   await checkXPageWorldAfterReload();
@@ -1302,6 +1356,7 @@ try {
     overlayOfRunningBuild: true, openPagesGetNewContentScript: true, oldContentScriptButtonsRemoved: true,
     xButtonOfNewContentScriptOpensClipper: true, xPostWithoutPageCacheReadThroughBackground: true,
     pageWorldScriptsPutIntoTabOpenBeforeReload: true,
+    overlayStyledOnPageOnDisk: true, svgPageOpensClipperWindow: true, localStorageKeepsRecordPast10MB: true,
     filesystem: 'OPFS-not-OS-folder' });
 } catch (error) {
   report.error = error.stack ?? String(error);

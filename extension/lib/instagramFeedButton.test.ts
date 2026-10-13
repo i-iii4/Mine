@@ -12,19 +12,54 @@ const contentScript = readFileSync("extension/content.js", "utf8");
 const BUTTON = "[data-la-clip]";
 const post = (shortcode: string) => `<article><a href="/p/${shortcode}/">Post</a></article>`;
 
-function instagram(storage: ReturnType<typeof switchStorage>) {
+function instagram(storage: ReturnType<typeof switchStorage>, options: {
+  fetch?: (...args: unknown[]) => unknown; sendMessage?: (...args: unknown[]) => unknown;
+} = {}) {
   const dom = new JSDOM(`<html><body><main>${post("abc")}${post("def")}</main></body></html>`,
     { url: "https://www.instagram.com/", pretendToBeVisual: true });
   runInNewContext(`${libs}\nwindow.MineFeedButtonSettings = globalThis.MineFeedButtonSettings;\n${contentScript}`, {
     window: dom.window, document: dom.window.document, URL, Node: dom.window.Node, getComputedStyle: dom.window.getComputedStyle,
     chrome: {
-      runtime: { onMessage: { addListener: vi.fn() }, sendMessage: vi.fn(), lastError: undefined, getURL: (path: string) => path },
+      runtime: { onMessage: { addListener: vi.fn() }, sendMessage: options.sendMessage ?? vi.fn(), lastError: undefined, getURL: (path: string) => path },
       storage,
     },
-    fetch: vi.fn(), console, setTimeout, setInterval, clearInterval, clearTimeout,
+    fetch: options.fetch ?? vi.fn(), console, setTimeout, setInterval, clearInterval, clearTimeout,
   });
   return dom.window.document;
 }
+
+// SPEC_DEEP_AUDIT.md, Е3.16: a press that cannot read the post or open the
+// clipper shows why, the way the Mine button of an X post does.
+describe("a press on the Instagram button that fails", () => {
+  it("opens the clipper for the post with the reason when Instagram does not give the post", async () => {
+    // A request the network or the browser refuses fails this way.
+    const sendMessage = vi.fn(async () => ({ ok: true, mode: "overlay" }));
+    const storage = switchStorage();
+    const page = instagram(storage, { fetch: vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))), sendMessage });
+    await vi.waitFor(() => expect(page.querySelectorAll(BUTTON)).toHaveLength(2));
+    (page.querySelector(BUTTON) as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled());
+    expect(sendMessage.mock.calls[0]![0]).toMatchObject({
+      action: "showOverlayInThisTab",
+      preloaded: {
+        metadata: { url: "https://www.instagram.com/p/abc/" },
+        article: { content: "", unavailableReason: "Mine couldn't read this Instagram post. Save it as Screenshot or Link." },
+      },
+    });
+    storage.set({ x: true, instagram: false });
+  });
+
+  it("names the reason on the button when the clipper does not open", async () => {
+    const sendMessage = vi.fn(async () => ({ ok: false, error: "The Mine extension files on disk do not match the running extension." }));
+    const storage = switchStorage();
+    const page = instagram(storage, { fetch: vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))), sendMessage });
+    await vi.waitFor(() => expect(page.querySelectorAll(BUTTON)).toHaveLength(2));
+    const button = page.querySelector(BUTTON) as HTMLButtonElement;
+    button.click();
+    await vi.waitFor(() => expect(button.title).toBe("Mine could not open: The Mine extension files on disk do not match the running extension."));
+    storage.set({ x: true, instagram: false });
+  });
+});
 
 describe("the Mine button on Instagram posts", () => {
   it("goes away at once when its switch is turned off and comes back when it is on again", async () => {

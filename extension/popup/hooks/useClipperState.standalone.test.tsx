@@ -54,7 +54,10 @@ vi.hoisted(() => {
   (globalThis as Record<string, unknown>).chrome = { tabs: {} };
 });
 
-import { CLIPPER_RECONNECT_INTERVAL_MS, DESTINATION_CHANGED_DURING_SAVE, MINE_NOT_CONNECTED, useClipperState } from "./useClipperState";
+import {
+  CLIPPER_RECONNECT_INTERVAL_MS, DESTINATION_CHANGED_DURING_SAVE, FOLDER_ACCESS_RESTORED, LINKED_PAGE_NOT_READ, MINE_NOT_CONNECTED,
+  useClipperState,
+} from "./useClipperState";
 import * as messaging from "../lib/messaging";
 import * as photoLightbox from "../lib/twitterPhotoLightbox";
 
@@ -681,13 +684,19 @@ describe("standalone mode decision", () => {
     expect(nativeActions.every((action) => action === "get_status")).toBe(true);
   });
 
-  it("asks for a folder instead of erroring when nothing is configured", async () => {
-    sendToNative.mockResolvedValue({ ok: false, error: "Native host not installed" });
+  // Without Mine the clipper saves into a folder of the browser
+  // (SPEC_ONBOARDING.md, О1; SPEC_DEEP_AUDIT.md, Е3.3). Background answers an
+  // unregistered helper the way Chromium reports it (checked in Chromium 148
+  // without a window, 13.10.2026).
+  it("asks for a folder when the helper is not registered in this browser", async () => {
+    sendToNative.mockResolvedValue({ ok: false, code: "native_disconnected", error: "Specified native messaging host not found.", outcome: "unknown" });
     standalone.getStandaloneStatus.mockResolvedValue({ configured: false });
 
     const { result } = renderHook(() => useClipperState());
-    await waitFor(() => expect(result.current.saveMode).toBe("unconfigured"));
-    expect(result.current.nativeStatusError).toBe(MINE_NOT_CONNECTED);
+    await waitFor(() => expect(result.current.nativeStatusError).toBe(MINE_NOT_CONNECTED));
+    expect(result.current.saveMode).toBe("unconfigured");
+    // Mine opened later still connects on its own.
+    expect(result.current.reconnecting).toBe(true);
 
     standalone.chooseStandaloneFolder.mockResolvedValue({
       configured: true,
@@ -704,6 +713,17 @@ describe("standalone mode decision", () => {
     expect(result.current.saveMode).toBe("standalone");
     expect(result.current.standaloneFolder).toBe("Clips");
     expect(result.current.nativeStatusError).toBeNull();
+  });
+
+  it("keeps a space of Mine chosen before and offers no browser folder in its place", async () => {
+    await chrome.storage.local.set({ mineSaveDestination: { executor: "native", vaultPath: "/v", bindingId: "space-v" } });
+    sendToNative.mockResolvedValue({ ok: false, code: "native_disconnected", error: "Specified native messaging host not found.", outcome: "unknown" });
+
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.nativeStatusError).toBe(MINE_NOT_CONNECTED));
+    expect(result.current.saveMode).toBe("app");
+    expect(result.current.selectedVault).toBe("/v");
+    expect(result.current.reconnecting).toBe(true);
   });
 
   it("connects by itself once Mine repairs the helper, with no button pressed", async () => {
@@ -904,6 +924,30 @@ describe("standalone mode decision", () => {
     standalone.regrantStandaloneAccess.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });
     await act(async () => { await result.current.regrantFolder(); });
     expect(standalone.regrantStandaloneAccess).toHaveBeenCalledWith("browser-original");
+  });
+
+  // The overlay restores access on the extension's setup page; background
+  // tells every open clipper (SPEC_ONBOARDING.md, О1; SPEC_DEEP_AUDIT.md, Е3.7).
+  it("hears that the setup page restored access to the folder of its waiting save", async () => {
+    sendToNative.mockResolvedValue({ ok: false, error: "No helper connection" });
+    standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });
+    standalone.standaloneSave.mockResolvedValue({ ok: false, outcome: "unknown", code: "permission_required",
+      error: "Restore access to the saved folder in the Mine extension window" });
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.saveMode).toBe("standalone"));
+    act(() => result.current.setCurrentType("link"));
+    await act(async () => { await result.current.save(); });
+    expect(result.current.pendingOperation).toBe(true);
+    expect(result.current.folderAccessNotice).toBeNull();
+
+    const listeners = vi.mocked(chrome.runtime.onMessage.addListener).mock.calls
+      .map(([registered]) => registered as unknown as (message: Record<string, unknown>) => void);
+    act(() => listeners.forEach((receive) => receive({ action: "mineStandaloneAccessRestored", binding_id: "another-folder" })));
+    expect(result.current.folderAccessNotice).toBeNull();
+    act(() => listeners.forEach((receive) => receive({ action: "mineStandaloneAccessRestored", binding_id: "browser-original" })));
+    expect(result.current.folderAccessNotice).toBe(FOLDER_ACCESS_RESTORED);
+    // Nothing is saved until the person presses Retry.
+    expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
   });
 
   it("does not let a delayed old-folder status undo an explicit folder switch", async () => {
@@ -1251,6 +1295,48 @@ describe("screenshots in the editor (SPEC_AUDIT_FIXES.md, Б4.5, Б4.6)", () => 
     expect(result.current.captureError).toBe(refusal);
     expect(chrome.storage.session.remove).toHaveBeenCalledWith("cropPendingState");
   });
+
+  // SPEC_DEEP_AUDIT.md, Е3.9: the clip a window left for its crop belongs to
+  // that window's page. The next opening on another page is a new clip.
+  const cropLeftover = (extra: Record<string, unknown>) => ({
+    cropPendingState: { tabId: 7, linkTarget: null, selectedTags: ["Old collection"], title: "Old clip", currentType: "screenshot",
+      selectedVault: null, screenshotDataUrl: null, screenshotUploadId: null, articleData: null,
+      metadata: { url: "https://old.example/page", title: "Old clip", selection: "", detectedType: "link" }, ...extra },
+    cropResult: { status: "done", dataUrl: "data:image/jpeg;base64,AQID", screenshotId: "shot-old" },
+  });
+
+  it("opens a new clip on another page, not the clip a crop left for its page", async () => {
+    answerLater();
+    vi.mocked(chrome.storage.session.get).mockResolvedValue(cropLeftover({ pageUrl: "https://old.example/page", createdAt: Date.now() }));
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.state).toBe("main"));
+    expect(result.current.metadata?.url).toBe("https://example.com");
+    expect(result.current.title).toBe("Page");
+    expect(result.current.selectedTags).toEqual([]);
+    expect(chrome.storage.session.remove).toHaveBeenCalledWith(["cropPendingState", "cropResult"]);
+  });
+
+  it("opens a new clip in the window of another tab and leaves the crop's clip to its own tab", async () => {
+    answerLater();
+    vi.mocked(chrome.storage.session.get).mockResolvedValue(cropLeftover({ tabId: 9, pageUrl: "https://old.example/page", createdAt: Date.now() }));
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.state).toBe("main"));
+    expect(result.current.metadata?.url).toBe("https://example.com");
+    expect(chrome.storage.session.remove).not.toHaveBeenCalledWith(["cropPendingState", "cropResult"]);
+  });
+
+  it("brings the clip back with its crop in the window of the same page", async () => {
+    answerLater();
+    vi.mocked(chrome.storage.session.get).mockResolvedValue(cropLeftover({
+      pageUrl: "https://example.com", createdAt: Date.now(),
+      metadata: { url: "https://example.com", title: "Clip before the crop", selection: "", detectedType: "link" },
+      title: "Clip before the crop",
+    }));
+    const { result } = renderHook(() => useClipperState());
+    await waitFor(() => expect(result.current.state).toBe("main"));
+    expect(result.current.title).toBe("Clip before the crop");
+    expect(result.current.screenshotDataUrl).toBe("data:image/jpeg;base64,AQID");
+  });
 });
 
 describe("a clip is never moved to another browser folder in silence (SPEC_AUDIT_FIXES.md, В4.4)", () => {
@@ -1419,6 +1505,20 @@ describe("Save link clips the link, not the page it was clicked on (SPEC_AUDIT_F
     expect(result.current.screenshotDataUrl).toBe(frame);
     expect(result.current.captureError).toBeNull();
     expect(result.current.metadata).toMatchObject({ url: linkB });
+  });
+
+  // SPEC_DEEP_AUDIT.md, Е3.17: Content of link B does not read the tab, which
+  // shows page A; it says why, and Save sends nothing of page A.
+  it("reads nothing of page A for Content of link B and says why", async () => {
+    const read = vi.spyOn(messaging, "extractArticleAsync").mockResolvedValue({ title: "Page A title", content: "Text of page A",
+      byline: "Author of A", excerpt: "About page A", sourceUrl: pageA, documentUrl: pageA, captureGeneration: "a:1" });
+    const { result } = renderHook(() => useClipperState());
+    await settled(result);
+    act(() => result.current.setCurrentType("content"));
+    await waitFor(() => expect(result.current.articleExtractionState).toBe("empty"));
+
+    expect(read).not.toHaveBeenCalled();
+    expect(result.current.articleData).toMatchObject({ content: "", unavailableReason: LINKED_PAGE_NOT_READ });
   });
 });
 

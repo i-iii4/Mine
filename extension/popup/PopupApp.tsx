@@ -74,6 +74,16 @@ export function PopupApp() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
+  // Access to the folder of the waiting save came back (SPEC_DEEP_AUDIT.md,
+  // Е3.7): the refusal it answered with no longer holds.
+  const [seenAccessNotice, setSeenAccessNotice] = useState<string | null>(null);
+  if (clipper.folderAccessNotice !== seenAccessNotice) {
+    setSeenAccessNotice(clipper.folderAccessNotice);
+    if (clipper.folderAccessNotice) {
+      setSaveError(null);
+      setRecoveryMessage(null);
+    }
+  }
 
   // Context-aware close: in the overlay (content-script isolated world)
   // `window.close()` would try to close the whole tab because `window`
@@ -295,6 +305,7 @@ export function PopupApp() {
       <>
       {previousSavePanel}
       {recoveryMessage && <p className="p-3 text-sm" role="status">{recoveryMessage}</p>}
+      {clipper.folderAccessNotice && <p className="p-3 text-sm" role="status">{clipper.folderAccessNotice}</p>}
       <StandaloneSetup
         canPickFolder={clipper.canPickFolder}
         folderName={clipper.standaloneFolder}
@@ -508,6 +519,12 @@ export function PopupApp() {
             <p role="status" className="text-sm text-muted-foreground" data-clipper-destination-notice="">
               {clipper.destinationNotice}
             </p>
+          )}
+          {clipper.folderAccessNotice && !saved && (
+            <p role="status" className="text-sm text-muted-foreground">{clipper.folderAccessNotice}</p>
+          )}
+          {clipper.openClipNotice && !saved && (
+            <p role="status" className="text-sm text-muted-foreground" data-clipper-open-clip-notice="">{clipper.openClipNotice}</p>
           )}
           {saveWarning && <p className="text-sm text-muted-foreground" role="status">{saveWarning}</p>}
           {clipper.pendingOperation && clipper.saveMode === "standalone" && !clipper.saving && !saved && (

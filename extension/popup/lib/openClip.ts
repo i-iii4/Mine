@@ -142,9 +142,29 @@ function tellBackground(message: Record<string, unknown>): void {
   }
 }
 
-/// Hand the clip of this open overlay to background for its tab.
-export function writeOpenClip(clip: OpenClipWrite): void {
-  tellBackground({ action: "openClipWrite", clip });
+/** What background kept of the clip: all of it, all but its frame, or
+ *  nothing, because session storage cannot hold it (SPEC_DEEP_AUDIT.md,
+ *  Е3.11). `unknown` when background did not answer. */
+export type OpenClipKept = "kept" | "kept_without_screenshot" | "not_kept" | "unknown";
+
+/// Hand the clip of this open overlay to background for its tab, and hear
+/// what it kept.
+export function writeOpenClip(clip: OpenClipWrite): Promise<OpenClipKept> {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ target: "background", action: "openClipWrite", clip }, (answer?: unknown) => {
+        if (chrome.runtime.lastError || !isRecord(answer)) {
+          resolve("unknown");
+          return;
+        }
+        if (answer.ok === true) resolve(answer.screenshotKept === false ? "kept_without_screenshot" : "kept");
+        else resolve(answer.code === "open_clip_too_large" ? "not_kept" : "unknown");
+      });
+    } catch {
+      // The extension context is gone: there is no background to keep the clip.
+      resolve("unknown");
+    }
+  });
 }
 
 /// The overlay of this tab closed or saved: its clip goes.

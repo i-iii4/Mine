@@ -1,7 +1,7 @@
 // Real compiled Rust/WASM + deterministic platform adapter. These tests do
 // not claim to model FSA's external-writer or power-loss guarantees.
 import { createRequire } from "node:module";
-import { Blob as NodeBlob } from "node:buffer";
+import { Blob as NodeBlob, File as NodeFile } from "node:buffer";
 import { webcrypto } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./saveProtocol.js";
@@ -30,15 +30,25 @@ class MemoryStore {
   async get(store: string, key: string) { return structuredClone(this.values.get(`${store}:${key}`)); }
   async put(store: string, key: string, value: unknown) { this.values.set(`${store}:${key}`, structuredClone(value)); }
 }
+// A file of the folder as File System Access gives it: a snapshot with its
+// modification time, which every write moves on. `reads` counts the reads of
+// its text.
+let clock = 1_000;
 class FakeFile {
   blob: NodeBlob;
+  modified = ++clock;
+  reads = 0;
   constructor(content = "") { this.blob = new NodeBlob([content]); }
-  async getFile() { return this.blob; }
+  async getFile() {
+    const file = new NodeFile([this.blob], "file", { lastModified: this.modified });
+    const read = file.text.bind(file);
+    return Object.assign(file, { text: async () => { this.reads += 1; return read(); } });
+  }
   async createWritable() {
     let pending = new NodeBlob();
     return {
       write: async (content: string | NodeBlob) => { pending = new NodeBlob([content]); },
-      close: async () => { this.blob = pending; },
+      close: async () => { this.blob = pending; this.modified = ++clock; },
       abort: async () => undefined,
     };
   }
@@ -66,7 +76,10 @@ class FakeDirectory {
     }
     return this.files.get(name)!;
   }
+  /** How many times this folder's entries were listed. */
+  listings = 0;
   async *entries(): AsyncGenerator<[string, { kind: string }]> {
+    this.listings += 1;
     for (const name of this.files.keys()) yield [name, { kind: "file" }];
     for (const [name, dir] of this.directories) yield [name, dir];
   }
@@ -315,6 +328,43 @@ describe("browser executor backed by actual WASM", () => {
     expect(await vault.saveStandaloneBlock(request({ operation_mode: "resume" }), options())).toMatchObject({ ok: true, outcome: "committed" });
     expect(await folder.text("Cards/Article.md")).toContain("Content");
   });
+  // SPEC_DEEP_AUDIT.md, Е3.10 (contract Н5): the browser folder is read by
+  // what changed, not whole on every opening and every step of a save.
+  it("reads again for the collection list only the notes that changed since it last read them", async () => {
+    const collections = await folder.getDirectoryHandle("Collections", { create: true });
+    const cards = await folder.getDirectoryHandle("Cards", { create: true });
+    collections.files.set("Travel.md", new FakeFile("---\ntype: channel\nposition: 0\nsaved_at: 2026-08-31T12:00:00Z\n---\n"));
+    cards.files.set("Trip.md", new FakeFile("---\nMine Collections:\n  - \"[[Travel]]\"\n---\nText"));
+    cards.files.set("Soup.md", new FakeFile("Plain note"));
+    const reads = () => [collections.files, cards.files].flatMap((files) => [...files.values()]).reduce((sum, file) => sum + file.reads, 0);
+
+    expect(await vault.listStandaloneChannels(options())).toEqual({ ok: true, channels: [{ tag: "Travel", block_count: 1 }] });
+    expect(reads()).toBe(3);
+    expect(await vault.listStandaloneChannels(options())).toEqual({ ok: true, channels: [{ tag: "Travel", block_count: 1 }] });
+    expect(reads()).toBe(3);
+
+    const soup = cards.files.get("Soup.md")!;
+    const writer = await soup.createWritable();
+    await writer.write("---\nMine Collections:\n  - \"[[Travel]]\"\n---\nSoup");
+    await writer.close();
+    expect(await vault.listStandaloneChannels(options())).toEqual({ ok: true, channels: [{ tag: "Travel", block_count: 2 }] });
+    expect(reads()).toBe(4);
+    // A note gone is no longer counted.
+    cards.files.delete("Trip.md");
+    expect(await vault.listStandaloneChannels(options())).toEqual({ ok: true, channels: [{ tag: "Travel", block_count: 1 }] });
+  });
+
+  it("walks the folder's tree once for a save with media", async () => {
+    const mine = await folder.getDirectoryHandle(".mine", { create: true });
+    mine.files.set("layout.json", new FakeFile(JSON.stringify({ cards: "Cards", media: "Media", collections: "Collections" })));
+    const cards = await folder.getDirectoryHandle("Cards", { create: true });
+    cards.files.set("Old.md", new FakeFile("Old"));
+    const fetcher = vi.fn(async () => ({ ok: true, blob: async () => new NodeBlob(["image"], { type: "image/png" }) }));
+    const image = request({ block_type: "image", body: "", image_url: "https://example.com/image.png" });
+    expect(await vault.saveStandaloneBlock(image, { ...options(), fetch: fetcher })).toMatchObject({ ok: true });
+    expect(cards.listings).toBe(1);
+  });
+
   it("exposes the real browser guarantee profile", async () => {
     expect(await vault.getStandaloneStatus(options())).toMatchObject({ configured: true, bindingId: "test-vault",
       capabilities: { atomic_no_clobber: false, durable_flush: false } });

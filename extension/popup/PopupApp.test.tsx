@@ -70,6 +70,25 @@ describe("clipper preview", () => {
       withReason.collectionError = null;
     }
   });
+  // SPEC_DEEP_AUDIT.md, Е3.7: the refusal of a save that waited for folder
+  // access goes once the setup page restored it.
+  it("replaces the refusal of a waiting save with the news that its folder access is back", async () => {
+    const refusal = "Restore access to the saved folder in the Mine extension window";
+    const withNotice = state as typeof state & { folderAccessNotice?: string | null };
+    state.save.mockResolvedValue({ ok: false, error: refusal });
+    withNotice.folderAccessNotice = null;
+    try {
+      const { container, rerender } = render(<PopupApp />);
+      fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+      await vi.waitFor(() => expect(container.querySelector("[data-clipper-save-error]")).toHaveTextContent(refusal));
+      withNotice.folderAccessNotice = "Folder access restored.";
+      rerender(<PopupApp />);
+      expect(container.querySelector("[data-clipper-save-error]")).toBeNull();
+      expect(screen.getByRole("status")).toHaveTextContent("Folder access restored.");
+    } finally {
+      withNotice.folderAccessNotice = null;
+    }
+  });
   it("shows an empty list only after a successful load", () => {
     render(<PopupApp />);
     expect(screen.getByText("No collections")).toBeInTheDocument();

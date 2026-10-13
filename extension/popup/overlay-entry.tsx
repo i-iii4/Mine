@@ -48,21 +48,31 @@ let pendingMount: Promise<void> | null = null;
 let overlayGeneration = 0;
 let cachedCss: string | null = null;
 
+/// The stylesheet of the overlay. One that cannot be read fails the mount:
+/// an overlay without its styles is unusable, and background opens the
+/// clipper window instead. A failure is not kept, the next open reads again
+/// (SPEC_DEEP_AUDIT.md, Е3.12).
 async function loadCss(): Promise<string> {
   if (cachedCss !== null) return cachedCss;
-  try {
-    const url = chrome.runtime.getURL("dist/assets/popup.css");
-    const raw = await fetch(url).then((r) => r.text());
-    // Tailwind v4 + shadcn emit all color custom properties on :root only.
-    // Inside Shadow DOM, :root matches nothing — no variables, no styles.
-    // Every bare :root selector, alone or in a selector list such as the
-    // colour ladder's `:root, [data-theme]`, also selects the shadow host.
-    cachedCss = rewriteRootForShadow(raw);
-  } catch (e) {
-    console.error("[Mine] failed to load popup.css:", e);
-    cachedCss = "";
-  }
+  const url = chrome.runtime.getURL("dist/assets/popup.css");
+  const response = await fetch(url);
+  if (response.ok === false) throw new Error(`The clipper's stylesheet did not load (HTTP ${response.status})`);
+  const raw = await response.text();
+  // Tailwind v4 + shadcn emit all color custom properties on :root only.
+  // Inside Shadow DOM, :root matches nothing — no variables, no styles.
+  // Every bare :root selector, alone or in a selector list such as the
+  // colour ladder's `:root, [data-theme]`, also selects the shadow host.
+  cachedCss = rewriteRootForShadow(raw);
   return cachedCss;
+}
+
+const XHTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
+
+/// Whether this document can hold the overlay: an HTML document with a body.
+/// An SVG or XML page has neither, and its elements cannot host a shadow
+/// root (SPEC_DEEP_AUDIT.md, Е3.8).
+function documentHoldsOverlay(): boolean {
+  return document.body !== null && document.documentElement?.namespaceURI === XHTML_NAMESPACE;
 }
 
 /// The place and size the person gave the overlay before, read before the
@@ -110,8 +120,10 @@ function keepInDocument(host: HTMLElement): () => void {
 /// when the editor opened; `restored` is the clip it reopens after its page
 /// changed (Р7), or `null` for a new clip.
 async function mount(generation: number, returnFocus: Element | null, restored: OpenClip | null): Promise<OverlayHandle | null> {
+  if (!documentHoldsOverlay()) throw new Error("This page cannot show the clipper overlay");
   const [css, bounds] = await Promise.all([loadCss(), loadBounds()]);
   if (generation !== overlayGeneration) return null;
+  if (!documentHoldsOverlay()) throw new Error("This page cannot show the clipper overlay");
 
   const host = document.createElement("div");
   host.setAttribute("data-mine-clipper-overlay", "");
@@ -443,14 +455,18 @@ interface MineOverlayApi {
   isHidden: () => boolean;
 }
 const api: MineOverlayApi = {
-  show: () => void resumeClipperOverlay(),
+  show: () => {
+    resumeClipperOverlay().catch((error: unknown) => console.warn("[Mine] The clipper overlay did not open:", error));
+  },
   hide: hideClipperOverlay,
   close: closeClipperOverlay,
   isHidden: isClipperOverlayHidden,
 };
 
-function onRuntimeMessage(msg: unknown) {
-  if (typeof msg !== "object" || msg === null) return false;
+/// The opening a `showClipperOverlay` message asks for, or `null` for any
+/// other message. Hide and close act at once and answer nothing.
+function onRuntimeMessage(msg: unknown): Promise<void> | null {
+  if (typeof msg !== "object" || msg === null) return null;
   const action = (msg as { action?: unknown }).action;
   if (action === "showClipperOverlay") {
     const message = msg as { freshMaterial?: unknown; restore?: unknown };
@@ -458,24 +474,17 @@ function onRuntimeMessage(msg: unknown) {
       // The clip background kept for this tab. One this version cannot open
       // is dropped rather than replaced by a capture of this page (Р7).
       const clip = parseOpenClip(message.restore);
-      if (clip) void restoreClipperOverlay(clip);
-      else clearOpenClip();
-      return true;
+      if (clip) return restoreClipperOverlay(clip);
+      clearOpenClip();
+      return Promise.resolve();
     }
     // A launch from a background that does not say treats as new material,
     // as every launch did before Ч11.
-    void showClipperOverlay(message.freshMaterial !== false);
-    return true;
+    return showClipperOverlay(message.freshMaterial !== false);
   }
-  if (action === "hideClipperOverlay") {
-    hideClipperOverlay();
-    return false;
-  }
-  if (action === "closeClipperOverlay") {
-    closeClipperOverlay();
-    return false;
-  }
-  return false;
+  if (action === "hideClipperOverlay") hideClipperOverlay();
+  if (action === "closeClipperOverlay") closeClipperOverlay();
+  return null;
 }
 
 function onMessage(msg: unknown, _sender: unknown, sendResponse: (response: unknown) => void): boolean {
@@ -489,9 +498,19 @@ function onMessage(msg: unknown, _sender: unknown, sendResponse: (response: unkn
     sendResponse({ open: isClipperOverlayOpen() });
     return false;
   }
-  const handled = onRuntimeMessage(msg);
-  if (handled) sendResponse({ ok: true });
-  return false;
+  const opening = onRuntimeMessage(msg);
+  if (!opening) return false;
+  // Background hears the outcome, not the request: an overlay that could not
+  // open (no styles, an SVG or XML page) says so, and background opens the
+  // clipper window instead (SPEC_DEEP_AUDIT.md, Е3.8).
+  opening.then(
+    () => sendResponse({ ok: true }),
+    (error: unknown) => {
+      console.warn("[Mine] The clipper overlay did not open:", error);
+      sendResponse({ ok: false, code: "overlay_unavailable", error: error instanceof Error ? error.message : String(error) });
+    },
+  );
+  return true;
 }
 
 // The bundle can run again in a page that already has it: two openings that

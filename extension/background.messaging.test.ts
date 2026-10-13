@@ -557,6 +557,17 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       expect(tabs.captureVisibleTab).toHaveBeenCalledOnce();
     });
 
+    // SPEC_DEEP_AUDIT.md, Е3.13: the page hides its Mine buttons for the frame
+    // and shows them again once the frame is taken, whatever came of it.
+    it("tells the page the frame is taken after it asked it to prepare", async () => {
+      const { worker, tabs } = captureWorker();
+      tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: pageA });
+      tabs.query.mockResolvedValue([{ id: 5, url: pageA }]);
+      await worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5 }, fromWindow).response;
+      const asked = tabs.sendMessage.mock.calls.map(([id, message]) => [id, (message as { action: string }).action]);
+      expect(asked).toEqual([[5, "prepareViewportCapture"], [5, "finishViewportCapture"]]);
+    });
+
     it("drops a frame taken while the page moved away", async () => {
       const { worker, tabs } = captureWorker();
       tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: pageA });
@@ -687,6 +698,44 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       const reply = await worker.dispatch({ target: "background", action: "restoreOpenClip" }, fromPage(pageB)).response;
       expect(reply).toEqual({ ok: false, mode: "none" });
       expect(worker.chrome.tabs.sendMessage).not.toHaveBeenCalled();
+    });
+
+    // Session storage holds 10 MB and refuses a write past that whole, with
+    // its own words (Chromium 148 without a window, 13.10.2026). The editor
+    // learns what was not kept (SPEC_DEEP_AUDIT.md, Е3.11).
+    function quotaWorker() {
+      const worker = launchWorker();
+      const session: Record<string, unknown> = {};
+      const bytes = (values: Record<string, unknown>) => Object.entries(values)
+        .reduce((total, [key, value]) => total + key.length + JSON.stringify(value).length, 0);
+      worker.chrome.storage.session.get.mockImplementation(async (key: unknown) => ({ [key as string]: structuredClone(session[key as string]) }));
+      worker.chrome.storage.session.set.mockImplementation(async (values: Record<string, unknown>) => {
+        if (bytes({ ...session, ...values }) > 10_485_760) throw new Error("Session storage quota bytes exceeded. Values were not stored.");
+        Object.assign(session, structuredClone(values));
+      });
+      worker.chrome.storage.session.remove.mockImplementation(async (keys: unknown) => {
+        for (const key of [keys].flat() as string[]) delete session[key];
+      });
+      return worker;
+    }
+    const big = "A".repeat(11 * 1024 * 1024);
+
+    it("keeps a clip too large with its frame without the frame, and says so", async () => {
+      const worker = quotaWorker();
+      const reply = await write(worker, clip("Large frame", { screenshot: { dataUrl: `data:image/jpeg;base64,${big}`, uploadId: "shot-big" } }));
+      expect(reply).toEqual({ ok: true, screenshotKept: false });
+      await expect(stored(worker)).resolves.toMatchObject({ title: "Large frame", screenshot: null });
+    });
+
+    it("keeps no older copy of a clip it cannot hold, and says the clip is not kept", async () => {
+      const worker = quotaWorker();
+      await expect(write(worker, clip("Small"))).resolves.toEqual({ ok: true });
+      const reply = await write(worker, clip("Long article", {
+        articleData: { title: "Long article", content: big, byline: null, excerpt: "" }, articleExtractionState: "ready",
+      }));
+      expect(reply).toMatchObject({ ok: false, code: "open_clip_too_large" });
+      await expect(stored(worker)).resolves.toBeNull();
+      await expect(worker.run("anyOpenClip()")).resolves.toBe(false);
     });
 
     it("counts a kept clip as an open clipper for a pending update (К4)", async () => {

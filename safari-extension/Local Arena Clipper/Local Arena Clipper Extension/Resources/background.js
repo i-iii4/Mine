@@ -100,6 +100,9 @@ async function captureTabViewport(tabId) {
   await new Promise((resolve) => prepareTabForViewportCapture(tabId, resolve));
   const dataUrl = await new Promise((resolve, reject) => {
     chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 95 }, (url) => {
+      // The page shows its Mine buttons again whatever came of the frame
+      // (SPEC_DEEP_AUDIT.md, Е3.13).
+      finishTabViewportCapture(tabId);
       if (chrome.runtime.lastError || !url) {
         reject(new Error(chrome.runtime.lastError?.message ?? "Capture failed"));
         return;
@@ -130,6 +133,19 @@ function startCropInTab(tabId, cropId) {
       resolve(resp || { ok: true });
     });
   });
+}
+
+/// The frame is taken: the page brings back what it hid for it. Best-effort,
+/// like the preparation; the page also brings it back on its own.
+function finishTabViewportCapture(tabId) {
+  if (typeof tabId !== "number") return;
+  try {
+    chrome.tabs.sendMessage(tabId, { action: "finishViewportCapture" }, () => {
+      void chrome.runtime.lastError;
+    });
+  } catch {
+    // The tab is gone: there is nothing to bring back.
+  }
 }
 
 function prepareTabForViewportCapture(tabId, callback) {
@@ -340,28 +356,54 @@ function openClipKey(tabId) {
 // Changes of one tab's clip run one at a time, in the order they came.
 const openClipChanges = new Map();
 
+// What a write of the clip kept: all of it, all but its frame, or nothing.
+const OPEN_CLIP_KEPT = "kept";
+const OPEN_CLIP_KEPT_WITHOUT_SCREENSHOT = "kept_without_screenshot";
+const OPEN_CLIP_NOT_KEPT = "not_kept";
+
+async function forgetOpenClipTab(tabId, key) {
+  await chrome.storage.session.remove(key);
+  await changeSessionValue(OPEN_CLIP_TABS_KEY, (tabs = []) => ({ next: tabs.filter((id) => id !== tabId) }));
+}
+
 function changeOpenClip(tabId, change) {
   const previous = openClipChanges.get(tabId) ?? Promise.resolve();
   const run = previous.then(async () => {
     const key = openClipKey(tabId);
     const stored = (await chrome.storage.session.get(key))[key] ?? null;
     const next = change(stored);
-    if (next === undefined) return;
+    if (next === undefined) return undefined;
     if (next === null) {
-      await chrome.storage.session.remove(key);
-      await changeSessionValue(OPEN_CLIP_TABS_KEY, (tabs = []) => ({ next: tabs.filter((id) => id !== tabId) }));
-      return;
+      await forgetOpenClipTab(tabId, key);
+      return undefined;
     }
+    // Session storage holds 10 MB for every tab's clip together. A clip that
+    // does not fit is kept without its frame, which the person can take
+    // again on the page shown. One that does not fit even so is not kept:
+    // an older copy would come back after the page changes as if it were
+    // the clip. The editor hears which, and says it (SPEC_DEEP_AUDIT.md,
+    // Е3.11).
+    let kept = OPEN_CLIP_KEPT;
     try {
       await chrome.storage.session.set({ [key]: next });
     } catch (error) {
-      // Session storage is bounded: a clip that does not fit is kept without
-      // its frame, which the person can take again on the page shown.
-      if (!next.screenshot) throw error;
-      console.warn("[Mine] open clip kept without its screenshot:", String(error?.message ?? error));
-      await chrome.storage.session.set({ [key]: { ...next, screenshot: null } });
+      console.warn("[Mine] open clip does not fit session storage:", String(error?.message ?? error));
+      kept = OPEN_CLIP_NOT_KEPT;
+      if (next.screenshot) {
+        try {
+          await chrome.storage.session.set({ [key]: { ...next, screenshot: null } });
+          kept = OPEN_CLIP_KEPT_WITHOUT_SCREENSHOT;
+        } catch (withoutFrame) {
+          console.warn("[Mine] open clip does not fit session storage without its screenshot:", String(withoutFrame?.message ?? withoutFrame));
+        }
+      }
+    }
+    if (kept === OPEN_CLIP_NOT_KEPT) {
+      await forgetOpenClipTab(tabId, key);
+      return kept;
     }
     await changeSessionValue(OPEN_CLIP_TABS_KEY, (tabs = []) => (tabs.includes(tabId) ? {} : { next: [...tabs, tabId] }));
+    return kept;
   });
   const settled = run.catch(() => undefined);
   openClipChanges.set(tabId, settled);
@@ -1717,8 +1759,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false });
       return false;
     }
-    writeOpenClip(sender.tab.id, msg.clip).then(() => sendResponse({ ok: true }),
-      (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    writeOpenClip(sender.tab.id, msg.clip).then((kept) => sendResponse(kept === OPEN_CLIP_NOT_KEPT
+      ? { ok: false, code: "open_clip_too_large", error: "This clip is too large to keep while the page changes." }
+      : kept === OPEN_CLIP_KEPT_WITHOUT_SCREENSHOT ? { ok: true, screenshotKept: false } : { ok: true }),
+    (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
     return true;
   }
 

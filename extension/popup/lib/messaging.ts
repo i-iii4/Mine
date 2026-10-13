@@ -315,7 +315,10 @@ export interface EmbeddedVideoPreview {
 
 export const CONTENT_SCRIPT_CONTEXT = -1;
 
-const EMPTY_METADATA: PageMetadata = {
+// Frozen: every caller gets a copy, which it fills with the tab's address and
+// title. Handed out itself, it kept them for the next opening on another page
+// (SPEC_DEEP_AUDIT.md, Е3.4).
+const EMPTY_METADATA: Readonly<PageMetadata> = Object.freeze({
   url: "",
   title: "",
   description: "",
@@ -326,9 +329,9 @@ const EMPTY_METADATA: PageMetadata = {
   selection: "",
   detectedType: "link",
   isArticle: false,
-};
+});
 
-const EMPTY_ARTICLE: ArticleData = { title: "", content: "", byline: null, excerpt: "" };
+const EMPTY_ARTICLE: Readonly<ArticleData> = Object.freeze({ title: "", content: "", byline: null, excerpt: "" });
 
 export interface TwitterLightboxResult {
   src: string;
@@ -366,7 +369,7 @@ function contentHelpers(): MineContentHelpers | null {
 export async function extractMetadata(tabId: number): Promise<PageMetadata> {
   if (tabId === CONTENT_SCRIPT_CONTEXT) {
     const helpers = contentHelpers();
-    return helpers ? helpers.extractMetadata() : EMPTY_METADATA;
+    return helpers ? helpers.extractMetadata() : { ...EMPTY_METADATA };
   }
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve({ ...EMPTY_METADATA }), 5_000);

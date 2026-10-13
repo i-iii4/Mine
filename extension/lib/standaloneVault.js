@@ -225,7 +225,10 @@
     return found;
   }
   const unknown = id => failed(id, error("operation_unknown", "Save outcome is unknown. Check the original folder; Mine will not create another copy."), "unknown");
-  async function advance(record, binding, store, options, execute) {
+  // `paths` is the folder's listing this save already read: one walk of the
+  // tree serves naming and every check of the same run, the files the run
+  // publishes being its own (SPEC_DEEP_AUDIT.md, Е3.10). A resume walks once.
+  async function advance(record, binding, store, options, execute, paths = null) {
     if (record.phase === "committed") return result(record);
     if (record.phase === "rejected") return record.response;
     await requirePermission(binding.handle);
@@ -236,7 +239,7 @@
       const targets = [`${record.slug}.md`, ...(record.media ? [record.media.path] : [])];
       const owned = new Set(targets);
       const names = new Set(targets.map(path => path.split("/").at(-1)));
-      const paths = await existingPaths(binding.handle);
+      paths ??= await existingPaths(binding.handle);
       if (paths.some(path => !owned.has(path) && names.has(path.split("/").at(-1)))) {
         if (record.phase !== "prepared") return unknown(record.id);
         const response = { ...failed(record.id, error("name_conflict", "The planned filename became occupied elsewhere in the folder. Save again to choose a free name.")),
@@ -267,7 +270,7 @@
       await options?.afterEffect?.("media", record);
       record.phase = "media_published";
       await store.put("operations", record.id, record);
-      return advance(record, binding, store, options, true);
+      return advance(record, binding, store, options, true, paths);
     }
     if (action === "publish_markdown") {
       record.phase = "markdown_publishing";
@@ -276,7 +279,7 @@
       await options?.afterEffect?.("markdown", record);
       record.phase = "source_committed";
       await store.put("operations", record.id, record);
-      return advance(record, binding, store, options, true);
+      return advance(record, binding, store, options, true, paths);
     }
     // Only these two steps record the save as committed. A step this adapter
     // does not know, from a core of another build, writes nothing and is
@@ -364,7 +367,7 @@
         markdown: document.markdown, hash: await hash(document.markdown), media };
       await store.put("operations", id, record);
       await options?.afterPrepared?.(record);
-      return await advance(record, binding, store, options, true);
+      return await advance(record, binding, store, options, true, paths);
     } catch (failure) {
       if (fresh && !record) {
         // Acquisition/preflight failure before any source effect is terminal,
@@ -411,6 +414,48 @@
         permission: await binding.handle.queryPermission({ mode: "readwrite" }), capabilities };
     } catch (failure) { return { configured: false, capabilities, error: String(failure?.message ?? failure) }; }
   }
+  // What the collection list learned of each note of a folder, by its path,
+  // with the modification time and size the note had: the next list reads
+  // again only the notes that changed (SPEC_DEEP_AUDIT.md, Е3.10). Derived
+  // data in a database of its own, beside the folder handles; losing it
+  // costs one full read.
+  function openNotesDb() {
+    return new Promise((resolve, reject) => {
+      const request = root.indexedDB.open("mine-standalone-notes", 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains("folders")) request.result.createObjectStore("folders");
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+  async function notesTransaction(mode, run) {
+    const db = await openNotesDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(["folders"], mode);
+      const request = run(tx.objectStore("folders"));
+      tx.oncomplete = () => { db.close(); resolve(request.result); };
+      tx.onerror = tx.onabort = () => { db.close(); reject(tx.error); };
+    });
+  }
+  const notesPersisted = {
+    get: (_store, key) => notesTransaction("readonly", folders => folders.get(key)),
+    put: (_store, key, value) => notesTransaction("readwrite", folders => folders.put(value, key)),
+  };
+  const notesStorage = options => options?.store ?? (root.indexedDB ? notesPersisted : null);
+  async function knownNotes(bindingId, options) {
+    try {
+      const known = await notesStorage(options)?.get("notes", bindingId);
+      return known && typeof known === "object" ? known : {};
+    } catch (failure) {
+      console.warn("[Mine] collection list reads every note:", String(failure?.message ?? failure));
+      return {};
+    }
+  }
+  async function rememberNotes(bindingId, notes, options) {
+    try { await notesStorage(options)?.put("notes", bindingId, notes); }
+    catch (failure) { console.warn("[Mine] collection list could not keep what it read:", String(failure?.message ?? failure)); }
+  }
   async function listStandaloneChannels(options) {
     try {
       const binding = await selectedBinding(options);
@@ -422,21 +467,35 @@
       // (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1 and К9).
       const pages = [];
       const memberships = [];
+      const known = await knownNotes(binding.id, options);
+      const seen = {};
       async function scan(handle, prefix = "") {
         for await (const [name, entry] of handle.entries()) {
           if (name.startsWith(".")) continue;
           if (entry.kind === "directory") { await scan(await handle.getDirectoryHandle(name), join(prefix, name)); continue; }
           if (!name.endsWith(".md")) continue;
           const slug = join(prefix, name.slice(0, -3));
-          const markdown = await (await (await handle.getFileHandle(name)).getFile()).text();
-          try {
-            const note = await core({ op: "inspect", slug, markdown });
-            if (note.collection) pages.push({ slug, position: note.position ?? null });
-            else if (note.collections?.length) memberships.push(note.collections);
-          } catch (failure) { if (failure.code !== "invalid_request") throw failure; }
+          const file = await (await handle.getFileHandle(name)).getFile();
+          const stamped = typeof file.lastModified === "number";
+          const previous = known[slug];
+          let note;
+          if (stamped && previous && previous.lastModified === file.lastModified && previous.size === file.size) {
+            note = previous.note;
+          } else {
+            note = null;
+            try {
+              const inspected = await core({ op: "inspect", slug, markdown: await file.text() });
+              note = { collection: Boolean(inspected.collection), position: inspected.position ?? null,
+                collections: Array.isArray(inspected.collections) ? inspected.collections : [] };
+            } catch (failure) { if (failure.code !== "invalid_request") throw failure; }
+          }
+          if (stamped) seen[slug] = { lastModified: file.lastModified, size: file.size, note };
+          if (note?.collection) pages.push({ slug, position: note.position });
+          else if (note?.collections.length) memberships.push(note.collections);
         }
       }
       await scan(binding.handle);
+      await rememberNotes(binding.id, seen, options);
       const channels = await core({ op: "collections", pages, memberships });
       return { ok: true, channels };
     } catch (failure) { return failed(undefined, failure); }

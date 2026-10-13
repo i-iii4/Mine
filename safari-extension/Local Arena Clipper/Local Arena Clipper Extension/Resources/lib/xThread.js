@@ -6,13 +6,50 @@
     try { const u = new URL(value); return u.protocol === "https:" ? u.href : null; }
     catch { return null; }
   };
+  // X escapes `&`, `<` and `>` in the legacy text of a post, GraphQL and the
+  // syndication service alike; the text of a long post (`note_tweet`) comes
+  // unescaped (live answers of 13.10.2026, xPost.live.test.json). One
+  // pass, so an escaped `&lt;` the author typed stays `&lt;`.
+  const ENTITIES = { amp: "&", lt: "<", gt: ">" };
+  const unescapeText = value => value.replace(/&(amp|lt|gt);/g, (_, name) => ENTITIES[name]);
+  // The part of the legacy text X shows: the mentions a reply starts with
+  // and a trailing media link fall outside `display_text_range`. GraphQL
+  // counts it in code points, the syndication service in UTF-16 units, both
+  // over the escaped text.
+  function shownText(text, range, units) {
+    const value = String(text || "");
+    if (!Array.isArray(range) || range.length !== 2 || !range.every(Number.isInteger)) return unescapeText(value);
+    const [start, end] = range;
+    const shown = units === "utf16" ? value.slice(start, end) : Array.from(value).slice(start, end).join("");
+    return unescapeText(shown);
+  }
+  /// The text a syndication answer of a post (or of its quote) shows.
+  const syndicationText = data => shownText(data?.text, data?.display_text_range, "utf16");
+  // The hosts of X whose `/<handle>/status/<id>` address is a post: one rule
+  // for every check, a host that merely ends in "x.com" is not X.
+  const X_HOSTS = new Set(["x.com", "www.x.com", "pro.x.com", "twitter.com", "www.twitter.com"]);
+  /// The address `value` parsed, when it is a page of X.
+  function xPage(value) {
+    let url;
+    try { url = new URL(String(value ?? "")); } catch { return null; }
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    return X_HOSTS.has(url.hostname.toLowerCase()) ? url : null;
+  }
+  /// Whether `value` is a page of X, any page.
+  const isXPage = value => xPage(value) !== null;
+  /// The post an address of X names, `{ handle, id }`, or `null`.
+  function postAddress(value) {
+    const url = xPage(value);
+    const match = url?.pathname.match(/^\/([^/]+)\/status\/(\d+)(?:\/|$)/);
+    return match ? { handle: match[1], id: match[2] } : null;
+  }
   function post(result, quoteDepth = 0) {
     const t = result?.tweet || result;
     const l = t?.legacy;
     const user = t?.core?.user_results?.result;
     if (!l || !id(t.rest_id || l.id_str) || !id(user?.rest_id)) return null;
     const note = t.note_tweet?.note_tweet_results?.result;
-    let text = note?.text || l.full_text || "";
+    let text = note?.text || shownText(l.full_text, l.display_text_range, "codepoints");
     const entities = note?.entity_set || l.entities || {};
     for (const link of entities.urls || []) {
       if (link.url && link.expanded_url) text = text.split(link.url).join(link.expanded_url);
@@ -175,5 +212,5 @@
     }
     return posts.map(p => body(p)).filter(Boolean).join("\n\n***\n\n");
   }
-  root.MineXThread = { page, feed, post, select, compose, continuations };
+  root.MineXThread = { page, feed, post, select, compose, continuations, syndicationText, postAddress, isXPage };
 })(globalThis);

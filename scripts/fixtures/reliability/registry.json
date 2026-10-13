@@ -2213,7 +2213,11 @@
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/xThread.js",
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/xThreadPage.js",
         "extension/popup/lib/twitterPhotoLightbox.test.ts",
-        "extension/popup/lib/twitterPhotoLightbox.ts"
+        "extension/popup/lib/twitterPhotoLightbox.ts",
+        "extension/popup/lib/socialContent.ts",
+        "extension/popup/lib/socialContent.test.ts",
+        "extension/popup/overlay-entry.mount.test.tsx",
+        "extension/lib/xPost.live.test.json"
       ],
       "requirement": "SPEC_CLIPPER.md#Кнопка Mine в ленте X (10.10.2026)",
       "tests": [

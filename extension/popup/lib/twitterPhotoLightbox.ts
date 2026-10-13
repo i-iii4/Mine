@@ -6,6 +6,7 @@
 // dependency on lazy-loaded DOM).
 
 import { requestXSyndication } from "./messaging";
+import { xPostAddress } from "./socialContent";
 
 export interface ResolvedLightboxImage {
   src: string;
@@ -27,16 +28,16 @@ interface SyndicationPhoto {
   original_info?: { width?: number; height?: number };
 }
 
-const TWITTER_PHOTO_URL_RE =
-  /(?:twitter\.com|x\.com)\/\w+\/status\/(\d+)\/photo\/(\d+)/i;
-
-/** Parse a raw page URL into a tweet id + zero-based photo index, or null. */
+/** Parse a raw page URL into a tweet id + zero-based photo index, or null.
+ *  The page is X's by the one rule of lib/xThread.js (SPEC_DEEP_AUDIT.md, Е3.15). */
 export function parseTwitterPhotoUrl(rawUrl: string): TwitterPhotoTarget | null {
-  const match = rawUrl.match(TWITTER_PHOTO_URL_RE);
+  const post = xPostAddress(rawUrl);
+  if (!post) return null;
+  const match = new URL(rawUrl).pathname.match(/^\/[^/]+\/status\/\d+\/photo\/(\d+)(?:\/|$)/);
   if (!match) return null;
   return {
-    tweetId: match[1]!,
-    photoIndex: Math.max(1, parseInt(match[2]!, 10)) - 1,
+    tweetId: post.id,
+    photoIndex: Math.max(1, parseInt(match[1]!, 10)) - 1,
   };
 }
 
