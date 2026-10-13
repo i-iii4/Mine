@@ -163,7 +163,7 @@ try {
   const devtools = await context.newCDPSession(second.page);
   try {
     const { targetInfos } = await devtools.send('Target.getTargets');
-    const target = targetInfos.find(item => item.type === 'service_worker' && item.url === `chrome-extension://${extensionId}/background.js`);
+    const target = targetInfos.find(item => item.type === 'service_worker' && item.url === `chrome-extension://${extensionId}/${manifest.background.service_worker}`);
     assert.ok(target, 'The packaged worker must exist before its forced restart');
     assert.equal((await devtools.send('Target.closeTarget', { targetId: target.targetId })).success, true);
     await waitFor(async () => !(await devtools.send('Target.getTargets')).targetInfos.some(item => item.targetId === target.targetId), 'worker destroyed after committed response loss');

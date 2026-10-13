@@ -101,6 +101,35 @@ fn legacy_extension_path(parent: &Path) -> std::io::Result<PathBuf> {
     Ok(clipper.join("extension"))
 }
 
+/// The worker wrapper of an extension build: it only imports `background.js`.
+/// Must match `WORKER_WRAPPER_SOURCE` in `scripts/clipper-extension-payload.mjs`.
+const WORKER_WRAPPER_SOURCE: &[u8] = b"importScripts(\"background.js\");\n";
+
+/// Whether the manifest's worker is Mine's: `background.js` itself, as builds
+/// before 13.10.2026 have it, or the build's own wrapper `worker-<version>.js`
+/// that only imports it. Each build names its worker after its version, since
+/// Chromium keeps a registered worker whose address did not change
+/// (SPEC_CLIPPER.md, К4).
+fn recognized_worker(root: &Path, manifest: &serde_json::Value) -> bool {
+    let Some(worker) = manifest["background"]["service_worker"].as_str() else {
+        return false;
+    };
+    if worker == "background.js" {
+        return true;
+    }
+    let Some(version) = manifest["version"].as_str() else {
+        return false;
+    };
+    let numeric = version
+        .split('.')
+        .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()));
+    let path = root.join(worker);
+    numeric
+        && worker == format!("worker-{version}.js")
+        && std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_file())
+        && std::fs::read(&path).is_ok_and(|bytes| bytes == WORKER_WRAPPER_SOURCE)
+}
+
 fn recognized_extension(root: &Path, host_name: &str) -> bool {
     use base64::Engine;
     let Some(manifest) = std::fs::read(root.join("manifest.json"))
@@ -111,7 +140,7 @@ fn recognized_extension(root: &Path, host_name: &str) -> bool {
     };
     if manifest["manifest_version"] != 3
         || manifest["name"] != "Mine"
-        || manifest["background"]["service_worker"] != "background.js"
+        || !recognized_worker(root, &manifest)
     {
         return false;
     }
@@ -2124,6 +2153,114 @@ mod tests {
                 Some(candidate.extension)
             );
         }
+    }
+
+    /// Stamp a payload the way the extension build does
+    /// (`scripts/clipper-extension-payload.mjs`): its own version and the
+    /// worker wrapper named after it.
+    fn stamp_build(root: &Path, version: &str) -> RuntimeComponentManifest {
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("manifest.json")).unwrap()).unwrap();
+        if let Some(previous) = manifest["background"]["service_worker"].as_str() {
+            if previous != "background.js" {
+                std::fs::remove_file(root.join(previous)).unwrap();
+            }
+        }
+        let worker = format!("worker-{version}.js");
+        manifest["version"] = serde_json::json!(version);
+        manifest["background"]["service_worker"] = serde_json::json!(worker);
+        write_runtime_json(&root.join("manifest.json"), &manifest).unwrap();
+        std::fs::write(root.join(&worker), WORKER_WRAPPER_SOURCE).unwrap();
+        extension_manifest(root).unwrap()
+    }
+
+    #[test]
+    fn recognized_extension_accepts_its_own_worker_wrapper_only() {
+        const VERSION: &str = "2026.1013.1542.37123";
+        let tmp = TempDir::new().unwrap();
+        let earlier = tmp.path().join("earlier");
+        browser_payload(&earlier, HOST_NAME, "build before the wrapper");
+        assert!(recognized_extension(&earlier, HOST_NAME));
+        let stamped = tmp.path().join("stamped");
+        browser_payload(&stamped, HOST_NAME, "build");
+        stamp_build(&stamped, VERSION);
+        assert!(recognized_extension(&stamped, HOST_NAME));
+        assert!(!recognized_extension(&stamped, "com.localarena.clipper"));
+        stamp_build(&stamped, "2026.1013.1542.37124");
+        assert!(recognized_extension(&stamped, HOST_NAME));
+
+        let wrapper = format!("worker-{VERSION}.js");
+        for damage in ["content", "missing", "symlink", "version", "name", "path"] {
+            let root = tmp.path().join(damage);
+            browser_payload(&root, HOST_NAME, "build");
+            stamp_build(&root, VERSION);
+            let manifest_path = root.join("manifest.json");
+            let mut manifest: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+            match damage {
+                "content" => {
+                    std::fs::write(root.join(&wrapper), "importScripts(\"foreign.js\");\n").unwrap();
+                }
+                "missing" => std::fs::remove_file(root.join(&wrapper)).unwrap(),
+                "symlink" => {
+                    let elsewhere = tmp.path().join(format!("{damage}-wrapper.js"));
+                    std::fs::write(&elsewhere, WORKER_WRAPPER_SOURCE).unwrap();
+                    std::fs::remove_file(root.join(&wrapper)).unwrap();
+                    std::os::unix::fs::symlink(&elsewhere, root.join(&wrapper)).unwrap();
+                }
+                "version" => manifest["version"] = serde_json::json!("2026.1013.1542.37124"),
+                "name" => {
+                    std::fs::write(root.join("foreign.js"), WORKER_WRAPPER_SOURCE).unwrap();
+                    manifest["background"]["service_worker"] = serde_json::json!("foreign.js");
+                }
+                "path" => {
+                    std::fs::create_dir_all(root.join("worker-1/..")).unwrap();
+                    std::fs::write(root.join("worker-1/../2.js"), WORKER_WRAPPER_SOURCE).unwrap();
+                    manifest["version"] = serde_json::json!("1/../2");
+                    manifest["background"]["service_worker"] = serde_json::json!("worker-1/../2.js");
+                }
+                _ => unreachable!(),
+            }
+            write_runtime_json(&manifest_path, &manifest).unwrap();
+            assert!(!recognized_extension(&root, HOST_NAME), "{damage}");
+        }
+    }
+
+    #[test]
+    fn legacy_activation_installs_a_stamped_payload() {
+        let tmp = TempDir::new().unwrap();
+        let parent = tmp.path().join("app/clipper/managed-v1");
+        let legacy = parent.parent().unwrap().join("extension");
+        let original = browser_payload(&legacy, "com.localarena.clipper", "original");
+        let (source, mut candidate) = runtime_fixture(tmp.path(), "bundle", "1.0.0");
+        browser_payload(&source.join("extension"), HOST_NAME, "stamped replacement");
+        candidate.extension = stamp_build(&source.join("extension"), "2026.1013.1542.37123");
+        let package_id = prepare_runtime_package(
+            &parent,
+            &candidate,
+            &source.join("native-host"),
+            &source.join("extension"),
+            Some(&source.join(YTDLP_DIRECTORY)),
+        )
+        .unwrap();
+        let mut journal = RuntimeInstallJournal {
+            schema_version: 1,
+            package_id,
+            candidate: candidate.clone(),
+            previous: None,
+            legacy_extension_previous: plan_legacy_extension(&parent, &candidate).unwrap(),
+            stage: RuntimeInstallStage::Prepared,
+        };
+        assert_eq!(journal.legacy_extension_previous, Some(original));
+        write_runtime_json(&parent.join("install-journal.json"), &journal).unwrap();
+        apply_runtime_journal(&parent, &mut journal, |_| Ok(()), |_| Ok(())).unwrap();
+        assert_eq!(extension_manifest(&legacy), Some(candidate.extension.clone()));
+        assert!(recognized_extension(&legacy, HOST_NAME));
+        // The next stamped build replaces the adopted, stamped directory.
+        assert_eq!(
+            plan_legacy_extension(&parent, &candidate).unwrap(),
+            Some(candidate.extension)
+        );
     }
 
     #[test]

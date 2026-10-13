@@ -2,12 +2,13 @@
 // only in a disposable profile: this does not test OS folders/permissions or Dia.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { extensionBuildVersion, stampExtensionBuild } from './clipper-extension-payload.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const argumentsList = process.argv.slice(2);
@@ -20,6 +21,8 @@ const extensionId = createHash('sha256').update(Buffer.from(manifest.key, 'base6
   .digest('hex').slice(0, 32).replace(/[0-9a-f]/g, digit => String.fromCharCode(97 + Number.parseInt(digit, 16)));
 assert.ok(manifest.content_security_policy.extension_pages.includes("'wasm-unsafe-eval'"));
 assert.equal(manifest.background.type, undefined, 'the shipped worker must retain classic importScripts semantics');
+// Each build names its own worker wrapper (SPEC_CLIPPER.md, К4).
+const workerUrl = `chrome-extension://${extensionId}/${manifest.background.service_worker}`;
 
 const temporaryProfile = mkdtempSync(join(tmpdir(), 'mine-clipper-worker-smoke-'));
 const evidenceDirectory = join(root, 'output/playwright');
@@ -38,7 +41,7 @@ async function launch() {
   });
   const worker = context.serviceWorkers()[0]
     ?? await context.waitForEvent('serviceworker', { timeout: 15_000 });
-  assert.equal(worker.url(), `chrome-extension://${extensionId}/background.js`);
+  assert.equal(worker.url(), workerUrl);
   return worker;
 }
 
@@ -75,7 +78,7 @@ async function restartWorker(page, browser = context) {
   try {
     const { targetInfos } = await devtools.send('Target.getTargets');
     const target = targetInfos.find((candidate) => candidate.type === 'service_worker'
-      && candidate.url === `chrome-extension://${extensionId}/background.js`);
+      && candidate.url === workerUrl);
     assert.ok(target, 'packaged service-worker target is unavailable');
     assert.equal((await devtools.send('Target.closeTarget', { targetId: target.targetId })).success, true);
     await waitForTargetToClose(devtools, target.targetId);
@@ -84,8 +87,8 @@ async function restartWorker(page, browser = context) {
     assert.equal(typeof result.response?.configured, 'boolean');
     const restarted = await devtools.send('Target.getTargets');
     assert.ok(restarted.targetInfos.some((candidate) => candidate.type === 'service_worker'
-      && candidate.url === `chrome-extension://${extensionId}/background.js`), 'standaloneStatus did not wake the worker');
-    return browser.serviceWorkers().find((candidate) => candidate.url() === `chrome-extension://${extensionId}/background.js`)
+      && candidate.url === workerUrl), 'standaloneStatus did not wake the worker');
+    return browser.serviceWorkers().find((candidate) => candidate.url() === workerUrl)
       ?? await browser.waitForEvent('serviceworker', { timeout: 15_000 });
   } finally { await devtools.detach(); }
 }
@@ -644,6 +647,107 @@ async function pollUntil(read, label) {
   assert.fail(`Timed out: ${label}`);
 }
 
+// A person's browser loads the copy through Load unpacked, which needs
+// developer mode; without it the browser does not load an unpacked extension
+// that reloads itself again, it disables it (К4).
+async function enableDeveloperMode(browser) {
+  const settings = await browser.newPage();
+  await settings.goto('chrome://extensions');
+  assert.equal(await settings.evaluate(async () => {
+    await chrome.developerPrivate.updateProfileConfiguration({ inDeveloperMode: true });
+    return (await chrome.developerPrivate.getProfileConfiguration()).inDeveloperMode;
+  }), true);
+  await settings.close();
+}
+
+// Turn the copy at `staged` into the next build the way the extension build
+// makes one: its own build identity, background and overlay, then its own
+// version and worker wrapper (scripts/clipper-extension-payload.mjs). The
+// background and the overlay mark the world they run in.
+function makeNextBuild(staged) {
+  const next = { buildId: createHash('sha256').update(`${report.runtimeIdentity.buildId}:next`).digest('hex'), commit: 'next-commit' };
+  writeFileSync(join(staged, 'dist/runtime-identity.json'), `${JSON.stringify(next)}\n`);
+  writeFileSync(join(staged, 'dist/build-identity.js'), `globalThis.MineBuildIdentity = Object.freeze(${JSON.stringify(next)});\n`);
+  writeFileSync(join(staged, 'background.js'),
+    `${readFileSync(join(staged, 'background.js'), 'utf8')}\nglobalThis.MineNextBackground = true;\n`);
+  writeFileSync(join(staged, 'dist/overlay.js'),
+    `${readFileSync(join(staged, 'dist/overlay.js'), 'utf8')}\n;globalThis.__mineSmokeOverlayBuild = ${JSON.stringify(next.buildId)};\n`);
+  const version = extensionBuildVersion();
+  const worker = stampExtensionBuild(staged, version);
+  return { ...next, version, workerUrl: `chrome-extension://${extensionId}/${worker}` };
+}
+
+// Chromium location of an extension added with Load unpacked.
+const UNPACKED_LOCATION = 4;
+
+function registeredLocation(profile) {
+  for (const name of ['Secure Preferences', 'Preferences']) {
+    const path = join(profile, 'Default', name);
+    if (!existsSync(path)) continue;
+    const location = JSON.parse(readFileSync(path, 'utf8'))?.extensions?.settings?.[extensionId]?.location;
+    if (location !== undefined) return location;
+  }
+  return null;
+}
+
+// A browser restart runs the build on disk (SPEC_CLIPPER.md, К4, 13.10.2026).
+// Chromium keeps the worker registered across restarts. It registers the
+// worker again only when the manifest names another version than the one
+// registered, and a new registration at the same script address keeps the old
+// script. Each build therefore has its own version and its own worker file.
+// The copy is registered as a person's browser holds it, Load unpacked (one
+// reload turns the command-line load into that), and the browser restarts
+// without any extension switch after the next build replaced the files.
+async function checkBrowserRestartRunsBuildOnDisk() {
+  const sandbox = mkdtempSync(join(tmpdir(), 'mine-clipper-restart-'));
+  const installed = join(sandbox, 'extension');
+  const profile = join(sandbox, 'profile');
+  let browser;
+  try {
+    cpSync(extension, installed, { recursive: true });
+    browser = await chromium.launchPersistentContext(profile, {
+      channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${installed}`, `--load-extension=${installed}`],
+    });
+    let worker = browser.serviceWorkers()[0] ?? await browser.waitForEvent('serviceworker', { timeout: 15_000 });
+    await enableDeveloperMode(browser);
+    const reloaded = browser.waitForEvent('serviceworker', { timeout: 15_000 });
+    reloaded.catch(() => undefined);
+    await worker.evaluate(() => { setTimeout(() => chrome.runtime.reload(), 50); });
+    worker = await reloaded;
+    assert.equal(worker.url(), workerUrl);
+    assert.equal(await worker.evaluate(() => globalThis.MineBuildIdentity?.buildId), report.runtimeIdentity.buildId);
+    await browser.close();
+    browser = undefined;
+    assert.equal(registeredLocation(profile), UNPACKED_LOCATION, 'the copy is not registered as Load unpacked registers it');
+
+    // The next build replaces the copy while the browser is closed, the way
+    // an install does: a new directory renamed into the same path.
+    const staged = join(sandbox, 'next');
+    cpSync(installed, staged, { recursive: true });
+    const next = makeNextBuild(staged);
+    renameSync(installed, join(sandbox, 'previous'));
+    renameSync(staged, installed);
+
+    browser = await chromium.launchPersistentContext(profile, {
+      channel: 'chromium', headless: true, ignoreDefaultArgs: ['--disable-extensions'],
+    });
+    worker = browser.serviceWorkers()[0] ?? await browser.waitForEvent('serviceworker', { timeout: 15_000 });
+    const running = await worker.evaluate(() => ({
+      build: globalThis.MineBuildIdentity?.buildId ?? null,
+      nextBackground: globalThis.MineNextBackground === true,
+      version: chrome.runtime.getManifest().version,
+    }));
+    assert.deepEqual({ url: worker.url(), ...running },
+      { url: next.workerUrl, build: next.buildId, nextBackground: true, version: next.version },
+      'the restarted browser runs the background of another build than the one on disk');
+  } finally {
+    await browser?.close();
+    // Allocated above for this check only, never a user profile or extension.
+    rmSync(sandbox, { recursive: true, force: true });
+  }
+}
+
 // An update replaces the extension files on disk while the browser keeps
 // running the worker it loaded, across worker restarts too (SPEC_CLIPPER.md,
 // К4, 12.10.2026). The worker compares the build written into its own code
@@ -658,7 +762,6 @@ async function checkUpdateReloadsWorker() {
   const sandbox = mkdtempSync(join(tmpdir(), 'mine-clipper-update-'));
   const installed = join(sandbox, 'extension');
   const profile = join(sandbox, 'profile');
-  const workerUrl = `chrome-extension://${extensionId}/background.js`;
   const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
   let browser;
   try {
@@ -679,16 +782,7 @@ async function checkUpdateReloadsWorker() {
       args: [`--disable-extensions-except=${installed}`, `--load-extension=${installed}`],
     });
     let worker = browser.serviceWorkers()[0] ?? await browser.waitForEvent('serviceworker', { timeout: 15_000 });
-    // A person's browser loads the copy through Load unpacked, which needs
-    // developer mode; without it the browser does not load an unpacked
-    // extension that reloads itself again, it disables it (К4).
-    const settings = await browser.newPage();
-    await settings.goto('chrome://extensions');
-    assert.equal(await settings.evaluate(async () => {
-      await chrome.developerPrivate.updateProfileConfiguration({ inDeveloperMode: true });
-      return (await chrome.developerPrivate.getProfileConfiguration()).inDeveloperMode;
-    }), true);
-    await settings.close();
+    await enableDeveloperMode(browser);
     const oldBuild = report.runtimeIdentity.buildId;
     // The shipped worker carries the build its identity file names.
     assert.equal(await worker.evaluate(() => globalThis.MineBuildIdentity?.buildId), oldBuild);
@@ -717,19 +811,13 @@ async function checkUpdateReloadsWorker() {
     assert.deepEqual(await coreReply(worker), { ok: true, value: CORE_COMMAND.layout });
 
     // Another build replaces the copy the way an install does: a new
-    // directory renamed into the same path. Its overlay marks the world it
-    // runs in; its save core binary is not one, so any read of it fails.
-    const next = { buildId: createHash('sha256').update(`${oldBuild}:next`).digest('hex'), commit: 'next-commit' };
+    // directory renamed into the same path. Its save core binary is not one,
+    // so any read of it fails.
     const staged = join(sandbox, 'next');
     const previous = join(sandbox, 'previous');
     const binary = 'generated/save-core/mine_core_bg.wasm';
     cpSync(installed, staged, { recursive: true });
-    writeFileSync(join(staged, 'dist/runtime-identity.json'), `${JSON.stringify(next)}\n`);
-    writeFileSync(join(staged, 'dist/build-identity.js'), `globalThis.MineBuildIdentity = Object.freeze(${JSON.stringify(next)});\n`);
-    writeFileSync(join(staged, 'background.js'),
-      `${readFileSync(join(staged, 'background.js'), 'utf8')}\nglobalThis.MineNextBackground = true;\n`);
-    writeFileSync(join(staged, 'dist/overlay.js'),
-      `${readFileSync(join(staged, 'dist/overlay.js'), 'utf8')}\n;globalThis.__mineSmokeOverlayBuild = ${JSON.stringify(next.buildId)};\n`);
+    const next = makeNextBuild(staged);
     writeFileSync(join(staged, binary), 'not the save core of any build');
     renameSync(installed, previous);
     renameSync(staged, installed);
@@ -771,8 +859,9 @@ async function checkUpdateReloadsWorker() {
     assert.equal(pending, next.buildId);
 
     // The clipper opened now would read the overlay of the next build: the
-    // worker reloads into it first, and the worker of that build opens it.
-    const reloaded = browser.waitForEvent('serviceworker', { timeout: 15_000, predicate: (candidate) => candidate.url() === workerUrl });
+    // worker reloads into it first, and the worker of that build, under its
+    // own wrapper, opens it.
+    const reloaded = browser.waitForEvent('serviceworker', { timeout: 15_000, predicate: (candidate) => candidate.url() === next.workerUrl });
     // A failure below closes the browser under this wait; it reports nothing.
     reloaded.catch(() => undefined);
     const opening = await worker.evaluate(async () => {
@@ -1017,7 +1106,7 @@ try {
   assert.equal(typeof statusTransport.response?.configured, 'boolean');
   const restartedTargets = await devtools.send('Target.getTargets');
   const restartedWorkerTarget = restartedTargets.targetInfos.find((target) =>
-    target.type === 'service_worker' && target.url === `chrome-extension://${extensionId}/background.js`);
+    target.type === 'service_worker' && target.url === workerUrl);
   assert.ok(restartedWorkerTarget, 'standaloneStatus did not wake the packaged service worker');
   await devtools.detach();
   await transportPage.close();
@@ -1046,6 +1135,7 @@ try {
   await checkCollectionsArePages(worker);
   await context.close();
   context = undefined;
+  await checkBrowserRestartRunsBuildOnDisk();
   await checkUpdateReloadsWorker();
   Object.assign(report, { ok: true, scope: 'chromium-extension-worker-wasm',
     fixtures: fixtures.length, headless: true, temporaryProfile: true,
@@ -1058,7 +1148,7 @@ try {
     overlayMovedResizedKeptAndFitted: true, overlayResizedByTopLeftCorner: true,
     overlayDraggedBySpaceName: true, spaceMenuOpensOnClickNotDrag: true, openClipClearedAfterSave: true,
     collectionsListedAsPagesOnly: true, saveIntoCollectionWithoutPageWritesNothing: true,
-    restartedWorkerKeepsLoadedBuild: true, updateOnDiskReloadsWorker: true,
+    browserRestartRunsBuildOnDisk: true, restartedWorkerKeepsLoadedBuild: true, updateOnDiskReloadsWorker: true,
     keptSaveCoreOfRunningBuild: true, saveCoreOfAnotherBuildRefused: true, openingReloadsIntoBuildOnDisk: true,
     overlayOfRunningBuild: true, openPagesGetNewContentScript: true, oldContentScriptButtonsRemoved: true,
     xButtonOfNewContentScriptOpensClipper: true,

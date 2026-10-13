@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, readdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { replaceExtensionPayload } from './clipper-extension-payload.mjs';
+import { extensionBuildVersion, replaceExtensionPayload } from './clipper-extension-payload.mjs';
 import { sourceBuildIdentity } from './build-identity.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -42,8 +42,11 @@ for (const name of readdirSync(join(source, 'lib'))) {
 const manifest = JSON.parse(readFileSync(join(source, 'manifest.json'), 'utf8'));
 if (!manifest.content_security_policy.extension_pages.includes("'wasm-unsafe-eval'")) throw new Error('WASM CSP missing');
 const payload = join(root, 'build/clipper-extension');
-const extensionId = replaceExtensionPayload(source, payload);
-console.log(`Extension payload ${extensionId}: ${payload}`);
+// The payload alone carries the build's version and worker wrapper; the
+// source manifest and the Safari mirror stay as they are (SPEC_CLIPPER.md, К4).
+const version = extensionBuildVersion();
+const extensionId = replaceExtensionPayload(source, payload, version);
+console.log(`Extension payload ${extensionId} ${version}: ${payload}`);
 if (process.argv.includes('--pack')) {
   mkdirSync(join(root, 'build'), { recursive: true });
   const archive = join(root, 'build/mine-clipper.zip');

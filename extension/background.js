@@ -664,8 +664,11 @@ chrome.runtime.onInstalled.addListener(() => {
 // keeps running the build it loaded. None of them reaches this worker's
 // clipper unless it is of this build: an opening that finds another build on
 // disk waits for the reload into it and is made by the worker of that build.
+// Reloading the extension runs the build on disk, and so does a browser
+// restart: every build has its own manifest version and worker wrapper, so
+// Chromium registers the worker of the files on disk again (К4, 13.10.2026).
 
-const FILES_OF_ANOTHER_BUILD = "The Mine extension files on disk do not match the running extension. Restart the browser to finish updating Mine.";
+const FILES_OF_ANOTHER_BUILD = "The Mine extension files on disk do not match the running extension. Restart the browser or reload Mine on the extensions page to finish updating Mine.";
 const EXTENSION_UPDATED = "Mine was updated. Close the clipper and open it again.";
 
 /// `same`, `reload` (pending now) or `refused`: lib/extensionBuild.js.
