@@ -20,7 +20,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { ChevronLeft, ChevronRight, Plus, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, CircleAlert, Plus, Search, X } from "lucide-react";
 import { ChromeActions, ChromeRow } from "@/components/ChromeRow";
 import { MineLogo } from "@/components/MineLogo";
 import { SidebarToggleButton } from "@/components/SidebarToggleButton";
@@ -61,7 +61,7 @@ import {
 } from "./tabDrag";
 import { adjacentTabDirection } from "@/lib/adjacentTab";
 import { focusAfterClose, tabKeyAction } from "./tabKeyboard";
-import { tabLabel } from "./tabLabel";
+import { tabLabel, tabTitle } from "./tabLabel";
 import {
   effectiveTabWidth,
   hiddenEdges,
@@ -616,8 +616,9 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
                 role="tab"
                 aria-selected={active}
                 tabIndex={tab.id === rovingId ? 0 : -1}
-                title={label}
+                title={tabTitle(tab)}
                 data-tab-id={tab.id}
+                data-tab-error={tab.error ? "" : undefined}
                 data-active={active ? "true" : undefined}
                 data-dragging={follows ? "true" : undefined}
                 // Square tabs the full height of the row, outlined by the
@@ -666,6 +667,17 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
                   openMenu(tab.id);
                 }}
               >
+                {/* A tab whose page or window could not be made says so
+                    before its label; the tooltip says why, and selecting
+                    the tab tries again (SPEC_TABS.md, «Ошибки»). */}
+                {tab.error && (
+                  <CircleAlert
+                    aria-hidden="true"
+                    data-tab-error-mark=""
+                    className="mr-1.5 size-[13px] shrink-0 text-destructive"
+                    strokeWidth={1}
+                  />
+                )}
                 {/* One line that dissolves at the right edge when it does
                     not fit (В46), by the chrome's shared rule. */}
                 <FadeText

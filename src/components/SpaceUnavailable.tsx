@@ -39,6 +39,21 @@ function folderName(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
+/** What the screen says happened, by what the backend found at the path:
+ *  no folder, a folder macOS will not let Mine read, or a folder that is
+ *  there and readable but is not this space (SPEC_DEEP_AUDIT.md, Е2.13).
+ *  Until 13.10.2026 the last case said there was no folder. */
+export function unavailableDescription(reason: UnavailableVaultReason, folder: string): string {
+  switch (reason) {
+    case "access_denied":
+      return `macOS is not letting Mine read the “${folder}” folder. Open System Settings, go to Privacy & Security, Files and Folders, and allow access for Mine.`;
+    case "not_this_space":
+      return `The “${folder}” folder at the saved path is not this space: its identity file .mine/vault-id is missing or names another space. Mine did not move or delete anything.`;
+    case "missing":
+      return `There is no “${folder}” folder at the saved path. This happens when it is renamed, moved or its drive is disconnected. Mine did not move or delete anything.`;
+  }
+}
+
 export function SpaceUnavailable({
   path,
   reason = "missing",
@@ -139,9 +154,7 @@ export function SpaceUnavailable({
           offered there; forgetting stays as the only way out of the screen. */}
       <ScreenState
         title={accessDenied ? "No access to the folder" : "Folder unavailable"}
-        description={accessDenied
-          ? `macOS is not letting Mine read the “${folderName(path)}” folder. Open System Settings, go to Privacy & Security, Files and Folders, and allow access for Mine.`
-          : `There is no “${folderName(path)}” folder at the saved path. This happens when it is renamed, moved or its drive is disconnected. Mine did not move or delete anything.`}
+        description={unavailableDescription(reason, folderName(path))}
         detail={
           <p className="font-mono text-sm text-muted-foreground" data-space-unavailable-path>
             {path}

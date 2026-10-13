@@ -418,6 +418,20 @@ export function EdgeStatesSection() {
       </StateCase>
 
       <StateCase
+        name="Папка на месте, но не это пространство"
+        when="По сохранённому пути стоит папка, но её файла .mine/vault-id нет или он называет другое пространство. Экран не говорит, что папки нет (SPEC_DEEP_AUDIT.md, Е2.13)."
+      >
+        <ScreenFrame>
+          <SpaceUnavailable
+            path="/Users/you/Documents/Mine"
+            reason="not_this_space"
+            onReopened={() => {}}
+            onForgotten={() => {}}
+          />
+        </ScreenFrame>
+      </StateCase>
+
+      <StateCase
         name="Нет доступа к папке"
         when="Папка на месте, но macOS не даёт её читать — «найдите папку» здесь бесполезный совет. Кнопка ведёт в системные настройки приватности."
       >

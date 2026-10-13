@@ -70,6 +70,8 @@ struct ThumbUpgradeRequestedPayload {
     kind: String,
     #[serde(rename = "tilePosters")]
     tile_posters: Vec<TilePosterUpgradePayload>,
+    /// The state of the media when asked (`commands::thumbnails::media_revision`, Е2.20).
+    revision: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -642,11 +644,12 @@ fn emit_thumb_events(
         return;
     }
 
-    let (media_path, kind) = slug_upgrade
+    let (media_path, kind, revision) = slug_upgrade
         .map(|media| {
             (
                 media.path.to_string_lossy().into_owned(),
                 media.kind.as_str().to_string(),
+                crate::commands::thumbnails::media_revision(&media.path),
             )
         })
         .unwrap_or_default();
@@ -659,6 +662,7 @@ fn emit_thumb_events(
             media_path,
             kind,
             tile_posters: Vec::new(),
+            revision,
         },
     );
 }

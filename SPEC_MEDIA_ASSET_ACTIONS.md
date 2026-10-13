@@ -334,15 +334,39 @@ Remove from Element, Create Element) в меню видео источника �
 5. При ошибке карточка не меняется, недокачанные файлы удаляются, под
    проигрывателем видна причина («Download failed: …»); повтор из того же меню.
    Отмена удаляет недокачанное без сообщения и действует на любом шаге: и до
-   того, как процесс успел зарегистрироваться, и во время склейки.
+   того, как процесс успел зарегистрироваться, и во время склейки. Отмена,
+   пришедшая, когда готовое видео уже вставляется в карточку, опоздала:
+   видео вставляется, и строка под проигрывателем говорит, что загрузка
+   закончена, а не отменена (SPEC_DEEP_AUDIT.md, Е2.6; до 13.10.2026 она
+   говорила Cancelled при вставленном видео).
 6. Задание принадлежит пространству и карточке (SPEC_AUDIT_FIXES.md, Ф9): у
    каждого задания своя рабочая папка, одноимённые карточки двух пространств
    качаются отдельно, прогресс показывается только в открытом пространстве
    задания. Результат попадает в пространство, где загрузка начата: открыто
    оно или нет, пока его папка на месте и хранит ту же идентичность. Если
    папки нет, файл остаётся в производном хранилище пространства
-   (`source-videos/`) и вставляется при следующем открытии, если карточка
-   всё ещё ссылается на ролик.
+   (`source-videos/`, список `kept.json`) и вставляется при следующем
+   открытии, если карточка всё ещё ссылается на ролик.
+7. Задание привязано к карточке, а не к её имени (SPEC_DEEP_AUDIT.md, Н4,
+   Е2.3). Карточка, переименованная в Mine, уносит загрузку под новым именем:
+   прогресс, Cancel и события идут с новым именем. Карточка, переименованная
+   или перенесённая вне Mine (Finder, Obsidian, CLI), находится по своему
+   файлу: задание помнит устройство и номер узла файла карточки с начала
+   загрузки, они не меняются при переименовании и переносе внутри тома. Так
+   её находят и запрос состояния из открытой карточки, и вставка готового
+   видео (среди карточек индекса, ссылающихся на этот ролик). Карточку, не
+   найденную ни по имени, ни по файлу, видео ждёт в `kept.json`, а не
+   удаляется; запись хранит и ключ файла карточки (поле `card`, у записей до
+   13.10.2026 его нет). До 13.10.2026 переименование во время загрузки
+   удаляло скачанное видео, а прогресс и Cancel пропадали.
+8. Выход из Mine (⌘Q, Quit, закрытие последнего окна) останавливает загрузки
+   (SPEC_DEEP_AUDIT.md, Н3, Е2.2): новые не начинаются, группа процессов
+   каждой загрузки останавливается, рабочая папка удаляется, а видео, уже
+   скачанное и ещё не вставленное, записывается в `kept.json` и вставляется
+   при следующем запуске. Список `kept.json` и перенос видео в производное
+   хранилище пишутся мимо шлюза записей источников: выход закрывает этот шлюз
+   (SPEC_STORAGE.md, «Выход»), а список принадлежит производному хранилищу.
+   Выход ждёт задания загрузки до 10 с.
 
 Устройство ([source_video_download.rs](src-tauri/src/source_video_download.rs)):
 
@@ -356,22 +380,43 @@ Remove from Element, Create Element) в меню видео источника �
   он берёт из метаданных источника: для фрагментированных MP4 YouTube
   AVFoundation считает дорожки вдвое длиннее, и без этого файл заканчивался
   бы пустой половиной;
-- `attach_downloaded_source_video` перечитывает карточку, проверяет, что она
-  всё ещё ссылается на этот ролик и не имеет своего видео (ни `file`, ни
-  локальной видеовставки в тексте), называет файл по карточке с уникальностью
-  по всему пространству, переносит его в папку медиа и вставляет
-  `![[имя.mp4]]` под заголовком одной атомарной мутацией. Индекс строит из
-  вставки превью `video_poster` и описание автоплея ленты, как для поста X.
+- `attach_downloaded_source_video` находит карточку (пункт 7), перечитывает
+  её, проверяет, что она всё ещё ссылается на этот ролик и не имеет своего
+  видео (ни `file`, ни локальной видеовставки в тексте), называет файл по
+  карточке с уникальностью по всему пространству, переносит его в папку
+  медиа и вставляет `![[имя.mp4]]` под заголовком одной атомарной мутацией.
+  Индекс строит из вставки превью `video_poster` и описание автоплея ленты,
+  как для поста X. Рассылка вкладкам после вставки сбоем вставки не
+  становится (SPEC_DEEP_AUDIT.md, Е2.15);
+- каждая утилита (`yt-dlp` и склейщик) запускается по правилам
+  [tool_process.rs](src-tauri/src/tool_process.rs) (SPEC_DEEP_AUDIT.md, Н4,
+  Е2.4): своя группа процессов в наборе утилит задания, построчное чтение
+  вывода (`run_lines`) и срок. Чтение форматов (`yt-dlp -J`) ограничено
+  120 с от начала; скачивание ограничено молчанием: 120 с без единой строки
+  от загрузчика значит, что он встал, а длинный ролик качается, пока
+  сообщает о ходе; склейка ограничена 15 мин. Отказ macOS загрузить утилиту
+  распознаётся (`Blocked`) и называется так: «macOS blocked the bundled video
+  downloader: …»; истёкший срок: «The video downloader stopped responding and
+  was ended after N s.». Cancel и выход закрывают набор утилит задания
+  (`RunningTools::close`): идущая утилита останавливается вместе со своей
+  группой, а утилита, запущенная после закрытия, останавливается сразу.
 
 Версия `yt-dlp` важна: YouTube меняет проигрыватель, и сборка 2026.07.04 к
 27.09.2026 получала HTTP 403 даже с Deno, а 2026.08.19 скачивает и без Deno.
 Закреплённая версия задаётся в `scripts/fetch-ytdlp.mjs`; при её смене уже
 лежащий бинарник заменяется. Если в системе установлен Deno, он доступен
-`yt-dlp` через стандартные пути Homebrew и `~/.deno/bin`.
+`yt-dlp` через стандартные пути Homebrew и `~/.deno/bin`. Поэтому отказ 403
+называет и возможную причину: «YouTube refused the download (HTTP 403). The
+bundled video downloader may be out of date.» (SPEC_DEEP_AUDIT.md, Е2.5).
 
 Проверки: выбор форматов, разбор прогресса, общий процент и тексты отказов
 покрыты тестами; тест `real_youtube_download_produces_one_playable_mp4`
 (запуск вручную с `--ignored`) скачивает настоящий ролик и склеивает его.
+С 13.10.2026 добавлены тесты без сети: молчащий загрузчик останавливается по
+сроку, отказ macOS распознаётся, Cancel во время вставки опаздывает,
+переименованная и перенесённая карточка сохраняет загрузку, выход
+останавливает загрузку с её группой и убирает рабочую папку, готовое видео
+при выходе и видео ненайденной карточки остаются в `kept.json`.
 
 ## User Flows
 
@@ -467,6 +512,10 @@ indexing:
 - Unrelated Markdown files must be ignored without rewriting.
 - Only files with matched media references are rewritten.
 
+`rename_media_asset` по-прежнему читает каждую заметку пространства.
+`prepare_delete_media_asset` и `delete_media_asset` читают только кандидатов
+из индекса: «Delete media», «Какие заметки читаются».
+
 ### Delete media
 
 1. User chooses `Delete` from a media menu.
@@ -493,6 +542,67 @@ indexing:
 7. Affected cards/notes remain in the app; they no longer intentionally contain
    stale references to the deleted file.
 
+#### Какие заметки читаются
+
+Реализовано 13.10.2026 по [SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md), Н5,
+Е5.5 и Е5.6. Случай: удаление медиа в пространстве iCloud больше чем на 700
+карточек держало приложение около 30 секунд, потому что подготовка шла в
+главном потоке и читала с диска каждую заметку.
+
+`prepare_delete_media_asset` и `delete_media_asset` читают с диска только
+заметки-кандидаты:
+
+1. Индекс приводится к файлам той же сверкой, что и перед действиями с
+   коллекциями (Н2): `reconcile_vault` читает только заметки, изменившиеся
+   после прошлой сверки. Заметка, которая начала ссылаться на файл в Obsidian,
+   пока Mine не следил за пространством, становится кандидатом.
+2. Кандидаты берутся из индекса без чтения заметок: строка, у которой
+   `media_file`, `thumbnail` или ссылка в тексте (`iter_file_references`)
+   содержит имя файла в одной нормализации Юникода и одном регистре, как
+   написано или после декодирования процентов. Это та же проверка, что у окна
+   удаления карточки (`MediaUsers`). Любая ссылка, которая ведёт к файлу,
+   содержит его имя, поэтому каждая заметка с файлом попадает в кандидаты;
+   лишним кандидатом может стать заметка с другим файлом того же имени.
+3. С диска читаются только кандидаты, и решение о ссылке принимает их текст,
+   как раньше. Кандидат, исчезнувший после сверки, пропускается. Кандидат,
+   который не читается или не разбирается, останавливает действие: без него
+   нельзя ни показать полный список, ни убрать ссылку.
+4. Заметка вне кандидатов не читается. Нечитаемая заметка вне кандидатов не
+   останавливает действие, выгруженная из iCloud не скачивается.
+5. Один снимок списка файлов (`MediaResolver`) служит всему действию.
+
+#### Холсты Obsidian
+
+Холст (`.canvas`, формат JSON Canvas) показывает файл, если на файл ведёт
+узел-файл (`file`, путь от корня пространства), фон группы (`background`)
+или ссылка либо вставка в тексте текстового узла, прочитанная как из заметки
+рядом с холстом. Разбор в `domain/canvas.rs`.
+
+Индекс холстов не знает, поэтому кандидатом считается каждый холст. Обход
+папок ищет имена `.canvas` (`files::scan_canvas_files`, те же пропуски папок,
+что у заметок) и не открывает ни одной заметки; читаются только холсты.
+Холст, содержимое которого в iCloud, не скачивается и не проверяется. Холст,
+который не читается или не является JSON, пропускается с записью в журнал.
+Ни тот, ни другой не останавливают подготовку.
+
+План удаления перечисляет холсты, которые показывают файл, в поле
+`canvases`: пути от корня пространства. Холст не элемент Mine, удаление его не
+переписывает: узел остаётся и указывает на удалённый файл. Окно удаления
+холсты пока не показывает: это клиентская часть.
+
+```ts
+type DeleteMediaAssetPlan = {
+  media_ref: string; // vault-relative path the confirmation deletes
+  media_kind: DeleteMediaAssetKind;
+  referenced_by: MediaAssetReferenceBlock[];
+  canvases: string[]; // .canvas files that show the file
+};
+```
+
+`delete_source_video` (Delete Embed) решает, показывает ли обложку другая
+заметка, тем же путём: сверка, кандидаты из индекса, чтение только
+кандидатов.
+
 ### Remove media from card
 
 1. User chooses `Remove from Element` from a media menu.
@@ -516,50 +626,63 @@ If the file disappears before the action:
 The existing card commands remain card-level and must not be reused for
 media-level mutations.
 
-Required command shape:
+Command shape (`commands/blocks.rs`). Every media command waits for the
+space's lock and reads files, so none runs on the main thread: an `async fn`,
+or `async` in the attribute (SPEC_INTEGRATION.md, «Команды вне главного
+потока»). `webview` names the calling tab, whose space the command acts on.
 
 ```rust
 #[tauri::command(rename_all = "snake_case")]
 async fn create_media_asset_card(
+    webview: Webview,
+    app: AppHandle,
     state: State<'_, AppState>,
-    media_ref: String,
-    target_collection_ref: String,
-    source_slug: Option<String>,
+    params: CreateMediaAssetCardParams, // media_ref, target_tag, source_slug
 ) -> Result<IndexedBlock, MediaAssetActionError>;
 
-#[tauri::command(rename_all = "snake_case")]
-async fn rename_media_asset(
+#[tauri::command(async, rename_all = "snake_case")]
+fn rename_media_asset(
+    webview: Webview,
+    app: AppHandle,
     state: State<'_, AppState>,
-    media_ref: String,
-    new_stem: String,
+    params: RenameMediaAssetParams, // media_ref, new_stem
 ) -> Result<MediaAssetMutationResult, MediaAssetActionError>;
 
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async, rename_all = "snake_case")]
 fn prepare_delete_media_asset(
+    webview: Webview,
     state: State<'_, AppState>,
     media_ref: String,
 ) -> Result<DeleteMediaAssetPlan, MediaAssetActionError>;
 
-#[tauri::command(rename_all = "snake_case")]
-async fn delete_media_asset(
+#[tauri::command(async, rename_all = "snake_case")]
+fn delete_media_asset(
+    webview: Webview,
+    app: AppHandle,
     state: State<'_, AppState>,
     media_ref: String,
 ) -> Result<MediaAssetMutationResult, MediaAssetActionError>;
 
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async, rename_all = "snake_case")]
 fn remove_media_asset_from_card(
+    webview: Webview,
+    app: AppHandle,
     state: State<'_, AppState>,
-    media_ref: String,
-    source_slug: String,
-    reference_kind: String,
+    params: RemoveMediaAssetFromCardParams, // media_ref, source_slug, reference_kind, occurrence_index
 ) -> Result<MediaAssetMutationResult, MediaAssetActionError>;
 
-#[tauri::command(rename_all = "snake_case")]
+#[tauri::command(async, rename_all = "snake_case")]
 fn copy_media_asset_to_clipboard(
+    webview: Webview,
     state: State<'_, AppState>,
     media_ref: String,
 ) -> Result<(), MediaAssetActionError>;
 ```
+
+`prepare_delete_media_asset` до 13.10.2026 работал в главном потоке и держал
+все окна, пока читал заметки. `copy_media_asset_to_clipboard` тоже ждёт
+замок пространства и читает файл, который iCloud может сначала скачать
+(SPEC_CLOUD_STORAGE.md, Х13), поэтому вынесен из главного потока тогда же.
 
 `Reveal in Finder` and `Copy Path` may use existing frontend utilities only if
 they first resolve the media path from `mediaRef`. They must never derive a path
@@ -675,6 +798,9 @@ Drop routing:
 | create card | creates a new media card from primary/inline image, optional channel membership, no source card membership change |
 | rename | renames file, rewrites frontmatter/body references, preserves card slugs/titles/H1s, rejects conflict |
 | delete | prepares referenced-card plan, deletes file, keeps `.md`, removes frontmatter/body refs, invalidates stale thumbnails |
+| delete, Н5 | plan and deletion read from disk only the 2 notes of 42 that name the file (`media_delete_reads_only_the_notes_that_name_the_file`, counter of `read_block_file`); an unreadable note that does not name the file stops neither (`an_unreadable_note_that_does_not_name_the_file_stops_nothing`) |
+| delete, Е5.6 | plan names the canvases that show the file by a file node or a text embed, leaves out a canvas of another file, one that is not JSON and one in a skipped folder; deletion leaves the canvas as it is (`the_delete_plan_names_the_canvases_that_show_the_file`); canvas parsing in `domain/canvas.rs` |
+| main thread | every registered command runs off the main thread unless `MAIN_THREAD_COMMANDS` in `commands/effects.rs` lists it with a reason (`no_command_runs_on_the_main_thread_unless_listed`) |
 | copy | image copy success path, unsupported media kind error/fallback |
 
 ### Frontend tests

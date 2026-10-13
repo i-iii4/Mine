@@ -39,7 +39,7 @@ fn derived_root(
         .to_path_buf())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cloud_recommendation_state(
     app: AppHandle,
     webview: tauri::Webview,
@@ -57,7 +57,7 @@ pub fn cloud_recommendation_state(
 
 /// Close the card. Without the checkbox the dismissal binds to this space;
 /// with it, the advice never comes back anywhere (Х19).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn dismiss_cloud_recommendation(
     app: AppHandle,
     webview: tauri::Webview,

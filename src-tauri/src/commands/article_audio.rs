@@ -20,7 +20,7 @@ struct ArticleAudioUpdatedPayload {
     slug: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_article_audio_state(
     webview: tauri::Webview,
     state: State<'_, AppState>,
@@ -76,7 +76,7 @@ pub fn delete_article_audio(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_article_audio_position(
     webview: tauri::Webview,
     state: State<'_, AppState>,

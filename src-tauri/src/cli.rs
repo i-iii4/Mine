@@ -52,6 +52,17 @@ impl CliEnv {
         }
     }
 
+    /// A line saying this program is another build than the Mine app, when it
+    /// is (SPEC_DEEP_AUDIT.md, Е2.22): an old CLI keeps working after the app
+    /// changed and gives answers the app would not.
+    pub fn build_warning(&self) -> Option<String> {
+        let app = crate::runtime_protocol::recorded_app_build(&self.app_data_dir);
+        crate::runtime_protocol::build_mismatch_warning(
+            &crate::runtime_protocol::BuildIdentity::this_build(),
+            app.as_ref(),
+        )
+    }
+
     /// The space a call that names none acts on, pinned at first use.
     pub fn default_space(&self) -> Option<String> {
         self.pinned_space
@@ -121,9 +132,25 @@ pub(crate) fn resolve_space(
     let vault = VaultLayout::with_derived_root(root, derived);
     let layout = crate::storage::files::load_vault_write_layout(&vault)
         .map_err(|error| CliError::space(format!("invalid write layout: {error:#}")))?;
-    db::open_vault_index(vault.with_write_layout(layout))
-        .map(|(vault, _, _)| vault)
-        .map_err(|error| CliError::space(error.to_string()))
+    let vault = vault.with_write_layout(layout);
+    // The index generation Mine selected, looked up without creating,
+    // migrating or recovering anything: the index belongs to the app
+    // (SPEC_AI_ACCESS.md, «Read-only гарантия»; SPEC_DEEP_AUDIT.md, Е2.21).
+    // A space without one keeps the layout's own path, and opening it says
+    // the space needs Mine first.
+    match db::existing_selected_index(&vault) {
+        Ok(Some(selected)) => Ok(selected),
+        Ok(None) => Ok(vault),
+        Err(error) => Err(CliError::space(format!("index of {}: {error:#}", vault.root().display()))),
+    }
+}
+
+/// What a read says when the space has no index it can read.
+fn index_not_built(vault: &VaultLayout) -> CliError {
+    CliError::space(format!(
+        "the index of {} is not built yet; open the space in Mine to build it",
+        vault.root().display()
+    ))
 }
 
 pub(crate) struct CliError {
@@ -241,7 +268,7 @@ pub struct CliOutput {
 /// Run one CLI invocation. Pure with respect to the process: no exit, no
 /// global state — the binary prints and exits with what this returns.
 pub fn run(env: &CliEnv, args: &[String]) -> CliOutput {
-    match run_inner(env, args) {
+    let mut output = match run_inner(env, args) {
         Ok(stdout) => CliOutput {
             code: EXIT_OK,
             stdout,
@@ -252,7 +279,23 @@ pub fn run(env: &CliEnv, args: &[String]) -> CliOutput {
             stdout: String::new(),
             stderr: format!("{}\n", e.message),
         },
+    };
+    // Stderr, so the JSON on stdout stays whole.
+    if let Some(warning) = env.build_warning() {
+        output.stderr = format!("{warning}\n{}", output.stderr);
     }
+    output
+}
+
+/// `mine --version`: the build of this program, and of the app when it
+/// recorded one (Е2.22).
+fn version_text(env: &CliEnv) -> String {
+    let own = crate::runtime_protocol::BuildIdentity::this_build();
+    let mut text = format!("mine {} build {} commit {}\n", own.version, own.build_id, own.commit);
+    if let Some(app) = crate::runtime_protocol::recorded_app_build(&env.app_data_dir) {
+        text.push_str(&format!("Mine app {} build {} commit {}\n", app.version, app.build_id, app.commit));
+    }
+    text
 }
 
 const USAGE: &str = "mine — read access to Mine spaces\n\n\
@@ -275,12 +318,16 @@ const USAGE: &str = "mine — read access to Mine spaces\n\n\
   mine collection create <name>\n\
   mine collection rename <old> <new>\n\
   mine collection delete <name>\n\
-  mine mcp\n";
+  mine mcp\n\
+  mine --version\n";
 
 fn run_inner(env: &CliEnv, args: &[String]) -> Result<String, CliError> {
     let Some((command, rest)) = args.split_first() else {
         return Err(CliError::usage(USAGE.to_string()));
     };
+    if command == "--version" {
+        return Ok(version_text(env));
+    }
     let flags = parse_flags(rest)?;
     match command.as_str() {
         "spaces" => cmd_spaces(env, &flags),
@@ -315,19 +362,42 @@ fn run_inner(env: &CliEnv, args: &[String]) -> Result<String, CliError> {
     }
 }
 
-fn open_index(vault: &VaultLayout) -> Result<(VaultLayout, rusqlite::Connection), CliError> {
-    let prepare = || -> anyhow::Result<()> {
-        let conn = db::open_or_create(&vault.index_db_path())?;
-        if !db::index_is_ready(&conn)? {
-            crate::storage::reconcile::reconcile_vault(&conn, vault)?;
-        }
-        Ok(())
-    };
-    let (selected, ()) = db::recover_projection_read(vault, prepare(), |_| Ok(()))
-        .map_err(|error| CliError::space(format!("prepare index: {error:#}")))?;
-    let conn = db::open_read_only(&selected.index_db_path())
+/// Open the space's index for a read: read-only, as Mine left it. Reading
+/// builds nothing and reconciles nothing (SPEC_AI_ACCESS.md, «Read-only
+/// гарантия»; SPEC_DEEP_AUDIT.md, Е2.21): until 13.10.2026 a read created the
+/// index of a space Mine never opened and ran a full reconciliation of one
+/// still being built. An index not built, still being built or damaged is
+/// said so; Mine builds and repairs it when it opens the space.
+fn open_index(vault: &VaultLayout) -> Result<rusqlite::Connection, CliError> {
+    if !vault.index_db_path().is_file() {
+        return Err(index_not_built(vault));
+    }
+    let conn = db::open_read_only(&vault.index_db_path())
         .map_err(|error| CliError::internal(format!("open index: {error:#}")))?;
-    Ok((selected, conn))
+    match db::index_is_ready(&conn) {
+        Ok(true) => Ok(conn),
+        Ok(false) => Err(index_not_built(vault)),
+        Err(error) if db::is_index_corruption(&error) => Err(CliError::space(format!(
+            "the index of {} is damaged; open the space in Mine to rebuild it",
+            vault.root().display()
+        ))),
+        Err(error) => Err(CliError::internal(format!("read index: {error:#}"))),
+    }
+}
+
+/// One read of the index. A damaged index is said so, not rebuilt: the
+/// rebuild is a write, and it belongs to the app (Е2.21).
+fn read_index<T>(
+    conn: &rusqlite::Connection,
+    query: impl FnOnce(&rusqlite::Connection) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    query(conn).map_err(|error| {
+        if db::is_index_corruption(&error) {
+            error.context("the index is damaged; open the space in Mine to rebuild it")
+        } else {
+            error
+        }
+    })
 }
 
 fn cmd_spaces(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
@@ -369,11 +439,10 @@ fn cmd_search(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
         return Err(CliError::usage("search needs a query".into()));
     }
     let vault = resolve_space(env, flags.space.as_deref())?;
-    let (vault, conn) = open_index(&vault)?;
-    let (blocks, has_more) = db::read_vault_projection_from(&conn, &vault, |conn| {
+    let conn = open_index(&vault)?;
+    let (blocks, has_more) = read_index(&conn, |conn| {
         search_engine::search_grid_blocks_read_only(conn, None, flags.offset, flags.limit, &query)
     })
-    .map(|(_, value)| value)
     .map_err(|e| CliError::internal(format!("search: {e:#}")))?;
     // The embedding model is warmed inside the app process; a cold CLI process
     // runs the lexical half only. Said out loud per the honest-degrade rule.
@@ -432,9 +501,8 @@ fn collection_has_page(conn: &rusqlite::Connection, collection: &str) -> anyhow:
 
 fn cmd_collections(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     let vault = resolve_space(env, flags.space.as_deref())?;
-    let (vault, conn) = open_index(&vault)?;
-    let tags = db::read_vault_projection_from(&conn, &vault, collection_counts)
-        .map(|(_, value)| value)
+    let conn = open_index(&vault)?;
+    let tags = read_index(&conn, collection_counts)
         .map_err(|e| CliError::internal(format!("collections: {e:#}")))?;
     if flags.json {
         let rows: Vec<_> = tags
@@ -461,14 +529,13 @@ fn cmd_cards(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
         return Err(CliError::usage("cards needs --collection".into()));
     };
     let vault = resolve_space(env, flags.space.as_deref())?;
-    let (vault, conn) = open_index(&vault)?;
-    let listed = db::read_vault_projection_from(&conn, &vault, |conn| {
+    let conn = open_index(&vault)?;
+    let listed = read_index(&conn, |conn| {
         if !collection_has_page(conn, collection)? {
             return Ok(None);
         }
         block_queries::list_grid_blocks(conn, Some(collection), flags.offset, flags.limit).map(Some)
     })
-    .map(|(_, value)| value)
     .map_err(|e| CliError::internal(format!("cards: {e:#}")))?;
     let Some((blocks, has_more)) = listed else {
         return Err(CliError::not_found(cli_mutations::collection_not_found_message(
@@ -509,10 +576,9 @@ fn cmd_card(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
         return Err(CliError::usage("card needs a slug".into()));
     };
     let vault = resolve_space(env, flags.space.as_deref())?;
-    let (vault, conn) = open_index(&vault)?;
+    let conn = open_index(&vault)?;
     let Some(block) =
-        db::read_vault_projection_from(&conn, &vault, |conn| block_queries::get_block(conn, slug))
-            .map(|(_, value)| value)
+        read_index(&conn, |conn| block_queries::get_block(conn, slug))
             .map_err(|e| CliError::internal(format!("card: {e:#}")))?
     else {
         return Err(CliError::not_found(format!("no card {slug}")));
@@ -542,7 +608,7 @@ fn cmd_card(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
                 "title": block.display_title,
                 "url": block.url,
                 "author": block.author,
-                "saved_at": block.saved_at,
+                "saved_at": crate::util::saved_at_with_zone(&block.saved_at),
                 // Derived, not stored: how the card presents (decision 044).
                 "card_kind": { "value": block.card_kind.as_str(), "derived": true },
                 "collections": block.tags,
@@ -560,7 +626,7 @@ fn cmd_card(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     if let Some(ref url) = block.url {
         out.push_str(&format!("url: {url}\n"));
     }
-    out.push_str(&format!("saved_at: {}\n", block.saved_at));
+    out.push_str(&format!("saved_at: {}\n", crate::util::saved_at_with_zone(&block.saved_at)));
     if !block.tags.is_empty() {
         out.push_str(&format!("collections: {}\n", block.tags.join(", ")));
     }
@@ -714,10 +780,10 @@ fn cmd_membership(env: &CliEnv, flags: &Flags, connected: bool) -> Result<String
         connected,
         flags.dry_run,
         |collection_ref| {
-            let (indexed, conn) = open_index(&vault).map_err(|error| {
+            let conn = open_index(&vault).map_err(|error| {
                 MutationError::Internal(format!("collection page: {}", error.message))
             })?;
-            cli_mutations::require_collection_page(&conn, &indexed, collection_ref)
+            cli_mutations::require_collection_page(&conn, &vault, collection_ref)
         },
     )?;
     let index = reindex_applied(&vault, slug, &outcome);
@@ -1028,7 +1094,7 @@ fn light_block_json(block: &crate::storage::index::LightBlock) -> serde_json::Va
         "slug": block.slug,
         "title": block.display_title,
         "url": block.url,
-        "saved_at": block.saved_at,
+        "saved_at": crate::util::saved_at_with_zone(&block.saved_at),
         // Derived, not stored: how the card presents (decision 044).
         "card_kind": { "value": block.card_kind.as_str(), "derived": true },
     })
@@ -1154,6 +1220,97 @@ pub(crate) mod tests {
         assert_eq!(vault.new_collection_slug("New"), "Sets/New");
         std::fs::write(&marker, "broken json").unwrap();
         assert!(resolve_space(&env, None).is_err());
+    }
+
+    /// Е2.21: reading builds no index and runs no reconciliation
+    /// (SPEC_AI_ACCESS.md, «Read-only гарантия»): a space Mine never opened
+    /// and an index still being built are said so, and nothing is written.
+    #[test]
+    fn reading_builds_no_index_and_reconciles_nothing() {
+        let (_dir, env, root) = fixture();
+        let derived = env.app_data_dir.join("vaults/testspace");
+        let index = resolve_space(&env, None)
+            .unwrap_or_else(|error| panic!("{}", error.message))
+            .index_db_path();
+
+        // The index is not ready yet, and a card came meanwhile.
+        let conn = db::open_or_create(&index).unwrap();
+        crate::storage::db::set_index_ready(&conn, false).unwrap();
+        drop(conn);
+        std::fs::write(root.join("Cards/new.md"), "---\nsaved_at: 2026-01-04T00:00:00Z\n---\nA new card.").unwrap();
+        let out = run(&env, &args(&["cards", "--collection", "Nature"]));
+        assert_eq!(out.code, EXIT_SPACE, "{}", out.stdout);
+        assert!(out.stderr.contains("open the space in Mine"), "{}", out.stderr);
+        let conn = db::open_read_only(&index).unwrap();
+        assert!(!db::index_is_ready(&conn).unwrap(), "a read finished the index");
+        let indexed: i64 = conn.query_row("SELECT COUNT(*) FROM blocks WHERE slug = 'Cards/new'", [], |row| row.get(0)).unwrap();
+        assert_eq!(indexed, 0, "a read reconciled the space");
+        drop(conn);
+
+        // No index at all: nothing is built.
+        std::fs::remove_dir_all(&derived).unwrap();
+        for command in [&["collections"][..], &["search", "sunset"][..], &["card", "Cards/sunset"][..]] {
+            let out = run(&env, &args(command));
+            assert_eq!(out.code, EXIT_SPACE, "{command:?}: {}", out.stdout);
+            assert!(out.stderr.contains("open the space in Mine"), "{command:?}: {}", out.stderr);
+            assert!(!derived.exists(), "{command:?} built an index");
+        }
+    }
+
+    /// Е2.22: `saved_at` written as local time without a zone goes out with
+    /// the zone of this Mac, so an agent reads the moment, not a guess.
+    #[test]
+    fn saved_at_goes_out_with_its_zone() {
+        let (_dir, env, root) = fixture();
+        std::fs::write(root.join("Cards/local.md"), "---\nsaved_at: 2026-01-03T10:00:00\n---\nLocal time.").unwrap();
+        let vault = resolve_space(&env, None).unwrap_or_else(|error| panic!("{}", error.message));
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        drop(conn);
+        let out = run(&env, &args(&["card", "Cards/local", "--json"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let card: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+        let saved_at = card["saved_at"].as_str().unwrap();
+        assert!(saved_at.starts_with("2026-01-03T10:00:00"), "{saved_at}");
+        let zone = &saved_at["2026-01-03T10:00:00".len()..];
+        assert!(zone == "Z" || (zone.len() == 6 && (zone.starts_with('+') || zone.starts_with('-'))), "{saved_at}");
+        // A value written in UTC names the same moment, in this Mac's zone.
+        let out = run(&env, &args(&["card", "Cards/sunset", "--json"]));
+        let card: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+        let sunset = card["saved_at"].as_str().unwrap();
+        assert!(
+            sunset.ends_with('Z') || sunset.len() == "2026-01-01T00:00:00+00:00".len(),
+            "{sunset}"
+        );
+    }
+
+    /// Е2.22: the CLI names its build.
+    #[test]
+    fn the_cli_names_its_build() {
+        let (_dir, env, _root) = fixture();
+        let out = run(&env, &args(&["--version"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert!(out.stdout.contains(env!("MINE_BUILD_ID")), "{}", out.stdout);
+    }
+
+    /// Е2.22: a CLI of another build than the app says so on every call, on
+    /// stderr, and its answer stays whole.
+    #[test]
+    fn a_cli_of_another_build_than_the_app_says_so() {
+        let (_dir, env, _root) = fixture();
+        let out = run(&env, &args(&["collections", "--json"]));
+        assert!(out.stderr.is_empty(), "{}", out.stderr);
+        std::fs::write(
+            env.app_data_dir.join(crate::runtime_protocol::APP_BUILD_FILE),
+            r#"{"version":"0.1.0","build_id":"0123456789abcdef","commit":"other"}"#,
+        )
+        .unwrap();
+        let out = run(&env, &args(&["collections", "--json"]));
+        assert_eq!(out.code, EXIT_OK);
+        assert!(out.stderr.starts_with("warning: this mine CLI is build"), "{}", out.stderr);
+        assert!(serde_json::from_str::<serde_json::Value>(&out.stdout).is_ok());
+        let version = run(&env, &args(&["--version"]));
+        assert!(version.stdout.contains("Mine app 0.1.0 build 0123456789abcdef"), "{}", version.stdout);
     }
 
     #[test]

@@ -91,7 +91,7 @@ fn known_vaults_from_config(cfg: &serde_json::Value) -> Vec<String> {
 }
 
 /// Add a space to the known list without switching the active one.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_known_vault(app: AppHandle, path: String) -> Result<Vec<String>, CommandError> {
     if path.trim().is_empty() {
         return Err(CommandError::Internal("space path is empty".into()));

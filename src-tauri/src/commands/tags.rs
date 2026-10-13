@@ -58,10 +58,10 @@ fn add_tag_unannounced(webview: tauri::Webview, state: State<'_, AppState>, slug
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async)]
 pub fn add_tag(webview: tauri::Webview, state: State<'_, AppState>, slug: String, tag: String) -> Result<(), CommandError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = add_tag_unannounced(webview, state, slug, tag);
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -86,10 +86,10 @@ fn remove_tag_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async)]
 pub fn remove_tag(webview: tauri::Webview, state: State<'_, AppState>, slug: String, tag: String) -> Result<(), CommandError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = remove_tag_unannounced(webview, state, slug, tag);
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -313,11 +313,11 @@ fn rename_tag_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn rename_tag(webview: tauri::Webview, state: State<'_, AppState>, old_tag: String, new_tag: String) -> Result<(), CommandError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let renamed = super::effects::SpaceRename::collection(&old_tag, &new_tag);
     let outcome = rename_tag_unannounced(webview, state, old_tag, new_tag);
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, vec![renamed]);
+        announcing.send(vec![renamed]);
     }
     outcome
 }

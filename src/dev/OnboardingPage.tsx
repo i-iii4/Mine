@@ -199,6 +199,7 @@ function tabBarState(spaceName: string | null): TabBarState {
       card: null,
       live: true,
       history: { back: false, forward: false },
+      error: null,
     }],
     active_tab: "0".repeat(32),
     sidebar: { width_px: SIDEBAR_WIDTH, collapsed: false },

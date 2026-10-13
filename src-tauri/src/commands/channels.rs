@@ -166,10 +166,10 @@ fn create_channel_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async)]
 pub fn create_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: String, title: Option<String>) -> Result<ChannelDto, CommandError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = create_channel_unannounced(webview, state, tag, title);
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -300,10 +300,10 @@ async fn reorder_channels_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command]
 pub async fn reorder_channels(app: AppHandle, webview: tauri::Webview, items: Vec<ReorderItem>) -> Result<(), CommandError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = reorder_channels_unannounced(app, webview, items).await;
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -429,14 +429,12 @@ fn rename_channel_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn rename_channel(webview: tauri::Webview, state: State<'_, AppState>, old_tag: String, new_tag: String) -> Result<ChannelDto, CommandError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let renamed_from = old_tag.clone();
     let outcome = rename_channel_unannounced(webview, state, old_tag, new_tag);
     if let Ok(renamed) = &outcome {
         // The name the collection took, as normalized, not as typed.
-        super::effects::space_changed_by_tab(
-            &announcing,
-            vec![super::effects::SpaceRename::collection(&renamed_from, &renamed.tag)],
+        announcing.send(vec![super::effects::SpaceRename::collection(&renamed_from, &renamed.tag)],
         );
     }
     outcome
@@ -963,10 +961,10 @@ fn delete_channel_unannounced(webview: tauri::Webview, state: State<'_, AppState
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async)]
 pub fn delete_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<CollectionDeleted, CommandError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = delete_channel_unannounced(webview, state, tag);
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }

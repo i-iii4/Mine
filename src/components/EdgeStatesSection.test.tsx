@@ -22,9 +22,11 @@ describe("EdgeStatesSection", () => {
     const { container } = render(<EdgeStatesSection />);
 
     // Screens that need a vault in a particular condition — including the
-    // locked-folder variant, whose only live trigger is a macOS refusal.
-    expect(container.querySelectorAll("[data-space-unavailable]")).toHaveLength(2);
+    // locked-folder variant, whose only live trigger is a macOS refusal, and
+    // a folder that is there but not this space (SPEC_DEEP_AUDIT.md, Е2.13).
+    expect(container.querySelectorAll("[data-space-unavailable]")).toHaveLength(3);
     expect(screen.getByText("No access to the folder")).toBeInTheDocument();
+    expect(screen.getByText(/is not this space: its identity file/)).toBeInTheDocument();
     expect(container.querySelector("[data-space-unavailable-open-settings]")).not.toBeNull();
     // A chosen folder opens at once; its count lives in the indexing notice
     // (SPEC_ONBOARDING.md, О12, О13).

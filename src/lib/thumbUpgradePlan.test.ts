@@ -27,6 +27,25 @@ describe("planThumbUpgrade", () => {
     ]);
   });
 
+  // Е2.20: the decode hands the media's state back with its picture.
+  it("carries the media's state from the request to the action", () => {
+    const input: ThumbUpgradeInput = {
+      slug: "sunset",
+      mediaPath: "/vault/sunset.heic",
+      kind: "image",
+      revision: "2048:1760000000000000000",
+    };
+    expect(planThumbUpgrade(input)).toEqual([
+      {
+        kind: "image",
+        key: blockThumbKey("sunset"),
+        slug: "sunset",
+        mediaPath: "/vault/sunset.heic",
+        revision: "2048:1760000000000000000",
+      },
+    ]);
+  });
+
   it("routes a video block to a single video action keyed by slug", () => {
     const input: ThumbUpgradeInput = {
       slug: "clip",

@@ -12,7 +12,6 @@ use crate::cli::{run, CliEnv};
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 const SERVER_NAME: &str = "mine";
-const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Serve MCP over the process's stdin/stdout. Blocks until stdin closes.
 pub fn serve(env: &CliEnv) {
@@ -48,11 +47,7 @@ pub fn handle_message(env: &CliEnv, raw: &str) -> Option<String> {
     let id = id?;
 
     let result = match method {
-        "initialize" => json!({
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": SERVER_NAME, "version": SERVER_VERSION },
-        }),
+        "initialize" => initialize_result(env),
         "ping" => json!({}),
         "tools/list" => json!({ "tools": tool_definitions() }),
         "tools/call" => {
@@ -69,6 +64,22 @@ pub fn handle_message(env: &CliEnv, raw: &str) -> Option<String> {
         _ => return Some(error_response(id, -32601, "method not found").to_string()),
     };
     Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }).to_string())
+}
+
+/// The server names its build (`0.1.0+<build>`), not the package version
+/// alone, which never changed (SPEC_DEEP_AUDIT.md, Е2.22); a server of
+/// another build than the Mine app says so in its instructions.
+fn initialize_result(env: &CliEnv) -> Value {
+    let build = crate::runtime_protocol::BuildIdentity::this_build();
+    let mut result = json!({
+        "protocolVersion": PROTOCOL_VERSION,
+        "capabilities": { "tools": {} },
+        "serverInfo": { "name": SERVER_NAME, "version": build.label() },
+    });
+    if let Some(warning) = env.build_warning() {
+        result["instructions"] = Value::String(warning);
+    }
+    result
 }
 
 fn error_response(id: Value, code: i32, message: &str) -> Value {
@@ -469,8 +480,14 @@ fn call_tool(env: &CliEnv, name: &str, arguments: &Value) -> Result<Value, Strin
     // Tool-level failures travel inside the result as isError, per MCP; only
     // malformed calls become JSON-RPC errors (handled by the caller).
     if output.code == 0 {
+        let mut content = vec![json!({ "type": "text", "text": output.stdout.trim_end() })];
+        // A server of another build than the app says so beside each
+        // answer: the agent may otherwise trust an outdated reading (Е2.22).
+        if let Some(warning) = env.build_warning() {
+            content.push(json!({ "type": "text", "text": warning }));
+        }
         Ok(json!({
-            "content": [{ "type": "text", "text": output.stdout.trim_end() }],
+            "content": content,
             "isError": false,
         }))
     } else {
@@ -512,6 +529,26 @@ mod tests {
 
     fn text_of(result: &Value) -> String {
         result["content"][0]["text"].as_str().unwrap().to_string()
+    }
+
+    /// Е2.22: the server names its build, and says when the app is another one.
+    #[test]
+    fn the_server_names_its_build_and_an_other_app_build() {
+        let (_dir, env, _root) = fixture();
+        let build = crate::runtime_protocol::BuildIdentity::this_build();
+        let response = request(&env, "initialize", json!({}));
+        assert_eq!(response["result"]["serverInfo"]["version"], build.label());
+        assert!(response["result"].get("instructions").is_none());
+        std::fs::write(
+            env.app_data_dir.join(crate::runtime_protocol::APP_BUILD_FILE),
+            r#"{"version":"0.1.0","build_id":"0123456789abcdef","commit":"other"}"#,
+        )
+        .unwrap();
+        let response = request(&env, "initialize", json!({}));
+        assert!(response["result"]["instructions"].as_str().unwrap().starts_with("warning:"));
+        let result = call(&env, "collections", json!({}));
+        assert_eq!(result["isError"], false);
+        assert!(result["content"][1]["text"].as_str().unwrap().starts_with("warning:"));
     }
 
     #[test]

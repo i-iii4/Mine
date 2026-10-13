@@ -2668,6 +2668,29 @@
         "src/App.test.tsx"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/thumbUpgradePlan.test.ts",
+        "src/lib/thumbUpgradePlan.ts"
+      ],
+      "requirement": "SPEC_DEEP_AUDIT.md## Контракты",
+      "tests": [
+        "src/lib/thumbUpgradePlan.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/domain/canvas.rs",
+        "src-tauri/src/shutdown.rs"
+      ],
+      "requirement": "SPEC_DEEP_AUDIT.md## Контракты",
+      "tests": [
+        "src-tauri/src/domain/canvas.rs",
+        "src-tauri/src/shutdown.rs"
+      ],
+      "command": "test:rust"
     }
   ],
   "release": null

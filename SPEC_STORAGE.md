@@ -700,6 +700,28 @@ enum SourceMutationError {
 - Derived artifacts are never part of the source transaction and may be
   regenerated after commit.
 
+### Выход (SPEC_DEEP_AUDIT.md, Н3, Е2.1)
+
+Каждая запись источников идёт под арендой шлюза записей (`begin_write`).
+Выход из Mine закрывает шлюз (`close_for_exit`): новая запись, не вложенная в
+уже идущую на том же потоке, получает отказ «Mine is quitting; new writes are
+not started», а выход ждёт окончания начатых записей до 30 с. Вложенная запись
+на потоке, который уже держит аренду (мутация публикует файл через
+`files::write_atomically`), проходит: отказ ей оставил бы внешнюю мутацию
+наполовину. Шлюз помнит аренды по потоку, который их взял, поэтому аренда,
+отпущенная на другом потоке, снимается со счёта своего потока. Шлюз после
+выхода не открывается: процесс кончается.
+
+Порядок выхода ([shutdown.rs](src-tauri/src/shutdown.rs)): первый запрос
+выхода (`RunEvent::ExitRequested`) задерживается (`prevent_exit`), сохранённые
+окна пишутся сразу (SPEC_TABS.md, В33), загрузки Download Media
+останавливаются и оставляют готовые видео (SPEC_MEDIA_ASSET_ACTIONS.md,
+«Download Media», пункт 8), шлюз закрывается и ждёт начатые записи, затем
+приложение выходит само (`app.exit(0)`), и этот запрос уже проходит. Запросы
+выхода во время ожидания тоже задерживаются. До 13.10.2026 выход не ждал
+ничего: групповое удаление и переименование коллекции, шедшие в эту минуту,
+оставались наполовину.
+
 ### Checked publication (SPEC_AUDIT_FIXES.md, Ф1, Ф2)
 
 - A write never rebuilds an existing note from the `Block` model:
@@ -1093,6 +1115,14 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
   vault-root-relative.
 - Derived DB fields store resolved vault-root-relative paths when the file is
   found. Source Markdown is not rewritten on read.
+- Запасной путь asset-протокола (`resolve_basename_under`: адрес
+  `<пространство>/<имя>`, файла по нему нет) ищет имя по указателю имён
+  пространства, который хранится в процессе: он отвечает, пока файл по
+  найденному пути на месте, а имя, которого он не знает или знает по пути,
+  где файла больше нет, обходит папку заново не чаще раза в 2 с на
+  пространство (`NAME_INDEX_REFRESH`). До 13.10.2026 каждый запрос
+  картинки этим путём обходил всё пространство (SPEC_DEEP_AUDIT.md, Е2.19,
+  Н5).
 
 ### Поведение rename_derived_artifacts
 

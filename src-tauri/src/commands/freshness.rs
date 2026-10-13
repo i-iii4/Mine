@@ -425,15 +425,10 @@ fn publish_freshness_outcome(
                     },
                 );
             }
-            // Every reconciliation pass is followed by a conflict check of the
-            // whole space (SPEC_ICLOUD_CONFLICTS.md, ВК4).
-            if outcome.ran_reconcile {
-                super::conflicts::schedule_conflict_check(
-                    app,
-                    &preview_vault,
-                    crate::storage::icloud_conflicts::CheckScope::Full,
-                );
-            }
+            // No check of the whole space for conflicts here: any read may
+            // start this pass, every 30 s at most. The whole space is checked
+            // when it opens and when the person comes back to its window
+            // (SPEC_ICLOUD_CONFLICTS.md, ВК4; SPEC_DEEP_AUDIT.md, Е2.18).
             if !report.is_fresh() {
                 log::warn!(
                     "vault freshness degraded for {}: {} source error(s); serving last-good snapshot",
@@ -507,6 +502,27 @@ mod tests {
             database_writes: 0,
             elapsed_ms: 1,
         }
+    }
+
+    /// Е2.18 (ВК4): the whole space is checked for iCloud conflicts when it
+    /// opens and when its window comes back into focus, never after the
+    /// routine pass any read may start.
+    #[test]
+    fn only_opening_and_coming_back_check_the_whole_space_for_conflicts() {
+        let source = |relative: &str| {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
+            std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+        };
+        let whole = "CheckScope::Full";
+        let freshness = source("src/commands/freshness.rs");
+        let routine = &freshness[..freshness.find("#[cfg(test)]").unwrap()];
+        assert!(!routine.contains(whole), "a routine pass checks the whole space");
+        let tabs = source("src/tabs/mod.rs");
+        let focus = &tabs[tabs.find("fn request_focus_refresh").unwrap()..];
+        let focus = &focus[..focus.find("\n}\n").unwrap()];
+        assert!(focus.contains(whole), "coming back to the window checks nothing");
+        let vault = source("src/commands/vault.rs");
+        assert!(vault.contains(whole), "opening the space checks nothing");
     }
 
     #[test]

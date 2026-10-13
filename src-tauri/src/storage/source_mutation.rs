@@ -5,7 +5,10 @@
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::collections::HashMap;
+use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard, PoisonError};
+use std::thread::ThreadId;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 use crate::storage::files;
@@ -14,35 +17,74 @@ use crate::storage::files;
 struct WriterState {
     active: usize,
     shutdown: bool,
+    /// Mine is quitting (SPEC_DEEP_AUDIT.md, Н3): a write that does not nest
+    /// in one already running on its thread is refused.
+    closing: bool,
+    /// Leases held, by the thread that took them. A write nested in a running
+    /// one on the same thread (a mutation that publishes a file through
+    /// `files::write_atomically`) goes on while Mine quits: refusing it would
+    /// leave the outer mutation half done.
+    held: HashMap<ThreadId, usize>,
+}
+
+#[derive(Debug, Default)]
+struct GateShared {
+    state: Mutex<WriterState>,
+    /// Signalled whenever a lease ends, for a quitting Mine that waits.
+    ended: Condvar,
+}
+
+impl GateShared {
+    fn state(&self) -> MutexGuard<'_, WriterState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 /// A nonblocking gate: shutdown may begin only after every existing writer drains.
 /// Nested write scopes are safe because shutdown never waits while holding a lock.
 #[derive(Debug, Clone, Default)]
-pub struct WriterGate(Arc<Mutex<WriterState>>);
+pub struct WriterGate(Arc<GateShared>);
 #[derive(Debug)]
-pub struct SourceWriteLease(Arc<Mutex<WriterState>>);
-pub struct ShutdownLease(Arc<Mutex<WriterState>>);
+pub struct SourceWriteLease {
+    gate: Arc<GateShared>,
+    /// The thread that took the lease; a drop on another thread still
+    /// counts it off that one.
+    thread: ThreadId,
+}
+pub struct ShutdownLease(Arc<GateShared>);
 static WRITERS: LazyLock<WriterGate> = LazyLock::new(WriterGate::default);
+
+/// What waiting for the writes of a quitting Mine came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitDrain {
+    /// Every write that had begun has ended.
+    Drained,
+    /// The deadline came first; this many writes were still running.
+    TimedOut { running: usize },
+}
 
 impl WriterGate {
     pub fn write(&self) -> Result<SourceWriteLease> {
-        let mut state = self
-            .0
-            .lock()
-            .map_err(|_| anyhow::anyhow!("writer gate poisoned"))?;
+        let thread = std::thread::current().id();
+        let mut state = self.0.state();
         anyhow::ensure!(
             !state.shutdown,
             "application update is preparing shutdown; new writes are disabled"
         );
+        let nested = state.held.get(&thread).is_some_and(|held| *held > 0);
+        anyhow::ensure!(
+            !state.closing || nested,
+            "Mine is quitting; new writes are not started"
+        );
         state.active += 1;
-        Ok(SourceWriteLease(self.0.clone()))
+        *state.held.entry(thread).or_default() += 1;
+        Ok(SourceWriteLease {
+            gate: self.0.clone(),
+            thread,
+        })
     }
     pub fn shutdown(&self) -> Result<ShutdownLease> {
-        let mut state = self
-            .0
-            .lock()
-            .map_err(|_| anyhow::anyhow!("writer gate poisoned"))?;
+        let mut state = self.0.state();
         anyhow::ensure!(
             !state.shutdown && state.active == 0,
             "pending application operations must finish before update activation"
@@ -50,19 +92,48 @@ impl WriterGate {
         state.shutdown = true;
         Ok(ShutdownLease(self.0.clone()))
     }
+
+    /// Mine is quitting (Н3): from now on no write starts, except one nested
+    /// in a write already running on its thread, and this waits up to
+    /// `deadline` for the writes that began. The gate stays closed: the
+    /// process ends after this.
+    pub fn close_for_exit(&self, deadline: Duration) -> ExitDrain {
+        let started = Instant::now();
+        let mut state = self.0.state();
+        state.closing = true;
+        while state.active > 0 {
+            let Some(left) = deadline.checked_sub(started.elapsed()) else {
+                return ExitDrain::TimedOut {
+                    running: state.active,
+                };
+            };
+            state = self
+                .0
+                .ended
+                .wait_timeout(state, left)
+                .map_or_else(|poisoned| poisoned.into_inner().0, |(state, _)| state);
+        }
+        ExitDrain::Drained
+    }
 }
 impl Drop for SourceWriteLease {
     fn drop(&mut self) {
-        if let Ok(mut state) = self.0.lock() {
+        {
+            let mut state = self.gate.state();
             state.active -= 1;
+            if let Some(held) = state.held.get_mut(&self.thread) {
+                *held -= 1;
+                if *held == 0 {
+                    state.held.remove(&self.thread);
+                }
+            }
         }
+        self.gate.ended.notify_all();
     }
 }
 impl Drop for ShutdownLease {
     fn drop(&mut self) {
-        if let Ok(mut state) = self.0.lock() {
-            state.shutdown = false;
-        }
+        self.0.state().shutdown = false;
     }
 }
 pub fn begin_write() -> Result<SourceWriteLease> {
@@ -70,6 +141,11 @@ pub fn begin_write() -> Result<SourceWriteLease> {
 }
 pub fn begin_shutdown() -> Result<ShutdownLease> {
     WRITERS.shutdown()
+}
+/// Mine is quitting: refuse new writes and wait for the running ones
+/// (SPEC_DEEP_AUDIT.md, Н3).
+pub fn close_for_exit(deadline: Duration) -> ExitDrain {
+    WRITERS.close_for_exit(deadline)
 }
 
 #[cfg(test)]
@@ -104,6 +180,46 @@ mod gate_tests {
             assert!(gate.write().is_err());
         }
         assert!(gate.write().is_ok());
+    }
+
+    /// Е2.1: quitting waits for a write that has begun, and no new one starts
+    /// meanwhile; a write nested in the running one still goes on.
+    #[test]
+    fn quitting_waits_for_a_running_write_and_starts_no_new_one() {
+        let gate = WriterGate::default();
+        let outer = gate.write().unwrap();
+        let begun = std::sync::Barrier::new(2);
+        let drained = std::thread::scope(|scope| {
+            let waiting = scope.spawn(|| {
+                begun.wait();
+                gate.close_for_exit(Duration::from_secs(10))
+            });
+            begun.wait();
+            std::thread::sleep(Duration::from_millis(200));
+            // A write on another thread is refused while the app quits...
+            let elsewhere = std::thread::scope(|inner| inner.spawn(|| gate.write().is_err()).join().unwrap());
+            assert!(elsewhere, "a new write began while the app was quitting");
+            // ...one nested in the running write on its thread is not.
+            let nested = gate.write().expect("a nested write finishes the running mutation");
+            drop(nested);
+            assert!(!waiting.is_finished(), "the exit did not wait for the running write");
+            drop(outer);
+            waiting.join().unwrap()
+        });
+        assert_eq!(drained, ExitDrain::Drained);
+        assert!(gate.write().is_err(), "the gate stays closed after the exit");
+    }
+
+    #[test]
+    fn quitting_stops_waiting_at_its_deadline() {
+        let gate = WriterGate::default();
+        let _stuck = gate.write().unwrap();
+        let started = Instant::now();
+        assert_eq!(
+            gate.close_for_exit(Duration::from_millis(200)),
+            ExitDrain::TimedOut { running: 1 }
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 }
 

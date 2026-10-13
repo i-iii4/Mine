@@ -34,6 +34,7 @@ use unicode_normalization::UnicodeNormalization;
 use crate::domain::vault::{
     name_problem, normalize_filename_stem, normalize_typed_name, validate_slug, VaultLayout,
 };
+use crate::source_video_download::CardKey;
 use crate::storage::index::IndexedBlock;
 use crate::storage::source_mutation::{SourceFileWrite, SourceMutationError, StagedSourceMutation};
 use crate::storage::{
@@ -229,6 +230,10 @@ pub struct DeleteMediaAssetPlan {
     pub media_ref: String,
     pub media_kind: DeleteMediaAssetKind,
     pub referenced_by: Vec<MediaAssetReferenceBlock>,
+    /// The Obsidian canvases (`.canvas`) that show the file, as paths from
+    /// the space root (SPEC_DEEP_AUDIT.md, Н5, Е5.6). They use the file but
+    /// are not elements: the deletion does not rewrite them.
+    pub canvases: Vec<String>,
 }
 
 #[derive(Debug, Error, Serialize, specta::Type)]
@@ -633,10 +638,10 @@ fn create_block_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn create_block(webview: tauri::Webview, state: State<'_, AppState>, params: CreateBlockParams) -> Result<IndexedBlock, CommandError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = create_block_unannounced(webview, state, params);
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -780,27 +785,21 @@ async fn extract_inline_media_unannounced(
     let slug = indexed.slug.clone();
     let tags = indexed.tags.clone();
 
-    crate::commands::space_events::emit_to_vault(&app, &event_vault, 
+    crate::commands::space_events::announce_to_vault(&app, &event_vault, 
         "block:added",
         BlockAddedPayload {
             slug: slug.clone(),
             tags,
             is_text: false,
         },
-    )
-    .map_err(|e| InlineMediaExtractError::Internal {
-        message: format!("failed to emit block:added: {e}"),
-    })?;
-    crate::commands::space_events::emit_to_vault(&app, &event_vault, 
+    );
+    crate::commands::space_events::announce_to_vault(&app, &event_vault, 
         "thumb:updated",
         ThumbUpdatedPayload {
             slug,
             is_text: false,
         },
-    )
-    .map_err(|e| InlineMediaExtractError::Internal {
-        message: format!("failed to emit thumb:updated: {e}"),
-    })?;
+    );
 
     Ok(indexed)
 }
@@ -809,10 +808,10 @@ async fn extract_inline_media_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(rename_all = "snake_case")]
 pub async fn extract_inline_media(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: ExtractInlineMediaParams) -> Result<IndexedBlock, InlineMediaExtractError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = extract_inline_media_unannounced(webview, app, state, params).await;
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -855,27 +854,21 @@ async fn create_media_asset_card_unannounced(
         message: format!("media asset create worker failed: {e}"),
     })??;
 
-    crate::commands::space_events::emit_to_vault(&app, &event_vault, 
+    crate::commands::space_events::announce_to_vault(&app, &event_vault, 
         "block:added",
         BlockAddedPayload {
             slug: indexed.slug.clone(),
             tags: indexed.tags.clone(),
             is_text: false,
         },
-    )
-    .map_err(|e| MediaAssetActionError::Internal {
-        message: format!("failed to emit block:added: {e}"),
-    })?;
-    crate::commands::space_events::emit_to_vault(&app, &event_vault, 
+    );
+    crate::commands::space_events::announce_to_vault(&app, &event_vault, 
         "thumb:updated",
         ThumbUpdatedPayload {
             slug: indexed.slug.clone(),
             is_text: false,
         },
-    )
-    .map_err(|e| MediaAssetActionError::Internal {
-        message: format!("failed to emit thumb:updated: {e}"),
-    })?;
+    );
 
     Ok(indexed)
 }
@@ -884,10 +877,10 @@ async fn create_media_asset_card_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(rename_all = "snake_case")]
 pub async fn create_media_asset_card(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: CreateMediaAssetCardParams) -> Result<IndexedBlock, MediaAssetActionError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = create_media_asset_card_unannounced(webview, app, state, params).await;
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -915,24 +908,18 @@ fn rename_media_asset_unannounced(
 
     let result = rename_media_asset_inner(&state, &vs.conn, &vs.vault, media_ref, new_stem)?;
     for slug in &result.affected_slugs {
-        crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
+        crate::commands::space_events::announce_to_vault(&app, &vs.vault, 
             "thumb:updated",
             ThumbUpdatedPayload {
                 slug: slug.clone(),
                 is_text: false,
             },
-        )
-        .map_err(|e| MediaAssetActionError::Internal {
-            message: format!("failed to emit thumb:updated: {e}"),
-        })?;
+        );
     }
-    crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
+    crate::commands::space_events::announce_to_vault(&app, &vs.vault, 
         "vault-changed",
         VaultChangedPayload::from_outside(vs.vault.root().to_string_lossy().to_string()),
-    )
-    .map_err(|e| MediaAssetActionError::Internal {
-        message: format!("failed to emit vault-changed: {e}"),
-    })?;
+    );
 
     Ok(result)
 }
@@ -941,17 +928,19 @@ fn rename_media_asset_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn rename_media_asset(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: RenameMediaAssetParams) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = rename_media_asset_unannounced(webview, app, state, params);
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
 
 /// Prepare a destructive media-file delete by listing every card/note whose
-/// Markdown currently references the selected local file.
-#[tauri::command(rename_all = "snake_case")]
+/// Markdown currently references the selected local file, and every canvas
+/// that shows it. Off the main thread: it waits for the space's lock and
+/// reads files (SPEC_INTEGRATION.md, «Команды вне главного потока»).
+#[tauri::command(async, rename_all = "snake_case")]
 pub fn prepare_delete_media_asset(
     webview: tauri::Webview,
     state: State<'_, AppState>,
@@ -966,7 +955,7 @@ pub fn prepare_delete_media_asset(
         })?;
     let vs = vault_state.as_ref().ok_or(MediaAssetActionError::NoVault)?;
 
-    prepare_delete_media_asset_inner(&vs.vault, media_ref)
+    prepare_delete_media_asset_inner(&vs.conn, &vs.vault, media_ref)
 }
 
 /// Delete the selected media file and remove references to it from every
@@ -988,24 +977,18 @@ fn delete_media_asset_unannounced(
 
     let result = delete_media_asset_inner(&state, &vs.conn, &vs.vault, media_ref)?;
     for slug in &result.affected_slugs {
-        crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
+        crate::commands::space_events::announce_to_vault(&app, &vs.vault, 
             "thumb:updated",
             ThumbUpdatedPayload {
                 slug: slug.clone(),
                 is_text: false,
             },
-        )
-        .map_err(|e| MediaAssetActionError::Internal {
-            message: format!("failed to emit thumb:updated: {e}"),
-        })?;
+        );
     }
-    crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
+    crate::commands::space_events::announce_to_vault(&app, &vs.vault, 
         "vault-changed",
         VaultChangedPayload::from_outside(vs.vault.root().to_string_lossy().to_string()),
-    )
-    .map_err(|e| MediaAssetActionError::Internal {
-        message: format!("failed to emit vault-changed: {e}"),
-    })?;
+    );
 
     Ok(result)
 }
@@ -1014,10 +997,10 @@ fn delete_media_asset_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn delete_media_asset(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, media_ref: String) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = delete_media_asset_unannounced(webview, app, state, media_ref);
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -1055,24 +1038,18 @@ fn remove_media_asset_from_card_unannounced(
         occurrence_index,
     )?;
     for slug in &result.affected_slugs {
-        crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
+        crate::commands::space_events::announce_to_vault(&app, &vs.vault, 
             "thumb:updated",
             ThumbUpdatedPayload {
                 slug: slug.clone(),
                 is_text: false,
             },
-        )
-        .map_err(|e| MediaAssetActionError::Internal {
-            message: format!("failed to emit thumb:updated: {e}"),
-        })?;
+        );
     }
-    crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
+    crate::commands::space_events::announce_to_vault(&app, &vs.vault, 
         "vault-changed",
         VaultChangedPayload::from_outside(vs.vault.root().to_string_lossy().to_string()),
-    )
-    .map_err(|e| MediaAssetActionError::Internal {
-        message: format!("failed to emit vault-changed: {e}"),
-    })?;
+    );
 
     Ok(result)
 }
@@ -1081,10 +1058,10 @@ fn remove_media_asset_from_card_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn remove_media_asset_from_card(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: RemoveMediaAssetFromCardParams) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = remove_media_asset_from_card_unannounced(webview, app, state, params);
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -1110,24 +1087,18 @@ fn delete_source_video_unannounced(
 
     let result = delete_source_video_inner(&state, &vs.conn, &vs.vault, &slug)?;
     for slug in &result.affected_slugs {
-        crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
+        crate::commands::space_events::announce_to_vault(&app, &vs.vault, 
             "thumb:updated",
             ThumbUpdatedPayload {
                 slug: slug.clone(),
                 is_text: false,
             },
-        )
-        .map_err(|e| MediaAssetActionError::Internal {
-            message: format!("failed to emit thumb:updated: {e}"),
-        })?;
+        );
     }
-    crate::commands::space_events::emit_to_vault(&app, &vs.vault, 
+    crate::commands::space_events::announce_to_vault(&app, &vs.vault, 
         "vault-changed",
         VaultChangedPayload::from_outside(vs.vault.root().to_string_lossy().to_string()),
-    )
-    .map_err(|e| MediaAssetActionError::Internal {
-        message: format!("failed to emit vault-changed: {e}"),
-    })?;
+    );
 
     Ok(result)
 }
@@ -1136,10 +1107,10 @@ fn delete_source_video_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn delete_source_video(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, slug: String) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = delete_source_video_unannounced(webview, app, state, slug);
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -1156,33 +1127,34 @@ pub(crate) fn attach_downloaded_source_video(
     app: &AppHandle,
     vault: &VaultLayout,
     slug: &str,
+    card: Option<CardKey>,
     video_id: &str,
     downloaded: &Path,
 ) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
     let state = app.state::<AppState>();
-    let published = publish_downloaded_source_video(&state, vault, slug, video_id, downloaded)?;
+    let published = publish_downloaded_source_video(&state, vault, slug, card, video_id, downloaded)?;
     let Some(open_root) = published.open_root else {
         return Ok(published.result);
     };
+    // The video is in the card: telling the tabs can no longer fail the
+    // delivery, or the video would be reported lost and kept twice (Е2.15).
     for slug in &published.result.affected_slugs {
-        crate::commands::space_events::emit_to_vault(&app, &vault, 
+        crate::commands::space_events::announce_to_vault(
+            app,
+            vault,
             "thumb:updated",
             ThumbUpdatedPayload {
                 slug: slug.clone(),
                 is_text: false,
             },
-        )
-        .map_err(|e| MediaAssetActionError::Internal {
-            message: format!("failed to emit thumb:updated: {e}"),
-        })?;
+        );
     }
-    crate::commands::space_events::emit_to_vault(&app, &vault, 
+    crate::commands::space_events::announce_to_vault(
+        app,
+        vault,
         "vault-changed",
         VaultChangedPayload::from_outside(open_root.to_string_lossy().to_string()),
-    )
-    .map_err(|e| MediaAssetActionError::Internal {
-        message: format!("failed to emit vault-changed: {e}"),
-    })?;
+    );
     Ok(published.result)
 }
 
@@ -1201,6 +1173,7 @@ fn publish_downloaded_source_video(
     state: &AppState,
     vault: &VaultLayout,
     slug: &str,
+    card: Option<CardKey>,
     video_id: &str,
     downloaded: &Path,
 ) -> Result<PublishedSourceVideo, MediaAssetActionError> {
@@ -1221,7 +1194,7 @@ fn publish_downloaded_source_video(
                 && !crate::storage::root_guard::root_gone(&vs.vault)
         }) {
             let result = attach_downloaded_source_video_inner(
-                state, &vs.conn, &vs.vault, slug, video_id, downloaded,
+                state, &vs.conn, &vs.vault, slug, card, video_id, downloaded,
             )?;
             return Ok(PublishedSourceVideo {
                 result,
@@ -1230,7 +1203,7 @@ fn publish_downloaded_source_video(
         }
     }
     Ok(PublishedSourceVideo {
-        result: attach_into_closed_space(state, vault, slug, video_id, downloaded)?,
+        result: attach_into_closed_space(state, vault, slug, card, video_id, downloaded)?,
         open_root: None,
     })
 }
@@ -1247,6 +1220,7 @@ fn attach_into_closed_space(
     state: &AppState,
     vault: &VaultLayout,
     slug: &str,
+    card: Option<CardKey>,
     video_id: &str,
     downloaded: &Path,
 ) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
@@ -1262,7 +1236,7 @@ fn attach_into_closed_space(
         }
     };
     if !holds {
-        crate::source_video_download::keep_download(vault, slug, video_id, downloaded)
+        crate::source_video_download::keep_download(vault, slug, card, video_id, downloaded)
             .map_err(|message| MediaAssetActionError::Internal { message })?;
         return Ok(MediaAssetMutationResult {
             media_ref: String::new(),
@@ -1271,12 +1245,14 @@ fn attach_into_closed_space(
         });
     }
     let conn = db::open_or_create(&vault.index_db_path()).map_err(internal_media_asset_error)?;
-    attach_downloaded_source_video_inner(state, &conn, vault, slug, video_id, downloaded)
+    attach_downloaded_source_video_inner(state, &conn, vault, slug, card, video_id, downloaded)
 }
 
 /// Copy the selected local media file as a native media/file object. This is
 /// intentionally separate from Copy Path, which copies a plain string path.
-#[tauri::command(rename_all = "snake_case")]
+/// Off the main thread: it waits for the space's lock, and the copy reads a
+/// file iCloud may first have to bring (SPEC_CLOUD_STORAGE.md, Х13).
+#[tauri::command(async, rename_all = "snake_case")]
 pub fn copy_media_asset_to_clipboard(
     webview: tauri::Webview,
     state: State<'_, AppState>,
@@ -1363,27 +1339,21 @@ async fn extract_text_selection_unannounced(
     let slug = indexed.slug.clone();
     let tags = indexed.tags.clone();
 
-    crate::commands::space_events::emit_to_vault(&app, &event_vault, 
+    crate::commands::space_events::announce_to_vault(&app, &event_vault, 
         "block:added",
         BlockAddedPayload {
             slug: slug.clone(),
             tags,
             is_text: true,
         },
-    )
-    .map_err(|e| TextSelectionExtractError::Internal {
-        message: format!("failed to emit block:added: {e}"),
-    })?;
-    crate::commands::space_events::emit_to_vault(&app, &event_vault, 
+    );
+    crate::commands::space_events::announce_to_vault(&app, &event_vault, 
         "thumb:updated",
         ThumbUpdatedPayload {
             slug,
             is_text: true,
         },
-    )
-    .map_err(|e| TextSelectionExtractError::Internal {
-        message: format!("failed to emit thumb:updated: {e}"),
-    })?;
+    );
 
     Ok(indexed)
 }
@@ -1392,10 +1362,10 @@ async fn extract_text_selection_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(rename_all = "snake_case")]
 pub async fn extract_text_selection(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: ExtractTextSelectionParams) -> Result<IndexedBlock, TextSelectionExtractError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = extract_text_selection_unannounced(webview, app, state, params).await;
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -1457,16 +1427,13 @@ async fn delete_text_selection_unannounced(
         message: format!("text selection deletion worker failed: {e}"),
     })??;
 
-    crate::commands::space_events::emit_to_vault(&app, &event_vault, 
+    crate::commands::space_events::announce_to_vault(&app, &event_vault, 
         "thumb:updated",
         ThumbUpdatedPayload {
             slug: indexed.slug.clone(),
             is_text: true,
         },
-    )
-    .map_err(|e| TextSelectionExtractError::Internal {
-        message: format!("failed to emit thumb:updated: {e}"),
-    })?;
+    );
 
     Ok(indexed)
 }
@@ -1475,10 +1442,10 @@ async fn delete_text_selection_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(rename_all = "snake_case")]
 pub async fn delete_text_selection(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: DeleteTextSelectionParams) -> Result<IndexedBlock, TextSelectionExtractError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = delete_text_selection_unannounced(webview, app, state, params).await;
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -2048,26 +2015,31 @@ fn rename_block_file_unannounced(
         })?;
     let vs = vault_state.as_ref().ok_or(RenameBlockError::NoVault)?;
 
-    rename_block_file_inner(
+    let renamed = rename_block_file_inner(
         Some(&app),
         Some(&state),
         &vs.conn,
         &vs.vault,
         &old_slug,
         &new_stem,
-    )
+    );
+    if let Ok(result) = &renamed {
+        // A download of this card goes on under its new name: progress,
+        // Cancel and the video follow it (SPEC_DEEP_AUDIT.md, Н4).
+        app.state::<crate::source_video_download::SourceVideoDownloads>()
+            .follow_rename(&vs.vault, &result.old_slug, &result.new_slug);
+    }
+    renamed
 }
 
 /// [`rename_block_file_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn rename_block_file(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, old_slug: String, new_stem: String) -> Result<RenameBlockResult, RenameBlockError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = rename_block_file_unannounced(webview, app, state, old_slug, new_stem);
     if let Ok(result) = &outcome {
-        super::effects::space_changed_by_tab(
-            &announcing,
-            vec![super::effects::SpaceRename::card(&result.old_slug, &result.new_slug)],
+        announcing.send(vec![super::effects::SpaceRename::card(&result.old_slug, &result.new_slug)],
         );
     }
     outcome
@@ -2151,10 +2123,10 @@ fn delete_block_unannounced(
 /// no other (SPEC_DEEP_AUDIT.md, Е1.10).
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn delete_block(webview: tauri::Webview, state: State<'_, AppState>, slug: String, delete_unused_media: Option<bool>, offered_media: Option<Vec<String>>) -> Result<DeleteBlockOutcome, CommandError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = delete_block_unannounced(webview, state, slug, delete_unused_media, offered_media);
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -2240,11 +2212,11 @@ pub async fn delete_blocks(
     delete_unused_media: bool,
     offered_media: Option<Vec<String>>,
 ) -> Result<DeleteBlocksOutcome, CommandError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome =
         delete_blocks_unannounced(webview, app, slugs, delete_unused_media, offered_media).await;
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -2436,32 +2408,28 @@ fn merge_blocks_unannounced(
     let mutation = merge_blocks_inner(Some(&state), &vs.conn, &vault, ordered_slugs)?;
     let result = mutation.result;
 
-    crate::commands::space_events::emit_to_vault(&app, &vault, 
+    crate::commands::space_events::announce_to_vault(&app, &vault, 
         "block:added",
         BlockAddedPayload {
             slug: result.merged_slug.clone(),
             tags: result.block.tags.clone(),
             is_text: true,
         },
-    )
-    .map_err(internal_merge_error)?;
-    crate::commands::space_events::emit_to_vault(&app, &vault, 
+    );
+    crate::commands::space_events::announce_to_vault(&app, &vault, 
         "thumb:updated",
         ThumbUpdatedPayload {
             slug: result.merged_slug.clone(),
             is_text: true,
         },
-    )
-    .map_err(internal_merge_error)?;
+    );
     for event in mutation.removed_events {
-        crate::commands::space_events::emit_to_vault(&app, &vault, "block:removed", event)
-            .map_err(internal_merge_error)?;
+        crate::commands::space_events::announce_to_vault(&app, &vault, "block:removed", event);
     }
-    crate::commands::space_events::emit_to_vault(&app, &vault, 
+    crate::commands::space_events::announce_to_vault(&app, &vault, 
         "vault-changed",
         VaultChangedPayload::from_outside(vs.vault.root().to_string_lossy().to_string()),
-    )
-    .map_err(internal_merge_error)?;
+    );
 
     Ok(result)
 }
@@ -2470,10 +2438,10 @@ fn merge_blocks_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn merge_blocks(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, ordered_slugs: Vec<String>) -> Result<MergeBlocksResult, MergeBlocksError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = merge_blocks_unannounced(webview, app, state, ordered_slugs);
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -3708,6 +3676,11 @@ fn rename_media_asset_inner(
     })
 }
 
+/// Delete the media file and take its references out of the notes that use
+/// it. The notes come from the index brought up to the files, and only they
+/// are read (SPEC_DEEP_AUDIT.md, Н5): a note that cannot be read or whose
+/// contents iCloud took away, and that does not name the file, neither stops
+/// the deletion nor is brought back. Canvases are not rewritten.
 fn delete_media_asset_inner(
     state: &AppState,
     conn: &rusqlite::Connection,
@@ -3720,7 +3693,8 @@ fn delete_media_asset_inner(
             reason: "media reference must stay inside the vault".to_string(),
         }
     })?;
-    let planned_writes = build_media_asset_removal_writes(vault, &media_path)?;
+    reconcile_before_media_action(conn, vault)?;
+    let planned_writes = build_media_asset_removal_writes(conn, vault, &media_path)?;
     let mut suppressed_paths = vec![media_path.clone()];
     for write in &planned_writes {
         suppressed_paths.push(write.path.clone());
@@ -3961,7 +3935,12 @@ fn delete_source_video_inner(
         .and_then(|reference| media_refs::resolve_indexed_media(vault, &block.slug, reference));
     let poster_to_delete = match &poster_path {
         Some(path) => {
-            let shared = collect_media_asset_reference_blocks(vault, path)?
+            // The notes that show the poster come from the index brought up
+            // to the files, as for Delete of a media file (SPEC_DEEP_AUDIT.md,
+            // Н5).
+            reconcile_before_media_action(conn, vault)?;
+            let mut resolver = media_refs::MediaResolver::new(vault);
+            let shared = collect_media_asset_reference_blocks(conn, vault, &mut resolver, path)?
                 .iter()
                 .any(|reference| {
                     reference.slug != block.slug
@@ -4050,44 +4029,96 @@ fn insert_video_embed(body: &str, link: &str) -> String {
     format!("{embed}\n\n{trimmed}")
 }
 
-fn attach_downloaded_source_video_inner(
-    state: &AppState,
+/// The cards of the index whose source is the YouTube video `video_id`.
+fn cards_linking_video(
+    conn: &rusqlite::Connection,
+    video_id: &str,
+) -> Result<Vec<String>, MediaAssetActionError> {
+    let mut statement = conn
+        .prepare("SELECT slug, url FROM blocks WHERE url LIKE ?1")
+        .map_err(internal_media_asset_error)?;
+    let rows = statement
+        .query_map([format!("%{video_id}%")], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
+        .map_err(internal_media_asset_error)?;
+    let mut slugs = Vec::new();
+    for row in rows {
+        let (slug, url) = row.map_err(internal_media_asset_error)?;
+        let links = url
+            .as_deref()
+            .and_then(mine_core::domain::video_source::parse_youtube_source)
+            .is_some_and(|source| source.video_id == video_id);
+        if links {
+            slugs.push(slug);
+        }
+    }
+    Ok(slugs)
+}
+
+/// The card a download belongs to (SPEC_DEEP_AUDIT.md, Н4): the card at
+/// `slug`, its name when the download last heard of it; otherwise the card of
+/// the index that links this video and has the file `card` named when the
+/// download started, a card renamed or moved outside Mine since. A card found
+/// nowhere passes: the video is kept for the next opening, never discarded.
+fn locate_download_card(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     slug: &str,
+    card: Option<CardKey>,
     video_id: &str,
-    downloaded: &Path,
-) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
-    validate_slug(slug).map_err(|e| MediaAssetActionError::InvalidMediaRef {
-        reason: format!("invalid card slug: {e}"),
-    })?;
-    let source_path = vault.block_path(slug);
-    // Only a card that is not there is gone for good. A folder that cannot
-    // be read now (no access, an I/O error) says nothing about the card, and
-    // an answer taken as final would discard the video (`SPEC_AUDIT_FIXES.md`,
+) -> Result<String, MediaAssetActionError> {
+    // Only a card that is not there is looked for. A folder that cannot be
+    // read now (no access, an I/O error) says nothing about the card, and an
+    // answer taken as final would discard the video (`SPEC_AUDIT_FIXES.md`,
     // Ф9, В3.1).
-    match source_path.try_exists() {
-        Ok(true) => {}
-        // A card is gone only from a space proven present. A disk
-        // disconnected or a folder renamed hides every card: that answer
-        // passes, and the video is kept for the space (`SPEC_AUDIT_FIXES.md`,
-        // Ф9, Г2.2).
-        Ok(false) => {
-            if let Err(unavailable) = crate::storage::root_guard::ensure_root_present(vault) {
-                return Err(MediaAssetActionError::Internal {
-                    message: format!("card {slug} cannot be looked for now: {unavailable}"),
-                });
-            }
-            return Err(MediaAssetActionError::InvalidMediaRef {
-                reason: format!("card not found: {slug}"),
-            });
-        }
+    match vault.block_path(slug).try_exists() {
+        Ok(true) => return Ok(slug.to_owned()),
+        Ok(false) => {}
         Err(error) => {
             return Err(MediaAssetActionError::Internal {
                 message: format!("card {slug} cannot be read now: {error}"),
             })
         }
     }
+    // A card is gone only from a space proven present. A disk disconnected or
+    // a folder renamed hides every card: that answer passes, and the video is
+    // kept for the space (`SPEC_AUDIT_FIXES.md`, Ф9, Г2.2).
+    if let Err(unavailable) = crate::storage::root_guard::ensure_root_present(vault) {
+        return Err(MediaAssetActionError::Internal {
+            message: format!("card {slug} cannot be looked for now: {unavailable}"),
+        });
+    }
+    let found: Vec<String> = match card {
+        Some(key) => cards_linking_video(conn, video_id)?
+            .into_iter()
+            .filter(|candidate| CardKey::of(&vault.block_path(candidate)) == Some(key))
+            .collect(),
+        None => Vec::new(),
+    };
+    match found.as_slice() {
+        [moved] => Ok(moved.clone()),
+        _ => Err(MediaAssetActionError::Internal {
+            message: format!("the card {slug} of this download was not found"),
+        }),
+    }
+}
+
+fn attach_downloaded_source_video_inner(
+    state: &AppState,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    slug: &str,
+    card: Option<CardKey>,
+    video_id: &str,
+    downloaded: &Path,
+) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
+    validate_slug(slug).map_err(|e| MediaAssetActionError::InvalidMediaRef {
+        reason: format!("invalid card slug: {e}"),
+    })?;
+    let located = locate_download_card(conn, vault, slug, card, video_id)?;
+    let slug = located.as_str();
+    let source_path = vault.block_path(slug);
     let (read_slug, content) =
         files::read_block_file(vault, &source_path).map_err(internal_media_asset_error)?;
     #[cfg(test)]
@@ -4432,7 +4463,11 @@ fn build_media_asset_reference_writes(
     Ok(writes)
 }
 
+/// The delete window's plan for a media file: the notes that use it and the
+/// canvases that show it. The notes come from the index brought up to the
+/// files, and only they are read (SPEC_DEEP_AUDIT.md, Н5).
 fn prepare_delete_media_asset_inner(
+    conn: &rusqlite::Connection,
     vault: &VaultLayout,
     media_ref: String,
 ) -> Result<DeleteMediaAssetPlan, MediaAssetActionError> {
@@ -4443,23 +4478,112 @@ fn prepare_delete_media_asset_inner(
         }
     })?;
     let media_kind = delete_media_kind(&media_ref);
-    let referenced_by = collect_media_asset_reference_blocks(vault, &media_path)?;
+    reconcile_before_media_action(conn, vault)?;
+    // One snapshot of the file list serves the whole plan. A file that
+    // appears after it can only make a short name ambiguous that was not:
+    // the same race each lookup of its own walk had.
+    let mut resolver = media_refs::MediaResolver::new(vault);
+    let referenced_by =
+        collect_media_asset_reference_blocks(conn, vault, &mut resolver, &media_path)?;
+    let canvases = canvases_showing_media(vault, &mut resolver, &media_path)?;
 
     Ok(DeleteMediaAssetPlan {
         media_ref,
         media_kind,
         referenced_by,
+        canvases,
     })
 }
 
+/// Bring the index up to the files before a media action takes its
+/// candidates from it (SPEC_DEEP_AUDIT.md, Н5), as a collection mutation
+/// does (Н2): a note that took the file into its text in Obsidian while
+/// nothing watched the space is a candidate, as its file says. The pass
+/// reads only the notes changed since the last one; a note it cannot read
+/// does not stop the action.
+fn reconcile_before_media_action(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+) -> Result<(), MediaAssetActionError> {
+    reconcile::reconcile_vault(conn, vault)
+        .map(|_| ())
+        .map_err(|error| MediaAssetActionError::Internal {
+            message: format!("bring the index up to the files: {error}"),
+        })
+}
+
+/// The notes that may use `media_path`, by the index alone: those whose
+/// frontmatter file or thumbnail, or a reference of whose text, holds the
+/// file's name in one Unicode form and letter case, as written or
+/// percent-decoded (`media_reference_forms`), the match the delete window of
+/// a card makes (`MediaUsers`). Every reference that resolves to the file
+/// holds its name, so every note that uses it is here, with maybe one that
+/// names another file of the same name. No note is read here.
+fn media_action_candidates(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    media_path: &Path,
+) -> Result<Vec<PathBuf>, MediaAssetActionError> {
+    let Some(name) = media_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(fold_media_name)
+    else {
+        return Ok(Vec::new());
+    };
+    let notes = block_queries::list_note_file_mentions(conn, &BTreeSet::new())
+        .map_err(internal_media_asset_error)?;
+    let mut candidates = Vec::new();
+    for note in &notes {
+        if let Err(error) = validate_slug(&note.slug) {
+            log::warn!(
+                "media action skipped invalid indexed block slug {:?}: {}",
+                note.slug,
+                error
+            );
+            continue;
+        }
+        let references = iter_file_references(&note.body);
+        let forms = media_reference_forms(&NoteFiles {
+            slug: &note.slug,
+            file: note.media_file.as_deref(),
+            thumbnail: note.thumbnail.as_deref(),
+            references: &references,
+        });
+        if forms.iter().any(|form| form.contains(name.as_str())) {
+            candidates.push(vault.block_path(&note.slug));
+        }
+    }
+    Ok(candidates)
+}
+
+/// A candidate note's text and model, or `None` when the note is gone since
+/// the index named it: a note that is not there uses no file.
+fn read_media_action_candidate(
+    vault: &VaultLayout,
+    path: &Path,
+) -> Result<Option<(String, Block)>, MediaAssetActionError> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    read_media_asset_action_note(vault, path).map(Some)
+}
+
 fn build_media_asset_removal_writes(
+    conn: &rusqlite::Connection,
     vault: &VaultLayout,
     media_path: &Path,
 ) -> Result<Vec<MediaAssetBlockWrite>, MediaAssetActionError> {
+    // One snapshot of the file list serves every candidate, as in the plan.
+    let mut resolver = media_refs::MediaResolver::new(vault);
     let mut writes = Vec::new();
-    for path in files::scan_md_files(vault).map_err(internal_media_asset_error)? {
-        let (source, block) = read_media_asset_action_note(vault, &path)?;
-        if let Some(rewritten) = remove_block_media_asset_references(vault, &block, media_path) {
+    for path in media_action_candidates(conn, vault, media_path)? {
+        let Some((source, block)) = read_media_action_candidate(vault, &path)? else {
+            continue;
+        };
+        if let Some(rewritten) =
+            remove_block_media_asset_references(&mut resolver, &block, media_path)
+        {
             writes.push(MediaAssetBlockWrite {
                 path,
                 source,
@@ -4472,13 +4596,17 @@ fn build_media_asset_removal_writes(
 }
 
 fn collect_media_asset_reference_blocks(
+    conn: &rusqlite::Connection,
     vault: &VaultLayout,
+    resolver: &mut media_refs::MediaResolver<'_>,
     media_path: &Path,
 ) -> Result<Vec<MediaAssetReferenceBlock>, MediaAssetActionError> {
     let mut blocks = Vec::new();
-    for path in files::scan_md_files(vault).map_err(internal_media_asset_error)? {
-        let block = read_media_asset_action_block(vault, &path)?;
-        let reference_kinds = media_asset_reference_kinds(vault, &block, media_path);
+    for path in media_action_candidates(conn, vault, media_path)? {
+        let Some((_, block)) = read_media_action_candidate(vault, &path)? else {
+            continue;
+        };
+        let reference_kinds = media_asset_reference_kinds(resolver, &block, media_path);
         if reference_kinds.is_empty() {
             continue;
         }
@@ -4498,11 +4626,74 @@ fn collect_media_asset_reference_blocks(
     Ok(blocks)
 }
 
-fn read_media_asset_action_block(
+/// The canvases of the space that show `media_path`, as paths from the
+/// space root (SPEC_DEEP_AUDIT.md, Н5, Е5.6). The index does not know
+/// canvases, so each one is a candidate: the walk lists folders for
+/// `.canvas` names without opening a note, and only canvases are read. A
+/// canvas whose contents iCloud took away is not brought back for this, and
+/// one that cannot be read or is not JSON is left out; both are logged and
+/// neither stops the plan.
+fn canvases_showing_media(
     vault: &VaultLayout,
-    path: &Path,
-) -> Result<Block, MediaAssetActionError> {
-    read_media_asset_action_note(vault, path).map(|(_, block)| block)
+    resolver: &mut media_refs::MediaResolver<'_>,
+    media_path: &Path,
+) -> Result<Vec<String>, MediaAssetActionError> {
+    let mut canvases = Vec::new();
+    for path in files::scan_canvas_files(vault).map_err(internal_media_asset_error)? {
+        if crate::storage::media_dimensions::is_content_offloaded(&path) {
+            log::info!(
+                "media delete plan left out a canvas whose contents are in iCloud: {}",
+                path.display()
+            );
+            continue;
+        }
+        let read = std::fs::read_to_string(&path)
+            .map_err(anyhow::Error::from)
+            .and_then(|json| {
+                crate::domain::canvas::canvas_file_references(&json).map_err(anyhow::Error::from)
+            });
+        let references = match read {
+            Ok(references) => references,
+            Err(error) => {
+                log::warn!(
+                    "media delete plan could not read the canvas {}: {error:#}",
+                    path.display()
+                );
+                continue;
+            }
+        };
+        if canvas_shows_media(vault, resolver, &path, &references, media_path) {
+            canvases.extend(vault.root_relative_reference(&path));
+        }
+    }
+    Ok(canvases)
+}
+
+/// Whether one canvas shows `media_path`: a file node or a group background
+/// at its path from the space root, or a link or embed in a text node, read
+/// as from a note beside the canvas.
+fn canvas_shows_media(
+    vault: &VaultLayout,
+    resolver: &mut media_refs::MediaResolver<'_>,
+    canvas: &Path,
+    references: &crate::domain::canvas::CanvasFileReferences,
+    media_path: &Path,
+) -> bool {
+    if references
+        .root_paths
+        .iter()
+        .any(|root_path| same_path(&vault.root().join(root_path), media_path))
+    {
+        return true;
+    }
+    let Ok(beside) = vault.slug_for_path(&canvas.with_extension("md")) else {
+        return false;
+    };
+    references.text_references.iter().any(|reference| {
+        resolver
+            .resolve_file_reference(&beside, reference)
+            .is_some_and(|path| same_path(&path, media_path))
+    })
 }
 
 /// A note's text together with its model, for a write that patches the text.
@@ -4572,7 +4763,7 @@ fn rewrite_block_media_asset_references(
 }
 
 fn remove_block_media_asset_references(
-    vault: &VaultLayout,
+    resolver: &mut media_refs::MediaResolver<'_>,
     block: &Block,
     media_path: &Path,
 ) -> Option<Block> {
@@ -4583,7 +4774,7 @@ fn remove_block_media_asset_references(
         .frontmatter
         .file
         .as_deref()
-        .and_then(|reference| media_refs::resolve_indexed_media(vault, &block.slug, reference))
+        .and_then(|reference| resolver.resolve_indexed_media(&block.slug, reference))
         .is_some_and(|path| same_path(&path, media_path))
     {
         rewritten.frontmatter.file = None;
@@ -4593,7 +4784,7 @@ fn remove_block_media_asset_references(
         .frontmatter
         .thumbnail
         .as_deref()
-        .and_then(|reference| media_refs::resolve_indexed_media(vault, &block.slug, reference))
+        .and_then(|reference| resolver.resolve_indexed_media(&block.slug, reference))
         .is_some_and(|path| same_path(&path, media_path))
     {
         rewritten.frontmatter.thumbnail = None;
@@ -4602,7 +4793,8 @@ fn remove_block_media_asset_references(
 
     let mut body_removals = BTreeSet::new();
     for reference in iter_inline_media_references(&block.body) {
-        if media_refs::resolve_inline_media(vault, &block.slug, &reference)
+        if resolver
+            .resolve_inline_media(&block.slug, &reference)
             .is_some_and(|path| same_path(&path, media_path))
         {
             body_removals.insert(reference.source);
@@ -4618,7 +4810,7 @@ fn remove_block_media_asset_references(
 }
 
 fn media_asset_reference_kinds(
-    vault: &VaultLayout,
+    resolver: &mut media_refs::MediaResolver<'_>,
     block: &Block,
     media_path: &Path,
 ) -> Vec<String> {
@@ -4627,7 +4819,7 @@ fn media_asset_reference_kinds(
         .frontmatter
         .file
         .as_deref()
-        .and_then(|reference| media_refs::resolve_indexed_media(vault, &block.slug, reference))
+        .and_then(|reference| resolver.resolve_indexed_media(&block.slug, reference))
         .is_some_and(|path| same_path(&path, media_path))
     {
         kinds.insert("frontmatter_file".to_string());
@@ -4636,7 +4828,7 @@ fn media_asset_reference_kinds(
         .frontmatter
         .thumbnail
         .as_deref()
-        .and_then(|reference| media_refs::resolve_indexed_media(vault, &block.slug, reference))
+        .and_then(|reference| resolver.resolve_indexed_media(&block.slug, reference))
         .is_some_and(|path| same_path(&path, media_path))
     {
         kinds.insert("frontmatter_thumbnail".to_string());
@@ -4644,7 +4836,8 @@ fn media_asset_reference_kinds(
     if iter_inline_media_references(&block.body)
         .into_iter()
         .any(|reference| {
-            media_refs::resolve_inline_media(vault, &block.slug, &reference)
+            resolver
+                .resolve_inline_media(&block.slug, &reference)
                 .is_some_and(|path| same_path(&path, media_path))
         })
     {
@@ -6841,7 +7034,7 @@ mod tests {
         persist_block(&conn, &vault, &media);
         std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
 
-        let plan = prepare_delete_media_asset_inner(&vault, "photo.png".to_string()).unwrap();
+        let plan = prepare_delete_media_asset_inner(&conn, &vault, "photo.png".to_string()).unwrap();
 
         assert_eq!(plan.media_ref, "photo.png");
         assert_eq!(plan.media_kind, DeleteMediaAssetKind::Image);
@@ -6857,9 +7050,117 @@ mod tests {
         );
     }
 
+    /// Н5, Е5.5: preparing and deleting a media file read only the notes
+    /// that name it, not every note of the space.
+    #[test]
+    fn media_delete_reads_only_the_notes_that_name_the_file() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+        std::fs::write(vault.root().join("other.png"), b"image-bytes").unwrap();
+        persist_block(&conn, &vault, &article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro"));
+        persist_block(&conn, &vault, &image("Photo Card", "photo.png"));
+        for index in 0..40 {
+            persist_block(
+                &conn,
+                &vault,
+                &article(&format!("Other {index}"), "Text\n\n![[other.png]]\n"),
+            );
+        }
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        files::take_note_reads();
+        let read_names = |reads: Vec<PathBuf>| {
+            let mut names: Vec<String> = reads
+                .iter()
+                .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names.dedup();
+            (reads.len(), names)
+        };
+        let named = vec!["Photo Card.md".to_string(), "Source Article.md".to_string()];
+
+        let plan = prepare_delete_media_asset_inner(&conn, &vault, "photo.png".to_string()).unwrap();
+
+        let slugs: Vec<&str> = plan.referenced_by.iter().map(|block| block.slug.as_str()).collect();
+        assert_eq!(slugs, ["Photo Card", "Source Article"]);
+        assert_eq!(read_names(files::take_note_reads()), (2, named.clone()));
+
+        let result =
+            delete_media_asset_inner(&state, &conn, &vault, "photo.png".to_string()).unwrap();
+
+        assert_eq!(result.affected_slugs, ["Photo Card", "Source Article"]);
+        assert_eq!(read_names(files::take_note_reads()), (2, named));
+        assert!(!vault.root().join("photo.png").exists());
+    }
+
+    /// Н5: a note that cannot be read and does not name the file stops
+    /// neither the plan nor the deletion.
+    #[test]
+    fn an_unreadable_note_that_does_not_name_the_file_stops_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+        persist_block(&conn, &vault, &article("Source Article", "Intro\n\n![[photo.png]]\n"));
+        let locked = vault.block_path("Locked");
+        std::fs::write(&locked, "# Locked\n\nNothing about the photo.\n").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let plan = prepare_delete_media_asset_inner(&conn, &vault, "photo.png".to_string());
+        let deleted = delete_media_asset_inner(&state, &conn, &vault, "photo.png".to_string());
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let plan = plan.unwrap();
+        let slugs: Vec<&str> = plan.referenced_by.iter().map(|block| block.slug.as_str()).collect();
+        assert_eq!(slugs, ["Source Article"]);
+        assert_eq!(deleted.unwrap().affected_slugs, ["Source Article"]);
+        assert!(!vault.root().join("photo.png").exists());
+    }
+
+    /// Е5.6: a canvas that shows the file uses it, by a file node or by an
+    /// embed in a text node; the plan names it and the deletion leaves it as
+    /// it is. A canvas of another file, one that is not JSON and one in a
+    /// skipped folder are not named.
+    #[test]
+    fn the_delete_plan_names_the_canvases_that_show_the_file() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let root = vault.root();
+        for folder in ["Media", "Boards", ".obsidian"] {
+            std::fs::create_dir_all(root.join(folder)).unwrap();
+        }
+        std::fs::write(root.join("Media/photo.png"), b"image-bytes").unwrap();
+        let node = r#"{"nodes":[{"id":"a","type":"file","file":"Media/photo.png","x":0,"y":0,"width":9,"height":9}],"edges":[]}"#;
+        std::fs::write(root.join("Boards/Node.canvas"), node).unwrap();
+        std::fs::write(
+            root.join("Boards/Text.canvas"),
+            r#"{"nodes":[{"id":"a","type":"text","text":"See ![[photo.png]]"}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("Other.canvas"),
+            r#"{"nodes":[{"id":"a","type":"file","file":"Media/other.png"}]}"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("Broken.canvas"), "not a canvas").unwrap();
+        std::fs::write(root.join(".obsidian/Hidden.canvas"), node).unwrap();
+
+        let plan =
+            prepare_delete_media_asset_inner(&conn, &vault, "Media/photo.png".to_string()).unwrap();
+
+        assert_eq!(plan.canvases, ["Boards/Node.canvas", "Boards/Text.canvas"]);
+        assert!(plan.referenced_by.is_empty());
+
+        delete_media_asset_inner(&state, &conn, &vault, "Media/photo.png".to_string()).unwrap();
+
+        assert!(!root.join("Media/photo.png").exists());
+        assert_eq!(std::fs::read_to_string(root.join("Boards/Node.canvas")).unwrap(), node);
+    }
+
     #[test]
     fn prepare_delete_media_asset_inner_accepts_partial_frontmatter_without_type() {
-        let (_root, _derived, vault, _conn) = make_vault();
+        let (_root, _derived, vault, conn) = make_vault();
         std::fs::write(
             vault.block_path("Partial Note"),
             "---\nsaved_at: 2026-05-05T22:28:06Z\n---\n# Partial Note\n\n![[photo.png]]\n",
@@ -6867,7 +7168,7 @@ mod tests {
         .unwrap();
         std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
 
-        let plan = prepare_delete_media_asset_inner(&vault, "photo.png".to_string()).unwrap();
+        let plan = prepare_delete_media_asset_inner(&conn, &vault, "photo.png".to_string()).unwrap();
 
         assert_eq!(plan.referenced_by.len(), 1);
         assert_eq!(plan.referenced_by[0].slug, "Partial Note");
@@ -6920,6 +7221,9 @@ mod tests {
         let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
         persist_block(&conn, &vault, &source);
         std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+        // The deletion brings the index up to the files first; with nothing
+        // left to bring, the trigger hits the deletion's own index write.
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
         let markdown = std::fs::read(vault.block_path("Source Article")).unwrap();
         conn.execute_batch(
             "CREATE TRIGGER fail_media_delete_index
@@ -7063,7 +7367,7 @@ mod tests {
         std::fs::write(&downloaded, b"video-bytes").unwrap();
 
         let result =
-            attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", "9KDDhAOyv9k", &downloaded)
+            attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", None, "9KDDhAOyv9k", &downloaded)
                 .unwrap();
 
         assert_eq!(result.affected_slugs, vec!["Film".to_string()]);
@@ -7096,7 +7400,7 @@ mod tests {
         std::fs::write(&downloaded, b"video-bytes").unwrap();
 
         let error =
-            attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", "9KDDhAOyv9k", &downloaded)
+            attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", None, "9KDDhAOyv9k", &downloaded)
                 .unwrap_err();
 
         assert!(matches!(error, MediaAssetActionError::InvalidMediaRef { .. }));
@@ -7122,7 +7426,7 @@ mod tests {
         std::fs::write(&downloaded, b"video-bytes").unwrap();
 
         let error =
-            attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", "abcdefghijk", &downloaded)
+            attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", None, "abcdefghijk", &downloaded)
                 .unwrap_err();
 
         assert!(matches!(error, MediaAssetActionError::InvalidMediaRef { .. }));
@@ -7880,7 +8184,7 @@ mod tests {
         for i in 0..6 {
             let name = format!("image{i}.jpg");
             std::fs::write(vault.root().join("Media").join(&name), b"image").unwrap();
-            let plan = prepare_delete_media_asset_inner(&vault, name).unwrap();
+            let plan = prepare_delete_media_asset_inner(&conn, &vault, name).unwrap();
             assert_eq!(plan.media_ref, format!("Media/image{i}.jpg"));
             assert_eq!(plan.referenced_by.len(), 1);
             assert_eq!(plan.referenced_by[0].slug, "Source");
@@ -9217,7 +9521,7 @@ mod tests {
         let downloaded = dir.path().join("joined.mp4");
         std::fs::write(&downloaded, b"video-bytes").unwrap();
 
-        let result = attach_into_closed_space(&AppState::new(), &vault, "Film", "9KDDhAOyv9k", &downloaded).unwrap();
+        let result = attach_into_closed_space(&AppState::new(), &vault, "Film", None, "9KDDhAOyv9k", &downloaded).unwrap();
 
         assert_eq!(result.affected_slugs, vec!["Film".to_string()]);
         assert_eq!(std::fs::read(vault.root().join(&result.media_ref)).unwrap(), b"video-bytes");
@@ -9237,7 +9541,7 @@ mod tests {
         let downloaded = dir.path().join("joined.mp4");
         std::fs::write(&downloaded, b"video-bytes").unwrap();
 
-        let result = attach_into_closed_space(&AppState::new(), &vault, "Film", "9KDDhAOyv9k", &downloaded).unwrap();
+        let result = attach_into_closed_space(&AppState::new(), &vault, "Film", None, "9KDDhAOyv9k", &downloaded).unwrap();
 
         assert!(result.affected_slugs.is_empty());
         let kept = crate::source_video_download::kept_downloads(&vault);
@@ -9266,7 +9570,7 @@ mod tests {
         std::fs::write(&downloaded, b"video-bytes").unwrap();
 
         let published =
-            publish_downloaded_source_video(&state, &first, "Film", "9KDDhAOyv9k", &downloaded).unwrap();
+            publish_downloaded_source_video(&state, &first, "Film", None, "9KDDhAOyv9k", &downloaded).unwrap();
 
         assert!(published.open_root.is_none());
         assert!(published.result.affected_slugs.is_empty());
@@ -9300,10 +9604,11 @@ mod tests {
         let delivered = crate::source_video_download::deliver_download(
             &vault,
             "Film",
+            None,
             "9KDDhAOyv9k",
             &finished,
             |finished| {
-                publish_downloaded_source_video(&state, &vault, "Film", "9KDDhAOyv9k", finished)
+                publish_downloaded_source_video(&state, &vault, "Film", None, "9KDDhAOyv9k", finished)
                     .map(|published| published.result)
             },
         );
@@ -9334,7 +9639,7 @@ mod tests {
         let state = AppState::new();
 
         let outcome =
-            attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", "9KDDhAOyv9k", &finished);
+            attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", None, "9KDDhAOyv9k", &finished);
         assert!(
             !matches!(outcome, Err(MediaAssetActionError::InvalidMediaRef { .. })),
             "{outcome:?}"
@@ -9342,10 +9647,11 @@ mod tests {
         let delivered = crate::source_video_download::deliver_download(
             &vault,
             "Film",
+            None,
             "9KDDhAOyv9k",
             &finished,
             |finished| {
-                attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", "9KDDhAOyv9k", finished)
+                attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", None, "9KDDhAOyv9k", finished)
             },
         );
 
@@ -9364,7 +9670,7 @@ mod tests {
         persist_block(&conn, &vault, &youtube_card("Film", "poster.jpg"));
         let downloaded = dir.path().join("joined.mp4");
         std::fs::write(&downloaded, b"video-bytes").unwrap();
-        crate::source_video_download::keep_download(&vault, "Film", "abcdefghijk", &downloaded).unwrap();
+        crate::source_video_download::keep_download(&vault, "Film", None, "abcdefghijk", &downloaded).unwrap();
         let kept = crate::source_video_download::kept_downloads(&vault).remove(0);
 
         let outcome = attach_downloaded_source_video_inner(
@@ -9372,6 +9678,7 @@ mod tests {
             &conn,
             &vault,
             &kept.slug,
+            kept.card,
             &kept.video_id,
             &vault.derived_root().join("source-videos").join(&kept.file),
         );
@@ -9724,7 +10031,7 @@ mod tests {
         persist_block(&conn, &vault, &youtube_card("Cards/Film", "poster.jpg"));
         let downloaded = dir.path().join("joined.mp4");
         std::fs::write(&downloaded, b"video-bytes").unwrap();
-        crate::source_video_download::keep_download(&vault, "Cards/Film", "9KDDhAOyv9k", &downloaded)
+        crate::source_video_download::keep_download(&vault, "Cards/Film", None, "9KDDhAOyv9k", &downloaded)
             .unwrap();
         let kept = crate::source_video_download::kept_downloads(&vault).remove(0);
         let kept_path = vault.derived_root().join("source-videos").join(&kept.file);
@@ -9738,6 +10045,7 @@ mod tests {
             &conn,
             &vault,
             &kept.slug,
+            kept.card,
             &kept.video_id,
             &kept_path,
         );
@@ -9757,6 +10065,7 @@ mod tests {
             &conn,
             &vault,
             &kept.slug,
+            kept.card,
             &kept.video_id,
             &kept_path,
         );
@@ -9791,10 +10100,11 @@ mod tests {
         let delivered = crate::source_video_download::deliver_download(
             &vault,
             "Film",
+            None,
             "9KDDhAOyv9k",
             &finished,
             |finished| {
-                attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", "9KDDhAOyv9k", finished)
+                attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", None, "9KDDhAOyv9k", finished)
             },
         );
 
@@ -9826,10 +10136,11 @@ mod tests {
         let delivered = crate::source_video_download::deliver_download(
             &vault,
             "Film",
+            None,
             "abcdefghijk",
             &finished,
             |finished| {
-                attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", "abcdefghijk", finished)
+                attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", None, "abcdefghijk", finished)
             },
         );
 
@@ -9840,6 +10151,54 @@ mod tests {
             .unwrap()
             .iter()
             .all(|path| !is_video_file_name(path)));
+    }
+
+    /// Е2.3 (Н4): a card renamed or moved outside Mine while its video
+    /// downloaded takes the video under its new name; a card found nowhere
+    /// keeps the video for the next opening instead of discarding it.
+    #[test]
+    fn a_download_finds_its_card_renamed_and_keeps_the_video_of_a_lost_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let (vault, conn) = identified_vault(dir.path(), "0123456789abcdef0123456789abcdef");
+        persist_block(&conn, &vault, &youtube_card("Film", "poster.jpg"));
+        let key = CardKey::of(&vault.block_path("Film"));
+        assert!(key.is_some());
+        // Moved in Finder: the index learns the new name, the file keeps its identity.
+        std::fs::create_dir_all(vault.root().join("Archive")).unwrap();
+        std::fs::rename(vault.block_path("Film"), vault.block_path("Archive/Movie")).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let finished = dir.path().join("joined.mp4");
+        std::fs::write(&finished, b"video-bytes").unwrap();
+        let state = AppState::new();
+
+        let attached =
+            attach_downloaded_source_video_inner(&state, &conn, &vault, "Film", key, "9KDDhAOyv9k", &finished)
+                .expect("the moved card takes its video");
+        assert_eq!(attached.affected_slugs, vec!["Archive/Movie".to_string()]);
+        assert!(read_note(&vault, "Archive/Movie").contains(".mp4"));
+
+        // A card deleted meanwhile: the video is kept, not discarded.
+        persist_block(&conn, &vault, &youtube_card("Clip", "poster.jpg"));
+        let lost_key = CardKey::of(&vault.block_path("Clip"));
+        std::fs::remove_file(vault.block_path("Clip")).unwrap();
+        let another = dir.path().join("another.mp4");
+        std::fs::write(&another, b"more-bytes").unwrap();
+        let delivered = crate::source_video_download::deliver_download(
+            &vault,
+            "Clip",
+            lost_key,
+            "9KDDhAOyv9k",
+            &another,
+            |finished| attach_downloaded_source_video_inner(&state, &conn, &vault, "Clip", lost_key, "9KDDhAOyv9k", finished),
+        );
+        assert!(delivered.is_err());
+        let kept = crate::source_video_download::kept_downloads(&vault);
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(kept[0].card, lost_key);
+        assert_eq!(
+            std::fs::read(vault.derived_root().join("source-videos").join(&kept[0].file)).unwrap(),
+            b"more-bytes"
+        );
     }
 
     /// В3.3: space A's download ends while space B, open, stands in A's
@@ -9880,7 +10239,7 @@ mod tests {
         std::fs::write(&downloaded, b"video-bytes").unwrap();
 
         let published =
-            publish_downloaded_source_video(&state, &first, "Film", "9KDDhAOyv9k", &downloaded).unwrap();
+            publish_downloaded_source_video(&state, &first, "Film", None, "9KDDhAOyv9k", &downloaded).unwrap();
 
         assert!(published.open_root.is_none());
         assert!(published.result.affected_slugs.is_empty());

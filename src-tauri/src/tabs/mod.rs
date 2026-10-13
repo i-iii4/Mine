@@ -25,8 +25,8 @@ use tauri::{
 use crate::commands::space_events;
 use crate::commands::state::AppState;
 use crate::domain::windows::{
-    cascaded_frame, centered_frame, normalize, ScreenArea, SavedTab, SavedWindow, SavedWindows, SidebarLayout,
-    ChromeRows, SpaceStatus, TabId, TabSpace, TabView, WindowFrame, WindowId,
+    cascaded_frame, centered_frame, normalize, RestoreStep, ScreenArea, SavedTab, SavedWindow, SavedWindows,
+    SidebarLayout, ChromeRows, TabId, TabSpace, TabView, WindowFrame, WindowId,
     WINDOW_DEFAULT_HEIGHT, WINDOW_DEFAULT_WIDTH, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH,
 };
 use crate::storage::window_store::{load, Loaded, WindowStore};
@@ -76,6 +76,23 @@ pub struct TabBarTab {
     /// The tab's page has places to go back and forward to (В81). An
     /// unloaded tab has neither: its history went with its page.
     pub history: TabHistory,
+    /// Why the tab's page or window could not be made the last time it was
+    /// tried; selecting the tab tries again (SPEC_TABS.md, «Ошибки»).
+    pub error: Option<String>,
+}
+
+/// Failures of the tab and window layer (SPEC_TABS.md, «Ошибки»). They reach
+/// the person as a mark on the tab in its bar, and the log; until 13.10.2026
+/// they went to a log the release build did not keep (SPEC_DEEP_AUDIT.md,
+/// Е2.9).
+#[derive(Debug, thiserror::Error)]
+pub enum TabError {
+    #[error("the page of this tab could not be made: {reason}")]
+    PageCreate { reason: String },
+    #[error("the window for this tab could not be made: {reason}")]
+    WindowCreate { reason: String },
+    #[error("this tab could not move to the other window and was made again: {source}")]
+    Move { source: tauri::Error },
 }
 
 /// Whether a tab's page can go back and forward through its places (В81).
@@ -173,6 +190,16 @@ struct Live {
     shown: BTreeMap<WindowId, TabId>,
     /// Where each page can step through its places (В81).
     history: BTreeMap<TabId, TabHistory>,
+    /// Why a tab's page or window could not be made, until it is (Е2.9).
+    errors: BTreeMap<TabId, String>,
+    /// While the saved windows come back, the last window keeps the focus:
+    /// focus that another restored window takes meanwhile changes nothing
+    /// (Е2.7). Ends at the deadline.
+    restore_focus: Option<(WindowId, Instant)>,
+    /// The registry's folders by identity, as of the config's modification
+    /// time: a tab switch on the main thread reads the config only when it
+    /// changed (Е2.10).
+    space_paths: Option<(std::time::SystemTime, BTreeMap<String, String>)>,
 }
 
 /// The tab windows of the running app.
@@ -248,12 +275,44 @@ fn screens(app: &AppHandle) -> Vec<ScreenArea> {
         .collect()
 }
 
-/// The folder of every known space, by identity.
+/// The folder of every known space, by identity. The config is read again
+/// only when it changed since: a tab switch, on the main thread, asks the
+/// file's modification time and reads nothing (SPEC_DEEP_AUDIT.md, Е2.10).
 fn space_paths(app: &AppHandle) -> BTreeMap<String, String> {
-    let serde_json::Value::Object(cfg) = crate::commands::vault::load_config(app) else {
+    let Some(config) = crate::commands::vault::app_config(app) else {
         return BTreeMap::new();
     };
-    space_paths_in(&cfg)
+    let modified = std::fs::metadata(config.path()).and_then(|metadata| metadata.modified()).ok();
+    let shell = shell(app);
+    if let (Some(modified), Some((at, paths))) = (modified, &lock(&shell.live).space_paths) {
+        if modified == *at {
+            return paths.clone();
+        }
+    }
+    let paths = match config.read() {
+        Ok(cfg) => space_paths_in(&cfg),
+        Err(error) => {
+            log::warn!("{error}");
+            return BTreeMap::new();
+        }
+    };
+    if let Some(modified) = modified {
+        lock(&shell.live).space_paths = Some((modified, paths.clone()));
+    }
+    paths
+}
+
+/// The identities the registry knows, or `None` when it cannot be read: a
+/// registry that cannot be read forgets no tab (Е2.8).
+fn known_spaces(app: &AppHandle) -> Option<BTreeSet<String>> {
+    let config = crate::commands::vault::app_config(app)?;
+    match config.read() {
+        Ok(cfg) => Some(space_paths_in(&cfg).into_keys().collect()),
+        Err(error) => {
+            log::warn!("the space registry cannot be read; saved tabs are kept: {error}");
+            None
+        }
+    }
 }
 
 /// The folder of every space the registry in `cfg` knows, by identity.
@@ -304,12 +363,20 @@ fn shell(app: &AppHandle) -> tauri::State<'_, TabShell> {
 pub fn restore(app: &AppHandle) -> anyhow::Result<()> {
     let shell = shell(app);
     let screens = screens(app);
-    let paths = space_paths(app);
+    // Spaces lost from the list come back from their derived stores before
+    // the tabs are checked against it: until 13.10.2026 the windows came
+    // first, and settings that had lost the list lost every tab with them,
+    // for good (SPEC_DEEP_AUDIT.md, Е2.8).
+    crate::commands::vault::repair_space_registry(app);
+    let registry = known_spaces(app);
     let loaded = match crate::commands::native_shell_smoke::enabled() {
         true => Loaded::Missing,
         false => match app.path().app_data_dir() {
             Ok(dir) => load(&dir).unwrap_or_else(|error| {
-                log::warn!("{error}");
+                // Neither readable nor set aside: start fresh and write
+                // nothing over it in this run (Е2.11).
+                log::warn!("saved windows left as they are: {error}");
+                shell.store.hold();
                 Loaded::Missing
             }),
             Err(_) => Loaded::Missing,
@@ -327,13 +394,7 @@ pub fn restore(app: &AppHandle) -> anyhow::Result<()> {
             fresh_windows(app, &screens)
         }
     };
-    let space = |vault_id: &str| {
-        if paths.contains_key(vault_id) {
-            SpaceStatus::Known
-        } else {
-            SpaceStatus::Unknown
-        }
-    };
+    let space = |vault_id: &str| crate::domain::windows::registry_status(registry.as_ref(), vault_id);
     let mut saved = normalize(saved, &space, &screens, &mut new_id);
     if saved.windows.is_empty() {
         saved = fresh_windows(app, &screens);
@@ -342,7 +403,7 @@ pub fn restore(app: &AppHandle) -> anyhow::Result<()> {
     *lock(&shell.model) = saved;
     lock(&shell.live).current_space = configured_space(app);
     if let Some(first) = first {
-        let window = create_window(app, &first)?;
+        let window = create_window(app, &first, true)?;
         // Before the event loop runs, the screens may not be known yet: a
         // window made from nothing is centred by the system instead.
         if screens.is_empty() && shell.fresh_start.load(Ordering::SeqCst) {
@@ -364,16 +425,79 @@ pub fn restore(app: &AppHandle) -> anyhow::Result<()> {
 
 /// Create the windows after the last one, once its first route is on
 /// screen (В36). Runs once.
+///
+/// The steps come from [`SavedWindows::restore_steps`]: the others are made
+/// without the focus and the last window takes it back, so the order of the
+/// windows and `vault_path` stay as they were saved (Е2.7). A window that
+/// cannot be made hands its tabs to the last window, marked with the error
+/// (Е2.9).
 pub fn restore_rest(app: &AppHandle) {
     let shell = shell(app);
     if shell.rest_created.swap(true, Ordering::SeqCst) {
         return;
     }
-    let rest: Vec<SavedWindow> = shell.snapshot().windows.into_iter().skip(1).collect();
-    for window in rest.iter().rev() {
-        if let Err(error) = create_window(app, window) {
-            log::warn!("failed to restore a window: {error:#}");
+    let snapshot = shell.snapshot();
+    let Some(last) = snapshot.last_window().map(|window| window.id.clone()) else {
+        return;
+    };
+    lock(&shell.live).restore_focus = Some((last.clone(), Instant::now()));
+    for step in snapshot.restore_steps() {
+        match step {
+            // The last window is made at launch already (В35).
+            RestoreStep::Create { window, .. } if window == last => {}
+            RestoreStep::Create { window, focus } => {
+                let Some(saved) = snapshot.window(&window) else {
+                    continue;
+                };
+                if let Err(error) = create_window(app, saved, focus) {
+                    hand_tabs_to(app, saved, &last, error);
+                }
+            }
+            RestoreStep::Focus(window) => {
+                if let Some(native) = app.get_window(&window.label()) {
+                    if let Err(error) = native.set_focus() {
+                        log::warn!("the last window could not take the focus back: {error}");
+                    }
+                }
+            }
         }
+    }
+}
+
+/// How long after the saved windows came back a focus taken by another of
+/// them is not a choice of the person (Е2.7).
+const RESTORE_FOCUS_GRACE: Duration = Duration::from_secs(1);
+
+/// The window `failed` could not be made: its tabs join `into`, the first of
+/// them marked with why, so nothing saved is lost and the person sees it
+/// (Е2.9).
+fn hand_tabs_to(app: &AppHandle, failed: &SavedWindow, into: &WindowId, error: TabError) {
+    let shell = shell(app);
+    let moved: Vec<TabId> = failed.tabs.iter().map(|tab| tab.id.clone()).collect();
+    let shown = lock(&shell.live).shown.get(into).cloned();
+    shell.change(|model| {
+        for tab in &moved {
+            let at = model.window(into).map_or(0, |window| window.tabs.len());
+            model.attach(tab, into, at);
+        }
+        // `attach` shows each tab it moves; the window keeps what it showed.
+        if let Some(shown) = &shown {
+            model.activate(shown);
+        }
+    });
+    if let Some(first) = moved.first() {
+        record_tab_error(app, first, &error);
+    } else {
+        log::warn!("{error}");
+    }
+}
+
+/// Mark `tab` with `error` in its bar and log it (Е2.9).
+fn record_tab_error(app: &AppHandle, tab: &TabId, error: &TabError) {
+    log::warn!("tab {}: {error:#}", tab.0);
+    lock(&shell(app).live).errors.insert(tab.clone(), error.to_string());
+    if let Some(window) = window_of(app, tab) {
+        emit_bar_state(app, &window);
     }
 }
 
@@ -436,8 +560,11 @@ pub fn set_chrome_rows(app: &AppHandle, bar_label: &str, rows: ChromeRows) {
 /// The event every bar and page re-reads the chrome rows' heights on (В83).
 pub const CHROME_ROWS_EVENT: &str = "chrome-rows-changed";
 
-/// Create the native window `saved` with its tab bar and its visible tab.
-fn create_window(app: &AppHandle, saved: &SavedWindow) -> anyhow::Result<Window> {
+/// Create the native window `saved` with its tab bar and its visible tab,
+/// taking the focus or not (Е2.7). A window that cannot be made with its bar
+/// is not left half made; a page that cannot be made leaves its tab marked
+/// in the bar, to try again on selection (Е2.9).
+fn create_window(app: &AppHandle, saved: &SavedWindow, focus: bool) -> Result<Window, TabError> {
     let label = saved.id.label();
     let frame = saved.frame;
     let window = WindowBuilder::new(app, &label)
@@ -447,16 +574,32 @@ fn create_window(app: &AppHandle, saved: &SavedWindow) -> anyhow::Result<Window>
         .inner_size(frame.width, frame.height)
         .min_inner_size(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
         .position(frame.x, frame.y)
-        .build()?;
+        .focused(focus)
+        .build()
+        .map_err(|error| TabError::WindowCreate {
+            reason: error.to_string(),
+        })?;
+    if let Err(error) = furnish_window(app, &window, saved) {
+        let _ = window.destroy();
+        return Err(TabError::WindowCreate {
+            reason: format!("{error:#}"),
+        });
+    }
+    Ok(window)
+}
+
+/// The bar and the visible page of the new window `window`.
+fn furnish_window(app: &AppHandle, window: &Window, saved: &SavedWindow) -> anyhow::Result<()> {
+    let frame = saved.frame;
     // The title bar and its full screen presentation stand before the
     // window goes full screen: AppKit takes both when the window enters it.
-    native::hide_toolbar_in_full_screen(&window);
-    native::set_title_bar(&window, crate::domain::windows::title_bar_for(saved.chrome_rows.tab_bar));
+    native::hide_toolbar_in_full_screen(window);
+    native::set_title_bar(window, crate::domain::windows::title_bar_for(saved.chrome_rows.tab_bar));
     if saved.fullscreen {
         window.set_fullscreen(true)?;
     }
     if let Some(surface) = shell(app).snapshot().window_surface {
-        native::set_window_background(&window, &surface);
+        native::set_window_background(window, &surface);
     }
     let bar = WebviewBuilder::new(saved.id.bar_label(), WebviewUrl::App(TAB_BAR_PAGE.into()))
         .initialization_script(chrome_height_script(saved.chrome_rows.tab_bar));
@@ -469,23 +612,31 @@ fn create_window(app: &AppHandle, saved: &SavedWindow) -> anyhow::Result<Window>
     let window_id = saved.id.clone();
     let handle = app.clone();
     window.on_window_event(move |event| on_window_event(&handle, &window_id, event));
-    let page = create_page(app, &window, &saved.active_tab)?;
-    let _ = page.show();
     lock(&shell(app).live)
         .shown
         .insert(saved.id.clone(), saved.active_tab.clone());
-    set_tab_visible(app, &saved.active_tab, true);
-    layout(app, &saved.id);
-    emit_bar_state(app, &saved.id);
-    // The page takes the keyboard, or a page shortcut goes nowhere.
-    native::keyboard_to_page(&window, &page);
-    Ok(window)
+    match create_page(app, window, &saved.active_tab) {
+        Ok(page) => {
+            let _ = page.show();
+            set_tab_visible(app, &saved.active_tab, true);
+            layout(app, &saved.id);
+            emit_bar_state(app, &saved.id);
+            // The page takes the keyboard, or a page shortcut goes nowhere.
+            native::keyboard_to_page(window, &page);
+        }
+        // The window stands with its bar, the tab marked there (Е2.9).
+        Err(error) => {
+            layout(app, &saved.id);
+            record_tab_error(app, &saved.active_tab, &error);
+        }
+    }
+    Ok(())
 }
 
 /// The page of `tab` in `window`: the live one, moved here from another
 /// window without reloading (В61, В66), or a new one. The caller decides
 /// when it shows.
-fn create_page(app: &AppHandle, window: &Window, tab: &TabId) -> anyhow::Result<Webview> {
+fn create_page(app: &AppHandle, window: &Window, tab: &TabId) -> Result<Webview, TabError> {
     let (width, height) = logical_size(window);
     let window_id = WindowId::from_label(window.label());
     let rows = window_id.as_ref().map_or_else(ChromeRows::default, |id| chrome_rows_of(app, id));
@@ -502,22 +653,28 @@ fn create_page(app: &AppHandle, window: &Window, tab: &TabId) -> anyhow::Result<
                 space_events::emit_to_labels(app, [tab.label()], CHROME_ROWS_EVENT, rows);
                 return Ok(existing);
             }
-            Err(error) => {
+            Err(source) => {
                 // The runtime already took the page out of its old window
                 // and dropped it; the tab gets a new page from its memory
-                // (В67).
-                log::warn!("moving a tab page failed, it is created again: {error}");
+                // (В67). The web view is gone, so the context menu forgets
+                // it too (Е2.16).
+                log::warn!("tab {}: {}", tab.0, TabError::Move { source });
+                crate::frame_context_menu::unregister_page(&tab.label());
                 let _ = existing.close();
                 app.state::<AppState>().tabs.remove(&tab.label());
             }
         }
     }
-    let page = window.add_child(
-        WebviewBuilder::new(tab.label(), WebviewUrl::App(tab_page_url().into()))
-            .initialization_script(chrome_height_script(rows.page)),
-        LogicalPosition::new(0.0, bar),
-        LogicalSize::new(width, height - bar),
-    )?;
+    let page = window
+        .add_child(
+            WebviewBuilder::new(tab.label(), WebviewUrl::App(tab_page_url().into()))
+                .initialization_script(chrome_height_script(rows.page)),
+            LogicalPosition::new(0.0, bar),
+            LogicalSize::new(width, height - bar),
+        )
+        .map_err(|error| TabError::PageCreate {
+            reason: error.to_string(),
+        })?;
     native::clear_page_background(&page);
     crate::frame_context_menu::register_page(&page);
     route_file_drags(app, &page, tab);
@@ -525,6 +682,7 @@ fn create_page(app: &AppHandle, window: &Window, tab: &TabId) -> anyhow::Result<
     let mut live = lock(&shell.live);
     live.pages.retain(|candidate| candidate != tab);
     live.pages.insert(0, tab.clone());
+    live.errors.remove(tab);
     drop(live);
     Ok(page)
 }
@@ -544,7 +702,7 @@ fn route_file_drags(app: &AppHandle, page: &Webview, tab: &TabId) {
         };
         let shell = shell(&handle);
         let shown = lock(&shell.live).shown.clone();
-        let Some(target) = shell.snapshot().shown_beside(&receiver, &shown) else {
+        let Some(target) = shell.snapshot().drop_target(&receiver.label(), &shown) else {
             return;
         };
         space_events::emit_to_labels(&handle, [target.label()], TAB_FILE_DRAG_EVENT, message);
@@ -659,6 +817,18 @@ fn on_window_focused(app: &AppHandle, window_id: &WindowId) {
     if shell.quitting() {
         return;
     }
+    // While the saved windows come back, only the last window's focus
+    // counts: another restored window taking it is AppKit's doing, not the
+    // person's (Е2.7).
+    {
+        let mut live = lock(&shell.live);
+        match &live.restore_focus {
+            Some((last, _)) if last == window_id => live.restore_focus = None,
+            Some((_, since)) if since.elapsed() < RESTORE_FOCUS_GRACE => return,
+            Some(_) => live.restore_focus = None,
+            None => {}
+        }
+    }
     shell.change(|model| model.focus_window(window_id));
     crate::commands::startup::nudge_clipper_upkeep();
     let Some(visible) = shell.snapshot().window(window_id).map(|window| window.active_tab.clone()) else {
@@ -699,6 +869,15 @@ fn request_focus_refresh(app: &AppHandle, tab: &TabId) {
     };
     if due {
         space_events::emit_to_labels(app, [tab.label()], "tab-refresh-requested", ());
+        // Coming back to the window checks the whole space for iCloud
+        // conflicts (SPEC_ICLOUD_CONFLICTS.md, ВК4), in the background.
+        if let Ok(layout) = space.layout() {
+            crate::commands::conflicts::schedule_conflict_check(
+                app,
+                &layout,
+                crate::storage::icloud_conflicts::CheckScope::Full,
+            );
+        }
     }
 }
 
@@ -723,8 +902,32 @@ pub fn project_current_space(app: &AppHandle) {
         }
         live.current_space = Some(vault_id.clone());
     }
+    // The space is recorded by the identity the tab is bound to, off the
+    // main thread: until 13.10.2026 every switch to another space read the
+    // folder's `.mine/vault-id` on the main thread, a file iCloud may hold
+    // (SPEC_DEEP_AUDIT.md, Е2.10, Н7).
+    let handle = app.clone();
+    let vault_id = vault_id.clone();
+    let spawned = std::thread::Builder::new()
+        .name("current-space".into())
+        .spawn(move || record_current_space(&handle, &vault_id));
+    if let Err(error) = spawned {
+        log::warn!("cannot record the current space: {error}");
+    }
+}
+
+/// One writer of the current space at a time.
+static CURRENT_SPACE_WRITER: Mutex<()> = Mutex::new(());
+
+/// Record `vault_id` as the current space, unless a later switch named
+/// another one meanwhile: the latest switch wins, whichever thread runs first.
+fn record_current_space(app: &AppHandle, vault_id: &str) {
+    let _turn = lock(&CURRENT_SPACE_WRITER);
+    if lock(&shell(app).live).current_space.as_deref() != Some(vault_id) {
+        return;
+    }
     if let Some(path) = space_paths(app).get(vault_id) {
-        crate::commands::vault::record_current_space(app, path);
+        crate::commands::vault::record_current_space(app, vault_id, path);
     }
 }
 
@@ -767,9 +970,9 @@ pub fn bar_state(app: &AppHandle, window_id: &WindowId) -> Option<TabBarState> {
     let snapshot = shell.snapshot();
     let window = snapshot.window(window_id)?;
     let paths = space_paths(app);
-    let (live, history): (BTreeSet<TabId>, BTreeMap<TabId, TabHistory>) = {
+    let (live, history, errors): (BTreeSet<TabId>, BTreeMap<TabId, TabHistory>, BTreeMap<TabId, String>) = {
         let live = lock(&shell.live);
-        (live.pages.iter().cloned().collect(), live.history.clone())
+        (live.pages.iter().cloned().collect(), live.history.clone(), live.errors.clone())
     };
     let tabs = window
         .tabs
@@ -781,6 +984,7 @@ pub fn bar_state(app: &AppHandle, window_id: &WindowId) -> Option<TabBarState> {
             card: open_card_title(&tab.view),
             live: live.contains(&tab.id),
             history: history.get(&tab.id).copied().unwrap_or_default(),
+            error: errors.get(&tab.id).cloned(),
         })
         .collect();
     Some(TabBarState {
@@ -854,10 +1058,19 @@ pub fn activate(app: &AppHandle, tab: &TabId) {
     if let Some(saved) = shell.snapshot().window(&window_id) {
         crate::commands::window_chrome::reflect_sidebar(app, saved.active_sidebar().collapsed);
     }
-    let Ok(page) = create_page(app, &window, tab) else {
-        log::warn!("failed to create a tab page");
-        emit_bar_state(app, &window_id);
-        return;
+    let page = match create_page(app, &window, tab) {
+        Ok(page) => page,
+        // The tab stays in its bar marked with why; selecting it again
+        // tries again (SPEC_TABS.md, «Ошибки»; Е2.9).
+        Err(error) => {
+            // The window goes on showing the page it showed.
+            let still_shown = lock(&shell.live).shown.get(&window_id).cloned();
+            if let Some(still_shown) = still_shown {
+                shell.change(|model| model.activate(&still_shown));
+            }
+            record_tab_error(app, tab, &error);
+            return;
+        }
     };
     // The page shown now in the window, whatever the model said before.
     let previous = {
@@ -1083,8 +1296,15 @@ pub fn new_window_at(app: &AppHandle, space: TabSpace, view: TabView) {
         chrome_rows,
     };
     shell.change(|model| model.add_window(window.clone()));
-    if let Err(error) = create_window(app, &window) {
-        log::warn!("failed to open a window: {error:#}");
+    if let Err(error) = create_window(app, &window, true) {
+        // The tab joins the window it came from, marked with why (Е2.9).
+        match last {
+            Some(last) => hand_tabs_to(app, &window, &last.id, error),
+            None => {
+                shell.change(|model| model.close_window(&window.id));
+                log::warn!("{error}");
+            }
+        }
     }
 }
 
@@ -1193,6 +1413,7 @@ pub fn move_tab_to_new_window(app: &AppHandle, tab: &TabId) {
         }
     };
     let source_id = source.id.clone();
+    let index = source.tabs.iter().position(|candidate| &candidate.id == tab).unwrap_or(0);
     let new_window = WindowId(new_id());
     let Some(now_visible) = shell.change(|model| model.detach(tab, new_window.clone(), frame)) else {
         return;
@@ -1201,12 +1422,33 @@ pub fn move_tab_to_new_window(app: &AppHandle, tab: &TabId) {
     let Some(saved) = shell.snapshot().window(&new_window).cloned() else {
         return;
     };
-    if let Err(error) = create_window(app, &saved) {
-        log::warn!("failed to open a window for the tab: {error:#}");
+    if let Err(error) = create_window(app, &saved, true) {
+        put_back(app, tab, &source_id, index, &error);
+        return;
     }
     match now_visible {
         Some(next) => activate(app, &next),
         None => emit_bar_state(app, &source_id),
+    }
+}
+
+/// The window `tab` was to move into could not be made: the tab goes back
+/// to `window` at `index`, shown and marked with why (Е2.9). Its page never
+/// left the window.
+pub(crate) fn put_back(app: &AppHandle, tab: &TabId, window: &WindowId, index: usize, error: &TabError) {
+    let shell = shell(app);
+    shell.change(|model| model.attach(tab, window, index));
+    activate(app, tab);
+    record_tab_error(app, tab, error);
+}
+
+/// A space was renamed or moved while open (П30): the bars of every window
+/// holding one of its tabs name it anew (SPEC_DEEP_AUDIT.md, Е2.24). Live
+/// tabs reopened the space and told their own bars; a window holding only
+/// unloaded tabs of it heard nothing until this.
+pub fn space_renamed(app: &AppHandle, vault_id: &str) {
+    for window in shell(app).snapshot().windows_with_space(vault_id) {
+        emit_bar_state(app, &window);
     }
 }
 

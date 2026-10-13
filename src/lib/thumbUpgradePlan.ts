@@ -19,11 +19,13 @@ export interface ThumbUpgradeInput {
   kind: "image" | "video";
   /** Gallery tile previews; absent for non-gallery blocks. */
   tilePosters?: TilePosterUpgrade[];
+  /** The state of `mediaPath` when asked (Е2.20); absent from an older backend. */
+  revision?: string;
 }
 
 export type ThumbUpgradeAction =
-  | { kind: "image"; key: string; slug: string; mediaPath: string }
-  | { kind: "video"; key: string; slug: string; mediaPath: string }
+  | { kind: "image"; key: string; slug: string; mediaPath: string; revision?: string }
+  | { kind: "video"; key: string; slug: string; mediaPath: string; revision?: string }
   | { kind: "tile-image"; key: string; slug: string; tile: TilePosterUpgrade }
   | { kind: "tile-video"; key: string; slug: string; tile: TilePosterUpgrade };
 
@@ -45,10 +47,11 @@ export function planThumbUpgrade(input: ThumbUpgradeInput): ThumbUpgradeAction[]
 
   if (input.mediaPath) {
     const key = blockThumbKey(input.slug);
+    const { slug, mediaPath, revision } = input;
     actions.push(
       input.kind === "video"
-        ? { kind: "video", key, slug: input.slug, mediaPath: input.mediaPath }
-        : { kind: "image", key, slug: input.slug, mediaPath: input.mediaPath },
+        ? { kind: "video", key, slug, mediaPath, revision }
+        : { kind: "image", key, slug, mediaPath, revision },
     );
   }
 

@@ -898,12 +898,27 @@ pub fn ensure_vault_write_layout(
     Ok(())
 }
 
+#[cfg(test)]
+thread_local! {
+    static NOTE_READS: std::cell::RefCell<Vec<PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The notes [`read_block_file`] read on this thread since the last call.
+/// Tests prove with it that an action reads only the notes it needs
+/// (SPEC_DEEP_AUDIT.md, Н5).
+#[cfg(test)]
+pub(crate) fn take_note_reads() -> Vec<PathBuf> {
+    NOTE_READS.with(|reads| std::mem::take(&mut *reads.borrow_mut()))
+}
+
 /// Read a .md file and return (path-based slug, raw_content).
 pub fn read_block_file(vault: &VaultLayout, path: &Path) -> Result<(String, String)> {
     let slug = vault
         .slug_for_path(path)
         .map_err(|e| anyhow::anyhow!(e.to_string()))
         .with_context(|| format!("invalid vault-relative file path: {}", path.display()))?;
+    #[cfg(test)]
+    NOTE_READS.with(|reads| reads.borrow_mut().push(path.to_path_buf()));
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read file: {}", path.display()))?;
 
@@ -915,16 +930,30 @@ pub fn read_block_file(vault: &VaultLayout, path: &Path) -> Result<(String, Stri
 /// `.mine-migration-backup`) and non-.md files.
 /// Returns paths sorted alphabetically.
 pub fn scan_md_files(vault: &VaultLayout) -> Result<Vec<PathBuf>> {
+    scan_files_with_extension(vault, "md")
+}
+
+/// The extension of an Obsidian canvas (JSON Canvas).
+pub const CANVAS_EXTENSION: &str = "canvas";
+
+/// Scan the vault for every Obsidian canvas (`.canvas`), by the same walk
+/// and the same skipped folders as [`scan_md_files`]. Only names are read:
+/// the walk lists folders and opens no file.
+pub fn scan_canvas_files(vault: &VaultLayout) -> Result<Vec<PathBuf>> {
+    scan_files_with_extension(vault, CANVAS_EXTENSION)
+}
+
+fn scan_files_with_extension(vault: &VaultLayout, extension: &str) -> Result<Vec<PathBuf>> {
     let root = vault.root();
     let mut paths = Vec::new();
-    scan_md_files_inner(root, &mut paths)
+    scan_files_inner(root, extension, &mut paths)
         .with_context(|| format!("failed to read vault directory: {}", root.display()))?;
 
     paths.sort();
     Ok(paths)
 }
 
-fn scan_md_files_inner(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+fn scan_files_inner(dir: &Path, extension: &str, paths: &mut Vec<PathBuf>) -> Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -933,10 +962,10 @@ fn scan_md_files_inner(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
             if is_ignored_vault_dir(&path) {
                 continue;
             }
-            scan_md_files_inner(&path, paths)?;
+            scan_files_inner(&path, extension, paths)?;
             continue;
         }
-        if file_type.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
+        if file_type.is_file() && path.extension().and_then(|e| e.to_str()) == Some(extension) {
             paths.push(path);
         }
     }

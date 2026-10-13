@@ -220,25 +220,44 @@ walk.
 
 ---
 
-## Команды записи вне главного потока
+## Команды вне главного потока
 
 Синхронная команда Tauri (`pub fn` с `#[tauri::command]`) выполняется в
 главном потоке. Команда записи ждёт замок пространства и запись в индекс, а
 фоновая работа (дозаливка метаданных, проверка превью, сверка) держит их
 секундами. Пока команда ждёт, замирают все окна: 03.10.2026 удаление карточки
 и коллекции висело почти минуту во время дозаливки 645 текстов превью.
+13.10.2026 подготовка удаления медиа (`prepare_delete_media_asset`) около 30
+секунд читала каждую заметку пространства iCloud больше чем на 700 карточек,
+и приложение крутило «радугу».
 
-Поэтому каждая команда с действием `ChangesSources` или `AnnouncesItself`
-(`commands/effects.rs`) выполняется вне главного потока: `pub async fn` или
-`#[tauri::command(async)]`, во втором случае тело выполняется в пуле потоков
-Tauri. Так же вынесены чтения, которые ждут сеть, процесс-помощник или замок
-пространства: `list_arena_channels`, `icloud_download_progress`,
-`start_vault_sync`. В главном потоке остаются команды буфера обмена и окон:
-`copy_media_asset_to_clipboard`, `read_clipboard_payload`,
-`open_settings_window` и команды `commands/tabs.rs`.
+Поэтому вне главного потока выполняется каждая команда, которая читает или
+пишет файлы пространства, ходит в индекс или ждёт замок пространства, в том
+числе через `tab_layout`: `pub async fn` или `#[tauri::command(async)]`, во
+втором случае тело выполняется в пуле потоков Tauri. Так же вынесены чтения,
+которые ждут сеть или процесс-помощник: `list_arena_channels`,
+`icloud_download_progress`, `start_vault_sync`. 13.10.2026 вынесены
+`prepare_delete_media_asset`, `copy_media_asset_to_clipboard`,
+`get_article_audio_state`, `set_article_audio_position`,
+`cloud_recommendation_state`, `dismiss_cloud_recommendation`,
+`add_known_vault`, `get_unavailable_vault`, `get_vault_path`,
+`get_vault_write_layout`, `first_card_marker_pending` и
+`complete_first_card_marker`.
 
-Тест `no_command_that_writes_runs_on_the_main_thread` в `effects.rs` находит
-каждую команду записи и роняется, если она объявлена синхронной без `async`.
+В главном потоке остаются только команды из `MAIN_THREAD_COMMANDS` в
+`commands/effects.rs`, каждая с причиной: окна и вкладки (`commands/tabs.rs`),
+меню приложения, системный буфер обмена (`read_clipboard_payload`), настройки
+приложения, счётчики в памяти. Исключение до работ над загрузками и выходом
+([SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md), Е2): команды Download Media
+(`start_source_video_download`, `cancel_source_video_download`,
+`source_video_download_status`) ждут замок пространства через `tab_layout` и
+помечены в списке как ожидающие переноса.
+
+Тест `no_command_runs_on_the_main_thread_unless_listed` в `effects.rs` берёт
+каждую зарегистрированную команду и роняется, если синхронная команда не
+названа в списке или названная уже выполняется вне главного потока. Тест
+`no_command_that_writes_runs_on_the_main_thread` дополнительно не пускает в
+список команды записи.
 
 ---
 

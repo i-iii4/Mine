@@ -61,14 +61,51 @@ fn origin(port: u16) -> String {
     format!("http://localhost:{port}")
 }
 
+/// How many ports to try for a pair of listeners on both loopback addresses
+/// before settling for IPv4 alone.
+const PORT_ATTEMPTS: usize = 8;
+
+/// Listen on `localhost` the way the name resolves: `127.0.0.1` and `::1`,
+/// one port for both (SPEC_DEEP_AUDIT.md, Е2.17). Measured 13.10.2026: with
+/// the IPv4 listener alone nothing answered at `[::1]:<port>`, so WebKit's
+/// first try at the name was refused, and any other process could have taken
+/// that address and served the player page in Mine's place.
 fn start() -> Result<u16, YoutubeEmbedError> {
-    let server = tiny_http::Server::http("127.0.0.1:0")
-        .map_err(|error| YoutubeEmbedError::Server(error.to_string()))?;
-    let port = server
-        .server_addr()
-        .to_ip()
-        .map(|address| address.port())
-        .ok_or_else(|| YoutubeEmbedError::Server("listener has no IP address".into()))?;
+    let mut last_error = String::new();
+    for _ in 0..PORT_ATTEMPTS {
+        let ipv4 = tiny_http::Server::http("127.0.0.1:0")
+            .map_err(|error| YoutubeEmbedError::Server(error.to_string()))?;
+        let port = ipv4
+            .server_addr()
+            .to_ip()
+            .map(|address| address.port())
+            .ok_or_else(|| YoutubeEmbedError::Server("listener has no IP address".into()))?;
+        match tiny_http::Server::http(("::1", port)) {
+            Ok(ipv6) => {
+                serve(ipv4, port)?;
+                serve(ipv6, port)?;
+                return Ok(port);
+            }
+            // The port is taken at `::1`: another pair.
+            Err(error) if ipv6_available() => last_error = error.to_string(),
+            // A Mac without IPv6 loopback resolves `localhost` to IPv4 only.
+            Err(_) => {
+                serve(ipv4, port)?;
+                return Ok(port);
+            }
+        }
+    }
+    Err(YoutubeEmbedError::Server(format!(
+        "no port free on both loopback addresses: {last_error}"
+    )))
+}
+
+/// Whether this Mac has the IPv6 loopback address at all.
+fn ipv6_available() -> bool {
+    std::net::TcpListener::bind(("::1", 0)).is_ok()
+}
+
+fn serve(server: tiny_http::Server, port: u16) -> Result<(), YoutubeEmbedError> {
     std::thread::Builder::new()
         .name("youtube-embed".into())
         .spawn(move || {
@@ -79,8 +116,8 @@ fn start() -> Result<u16, YoutubeEmbedError> {
                 }
             }
         })
-        .map_err(|error| YoutubeEmbedError::Server(error.to_string()))?;
-    Ok(port)
+        .map(|_| ())
+        .map_err(|error| YoutubeEmbedError::Server(error.to_string()))
 }
 
 fn respond(method: &tiny_http::Method, url: &str, port: u16) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
@@ -214,6 +251,27 @@ mod tests {
         assert!(page.contains("https://www.youtube.com/embed/9KDDhAOyv9k"));
         assert!(get(port, "/youtube/bad").starts_with("HTTP/1.1 404"));
         assert!(get(port, "/").starts_with("HTTP/1.1 404"));
+    }
+
+    /// Е2.17: the player's address names `localhost`, which macOS resolves to
+    /// `::1` as well as `127.0.0.1`; the page answers at every address the
+    /// name resolves to, so no other process can take the IPv6 one.
+    #[test]
+    fn the_page_answers_at_every_address_localhost_names() {
+        use std::net::ToSocketAddrs;
+        let server = YoutubeEmbedServer::default();
+        server.player_url("https://youtu.be/9KDDhAOyv9k").expect("player url");
+        let port = server.port().expect("port");
+        let addresses: Vec<std::net::SocketAddr> = ("localhost", port).to_socket_addrs().expect("localhost resolves").collect();
+        assert!(!addresses.is_empty());
+        for address in addresses {
+            let mut stream = std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_secs(2))
+                .unwrap_or_else(|error| panic!("nothing listens at {address}: {error}"));
+            write!(stream, "GET /youtube/9KDDhAOyv9k HTTP/1.1\r\nHost: localhost:{port}\r\nConnection: close\r\n\r\n").expect("request");
+            let mut response = String::new();
+            stream.read_to_string(&mut response).expect("response");
+            assert!(response.starts_with("HTTP/1.1 200"), "{address}: {response}");
+        }
     }
 
     #[test]

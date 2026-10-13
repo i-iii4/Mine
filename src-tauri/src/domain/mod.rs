@@ -4,6 +4,7 @@
 //! native paths; it delegates content, naming and validation to mine-core.
 pub mod article_audio;
 pub mod block;
+pub mod canvas;
 pub mod card_association;
 pub mod channel;
 pub mod collection;

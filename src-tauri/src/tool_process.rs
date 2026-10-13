@@ -82,7 +82,16 @@ pub struct ToolOutput {
 /// outlive the clipper's helper (SPEC_CLIPPER.md, 3d, В2).
 #[derive(Debug, Default)]
 pub struct RunningTools {
-    groups: Mutex<HashSet<libc::pid_t>>,
+    groups: Mutex<Groups>,
+}
+
+#[derive(Debug, Default)]
+struct Groups {
+    running: HashSet<libc::pid_t>,
+    /// Whoever owns these tools stopped them for good: a tool that starts
+    /// after that is killed as soon as it is listed (a Download Media cancel
+    /// or the app quitting between a check and the start, Н3).
+    closed: bool,
 }
 
 impl RunningTools {
@@ -92,16 +101,20 @@ impl RunningTools {
     }
 
     fn add(&self, group: libc::pid_t) {
-        self.groups
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(group);
+        let mut groups = self.groups.lock().unwrap_or_else(PoisonError::into_inner);
+        if groups.closed {
+            drop(groups);
+            kill_group(group);
+            return;
+        }
+        groups.running.insert(group);
     }
 
     fn remove(&self, group: libc::pid_t) {
         self.groups
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .running
             .remove(&group);
     }
 
@@ -111,6 +124,7 @@ impl RunningTools {
             .groups
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .running
             .drain()
             .collect();
         for group in groups {
@@ -118,10 +132,22 @@ impl RunningTools {
         }
     }
 
+    /// Kill every tool still running and every tool started from now on.
+    pub fn close(&self) {
+        self.groups.lock().unwrap_or_else(PoisonError::into_inner).closed = true;
+        self.kill_all();
+    }
+
+    /// Whether [`RunningTools::close`] was called.
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.groups.lock().unwrap_or_else(PoisonError::into_inner).closed
+    }
+
     /// How many tools are running now.
     #[must_use]
     pub fn count(&self) -> usize {
-        self.groups.lock().unwrap_or_else(PoisonError::into_inner).len()
+        self.groups.lock().unwrap_or_else(PoisonError::into_inner).running.len()
     }
 }
 
@@ -277,6 +303,138 @@ pub fn run_to_exit(
     })
 }
 
+/// How long a tool run by [`run_lines`] may take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// The whole run, from the start.
+    pub total: Option<Duration>,
+    /// The longest silence: no line on stdout or stderr for this long ends
+    /// the run. A long download keeps going while it reports progress.
+    pub idle: Option<Duration>,
+}
+
+/// Run `command` to its end, handing every line it writes to stdout to
+/// `on_line` as it comes, under `limits`: past either limit the whole group
+/// is killed and the run is a [`ToolFailure::Timeout`] of the limit that
+/// ended it. As [`run_to_exit`] does, the tool leads a process group of its
+/// own, listed in `running`, so whoever owns `running` can end it at any
+/// moment (`RunningTools::close`); a run ended that way reports how the
+/// killed tool exited, and the owner, who knows it stopped the tool, says
+/// what that means.
+pub fn run_lines(
+    command: &mut Command,
+    limits: Limits,
+    running: &RunningTools,
+    mut on_line: impl FnMut(&str),
+) -> Result<ToolExit, ToolFailure> {
+    use std::io::BufRead;
+    use std::sync::mpsc;
+
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .map_err(|error| ToolFailure::Missing(error.to_string()))?;
+    let Ok(group) = libc::pid_t::try_from(child.id()) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(ToolFailure::Failed("process id out of range".into()));
+    };
+    running.add(group);
+    // Lines of both pipes reach this thread; stderr is kept whole for the
+    // failure, stdout goes to `on_line`. Either is a sign of life.
+    enum Line {
+        Out(String),
+        Err(String),
+    }
+    let (lines, received) = mpsc::channel::<Line>();
+    let readers: Vec<_> = [
+        child.stdout.take().map(|pipe| (Box::new(pipe) as Box<dyn Read + Send>, true)),
+        child.stderr.take().map(|pipe| (Box::new(pipe) as Box<dyn Read + Send>, false)),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|(pipe, out)| {
+        let lines = lines.clone();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(pipe).lines().map_while(Result::ok) {
+                let sent = lines.send(if out { Line::Out(line) } else { Line::Err(line) });
+                if sent.is_err() {
+                    break;
+                }
+            }
+        })
+    })
+    .collect();
+    drop(lines);
+
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let started = Instant::now();
+    let mut last_sign = Instant::now();
+    let mut take = |line: Line, stdout: &mut String, stderr: &mut String| match line {
+        Line::Out(line) => {
+            on_line(&line);
+            stdout.push_str(&line);
+            stdout.push('\n');
+        }
+        Line::Err(line) => {
+            stderr.push_str(&line);
+            stderr.push('\n');
+        }
+    };
+    let status = loop {
+        let pipes_closed = match received.recv_timeout(POLL) {
+            Ok(line) => {
+                last_sign = Instant::now();
+                take(line, &mut stdout, &mut stderr);
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => false,
+            Err(mpsc::RecvTimeoutError::Disconnected) => true,
+        };
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) => {
+                let over = limits
+                    .total
+                    .filter(|total| started.elapsed() >= *total)
+                    .or_else(|| limits.idle.filter(|idle| last_sign.elapsed() >= *idle));
+                if let Some(limit) = over {
+                    kill_group(group);
+                    let _ = child.wait();
+                    break Err(ToolFailure::Timeout(limit));
+                }
+                // Both pipes closed with the tool alive: wait without spinning.
+                if pipes_closed {
+                    std::thread::sleep(POLL);
+                }
+            }
+            Err(error) => {
+                kill_group(group);
+                let _ = child.wait();
+                break Err(ToolFailure::Failed(error.to_string()));
+            }
+        }
+    };
+    running.remove(group);
+    // The group is gone: the readers reach the end of the pipes.
+    for reader in readers {
+        let _ = reader.join();
+    }
+    for line in received.try_iter() {
+        take(line, &mut stdout, &mut stderr);
+    }
+    let status = status?;
+    Ok(ToolExit {
+        success: status.success(),
+        stdout,
+        stderr,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,6 +549,63 @@ mod tests {
         let result = worker.join().unwrap();
         assert!(result.is_err(), "a killed tool is not a success");
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn run_lines_hands_every_line_over_as_it_comes() {
+        let running = RunningTools::new();
+        let mut seen = Vec::new();
+        let exit = run_lines(
+            &mut shell("echo one; echo warn >&2; echo two"),
+            Limits { total: Some(Duration::from_secs(10)), idle: None },
+            &running,
+            |line| seen.push(line.to_owned()),
+        )
+        .expect("the tool runs to its end");
+        assert!(exit.success);
+        assert_eq!(seen, vec!["one", "two"]);
+        assert_eq!(exit.stderr.trim(), "warn");
+        assert_eq!(running.count(), 0);
+    }
+
+    /// Е2.4: a tool that stops saying anything is ended at its idle limit,
+    /// while one that keeps talking runs past it.
+    #[test]
+    fn run_lines_ends_a_silent_tool_and_keeps_a_talking_one() {
+        let running = RunningTools::new();
+        let idle = Duration::from_millis(600);
+        let limits = Limits { total: Some(Duration::from_secs(20)), idle: Some(idle) };
+        let started = Instant::now();
+        let silent = run_lines(&mut shell("echo start; /bin/sleep 30"), limits, &running, |_| {});
+        assert_eq!(silent, Err(ToolFailure::Timeout(idle)));
+        assert!(started.elapsed() < Duration::from_secs(10));
+        let talking = run_lines(
+            &mut shell("for n in 1 2 3 4 5; do echo $n; /bin/sleep 0.3; done"),
+            limits,
+            &running,
+            |_| {},
+        )
+        .expect("a talking tool is not cut off");
+        assert!(talking.success);
+        assert_eq!(running.count(), 0);
+    }
+
+    /// Н3: tools closed for good are killed, and so is a tool listed after.
+    #[test]
+    fn closed_tools_kill_a_tool_that_starts_later() {
+        let running = std::sync::Arc::new(RunningTools::new());
+        running.close();
+        let started = Instant::now();
+        let exit = run_lines(
+            &mut shell("/bin/sleep 30"),
+            Limits { total: Some(Duration::from_secs(60)), idle: None },
+            &running,
+            |_| {},
+        )
+        .expect("the killed tool is reaped");
+        assert!(!exit.success);
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(running.is_closed());
     }
 
     #[test]

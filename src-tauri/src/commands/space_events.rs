@@ -121,6 +121,17 @@ pub fn emit_to_vault<S: Serialize + Clone>(
     app.emit_filter(event, payload, |target| targets_label(target, &labels))
 }
 
+/// Tell every tab of the space `vault` belongs to about a change that is
+/// already committed. Telling them cannot fail the change: a command that
+/// answered with an error after its write was done made the person retry
+/// what had happened (SPEC_DEEP_AUDIT.md, Е2.15). A failure to send goes to
+/// the log; the tabs catch up at their next read.
+pub fn announce_to_vault<S: Serialize + Clone>(app: &AppHandle, vault: &VaultLayout, event: &str, payload: S) {
+    if let Err(error) = emit_to_vault(app, vault, event, payload) {
+        log::warn!("committed change, but {event} was not sent: {error}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,5 +147,30 @@ mod tests {
             &EventTarget::WebviewWindow { label: "tab-a".into() },
             &labels
         ));
+    }
+
+    /// Е2.15: no command answers with an error because telling the tabs
+    /// failed after its write: every `emit_to_vault` result is either
+    /// dropped (`let _ =`) or handled by `announce_to_vault`, never passed on
+    /// with `?`.
+    #[test]
+    fn telling_the_tabs_never_fails_a_command_after_its_write() {
+        let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands");
+        for entry in std::fs::read_dir(&folder).unwrap() {
+            let path = entry.unwrap().path();
+            let text = std::fs::read_to_string(&path).unwrap();
+            let mut rest = text.as_str();
+            while let Some(at) = rest.find("emit_to_vault(") {
+                let statement = &rest[at..];
+                let end = statement.find(';').unwrap_or(statement.len());
+                let statement = &statement[..end];
+                assert!(
+                    !statement.ends_with('?'),
+                    "{}: a failure to tell the tabs fails the command: {statement}",
+                    path.display()
+                );
+                rest = &rest[at + "emit_to_vault(".len()..];
+            }
+        }
     }
 }

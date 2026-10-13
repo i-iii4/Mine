@@ -706,6 +706,76 @@ impl SavedWindows {
         let index = self.windows.iter().position(|candidate| &candidate.id == window)?;
         Some(self.windows.remove(index))
     }
+
+    /// The steps that bring the saved windows back at launch (В35, В36): the
+    /// last window first, with the focus; then the others, back to front,
+    /// none taking the focus; then the last window takes it again, so it is
+    /// in front of the others it had behind it.
+    ///
+    /// A window that takes the focus becomes the last window
+    /// ([`SavedWindows::focus_window`]). Until 13.10.2026 every restored
+    /// window took it as it was created, and the one created last, not the
+    /// last window, ended in front: the order turned at every launch and
+    /// `vault_path` followed the wrong window (SPEC_DEEP_AUDIT.md, Е2.7).
+    pub fn restore_steps(&self) -> Vec<RestoreStep> {
+        let Some(last) = self.windows.first() else {
+            return Vec::new();
+        };
+        let mut steps = vec![RestoreStep::Create {
+            window: last.id.clone(),
+            focus: true,
+        }];
+        steps.extend(self.windows.iter().skip(1).rev().map(|window| RestoreStep::Create {
+            window: window.id.clone(),
+            focus: false,
+        }));
+        if self.windows.len() > 1 {
+            steps.push(RestoreStep::Focus(last.id.clone()));
+        }
+        steps
+    }
+
+    /// The windows holding a tab of the space `vault_id`.
+    pub fn windows_with_space(&self, vault_id: &str) -> Vec<WindowId> {
+        self.windows
+            .iter()
+            .filter(|window| {
+                window
+                    .tabs
+                    .iter()
+                    .any(|tab| matches!(&tab.space, TabSpace::Space { vault_id: id } if id == vault_id))
+            })
+            .map(|window| window.id.clone())
+            .collect()
+    }
+
+    /// The tab that takes files dropped on the page `label`: the tab its
+    /// window shows, for a drop on any tab page of the window (В22). A drop
+    /// on a tab bar goes to no tab (В50): the files stay where they are.
+    pub fn drop_target(&self, label: &str, shown: &BTreeMap<WindowId, TabId>) -> Option<TabId> {
+        let tab = TabId::from_label(label)?;
+        self.shown_beside(&tab, shown)
+    }
+}
+
+/// One step of bringing the saved windows back ([`SavedWindows::restore_steps`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestoreStep {
+    /// Create the window, taking the focus or not.
+    Create { window: WindowId, focus: bool },
+    /// Give the window the focus.
+    Focus(WindowId),
+}
+
+/// What the registry says of the space `vault_id` a saved tab names, when
+/// the registry could be read (`Some`, the identities it knows) or not
+/// (`None`). A registry that cannot be read forgets nothing: its tabs stay
+/// until it can (SPEC_DEEP_AUDIT.md, Е2.8).
+pub fn registry_status(known: Option<&std::collections::BTreeSet<String>>, vault_id: &str) -> SpaceStatus {
+    match known {
+        Some(known) if !known.contains(vault_id) => SpaceStatus::Unknown,
+        _ => SpaceStatus::Known,
+    }
 }
 
 /// What closing a tab did.
@@ -867,6 +937,85 @@ mod tests {
         // A window not yet in `shown` answers with its active tab.
         assert_eq!(model.shown_beside(&TabId("other".into()), &shown), Some(TabId("other".into())));
         assert_eq!(model.shown_beside(&TabId("gone".into()), &shown), None);
+    }
+
+    /// Replay restore steps the way AppKit takes them: a window that takes
+    /// the focus becomes the last window.
+    fn replay(saved: &SavedWindows, steps: &[RestoreStep]) -> SavedWindows {
+        let mut model = saved.clone();
+        for step in steps {
+            match step {
+                RestoreStep::Create { window, focus: true } | RestoreStep::Focus(window) => {
+                    model.focus_window(window);
+                }
+                RestoreStep::Create { focus: false, .. } => {}
+            }
+        }
+        model
+    }
+
+    /// Е2.7: restoring keeps the order of the windows and the focus on the
+    /// last window, launch after launch.
+    #[test]
+    fn restoring_keeps_the_order_and_the_last_window_in_front() {
+        let launched = saved(vec![
+            window("last", vec![tab("a", "x")], "a"),
+            window("second", vec![tab("b", "y")], "b"),
+            window("third", vec![tab("c", "z")], "c"),
+        ]);
+        let order = |model: &SavedWindows| -> Vec<String> { model.windows.iter().map(|window| window.id.0.clone()).collect() };
+        let mut model = launched;
+        for _launch in 0..3 {
+            model = replay(&model, &model.restore_steps());
+            assert_eq!(order(&model), vec!["last", "second", "third"]);
+        }
+        // Every restored window taking the focus as it was created, as before
+        // 13.10.2026, turned the order and put another window in front.
+        let old: Vec<RestoreStep> = model
+            .restore_steps()
+            .into_iter()
+            .filter_map(|step| match step {
+                RestoreStep::Create { window, .. } => Some(RestoreStep::Create { window, focus: true }),
+                RestoreStep::Focus(_) => None,
+            })
+            .collect();
+        assert_eq!(order(&replay(&model, &old)), vec!["second", "third", "last"]);
+        assert!(saved(Vec::new()).restore_steps().is_empty());
+    }
+
+    /// Е2.8: a registry that cannot be read forgets no tab; one that can and
+    /// does not know the space forgets it (В32).
+    #[test]
+    fn an_unreadable_registry_forgets_no_tab() {
+        let value = saved(vec![window("w1", vec![tab("t1", "gone"), tab("t2", "kept")], "t1")]);
+        let unreadable = normalize(value.clone(), &|id| registry_status(None, id), &screen(), &mut ids());
+        assert_eq!(unreadable.windows[0].tabs.len(), 2);
+        let known: std::collections::BTreeSet<String> = ["kept".to_string()].into();
+        let read = normalize(value, &|id| registry_status(Some(&known), id), &screen(), &mut ids());
+        assert_eq!(read.windows[0].tabs.len(), 1);
+    }
+
+    /// Е2.14: files dropped on a tab bar go to no tab (В50), files dropped on
+    /// any tab page of a window go to the tab it shows (В22).
+    #[test]
+    fn files_dropped_on_a_tab_bar_go_to_no_tab() {
+        let model = saved(vec![window("w", vec![tab("first", "x"), tab("shown", "y")], "shown")]);
+        let shown = BTreeMap::new();
+        assert_eq!(model.drop_target(&TabId("first".into()).label(), &shown), Some(TabId("shown".into())));
+        assert_eq!(model.drop_target(&WindowId("w".into()).bar_label(), &shown), None);
+        assert_eq!(model.drop_target("settings", &shown), None);
+    }
+
+    /// Е2.24: the windows whose bars name a space.
+    #[test]
+    fn the_windows_with_a_space_are_found() {
+        let model = saved(vec![
+            window("w1", vec![tab("a", "x"), tab("b", "y")], "a"),
+            window("w2", vec![tab("c", "y")], "c"),
+            window("w3", vec![tab("d", "z")], "d"),
+        ]);
+        assert_eq!(model.windows_with_space("y"), vec![WindowId("w1".into()), WindowId("w2".into())]);
+        assert!(model.windows_with_space("none").is_empty());
     }
 
     #[test]

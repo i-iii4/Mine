@@ -130,6 +130,7 @@ const MEDIA_PLAN: DeleteMediaAssetPlan = {
     { slug: "popup-1", title: "Local-first software", display_title: "Local-first software", fallback_label: "Local-first software", card_kind: "article", reference_kinds: ["frontmatter_file"] },
     { slug: "popup-2", title: "CRDTs explained", display_title: "CRDTs explained", fallback_label: "CRDTs explained", card_kind: "article", reference_kinds: ["body_embed"] },
   ],
+  canvases: [],
 };
 
 // Three conflicts with fixed versions: one at rest, one being resolved, one

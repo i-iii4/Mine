@@ -362,15 +362,54 @@ fn collect_all_files(root: &Path, dir: &Path, files: &mut Vec<String>) {
 /// Used by the asset protocol, which receives `<vault>/<name>` URLs built by
 /// the frontend and must still find the file after the vault was sorted into
 /// folders.
+///
+/// A feed asks for one name per image, so the walk is not made per request
+/// (SPEC_DEEP_AUDIT.md, Е2.19, Н5): the index of names under each root is
+/// kept and answers while the file it names is there. A name it does not
+/// know, or knows at a path that is gone, walks the folder again, at most
+/// once per [`NAME_INDEX_REFRESH`] for that root.
 pub fn resolve_basename_under(root: &Path, file_name: &str) -> Option<PathBuf> {
     if file_name.contains('/') || file_name.contains('\\') {
         return None;
     }
-    match build_link_index(root).resolve_basename(file_name) {
+    let resolve = |index: &LinkIndex| match index.resolve_basename(file_name) {
         LinkResolution::Resolved(path) => Some(root.join(path)),
         LinkResolution::Missing | LinkResolution::Ambiguous(_) => None,
+    };
+    let mut indexes = NAME_INDEXES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(known) = indexes.get(root) {
+        if let Some(path) = resolve(&known.index).filter(|path| path.is_file()) {
+            return Some(path);
+        }
+        if known.built.elapsed() < NAME_INDEX_REFRESH {
+            return None;
+        }
     }
+    let index = build_link_index(root);
+    let found = resolve(&index);
+    indexes.insert(
+        root.to_path_buf(),
+        NameIndex {
+            index,
+            built: std::time::Instant::now(),
+        },
+    );
+    found
 }
+
+/// The shortest time between two walks of one root for names it did not know.
+const NAME_INDEX_REFRESH: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Every file of a root by name, as of `built`.
+struct NameIndex {
+    index: LinkIndex,
+    built: std::time::Instant,
+}
+
+/// The kept name indexes, by root. A space holds one; the map grows only
+/// with the spaces opened in this process.
+static NAME_INDEXES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<PathBuf, NameIndex>>> =
+    std::sync::LazyLock::new(Default::default);
 
 fn has_path_separator(reference: &str) -> bool {
     reference.contains('/') || reference.contains('\\')
@@ -408,6 +447,24 @@ mod tests {
         let resolved = resolve_basename_under(root, "Work by — Hassco Design©.jpg").unwrap();
 
         assert_eq!(resolved, root.join("Media/Work by — Hassco Design©.jpg"));
+    }
+
+    /// Е2.19 (Н5): the asset protocol asks for one name per image request;
+    /// a feed of images must not walk the whole space for each of them.
+    #[test]
+    fn repeated_name_lookups_walk_the_space_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("Media")).unwrap();
+        for index in 0..10 {
+            std::fs::write(root.join(format!("Media/shot-{index}.png")), b"png").unwrap();
+        }
+        let before = link_index_builds();
+        for index in 0..10 {
+            let name = format!("shot-{index}.png");
+            assert_eq!(resolve_basename_under(root, &name), Some(root.join("Media").join(&name)));
+        }
+        assert_eq!(link_index_builds() - before, 1, "every lookup walked the space");
     }
 
     #[test]

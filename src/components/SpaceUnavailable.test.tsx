@@ -23,6 +23,21 @@ describe("SpaceUnavailable (SPEC_VAULT_LIFECYCLE.md, П12, П25)", () => {
     commandMocks.selectVault.mockResolvedValue(undefined);
   });
 
+  // Е2.13: a folder at the path that is not this space is not called missing.
+  it("says the folder is there when it is not this space", async () => {
+    render(
+      <SpaceUnavailable path="/spaces/Mine" reason="not_this_space" onReopened={vi.fn()} onForgotten={vi.fn()} />,
+    );
+    await screen.findByRole("button", { name: "Open NSFV" });
+    expect(
+      screen.getByText(
+        "The “Mine” folder at the saved path is not this space: its identity file .mine/vault-id is missing or names another space. Mine did not move or delete anything.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/There is no “Mine” folder/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Locate folder…" })).toBeInTheDocument();
+  });
+
   it("lists the other spaces and opens an available one with one click", async () => {
     const onReopened = vi.fn();
     render(<SpaceUnavailable path="/spaces/Mine" onReopened={onReopened} onForgotten={vi.fn()} />);

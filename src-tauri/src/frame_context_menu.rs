@@ -83,6 +83,31 @@ fn plan_menu(items: &[NativeItem], frame_menu_allowed: bool) -> MenuPlan {
     MenuPlan::Remove(remove)
 }
 
+/// The web views of tab pages, by address, with their page labels
+/// (SPEC_TABS.md, В77). A label has one view: a page made again for its tab
+/// (after a failed move between windows, В67) replaces the old view, whose
+/// address may be reused by the next view the system makes
+/// (SPEC_DEEP_AUDIT.md, Е2.16).
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Default)]
+struct PageViews(std::collections::BTreeMap<usize, String>);
+
+#[cfg(any(target_os = "macos", test))]
+impl PageViews {
+    fn register(&mut self, view: usize, label: &str) {
+        self.0.retain(|_, known| known != label);
+        self.0.insert(view, label.to_owned());
+    }
+
+    fn unregister(&mut self, label: &str) {
+        self.0.retain(|_, known| known != label);
+    }
+
+    fn label_at(&self, view: usize) -> Option<&str> {
+        self.0.get(&view).map(String::as_str)
+    }
+}
+
 /// View coordinates in points to CSS pixels from the top left of the page.
 #[cfg(any(target_os = "macos", test))]
 fn css_point(x: f64, y: f64, view_height: f64, flipped: bool, page_zoom: f64) -> MenuPoint {
@@ -93,7 +118,6 @@ fn css_point(x: f64, y: f64, view_height: f64, flipped: bool, page_zoom: f64) ->
 
 #[cfg(target_os = "macos")]
 mod imp {
-    use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Mutex, OnceLock};
 
@@ -103,15 +127,22 @@ mod imp {
     use objc2_foundation::{NSPoint, NSRect, NSString};
     use tauri::{AppHandle, Webview, Wry};
 
-    use super::{css_point, plan_menu, MenuPlan, NativeItem, EVENT};
+    use super::{css_point, plan_menu, MenuPlan, NativeItem, PageViews, EVENT};
 
     static APP: OnceLock<AppHandle<Wry>> = OnceLock::new();
-    /// The web views of tab pages, by address, with their page labels
-    /// (SPEC_TABS.md, В77). Any other web view is a window that is not a tab.
-    static TAB_VIEWS: Mutex<BTreeMap<usize, String>> = Mutex::new(BTreeMap::new());
+    /// The web views of tab pages (В77). Any other web view is a window
+    /// that is not a tab.
+    static TAB_VIEWS: Mutex<PageViews> = Mutex::new(PageViews(std::collections::BTreeMap::new()));
     static HOOKED: AtomicBool = AtomicBool::new(false);
+    /// The class the hook was added to, by address. Its parent's
+    /// `willOpenMenu:withEvent:` runs after the hook: the parent of the class
+    /// that has the hook, never of the view's own class, which may be a
+    /// subclass of it (key-value observing makes one at run time), and whose
+    /// parent would be the hooked class itself, running the hook again
+    /// (SPEC_DEEP_AUDIT.md, Е2.16).
+    static HOOKED_CLASS: OnceLock<usize> = OnceLock::new();
 
-    fn tab_views() -> std::sync::MutexGuard<'static, BTreeMap<usize, String>> {
+    fn tab_views() -> std::sync::MutexGuard<'static, PageViews> {
         TAB_VIEWS.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
@@ -127,7 +158,7 @@ mod imp {
         let label = page.label().to_string();
         let result = page.with_webview(move |webview| {
             let view = webview.inner();
-            tab_views().insert(view as usize, label);
+            tab_views().register(view as usize, &label);
             if !HOOKED.swap(true, Ordering::SeqCst) {
                 // SAFETY: `inner()` is a live WKWebView and this closure runs
                 // on the main thread where AppKit objects live.
@@ -141,12 +172,13 @@ mod imp {
 
     /// The tab page `label` is gone.
     pub fn unregister_page(label: &str) {
-        tab_views().retain(|_, known| known != label);
+        tab_views().unregister(label);
     }
 
     unsafe fn add_menu_hook(view: *mut AnyObject) {
         let Some(view) = view.as_ref() else { return };
         let class: *const AnyClass = view.class();
+        let _ = HOOKED_CLASS.set(class as usize);
         // SAFETY: the signature matches `-(void)willOpenMenu:(NSMenu*)withEvent:(NSEvent*)`,
         // encoded as "v@:@@".
         let imp: Imp = std::mem::transmute::<
@@ -166,8 +198,8 @@ mod imp {
 
     unsafe extern "C-unwind" fn will_open_menu(this: &AnyObject, _cmd: Sel, menu: &AnyObject, event: &AnyObject) {
         let tab = tab_views()
-            .get(&((this as *const AnyObject) as usize))
-            .cloned();
+            .label_at((this as *const AnyObject) as usize)
+            .map(str::to_owned);
         match plan_menu(&native_items(menu), tab.is_some()) {
             MenuPlan::ReplaceWithMineMenu => {
                 let _: () = msg_send![menu, removeAllItems];
@@ -188,8 +220,12 @@ mod imp {
                 }
             }
         }
-        // WKWebView's own implementation still runs, as it did before the hook.
-        if let Some(superclass) = this.class().superclass() {
+        // WKWebView's own implementation still runs, as it did before the
+        // hook: the parent of the hooked class, whatever class `this` is.
+        let hooked = HOOKED_CLASS
+            .get()
+            .and_then(|class| (*class as *const AnyClass).as_ref());
+        if let Some(superclass) = hooked.and_then(AnyClass::superclass) {
             let _: () = msg_send![super(this, superclass), willOpenMenu: menu, withEvent: event];
         }
     }
@@ -286,6 +322,21 @@ mod tests {
             item("WKMenuItemIdentifierLookUp", 22),
         ];
         assert_eq!(plan_menu(&items, true), MenuPlan::Remove(vec![3, 2]));
+    }
+
+    /// Е2.16: a tab page made again replaces its old view, so an address the
+    /// system gives the next view never names the tab.
+    #[test]
+    fn a_page_made_again_replaces_its_old_view() {
+        let mut views = PageViews::default();
+        views.register(1, "tab-a");
+        views.register(2, "tab-a");
+        assert_eq!(views.label_at(1), None);
+        assert_eq!(views.label_at(2), Some("tab-a"));
+        views.register(3, "tab-b");
+        views.unregister("tab-a");
+        assert_eq!(views.label_at(2), None);
+        assert_eq!(views.label_at(3), Some("tab-b"));
     }
 
     #[test]

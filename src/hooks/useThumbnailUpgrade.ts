@@ -28,7 +28,7 @@ import { useEffect, useRef } from "react";
 import { listenPage } from "@/lib/pageEvents";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { listPendingThumbUpgrades, saveThumb, saveTilePoster } from "@/lib/commands";
-import type { TilePosterUpgrade } from "@/lib/commands";
+import type { DecodedMedia, TilePosterUpgrade } from "@/lib/commands";
 import { DecodeQueue } from "@/lib/decodeQueue";
 import { planThumbUpgrade } from "@/lib/thumbUpgradePlan";
 import type { ThumbUpgradeInput } from "@/lib/thumbUpgradePlan";
@@ -42,11 +42,18 @@ interface ThumbUpgradeRequestedEvent {
   kind: "image" | "video";
   /** Derived gallery tiles requiring browser decoding. */
   tilePosters?: TilePosterUpgrade[];
+  /** The state of `mediaPath` when asked (Е2.20). */
+  revision?: string;
 }
 
 type PendingImageWrite =
-  | { key: string; slug: string; target: "thumb" }
+  | { key: string; slug: string; target: "thumb"; decoded?: DecodedMedia }
   | { key: string; slug: string; target: "tile"; posterName: string };
+
+/** The media a decode reads, when the request named its state (Е2.20). */
+function decodedMedia(mediaPath: string, revision: string | undefined): DecodedMedia | undefined {
+  return revision === undefined ? undefined : { mediaPath, revision };
+}
 
 interface BufferedImageRequest {
   key: string;
@@ -269,11 +276,11 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
       postImageToWorker(request);
     }
 
-    function enqueueVideo(key: string, slug: string, assetUrl: string) {
+    function enqueueVideo(key: string, slug: string, assetUrl: string, decoded: DecodedMedia | undefined) {
       videoQueue.enqueue(key, async () => {
         const bytes = await extractVideoFrame(assetUrl, THUMB_UPGRADE_TARGET_PX);
         if (cancelled) return;
-        await saveThumb(slug, new Uint8Array(bytes));
+        await saveThumb(slug, new Uint8Array(bytes), decoded);
         onUpgraded?.();
       });
     }
@@ -295,11 +302,21 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
               key: action.key,
               slug: action.slug,
               assetUrl: convertFileSrc(action.mediaPath),
-              target: { key: action.key, slug: action.slug, target: "thumb" },
+              target: {
+                key: action.key,
+                slug: action.slug,
+                target: "thumb",
+                decoded: decodedMedia(action.mediaPath, action.revision),
+              },
             });
             break;
           case "video":
-            enqueueVideo(action.key, action.slug, convertFileSrc(action.mediaPath));
+            enqueueVideo(
+              action.key,
+              action.slug,
+              convertFileSrc(action.mediaPath),
+              decodedMedia(action.mediaPath, action.revision),
+            );
             break;
           case "tile-image":
             enqueueImage({
@@ -356,7 +373,7 @@ export function useThumbnailUpgrade(enabled: boolean, onUpgraded?: () => void): 
           if (entry.target === "tile") {
             await saveTilePoster(entry.posterName, entry.slug, new Uint8Array(msg.bytes));
           } else {
-            await saveThumb(msg.slug, new Uint8Array(msg.bytes));
+            await saveThumb(msg.slug, new Uint8Array(msg.bytes), entry.decoded);
           }
           onUpgraded?.();
         } catch (err) {

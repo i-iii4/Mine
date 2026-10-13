@@ -374,6 +374,10 @@ pub enum UnavailableVaultReason {
     Missing,
     /// The folder exists; reading it is what fails.
     AccessDenied,
+    /// A folder stands at the path and can be read, but it is not this
+    /// space: its identity file `.mine/vault-id` is gone, or names another
+    /// space (SPEC_DEEP_AUDIT.md, Е2.13).
+    NotThisSpace,
 }
 
 /// The saved space that could not be opened, if any.
@@ -381,7 +385,7 @@ pub enum UnavailableVaultReason {
 /// Returns `None` when there is no binding at all (a genuinely first run) or
 /// when the saved space is reachable. The distinction matters: a missing folder
 /// must never look like a fresh install.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_unavailable_vault(
     app: AppHandle,
     webview: tauri::Webview,
@@ -392,14 +396,16 @@ pub fn get_unavailable_vault(
     match locate_saved_space(&app, &saved_path) {
         Located::Here { .. } | Located::Moved { .. } => Ok(None),
         // A folder at the path that is another space, or no space at all,
-        // means the saved space is not there: the same words as a missing
-        // folder, and the same action, locate it.
+        // means the saved space is not there, and the action is the same,
+        // locate it; but the words say the folder is there (Е2.13): until
+        // 13.10.2026 they said there was no folder at the path.
         Located::Lost { reason, .. } => Ok(Some(UnavailableVault {
             vault_id: saved_space_identity(&app, &saved_path),
             path: saved_path,
             reason: match reason {
                 LostReason::AccessDenied => UnavailableVaultReason::AccessDenied,
-                LostReason::Missing | LostReason::Replaced => UnavailableVaultReason::Missing,
+                LostReason::Missing => UnavailableVaultReason::Missing,
+                LostReason::Replaced => UnavailableVaultReason::NotThisSpace,
             },
         })),
     }
@@ -454,7 +460,7 @@ pub(crate) fn unavailable_reason(path: &Path) -> Option<UnavailableVaultReason> 
 /// person just got their first result: the card they saved is a file in the
 /// folder they chose. Shown once per space; the flag is a sidecar in the
 /// derived store, so it survives an index rebuild and dies with the space.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn first_card_marker_pending(
     webview: tauri::Webview,
     state: State<'_, AppState>,
@@ -464,7 +470,7 @@ pub fn first_card_marker_pending(
 }
 
 /// The marker was shown (or dismissed); it never comes back in this space.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn complete_first_card_marker(
     webview: tauri::Webview,
     state: State<'_, AppState>,
@@ -554,14 +560,16 @@ fn saved_space_path(app: &AppHandle, webview: &tauri::Webview) -> Option<String>
     }
 }
 
-/// Make `path` the space the config names as current (SPEC_TABS.md, В74).
-pub(crate) fn record_current_space(app: &AppHandle, path: &str) {
-    save_vault_path(app, path);
+/// Make the space `vault_id` at `path` the one the config names as current
+/// (SPEC_TABS.md, В74), by the identity the tab is bound to: the folder's
+/// own identity file is not read (SPEC_DEEP_AUDIT.md, Е2.10).
+pub(crate) fn record_current_space(app: &AppHandle, vault_id: &str, path: &str) {
+    record_opened_space(app, vault_id, path);
 }
 
 /// The write layout of the space `vault_id`, else of the most recently used
 /// tab's space (SPEC_TABS.md, В71).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_vault_write_layout(
     state: State<'_, AppState>,
     vault_id: Option<String>,
@@ -704,7 +712,7 @@ pub async fn open_vault(
 /// path if it still exists. Actual vault initialization is performed by
 /// a follow-up `open_vault` / `select_vault` call after the first paint,
 /// so app startup never blocks on restore-path side effects.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_vault_path(
     app: AppHandle,
     webview: tauri::Webview,
@@ -853,10 +861,10 @@ async fn rebuild_index_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command]
 pub async fn rebuild_index(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>) -> Result<ScanResult, CommandError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = rebuild_index_unannounced(webview, app, state).await;
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }
@@ -1239,6 +1247,10 @@ fn initialize_vault(
 
 /// How often the open space's folder is checked for still being there.
 const SPACE_ROOT_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+/// How often the folder of a space reported unavailable is looked for: a
+/// look reads the identity of every folder beside the old path, so it runs
+/// less often than the check of a folder that is there.
+const LOST_SPACE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Watch the open space's folder itself (SPEC_VAULT_LIFECYCLE.md, П15, П30).
 ///
@@ -1247,6 +1259,10 @@ const SPACE_ROOT_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from
 /// [`SPACE_ROOT_CHECK_INTERVAL`] asks the root guard whether the folder is
 /// still this space. When it is not, the space is looked for beside its old
 /// path by identity and reopened there, or the unavailable screen is shown.
+/// After that the watch goes on looking, every [`LOST_SPACE_CHECK_INTERVAL`]:
+/// a drive plugged back in or a folder renamed back brings the space back to
+/// its tabs (SPEC_DEEP_AUDIT.md, Е2.13). Until 13.10.2026 the watch ended
+/// with the loss, and the tabs stayed on the unavailable screen.
 ///
 /// The watch belongs to the open space and lives as long as it does
 /// (SPEC_TABS.md, В9): a choice made in a tab never ends it, and following a
@@ -1258,11 +1274,18 @@ fn watch_space_root(app: &AppHandle, space: Arc<OpenSpace>) {
     let spawned = std::thread::Builder::new()
         .name("space-root-watch".into())
         .spawn(move || {
+            let mut lost = false;
             loop {
-                std::thread::sleep(SPACE_ROOT_CHECK_INTERVAL);
-                if !keeps_watching(&check_space_root(&host, &space)) {
+                std::thread::sleep(if lost { LOST_SPACE_CHECK_INTERVAL } else { SPACE_ROOT_CHECK_INTERVAL });
+                let state = if lost {
+                    check_lost_space(&host, &space)
+                } else {
+                    check_space_root(&host, &space)
+                };
+                if !keeps_watching(&state) {
                     break;
                 }
+                lost = is_lost(&state);
             }
             // The next opening of this space watches its folder again.
             space.release_root_watch();
@@ -1278,8 +1301,11 @@ trait SpaceRootHost {
     /// Where the space last seen at `path` stands now (Ф8, П30).
     fn locate(&self, path: &str) -> Located;
     /// Reopen `space` at `to`, recording its move from `from`, and tell the
-    /// tabs showing it.
+    /// tabs showing it and the bars naming it.
     fn reopen_moved(&self, space: &OpenSpace, from: &str, to: &str) -> Result<(), CommandError>;
+    /// Reopen `space` in its own folder, back after it was reported
+    /// unavailable, and tell the tabs showing it.
+    fn reopen_returned(&self, space: &OpenSpace, path: &str) -> Result<(), CommandError>;
     /// Tell the tabs showing `space` it is not there.
     fn announce_unavailable(&self, space: &OpenSpace, lost: &UnavailableVault);
 }
@@ -1287,34 +1313,50 @@ trait SpaceRootHost {
 /// The running app as the host of the watch.
 struct AppSpaceRoot(AppHandle);
 
-impl SpaceRootHost for AppSpaceRoot {
-    fn locate(&self, path: &str) -> Located {
-        locate_saved_space(&self.0, path)
-    }
-
-    fn reopen_moved(&self, space: &OpenSpace, from: &str, to: &str) -> Result<(), CommandError> {
+impl AppSpaceRoot {
+    /// Open `space` at `to` again and tell its tabs and the settings window
+    /// where it lives: the tabs reopen their route there (В73).
+    fn reopen_at(&self, space: &OpenSpace, to: &str) -> Result<String, CommandError> {
         let state = self.0.state::<AppState>();
-        record_moved_space(&self.0, from, to);
         let to = canonical_space_path(to)?;
         // The same identity leases the same owner, which takes the session
-        // at the new folder; the tabs keep their own leases.
+        // at the folder; the tabs keep their own leases.
         let (lease, _) = initialize_vault(&self.0, &state, &to, SpaceOpening::Restored)?;
         drop(lease);
-        if load_saved_vault_path(&self.0)
-            .is_some_and(|saved| crate::space_registry::same_path(&saved, from))
-        {
-            save_vault_path(&self.0, &to);
-        }
         space_events::emit_to_space_and_settings(
             &self.0,
             space.vault_id(),
             "space-moved",
             SpaceMovedPayload {
                 vault_id: space.vault_id().to_string(),
-                path: to,
+                path: to.clone(),
             },
         );
+        Ok(to)
+    }
+}
+
+impl SpaceRootHost for AppSpaceRoot {
+    fn locate(&self, path: &str) -> Located {
+        locate_saved_space(&self.0, path)
+    }
+
+    fn reopen_moved(&self, space: &OpenSpace, from: &str, to: &str) -> Result<(), CommandError> {
+        record_moved_space(&self.0, from, to);
+        let to = self.reopen_at(space, to)?;
+        if load_saved_vault_path(&self.0)
+            .is_some_and(|saved| crate::space_registry::same_path(&saved, from))
+        {
+            save_vault_path(&self.0, &to);
+        }
+        // Every bar with a tab of the space names it by its new folder, the
+        // unloaded tabs too (SPEC_DEEP_AUDIT.md, Е2.24).
+        crate::tabs::space_renamed(&self.0, space.vault_id());
         Ok(())
+    }
+
+    fn reopen_returned(&self, space: &OpenSpace, path: &str) -> Result<(), CommandError> {
+        self.reopen_at(space, path).map(|_| ())
     }
 
     fn announce_unavailable(&self, space: &OpenSpace, lost: &UnavailableVault) {
@@ -1346,14 +1388,24 @@ enum RootWatch {
     Followed(String),
     /// The space is nowhere to be found, and its tabs were told.
     Unavailable,
+    /// The space reported unavailable is still nowhere to be found.
+    StillLost,
+    /// The space reported unavailable is back in its folder and reopened.
+    Returned,
 }
 
-/// Whether the folder watch goes on after `state`. After a followed move it
-/// does: the open space serves the new folder now, and a second rename of
-/// it is the same case (П30). Measured 03.10.2026: the watch ended after the
-/// first move, and a second rename of the open space went unseen.
+/// Whether the folder watch goes on after `state`: until the space closes.
+/// After a followed move the open space serves the new folder, and a second
+/// rename of it is the same case (П30; measured 03.10.2026, the watch ended
+/// after the first move). After a loss the watch looks for the space to come
+/// back (Е2.13).
 fn keeps_watching(state: &RootWatch) -> bool {
-    matches!(state, RootWatch::Watching | RootWatch::Followed(_))
+    !matches!(state, RootWatch::Retired)
+}
+
+/// Whether the space is reported unavailable after `state`.
+fn is_lost(state: &RootWatch) -> bool {
+    matches!(state, RootWatch::Unavailable | RootWatch::StillLost)
 }
 
 /// One look at the folder of the open space.
@@ -1368,6 +1420,42 @@ fn check_space_root(host: &impl SpaceRootHost, space: &OpenSpace) -> RootWatch {
         return RootWatch::Watching;
     }
     handle_space_root_lost(host, space, &layout)
+}
+
+/// One look for a space reported unavailable: back in its folder, or found
+/// moved beside it; otherwise nothing is reported again (Е2.13).
+fn check_lost_space(host: &impl SpaceRootHost, space: &OpenSpace) -> RootWatch {
+    if space.is_closed() {
+        return RootWatch::Retired;
+    }
+    let Ok(layout) = space.layout() else {
+        return RootWatch::Retired;
+    };
+    let path = layout.root().to_string_lossy().into_owned();
+    if !crate::storage::root_guard::root_gone(&layout) {
+        return match host.reopen_returned(space, &path) {
+            Ok(()) => RootWatch::Returned,
+            Err(error) => {
+                log::warn!("cannot reopen the space back at {path}: {error}");
+                RootWatch::StillLost
+            }
+        };
+    }
+    if let Located::Moved { path: moved, .. } = host.locate(&path) {
+        match host.reopen_moved(space, &path, &moved) {
+            Ok(()) => return RootWatch::Followed(moved),
+            Err(error) => log::warn!("cannot reopen the moved space at {moved}: {error}"),
+        }
+    }
+    RootWatch::StillLost
+}
+
+/// Why the folder at `root` is not the space: not there or not readable, or
+/// there and readable but without this space's identity, its identity file
+/// gone or another space's (Е2.13). Until 13.10.2026 the last case said the
+/// folder was missing while it stood at its path.
+fn lost_reason(root: &Path) -> UnavailableVaultReason {
+    unavailable_reason(root).unwrap_or(UnavailableVaultReason::NotThisSpace)
 }
 
 /// The open space's folder is gone or is another space now: follow the
@@ -1386,7 +1474,7 @@ fn handle_space_root_lost(host: &impl SpaceRootHost, space: &OpenSpace, layout: 
         return RootWatch::Retired;
     }
     let lost = UnavailableVault {
-        reason: unavailable_reason(root).unwrap_or(UnavailableVaultReason::Missing),
+        reason: lost_reason(root),
         vault_id: layout_space_id(layout),
         path,
     };
@@ -2412,7 +2500,7 @@ pub(crate) fn load_known_vaults(app: &AppHandle) -> Vec<String> {
 /// Bring spaces lost from the list back from their derived stores (П27),
 /// and follow a space renamed beside its old path (П30). Runs before the
 /// saved space is resolved at startup; both are no-ops when nothing is lost.
-fn repair_space_registry(app: &AppHandle) {
+pub(crate) fn repair_space_registry(app: &AppHandle) {
     let Some(config) = app_config(app) else {
         return;
     };
@@ -3096,6 +3184,7 @@ mod space_root_watch_tests {
     struct RootHost {
         located: Located,
         reopened: std::cell::RefCell<Vec<(String, String, String)>>,
+        returned: std::cell::RefCell<Vec<(String, String)>>,
         announced: std::cell::RefCell<Vec<(String, UnavailableVault)>>,
     }
 
@@ -3104,6 +3193,7 @@ mod space_root_watch_tests {
             Self {
                 located,
                 reopened: std::cell::RefCell::default(),
+                returned: std::cell::RefCell::default(),
                 announced: std::cell::RefCell::default(),
             }
         }
@@ -3120,6 +3210,11 @@ mod space_root_watch_tests {
                 from.to_string(),
                 to.to_string(),
             ));
+            Ok(())
+        }
+
+        fn reopen_returned(&self, space: &OpenSpace, path: &str) -> Result<(), CommandError> {
+            self.returned.borrow_mut().push((space.vault_id().to_string(), path.to_string()));
             Ok(())
         }
 
@@ -3161,13 +3256,50 @@ mod space_root_watch_tests {
     }
 
     #[test]
-    fn the_watch_goes_on_after_a_followed_move_and_ends_only_on_loss_or_close() {
+    fn the_watch_goes_on_after_a_move_or_a_loss_and_ends_only_on_close() {
         // П30: the moved space is watched at its new folder, so a second
-        // rename is seen too (03.10.2026, a folder renamed twice).
+        // rename is seen too (03.10.2026, a folder renamed twice). Е2.13: a
+        // lost space is looked for until it comes back.
         assert!(keeps_watching(&RootWatch::Watching));
         assert!(keeps_watching(&RootWatch::Followed("/new".into())));
-        assert!(!keeps_watching(&RootWatch::Unavailable));
+        assert!(keeps_watching(&RootWatch::Unavailable));
+        assert!(keeps_watching(&RootWatch::StillLost));
+        assert!(keeps_watching(&RootWatch::Returned));
         assert!(!keeps_watching(&RootWatch::Retired));
+        assert!(is_lost(&RootWatch::Unavailable) && is_lost(&RootWatch::StillLost));
+        assert!(!is_lost(&RootWatch::Returned) && !is_lost(&RootWatch::Followed("/new".into())));
+    }
+
+    /// Е2.13: a space lost and back in its folder comes back to its tabs; one
+    /// still lost is not reported again.
+    #[test]
+    fn a_lost_space_comes_back_when_its_folder_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let spaces = SpaceHost::with_grace(Duration::from_millis(20));
+        let (lease, a, _) = open_space_a(&spaces, dir.path());
+        let host = RootHost::new(Located::Lost { path: a.clone(), reason: LostReason::Missing });
+
+        assert_eq!(check_space_root(&host, lease.space()), RootWatch::Unavailable);
+        assert_eq!(check_lost_space(&host, lease.space()), RootWatch::StillLost);
+        assert_eq!(host.announced.borrow().len(), 1, "a lost space was reported again");
+
+        carry_identity(Path::new(&a), ID);
+        assert_eq!(check_lost_space(&host, lease.space()), RootWatch::Returned);
+        assert_eq!(*host.returned.borrow(), vec![(ID.to_string(), a)]);
+    }
+
+    /// Е2.13: a folder standing at the path without the space's identity is
+    /// not reported as a folder that is not there.
+    #[test]
+    fn a_folder_without_its_identity_is_not_called_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let spaces = SpaceHost::with_grace(Duration::from_millis(20));
+        let (lease, a, _) = open_space_a(&spaces, dir.path());
+        std::fs::create_dir_all(&a).unwrap();
+        let host = RootHost::new(Located::Lost { path: a.clone(), reason: LostReason::Replaced });
+
+        assert_eq!(check_space_root(&host, lease.space()), RootWatch::Unavailable);
+        assert_eq!(host.announced.borrow()[0].1.reason, UnavailableVaultReason::NotThisSpace);
     }
 
     #[test]

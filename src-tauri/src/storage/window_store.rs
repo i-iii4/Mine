@@ -44,45 +44,56 @@ pub enum Loaded {
 }
 
 /// Read the saved windows from `dir`. An unusable file is moved aside, so the
-/// next write does not destroy it (В32).
+/// next write does not destroy it (В32); a file that cannot be read at all is
+/// unusable too (Е2.11): until 13.10.2026 a read error started from scratch
+/// and the next write replaced the file.
 ///
 /// # Errors
-/// The file exists and cannot be read.
+/// The file cannot be used and cannot be moved aside either: the caller must
+/// not write over it ([`WindowStore::hold`]).
 pub fn load(dir: &Path) -> Result<Loaded, SavedWindowsError> {
     let path = dir.join(WINDOWS_FILE);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
+    let issue = match std::fs::read_to_string(&path) {
+        Ok(text) => match parse(&text) {
+            Ok(windows) => return Ok(Loaded::Windows(windows)),
+            Err(issue) => issue,
+        },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Loaded::Missing),
-        Err(error) if error.kind() == std::io::ErrorKind::InvalidData => String::new(),
-        Err(source) => return Err(SavedWindowsError::Read { source }),
-    };
-    match parse(&text) {
-        Ok(windows) => Ok(Loaded::Windows(windows)),
-        Err(issue) => {
-            let aside = match &issue {
-                ReadIssue::Corrupt => dir.join(WINDOWS_CORRUPT_FILE),
-                ReadIssue::Newer { found } => dir.join(format!("windows.v{found}.json")),
-            };
-            std::fs::rename(&path, &aside).map_err(|source| SavedWindowsError::Write { source })?;
-            Ok(Loaded::SetAside(issue))
+        Err(error) => {
+            log::warn!("saved windows cannot be read, setting them aside: {error}");
+            ReadIssue::Corrupt
         }
-    }
+    };
+    let aside = match &issue {
+        ReadIssue::Corrupt => dir.join(WINDOWS_CORRUPT_FILE),
+        ReadIssue::Newer { found } => dir.join(format!("windows.v{found}.json")),
+    };
+    std::fs::rename(&path, &aside).map_err(|source| SavedWindowsError::Write { source })?;
+    Ok(Loaded::SetAside(issue))
 }
 
-/// Write `windows` to `dir` atomically.
+/// Write `windows` to `dir` atomically and durably: a temporary file of its
+/// own, flushed to disk, renamed over the file, and the folder flushed.
 ///
 /// # Errors
 /// The folder or file cannot be written.
 pub fn save(dir: &Path, windows: &SavedWindows) -> Result<(), SavedWindowsError> {
+    use std::io::Write;
     let bytes =
         serde_json::to_vec_pretty(windows).map_err(|source| SavedWindowsError::Encode { source })?;
     std::fs::create_dir_all(dir).map_err(|source| SavedWindowsError::Write { source })?;
-    let temporary = dir.join(format!(".{WINDOWS_FILE}.{}.tmp", std::process::id()));
-    std::fs::write(&temporary, bytes).map_err(|source| SavedWindowsError::Write { source })?;
-    std::fs::rename(&temporary, dir.join(WINDOWS_FILE)).map_err(|source| {
-        let _ = std::fs::remove_file(&temporary);
-        SavedWindowsError::Write { source }
-    })
+    let write = |source| SavedWindowsError::Write { source };
+    let mut temporary = tempfile::Builder::new()
+        .prefix(&format!(".{WINDOWS_FILE}."))
+        .suffix(".tmp")
+        .tempfile_in(dir)
+        .map_err(write)?;
+    temporary.write_all(&bytes).map_err(write)?;
+    temporary.as_file().sync_all().map_err(write)?;
+    temporary
+        .persist(dir.join(WINDOWS_FILE))
+        .map_err(|error| SavedWindowsError::Write { source: error.error })?;
+    std::fs::File::open(dir).and_then(|folder| folder.sync_all()).map_err(write)
 }
 
 #[derive(Default)]
@@ -90,12 +101,20 @@ struct Pending {
     latest: Option<SavedWindows>,
     quitting: bool,
     stopped: bool,
+    /// The file could be neither read nor set aside: nothing is written over
+    /// it in this run (Е2.11).
+    held: bool,
 }
 
 struct StoreShared {
     dir: Option<PathBuf>,
     pending: Mutex<Pending>,
     changed: Condvar,
+    /// The one writer of the file (Е2.11): the delayed writer and the exit
+    /// write take turns, and the delayed writer, once it has the turn, looks
+    /// again whether the exit wrote, so it never writes an older value after
+    /// it. Until 13.10.2026 both wrote through one temporary file at once.
+    writer: Mutex<()>,
 }
 
 /// The writer of `windows.json` for the running app.
@@ -103,7 +122,7 @@ pub struct WindowStore {
     shared: Arc<StoreShared>,
 }
 
-fn lock(mutex: &Mutex<Pending>) -> MutexGuard<'_, Pending> {
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
@@ -115,6 +134,7 @@ impl WindowStore {
             dir,
             pending: Mutex::new(Pending::default()),
             changed: Condvar::new(),
+            writer: Mutex::new(()),
         });
         if shared.dir.is_some() {
             let worker = Arc::clone(&shared);
@@ -128,10 +148,16 @@ impl WindowStore {
         Self { shared }
     }
 
+    /// The saved windows could not be read nor set aside: write nothing over
+    /// them in this run.
+    pub fn hold(&self) {
+        lock(&self.shared.pending).held = true;
+    }
+
     /// Remember `windows` to be written after the debounce (В31).
     pub fn schedule(&self, windows: SavedWindows) {
         let mut pending = lock(&self.shared.pending);
-        if pending.quitting {
+        if pending.quitting || pending.held {
             return;
         }
         pending.latest = Some(windows);
@@ -146,13 +172,18 @@ impl WindowStore {
         }
         pending.quitting = true;
         pending.latest = None;
+        let held = pending.held;
         drop(pending);
+        self.shared.changed.notify_all();
+        if held {
+            return;
+        }
         if let Some(dir) = &self.shared.dir {
+            let _turn = lock(&self.shared.writer);
             if let Err(error) = save(dir, windows) {
                 log::warn!("{error}");
             }
         }
-        self.shared.changed.notify_all();
     }
 
     /// Whether the app is quitting: closing windows no longer changes what is
@@ -188,6 +219,7 @@ impl StoreShared {
             // Gather the burst: later changes replace the value to write.
             drop(pending);
             std::thread::sleep(SAVE_WINDOWS_DEBOUNCE);
+            let _turn = lock(&self.writer);
             let latest = {
                 let mut pending = lock(&self.pending);
                 if pending.quitting {
@@ -269,6 +301,63 @@ mod tests {
         std::thread::sleep(SAVE_WINDOWS_DEBOUNCE * 3);
         assert_eq!(load(dir.path()).unwrap(), Loaded::Windows(sample("t2")));
         assert!(store.quitting());
+    }
+
+    /// Е2.11: two writes at once (the delayed writer and the exit write) each
+    /// go through a temporary file of its own and leave a whole file.
+    #[test]
+    fn two_writes_at_once_both_land_whole() {
+        const ROUNDS: usize = 200;
+        let dir = tempfile::tempdir().unwrap();
+        for round in 0..ROUNDS {
+            let start = std::sync::Barrier::new(2);
+            let results: Vec<_> = std::thread::scope(|scope| {
+                let writers: Vec<_> = ["a", "b"]
+                    .into_iter()
+                    .map(|tab| {
+                        let (dir, start) = (dir.path(), &start);
+                        scope.spawn(move || {
+                            start.wait();
+                            save(dir, &sample(tab))
+                        })
+                    })
+                    .collect();
+                writers.into_iter().map(|writer| writer.join().unwrap()).collect()
+            });
+            for result in results {
+                assert!(result.is_ok(), "round {round}: {result:?}");
+            }
+            assert!(matches!(load(dir.path()).unwrap(), Loaded::Windows(_)), "round {round}");
+        }
+    }
+
+    /// Е2.11: a file that cannot be read is set aside as unreadable (В32),
+    /// not taken for a missing one and written over.
+    #[test]
+    fn a_file_that_cannot_be_read_is_set_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        // A folder in the file's place reads as an error, not as text.
+        std::fs::create_dir(dir.path().join(WINDOWS_FILE)).unwrap();
+        assert_eq!(load(dir.path()).unwrap(), Loaded::SetAside(ReadIssue::Corrupt));
+        assert!(dir.path().join(WINDOWS_CORRUPT_FILE).is_dir());
+        assert_eq!(load(dir.path()).unwrap(), Loaded::Missing);
+    }
+
+    /// Е2.11: saved windows that could be neither read nor set aside are not
+    /// written over in this run.
+    #[test]
+    fn a_held_store_writes_nothing_over_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(WINDOWS_FILE), "kept as it is").unwrap();
+        let store = WindowStore::new(Some(dir.path().to_path_buf()));
+        store.hold();
+        store.schedule(sample("t1"));
+        std::thread::sleep(SAVE_WINDOWS_DEBOUNCE * 3);
+        store.flush_for_exit(&sample("t2"));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(WINDOWS_FILE)).unwrap(),
+            "kept as it is"
+        );
     }
 
     #[test]

@@ -48,6 +48,37 @@ pub struct ThumbUpgradeRequest {
     /// `media_path`.
     #[serde(rename = "tilePosters")]
     pub tile_posters: Vec<TilePosterUpgrade>,
+    /// The state of `media_path` when the request was made
+    /// ([`media_revision`]); the browser hands it back with the picture, so
+    /// a decode of a file that changed since is not written (Е2.20). Empty
+    /// without a media path.
+    pub revision: String,
+}
+
+/// The state of a media file a browser decode starts from: its size and
+/// modification time. A file replaced, or a card that moved to another file,
+/// gives another revision (SPEC_DEEP_AUDIT.md, Е2.20).
+pub(crate) fn media_revision(path: &std::path::Path) -> String {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return String::new();
+    };
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |since| since.as_nanos());
+    format!("{}:{modified}", metadata.len())
+}
+
+/// Whether a browser decode of `decoded` (its media path and revision, as
+/// the request carried them) is still the card's picture to write: the card
+/// still takes its preview from that file, and the file has not changed
+/// since. A decode from before carries neither and is written as before.
+fn decode_is_current(decoded: Option<(&str, &str)>, current: Option<&std::path::Path>) -> bool {
+    let Some((path, revision)) = decoded else {
+        return true;
+    };
+    current.is_some_and(|current| current == std::path::Path::new(path) && media_revision(current) == revision)
 }
 
 /// One per-video gallery tile poster to generate via the browser.
@@ -115,6 +146,39 @@ pub fn save_thumb(
     };
     let thumb_path = vault.thumb_path(&slug);
 
+    // A decode that started before the card's media changed is not written
+    // over the picture of the media it has now (Е2.20): the decode of the
+    // current media is asked for instead.
+    let decoded = match (
+        optional_header(&request, "x-media-path")?,
+        optional_header(&request, "x-media-revision")?,
+    ) {
+        (Some(path), Some(revision)) => Some((path, revision)),
+        _ => None,
+    };
+    let current = current_upgrade_media(&vault, &slug);
+    if !decode_is_current(
+        decoded.as_ref().map(|(path, revision)| (path.as_str(), revision.as_str())),
+        current.as_ref().map(|media| media.path.as_path()),
+    ) {
+        log::info!("a browser decode of {slug} came after its media changed; not written");
+        if let Some(media) = current {
+            crate::commands::space_events::emit_to_lead(
+                &app,
+                vault.root(),
+                "thumb:upgrade-requested",
+                ThumbUpgradeRequest {
+                    slug: slug.clone(),
+                    revision: media_revision(&media.path),
+                    media_path: media.path.to_string_lossy().into_owned(),
+                    kind: media.kind.as_str().to_string(),
+                    tile_posters: Vec::new(),
+                },
+            );
+        }
+        return Ok(());
+    }
+
     if let Some(parent) = thumb_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| CommandError::Internal(format!("create thumbs dir: {}", e)))?;
@@ -180,6 +244,22 @@ fn percent_decode_header(name: &str, raw: &str) -> Result<String, CommandError> 
         .decode_utf8()
         .map(|decoded| decoded.into_owned())
         .map_err(|_| CommandError::Internal(format!("{name} header is not valid UTF-8")))
+}
+
+/// Read a metadata header that may be absent, percent-decoded.
+fn optional_header(request: &Request<'_>, name: &str) -> Result<Option<String>, CommandError> {
+    if request.headers().get(name).is_none() {
+        return Ok(None);
+    }
+    decode_header(request, name).map(Some)
+}
+
+/// The media the card `slug` takes its browser-decoded preview from now,
+/// per the index.
+fn current_upgrade_media(vault: &crate::domain::vault::VaultLayout, slug: &str) -> Option<ResolvedPreviewMedia> {
+    let conn = db::open_read_only(&vault.index_db_path()).ok()?;
+    let block = index::get_pending_thumb_upgrade_block(&conn, slug).ok()??;
+    crate::storage::preview_plan::resolve_upgrade_media(vault, block.upgrade_input())
 }
 
 /// Read a required metadata header off a raw-IPC request and percent-decode it.
@@ -381,6 +461,10 @@ pub async fn list_pending_thumb_upgrades(
                     continue;
                 }
 
+                let revision = slug_upgrade
+                    .as_ref()
+                    .map(|(path, _)| media_revision(path))
+                    .unwrap_or_default();
                 let (media_path, kind) = slug_upgrade
                     .map(|(path, kind)| (path.to_string_lossy().into_owned(), kind.to_string()))
                     .unwrap_or_default();
@@ -389,6 +473,7 @@ pub async fn list_pending_thumb_upgrades(
                     media_path,
                     kind,
                     tile_posters,
+                    revision,
                 });
             }
 
@@ -481,6 +566,29 @@ mod tests {
     use super::*;
     use crate::domain::block::{Block, BlockType, DateTime, Frontmatter};
     use crate::domain::vault::VaultLayout;
+
+    /// Е2.20: a browser decode is written only while the card still takes
+    /// its preview from the file it decoded, unchanged since the request.
+    #[test]
+    fn a_decode_of_media_that_changed_since_is_not_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first.heic");
+        let second = dir.path().join("second.heic");
+        std::fs::write(&first, b"first version").unwrap();
+        std::fs::write(&second, b"another file").unwrap();
+        let asked = media_revision(&first);
+        let path = first.to_string_lossy().into_owned();
+
+        assert!(decode_is_current(Some((&path, &asked)), Some(&first)));
+        // The card takes its preview from another file now.
+        assert!(!decode_is_current(Some((&path, &asked)), Some(&second)));
+        assert!(!decode_is_current(Some((&path, &asked)), None));
+        // The file was replaced in place.
+        std::fs::write(&first, b"a newer and longer version").unwrap();
+        assert!(!decode_is_current(Some((&path, &asked)), Some(&first)));
+        // A request from before revisions is written as before.
+        assert!(decode_is_current(None, Some(&first)));
+    }
     use crate::storage::{db, files, index, thumbnails};
 
     fn make_vault(path: &std::path::Path) -> VaultLayout {

@@ -30,6 +30,8 @@ pub mod space_registry;
 pub mod storage;
 pub mod tool_process;
 #[cfg(feature = "desktop")]
+mod shutdown;
+#[cfg(feature = "desktop")]
 mod source_video_download;
 #[cfg(feature = "desktop")]
 mod swipe_gesture;
@@ -279,13 +281,16 @@ pub fn run() {
             frame_context_menu::install(app.handle());
 
 
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            // Every build logs, to stdout and to a file with the time of each
+            // line in the app's log folder: a failure that is not the person's
+            // to see still leaves a trace (SPEC_DEEP_AUDIT.md, Н11). Until
+            // 13.10.2026 only the debug build had a logger, and every
+            // `log::warn!` of an installed Mine went nowhere.
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .build(),
+            )?;
 
             // ── Native macOS menu ────────────────────────────────────────
             //
@@ -307,6 +312,20 @@ pub fn run() {
             } else {
                 app.path().app_data_dir().ok()
             };
+            // The CLI and the MCP server compare their build with the app's
+            // (SPEC_DEEP_AUDIT.md, Е2.22); off the launch's critical path.
+            if let Some(dir) = saved_windows_dir.clone() {
+                let recorded = std::thread::Builder::new()
+                    .name("record-app-build".into())
+                    .spawn(move || {
+                        if let Err(error) = runtime_protocol::record_app_build(&dir) {
+                            log::warn!("cannot record the app's build: {error}");
+                        }
+                    });
+                if let Err(error) = recorded {
+                    log::warn!("cannot record the app's build: {error}");
+                }
+            }
             app.manage(tabs::TabShell::new(saved_windows_dir));
             tabs::restore(app.handle())?;
             crate::util::append_startup_trace(app.handle(), "window", "created");
@@ -321,10 +340,13 @@ pub fn run() {
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             tauri::RunEvent::Opened { urls } => commands::app_open::receive(app, &urls),
             // Quitting keeps every window as it stands for the next launch
-            // (SPEC_TABS.md, В33).
-            tauri::RunEvent::ExitRequested { .. } => {
-                if let Some(shell) = app.try_state::<tabs::TabShell>() {
-                    shell.quit();
+            // (SPEC_TABS.md, В33) and finishes what began first: downloads
+            // stop and keep their videos, writes are waited for
+            // (SPEC_DEEP_AUDIT.md, Н3).
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                let may_exit = shutdown::exit_requested(app);
+                if !may_exit {
+                    api.prevent_exit();
                 }
             }
             _ => {}

@@ -75,7 +75,16 @@ function tab(
   place: string | null = null,
   overrides: Partial<TabBarTab> = {},
 ): TabBarTab {
-  return { id, space_name, place, card: null, live: true, history: { back: false, forward: false }, ...overrides };
+  return {
+    id,
+    space_name,
+    place,
+    card: null,
+    live: true,
+    history: { back: false, forward: false },
+    error: null,
+    ...overrides,
+  };
 }
 
 function barState(tabs: TabBarTab[], overrides: Partial<TabBarState> = {}): TabBarState {
@@ -134,6 +143,26 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const spy of spies) spy.mockRestore();
+});
+
+describe("a tab that could not open (Е2.9)", () => {
+  it("is marked in its bar, says why in its tooltip and opens on selection", () => {
+    renderBar(
+      barState([
+        tab("ok"),
+        tab("failed", "Mine", "Posters", { error: "the page of this tab could not be made: no memory" }),
+      ]),
+    );
+    const failed = tabById("failed");
+    expect(failed.hasAttribute("data-tab-error")).toBe(true);
+    expect(failed.querySelector("[data-tab-error-mark]")).not.toBeNull();
+    expect(failed.title).toBe(
+      "Posters\nThe page of this tab could not be made: no memory. Select the tab to try again.",
+    );
+    expect(tabById("ok").querySelector("[data-tab-error-mark]")).toBeNull();
+    fireEvent.click(failed);
+    expect(commands.activateTab).toHaveBeenCalledWith("failed");
+  });
 });
 
 describe("tab bar row (В43)", () => {

@@ -103,10 +103,10 @@ fn import_arena_channels_unannounced(
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async)]
 pub fn import_arena_channels(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, channels: Vec<ImportChannelRequest>) -> Result<Vec<importer::ImportChannelResult>, CommandError> {
-    let announcing = webview.clone();
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = import_arena_channels_unannounced(webview, app, state, channels);
     if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }

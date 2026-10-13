@@ -20,6 +20,83 @@ pub struct RuntimeProbe {
     pub save_protocols: Vec<u32>,
 }
 
+/// The file in the app's data folder where Mine records its build at every
+/// launch (SPEC_DEEP_AUDIT.md, Е2.22): the CLI and the MCP server compare
+/// their own build with it and say when they are from another one.
+pub const APP_BUILD_FILE: &str = "app-build.json";
+
+/// Which build a program of Mine is.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BuildIdentity {
+    /// The package version; it rarely changes between builds.
+    pub version: String,
+    /// The compiled source identity: what tells two builds apart.
+    pub build_id: String,
+    /// The source commit, or `source-archive`.
+    pub commit: String,
+}
+
+impl BuildIdentity {
+    /// The build of the running program.
+    #[must_use]
+    pub fn this_build() -> Self {
+        Self {
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            build_id: option_env!("MINE_BUILD_ID").unwrap_or("unidentified-build").to_owned(),
+            commit: option_env!("MINE_BUILD_COMMIT").unwrap_or("unknown").to_owned(),
+        }
+    }
+
+    /// The first twelve characters of the build id, enough to tell builds apart.
+    #[must_use]
+    pub fn short_id(&self) -> &str {
+        self.build_id.get(..12).unwrap_or(&self.build_id)
+    }
+
+    /// `0.1.0+<short build id>`: the version as a person or a client shows it.
+    #[must_use]
+    pub fn label(&self) -> String {
+        format!("{}+{}", self.version, self.short_id())
+    }
+}
+
+/// Record the running build as the app's (called by the app at launch).
+///
+/// # Errors
+/// The file cannot be written.
+pub fn record_app_build(app_data_dir: &std::path::Path) -> std::io::Result<()> {
+    use std::io::Write;
+    std::fs::create_dir_all(app_data_dir)?;
+    let bytes = serde_json::to_vec_pretty(&BuildIdentity::this_build()).map_err(std::io::Error::other)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(app_data_dir)?;
+    temporary.write_all(&bytes)?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(app_data_dir.join(APP_BUILD_FILE)).map_err(|error| error.error)?;
+    Ok(())
+}
+
+/// The build the app recorded at its last launch, if it did.
+#[must_use]
+pub fn recorded_app_build(app_data_dir: &std::path::Path) -> Option<BuildIdentity> {
+    let bytes = std::fs::read(app_data_dir.join(APP_BUILD_FILE)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// What a program of `own` build says when the app is another build: one
+/// line for its user, or nothing when the builds match or the app recorded
+/// none.
+#[must_use]
+pub fn build_mismatch_warning(own: &BuildIdentity, app: Option<&BuildIdentity>) -> Option<String> {
+    let app = app?;
+    (app.build_id != own.build_id).then(|| {
+        format!(
+            "warning: this mine CLI is build {} and the Mine app is build {}; reinstall the CLI from the app's build (bun run cli:install)",
+            own.label(),
+            app.label()
+        )
+    })
+}
+
 /// Compatibility failures are known before any source or journal write.
 #[derive(Debug, thiserror::Error)]
 pub enum ProtocolError {
@@ -70,6 +147,24 @@ mod tests {
             "required_capabilities": ["save_operation_v1", "operation_lookup_v1"]
         }))
         .is_ok());
+    }
+
+    /// Е2.22: a program of another build than the app says so; the same
+    /// build, or an app that recorded none, says nothing.
+    #[test]
+    fn a_build_other_than_the_apps_is_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let own = BuildIdentity::this_build();
+        assert_eq!(recorded_app_build(dir.path()), None);
+        assert_eq!(build_mismatch_warning(&own, None), None);
+        record_app_build(dir.path()).unwrap();
+        let app = recorded_app_build(dir.path()).unwrap();
+        assert_eq!(app, own);
+        assert_eq!(build_mismatch_warning(&own, Some(&app)), None);
+        let older = BuildIdentity { build_id: "0123456789abcdef".into(), ..own.clone() };
+        let warning = build_mismatch_warning(&own, Some(&older)).unwrap();
+        let older_label = format!("{}+0123456789ab", own.version);
+        assert!(warning.contains(&own.label()) && warning.contains(&older_label), "{warning}");
     }
 
     #[test]

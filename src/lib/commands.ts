@@ -592,6 +592,15 @@ export interface ThumbUpgradeRequest {
   kind: "image" | "video";
   /** Derived gallery tiles requiring the browser decoder. */
   tilePosters: TilePosterUpgrade[];
+  /** The state of `mediaPath` when asked; handed back with the picture so a
+   *  decode of a file that changed since is not written (Е2.20). */
+  revision: string;
+}
+
+/** The media a browser decode read, as its request named it (Е2.20). */
+export interface DecodedMedia {
+  mediaPath: string;
+  revision: string;
 }
 
 // Binary IPC: the decoded JPEG travels as the raw request body (Uint8Array →
@@ -599,10 +608,20 @@ export interface ThumbUpgradeRequest {
 // longer inflates ~4x into a payload the main thread must build and Rust must
 // parse. Metadata rides in percent-encoded headers — encodeURIComponent keeps
 // Unicode slugs (Cyrillic, symbols like ⊷) ASCII-safe for HTTP header
-// transport; Rust percent-decodes them.
-export const saveThumb = (slug: string, bytes: Uint8Array) =>
+// transport; Rust percent-decodes them. `decoded` names the media the picture
+// came from: the backend writes it only while the card still takes its
+// preview from that file, unchanged (SPEC_DEEP_AUDIT.md, Е2.20).
+export const saveThumb = (slug: string, bytes: Uint8Array, decoded?: DecodedMedia) =>
   invoke<void>("save_thumb", bytes, {
-    headers: { "x-slug": encodeURIComponent(slug) },
+    headers: {
+      "x-slug": encodeURIComponent(slug),
+      ...(decoded
+        ? {
+            "x-media-path": encodeURIComponent(decoded.mediaPath),
+            "x-media-revision": encodeURIComponent(decoded.revision),
+          }
+        : {}),
+    },
   });
 
 /** Write a decoded JPEG for one gallery tile. `posterName` is the tile's

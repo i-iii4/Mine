@@ -282,6 +282,7 @@ pub fn resolve_vault_conflict(
     choice: ConflictChoice,
     expected_tokens: Vec<String>,
 ) -> Result<(), VaultConflictError> {
+    let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = resolve_vault_conflict_unannounced(
         &webview,
         &app,
@@ -291,7 +292,7 @@ pub fn resolve_vault_conflict(
         &expected_tokens,
     );
     if !matches!(outcome, Err(VaultConflictError::NoVault)) {
-        super::effects::space_changed_by_tab(&webview, Vec::new());
+        announcing.send(Vec::new());
     }
     outcome
 }

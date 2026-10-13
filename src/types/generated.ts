@@ -314,7 +314,13 @@ shared_media: DeleteBlockMedia[] }
 
 export type DeleteMediaAssetKind = "image" | "video" | "audio" | "document" | "file"
 
-export type DeleteMediaAssetPlan = { media_ref: string; media_kind: DeleteMediaAssetKind; referenced_by: MediaAssetReferenceBlock[] }
+export type DeleteMediaAssetPlan = { media_ref: string; media_kind: DeleteMediaAssetKind; referenced_by: MediaAssetReferenceBlock[];
+/**
+ * The Obsidian canvases (`.canvas`) that show the file, as paths from
+ * the space root (SPEC_DEEP_AUDIT.md, Н5, Е5.6). They use the file but
+ * are not elements: the deletion does not rewrite them.
+ */
+canvases: string[] }
 
 export type DeleteOrphanResult = { deleted: string[]; skipped: string[] }
 
@@ -781,7 +787,12 @@ live: boolean;
  * The tab's page has places to go back and forward to (В81). An
  * unloaded tab has neither: its history went with its page.
  */
-history: TabHistory }
+history: TabHistory;
+/**
+ * Why the tab's page or window could not be made the last time it was
+ * tried; selecting the tab tries again (SPEC_TABS.md, «Ошибки»).
+ */
+error: string | null }
 
 /**
  * What a tab page needs to start (`get_tab_bootstrap`).
@@ -909,7 +920,13 @@ export type UnavailableVaultReason =
 /**
  * The folder exists; reading it is what fails.
  */
-"access_denied"
+"access_denied" |
+/**
+ * A folder stands at the path and can be read, but it is not this
+ * space: its identity file `.mine/vault-id` is gone, or names another
+ * space (SPEC_DEEP_AUDIT.md, Е2.13).
+ */
+"not_this_space"
 
 /**
  * Failures are distinct; a signed staged archive is never reported as installed.

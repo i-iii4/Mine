@@ -195,6 +195,31 @@ fn iso8601_epoch_seconds(value: &str) -> Option<i64> {
     Some(days * 86_400 + hour * 3600 + minute * 60 + second - offset)
 }
 
+/// A `saved_at` as an outside reader needs it: with its zone
+/// (SPEC_DEEP_AUDIT.md, Е2.22). A value with a zone stays as it is; local
+/// wall-clock time without one, as the index keeps it and new files carry
+/// it, gets this Mac's offset at that moment; anything else stays as it is.
+pub fn saved_at_with_zone(value: &str) -> String {
+    with_zone(value, local_offset_seconds)
+}
+
+/// [`saved_at_with_zone`] with the zone's offset at an instant given by
+/// `offset_at` (seconds east of UTC for seconds since the epoch).
+fn with_zone(value: &str, offset_at: impl Fn(i64) -> i64) -> String {
+    if iso8601_epoch_seconds(value).is_some() || value.len() != 19 {
+        return value.to_owned();
+    }
+    let Some(wall) = iso8601_epoch_seconds(&format!("{value}Z")) else {
+        return value.to_owned();
+    };
+    // The offset in force at the wall time: the instant is the wall time less
+    // the offset, and the offset is asked at that instant.
+    let offset = offset_at(wall - offset_at(wall));
+    let sign = if offset < 0 { '-' } else { '+' };
+    let minutes = offset.abs() / 60;
+    format!("{value}{sign}{:02}:{:02}", minutes / 60, minutes % 60)
+}
+
 /// Current UTC time as ISO 8601 string (without chrono dependency).
 pub fn now_iso8601() -> String {
     system_time_to_iso8601(std::time::SystemTime::now())
@@ -330,6 +355,22 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
 #[cfg(test)]
 mod saved_at_tests {
     use super::*;
+
+    /// Е2.22: local time goes out with the zone in force at that moment.
+    #[test]
+    fn local_time_gets_its_zone_and_a_zoned_value_keeps_its_own() {
+        const BUENOS_AIRES: i64 = -3 * 3600;
+        assert_eq!(with_zone("2026-01-03T10:00:00", |_| BUENOS_AIRES), "2026-01-03T10:00:00-03:00");
+        assert_eq!(with_zone("2026-07-01T09:30:00", |_| 5 * 3600 + 30 * 60), "2026-07-01T09:30:00+05:30");
+        assert_eq!(with_zone("2026-07-01T09:30:00", |_| 0), "2026-07-01T09:30:00+00:00");
+        // Summer time in force at the wall time, not at another moment.
+        let berlin = |epoch: i64| if epoch >= 1_774_746_000 { 2 * 3600 } else { 3600 };
+        assert_eq!(with_zone("2026-03-29T12:00:00", berlin), "2026-03-29T12:00:00+02:00");
+        assert_eq!(with_zone("2026-03-28T12:00:00", berlin), "2026-03-28T12:00:00+01:00");
+        for kept in ["2026-01-01T00:00:00Z", "2026-01-01T00:00:00+03:00", "2026-01-01", "not a time"] {
+            assert_eq!(with_zone(kept, |_| BUENOS_AIRES), kept);
+        }
+    }
 
     #[test]
     fn saved_at_is_local_wall_clock_without_a_zone() {
