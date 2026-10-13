@@ -253,21 +253,79 @@ fn open_space_in_tab(
         .tabs
         .bind(label, request, lease)
         .map_err(|_| superseded_selection())?;
-    crate::tabs::space_shown(app, label, &vault_id);
-    // The space the tab left may have lost its lead (SPEC_TABS.md, В19).
-    if let Some(left) = left {
-        crate::tabs::refresh_leads(app, &left);
+    show_bound_space(&AppBoundSpace(app), label, &vault_id, &path, left.as_deref(), announce);
+    Ok(result)
+}
+
+/// What a tab bound to a space tells the rest of the app (SPEC_TABS.md,
+/// В10, В47). Tests stand in for the windows and the settings file.
+trait BoundSpaceHost {
+    /// Record the space `vault_id`, opened at `path`, in the registry as the
+    /// space opened last.
+    fn record_opened(&self, vault_id: &str, path: &str);
+    /// The tab `label` shows `vault_id`: the windows and the tab bar learn it.
+    fn space_shown(&self, label: &str, vault_id: &str);
+    /// The space `vault_id` may have lost its lead (В19).
+    fn refresh_leads(&self, vault_id: &str);
+    /// Tell the tab `label` and the settings window the space at `path` was
+    /// chosen.
+    fn announce_selected(&self, label: &str, path: &str);
+}
+
+/// The running app as the host of a bound space.
+struct AppBoundSpace<'a>(&'a AppHandle);
+
+impl BoundSpaceHost for AppBoundSpace<'_> {
+    fn record_opened(&self, vault_id: &str, path: &str) {
+        record_opened_space(self.0, vault_id, path);
     }
-    if announce {
-        save_vault_path(app, &path);
+
+    fn space_shown(&self, label: &str, vault_id: &str) {
+        crate::tabs::space_shown(self.0, label, vault_id);
+    }
+
+    fn refresh_leads(&self, vault_id: &str) {
+        crate::tabs::refresh_leads(self.0, vault_id);
+    }
+
+    fn announce_selected(&self, label: &str, path: &str) {
         space_events::emit_to_labels(
-            app,
+            self.0,
             [label, space_events::SETTINGS_LABEL],
             "vault-selected",
-            VaultChangedPayload::from_outside(path),
+            VaultChangedPayload::from_outside(path.to_string()),
         );
     }
-    Ok(result)
+}
+
+/// The tab `label` was bound to the space `vault_id` opened at `path`,
+/// leaving the space `left`. `announce` records the space as the one to
+/// restore and tells the tab and the settings window; a restore at launch
+/// does neither.
+///
+/// The registry learns the space before the windows do: the tab bar names a
+/// tab by the registry's folder for its identity (SPEC_TABS.md, В47), and a
+/// folder that became a space in this very choice has no record until now.
+/// Measured 13.10.2026: told first, the bar labelled the tab Choose Space.
+fn show_bound_space(
+    host: &impl BoundSpaceHost,
+    label: &str,
+    vault_id: &str,
+    path: &str,
+    left: Option<&str>,
+    announce: bool,
+) {
+    if announce {
+        host.record_opened(vault_id, path);
+    }
+    host.space_shown(label, vault_id);
+    // The space the tab left may have lost its lead (SPEC_TABS.md, В19).
+    if let Some(left) = left {
+        host.refresh_leads(left);
+    }
+    if announce {
+        host.announce_selected(label, path);
+    }
 }
 
 fn superseded_selection() -> CommandError {
@@ -2313,6 +2371,17 @@ fn save_vault_path(app: &AppHandle, path: &str) {
     }
 }
 
+/// Record the space `vault_id`, opened at `path`, as the space opened last
+/// (П16, П26). The identity is the one the tab was bound to, not one read
+/// back from the folder: the tab bar names the tab by it (SPEC_TABS.md, В47).
+fn record_opened_space(app: &AppHandle, vault_id: &str, path: &str) {
+    let now = now_ms();
+    let result = update_config(app, |cfg| crate::space_registry::record_open(cfg, vault_id, path, now));
+    if let Err(error) = result {
+        log::warn!("failed to record the opened space {path}: {error}");
+    }
+}
+
 /// Load the saved vault path from the config file.
 fn load_saved_vault_path(app: &AppHandle) -> Option<String> {
     let serde_json::Value::Object(cfg) = load_config(app) else {
@@ -3159,5 +3228,110 @@ mod space_root_watch_tests {
         let host = RootHost::new(Located::Here { path: a });
         assert_eq!(check_space_root(&host, lease.space()), RootWatch::Watching);
         assert!(host.announced.borrow().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod bound_space_tests {
+    use super::*;
+    use crate::domain::windows::TabSpace;
+    use crate::space_registry;
+    use std::cell::RefCell;
+
+    const LABEL: &str = "tab-5d0f0c0a5d0f0c0a5d0f0c0a5d0f0c0a";
+    const SHOWN: &str = "cea575682e5a4018991c0097fbedff66";
+    const CHOSEN: &str = "0b1d6a3c9e2f4a7b8c5d1e0f2a3b4c5d";
+
+    /// The app around a tab bound to a space: the settings file, and the
+    /// name the tab bar gives the tab each time it is told. The bar names a
+    /// space from the registry at that moment (`tabs::bar_state`).
+    struct Host {
+        cfg: RefCell<serde_json::Map<String, serde_json::Value>>,
+        named: RefCell<Vec<Option<String>>>,
+    }
+
+    impl Host {
+        fn new(cfg: serde_json::Map<String, serde_json::Value>) -> Self {
+            Self { cfg: RefCell::new(cfg), named: RefCell::default() }
+        }
+    }
+
+    impl BoundSpaceHost for Host {
+        fn record_opened(&self, vault_id: &str, path: &str) {
+            space_registry::record_open(&mut self.cfg.borrow_mut(), vault_id, path, 2);
+        }
+
+        fn space_shown(&self, _label: &str, vault_id: &str) {
+            let paths = crate::tabs::space_paths_in(&self.cfg.borrow());
+            let space = TabSpace::Space { vault_id: vault_id.to_string() };
+            self.named.borrow_mut().push(crate::tabs::space_name(&space, &paths));
+        }
+
+        fn refresh_leads(&self, _vault_id: &str) {}
+
+        fn announce_selected(&self, _label: &str, _path: &str) {}
+    }
+
+    /// A registry that knows the space the tab shows now, and the folder
+    /// `Тест` on disk.
+    fn setup() -> (tempfile::TempDir, serde_json::Map<String, serde_json::Value>, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let shown = dir.path().join("Mine. Длинное название");
+        let chosen = dir.path().join("Тест");
+        std::fs::create_dir_all(&shown).unwrap();
+        std::fs::create_dir_all(&chosen).unwrap();
+        let mut cfg = serde_json::Map::new();
+        space_registry::record_open(&mut cfg, SHOWN, &shown.to_string_lossy(), 1);
+        (dir, cfg, chosen.to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn a_space_added_for_the_first_time_is_named_in_its_tab() {
+        // Add space with an empty folder, 13.10.2026: the folder became a
+        // space in this choice, so the registry had no record of it yet,
+        // and the tab was labelled Choose Space.
+        let (_dir, cfg, chosen) = setup();
+        let host = Host::new(cfg);
+
+        show_bound_space(&host, LABEL, CHOSEN, &chosen, Some(SHOWN), true);
+
+        assert_eq!(*host.named.borrow(), [Some("Тест".to_string())]);
+    }
+
+    #[test]
+    fn a_listed_folder_without_an_identity_is_named_in_its_tab() {
+        // A folder added in Settings > Spaces before it had an identity is
+        // listed by its path only; choosing it gives it one.
+        let (_dir, mut cfg, chosen) = setup();
+        space_registry::add_space(&mut cfg, None, &chosen);
+        let host = Host::new(cfg);
+
+        show_bound_space(&host, LABEL, CHOSEN, &chosen, Some(SHOWN), true);
+
+        assert_eq!(*host.named.borrow(), [Some("Тест".to_string())]);
+    }
+
+    #[test]
+    fn a_known_space_is_named_in_its_tab() {
+        let (_dir, mut cfg, chosen) = setup();
+        space_registry::record_open(&mut cfg, CHOSEN, &chosen, 1);
+        let host = Host::new(cfg);
+
+        show_bound_space(&host, LABEL, CHOSEN, &chosen, Some(SHOWN), true);
+
+        assert_eq!(*host.named.borrow(), [Some("Тест".to_string())]);
+    }
+
+    #[test]
+    fn a_restore_names_the_tab_without_recording_the_space() {
+        let (_dir, mut cfg, chosen) = setup();
+        space_registry::record_open(&mut cfg, CHOSEN, &chosen, 1);
+        let before = cfg.clone();
+        let host = Host::new(cfg);
+
+        show_bound_space(&host, LABEL, CHOSEN, &chosen, None, false);
+
+        assert_eq!(*host.named.borrow(), [Some("Тест".to_string())]);
+        assert_eq!(*host.cfg.borrow(), before);
     }
 }

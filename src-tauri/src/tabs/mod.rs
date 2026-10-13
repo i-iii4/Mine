@@ -253,10 +253,27 @@ fn space_paths(app: &AppHandle) -> BTreeMap<String, String> {
     let serde_json::Value::Object(cfg) = crate::commands::vault::load_config(app) else {
         return BTreeMap::new();
     };
-    crate::space_registry::records(&cfg)
+    space_paths_in(&cfg)
+}
+
+/// The folder of every space the registry in `cfg` knows, by identity.
+pub(crate) fn space_paths_in(
+    cfg: &serde_json::Map<String, serde_json::Value>,
+) -> BTreeMap<String, String> {
+    crate::space_registry::records(cfg)
         .into_iter()
         .filter_map(|record| record.vault_id.map(|id| (id, record.path)))
         .collect()
+}
+
+/// The name of the space a tab shows (В47): the folder the registry records
+/// for its identity. `None` for a tab choosing a space, and for a space the
+/// registry does not know by its identity; the bar then asks for a space.
+pub(crate) fn space_name(space: &TabSpace, paths: &BTreeMap<String, String>) -> Option<String> {
+    match space {
+        TabSpace::Space { vault_id } => paths.get(vault_id).map(|path| folder_name(path)),
+        TabSpace::Picker => None,
+    }
 }
 
 /// The identity of the space the config names as current, if known.
@@ -759,10 +776,7 @@ pub fn bar_state(app: &AppHandle, window_id: &WindowId) -> Option<TabBarState> {
         .iter()
         .map(|tab| TabBarTab {
             id: tab.id.clone(),
-            space_name: match &tab.space {
-                TabSpace::Space { vault_id } => paths.get(vault_id).map(|path| folder_name(path)),
-                TabSpace::Picker => None,
-            },
+            space_name: space_name(&tab.space, &paths),
             place: tab.view.location.label().map(str::to_string),
             card: open_card_title(&tab.view),
             live: live.contains(&tab.id),
@@ -1298,10 +1312,12 @@ pub fn space_shown(app: &AppHandle, label: &str, vault_id: &str) {
     });
     if changed {
         emit_spaces_in_tabs(app);
-        if let Some(window) = window_of(app, &tab) {
-            emit_bar_state(app, &window);
-        }
         project_current_space(app);
+    }
+    // The bar is told on every showing: the name can change with the same
+    // identity, a space located again in a renamed folder (В47).
+    if let Some(window) = window_of(app, &tab) {
+        emit_bar_state(app, &window);
     }
     // The tab's lead role may change with its space.
     refresh_leads(app, vault_id);
