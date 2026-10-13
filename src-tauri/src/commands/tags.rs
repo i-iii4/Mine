@@ -322,40 +322,6 @@ pub fn rename_tag(webview: tauri::Webview, state: State<'_, AppState>, old_tag: 
     outcome
 }
 
-/// Delete a tag from ALL blocks: find blocks with tag, remove it from
-/// frontmatter, write back, re-index.
-fn delete_tag_from_all_unannounced(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<(), CommandError> {
-    let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
-    let vault_state = space
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-
-    let normalized = normalize_collection_ref(&tag);
-    if normalized.is_empty() {
-        return Ok(());
-    }
-    validate_collection_ref(&normalized).map_err(CommandError::Internal)?;
-
-    let affected_blocks = index::list_blocks_by_tag(&vs.conn, &normalized)?;
-    rewrite_collection_membership(&vs.conn, &vs.vault, &affected_blocks, |tags| {
-        tags.retain(|t| t != &normalized);
-    })
-}
-
-/// [`delete_tag_from_all_unannounced`], then the other tabs of the space hear of the
-/// change (SPEC_TABS.md, В15).
-#[tauri::command(async)]
-pub fn delete_tag_from_all(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<(), CommandError> {
-    let announcing = webview.clone();
-    let outcome = delete_tag_from_all_unannounced(webview, state, tag);
-    if outcome.is_ok() {
-        super::effects::space_changed_by_tab(&announcing, Vec::new());
-    }
-    outcome
-}
-
 fn file_saved_at(path: &std::path::Path) -> DateTime {
     let time = std::fs::metadata(path)
         .ok()

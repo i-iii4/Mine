@@ -98,7 +98,6 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("add_tag", Effect::ChangesSources),
     ("remove_tag", Effect::ChangesSources),
     ("rename_tag", Effect::ChangesSources),
-    ("delete_tag_from_all", Effect::ChangesSources),
     ("search", Effect::Reads),
     ("search_grid_blocks", Effect::Reads),
     ("list_channels", Effect::Reads),

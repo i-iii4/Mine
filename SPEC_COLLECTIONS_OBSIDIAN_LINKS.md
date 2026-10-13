@@ -28,6 +28,11 @@ not rewrite user files.
 ([PLAN.md](PLAN.md), Phase 44, этапы с 44.2 по 44.10), живая приёмка за
 пользователем.
 
+Контракт Н2 из [SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md), одна операция на
+каждое действие с коллекцией: раздел «Одна операция на каждое действие с
+коллекцией (13.10.2026)» в конце документа, правила с К12 по К15;
+реализовано 13.10.2026.
+
 ## Decision
 
 Mine collections are Obsidian pages.
@@ -507,7 +512,8 @@ auto-created» (`reorder_channels_unannounced` и `reorder_channels_blocking` в
 - Формат `Mine Collections`, формат страницы коллекции, `CollectionRef`,
   порядок по `position`.
 - Удаление коллекции в приложении снимает ссылки во всех карточках и
-  отправляет страницу в Корзину.
+  отправляет страницу в Корзину. С 13.10.2026 это одна команда бэкенда и
+  для CLI и MCP (К12).
 - Переименование требует страницы и без неё уже отказывает; ошибка
   становится `CollectionNotFound`.
 - Слияние карточек объединяет их `Mine Collections` вместе со ссылками без
@@ -584,7 +590,9 @@ Rust:
 2. **Отражение файлов остаётся без условия.** `list_blocks_by_tag` ищет все
    карточки, чьи `Mine Collections` называют имя, есть страница или нет: по
    нему переименование и удаление коллекции находят файлы, которые
-   переписывают. Ничего не показывает и не считает.
+   переписывают, после сверки индекса с диском (К13). Переименование ещё и
+   читает заметки, которые ссылаются на страницу (К14). Ничего не показывает
+   и не считает.
 3. **Перестановка пишет только найденные байты.** Страница, которую индекс
    знает, но файла которой уже нет, пропускается так же, как имя без
    страницы. Запись заменяет ровно те байты, с которыми страница найдена:
@@ -695,3 +703,81 @@ Rust:
     [channels.rs](src-tauri/src/commands/channels.rs)), CLI
     (`a_collection_whose_page_left_with_the_app_closed_is_no_collection_for_writes`
     в [cli.rs](src-tauri/src/cli.rs)).
+
+## Одна операция на каждое действие с коллекцией (13.10.2026)
+
+Статус: контракт Н2 из [SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md) (находки
+Е1.3, Е1.4, Е1.5, Е1.6), реализовано 13.10.2026 ([PLAN.md](PLAN.md), Phase 46,
+срез 46.3). Интерфейс, CLI `mine` и MCP вызывают одни и те же функции бэкенда
+в [channels.rs](src-tauri/src/commands/channels.rs).
+
+### Правила
+
+**К12. Удаление коллекции одной командой.** `delete_channel` (интерфейс),
+`mine collection delete` и инструмент MCP `collection_delete` зовут
+`delete_channel_inner`. Оно снимает ссылку `Mine Collections` у каждой
+карточки, у которой она есть, и отправляет страницу в Корзину одной
+мутацией вместе с индексом (`StagedSourceMutation::commit_with_index`).
+Каждая карточка и страница пишутся только поверх байтов, с которыми их
+прочитали ([SPEC_AUDIT_FIXES.md](SPEC_AUDIT_FIXES.md), Ф2): правка снаружи
+между чтением и записью отказывает всей операции (`SourceChanged`), ни один
+файл не меняется. Ответ `CollectionDeleted { deleted, kept_links }`.
+
+- Карточку, которую нельзя прочитать (нет доступа, не UTF-8) или чьи
+  свойства нельзя изменить на месте (`FrontmatterNotWritable`), удаление
+  пропускает: её файл остаётся байт в байт, ссылка остаётся, имя карточки
+  попадает в `kept_links`. Удаление коллекции она не останавливает. Такая
+  ссылка дальше живёт по К2: Mine её не показывает; новая страница с этим
+  именем вернёт эту карточку в коллекцию по К3.
+- Интерфейс делает один вызов (`handleDeleteTagFromAll` в
+  [App.tsx](src/App.tsx)). Сбой: уведомление `Could not delete the
+  collection` со строкой `Nothing changed.` и текстом ошибки. Непустой
+  `kept_links`: уведомление `Links kept` с текстом `“<имя файла>” could not
+  be changed and still links to “<коллекция>”.` для одной карточки и `<N>
+  elements could not be changed and still link to “<коллекция>”.` для
+  нескольких (`src/lib/deleteFailure.ts`). Тексты выбраны при реализации,
+  пользователь их не утверждал.
+- Команда `delete_tag_from_all` удалена: после перехода интерфейса на одну
+  команду её никто не вызывал.
+
+**К13. Переименование видит участников, сверенных с диском.** Перед
+переименованием и удалением коллекции индекс сверяется с файлами
+(`reconcile_vault`, «Мутации коллекций ждут сверки так же, как чтения»).
+Карточка, присоединённая в Obsidian, пока Mine был закрыт, участник
+наравне с остальными.
+
+**К14. Переименование переписывает всё, что ведёт к странице.** Страница
+переезжает, а заметки, которые на неё ссылаются, переписываются планом
+переименования карточки (`plan_note_move` в
+[blocks.rs](src-tauri/src/commands/blocks.rs)): ссылки `[[Имя]]`,
+`[[Имя|подпись]]` и Markdown-ссылки в тексте, `Mine Related Notes`. В том же
+проходе у каждой прочитанной заметки имя коллекции меняется в
+`Mine Collections` на своём месте в списке; участник из индекса, до которого
+проход не дошёл, дописывается. Всё пишется одной мутацией поверх прочитанных
+байтов, индекс отражает записанные файлы (`project_source_path`). Свойства,
+которые нельзя изменить на месте, отказывают всему переименованию
+(`FrontmatterNotWritable`), ни один файл не меняется.
+
+**К15. Страница коллекции остаётся коллекцией.** Переименование страницы как
+заметки (`rename_block_file`, `mine card rename`, инструмент MCP
+`card_rename`) выполняет переименование коллекции по К13 и К14; имя с другой
+папкой отказывает словами `A collection stays in its folder: type its name
+without /.`. Правка полей, тела и членства страницы через CLI и MCP
+индексирует её как коллекцию (`channels`), а не как карточку (`blocks`).
+
+### Проверки
+
+- CLI на настоящих файлах во временном пространстве
+  (`source_fidelity_tests` в [cli.rs](src-tauri/src/cli.rs)):
+  `deleting_a_collection_takes_its_links_off_and_a_new_page_starts_empty`,
+  `renaming_a_collection_finds_members_the_index_missed_and_rewrites_links`,
+  `card_rename_of_a_collection_page_renames_the_collection`,
+  `card_set_on_a_collection_page_keeps_it_a_collection`;
+- MCP: `collection_tools_keep_membership_whole` в
+  [mcp.rs](src-tauri/src/mcp.rs);
+- приложение: `deleting_a_collection_takes_its_links_off_past_a_card_it_cannot_read`
+  и `renaming_a_collection_moves_a_member_the_index_had_not_seen` в
+  [channels.rs](src-tauri/src/commands/channels.rs);
+- интерфейс: `tells that the collection was not deleted and that nothing
+  changed` и `names the elements that still link a deleted collection` в
+  [App.test.tsx](src/App.test.tsx).

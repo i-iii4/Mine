@@ -1387,10 +1387,28 @@ fn yaml_quote(s: &str) -> String {
         || s.starts_with('%')
         || s.starts_with('@')
         || s.starts_with('`')
-        || s.is_empty();
+        || s.is_empty()
+        // A line break inside a plain scalar starts a new key, and a literal
+        // one inside quotes folds into a space: either way the value reads
+        // back different (SPEC_DEEP_AUDIT.md, Н1, Е1.2).
+        || s.chars().any(|ch| ch.is_control() && ch != '\t');
 
     if needs_quoting {
-        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+        let mut quoted = String::with_capacity(s.len() + 2);
+        quoted.push('"');
+        for ch in s.chars() {
+            match ch {
+                '\\' => quoted.push_str("\\\\"),
+                '"' => quoted.push_str("\\\""),
+                '\n' => quoted.push_str("\\n"),
+                '\r' => quoted.push_str("\\r"),
+                '\t' => quoted.push('\t'),
+                ch if ch.is_control() => quoted.push_str(&format!("\\u{:04X}", u32::from(ch))),
+                ch => quoted.push(ch),
+            }
+        }
+        quoted.push('"');
+        quoted
     } else {
         s.to_string()
     }
@@ -2408,6 +2426,18 @@ mod tests {
         // A colon inside a word still needs no quotes: YAML only breaks on the
         // separator forms.
         assert_eq!(super::yaml_quote("ratio 16:9"), "ratio 16:9");
+    }
+
+    /// SPEC_DEEP_AUDIT.md, Е1.2: a value with line breaks is written as an
+    /// escaped double-quoted scalar and reads back as the same value.
+    #[test]
+    fn a_value_with_line_breaks_reads_back_unchanged() {
+        for value in ["one\ntwo", "one\r\ntwo: \"x\"\n", "bell\u{7}\ttab", "trailing\n"] {
+            let line = format!("title: {}", super::yaml_quote(value));
+            assert!(!line.contains('\n'), "{line:?}");
+            let read: serde_yaml::Value = serde_yaml::from_str(&line).unwrap();
+            assert_eq!(read["title"].as_str(), Some(value), "{line:?}");
+        }
     }
 
     #[test]

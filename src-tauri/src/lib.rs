@@ -195,7 +195,6 @@ pub fn run() {
             commands::tags::add_tag,
             commands::tags::remove_tag,
             commands::tags::rename_tag,
-            commands::tags::delete_tag_from_all,
             commands::search::search,
             commands::search::search_grid_blocks,
             commands::channels::list_channels,

@@ -83,8 +83,10 @@ import { applyPendingTagOrder } from "@/lib/collectionOrder";
 import { collectionRefLabel } from "@/lib/collections";
 import {
   DELETE_COLLECTION_FAILED_TITLE,
+  DELETE_COLLECTION_KEPT_LINKS_TITLE,
+  DELETE_COLLECTION_NOTHING_CHANGED,
   DELETE_ELEMENT_FAILED_TITLE,
-  deleteCollectionFailureSummary,
+  deleteCollectionKeptLinksText,
 } from "@/lib/deleteFailure";
 import { reconcileBlocks } from "@/lib/blockIdentity";
 import { refreshPageLimit } from "@/lib/gridPaging";
@@ -285,7 +287,6 @@ import {
   checkBlockRename,
   prepareDeleteBlock,
   prepareDeleteBlocks,
-  deleteTagFromAll,
   addTag,
   removeTag,
   isCollectionNotFound,
@@ -1099,6 +1100,12 @@ export function AppWithVault({
   const [deleteCollectionFailure, setDeleteCollectionFailure] = useState<{
     summary: string;
     error: string;
+  } | null>(null);
+  // The elements a deleted collection's link stayed in: the deletion could
+  // not change them (SPEC_DEEP_AUDIT.md, Е1.3).
+  const [deleteCollectionKeptLinks, setDeleteCollectionKeptLinks] = useState<{
+    label: string;
+    slugs: string[];
   } | null>(null);
   const [detailChromeClosing, setDetailChromeClosing] = useState(false);
   const [closingDetailBlock, setClosingDetailBlock] = useState<LightBlock | IndexedBlock | null>(null);
@@ -2176,6 +2183,7 @@ export function AppWithVault({
     setTaxonomyLoadError(null);
     setSelectionCardError(null);
     setDeleteKeptMedia(null);
+    setDeleteCollectionKeptLinks(null);
     cancelGridRetry();
     cancelPageRetry();
     setVaultStats(null);
@@ -3224,22 +3232,29 @@ export function AppWithVault({
   );
 
   // `Delete collection?` closes on the press; a failure is a notice of this
-  // tab naming what had changed (DESIGN_SYSTEM.md, «Сбой после закрытия
-  // окна», decision of 11.10.2026).
+  // tab (DESIGN_SYSTEM.md, «Сбой после закрытия окна», decision of
+  // 11.10.2026). One backend command takes the collection's links off its
+  // elements and sends its page to the Trash in one mutation, so a failure
+  // changed nothing; elements it could not change are named
+  // (SPEC_DEEP_AUDIT.md, Н2, Е1.3).
   const handleDeleteTagFromAll = useCallback(
     async (tag: string) => {
       setDeleteCollectionFailure(null);
-      let connectionsRemoved = false;
+      setDeleteCollectionKeptLinks(null);
       try {
-        await deleteTagFromAll(tag);
-        connectionsRemoved = true;
-        await deleteChannel(tag);
+        const deletion = await deleteChannel(tag);
+        if (deletion.kept_links.length > 0) {
+          setDeleteCollectionKeptLinks({
+            label: collectionRefLabel(tag),
+            slugs: deletion.kept_links,
+          });
+        }
         if (currentTag === tag) {
           navigate("/");
         }
       } catch (err) {
         setDeleteCollectionFailure({
-          summary: deleteCollectionFailureSummary(collectionRefLabel(tag), connectionsRemoved),
+          summary: DELETE_COLLECTION_NOTHING_CHANGED,
           error: errorMessage(err),
         });
       }
@@ -4302,7 +4317,12 @@ export function AppWithVault({
       setDeleteKeptMedia(null);
       setDeleteBlockError(null);
       try {
-        const outcome = await deleteBlocks(slugs, deleteUnusedMedia);
+        // Only the files the window offered may go (SPEC_DEEP_AUDIT.md, Е1.10).
+        const outcome = await deleteBlocks(
+          slugs,
+          deleteUnusedMedia,
+          offeredMedia.map((media) => media.path),
+        );
         // The open card closes when it went with the selection.
         if (selectedBlockRef.current && slugs.includes(selectedBlockRef.current.slug)) {
           setSelectedBlock(null);
@@ -4368,7 +4388,12 @@ export function AppWithVault({
       // truth (and self-heals the list if the delete failed).
       window.dispatchEvent(new CustomEvent("block-deleted", { detail: { slug } }));
       try {
-        const outcome = await deleteBlock(slug, deleteUnusedMedia);
+        // Only the files the window offered may go (SPEC_DEEP_AUDIT.md, Е1.10).
+        const outcome = await deleteBlock(
+          slug,
+          deleteUnusedMedia,
+          offeredMedia.map((media) => media.path),
+        );
         // The window's plan came from the index; the deletion checked the
         // notes on disk. A file the window offered that a note uses after
         // all stayed, and the reader hears of it (11.10.2026).
@@ -4476,6 +4501,7 @@ export function AppWithVault({
     || deleteKeptMedia !== null
     || deleteBlockError !== null
     || deleteCollectionFailure !== null
+    || deleteCollectionKeptLinks !== null
     || showFirstCardMarker
     || showIndexingNotice;
 
@@ -4941,6 +4967,19 @@ export function AppWithVault({
                 </p>
                 <p className="text-sm text-destructive" data-delete-failed-notice="collection">
                   {deleteCollectionFailure.error}
+                </p>
+              </NotificationCard>
+            )}
+            {deleteCollectionKeptLinks !== null && (
+              <NotificationCard
+                title={DELETE_COLLECTION_KEPT_LINKS_TITLE}
+                onClose={() => setDeleteCollectionKeptLinks(null)}
+              >
+                <p className="text-sm text-muted-foreground" data-delete-kept-links="">
+                  {deleteCollectionKeptLinksText(
+                    deleteCollectionKeptLinks.label,
+                    deleteCollectionKeptLinks.slugs,
+                  )}
                 </p>
               </NotificationCard>
             )}

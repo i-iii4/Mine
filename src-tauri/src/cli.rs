@@ -598,18 +598,42 @@ impl From<MutationError> for CliError {
     }
 }
 
-fn mutation_report(outcome: cli_mutations::MutationOutcome, json: bool) -> String {
+/// The report of a field, body or membership mutation. `index` is how the
+/// index took the written note: a failure is said, not swallowed
+/// (SPEC_DEEP_AUDIT.md, Н11); the file is written either way, and Mine
+/// indexes it when it next reads the space.
+fn mutation_report(
+    outcome: cli_mutations::MutationOutcome,
+    json: bool,
+    index: Result<(), String>,
+) -> String {
     if json {
-        format!(
-            "{}\n",
-            json!({
-                "contract": CONTRACT_VERSION,
-                "applied": !outcome.dry_run,
-                "summary": outcome.summary,
-            })
-        )
+        let mut report = json!({
+            "contract": CONTRACT_VERSION,
+            "applied": !outcome.dry_run,
+            "summary": outcome.summary,
+        });
+        if let Err(error) = &index {
+            report["index_error"] = json!(error);
+        }
+        format!("{report}\n")
     } else {
-        format!("{}\n", outcome.summary)
+        match index {
+            Ok(()) => format!("{}\n", outcome.summary),
+            Err(error) => format!(
+                "{}\nthe index was not updated ({error}); Mine updates it when it next reads the space\n",
+                outcome.summary
+            ),
+        }
+    }
+}
+
+/// Index the note an applied mutation wrote, or nothing for a dry run.
+fn reindex_applied(vault: &VaultLayout, slug: &str, outcome: &cli_mutations::MutationOutcome) -> Result<(), String> {
+    if outcome.dry_run {
+        Ok(())
+    } else {
+        reindex_note(vault, slug)
     }
 }
 
@@ -618,24 +642,9 @@ fn cmd_card_body(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
         return Err(CliError::usage("card body needs a slug".into()));
     };
     let vault = resolve_space(env, flags.space.as_deref())?;
-    let path = vault.block_path(slug);
-    let content = std::fs::read_to_string(&path)
-        .map_err(|_| CliError::not_found(format!("no card {slug}")))?;
-    let body = match content
-        .strip_prefix("---\n")
-        .and_then(|rest| rest.find("\n---").map(|i| i + 4))
-    {
-        Some(close) => {
-            let after = &content[4 + close..];
-            after
-                .split_once('\n')
-                .map(|(_, b)| b)
-                .unwrap_or("")
-                .to_string()
-        }
-        None => content,
-    };
-    Ok(body)
+    // The part after the closing fence the app finds; `card set-body`
+    // writes exactly this part (SPEC_DEEP_AUDIT.md, Н1).
+    Ok(cli_mutations::card_body(&vault, slug)?)
 }
 
 fn cmd_card_set(env: &CliEnv, flags: &Flags, set: bool) -> Result<String, CliError> {
@@ -657,10 +666,8 @@ fn cmd_card_set(env: &CliEnv, flags: &Flags, set: bool) -> Result<String, CliErr
     };
     let vault = resolve_space(env, flags.space.as_deref())?;
     let outcome = cli_mutations::set_field(&vault, slug, field, value, flags.dry_run)?;
-    if !outcome.dry_run {
-        reindex_card(&vault, slug);
-    }
-    Ok(mutation_report(outcome, flags.json))
+    let index = reindex_applied(&vault, slug, &outcome);
+    Ok(mutation_report(outcome, flags.json, index))
 }
 
 fn cmd_card_set_body(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
@@ -687,10 +694,8 @@ fn cmd_card_set_body(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
         flags.allow_media_changes,
         flags.dry_run,
     )?;
-    if !outcome.dry_run {
-        reindex_card(&vault, slug);
-    }
-    Ok(mutation_report(outcome, flags.json))
+    let index = reindex_applied(&vault, slug, &outcome);
+    Ok(mutation_report(outcome, flags.json, index))
 }
 
 fn cmd_membership(env: &CliEnv, flags: &Flags, connected: bool) -> Result<String, CliError> {
@@ -715,10 +720,8 @@ fn cmd_membership(env: &CliEnv, flags: &Flags, connected: bool) -> Result<String
             cli_mutations::require_collection_page(&conn, &indexed, collection_ref)
         },
     )?;
-    if !outcome.dry_run {
-        reindex_card(&vault, slug);
-    }
-    Ok(mutation_report(outcome, flags.json))
+    let index = reindex_applied(&vault, slug, &outcome);
+    Ok(mutation_report(outcome, flags.json, index))
 }
 
 fn cmd_restore(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
@@ -727,33 +730,30 @@ fn cmd_restore(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     };
     let vault = resolve_space(env, flags.space.as_deref())?;
     let outcome = cli_mutations::restore(&vault, slug)?;
-    if !outcome.dry_run {
-        reindex_card(&vault, slug);
-    }
-    Ok(mutation_report(outcome, flags.json))
+    let index = reindex_applied(&vault, slug, &outcome);
+    Ok(mutation_report(outcome, flags.json, index))
 }
 
-/// Re-index one card after an applied file mutation, so structural commands
-/// (collection rename, merge) in the same CLI session see fresh membership.
-/// Best effort: the app's watcher re-indexes the file anyway.
-fn reindex_card(vault: &VaultLayout, slug: &str) {
+/// Index one note after an applied file mutation the way the app projects a
+/// written note (`reconcile::project_source_path`): a collection page as its
+/// collection, a card as a card (SPEC_DEEP_AUDIT.md, Е1.6), a note gone as
+/// gone. Commands later in the same CLI session see it as written; the
+/// app's watcher indexes the file too.
+fn reindex_note(vault: &VaultLayout, slug: &str) -> Result<(), String> {
     let path = vault.block_path(slug);
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        return;
-    };
-    let saved_at = std::fs::metadata(&path)
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .map(crate::util::system_time_to_iso8601)
-        .and_then(|iso| crate::domain::block::DateTime::new(&iso).ok())
-        .unwrap_or_else(|| crate::domain::block::DateTime::new("1970-01-01T00:00:00Z").unwrap());
-    let Ok(parsed) = crate::domain::block::parse_markdown_document(slug, &content, saved_at) else {
-        return;
-    };
-    let Ok(conn) = db::open_or_create(&vault.index_db_path()) else {
-        return;
-    };
-    let _ = crate::storage::index::upsert_block(&conn, &parsed.block, Some(vault.root()));
+    let conn = db::open_or_create(&vault.index_db_path()).map_err(|error| format!("{error:#}"))?;
+    let transaction = conn
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    if path.is_file() {
+        crate::storage::reconcile::project_source_path(&transaction, vault, &path)
+            .map(|_| ())
+            .map_err(|error| format!("{error:#}"))?;
+    } else {
+        crate::storage::reconcile::remove_source_projection(&transaction, vault, slug)
+            .map_err(|error| format!("{error:#}"))?;
+    }
+    transaction.commit().map_err(|error| error.to_string())
 }
 
 fn open_index_rw(vault: &VaultLayout) -> Result<rusqlite::Connection, CliError> {
@@ -908,27 +908,23 @@ fn cmd_card_delete(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
         ));
     }
     // The card file is backed up before the transactional delete runs, so
-    // `mine restore` can bring the text back even after a deletion.
-    let path = vault.block_path(slug);
-    if let Ok(content) = std::fs::read_to_string(&path) {
-        let backup = vault
-            .derived_root()
-            .join("cli-backups")
-            .join(format!("{slug}.md"));
-        if let Some(parent) = backup.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(&backup, content);
-    }
+    // `mine restore` can bring the text back even after a deletion; the
+    // backup records that the deletion left no file, and restore puts the
+    // text back only while none took its place (SPEC_DEEP_AUDIT.md, Е1.9).
+    cli_mutations::checked_slug(slug)?;
+    let content = std::fs::read_to_string(vault.block_path(slug))
+        .map_err(|error| CliError::internal(format!("read {slug} for its backup: {error}")))?;
+    let backup = cli_mutations::CliBackup::record(&vault, slug, &content, &cli_mutations::Left::Absent)?;
     let deleted = crate::commands::blocks::delete_block_inner(
         None,
         &conn,
         &vault,
         slug,
-        Some(flags.delete_unused_media),
+        Some(flags.delete_unused_media), None,
     )
     .map_err(|e| CliError::internal(format!("delete: {e:?}")))?
     .removed;
+    backup.keep();
     if flags.json {
         return Ok(format!(
             "{}\n",
@@ -1002,15 +998,29 @@ fn cmd_collection_delete(env: &CliEnv, flags: &Flags) -> Result<String, CliError
     };
     let vault = resolve_space(env, flags.space.as_deref())?;
     let conn = open_index_rw(&vault)?;
-    let deleted = crate::commands::channels::delete_channel_inner(&conn, &vault, name)
+    // One deletion with the app's: the page goes to the Trash and its link
+    // comes off every card, in one mutation (SPEC_DEEP_AUDIT.md, Н2).
+    let deletion = crate::commands::channels::delete_channel_inner(None, &conn, &vault, name)
         .map_err(|e| CliError::internal(format!("collection delete: {e:?}")))?;
     if flags.json {
         return Ok(format!(
             "{}\n",
-            json!({ "contract": CONTRACT_VERSION, "deleted": deleted, "collection": name })
+            json!({
+                "contract": CONTRACT_VERSION,
+                "deleted": deletion.deleted,
+                "collection": name,
+                "kept_links": deletion.kept_links,
+            })
         ));
     }
-    Ok(format!("deleted collection {name}\n"))
+    let mut out = format!("deleted collection {name}\n");
+    if !deletion.kept_links.is_empty() {
+        out.push_str(&format!(
+            "these cards could not be changed and still link it: {}\n",
+            deletion.kept_links.join(", ")
+        ));
+    }
+    Ok(out)
 }
 
 fn light_block_json(block: &crate::storage::index::LightBlock) -> serde_json::Value {
@@ -1951,5 +1961,273 @@ mod mutation_tests {
         let out = run(&env, &args(&["card", "set", "Cards/foreign", "title", "X"]));
         assert_eq!(out.code, EXIT_USAGE);
         assert!(out.stderr.contains("no front matter"));
+    }
+}
+
+/// SPEC_DEEP_AUDIT.md, Е1 (Н1, Н2): the CLI and the MCP change notes the way
+/// the app reads them, on real files in a disposable space.
+#[cfg(test)]
+pub(crate) mod source_fidelity_tests {
+    use super::tests::*;
+    use super::*;
+
+    pub(crate) fn read(root: &std::path::Path, slug: &str) -> String {
+        std::fs::read_to_string(root.join(format!("{slug}.md"))).unwrap()
+    }
+
+    pub(crate) fn write(root: &std::path::Path, slug: &str, text: &str) {
+        let path = root.join(format!("{slug}.md"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    /// The note as the app reads it.
+    pub(crate) fn parsed(root: &std::path::Path, slug: &str) -> crate::domain::block::ParsedMarkdownBlock {
+        crate::domain::block::parse_markdown_document(
+            slug,
+            &read(root, slug),
+            DateTime::new("1999-01-01T00:00:00Z").unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn body_file(dir: &tempfile::TempDir, text: &str) -> String {
+        let path = dir.path().join(format!("body-{}.md", text.len()));
+        std::fs::write(&path, text).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    fn ok(out: &CliOutput) {
+        assert_eq!(out.code, EXIT_OK, "stdout: {} stderr: {}", out.stdout, out.stderr);
+    }
+
+    /// The index of the fixture space, opened for a look.
+    fn index(env: &CliEnv) -> rusqlite::Connection {
+        let vault = resolve_space(env, None).map_err(|error| error.message).unwrap();
+        db::open_or_create(&vault.index_db_path()).unwrap()
+    }
+
+    // ── Е1.1: one frontmatter boundary ──────────────────────────────────────
+
+    #[test]
+    fn set_body_keeps_a_crlf_front_matter() {
+        let (dir, env, root) = fixture();
+        write(&root, "Cards/crlf", "---\r\nsaved_at: 2026-01-03T00:00:00Z\r\nauthor: Ann\r\n---\r\nOld body\r\n");
+
+        let out = run(&env, &args(&["card", "set-body", "Cards/crlf", "--from", &body_file(&dir, "New body\n")]));
+
+        ok(&out);
+        assert_eq!(
+            read(&root, "Cards/crlf"),
+            "---\r\nsaved_at: 2026-01-03T00:00:00Z\r\nauthor: Ann\r\n---\r\nNew body\n"
+        );
+        let note = parsed(&root, "Cards/crlf");
+        assert_eq!(note.block.frontmatter.author.as_deref(), Some("Ann"));
+        assert_eq!(note.block.body, "New body\n");
+    }
+
+    #[test]
+    fn set_body_starts_on_its_own_line_after_a_closing_fence_without_a_line_break() {
+        let (dir, env, root) = fixture();
+        write(&root, "Cards/bare", "---\nsaved_at: 2026-01-03T00:00:00Z\n---");
+
+        let out = run(&env, &args(&["card", "set-body", "Cards/bare", "--from", &body_file(&dir, "Body\n")]));
+
+        ok(&out);
+        assert_eq!(read(&root, "Cards/bare"), "---\nsaved_at: 2026-01-03T00:00:00Z\n---\nBody\n");
+        assert_eq!(parsed(&root, "Cards/bare").block.body, "Body\n");
+    }
+
+    #[test]
+    fn an_empty_front_matter_is_found_and_a_rule_in_the_body_stays_body() {
+        let (dir, env, root) = fixture();
+        let note = "---\n---\nIntro\n---\nMore\n";
+        write(&root, "Cards/empty", note);
+
+        let out = run(&env, &args(&["card", "set", "Cards/empty", "author", "Ann"]));
+        ok(&out);
+        assert_eq!(read(&root, "Cards/empty"), "---\nauthor: Ann\n---\nIntro\n---\nMore\n");
+
+        write(&root, "Cards/empty", note);
+        let out = run(&env, &args(&["card", "set-body", "Cards/empty", "--from", &body_file(&dir, "New\n")]));
+        ok(&out);
+        assert_eq!(read(&root, "Cards/empty"), "---\n---\nNew\n");
+
+        write(&root, "Cards/empty", note);
+        let out = run(&env, &args(&["card", "body", "Cards/empty"]));
+        ok(&out);
+        assert_eq!(out.stdout, "Intro\n---\nMore\n");
+    }
+
+    // ── Е1.2: a key with its continuation lines ─────────────────────────────
+
+    pub(crate) const MULTILINE: &str = "---\nsaved_at: 2026-01-03T00:00:00Z\ndescription: |\n  First line\n  Second line\nauthor: Ann\n---\nBody\n";
+
+    #[test]
+    fn set_replaces_a_block_scalar_whole() {
+        let (_dir, env, root) = fixture();
+        write(&root, "Cards/multi", MULTILINE);
+
+        let out = run(&env, &args(&["card", "set", "Cards/multi", "description", "Short"]));
+
+        ok(&out);
+        let note = parsed(&root, "Cards/multi");
+        assert_eq!(note.block.frontmatter.description.as_deref(), Some("Short"));
+        assert_eq!(note.block.frontmatter.author.as_deref(), Some("Ann"));
+        assert_eq!(note.block.frontmatter.saved_at.as_str(), "2026-01-03T00:00:00Z");
+        assert_eq!(note.block.body, "Body\n");
+        assert!(!read(&root, "Cards/multi").contains("First line"));
+    }
+
+    #[test]
+    fn unset_takes_a_folded_value_with_its_lines() {
+        let (_dir, env, root) = fixture();
+        write(
+            &root,
+            "Cards/folded",
+            "---\nsaved_at: 2026-01-03T00:00:00Z\ndescription: >\n  folded\n  text\nauthor: Ann\n---\nBody\n",
+        );
+
+        let out = run(&env, &args(&["card", "unset", "Cards/folded", "description"]));
+
+        ok(&out);
+        assert_eq!(
+            read(&root, "Cards/folded"),
+            "---\nsaved_at: 2026-01-03T00:00:00Z\nauthor: Ann\n---\nBody\n"
+        );
+    }
+
+    #[test]
+    fn a_value_with_line_breaks_reads_back_as_written() {
+        let (_dir, env, root) = fixture();
+        write(&root, "Cards/multi", MULTILINE);
+
+        let value = "Line one\nLine two: \"quoted\"\n";
+        let out = run(&env, &args(&["card", "set", "Cards/multi", "description", value]));
+
+        ok(&out);
+        let note = parsed(&root, "Cards/multi");
+        assert_eq!(note.origin, "partial_frontmatter");
+        assert_eq!(note.block.frontmatter.description.as_deref(), Some(value));
+        assert_eq!(note.block.frontmatter.author.as_deref(), Some("Ann"));
+    }
+
+    // ── Е1.6: a collection page stays a collection ──────────────────────────
+
+    #[test]
+    fn card_set_on_a_collection_page_keeps_it_a_collection() {
+        let (_dir, env, _root) = fixture();
+
+        let out = run(&env, &args(&["card", "set", "Collections/Nature", "description", "Wild things"]));
+
+        ok(&out);
+        let conn = index(&env);
+        let as_card: i64 = conn
+            .query_row("SELECT COUNT(*) FROM blocks WHERE slug = 'Collections/Nature'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(as_card, 0, "the page was indexed as a card");
+        let description: Option<String> = conn
+            .query_row("SELECT description FROM channels WHERE tag = 'Nature'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(description.as_deref(), Some("Wild things"));
+    }
+
+    // ── Е1.9: writes and restore check the file they read ───────────────────
+
+    #[test]
+    fn restore_refuses_a_card_edited_after_the_cli_wrote_it() {
+        let (_dir, env, root) = fixture();
+        ok(&run(&env, &args(&["card", "set", "Cards/plain", "author", "Ann"])));
+        let edited = "---\nsaved_at: 2026-01-02T00:00:00Z\nauthor: Ann\n---\nEdited in Obsidian.\n";
+        write(&root, "Cards/plain", edited);
+
+        let out = run(&env, &args(&["restore", "Cards/plain"]));
+
+        assert_ne!(out.code, EXIT_OK, "{}", out.stdout);
+        assert_eq!(read(&root, "Cards/plain"), edited);
+    }
+
+    #[test]
+    fn restore_never_puts_a_backup_over_another_card_that_took_the_name() {
+        let (_dir, env, root) = fixture();
+        ok(&run(&env, &args(&["card", "set", "Cards/plain", "author", "Ann"])));
+        ok(&run(&env, &args(&["card", "rename", "Cards/plain", "Typography"])));
+        let other = "---\nsaved_at: 2026-02-01T00:00:00Z\n---\nAnother card under the old name.\n";
+        write(&root, "Cards/plain", other);
+
+        let out = run(&env, &args(&["restore", "Cards/plain"]));
+
+        assert_ne!(out.code, EXIT_OK, "{}", out.stdout);
+        assert_eq!(read(&root, "Cards/plain"), other);
+    }
+
+    // ── Е1.3: deleting a collection takes its links off ─────────────────────
+
+    #[test]
+    fn deleting_a_collection_takes_its_links_off_and_a_new_page_starts_empty() {
+        let (_dir, env, root) = fixture();
+
+        let out = run(&env, &args(&["collection", "delete", "Nature"]));
+
+        ok(&out);
+        assert!(!root.join("Collections/Nature.md").exists());
+        let sunset = read(&root, "Cards/sunset");
+        assert!(!sunset.contains("Nature"), "{sunset}");
+        assert_eq!(parsed(&root, "Cards/sunset").block.body, "A sunset over the bay.");
+
+        ok(&run(&env, &args(&["collection", "create", "Nature"])));
+        let out = run(&env, &args(&["cards", "--collection", "Nature"]));
+        ok(&out);
+        assert!(!out.stdout.contains("Cards/sunset"), "{}", out.stdout);
+    }
+
+    // ── Е1.4: renaming a collection finds every member and every link ───────
+
+    #[test]
+    fn renaming_a_collection_finds_members_the_index_missed_and_rewrites_links() {
+        let (_dir, env, root) = fixture();
+        // Written with the app closed: on disk, not in the index.
+        write(
+            &root,
+            "Cards/fresh",
+            "---\nsaved_at: 2026-01-05T00:00:00Z\nMine Collections:\n  - \"[[Nature]]\"\n---\nFresh.\n",
+        );
+        write(
+            &root,
+            "Cards/notes",
+            "---\nsaved_at: 2026-01-05T00:00:00Z\nMine Related Notes:\n  - \"[[Nature]]\"\n---\nSee [[Nature]] and [[Nature|the shelf]].\n",
+        );
+
+        let out = run(&env, &args(&["collection", "rename", "Nature", "Wild"]));
+
+        ok(&out);
+        assert!(root.join("Collections/Wild.md").exists());
+        assert_eq!(parsed(&root, "Cards/fresh").block.frontmatter.tags, vec!["Wild"]);
+        assert_eq!(parsed(&root, "Cards/sunset").block.frontmatter.tags, vec!["Wild"]);
+        let notes = parsed(&root, "Cards/notes");
+        assert_eq!(notes.block.frontmatter.related_notes, vec!["Wild"]);
+        assert_eq!(notes.block.body, "See [[Wild]] and [[Wild|the shelf]].\n");
+        let out = run(&env, &args(&["collections", "--json"]));
+        ok(&out);
+        let value: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(value["collections"], json!([{ "name": "Wild", "count": 2 }]));
+    }
+
+    // ── Е1.5: renaming a collection page renames the collection ─────────────
+
+    #[test]
+    fn card_rename_of_a_collection_page_renames_the_collection() {
+        let (_dir, env, root) = fixture();
+
+        let out = run(&env, &args(&["card", "rename", "Collections/Nature", "Wild"]));
+
+        ok(&out);
+        assert!(!root.join("Collections/Nature.md").exists());
+        assert!(root.join("Collections/Wild.md").exists());
+        assert_eq!(parsed(&root, "Cards/sunset").block.frontmatter.tags, vec!["Wild"]);
+        let out = run(&env, &args(&["collections", "--json"]));
+        ok(&out);
+        let value: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+        assert_eq!(value["collections"], json!([{ "name": "Wild", "count": 1 }]));
     }
 }

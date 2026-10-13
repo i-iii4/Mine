@@ -134,6 +134,12 @@ The dialog order is the only source of truth for backend merge order. The
 backend must not reorder `ordered_slugs` by slug, id, saved date or current
 collection order.
 
+The dialog takes the selection when it opens and keeps its rows and their
+order while it is open: a feed reload under the open dialog (a new list of
+the selected cards, often in another order) does not reset the order the
+person set. The next opening takes the selection as it is then
+([SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md), Е1.7).
+
 Keyboard support:
 
 - `Escape` closes the dialog without merging;
@@ -179,7 +185,9 @@ Rules:
 | `saved_at` | Merge time. |
 | `source` | Literal `card-merge`. |
 | `file` | Omitted. Media references live in the body sections. |
-| `thumbnail` | Omitted on write; derived preview pipeline regenerates the new card preview. |
+| `thumbnail` | First non-empty `thumbnail` in merge order: the cover of the first card that has one is the merged card's cover. A reference written as a path from the note (`./`, `../`) is written again from the merged card's folder; any other form is copied as written. The covers of the other cards are embedded in their sections (Source Card Content Mapping). |
+| `Mine Source Media` | First non-empty value in merge order. Provenance only, as on the source card. |
+| User properties | Every key Mine does not own (`MINE_FRONTMATTER_KEYS`), from every source, after Mine's keys: Obsidian `tags`, `aliases`, `rating`, any other. A key one source has keeps its value. A key several sources have takes the first value in merge order; when any of the values is a list, the merged value is the ordered union of all of them, each value once, a single value counting as one item. The merged note is read back before it is written: Mine's fields and these properties must read as composed. |
 | `title` | Not synthesized. Legacy `title` is not copied into new writes. |
 | `width` / `height` | Omitted. A merged article is not one primary media asset. |
 
@@ -255,6 +263,13 @@ Section rules:
 
 Media-card sections may also append `Source:` and `Author:` if those fields are
 present on the source card.
+
+A source card's `thumbnail` that is not the merged card's cover is embedded
+in its section after the card's own `file` embed, unless the section already
+names it: `![[<thumbnail>]]`, or `![](<path>)` for a path from the note and
+for a remote picture. Every cover stays referenced by the merged card, so
+merge leaves no media file without a reference (decision of 13.10.2026,
+[SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md), Е1.8).
 
 ### Example
 
@@ -598,6 +613,9 @@ Rows:
 - rejects missing source block;
 - rejects `channel` source;
 - output frontmatter uses first non-empty `url` and `author`;
+- output keeps the first `thumbnail` and `Mine Source Media`, embeds the
+  other covers in their sections, and carries the sources' own properties
+  with lists united (`merge_keeps_thumbnails_source_media_and_the_users_properties`);
 - output `Mine Collections` is ordered union and deduped;
 - output `Mine Related Notes` is ordered union and deduped;
 - bodyful articles preserve body Markdown;
@@ -623,6 +641,8 @@ Rows:
 - dialog rows reuse the shared card-reference row component markers;
 - drag handle reorders rows without opening cards;
 - confirm sends exactly the visible row order to `mergeBlocks`;
+- a feed reload under the open dialog keeps its order
+  (`keeps its order while the feed changes under the open window`);
 - command failure keeps dialog open and selection intact;
 - success closes dialog, clears selection and removes selected frames;
 - success preserves viewport anchor after masonry reflow;

@@ -15,7 +15,7 @@ import { act, render, screen, waitFor, fireEvent, within } from "@testing-librar
 import { MemoryRouter } from "react-router";
 import { isTauri } from "@tauri-apps/api/core";
 
-import type { ChannelDto, DeleteBlockMedia, DeleteBlockOutcome, DeleteBlockPlan, DeleteBlocksOutcome, DeleteBlocksPlan, GridSnapshot, IndexedBlock, LightBlock, SidebarLayout, TabBootstrap, TabLocation, TabView, TaxonomySnapshot, VaultOpenResult, VaultStats } from "@/types";
+import type { ChannelDto, CollectionDeleted, DeleteBlockMedia, DeleteBlockOutcome, DeleteBlockPlan, DeleteBlocksOutcome, DeleteBlocksPlan, GridSnapshot, IndexedBlock, LightBlock, SidebarLayout, TabBootstrap, TabLocation, TabView, TaxonomySnapshot, VaultOpenResult, VaultStats } from "@/types";
 import { App, AppWithVault } from "./App";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { SEARCH_OVERLAY_RECENT_LIMIT, SEARCH_OVERLAY_RESULT_LIMIT } from "@/components/SearchOverlay";
@@ -72,11 +72,10 @@ const commandMocks = vi.hoisted(() => ({
   reorderChannels: vi.fn(async (_items: { tag: string; position: number }[]) => undefined),
   renameBlockFile: vi.fn(),
   prepareDeleteBlock: vi.fn<(slug: string) => Promise<DeleteBlockPlan>>(),
-  deleteBlock: vi.fn<(slug: string, deleteUnusedMedia?: boolean) => Promise<DeleteBlockOutcome>>(),
+  deleteBlock: vi.fn<(slug: string, deleteUnusedMedia?: boolean, offeredMedia?: string[]) => Promise<DeleteBlockOutcome>>(),
   prepareDeleteBlocks: vi.fn<(slugs: string[]) => Promise<DeleteBlocksPlan>>(),
-  deleteBlocks: vi.fn<(slugs: string[], deleteUnusedMedia: boolean) => Promise<DeleteBlocksOutcome>>(),
-  deleteTagFromAll: vi.fn<(tag: string) => Promise<void>>(),
-  deleteChannel: vi.fn<(tag: string) => Promise<boolean>>(),
+  deleteBlocks: vi.fn<(slugs: string[], deleteUnusedMedia: boolean, offeredMedia?: string[]) => Promise<DeleteBlocksOutcome>>(),
+  deleteChannel: vi.fn<(tag: string) => Promise<CollectionDeleted>>(),
   mergeBlocks: vi.fn<(orderedSlugs: string[]) => Promise<unknown>>(),
   getBlock: vi.fn(),
   addTag: vi.fn(async (_slug: string, _tag: string) => undefined),
@@ -156,7 +155,6 @@ vi.mock("@/lib/commands", () => ({
   renameChannel: vi.fn(),
   checkCollectionName: vi.fn(async () => null),
   renameBlockFile: commandMocks.renameBlockFile,
-  deleteTagFromAll: commandMocks.deleteTagFromAll,
   addTag: commandMocks.addTag,
   removeTag: vi.fn(),
   isCollectionNotFound: (error: unknown) => Boolean(error) && typeof error === "object"
@@ -689,8 +687,7 @@ describe("AppWithVault", () => {
     });
     commandMocks.deleteBlock.mockResolvedValue({ removed: true, kept_media: [] });
     commandMocks.deleteBlocks.mockResolvedValue({ removed: 2, kept_media: [] });
-    commandMocks.deleteTagFromAll.mockResolvedValue(undefined);
-    commandMocks.deleteChannel.mockResolvedValue(true);
+    commandMocks.deleteChannel.mockResolvedValue({ deleted: true, kept_links: [] });
     commandMocks.mergeBlocks.mockResolvedValue({});
     commandMocks.getBlock.mockImplementation(async (slug: string) => indexedBlock(1, slug, slug));
     commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {
@@ -3405,7 +3402,7 @@ describe("AppWithVault", () => {
     fireEvent.click(screen.getByRole("button", { name: "Keep media" }));
 
     await waitFor(() => {
-      expect(commandMocks.deleteBlock).toHaveBeenCalledWith("alpha-block", false);
+      expect(commandMocks.deleteBlock).toHaveBeenCalledWith("alpha-block", false, []);
     });
     // Optimistic notice for overlay-owned result sets fires on confirm.
     expect(deletedSlugs).toEqual(["alpha-block"]);
@@ -3438,7 +3435,7 @@ describe("AppWithVault", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
-      expect(commandMocks.deleteBlock).toHaveBeenCalledWith("beta-block", false);
+      expect(commandMocks.deleteBlock).toHaveBeenCalledWith("beta-block", false, []);
     });
     expect(document.querySelector("[data-detail-root]")).not.toBeNull();
     expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
@@ -3515,7 +3512,13 @@ describe("AppWithVault", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
-      expect(commandMocks.deleteBlock).toHaveBeenCalledWith("alpha-block", true);
+      // SPEC_DEEP_AUDIT.md, Е1.10: the files the window offered go with the
+      // deletion, which takes no other.
+      expect(commandMocks.deleteBlock).toHaveBeenCalledWith(
+        "alpha-block",
+        true,
+        ["Media/photo.png", "Media/lone.png"],
+      );
     });
     expect(await screen.findByText("Media kept")).toBeInTheDocument();
     expect(document.querySelector("[data-delete-kept-media]")).toHaveTextContent(
@@ -3559,7 +3562,9 @@ describe("AppWithVault", () => {
     });
   });
 
-  it("tells that the collection was not deleted and what had changed", async () => {
+  // SPEC_DEEP_AUDIT.md, Е1.3 (Н2): the collection goes in one backend
+  // command, so a failure changed nothing and says so.
+  it("tells that the collection was not deleted and that nothing changed", async () => {
     commandMocks.deleteChannel.mockRejectedValueOnce(new Error("The page is locked"));
 
     render(
@@ -3570,9 +3575,10 @@ describe("AppWithVault", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Delete collection alpha" }));
 
     expect(await screen.findByText("Could not delete the collection")).toBeInTheDocument();
-    expect(commandMocks.deleteTagFromAll).toHaveBeenCalledWith("alpha");
+    expect(commandMocks.deleteChannel).toHaveBeenCalledTimes(1);
+    expect(commandMocks.deleteChannel).toHaveBeenCalledWith("alpha");
     expect(document.querySelector('[data-delete-failed-summary="collection"]')).toHaveTextContent(
-      "The elements are no longer connected to “alpha”, but the collection page stayed.",
+      "Nothing changed.",
     );
     expect(document.querySelector('[data-delete-failed-notice="collection"]')).toHaveTextContent(
       "The page is locked",
@@ -3582,8 +3588,13 @@ describe("AppWithVault", () => {
     expect(screen.queryByText("Could not delete the collection")).toBeNull();
   });
 
-  it("says nothing changed when the collection's connections could not be removed", async () => {
-    commandMocks.deleteTagFromAll.mockRejectedValueOnce(new Error("disk full"));
+  // Е1.3: a card the deletion could not change keeps its link, and the tab
+  // says which.
+  it("names the elements that still link a deleted collection", async () => {
+    commandMocks.deleteChannel.mockResolvedValueOnce({
+      deleted: true,
+      kept_links: ["Cards/Locked"],
+    });
 
     render(
       <MemoryRouter initialEntries={["/"]}>
@@ -3592,11 +3603,14 @@ describe("AppWithVault", () => {
     );
     fireEvent.click(await screen.findByRole("button", { name: "Delete collection beta" }));
 
-    expect(await screen.findByText("Could not delete the collection")).toBeInTheDocument();
-    expect(commandMocks.deleteChannel).not.toHaveBeenCalled();
-    expect(document.querySelector('[data-delete-failed-summary="collection"]')).toHaveTextContent(
-      "Nothing changed.",
+    expect(await screen.findByText("Links kept")).toBeInTheDocument();
+    expect(commandMocks.deleteChannel).toHaveBeenCalledTimes(1);
+    expect(document.querySelector("[data-delete-kept-links]")).toHaveTextContent(
+      "“Locked” could not be changed and still links to “beta”.",
     );
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText("Links kept")).toBeNull();
   });
 
   // SPEC_GROUP_SELECTION.md, «Окно»: a non-empty `kept_media` of the group
@@ -3621,7 +3635,11 @@ describe("AppWithVault", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete the selection with its media" }));
 
     await waitFor(() => {
-      expect(commandMocks.deleteBlocks).toHaveBeenCalledWith(["alpha-block", "beta-block"], true);
+      expect(commandMocks.deleteBlocks).toHaveBeenCalledWith(
+        ["alpha-block", "beta-block"],
+        true,
+        ["Media/photo.png"],
+      );
     });
     expect(await screen.findByText("Media kept")).toBeInTheDocument();
     expect(document.querySelector("[data-delete-kept-media]")).toHaveTextContent(

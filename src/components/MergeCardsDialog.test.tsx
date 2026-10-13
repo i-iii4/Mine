@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { LightBlock } from "@/types";
@@ -49,5 +49,62 @@ describe("MergeCardsDialog", () => {
     expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
       "Drag to set the order. These elements go to the Trash; links to them now lead to the new element, even if you restore them.",
     );
+  });
+
+  function rowOrder(): (string | null)[] {
+    return screen
+      .getAllByRole("button", { name: /^Reorder / })
+      .map((handle) => handle.getAttribute("aria-label"));
+  }
+
+  // SPEC_DEEP_AUDIT.md, Е1.7: the feed reloads under the open window (a
+  // fresh list, another order); the order in the window stays, and Merge
+  // sends it. The next opening takes the selection as it is then.
+  it("keeps its order while the feed changes under the open window", async () => {
+    const onConfirm = vi.fn(async (orderedSlugs: string[]) => {
+      expect(orderedSlugs).toHaveLength(2);
+    });
+    const onOpenChange = vi.fn();
+    const { rerender } = render(
+      <MergeCardsDialog
+        open
+        selectedBlocks={[lightBlock(1, "First"), lightBlock(2, "Second")]}
+        onOpenChange={onOpenChange}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    rerender(
+      <MergeCardsDialog
+        open
+        selectedBlocks={[lightBlock(2, "Second"), lightBlock(1, "First")]}
+        onOpenChange={onOpenChange}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    expect(rowOrder()).toEqual(["Reorder First", "Reorder Second"]);
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    await waitFor(() => {
+      expect(onConfirm).toHaveBeenCalledWith(["First", "Second"]);
+    });
+
+    rerender(
+      <MergeCardsDialog
+        open={false}
+        selectedBlocks={[lightBlock(2, "Second"), lightBlock(1, "First")]}
+        onOpenChange={onOpenChange}
+        onConfirm={onConfirm}
+      />,
+    );
+    rerender(
+      <MergeCardsDialog
+        open
+        selectedBlocks={[lightBlock(2, "Second"), lightBlock(1, "First")]}
+        onOpenChange={onOpenChange}
+        onConfirm={onConfirm}
+      />,
+    );
+    expect(rowOrder()).toEqual(["Reorder Second", "Reorder First"]);
   });
 });

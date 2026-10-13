@@ -32,6 +32,7 @@ import type {
   RenameBlockResult,
   TagCount,
   ChannelDto,
+  CollectionDeleted,
   ChannelPreviewsSnapshot,
   TaxonomySnapshot,
   VaultStats,
@@ -83,6 +84,11 @@ function isCommandError(error: unknown): error is CommandError {
     return typeof message === "object" && message !== null
       && typeof (message as { collection?: unknown }).collection === "string";
   }
+  if (kind === "media_plan_changed") {
+    const message = (error as { message?: unknown }).message;
+    return typeof message === "object" && message !== null
+      && Array.isArray((message as { files?: unknown }).files);
+  }
   return kind === "no_vault"
     || kind === "space_changed"
     || kind === "source_changed"
@@ -115,6 +121,17 @@ function noteName(path: string): string {
   return path.split("/").filter(Boolean).pop() ?? path;
 }
 
+/// A deletion that refused because a file the window said stays lost its
+/// other user while the window was open (SPEC_DEEP_AUDIT.md, Е1.10).
+function mediaPlanChangedMessage(files: string[]): string {
+  const retry = "Nothing was deleted; delete again to see the files.";
+  const [only] = files;
+  if (files.length === 1 && only !== undefined) {
+    return `“${only}” is no longer used by another element, and the window did not offer it. ${retry}`;
+  }
+  return `${files.length} files are no longer used by other elements, and the window did not offer them. ${retry}`;
+}
+
 function commandErrorMessage(error: CommandError): string {
   switch (error.kind) {
     case "no_vault":
@@ -129,6 +146,8 @@ function commandErrorMessage(error: CommandError): string {
       return `Mine cannot read the identity file of “${noteName(error.message.path)}”, so it did not open the space and changed nothing. Check access to the folder, or wait until iCloud downloads it.`;
     case "collection_not_found":
       return `Collection “${error.message.collection}” has no page; nothing was written.`;
+    case "media_plan_changed":
+      return mediaPlanChangedMessage(error.message.files);
     case "name_refused":
     case "internal":
       return error.message;
@@ -457,16 +476,26 @@ export const prepareDeleteBlocks = (slugs: string[]) =>
 
 /** Delete the selection in one atomic batch; with its media, the files are
  *  checked against the notes on disk first, and `kept_media` names the ones
- *  a note outside the selection uses. */
-export const deleteBlocks = (slugs: string[], delete_unused_media: boolean) =>
-  invoke<DeleteBlocksOutcome>("delete_blocks", { slugs, delete_unused_media });
+ *  a note outside the selection uses. `offered_media`: the paths the window
+ *  offered; no other file goes (SPEC_DEEP_AUDIT.md, Е1.10). */
+export const deleteBlocks = (
+  slugs: string[],
+  delete_unused_media: boolean,
+  offered_media?: string[],
+) =>
+  invoke<DeleteBlocksOutcome>("delete_blocks", { slugs, delete_unused_media, offered_media });
 
 /** Delete one card; with its media, the files are checked against the notes
- *  on disk first, and `kept_media` names the ones another note uses. */
-export const deleteBlock = (slug: string, delete_unused_media?: boolean) =>
+ *  on disk first, and `kept_media` names the ones another note uses.
+ *  `offered_media` as for `deleteBlocks`. */
+export const deleteBlock = (
+  slug: string,
+  delete_unused_media?: boolean,
+  offered_media?: string[],
+) =>
   invoke<DeleteBlockOutcome>(
     "delete_block",
-    delete_unused_media === undefined ? { slug } : { slug, delete_unused_media },
+    delete_unused_media === undefined ? { slug } : { slug, delete_unused_media, offered_media },
   );
 
 function normalizeMergeBlocksError(error: unknown): MergeBlocksError {
@@ -526,9 +555,6 @@ export const checkCollectionName = async (
 export const collectionPagePath = (tag: string) =>
   invoke<string | null>("collection_page_path", { tag });
 
-export const deleteTagFromAll = (tag: string) =>
-  invoke<void>("delete_tag_from_all", { tag });
-
 // Channels
 export const listChannels = () =>
   invoke<ChannelDto[]>("list_channels");
@@ -542,8 +568,11 @@ export const createChannel = (tag: string) =>
 export const reorderChannels = (items: { tag: string; position: number }[]) =>
   invoke<void>("reorder_channels", { items });
 
+/** Delete a collection in one backend command: its link comes off every
+ *  card and its page goes to the Trash (SPEC_DEEP_AUDIT.md, Н2). The cards
+ *  it could not change are in `kept_links`. */
 export const deleteChannel = (tag: string) =>
-  invoke<boolean>("delete_channel", { tag });
+  invoke<CollectionDeleted>("delete_channel", { tag });
 
 export const listChannelPreviews = (limit: number) =>
   invoke<ChannelPreviewsSnapshot>("list_channel_previews", { limit });

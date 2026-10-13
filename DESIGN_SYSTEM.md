@@ -2375,23 +2375,25 @@ physics и не является отдельным интерактивным �
 
 То же правило у `Delete collection?` (решение пользователя 11.10.2026): до
 11.10.2026 сбой удаления коллекции уходил только в консоль (`App.tsx`,
-`handleDeleteTagFromAll`). Удаление идёт двумя вызовами (связи из карточек,
-затем страница), и при сбое второго связи уже сняты, а пустая коллекция
-остаётся в меню. Уведомление с заголовком `Could not delete the collection`
-называет, что успело измениться.
+`handleDeleteTagFromAll`). С 13.10.2026 удаление идёт одной командой
+бэкенда (`delete_channel`): связи снимаются из карточек и страница уходит в
+Корзину одной мутацией ([SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md),
+К12), поэтому сбой ничего не меняет.
 
-Тексты уведомления коллекции (решение при реализации 11.10.2026, самое
-осторожное, пользователь его не утверждал; `src/lib/deleteFailure.ts`):
-первая строка `text-sm text-muted-foreground` говорит, что изменилось, вторая
-`text-sm text-destructive` это сообщение ошибки.
+Тексты уведомлений коллекции (решения при реализации 11.10.2026 и
+13.10.2026, самые осторожные, пользователь их не утверждал;
+`src/lib/deleteFailure.ts`):
 
-- Сбой снятия связей (`delete_tag_from_all`, один атомарный пакет): `Nothing
-  changed.`; страницу удалять не пробуют.
-- Сбой удаления страницы (`delete_channel`) после снятия связей: `The
-  elements are no longer connected to “{label}”, but the collection page
-  stayed.`; открытая коллекция остаётся открытой.
+- Сбой: заголовок `Could not delete the collection`, первая строка
+  `text-sm text-muted-foreground` `Nothing changed.`, вторая
+  `text-sm text-destructive` это сообщение ошибки; открытая коллекция
+  остаётся открытой.
+- Удаление прошло, но часть карточек изменить не удалось: заголовок `Links
+  kept`, строка `text-sm text-muted-foreground` `“{имя файла}” could not be
+  changed and still links to “{label}”.` для одной карточки и `{N} elements
+  could not be changed and still link to “{label}”.` для нескольких.
 
-Лента уходит на `Everything` только после успеха обоих шагов.
+Лента уходит на `Everything` только после успешного удаления.
 
 Окно, которое ждёт ответа (`Deleting…`, `Renaming…`, `Removing…`), показывает
 ошибку у себя строкой ошибки и остаётся открытым; уведомление ему не нужно.

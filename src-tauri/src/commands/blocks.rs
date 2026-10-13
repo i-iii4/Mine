@@ -20,7 +20,7 @@ use crate::commands::state::{
 use crate::domain::block::{
     compute_body_hash, derive_card_kind, derive_title_fields, iter_file_references,
     iter_inline_media_references, parse_markdown_document, suggest_slug, Block, BlockType,
-    CardKind, DateTime, FileReference, Frontmatter,
+    normalize_attachment_reference, CardKind, DateTime, FileReference, Frontmatter,
 };
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use crate::domain::markdown::{
@@ -415,14 +415,16 @@ struct ThumbUpdatedPayload {
 }
 
 
-struct PlannedBlockWrite {
-    original_path: PathBuf,
-    target_path: PathBuf,
+/// One note a move rewrites: where it is, where it goes, the text it was
+/// read from and the model before and after.
+pub(crate) struct PlannedBlockWrite {
+    pub(crate) original_path: PathBuf,
+    pub(crate) target_path: PathBuf,
     /// The note as read: its text and model. The rewrite is carried into this
     /// text rather than rebuilt from the model (SPEC_AUDIT_FIXES.md, Ф1).
-    source: String,
-    before: Block,
-    block: Block,
+    pub(crate) source: String,
+    pub(crate) before: Block,
+    pub(crate) block: Block,
 }
 
 struct MediaAssetBlockWrite {
@@ -2124,6 +2126,7 @@ fn delete_block_unannounced(
     state: State<'_, AppState>,
     slug: String,
     delete_unused_media: Option<bool>,
+    offered_media: Option<Vec<String>>,
 ) -> Result<DeleteBlockOutcome, CommandError> {
     let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
     let vault_state = space
@@ -2138,15 +2141,18 @@ fn delete_block_unannounced(
         &vs.vault,
         &slug,
         delete_unused_media,
+        offered_media.as_deref(),
     )
 }
 
 /// [`delete_block_unannounced`], then the other tabs of the space hear of the
-/// change (SPEC_TABS.md, В15).
+/// change (SPEC_TABS.md, В15). `offered_media` are the paths of the files the
+/// window offered to delete (`unused_media` of its plan): the deletion takes
+/// no other (SPEC_DEEP_AUDIT.md, Е1.10).
 #[tauri::command(async, rename_all = "snake_case")]
-pub fn delete_block(webview: tauri::Webview, state: State<'_, AppState>, slug: String, delete_unused_media: Option<bool>) -> Result<DeleteBlockOutcome, CommandError> {
+pub fn delete_block(webview: tauri::Webview, state: State<'_, AppState>, slug: String, delete_unused_media: Option<bool>, offered_media: Option<Vec<String>>) -> Result<DeleteBlockOutcome, CommandError> {
     let announcing = webview.clone();
-    let outcome = delete_block_unannounced(webview, state, slug, delete_unused_media);
+    let outcome = delete_block_unannounced(webview, state, slug, delete_unused_media, offered_media);
     if outcome.is_ok() {
         super::effects::space_changed_by_tab(&announcing, Vec::new());
     }
@@ -2195,6 +2201,7 @@ async fn delete_blocks_unannounced(
     app: AppHandle,
     slugs: Vec<String>,
     delete_unused_media: bool,
+    offered_media: Option<Vec<String>>,
 ) -> Result<DeleteBlocksOutcome, CommandError> {
     let expected_vault = tab_layout(&app.state::<AppState>(), &webview)?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -2210,23 +2217,32 @@ async fn delete_blocks_unannounced(
                 "active space changed before deletion".into(),
             ));
         }
-        delete_blocks_inner(Some(&state), &vs.conn, &vs.vault, slugs, delete_unused_media)
+        delete_blocks_inner(
+            Some(&state),
+            &vs.conn,
+            &vs.vault,
+            slugs,
+            delete_unused_media,
+            offered_media.as_deref(),
+        )
     })
     .await
     .map_err(|error| CommandError::Internal(error.to_string()))?
 }
 
 /// [`delete_blocks_unannounced`], then the other tabs of the space hear of the
-/// change (SPEC_TABS.md, В15).
+/// change (SPEC_TABS.md, В15). `offered_media` as for `delete_block`.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn delete_blocks(
     webview: tauri::Webview,
     app: AppHandle,
     slugs: Vec<String>,
     delete_unused_media: bool,
+    offered_media: Option<Vec<String>>,
 ) -> Result<DeleteBlocksOutcome, CommandError> {
     let announcing = webview.clone();
-    let outcome = delete_blocks_unannounced(webview, app, slugs, delete_unused_media).await;
+    let outcome =
+        delete_blocks_unannounced(webview, app, slugs, delete_unused_media, offered_media).await;
     if outcome.is_ok() {
         super::effects::space_changed_by_tab(&announcing, Vec::new());
     }
@@ -2237,7 +2253,8 @@ pub async fn delete_blocks(
 /// Delete»). With `delete_unused_media`, the plan is built again from the
 /// index and every file it calls unused is checked against the notes on disk
 /// at this moment, as for one card (`build_delete_blocks_plan`); the files
-/// left unused go to the Trash with the cards. Without it no media is
+/// left unused go to the Trash with the cards, never one the window did not
+/// offer (`offered_media`, SPEC_DEEP_AUDIT.md, Е1.10). Without it no media is
 /// touched and no note of the space is read. The files and the index rows go
 /// in one `StagedSourceMutation`: a failure leaves every one of them.
 pub(crate) fn delete_blocks_inner(
@@ -2246,6 +2263,7 @@ pub(crate) fn delete_blocks_inner(
     vault: &VaultLayout,
     slugs: Vec<String>,
     delete_unused_media: bool,
+    offered_media: Option<&[String]>,
 ) -> Result<DeleteBlocksOutcome, CommandError> {
     let slugs = validated_slug_set(slugs)?;
     if slugs.is_empty() {
@@ -2256,7 +2274,9 @@ pub(crate) fn delete_blocks_inner(
     }
     // Retaining media needs no vault-wide media reference analysis.
     let plan = if delete_unused_media {
-        Some(build_delete_blocks_plan(conn, vault, &slugs)?)
+        let plan = build_delete_blocks_plan(conn, vault, &slugs)?;
+        refuse_media_the_window_did_not_offer(&plan.unused_media, offered_media)?;
+        Some(plan)
     } else {
         None
     };
@@ -2306,20 +2326,23 @@ pub(crate) fn delete_blocks_inner(
 }
 
 /// Delete one card and, when asked, the media only it uses. The media are
-/// checked against the notes on disk at this moment, whatever the window
-/// showed (decision of 11.10.2026): a file another note uses stays, and the
-/// outcome names it.
+/// checked against the notes on disk at this moment (decision of
+/// 11.10.2026): a file another note uses stays, and the outcome names it. A
+/// file the window did not offer (`offered_media`) is never taken: when the
+/// plan grew while the window was open, the deletion refuses
+/// (SPEC_DEEP_AUDIT.md, Е1.10).
 pub(crate) fn delete_block_inner(
     state: Option<&AppState>,
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     slug: &str,
     delete_unused_media: Option<bool>,
+    offered_media: Option<&[String]>,
 ) -> Result<DeleteBlockOutcome, CommandError> {
     validate_slug(slug).map_err(|e| CommandError::Internal(e.to_string()))?;
     // Retaining media needs no vault-wide media reference analysis.
     if delete_unused_media == Some(false) {
-        return delete_blocks_inner(state, conn, vault, vec![slug.to_string()], false).map(
+        return delete_blocks_inner(state, conn, vault, vec![slug.to_string()], false, None).map(
             |outcome| DeleteBlockOutcome {
                 removed: outcome.removed > 0,
                 kept_media: Vec::new(),
@@ -2327,6 +2350,9 @@ pub(crate) fn delete_block_inner(
         );
     }
     let plan = build_delete_block_plan(conn, vault, slug)?;
+    if delete_unused_media == Some(true) {
+        refuse_media_the_window_did_not_offer(&plan.unused_media, offered_media)?;
+    }
 
     let media_paths: BTreeSet<PathBuf> = match delete_unused_media {
         Some(true) => plan
@@ -2450,6 +2476,31 @@ pub fn merge_blocks(webview: tauri::Webview, app: AppHandle, state: State<'_, Ap
         super::effects::space_changed_by_tab(&announcing, Vec::new());
     }
     outcome
+}
+
+/// A deletion takes to the Trash only files its window offered
+/// (SPEC_DEEP_AUDIT.md, Е1.10). A file the fresh plan calls unused that the
+/// window did not offer, because the note that used it let it go while the
+/// window was open, refuses the whole deletion: nothing goes, and the window
+/// opened again shows the new list. `offered` is `None` where no window
+/// showed a plan: the CLI deletes by the plan it builds itself.
+fn refuse_media_the_window_did_not_offer(
+    unused: &[DeleteBlockMedia],
+    offered: Option<&[String]>,
+) -> Result<(), CommandError> {
+    let Some(offered) = offered else {
+        return Ok(());
+    };
+    let files: Vec<String> = unused
+        .iter()
+        .filter(|media| !offered.contains(&media.path))
+        .map(|media| media.file_name.clone())
+        .collect();
+    if files.is_empty() {
+        Ok(())
+    } else {
+        Err(CommandError::MediaPlanChanged { files })
+    }
 }
 
 /// The plan the deletion acts on: the index's plan
@@ -2807,6 +2858,9 @@ struct MergePlan {
     ordered_slugs: Vec<String>,
     sources: Vec<MergeSourceBlock>,
     merged_block: Block,
+    /// The merged card's text: `merged_block` with the sources' own
+    /// properties (SPEC_CARD_MERGE.md, «New Frontmatter»).
+    merged_text: String,
     reference_writes: Vec<MergeReferenceWrite>,
 }
 
@@ -2822,11 +2876,13 @@ fn plan_merge_blocks(
     let moves = merge_note_moves(vault, &sources, &merged_slug)?;
     let mut merged_block = build_merged_block(&sources, &moves, merged_slug)?;
     merged_block.body = retarget_wikilinks(&merged_block.body, |target| moves.retarget(target));
+    let merged_text = merged_card_text(&merged_block, &sources)?;
     let reference_writes = build_merge_reference_writes(vault, &selected_slugs, &moves)?;
     Ok(MergePlan {
         ordered_slugs,
         sources,
         merged_block,
+        merged_text,
         reference_writes,
     })
 }
@@ -2841,6 +2897,7 @@ fn apply_merge_plan(
         ordered_slugs,
         sources,
         merged_block,
+        merged_text,
         reference_writes,
     } = plan;
     let removed_events = sources
@@ -2872,7 +2929,7 @@ fn apply_merge_plan(
             .map_err(internal_merge_error)?;
     }
 
-    let indexed = match apply_merge_blocks(conn, vault, &merged_block, &sources, &reference_writes) {
+    let indexed = match apply_merge_blocks(conn, vault, &merged_block, &merged_text, &sources, &reference_writes) {
         Ok(indexed) => indexed,
         Err(error) => {
             let notes: Vec<PathBuf> = std::iter::once(merged_path)
@@ -2946,13 +3003,14 @@ fn apply_merge_blocks(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     merged_block: &Block,
+    merged_text: &str,
     sources: &[MergeSourceBlock],
     reference_writes: &[MergeReferenceWrite],
 ) -> Result<IndexedBlock, MergeBlocksError> {
     let mut writes = Vec::with_capacity(1 + reference_writes.len() + sources.len());
     writes.push(SourceFileWrite::create(
         vault.block_path(&merged_block.slug),
-        crate::domain::block::serialize_block(merged_block).into_bytes(),
+        merged_text.as_bytes().to_vec(),
     ));
     for write in reference_writes {
         let patched = apply_block_changes(&write.source, &write.before, &write.block)
@@ -3136,11 +3194,28 @@ fn build_merged_block(
     // Markdown paths are written again from there (`SPEC_AUDIT_FIXES.md`,
     // В1.3).
     let merged_note = format!("{slug}.md");
+    // The first cover in merge order is the merged card's cover; every other
+    // cover stays in its card's section (SPEC_CARD_MERGE.md, «New
+    // Frontmatter», SPEC_DEEP_AUDIT.md, Е1.8).
+    let cover = sources
+        .iter()
+        .position(|source| trimmed_option(source.block.frontmatter.thumbnail.as_deref()).is_some());
+    let thumbnail = cover.and_then(|index| {
+        let source = &sources[index];
+        let reference = trimmed_option(source.block.frontmatter.thumbnail.as_deref())?;
+        let note = format!("{}.md", source.block.slug);
+        Some(
+            retarget_note_relative_property(reference, moves, &note, &merged_note)
+                .unwrap_or_else(|| reference.to_string()),
+        )
+    });
     let body = sources
         .iter()
-        .map(|source| {
+        .enumerate()
+        .map(|(index, source)| {
             let note = format!("{}.md", source.block.slug);
-            retarget_markdown_destinations(&merged_section_body(&source.block), |destination| {
+            let section = merged_section_body(&source.block, Some(index) != cover);
+            retarget_markdown_destinations(&section, |destination| {
                 moves.retarget_markdown(&note, &merged_note, destination)
             })
         })
@@ -3158,10 +3233,12 @@ fn build_merged_block(
             }),
             url: first_safe_url_frontmatter(sources),
             file: None,
-            thumbnail: None,
+            thumbnail,
             tags,
             related_notes,
-            source_media: None,
+            source_media: first_non_empty_frontmatter(sources, |frontmatter| {
+                frontmatter.source_media.as_ref()
+            }),
             saved_at,
             source: Some("card-merge".to_string()),
             width: None,
@@ -3279,19 +3356,26 @@ fn retarget_related_note(note: &str, moves: &NoteMoves) -> Option<String> {
     })
 }
 
-fn merged_section_body(block: &Block) -> String {
+/// One source card's section of the merged body. `with_cover`: the card's
+/// `thumbnail` is embedded in its section, unless the section names it
+/// already; the first cover in merge order is the merged card's own
+/// `thumbnail` instead (SPEC_CARD_MERGE.md, «Source Card Content Mapping»).
+fn merged_section_body(block: &Block, with_cover: bool) -> String {
     let mut parts = Vec::new();
     let body = block.body.trim();
-    if let Some(file) = trimmed_option(block.frontmatter.file.as_deref()) {
+    let file = trimmed_option(block.frontmatter.file.as_deref());
+    if let Some(file) = file {
         if body.is_empty() || !body.contains(file) {
-            // A path from the note stays one, as a Markdown image the merge
-            // writes again from the merged card's folder; a wikilink would
-            // not resolve it.
-            parts.push(if is_note_relative_property(file) {
-                format!("![](<{}>)", file.replace('<', "%3C").replace('>', "%3E"))
-            } else {
-                format!("![[{file}]]")
-            });
+            parts.push(section_media_embed(file));
+        }
+    }
+    if with_cover {
+        if let Some(cover) = trimmed_option(block.frontmatter.thumbnail.as_deref())
+            .and_then(normalize_attachment_reference)
+        {
+            if !body.contains(cover.as_str()) && file != Some(cover.as_str()) {
+                parts.push(section_media_embed(&cover));
+            }
         }
     }
     if !body.is_empty() {
@@ -3314,6 +3398,90 @@ fn merged_section_body(block: &Block) -> String {
         parts.push(format!("Author: {author}"));
     }
     parts.join("\n\n")
+}
+
+/// The embed of one media reference in a merged section. A path from the
+/// note stays one, as a Markdown image the merge writes again from the
+/// merged card's folder; a wikilink would not resolve it. A remote picture
+/// stays a remote image.
+fn section_media_embed(reference: &str) -> String {
+    let remote = reference.starts_with("http://") || reference.starts_with("https://");
+    if is_note_relative_property(reference) || remote {
+        format!(
+            "![](<{}>)",
+            reference.replace('<', "%3C").replace('>', "%3E")
+        )
+    } else {
+        format!("![[{reference}]]")
+    }
+}
+
+/// The merged card's text: the canonical Mine note of `merged`, with the
+/// sources' own properties (Obsidian `tags`, `aliases`, any other key Mine
+/// does not own) after Mine's. A key one source has keeps that value; a key
+/// several sources have takes the first value in merge order, except a list:
+/// when any of them is a list, the value is the ordered union of all of
+/// them, each value once (SPEC_CARD_MERGE.md, «New Frontmatter»,
+/// SPEC_DEEP_AUDIT.md, Е1.8). The text is read back before it is written.
+fn merged_card_text(merged: &Block, sources: &[MergeSourceBlock]) -> Result<String, MergeBlocksError> {
+    use serde_yaml::{Mapping, Value};
+    let mut properties = Mapping::new();
+    for source in sources {
+        let Some(own) = crate::domain::source_patch::user_properties(&source.source) else {
+            continue;
+        };
+        for (key, value) in own {
+            match properties.get_mut(&key) {
+                None => {
+                    properties.insert(key, value);
+                }
+                Some(existing) => {
+                    if matches!(existing, Value::Sequence(_)) || matches!(value, Value::Sequence(_)) {
+                        let mut items = match std::mem::take(existing) {
+                            Value::Sequence(items) => items,
+                            single => vec![single],
+                        };
+                        let more = match value {
+                            Value::Sequence(more) => more,
+                            single => vec![single],
+                        };
+                        for item in more {
+                            if !items.contains(&item) {
+                                items.push(item);
+                            }
+                        }
+                        *existing = Value::Sequence(items);
+                    }
+                }
+            }
+        }
+    }
+    let note = crate::domain::block::serialize_block(merged);
+    if properties.is_empty() {
+        return Ok(note);
+    }
+    let yaml = serde_yaml::to_string(&Value::Mapping(properties.clone()))
+        .map_err(internal_merge_error)?;
+    let crate::domain::source_patch::FrontmatterBounds::Valid { yaml_end, .. } =
+        crate::domain::source_patch::frontmatter_bounds(&note)
+    else {
+        return Err(internal_merge_error("the merged note has no front matter"));
+    };
+    let text = format!("{}{}{}", &note[..yaml_end], yaml, &note[yaml_end..]);
+    // Mine reads the note as the model says, and the properties as merged.
+    let read = parse_markdown_document(&merged.slug, &text, merged.frontmatter.saved_at.clone())
+        .map_err(internal_merge_error)?;
+    let kept = crate::domain::source_patch::user_properties(&text);
+    let fields = crate::domain::block::render_frontmatter_fields;
+    if fields(&read.block.frontmatter) != fields(&merged.frontmatter)
+        || read.block.body != crate::domain::source_patch::body_of(&note)
+        || kept.as_ref() != Some(&properties)
+    {
+        return Err(internal_merge_error(
+            "the merged note does not read back as composed",
+        ));
+    }
+    Ok(text)
 }
 
 fn merge_block_label(block: &Block) -> String {
@@ -4515,6 +4683,23 @@ pub(crate) fn rename_block_file_inner(
         });
     }
 
+    // A collection page renamed as a note is its collection renamed: its
+    // members' `Mine Collections` follow it (SPEC_DEEP_AUDIT.md, Н2, Е1.5).
+    if crate::commands::channels::is_collection_page(vault, old_slug).map_err(internal_rename_error)? {
+        let renamed = crate::commands::channels::rename_collection_page(state, conn, vault, old_slug, &new_slug)
+            .map_err(|error| match error {
+                CommandError::NameRefused(reason) => RenameBlockError::InvalidFilename { reason },
+                CommandError::CollectionNotFound { .. } => RenameBlockError::BlockNotFound {
+                    slug: old_slug.to_string(),
+                },
+                other => internal_rename_error(other),
+            })?;
+        return Ok(RenameBlockResult {
+            old_slug: old_slug.to_string(),
+            new_slug: renamed,
+        });
+    }
+
     refuse_taken_name(conn, vault, old_slug, &new_slug)?;
 
     let (read_slug, content) =
@@ -4526,7 +4711,7 @@ pub(crate) fn rename_block_file_inner(
         })?
         .block;
     let media_renames = collect_mine_owned_media_renames(vault, &old_block, old_slug, &new_slug)?;
-    let planned_writes = build_planned_block_writes(vault, old_slug, &new_slug, &media_renames)?;
+    let planned_writes = build_planned_block_writes(vault, old_slug, &new_slug, &media_renames, None)?;
     // A name with a folder moves the card there, as Obsidian does; a folder
     // made for it and left empty by a refused rename goes again.
     let new_folder = NewFolder::make(&vault.block_path(&new_slug)).map_err(internal_rename_error)?;
@@ -5294,11 +5479,30 @@ fn internal_rename_error(error: impl std::fmt::Display) -> RenameBlockError {
     }
 }
 
+/// The notes moving the note `old_slug` to `new_slug` rewrites, planned the
+/// way a card rename plans them (`SPEC_AUDIT_FIXES.md`, Ф3): the note itself
+/// and every note whose links, in the text or in `Mine Related Notes`, lead
+/// to it. `retag` changes the `Mine Collections` of every note the pass
+/// reads: a collection rename renames the collection in its members in the
+/// same plan (SPEC_DEEP_AUDIT.md, Н2).
+pub(crate) fn plan_note_move(
+    vault: &VaultLayout,
+    old_slug: &str,
+    new_slug: &str,
+    retag: Retag<'_>,
+) -> Result<Vec<PlannedBlockWrite>, RenameBlockError> {
+    build_planned_block_writes(vault, old_slug, new_slug, &[], Some(retag))
+}
+
+/// A change of a note's `Mine Collections`, applied by a move's plan.
+type Retag<'a> = &'a dyn Fn(&mut Vec<String>);
+
 fn build_planned_block_writes(
     vault: &VaultLayout,
     old_slug: &str,
     new_slug: &str,
     media_renames: &[FileRename],
+    retag: Option<Retag<'_>>,
 ) -> Result<Vec<PlannedBlockWrite>, RenameBlockError> {
     let old_path = vault.block_path(old_slug);
     let mut relocations = vec![(format!("{old_slug}.md"), format!("{new_slug}.md"))];
@@ -5351,6 +5555,9 @@ fn build_planned_block_writes(
             note_before.clone()
         };
         let mut rewritten = rewrite_note_links(&block, &moves, &note_before, &note_after);
+        if let Some(retag) = retag {
+            retag(&mut rewritten.frontmatter.tags);
+        }
         let references = iter_file_references(&block.body);
         let mentions_moved_media = media_reference_forms(&NoteFiles::of_block(&block, &references))
             .iter()
@@ -5547,7 +5754,7 @@ mod tests {
                 &conn,
                 &vault,
                 vec!["one".into(), "two".into(), "one".into()],
-                false,
+                false, None,
             )
             .unwrap()
             .removed,
@@ -5558,7 +5765,7 @@ mod tests {
         assert!(vault.block_path("keep").exists());
         assert_eq!(std::fs::read(media).unwrap(), b"source bytes");
         assert_eq!(
-            delete_blocks_inner(None, &conn, &vault, vec!["one".into()], false)
+            delete_blocks_inner(None, &conn, &vault, vec!["one".into()], false, None)
                 .unwrap()
                 .removed,
             0
@@ -5629,7 +5836,7 @@ mod tests {
         }
 
         let outcome =
-            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()], true)
+            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()], true, None)
                 .unwrap();
 
         assert_eq!(outcome.removed, 2);
@@ -5657,7 +5864,7 @@ mod tests {
         }
 
         let outcome =
-            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()], false)
+            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()], false, None)
                 .unwrap();
 
         assert_eq!(outcome.removed, 2);
@@ -5692,7 +5899,7 @@ mod tests {
             &conn,
             &vault,
             vec!["Cards/One".into(), "Cards/Two".into()],
-            true,
+            true, None,
         )
         .unwrap();
 
@@ -5729,7 +5936,7 @@ mod tests {
             &conn,
             &vault,
             vec!["one".into(), "two".into(), "gone".into()],
-            true,
+            true, None,
         )
         .unwrap();
         assert_eq!(outcome.removed, 2);
@@ -5755,7 +5962,7 @@ mod tests {
         .unwrap();
 
         assert!(
-            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()], true)
+            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()], true, None)
                 .is_err()
         );
 
@@ -5781,7 +5988,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()], false).is_err()
+            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()], false, None).is_err()
         );
         for slug in ["one", "two"] {
             assert!(vault.block_path(slug).exists());
@@ -5799,7 +6006,7 @@ mod tests {
         }
         std::fs::remove_file(vault.block_path("one")).unwrap();
         assert_eq!(
-            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()], false).unwrap().removed,
+            delete_blocks_inner(None, &conn, &vault, vec!["one".into(), "two".into()], false, None).unwrap().removed,
             2
         );
         for slug in ["one", "two"] {
@@ -5819,7 +6026,7 @@ mod tests {
         let folder = vault.block_path("one").parent().unwrap().to_path_buf();
         let mode = std::fs::metadata(&folder).unwrap().permissions().mode();
         std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
-        let result = delete_blocks_inner(None, &conn, &vault, vec!["one".into()], false);
+        let result = delete_blocks_inner(None, &conn, &vault, vec!["one".into()], false, None);
         std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(mode)).unwrap();
         let Err(CommandError::Internal(message)) = result else {
             panic!("a read-only folder refuses the delete: {result:?}");
@@ -6271,7 +6478,8 @@ mod tests {
             block: article("Broken", "Broken body"),
         });
 
-        let error = apply_merge_blocks(&conn, &vault, &merged_block, &sources, &reference_writes)
+        let merged_text = merged_card_text(&merged_block, &sources).unwrap();
+        let error = apply_merge_blocks(&conn, &vault, &merged_block, &merged_text, &sources, &reference_writes)
             .unwrap_err();
         assert!(matches!(error, MergeBlocksError::Internal { .. }));
 
@@ -6399,7 +6607,7 @@ mod tests {
         assert_eq!(plan.shared_media.len(), 1);
         assert_eq!(plan.shared_media[0].path, "photo.png");
         assert_eq!(plan.shared_media[0].referenced_by, vec!["Source Article"]);
-        assert!(delete_block_inner(None, &conn, &vault, &indexed.slug, Some(true)).unwrap().removed);
+        assert!(delete_block_inner(None, &conn, &vault, &indexed.slug, Some(true), None).unwrap().removed);
         assert!(!vault.block_path(&indexed.slug).exists());
         assert_eq!(
             std::fs::read(vault.root().join("photo.png")).unwrap(),
@@ -7242,7 +7450,7 @@ mod tests {
         assert_eq!(plan.shared_media[0].path, "shared.png");
 
         assert!(
-            delete_block_inner(Some(&state), &conn, &vault, "Source Article", Some(true)).unwrap().removed
+            delete_block_inner(Some(&state), &conn, &vault, "Source Article", Some(true), None).unwrap().removed
         );
 
         assert!(!vault.block_path("Source Article").exists());
@@ -7268,7 +7476,7 @@ mod tests {
         )
         .unwrap();
 
-        let error = delete_block_inner(Some(&state), &conn, &vault, "Source Article", Some(true))
+        let error = delete_block_inner(Some(&state), &conn, &vault, "Source Article", Some(true), None)
             .unwrap_err();
 
         assert!(matches!(error, CommandError::Internal(_)));
@@ -8404,7 +8612,7 @@ mod tests {
         write_note(&vault, "Other", "See [[Foo]].\n");
         crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
         let planned =
-            build_planned_block_writes(&vault, "Foo", "Bar", &[]).unwrap();
+            build_planned_block_writes(&vault, "Foo", "Bar", &[], None).unwrap();
         write_note(&vault, "Other", "Edited in Obsidian: [[Foo]].\n");
 
         let writes = planned
@@ -8489,7 +8697,7 @@ mod tests {
         assert_eq!(plan.shared_media.len(), 1);
         assert_eq!(plan.shared_media[0].referenced_by, vec!["Cards/Note".to_string()]);
 
-        assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap().removed);
+        assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true), None).unwrap().removed);
 
         assert!(!vault.block_path("Cards/Owner").exists());
         assert_eq!(std::fs::read(&photo).unwrap(), b"photo bytes");
@@ -8566,7 +8774,7 @@ mod tests {
                     vec![("Media/doc.pdf", vec!["Cards/Reader".to_string()])],
                     "{link} (indexed: {indexed})"
                 );
-                assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap().removed);
+                assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true), None).unwrap().removed);
                 assert_eq!(std::fs::read(&doc).unwrap(), b"pdf bytes", "{link} (indexed: {indexed})");
             }
         }
@@ -8597,8 +8805,8 @@ mod tests {
             plan.shared_media.iter().map(|media| media.path.as_str()).collect::<BTreeSet<_>>(),
             BTreeSet::from(["Media/a%20b.jpg", "Media/photo#tag.jpg"])
         );
-        assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap().removed);
-        assert!(delete_block_inner(None, &conn, &vault, "Cards/Reader", Some(true)).unwrap().removed);
+        assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true), None).unwrap().removed);
+        assert!(delete_block_inner(None, &conn, &vault, "Cards/Reader", Some(true), None).unwrap().removed);
         for name in ["photo#tag.jpg", "a%20b.jpg", "a b.jpg"] {
             assert!(vault.root().join("Media").join(name).is_file(), "{name}");
         }
@@ -8688,7 +8896,7 @@ mod tests {
         // Saved while the window was open: on disk, not yet in the index.
         write_note(&vault, "Cards/Late", "![[photo.jpg]]\n");
 
-        let outcome = delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap();
+        let outcome = delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true), None).unwrap();
 
         assert!(outcome.removed);
         assert!(!vault.block_path("Cards/Owner").exists());
@@ -8702,6 +8910,127 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![("Media/photo.jpg", vec!["Cards/Late".to_string()])]
         );
+    }
+
+    /// SPEC_DEEP_AUDIT.md, Е1.10: the deletion takes to the Trash only what
+    /// the window offered. A file the window said stays, which the other note
+    /// let go while the window was open, is not taken: the deletion refuses
+    /// and nothing goes.
+    #[test]
+    fn delete_never_takes_a_file_the_window_said_stays() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let photo = write_media(&vault, "Media/photo.jpg");
+        let lone = write_media(&vault, "Media/lone.jpg");
+        write_note(&vault, "Cards/Owner", "![[photo.jpg]]\n\n![[lone.jpg]]\n");
+        write_note(&vault, "Cards/Other", "![[photo.jpg]]\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let window = build_delete_block_plan_from_index(&conn, &vault, "Cards/Owner").unwrap();
+        assert_eq!(media_paths(&window.unused_media), vec![("Media/lone.jpg", Vec::new())]);
+        assert_eq!(
+            media_paths(&window.shared_media),
+            vec![("Media/photo.jpg", vec!["Cards/Other".to_string()])]
+        );
+        // The other note lets the photo go while the window is open.
+        write_note(&vault, "Cards/Other", "No pictures now.\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let offered: Vec<String> = window.unused_media.iter().map(|media| media.path.clone()).collect();
+        let outcome = delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true), Some(&offered));
+
+        assert!(
+            matches!(&outcome, Err(CommandError::MediaPlanChanged { files }) if files == &vec!["photo.jpg".to_string()]),
+            "{outcome:?}"
+        );
+        assert!(vault.block_path("Cards/Owner").exists());
+        assert!(photo.exists());
+        assert!(lone.exists());
+    }
+
+    /// Е1.10 for a selection: the group deletion takes only the files its
+    /// window offered and refuses when the set grew.
+    #[test]
+    fn group_delete_never_takes_a_file_the_window_said_stays() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let photo = write_media(&vault, "Media/photo.jpg");
+        let lone = write_media(&vault, "Media/lone.jpg");
+        write_note(&vault, "Cards/One", "![[photo.jpg]]\n\n![[lone.jpg]]\n");
+        write_note(&vault, "Cards/Two", "![[lone.jpg]]\n");
+        write_note(&vault, "Cards/Other", "![[photo.jpg]]\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let window = group_window_plan(&conn, &vault, &["Cards/One", "Cards/Two"]);
+        assert_eq!(
+            window.unused_media.iter().map(|media| media.path.as_str()).collect::<Vec<_>>(),
+            vec!["Media/lone.jpg"]
+        );
+        write_note(&vault, "Cards/Other", "No pictures now.\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let offered: Vec<String> = window.unused_media.iter().map(|media| media.path.clone()).collect();
+        let outcome = delete_blocks_inner(
+            None,
+            &conn,
+            &vault,
+            vec!["Cards/One".into(), "Cards/Two".into()],
+            true,
+            Some(&offered),
+        );
+
+        assert!(
+            matches!(&outcome, Err(CommandError::MediaPlanChanged { files }) if files == &vec!["photo.jpg".to_string()]),
+            "{outcome:?}"
+        );
+        assert!(vault.block_path("Cards/One").exists());
+        assert!(vault.block_path("Cards/Two").exists());
+        assert!(photo.exists());
+        assert!(lone.exists());
+    }
+
+    /// SPEC_DEEP_AUDIT.md, Е1.8 (SPEC_CARD_MERGE.md, «New Frontmatter»): the
+    /// merged card keeps the cover, the provenance and the user's own
+    /// properties of its sources.
+    #[test]
+    fn merge_keeps_thumbnails_source_media_and_the_users_properties() {
+        let (_root, _derived, vault, conn) = make_vault();
+        write_media(&vault, "Media/first-cover.jpg");
+        write_media(&vault, "Media/second-cover.jpg");
+        write_media(&vault, "Media/photo.jpg");
+        write_note(
+            &vault,
+            "Cards/First",
+            "---\nthumbnail: \"[[first-cover.jpg]]\"\nMine Source Media: photo.jpg\naliases:\n  - Alpha\ntags:\n  - design\nrating: 5\nsaved_at: 2026-04-22T00:00:00Z\n---\nAlpha text.\n",
+        );
+        write_note(
+            &vault,
+            "Cards/Second",
+            "---\nthumbnail: \"[[second-cover.jpg]]\"\naliases: [Beta]\ntags: [design, print]\nrating: 3\nstatus: draft\nsaved_at: 2026-04-22T00:00:00Z\n---\nBeta text.\n",
+        );
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let mutation = merge_blocks_inner(
+            None,
+            &conn,
+            &vault,
+            vec!["Cards/First".to_string(), "Cards/Second".to_string()],
+        )
+        .unwrap();
+
+        let written = read_note(&vault, &mutation.result.merged_slug);
+        let read = parse_markdown_document(
+            &mutation.result.merged_slug,
+            &written,
+            DateTime::new("2026-01-01T00:00:00Z").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(read.origin, "partial_frontmatter", "{written}");
+        assert_eq!(read.block.frontmatter.thumbnail.as_deref(), Some("[[first-cover.jpg]]"), "{written}");
+        assert_eq!(read.block.frontmatter.source_media.as_deref(), Some("photo.jpg"), "{written}");
+        assert!(read.block.body.contains("![[second-cover.jpg]]"), "{written}");
+        let fenced = written.split("---\n").nth(1).unwrap();
+        let properties: serde_yaml::Value = serde_yaml::from_str(fenced).unwrap();
+        assert_eq!(properties["aliases"], serde_yaml::from_str::<serde_yaml::Value>("[Alpha, Beta]").unwrap());
+        assert_eq!(properties["tags"], serde_yaml::from_str::<serde_yaml::Value>("[design, print]").unwrap());
+        assert_eq!(properties["rating"], serde_yaml::Value::from(5));
+        assert_eq!(properties["status"], serde_yaml::Value::from("draft"));
     }
 
     #[test]
@@ -9090,7 +9419,7 @@ mod tests {
         let plan = build_delete_block_plan(&conn, &vault, "Cards/Owner").unwrap();
         assert!(plan.unused_media.is_empty(), "{:?}", plan.unused_media);
         assert_eq!(plan.shared_media.len(), TITLED_IMAGES.len());
-        assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true)).unwrap().removed);
+        assert!(delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true), None).unwrap().removed);
 
         for name in TITLED_IMAGES {
             let relative = format!("Media/{name}");

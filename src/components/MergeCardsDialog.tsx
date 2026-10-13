@@ -15,7 +15,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { GripVertical } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -49,37 +49,35 @@ export function MergeCardsDialog({
   onOpenChange,
   onConfirm,
 }: MergeCardsDialogProps) {
-  const [orderedSlugs, setOrderedSlugs] = useState<string[]>([]);
+  const [orderedBlocks, setOrderedBlocks] = useState<readonly LightBlock[]>([]);
+  const [shownOpen, setShownOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const blockBySlug = useMemo(
-    () => new Map(selectedBlocks.map((block) => [block.slug, block])),
-    [selectedBlocks],
-  );
-  const orderedBlocks = useMemo(
-    () => orderedSlugs.flatMap((slug) => blockBySlug.get(slug) ?? []),
-    [blockBySlug, orderedSlugs],
-  );
+  // The window takes the selection when it opens. The feed reloading under
+  // the open window gives a new list, often in another order; the order the
+  // window shows, and the person set, stays (SPEC_DEEP_AUDIT.md, Е1.7).
+  if (open !== shownOpen) {
+    setShownOpen(open);
+    if (open) {
+      setOrderedBlocks(selectedBlocks);
+      setError(null);
+      setSubmitting(false);
+    }
+  }
+  const orderedSlugs = useMemo(() => orderedBlocks.map((block) => block.slug), [orderedBlocks]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  useEffect(() => {
-    if (!open) return;
-    setOrderedSlugs(selectedBlocks.map((block) => block.slug));
-    setError(null);
-    setSubmitting(false);
-  }, [open, selectedBlocks]);
-
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    setOrderedSlugs((current) => {
-      const oldIndex = current.indexOf(String(active.id));
-      const newIndex = current.indexOf(String(over.id));
+    setOrderedBlocks((current) => {
+      const oldIndex = current.findIndex((block) => block.slug === String(active.id));
+      const newIndex = current.findIndex((block) => block.slug === String(over.id));
       if (oldIndex < 0 || newIndex < 0) return current;
-      return arrayMove(current, oldIndex, newIndex);
+      return arrayMove([...current], oldIndex, newIndex);
     });
   };
 

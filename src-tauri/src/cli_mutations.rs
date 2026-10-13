@@ -2,30 +2,49 @@
 //!
 //! One principle: the CLI never edits a file as text. A mutation is a surgical
 //! patch of one named part — a single front-matter field, the collections
-//! block, or the body — with everything else byte-identical. Every write goes
-//! through the same guards:
+//! block, or the body — with everything else byte-identical. The front matter
+//! is found by the app's own boundary (`frontmatter_bounds`), a field is
+//! written by the app's own source-preserving writer (`apply_block_changes`),
+//! and every write goes through the same guards (SPEC_DEEP_AUDIT.md, Н1):
 //!
-//! 1. the patched content must parse back (round-trip), else refusal;
-//! 2. front matter cannot disappear and `saved_at` cannot change;
-//! 3. the previous version is copied into the derived store first, and
-//!    `mine restore` brings it back;
-//! 4. the write is atomic (`write_atomically`).
-//!
-//! The index is never touched: files are the source of truth, the running
-//! app's watcher catches up, a closed app catches up on launch.
+//! 1. the patched content is read back the way the app reads notes: the
+//!    front matter cannot disappear or stop parsing, every property the
+//!    mutation does not own (`saved_at` among them) reads as before, and the
+//!    body is the one intended;
+//! 2. the previous version is copied into the derived store first, with a
+//!    fingerprint of what the CLI leaves in its place, and `mine restore`
+//!    brings it back only while the file still holds that;
+//! 3. the write is published only while the file still holds the bytes it
+//!    was built from (`write_atomically_if_unchanged`, SPEC_AUDIT_FIXES.md,
+//!    Ф2).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::domain::block::{
     body_without_media_embeds, iter_inline_media_sources, parse_markdown_document, DateTime,
+    Frontmatter, ParsedMarkdownBlock,
 };
-use crate::domain::collection::{normalize_collection_ref, patch_collections_frontmatter};
-use crate::domain::vault::VaultLayout;
-use crate::storage::files::write_atomically;
+use crate::domain::collection::{
+    normalize_collection_ref, patch_collections_frontmatter, MINE_COLLECTIONS_FIELD,
+};
+use crate::domain::source_patch::{
+    apply_block_changes, body_of, frontmatter_bounds, verify_other_properties, FrontmatterBounds,
+};
+use crate::domain::vault::{validate_slug, VaultLayout};
+use crate::storage::files::{
+    conflict_dir_for, source_changed, write_atomically, write_atomically_if_unchanged,
+    write_new_atomically,
+};
 
 /// Front-matter fields the CLI may set. Everything else is either managed
 /// (`Mine Collections`, `file`, `saved_at`) or unknown — both are refused.
 pub const SETTABLE_FIELDS: &[&str] = &["title", "description", "url", "author", "source"];
+
+/// `saved_at` a note without one is read back under; never written.
+const READ_BACK_SAVED_AT: &str = "1970-01-01T00:00:00Z";
+
+/// The parse origin of fences around text that is not YAML properties.
+const MALFORMED_ORIGIN: &str = "malformed_frontmatter";
 
 pub struct MutationOutcome {
     /// What changed, для отчёта и dry-run.
@@ -89,61 +108,122 @@ pub fn require_collection_page(
     }
 }
 
+/// A slug the CLI may turn into a path: inside the space, no traversal.
+pub fn checked_slug(slug: &str) -> Result<(), MutationError> {
+    validate_slug(slug).map_err(|error| MutationError::Usage(format!("{slug}: {error}")))
+}
+
 fn read_card(vault: &VaultLayout, slug: &str) -> Result<(PathBuf, String), MutationError> {
+    checked_slug(slug)?;
     let path = vault.block_path(slug);
-    let content = std::fs::read_to_string(&path)
-        .map_err(|_| MutationError::NotFound(format!("no card {slug}")))?;
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(MutationError::NotFound(format!("no card {slug}")));
+        }
+        Err(error) => {
+            return Err(MutationError::Internal(format!(
+                "read {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    let content = String::from_utf8(bytes).map_err(|_| {
+        MutationError::Refused(format!("{slug} is not UTF-8 text; nothing was written"))
+    })?;
     Ok((path, content))
 }
 
-/// The byte range of the front-matter block, excluding both fences.
-fn frontmatter_span(content: &str) -> Option<(usize, usize)> {
-    let after_open = content.strip_prefix("---\n")?;
-    let close = after_open.find("\n---")?;
-    Some((4, 4 + close))
+/// The note as the app reads it.
+fn read_as_app(slug: &str, content: &str) -> Result<ParsedMarkdownBlock, MutationError> {
+    let fallback = DateTime::new(READ_BACK_SAVED_AT)
+        .map_err(|error| MutationError::Internal(error.to_string()))?;
+    parse_markdown_document(slug, content, fallback)
+        .map_err(|error| MutationError::Refused(format!("{slug} does not parse: {error}")))
 }
 
-fn saved_at_of(content: &str) -> Option<String> {
-    let (start, end) = frontmatter_span(content)?;
-    content[start..end]
-        .lines()
-        .find_map(|line| line.strip_prefix("saved_at:").map(|v| v.trim().to_string()))
+/// What a patch may change: the properties it owns, and the body.
+struct PatchScope<'a> {
+    /// Properties the mutation writes. Every other one must read back as it
+    /// was; with none, the front matter must stay byte for byte.
+    own_keys: &'a [&'a str],
+    /// The body the mutation writes, or `None` when the body must stay.
+    body: Option<&'a str>,
 }
 
-/// Every guard a patched card must clear before it may touch the disk.
-fn verify_patched(slug: &str, old_content: &str, new_content: &str) -> Result<(), MutationError> {
-    // Front matter cannot disappear.
-    if frontmatter_span(old_content).is_some() && frontmatter_span(new_content).is_none() {
+/// Every guard a patched card must clear before it may touch the disk: it is
+/// read back the way the app reads notes (SPEC_DEEP_AUDIT.md, Н1).
+fn verify_patched(
+    slug: &str,
+    old_content: &str,
+    new_content: &str,
+    scope: &PatchScope<'_>,
+) -> Result<(), MutationError> {
+    // Front matter cannot disappear; a body or membership patch leaves the
+    // rest of it byte for byte.
+    if let FrontmatterBounds::Valid {
+        body_start: old_start,
+        ..
+    } = frontmatter_bounds(old_content)
+    {
+        let FrontmatterBounds::Valid {
+            body_start: new_start,
+            ..
+        } = frontmatter_bounds(new_content)
+        else {
+            return Err(MutationError::Refused(
+                "the patch would drop the front matter — refused".into(),
+            ));
+        };
+        let old_fences = &old_content[..old_start];
+        let new_fences = &new_content[..new_start];
+        // A file that ended on its closing fence gains the line break the
+        // body starts after; nothing else of the fences may change.
+        let same_fences = new_fences == old_fences
+            || (!old_fences.ends_with('\n')
+                && new_fences
+                    .strip_prefix(old_fences)
+                    .is_some_and(|rest| rest == "\n" || rest == "\r\n"));
+        if scope.own_keys.is_empty() && !same_fences {
+            return Err(MutationError::Refused(
+                "the patch would change the front matter — refused".into(),
+            ));
+        }
+    }
+    // Properties that read as properties keep doing so.
+    let old_read = read_as_app(slug, old_content)?;
+    let new_read = read_as_app(slug, new_content)?;
+    if old_read.origin != MALFORMED_ORIGIN && new_read.origin == MALFORMED_ORIGIN {
         return Err(MutationError::Refused(
-            "the patch would drop the front matter — refused".into(),
+            "the patched card's front matter no longer parses — refused".into(),
         ));
     }
-    // saved_at cannot change.
-    if saved_at_of(old_content) != saved_at_of(new_content) {
+    // Every property the mutation does not own reads as before; `saved_at`
+    // is never owned.
+    verify_other_properties(old_content, new_content, scope.own_keys).map_err(|error| {
+        MutationError::Refused(format!(
+            "the patch would change other properties ({error}) — refused"
+        ))
+    })?;
+    let intended_body = scope.body.unwrap_or_else(|| body_of(old_content));
+    if body_of(new_content) != intended_body {
         return Err(MutationError::Refused(
-            "the patch would change saved_at — refused".into(),
+            "the patched card would not read back with the intended body — refused".into(),
         ));
     }
-    // The result must still parse.
-    parse_markdown_document(slug, new_content, DateTime::new("2000-01-01").unwrap())
-        .map_err(|e| MutationError::Refused(format!("the patched card no longer parses: {e}")))?;
     Ok(())
 }
 
-fn backup_path(vault: &VaultLayout, slug: &str) -> PathBuf {
-    vault
-        .derived_root()
-        .join("cli-backups")
-        .join(format!("{slug}.md"))
-}
-
-/// Write with the full guard chain: verify, back up, atomic replace.
+/// Write with the full guard chain: verify, back up, publish only over the
+/// bytes that were read.
+#[allow(clippy::too_many_arguments)]
 fn guarded_write(
     vault: &VaultLayout,
     slug: &str,
-    path: &std::path::Path,
+    path: &Path,
     old_content: &str,
     new_content: &str,
+    scope: &PatchScope<'_>,
     summary: String,
     dry_run: bool,
 ) -> Result<MutationOutcome, MutationError> {
@@ -155,38 +235,191 @@ fn guarded_write(
             dry_run: true,
         });
     }
-    verify_patched(slug, old_content, new_content)?;
+    verify_patched(slug, old_content, new_content, scope)?;
     if dry_run {
         return Ok(MutationOutcome {
             summary: format!("would apply: {summary}"),
             dry_run: true,
         });
     }
-    let backup = backup_path(vault, slug);
-    if let Some(parent) = backup.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| MutationError::Internal(format!("backup dir: {e}")))?;
-    }
-    std::fs::write(&backup, old_content)
-        .map_err(|e| MutationError::Internal(format!("backup write: {e}")))?;
-    write_atomically(path, new_content.as_bytes())
-        .map_err(|e| MutationError::Internal(format!("write: {e:#}")))?;
+    let backup = CliBackup::record(
+        vault,
+        slug,
+        old_content,
+        &Left::Bytes(new_content.as_bytes()),
+    )?;
+    publish_over(slug, path, old_content.as_bytes(), new_content.as_bytes())?;
+    backup.keep();
     Ok(MutationOutcome {
         summary,
         dry_run: false,
     })
 }
 
-/// yaml_quote lives in domain::block privately; the CLI reuses the same rules
-/// through serialization of a single field line.
-fn yaml_field_line(field: &str, value: &str) -> String {
-    format!(
-        "{field}: {}",
-        crate::domain::block::yaml_quote_public(value)
+/// Replace `path` with `replacement` only while it holds `expected`
+/// (SPEC_AUDIT_FIXES.md, Ф2). An outside edit wins and is reported.
+fn publish_over(
+    slug: &str,
+    path: &Path,
+    expected: &[u8],
+    replacement: &[u8],
+) -> Result<(), MutationError> {
+    write_atomically_if_unchanged(path, expected, replacement, &conflict_dir_for(path)).map_err(
+        |error| {
+            if source_changed(&error).is_some() {
+                MutationError::Refused(format!(
+                    "{slug} changed outside Mine after it was read; nothing was written"
+                ))
+            } else {
+                MutationError::Internal(format!("write: {error:#}"))
+            }
+        },
     )
 }
 
-/// Set or replace one known front-matter field, byte-surgically.
+// ─── Backups ────────────────────────────────────────────────────────────────
+
+/// What a CLI mutation left at the card's path: these bytes, or no file.
+pub enum Left<'a> {
+    Bytes(&'a [u8]),
+    Absent,
+}
+
+impl Left<'_> {
+    fn marker(&self) -> String {
+        match self {
+            Self::Bytes(bytes) => {
+                use sha2::{Digest, Sha256};
+                format!("sha256:{:x}\n", Sha256::digest(bytes))
+            }
+            Self::Absent => "absent\n".to_string(),
+        }
+    }
+}
+
+/// A backup file's bytes before a mutation replaced them, if it was there.
+type EarlierBackup = (Option<Vec<u8>>, Option<Vec<u8>>);
+
+/// The one level of undo of a card: its text before the last CLI mutation
+/// (`cli-backups/<slug>.md`) and a fingerprint of what that mutation left at
+/// the card's path (`<slug>.md.left`). `mine restore` puts the text back only
+/// while the path still holds what the mutation left, so it never writes over
+/// an edit made since, nor over another note that took the name
+/// (SPEC_DEEP_AUDIT.md, Е1.9).
+pub struct CliBackup {
+    text: PathBuf,
+    left: PathBuf,
+    /// The backup this one replaced, put back unless the mutation went
+    /// through (`keep`).
+    earlier: Option<EarlierBackup>,
+}
+
+impl CliBackup {
+    fn paths(vault: &VaultLayout, slug: &str) -> (PathBuf, PathBuf) {
+        let text = vault
+            .derived_root()
+            .join("cli-backups")
+            .join(format!("{slug}.md"));
+        let mut left = text.clone().into_os_string();
+        left.push(".left");
+        (text, PathBuf::from(left))
+    }
+
+    /// Back up `previous` as the text before a mutation that leaves `left`.
+    /// The backup it replaces comes back if the mutation does not go through.
+    pub fn record(
+        vault: &VaultLayout,
+        slug: &str,
+        previous: &str,
+        left: &Left<'_>,
+    ) -> Result<Self, MutationError> {
+        checked_slug(slug)?;
+        let (text, left_path) = Self::paths(vault, slug);
+        let earlier = (read_optional(&text)?, read_optional(&left_path)?);
+        if let Some(parent) = text.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| MutationError::Internal(format!("backup dir: {e}")))?;
+        }
+        let backup = Self {
+            text,
+            left: left_path,
+            earlier: Some(earlier),
+        };
+        backup.write(previous.as_bytes(), left)?;
+        Ok(backup)
+    }
+
+    fn write(&self, previous: &[u8], left: &Left<'_>) -> Result<(), MutationError> {
+        write_atomically(&self.text, previous)
+            .map_err(|e| MutationError::Internal(format!("backup write: {e:#}")))?;
+        write_atomically(&self.left, left.marker().as_bytes())
+            .map_err(|e| MutationError::Internal(format!("backup write: {e:#}")))
+    }
+
+    /// The mutation went through: this backup stays.
+    pub fn keep(mut self) {
+        self.earlier = None;
+    }
+
+    fn put_back(&self, earlier: &EarlierBackup) -> std::io::Result<()> {
+        for (path, bytes) in [(&self.text, &earlier.0), (&self.left, &earlier.1)] {
+            match bytes {
+                Some(bytes) => std::fs::write(path, bytes)?,
+                None => match std::fs::remove_file(path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                },
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for CliBackup {
+    fn drop(&mut self) {
+        if let Some(earlier) = self.earlier.take() {
+            if let Err(error) = self.put_back(&earlier) {
+                // The failed mutation's own error is the answer; this line
+                // says why undo now holds the refused version instead.
+                eprintln!(
+                    "mine: the CLI backup {} could not be put back as it was: {error}",
+                    self.text.display()
+                );
+            }
+        }
+    }
+}
+
+fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, MutationError> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(MutationError::Internal(format!(
+            "read {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
+// ─── Fields and body ────────────────────────────────────────────────────────
+
+/// The field `name` of the model, for a known settable field.
+fn settable_field<'f>(frontmatter: &'f mut Frontmatter, name: &str) -> Option<&'f mut Option<String>> {
+    match name {
+        "title" => Some(&mut frontmatter.title),
+        "description" => Some(&mut frontmatter.description),
+        "url" => Some(&mut frontmatter.url),
+        "author" => Some(&mut frontmatter.author),
+        "source" => Some(&mut frontmatter.source),
+        _ => None,
+    }
+}
+
+/// Set or remove one known front-matter field: its key is replaced whole,
+/// continuation lines included, by the app's source-preserving writer, and
+/// the value reads back as given, line breaks included (SPEC_DEEP_AUDIT.md,
+/// Н1, Е1.2).
 pub fn set_field(
     vault: &VaultLayout,
     slug: &str,
@@ -201,51 +434,69 @@ pub fn set_field(
         )));
     }
     let (path, content) = read_card(vault, slug)?;
-    let Some((start, end)) = frontmatter_span(&content) else {
+    if !matches!(frontmatter_bounds(&content), FrontmatterBounds::Valid { .. }) {
         return Err(MutationError::Refused(
             "this note has no front matter; the CLI does not invent one".into(),
         ));
+    }
+    let read = read_as_app(slug, &content)?;
+    if read.origin == MALFORMED_ORIGIN {
+        return Err(MutationError::Refused(format!(
+            "the front matter of {slug} is not valid YAML properties; nothing was written"
+        )));
+    }
+    let before = read.block;
+    let mut after = before.clone();
+    let Some(slot) = settable_field(&mut after.frontmatter, field) else {
+        return Err(MutationError::Usage(format!("field {field} is not settable")));
     };
-    let fm = &content[start..end];
-    let prefix = format!("{field}:");
-    let mut lines: Vec<&str> = fm.lines().collect();
-    let existing = lines.iter().position(|line| line.starts_with(&prefix));
-    let new_line;
-    let summary;
-    match (existing, value) {
-        (Some(i), Some(v)) => {
-            new_line = yaml_field_line(field, v);
-            summary = format!(
-                "{field}: {:?} -> {v:?}",
-                lines[i].trim_start_matches(&prefix).trim()
-            );
-            lines[i] = &new_line;
-        }
-        (None, Some(v)) => {
-            new_line = yaml_field_line(field, v);
-            summary = format!("{field}: (absent) -> {v:?}");
-            lines.push(&new_line);
-        }
-        (Some(i), None) => {
-            summary = format!(
-                "{field}: {:?} -> (absent)",
-                lines[i].trim_start_matches(&prefix).trim()
-            );
-            lines.remove(i);
-        }
+    let previous = slot.clone();
+    match (&previous, value) {
         (None, None) => {
             return Ok(MutationOutcome {
                 summary: format!("{field} already absent"),
                 dry_run: true,
-            });
+            })
         }
+        (Some(old), Some(new)) if old == new => {
+            return Ok(MutationOutcome {
+                summary: "no change".into(),
+                dry_run: true,
+            })
+        }
+        _ => {}
     }
-    let new_fm = lines.join("\n");
-    let new_content = format!("{}{}{}", &content[..start], new_fm, &content[end..]);
-    guarded_write(vault, slug, &path, &content, &new_content, summary, dry_run)
+    *slot = value.map(str::to_string);
+    let summary = format!(
+        "{field}: {} -> {}",
+        previous
+            .as_deref()
+            .map_or_else(|| "(absent)".to_string(), |old| format!("{old:?}")),
+        value.map_or_else(|| "(absent)".to_string(), |new| format!("{new:?}")),
+    );
+    let new_content = apply_block_changes(&content, &before, &after).map_err(|error| {
+        MutationError::Refused(format!("{slug}: {error}; nothing was written"))
+    })?;
+    guarded_write(
+        vault,
+        slug,
+        &path,
+        &content,
+        &new_content,
+        &PatchScope {
+            own_keys: &[field],
+            body: None,
+        },
+        summary,
+        dry_run,
+    )
 }
 
 /// Replace the body wholesale, keeping the front matter byte-identical.
+///
+/// The body starts after the closing fence the app finds
+/// (`frontmatter_bounds`): CRLF, a closing line of exactly `---`, a file
+/// that ends on that line, an empty front matter (SPEC_DEEP_AUDIT.md, Н1).
 ///
 /// The media embeds are the content itself; losing one to a careless rewrite
 /// (a translation that drops the pictures) is the classic failure, so by
@@ -258,20 +509,17 @@ pub fn set_body(
     dry_run: bool,
 ) -> Result<MutationOutcome, MutationError> {
     let (path, content) = read_card(vault, slug)?;
-    let (old_body_start, old_body) = match frontmatter_span(&content) {
-        Some((_, end)) => {
-            // Past the closing fence line.
-            let after = content[end..]
-                .find('\n')
-                .map(|i| end + i + 1)
-                .unwrap_or(content.len());
-            let after = content[after..]
-                .find('\n')
-                .map(|i| after + i + 1)
-                .unwrap_or(content.len());
-            (after, &content[after..])
+    let (prefix, old_body) = match frontmatter_bounds(&content) {
+        FrontmatterBounds::Valid { body_start, .. } => {
+            let mut prefix = content[..body_start].to_string();
+            if !prefix.ends_with('\n') {
+                // The file ends on its closing fence: the body starts on a
+                // line of its own, in the line breaks the fences use.
+                prefix.push_str(if prefix.contains("\r\n") { "\r\n" } else { "\n" });
+            }
+            (prefix, &content[body_start..])
         }
-        None => (0, content.as_str()),
+        FrontmatterBounds::None => (String::new(), content.as_str()),
     };
 
     let old_embeds: Vec<String> = iter_inline_media_sources(old_body);
@@ -290,7 +538,7 @@ pub fn set_body(
         }
     }
 
-    let mut new_content = content[..old_body_start].to_string();
+    let mut new_content = prefix.clone();
     new_content.push_str(new_body);
     if !new_content.ends_with('\n') {
         new_content.push('\n');
@@ -302,7 +550,28 @@ pub fn set_body(
         body_without_media_embeds(old_body).trim().len(),
         body_without_media_embeds(new_body).trim().len(),
     );
-    guarded_write(vault, slug, &path, &content, &new_content, summary, dry_run)
+    let written_body = new_content[prefix.len()..].to_string();
+    guarded_write(
+        vault,
+        slug,
+        &path,
+        &content,
+        &new_content,
+        &PatchScope {
+            own_keys: &[],
+            body: Some(&written_body),
+        },
+        summary,
+        dry_run,
+    )
+}
+
+/// The text `mine card body` prints: what follows the closing fence the app
+/// finds, or the whole note without front matter. `card set-body` writes
+/// exactly this part.
+pub fn card_body(vault: &VaultLayout, slug: &str) -> Result<String, MutationError> {
+    let (_, content) = read_card(vault, slug)?;
+    Ok(body_of(&content).to_string())
 }
 
 /// Connect or disconnect a card and a collection — the only door to
@@ -331,8 +600,7 @@ pub fn set_collection_membership(
     if connected {
         collection_page(&collection_ref)?;
     }
-    let parsed = parse_markdown_document(slug, &content, DateTime::new("2000-01-01").unwrap())
-        .map_err(|e| MutationError::Refused(format!("card does not parse: {e}")))?;
+    let parsed = read_as_app(slug, &content)?;
     let mut tags = parsed.block.frontmatter.tags.clone();
     let had = tags.contains(&collection_ref);
     match (had, connected) {
@@ -363,27 +631,84 @@ pub fn set_collection_membership(
         &path,
         &content,
         &new_content,
+        &PatchScope {
+            own_keys: &[MINE_COLLECTIONS_FIELD],
+            body: None,
+        },
         format!("{verb} {collection_ref}"),
         dry_run,
     )
 }
 
-/// Bring back the version saved before the last CLI mutation of this card.
+/// Bring back the version saved before the last CLI mutation of this card,
+/// only while the card's path holds what that mutation left there: an edit
+/// made since, or another note that took the name, stays and the restore
+/// refuses (SPEC_DEEP_AUDIT.md, Е1.9; SPEC_AUDIT_FIXES.md, Ф2).
 pub fn restore(vault: &VaultLayout, slug: &str) -> Result<MutationOutcome, MutationError> {
+    checked_slug(slug)?;
     let _write = crate::storage::source_mutation::begin_write()
         .map_err(|error| MutationError::Internal(error.to_string()))?;
-    let backup = backup_path(vault, slug);
-    let previous = std::fs::read_to_string(&backup)
-        .map_err(|_| MutationError::NotFound(format!("no CLI backup for {slug}")))?;
+    let (text_path, left_path) = CliBackup::paths(vault, slug);
+    let Some(previous) = read_optional(&text_path)? else {
+        return Err(MutationError::NotFound(format!("no CLI backup for {slug}")));
+    };
+    let Some(left) = read_optional(&left_path)? else {
+        return Err(MutationError::Refused(format!(
+            "the CLI backup of {slug} was made before restore could check the card; nothing was restored; the earlier text is at {}",
+            text_path.display()
+        )));
+    };
     let path = vault.block_path(slug);
-    let current = std::fs::read_to_string(&path).unwrap_or_default();
-    // The swap keeps one level of undo in both directions.
-    std::fs::write(&backup, &current)
-        .map_err(|e| MutationError::Internal(format!("backup swap: {e}")))?;
-    write_atomically(&path, previous.as_bytes())
-        .map_err(|e| MutationError::Internal(format!("restore write: {e:#}")))?;
+    let current = read_optional(&path)?;
+    let still_left = match &current {
+        Some(bytes) => Left::Bytes(bytes).marker(),
+        None => Left::Absent.marker(),
+    };
+    if left != still_left.as_bytes() {
+        return Err(MutationError::Refused(format!(
+            "{slug} changed since the last CLI mutation, or another note took its name; nothing was restored; the earlier text is at {}",
+            text_path.display()
+        )));
+    }
+    match &current {
+        Some(bytes) => publish_over(slug, &path, bytes, &previous)?,
+        None => {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| MutationError::Internal(format!("restore dir: {e}")))?;
+            }
+            write_new_atomically(&path, &previous).map_err(|e| {
+                MutationError::Refused(format!(
+                    "{slug} could not be brought back ({e:#}); nothing was restored"
+                ))
+            })?;
+        }
+    }
+    // The swap keeps one level of undo in both directions; a restored
+    // deletion has nothing to go back to.
+    let swap = match current {
+        Some(bytes) => {
+            let swapped = CliBackup {
+                text: text_path,
+                left: left_path,
+                earlier: None,
+            };
+            swapped.write(&bytes, &Left::Bytes(&previous)).err()
+        }
+        None => [&text_path, &left_path]
+            .into_iter()
+            .find_map(|path| std::fs::remove_file(path).err())
+            .map(|error| MutationError::Internal(error.to_string())),
+    };
+    let summary = match swap {
+        None => format!("restored {slug} from the CLI backup"),
+        Some(error) => format!(
+            "restored {slug} from the CLI backup; the backup could not be swapped ({}), so mine restore cannot undo this",
+            error.message()
+        ),
+    };
     Ok(MutationOutcome {
-        summary: format!("restored {slug} from the CLI backup"),
+        summary,
         dry_run: false,
     })
 }
@@ -470,5 +795,56 @@ mod tests {
 
         assert!(matches!(refused, Err(MutationError::Refused(_))));
         assert_eq!(std::fs::read_to_string(vault.block_path("Note")).unwrap(), source);
+    }
+
+    /// SPEC_DEEP_AUDIT.md, Е1.9 (Ф2): a write whose file changed after it
+    /// was read refuses, and the other version stays as it is.
+    #[test]
+    fn a_write_refuses_a_file_changed_after_it_was_read() {
+        let source = "---\nsaved_at: 2026-07-10\n---\nBody\n";
+        let (_dir, vault) = space_with_card(source);
+        let edited = "---\nsaved_at: 2026-07-10\n---\nEdited elsewhere\n";
+        std::fs::write(vault.block_path("Note"), edited).unwrap();
+
+        let outcome = guarded_write(
+            &vault,
+            "Note",
+            &vault.block_path("Note"),
+            source,
+            "---\nsaved_at: 2026-07-10\nauthor: Ann\n---\nBody\n",
+            &PatchScope {
+                own_keys: &["author"],
+                body: None,
+            },
+            "author".into(),
+            false,
+        );
+
+        assert!(matches!(outcome, Err(MutationError::Refused(_))));
+        assert_eq!(std::fs::read_to_string(vault.block_path("Note")).unwrap(), edited);
+        // The refused write left no backup to restore over the edit.
+        assert!(matches!(restore(&vault, "Note"), Err(MutationError::NotFound(_))));
+    }
+
+    /// Н1: a patch that would read back with another `saved_at`, another
+    /// property or another body is refused before it reaches the disk.
+    #[test]
+    fn a_patch_that_reads_back_differently_is_refused() {
+        let source = "---\nsaved_at: 2026-07-10\nrating: 5\n---\nBody\n";
+        let scope = PatchScope {
+            own_keys: &["author"],
+            body: None,
+        };
+        for patched in [
+            "---\nsaved_at: 2026-07-11\nrating: 5\nauthor: Ann\n---\nBody\n",
+            "---\nsaved_at: 2026-07-10\nrating: 4\nauthor: Ann\n---\nBody\n",
+            "---\nsaved_at: 2026-07-10\nrating: 5\nauthor: Ann\n---\nOther\n",
+            "---\nsaved_at: 2026-07-10\nrating: [5\n---\nBody\n",
+        ] {
+            assert!(
+                matches!(verify_patched("Note", source, patched, &scope), Err(MutationError::Refused(_))),
+                "{patched:?}"
+            );
+        }
     }
 }

@@ -987,8 +987,9 @@ fn read_properties(note: &str) -> Properties {
     }
 }
 
-/// The text after the frontmatter, or the whole note without one.
-pub(crate) fn body_of(note: &str) -> &str {
+/// The text after the frontmatter fences (`frontmatter_bounds`), or the
+/// whole note without them.
+pub fn body_of(note: &str) -> &str {
     match frontmatter_bounds(note) {
         FrontmatterBounds::None => note,
         FrontmatterBounds::Valid { body_start, .. } => &note[body_start..],
@@ -1000,7 +1001,7 @@ pub(crate) fn body_of(note: &str) -> &str {
 /// user's own properties are not the operation's to change (Ф1). Properties
 /// `source` holds as unreadable text are not compared; the patch leaves that
 /// text as it is.
-pub(crate) fn verify_other_properties(
+pub fn verify_other_properties(
     source: &str,
     patched: &str,
     own_keys: &[&str],
@@ -1027,6 +1028,22 @@ pub(crate) fn verify_other_properties(
         });
     }
     Ok(())
+}
+
+/// The note's own properties: every key of its frontmatter outside
+/// `MINE_FRONTMATTER_KEYS`, in the order written. A note without frontmatter
+/// has none; fences around text that is not a mapping are `None`, since no
+/// property can be read from them.
+pub fn user_properties(note: &str) -> Option<serde_yaml::Mapping> {
+    let Properties::Mapping(mapping) = read_properties(note) else {
+        return None;
+    };
+    Some(
+        mapping
+            .into_iter()
+            .filter(|(key, _)| !key.as_str().is_some_and(|key| MINE_FRONTMATTER_KEYS.contains(&key)))
+            .collect(),
+    )
 }
 
 /// Read the patched text back and compare it with the intended model.

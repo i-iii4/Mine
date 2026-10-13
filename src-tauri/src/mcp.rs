@@ -192,7 +192,7 @@ Each result is named by its file name (`name`); `title` is the note's H1 or lega
     },
     ToolSpec {
         name: "card_rename",
-        description: "Rename a card; references and index follow",
+        description: "Rename a card; references and index follow. A collection page renames its collection, membership included",
         schema: || schema(&["slug", "new_name"], vec![
             slug_prop(),
             prop("new_name", "string", "New card name (no folder, no extension)"),
@@ -248,7 +248,7 @@ Each result is named by its file name (`name`); `title` is the note's H1 or lega
     },
     ToolSpec {
         name: "collection_rename",
-        description: "Rename a collection; membership in cards is rewritten",
+        description: "Rename a collection; its page, the membership in cards and the links to it in text and Mine Related Notes follow",
         schema: || schema(&["old", "new"], vec![
             prop("old", "string", "Current name"),
             prop("new", "string", "New name"),
@@ -257,7 +257,7 @@ Each result is named by its file name (`name`); `title` is the note's H1 or lega
     },
     ToolSpec {
         name: "collection_delete",
-        description: "Delete a collection page (cards keep their files)",
+        description: "Delete a collection: its page goes to the Trash and its link comes off every card (cards keep their files); kept_links names cards that could not be changed",
         schema: || schema(&["name"], vec![
             prop("name", "string", "Collection name"),
             space_prop(),
@@ -659,5 +659,51 @@ mod tests {
         assert_eq!(result["isError"], false);
         let after = Sha256::digest(std::fs::read(vault.index_db_path()).unwrap());
         assert_eq!(before, after, "reads must not touch the index");
+    }
+
+    /// SPEC_DEEP_AUDIT.md, Е1.1 and Е1.2 (Н1) through the MCP: a CRLF note
+    /// keeps its properties under a new body, and a field set over a block
+    /// scalar reads back as the value written, line breaks included.
+    #[test]
+    fn field_and_body_tools_keep_the_note_as_the_app_reads_it() {
+        use crate::cli::source_fidelity_tests::{parsed, read, write, MULTILINE};
+        let (_dir, env, root) = fixture();
+        write(&root, "Cards/crlf", "---\r\nsaved_at: 2026-01-03T00:00:00Z\r\nauthor: Ann\r\n---\r\nOld\r\n");
+        write(&root, "Cards/multi", MULTILINE);
+
+        let result = call(&env, "card_set_body", json!({ "slug": "Cards/crlf", "body": "New\n" }));
+        assert_eq!(result["isError"], false, "{}", text_of(&result));
+        assert_eq!(
+            read(&root, "Cards/crlf"),
+            "---\r\nsaved_at: 2026-01-03T00:00:00Z\r\nauthor: Ann\r\n---\r\nNew\n"
+        );
+
+        let value = "One\nTwo";
+        let result = call(&env, "card_set", json!({
+            "slug": "Cards/multi", "field": "description", "value": value,
+        }));
+        assert_eq!(result["isError"], false, "{}", text_of(&result));
+        let note = parsed(&root, "Cards/multi");
+        assert_eq!(note.block.frontmatter.description.as_deref(), Some(value));
+        assert_eq!(note.block.frontmatter.author.as_deref(), Some("Ann"));
+        assert!(!read(&root, "Cards/multi").contains("First line"));
+    }
+
+    /// SPEC_DEEP_AUDIT.md, Е1.3 and Е1.5 (Н2) through the MCP: deleting a
+    /// collection takes its links off the cards; renaming its page renames it.
+    #[test]
+    fn collection_tools_keep_membership_whole() {
+        use crate::cli::source_fidelity_tests::parsed;
+        let (_dir, env, root) = fixture();
+
+        let result = call(&env, "card_rename", json!({ "slug": "Collections/Nature", "new_name": "Wild" }));
+        assert_eq!(result["isError"], false, "{}", text_of(&result));
+        assert_eq!(parsed(&root, "Cards/sunset").block.frontmatter.tags, vec!["Wild"]);
+
+        let result = call(&env, "collection_delete", json!({ "name": "Wild" }));
+        assert_eq!(result["isError"], false, "{}", text_of(&result));
+        assert!(!root.join("Collections/Wild.md").exists());
+        assert!(parsed(&root, "Cards/sunset").block.frontmatter.tags.is_empty());
+        assert!(!std::fs::read_to_string(root.join("Cards/sunset.md")).unwrap().contains("Wild"));
     }
 }

@@ -407,8 +407,9 @@ fn reorder_channels_blocking(
     Ok(())
 }
 
-/// Rename a channel: update the tag in all blocks' frontmatter files,
-/// re-index them, and update the channel record in the database.
+/// Rename a collection: its page, its name in every member's
+/// `Mine Collections`, and every link to the page in the text and in
+/// `Mine Related Notes`, in one source mutation (SPEC_DEEP_AUDIT.md, Н2).
 fn rename_channel_unannounced(
     webview: tauri::Webview,
     state: State<'_, AppState>,
@@ -441,6 +442,9 @@ pub fn rename_channel(webview: tauri::Webview, state: State<'_, AppState>, old_t
     outcome
 }
 
+/// Rename the collection `old_tag` to `new_tag`. The index is brought up to
+/// the files first, so the members are the ones the files name
+/// (SPEC_DEEP_AUDIT.md, Н2, Е1.4).
 pub(crate) fn rename_channel_inner(
     state: Option<&AppState>,
     conn: &rusqlite::Connection,
@@ -448,15 +452,117 @@ pub(crate) fn rename_channel_inner(
     old_tag: &str,
     new_tag: &str,
 ) -> Result<ChannelDto, CommandError> {
+    reconcile_before_collection_mutation(conn, vault)?;
+    rename_reconciled_collection(state, conn, vault, old_tag, new_tag).map(|renamed| renamed.channel)
+}
+
+/// Whether the note `slug` is a collection page: its file says
+/// `type: channel`. A missing file is no page.
+pub(crate) fn is_collection_page(vault: &VaultLayout, slug: &str) -> Result<bool, CommandError> {
+    let path = vault.block_path(slug);
+    if !path.is_file() {
+        return Ok(false);
+    }
+    let (read_slug, content) = files::read_block_file(vault, &path)?;
+    let parsed = parse_markdown_document(&read_slug, &content, file_saved_at(&path))
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
+    Ok(parsed.block.frontmatter.block_type == BlockType::Channel)
+}
+
+/// Rename the collection whose page is the note `page_slug` to the name
+/// `new_stem` gives, the way a card's rename names it (a bare name stays in
+/// the page's folder). A collection page renamed as a note is its collection
+/// renamed, membership included (SPEC_DEEP_AUDIT.md, Н2, Е1.5). Returns the
+/// page's new slug.
+pub(crate) fn rename_collection_page(
+    state: Option<&AppState>,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    page_slug: &str,
+    new_slug: &str,
+) -> Result<String, CommandError> {
+    let folder = |slug: &str| slug.rsplit_once('/').map(|(folder, _)| folder.to_string());
+    if folder(page_slug) != folder(new_slug) {
+        return Err(CommandError::NameRefused(
+            "A collection stays in its folder: type its name without /.".into(),
+        ));
+    }
+    reconcile_before_collection_mutation(conn, vault)?;
+    let tag = index::channel_page_slugs(conn)?
+        .into_iter()
+        .find_map(|(tag, page)| (page == page_slug).then_some(tag))
+        .ok_or_else(|| CommandError::CollectionNotFound {
+            collection: crate::domain::collection::collection_ref_from_slug(page_slug),
+        })?;
+    let name = new_slug.rsplit('/').next().unwrap_or(new_slug);
+    let renamed = rename_reconciled_collection(state, conn, vault, &tag, name)?;
+    Ok(renamed.page_slug.unwrap_or_else(|| page_slug.to_string()))
+}
+
+/// What a collection rename did.
+struct CollectionRenamed {
+    channel: ChannelDto,
+    /// The page's new slug; `None` when the name did not change.
+    page_slug: Option<String>,
+}
+
+/// Bring the index up to the files before a collection mutation reads the
+/// collection's members and pages from it: a card connected in Obsidian
+/// while nothing watched the space is a member, as its file says
+/// (SPEC_DEEP_AUDIT.md, Н2). Notes the pass cannot read stay as the index
+/// held them; the mutation reads its candidates again from disk.
+fn reconcile_before_collection_mutation(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+) -> Result<(), CommandError> {
+    crate::storage::reconcile::reconcile_vault(conn, vault)
+        .map(|_| ())
+        .map_err(|error| {
+            CommandError::Internal(format!("bring the index up to the files: {error}"))
+        })
+}
+
+/// Rename the collection's name in a membership list, in place.
+fn rename_membership(tags: &mut Vec<String>, old: &str, new: &str) {
+    if !tags.iter().any(|tag| tag == old) {
+        return;
+    }
+    let mut renamed: Vec<String> = Vec::with_capacity(tags.len());
+    for tag in tags.drain(..) {
+        let tag = if tag == old { new.to_string() } else { tag };
+        if !renamed.contains(&tag) {
+            renamed.push(tag);
+        }
+    }
+    *tags = renamed;
+}
+
+/// The rename over an index already brought up to the files.
+///
+/// The page moves and the notes that link it are rewritten by the card
+/// rename's own plan (`plan_note_move`: wikilinks and Markdown links in the
+/// text, `Mine Related Notes`, SPEC_AUDIT_FIXES.md, Ф3), with the members'
+/// `Mine Collections` renamed in the same pass; a member the index knows that
+/// the pass did not reach is added. Every note is written over the bytes it
+/// was read from (Ф1, Ф2), in one source mutation with the index.
+fn rename_reconciled_collection(
+    state: Option<&AppState>,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    old_tag: &str,
+    new_tag: &str,
+) -> Result<CollectionRenamed, CommandError> {
     let plan = CollectionRename::plan(conn, vault, old_tag, new_tag)?;
     let Some(page_move) = plan.page_move else {
         // The same name after normalization: nothing to write.
-        return channel_dto(conn, &plan.existing);
+        return Ok(CollectionRenamed {
+            channel: channel_dto(conn, &plan.existing)?,
+            page_slug: None,
+        });
     };
     let CollectionRename {
         old: normalized_old,
         new: normalized_new,
-        existing,
         ..
     } = plan;
     let PageMove {
@@ -464,48 +570,40 @@ pub(crate) fn rename_channel_inner(
         to: new_path,
         slug: new_slug,
     } = page_move;
+    let old_slug = vault
+        .slug_for_path(&old_path)
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
 
-    let affected_blocks = index::list_blocks_by_tag(conn, &normalized_old)?;
-    let mut writes = Vec::with_capacity(affected_blocks.len() + 1);
-    let mut prepared_blocks = Vec::with_capacity(affected_blocks.len());
-    // A page that is a member of itself changes its membership as it moves.
-    let mut page_rewrite = None;
-    for indexed_block in &affected_blocks {
-        if indexed_block.slug.is_empty() {
+    let retag = |tags: &mut Vec<String>| rename_membership(tags, &normalized_old, &normalized_new);
+    let mut planned = crate::commands::blocks::plan_note_move(vault, &old_slug, &new_slug, &retag)
+        .map_err(|error| CommandError::Internal(error.to_string()))?;
+    let reached: std::collections::BTreeSet<std::path::PathBuf> =
+        planned.iter().map(|write| write.original_path.clone()).collect();
+    for member in index::list_blocks_by_tag(conn, &normalized_old)? {
+        if member.slug.is_empty() {
             continue;
         }
-        let path = vault.block_path(&indexed_block.slug);
-        let (_, content) = files::read_block_file(vault, &path)?;
-        let parsed = parse_markdown_document(&indexed_block.slug, &content, file_saved_at(&path))
-            .map_err(|error| CommandError::Internal(error.to_string()))?;
-
-        // Replace old collection ref with new collection ref.
-        let mut collections = parsed.block.frontmatter.tags;
-        collections.retain(|t| t != &normalized_old);
-        if !collections.contains(&normalized_new) {
-            collections.push(normalized_new.clone());
-        }
-        let is_page = path == old_path;
-        let rewrite =
-            MembershipRewrite::prepare(vault, &indexed_block.slug, path, content, &collections)?;
-        if is_page {
-            page_rewrite = Some((rewrite.expected, rewrite.bytes));
+        let path = vault.block_path(&member.slug);
+        if reached.contains(&path) {
             continue;
         }
-        let (write, projection) = rewrite.into_source_write();
-        writes.push(write);
-        prepared_blocks.push(projection);
+        let (read_slug, content) = files::read_block_file(vault, &path)?;
+        let before = parse_markdown_document(&read_slug, &content, file_saved_at(&path))
+            .map_err(|error| CommandError::Internal(error.to_string()))?
+            .block;
+        let mut block = before.clone();
+        retag(&mut block.frontmatter.tags);
+        if block.frontmatter.tags == before.frontmatter.tags {
+            continue;
+        }
+        planned.push(crate::commands::blocks::PlannedBlockWrite {
+            original_path: path.clone(),
+            target_path: path,
+            source: content,
+            before,
+            block,
+        });
     }
-
-    // Create new channel with same metadata
-    let new_channel = Channel {
-        tag: normalized_new.clone(),
-        description: existing.description.clone(),
-        color: existing.color.clone(),
-        icon: existing.icon.clone(),
-        position: existing.position,
-        created_at: existing.created_at.clone(),
-    };
 
     // The page went since the plan found it: the rename never makes a new
     // one in its place (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К5).
@@ -514,36 +612,71 @@ pub(crate) fn rename_channel_inner(
             collection: normalized_old,
         });
     }
-    // The page carries no name inside it: renaming the collection is
-    // renaming the file, its text and properties move unchanged.
-    writes.push(match page_rewrite {
-        Some((expected, bytes)) => {
-            SourceFileWrite::rename_with_bytes(old_path.clone(), new_path, expected, bytes)
-        }
-        None => SourceFileWrite::rename(old_path.clone(), new_path),
-    });
+    let mut writes = Vec::with_capacity(planned.len());
+    let mut written = Vec::with_capacity(planned.len());
+    for write in &planned {
+        let patched = apply_block_changes(&write.source, &write.before, &write.block).map_err(|_| {
+            CommandError::FrontmatterNotWritable {
+                path: write.original_path.display().to_string(),
+            }
+        })?;
+        let expected = write.source.clone().into_bytes();
+        writes.push(match (write.original_path == old_path, patched == write.source) {
+            // The page carries no name inside it: renaming it renames the
+            // file, its text and properties move unchanged.
+            (true, true) => SourceFileWrite::rename(old_path.clone(), new_path.clone()),
+            (true, false) => SourceFileWrite::rename_with_bytes(
+                old_path.clone(),
+                new_path.clone(),
+                expected,
+                patched.into_bytes(),
+            ),
+            (false, _) => SourceFileWrite::replace(write.target_path.clone(), expected, patched.into_bytes()),
+        });
+        written.push(write.target_path.clone());
+    }
+    if !planned.iter().any(|write| write.original_path == old_path) {
+        writes.push(SourceFileWrite::rename(old_path.clone(), new_path.clone()));
+        written.push(new_path.clone());
+    }
 
     // Watcher suppression is only meaningful inside the app process; a CLI
     // mutation must stay visible to the app's watcher.
     if let Some(state) = state {
         state.suppress_paths(
-            std::iter::once(old_path).chain(writes.iter().map(|write| write.path.clone())),
+            std::iter::once(old_path.clone()).chain(writes.iter().map(|write| write.path.clone())),
             Duration::from_millis(SOURCE_MUTATION_WATCHER_SUPPRESSION_MS),
         )?;
     }
     let staged = StagedSourceMutation::stage(writes).map_err(CommandError::from)?;
     staged
         .commit_with_index(conn, "rename_channel", |index_conn| {
-            for projection in &prepared_blocks {
-                projection.upsert(index_conn, vault)?;
-            }
-            index::upsert_channel_with_source(index_conn, &new_channel, Some(new_slug.as_str()))?;
+            crate::storage::reconcile::remove_source_projection(index_conn, vault, &old_slug)?;
             index::remove_channel(index_conn, &normalized_old)?;
+            for path in &written {
+                crate::storage::reconcile::project_source_path(index_conn, vault, path)?;
+            }
             Ok(())
         })
         .map_err(CommandError::from)?;
 
-    channel_dto(conn, &new_channel)
+    // The page is indexed under the name its file now resolves to.
+    let page_tag = index::channel_page_slugs(conn)?
+        .into_iter()
+        .find_map(|(tag, page)| (page == new_slug).then_some(tag))
+        .unwrap_or_else(|| normalized_new.clone());
+    let channel = index::list_channels(conn)?
+        .into_iter()
+        .find(|channel| channel.tag == page_tag)
+        .ok_or_else(|| {
+            CommandError::Internal(format!(
+                "renamed collection {normalized_new} is missing from the index"
+            ))
+        })?;
+    Ok(CollectionRenamed {
+        channel: channel_dto(conn, &channel)?,
+        page_slug: Some(new_slug),
+    })
 }
 
 fn channel_dto(conn: &rusqlite::Connection, channel: &Channel) -> Result<ChannelDto, CommandError> {
@@ -802,22 +935,34 @@ pub async fn list_channel_previews(
     .map_err(|e| CommandError::Internal(format!("list_channel_previews task join failed: {e}")))?
 }
 
-/// Delete a channel: move its page to the Trash, as it was read, and remove
-/// its index entry. Blocks are not affected (tags stay in block frontmatter).
-fn delete_channel_unannounced(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<bool, CommandError> {
+/// What deleting a collection did (SPEC_DEEP_AUDIT.md, Н2, Е1.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+pub struct CollectionDeleted {
+    /// Whether there was a collection to delete: its page or its row.
+    pub deleted: bool,
+    /// Cards that still link the collection, by slug: the deletion could not
+    /// read them, or their properties cannot take the change in place. Their
+    /// files are as they were; every other link is gone.
+    pub kept_links: Vec<String>,
+}
+
+/// Delete a collection: take its link off every card that has it and send its
+/// page to the Trash, as it was read, in one source mutation with the index
+/// (SPEC_DEEP_AUDIT.md, Н2).
+fn delete_channel_unannounced(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<CollectionDeleted, CommandError> {
     let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
     let vault_state = space
         .vault_state
         .lock()
         .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
     let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-    delete_channel_inner(&vs.conn, &vs.vault, &tag)
+    delete_channel_inner(Some(&state), &vs.conn, &vs.vault, &tag)
 }
 
 /// [`delete_channel_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async)]
-pub fn delete_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<bool, CommandError> {
+pub fn delete_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<CollectionDeleted, CommandError> {
     let announcing = webview.clone();
     let outcome = delete_channel_unannounced(webview, state, tag);
     if outcome.is_ok() {
@@ -826,19 +971,30 @@ pub fn delete_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: 
     outcome
 }
 
+/// The one deletion of a collection the app, the CLI and the MCP run. The
+/// index is brought up to the files first, so the members are the ones the
+/// files name (SPEC_DEEP_AUDIT.md, Н2).
 pub(crate) fn delete_channel_inner(
+    state: Option<&AppState>,
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     tag: &str,
-) -> Result<bool, CommandError> {
-    ChannelDeletion::plan(conn, vault, tag)?.apply(conn)
+) -> Result<CollectionDeleted, CommandError> {
+    reconcile_before_collection_mutation(conn, vault)?;
+    ChannelDeletion::plan(conn, vault, tag)?
+        .with_members(conn, vault)?
+        .apply(state, conn, vault)
 }
 
 /// A collection deletion, planned from the collection's page as it was read
-/// (`SPEC_AUDIT_FIXES.md`, Ф2, Д2.6).
+/// (`SPEC_AUDIT_FIXES.md`, Ф2, Д2.6) and from its members as their files say.
 struct ChannelDeletion {
     tag: String,
     page: Option<CollectionPage>,
+    /// The members' links taken off, each written over the bytes it was
+    /// read from.
+    members: Vec<(SourceFileWrite, crate::commands::tags::BlockProjection)>,
+    kept_links: Vec<String>,
 }
 
 impl ChannelDeletion {
@@ -853,31 +1009,107 @@ impl ChannelDeletion {
         }
         validate_collection_ref(&tag).map_err(CommandError::Internal)?;
         let page = collection_document_for_mutation(conn, vault, &tag)?;
-        Ok(Self { tag, page })
+        Ok(Self {
+            tag,
+            page,
+            members: Vec::new(),
+            kept_links: Vec::new(),
+        })
     }
 
-    /// Send the page to the Trash only as the plan read it: an edit made
-    /// since, in Obsidian or by iCloud, stays, and the deletion refuses with
-    /// `SourceChanged`, leaving the page and the collection's record as they
-    /// are.
-    fn apply(self, conn: &rusqlite::Connection) -> Result<bool, CommandError> {
-        let mut writes = Vec::new();
+    /// Take the collection's link off every member. A member that cannot be
+    /// read, or whose properties cannot take the change in place, keeps its
+    /// link and is named; it does not stop the deletion (Е1.3).
+    fn with_members(mut self, conn: &rusqlite::Connection, vault: &VaultLayout) -> Result<Self, CommandError> {
+        let page_path = self.page.as_ref().map(|page| page.path.clone());
+        for member in index::list_blocks_by_tag(conn, &self.tag)? {
+            if member.slug.is_empty() {
+                continue;
+            }
+            let path = vault.block_path(&member.slug);
+            if Some(&path) == page_path.as_ref() {
+                continue;
+            }
+            match self.member_rewrite(vault, &member.slug, path) {
+                Ok(Some(rewrite)) => self.members.push(rewrite.into_source_write()),
+                Ok(None) => {}
+                Err(error) => {
+                    log::warn!(
+                        "collection {} deleted without its link in {}: {error}",
+                        self.tag,
+                        member.slug
+                    );
+                    self.kept_links.push(member.slug);
+                }
+            }
+        }
+        Ok(self)
+    }
+
+    fn member_rewrite(
+        &self,
+        vault: &VaultLayout,
+        slug: &str,
+        path: std::path::PathBuf,
+    ) -> Result<Option<MembershipRewrite>, CommandError> {
+        let (read_slug, content) = files::read_block_file(vault, &path)?;
+        let parsed = parse_markdown_document(&read_slug, &content, file_saved_at(&path))
+            .map_err(|error| CommandError::Internal(error.to_string()))?;
+        let mut collections = parsed.block.frontmatter.tags;
+        let before = collections.len();
+        collections.retain(|collection| collection != &self.tag);
+        if collections.len() == before {
+            // The file no longer names it: nothing to take off.
+            return Ok(None);
+        }
+        MembershipRewrite::prepare(vault, slug, path, content, &collections).map(Some)
+    }
+
+    /// Take the links off and send the page to the Trash only as the plan
+    /// read them: an edit made since, in Obsidian or by iCloud, stays, and
+    /// the deletion refuses with `SourceChanged`, leaving every file and the
+    /// collection's record as they are.
+    fn apply(
+        self,
+        state: Option<&AppState>,
+        conn: &rusqlite::Connection,
+        vault: &VaultLayout,
+    ) -> Result<CollectionDeleted, CommandError> {
+        let mut writes = Vec::with_capacity(self.members.len() + 1);
+        let mut projections = Vec::with_capacity(self.members.len());
+        for (write, projection) in self.members {
+            writes.push(write);
+            projections.push(projection);
+        }
         let mut slugs = Vec::new();
         if let Some(page) = self.page {
             writes.push(SourceFileWrite::delete_if_unchanged(page.path, page.read));
             slugs.push(page.slug);
         }
+        if let Some(state) = state {
+            state.suppress_paths(
+                writes.iter().map(|write| write.path.clone()),
+                Duration::from_millis(SOURCE_MUTATION_WATCHER_SUPPRESSION_MS),
+            )?;
+        }
         let tag = self.tag;
         let staged = StagedSourceMutation::stage(writes).map_err(CommandError::from)?;
-        staged
+        let deleted = staged
             .commit_with_index(conn, "delete_channel", |index_conn| {
+                for projection in &projections {
+                    projection.upsert(index_conn, vault)?;
+                }
                 for slug in &slugs {
                     index::remove_block(index_conn, slug)?;
                 }
                 let removed = index::remove_channel(index_conn, &tag)?;
                 Ok(removed || !slugs.is_empty())
             })
-            .map_err(CommandError::from)
+            .map_err(CommandError::from)?;
+        Ok(CollectionDeleted {
+            deleted,
+            kept_links: self.kept_links,
+        })
     }
 }
 
@@ -1223,10 +1455,10 @@ mod tests {
         std::fs::write(vault.block_path("Cards/Design"), article).unwrap();
         crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
 
-        assert!(delete_channel_inner(&conn, &vault, "Design").unwrap());
+        assert!(delete_channel_inner(None, &conn, &vault, "Design").unwrap().deleted);
         assert!(!vault.block_path("Design").exists());
         assert!(vault.block_path("Collections/Design").exists());
-        assert!(delete_channel_inner(&conn, &vault, "Collections/Design").unwrap());
+        assert!(delete_channel_inner(None, &conn, &vault, "Collections/Design").unwrap().deleted);
         assert!(!vault.block_path("Collections/Design").exists());
         assert_eq!(
             std::fs::read_to_string(vault.block_path("Cards/Design")).unwrap(),
@@ -1236,7 +1468,7 @@ mod tests {
             crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
             assert!(index::list_channels(&conn).unwrap().is_empty());
         }
-        assert!(!delete_channel_inner(&conn, &vault, "Design").unwrap());
+        assert!(!delete_channel_inner(None, &conn, &vault, "Design").unwrap().deleted);
     }
 
     /// Д2.6: the page is edited after the deletion read it. The edit is not
@@ -1253,7 +1485,7 @@ mod tests {
         let edited = WRITTEN_PAGE.replace("Why I keep these.", "Why I keep these, edited in Obsidian.");
         std::fs::write(vault.block_path("Collections/Photos"), &edited).unwrap();
 
-        let refused = deletion.apply(&conn);
+        let refused = deletion.apply(None, &conn, &vault);
 
         assert!(matches!(refused, Err(CommandError::SourceChanged { .. })), "{refused:?}");
         assert_eq!(
@@ -1299,7 +1531,7 @@ mod tests {
         }
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = db::open_or_create(&vault.index_db_path()).unwrap();
-        assert!(delete_channel_inner(&conn, &vault, "Design").is_err());
+        assert!(delete_channel_inner(None, &conn, &vault, "Design").is_err());
         assert!(vault.block_path("A/Design").exists());
         assert!(vault.block_path("B/Design").exists());
     }
@@ -1500,6 +1732,73 @@ mod tests {
             WRITTEN_PAGE
         );
         assert!(!vault.block_path("Collections/Pictures").exists());
+    }
+
+    /// SPEC_DEEP_AUDIT.md, Е1.3 (Н2): deleting a collection takes its links
+    /// off every member and sends its page to the Trash in one mutation. A
+    /// member the deletion cannot read keeps its link and is named; it does
+    /// not stop the deletion.
+    #[test]
+    fn deleting_a_collection_takes_its_links_off_past_a_card_it_cannot_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        let member = "---\naliases:\n  - Sunset\nMine Collections:\n  - \"[[Photos]]\"\n  - \"[[Archive]]\"\nsaved_at: 2026-04-25T14:00:40Z\n---\nBody\n";
+        std::fs::write(vault.block_path("Cards/Sunset"), member).unwrap();
+        let locked = "---\nMine Collections:\n  - \"[[Photos]]\"\nsaved_at: 2026-04-25T14:00:40Z\n---\nLocked\n";
+        std::fs::write(vault.block_path("Cards/Locked"), locked).unwrap();
+        let state = app_state(&vault);
+        let locked_path = vault.block_path("Cards/Locked");
+        std::fs::set_permissions(&locked_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+
+        let outcome = delete_channel_inner(None, &vs.conn, &vs.vault, "Photos");
+
+        std::fs::set_permissions(&locked_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            outcome.unwrap(),
+            CollectionDeleted {
+                deleted: true,
+                kept_links: vec!["Cards/Locked".to_string()],
+            }
+        );
+        assert!(!vault.block_path("Collections/Photos").exists());
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Cards/Sunset")).unwrap(),
+            "---\naliases:\n  - Sunset\nMine Collections:\n  - \"[[Archive]]\"\nsaved_at: 2026-04-25T14:00:40Z\n---\nBody\n"
+        );
+        assert_eq!(std::fs::read_to_string(&locked_path).unwrap(), locked);
+        assert_eq!(
+            index::get_block(&vs.conn, "Cards/Sunset").unwrap().unwrap().tags,
+            Vec::<String>::new(),
+            "Archive has no page, so the index shows no membership"
+        );
+    }
+
+    /// SPEC_DEEP_AUDIT.md, Е1.4 (Н2): the rename takes its members from the
+    /// index brought up to the files first; a member written while nothing
+    /// watched the space follows the collection to its new name.
+    #[test]
+    fn renaming_a_collection_moves_a_member_the_index_had_not_seen() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        let state = app_state(&vault);
+        let late = "---\nMine Collections:\n  - \"[[Photos]]\"\nsaved_at: 2026-04-25T14:00:40Z\n---\nLate\n";
+        std::fs::write(vault.block_path("Cards/Late"), late).unwrap();
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+
+        rename_channel_inner(None, &vs.conn, &vs.vault, "Photos", "Pictures").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Cards/Late")).unwrap(),
+            late.replace("[[Photos]]", "[[Pictures]]")
+        );
     }
 
     fn refusal(outcome: Result<impl std::fmt::Debug, CommandError>) -> String {

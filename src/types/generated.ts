@@ -124,6 +124,21 @@ export type CloudRecommendationState = {
 due: boolean }
 
 /**
+ * What deleting a collection did (SPEC_DEEP_AUDIT.md, Н2, Е1.3).
+ */
+export type CollectionDeleted = {
+/**
+ * Whether there was a collection to delete: its page or its row.
+ */
+deleted: boolean;
+/**
+ * Cards that still link the collection, by slug: the deletion could not
+ * read them, or their properties cannot take the change in place. Their
+ * files are as they were; every other link is gone.
+ */
+kept_links: string[] }
+
+/**
  * A collection page found among the notes, with its manual position.
  */
 export type CollectionPage = { slug: string; position?: number | null }
@@ -164,7 +179,14 @@ export type CommandError = { kind: "no_vault" } |
  * page (`type: channel`): a collection exists only as its page. Nothing
  * was written (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
  */
-{ kind: "collection_not_found"; message: { collection: string } } | { kind: "internal"; message: string }
+{ kind: "collection_not_found"; message: { collection: string } } |
+/**
+ * A deletion would take media its window did not offer: a file the
+ * window said stays lost its other user while the window was open.
+ * Nothing was deleted (SPEC_DEEP_AUDIT.md, Е1.10). `files` names the
+ * files the window did not offer.
+ */
+{ kind: "media_plan_changed"; message: { files: string[] } } | { kind: "internal"; message: string }
 
 /**
  * How the person resolves a conflict (ВК8).

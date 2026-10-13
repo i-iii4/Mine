@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { deleteCollectionFailureSummary } from "./deleteFailure";
+import { deleteCollectionKeptLinksText } from "./deleteFailure";
 
-// DESIGN_SYSTEM.md, «Сбой после закрытия окна» (decision of 11.10.2026): the
-// notice of a failed `Delete collection?` names what had changed.
-describe("deleteCollectionFailureSummary", () => {
-  it("says nothing changed when the connections stayed", () => {
-    expect(deleteCollectionFailureSummary("Typography", false)).toBe("Nothing changed.");
+// SPEC_DEEP_AUDIT.md, Е1.3: a deleted collection's link that stayed in an
+// element the deletion could not change is named.
+describe("deleteCollectionKeptLinksText", () => {
+  it("names the one element by its file name", () => {
+    expect(deleteCollectionKeptLinksText("Typography", ["Cards/Locked"])).toBe(
+      "“Locked” could not be changed and still links to “Typography”.",
+    );
   });
 
-  it("says the connections are gone and the page stayed", () => {
-    expect(deleteCollectionFailureSummary("Typography", true)).toBe(
-      "The elements are no longer connected to “Typography”, but the collection page stayed.",
+  it("counts several elements", () => {
+    expect(deleteCollectionKeptLinksText("Typography", ["Cards/One", "Two"])).toBe(
+      "2 elements could not be changed and still link to “Typography”.",
     );
   });
 });
