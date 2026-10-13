@@ -34,37 +34,17 @@ pub const SCAN_DEADLINE: Duration = Duration::from_secs(30);
 pub const READ_DEADLINE: Duration = Duration::from_secs(10);
 /// `settle` deadline (ВК5).
 pub const SETTLE_DEADLINE: Duration = Duration::from_secs(10);
-/// A space in iCloud Drive has this in its path (ВК3), the same rule the
-/// download progress helper keeps.
-const ICLOUD_DRIVE_MARK: &str = "/Mobile Documents/";
 /// The device of a separate note when the version names none (ВК9).
 const UNKNOWN_DEVICE: &str = "another device";
 /// The helper's failure for a version that left the file's conflict
 /// versions between the scan and the read.
 const VERSION_MISSING: &str = "version_missing";
 
-/// Whether the space at `root` can have iCloud conflicts (ВК3): its path is in
-/// iCloud Drive, or the system says the folder is synced by iCloud (Desktop
-/// and Documents). Both signals told the truth on the person's spaces in the
-/// live check of 11.10.2026.
+/// Whether the space at `root` can have iCloud conflicts (ВК3): the system
+/// says iCloud keeps its folder, iCloud Drive or the Desktop and Documents it
+/// syncs. The folder's path proves nothing (SPEC_DEEP_AUDIT.md, Н7, Е5.2).
 pub fn is_icloud_space(root: &Path) -> bool {
-    root.to_string_lossy().contains(ICLOUD_DRIVE_MARK) || is_ubiquitous(root)
-}
-
-#[cfg(target_os = "macos")]
-fn is_ubiquitous(root: &Path) -> bool {
-    use objc2_foundation::{NSFileManager, NSString, NSURL};
-
-    let Some(text) = root.to_str() else {
-        return false;
-    };
-    let url = NSURL::fileURLWithPath(&NSString::from_str(text));
-    NSFileManager::defaultManager().isUbiquitousItemAtURL(&url)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn is_ubiquitous(_root: &Path) -> bool {
-    false
+    crate::storage::cloud_files::is_icloud_item(root)
 }
 
 /// One version of a note in conflict.
@@ -96,6 +76,10 @@ pub struct VaultConflict {
     pub current: ConflictVersion,
     /// The hidden conflict versions.
     pub versions: Vec<ConflictVersion>,
+    /// iCloud did not answer about the note this time: the conflict stays
+    /// recorded and counted, no version can be kept until it answers
+    /// (SPEC_DEEP_AUDIT.md, Е5.12).
+    pub unanswered: bool,
 }
 
 /// How the person resolves a conflict (ВК8).
@@ -300,9 +284,19 @@ impl ConflictsHelper {
         }
         let stdout = self.run(&[OsStr::new("scan")], Some(input.into_bytes()), SCAN_DEADLINE)?;
         let mut done = false;
+        let mut garbled = false;
         for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
-            let parsed: ScanLine = serde_json::from_str(line)
-                .map_err(|error| HelperError::Protocol(format!("{error}: {line}")))?;
+            // One line Mine cannot read does not lose the others (Е5.11):
+            // it is logged, and the notes it may have been about keep what
+            // Mine knew of them.
+            let parsed: ScanLine = match serde_json::from_str(line) {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    log::warn!("the iCloud conflicts helper answered a line Mine cannot read ({error}): {line}");
+                    garbled = true;
+                    continue;
+                }
+            };
             match parsed {
                 ScanLine::Conflict {
                     path,
@@ -337,6 +331,18 @@ impl ConflictsHelper {
             return Err(HelperError::Protocol(
                 "the answer ended before its last line".into(),
             ));
+        }
+        if garbled {
+            let answered: BTreeSet<PathBuf> = report
+                .conflicts
+                .iter()
+                .map(|conflict| conflict.path.clone())
+                .collect();
+            report.failed.extend(
+                asked
+                    .into_values()
+                    .filter(|path| !answered.contains(path)),
+            );
         }
         Ok(report)
     }
@@ -486,8 +492,10 @@ pub struct ConflictList {
 
 /// The recorded conflicts with their versions read again by one `scan`
 /// (ВК7), newest first. A path without versions any more leaves the table
-/// and the list; a path the helper could not answer for stays in the table
-/// and is left out of the list.
+/// and the list. A path the helper could not answer for stays in the table
+/// and in the list, `unanswered` and without versions: the notice counts the
+/// table, so a list without it showed «1 conflict» and an empty window
+/// (SPEC_DEEP_AUDIT.md, Е5.12).
 pub fn list_conflicts(
     conn: &Connection,
     vault: &VaultLayout,
@@ -516,8 +524,20 @@ pub fn list_conflicts(
                     ..conflict.current
                 },
                 versions: conflict.versions,
+                unanswered: false,
             }),
-            _ if report.failed.contains(path) => {}
+            _ if report.failed.contains(path) => list.conflicts.push(VaultConflict {
+                name: note_name(&row.path),
+                path: row.path,
+                detected_at: row.detected_at,
+                current: ConflictVersion {
+                    token: None,
+                    modified: None,
+                    device: None,
+                },
+                versions: Vec::new(),
+                unanswered: true,
+            }),
             _ => list.removed.push(row.path),
         }
     }
@@ -553,6 +573,9 @@ struct SeparateNote {
     absolute: PathBuf,
     relative: String,
     bytes: Vec<u8>,
+    /// An earlier resolution of the same conflict already wrote it: a
+    /// settle that failed after it (ВК8), retried (SPEC_DEEP_AUDIT.md, Е5.10).
+    existing: bool,
 }
 
 /// The working folder for the copies of versions, removed with everything in
@@ -631,6 +654,47 @@ fn separate_stem(name: &str, version: &ConflictVersion) -> String {
         None => format!("{name} ({device})"),
     };
     mine_core::domain::block::suggest_slug(Some(&raw), None)
+}
+
+/// The separate note of `folder` an earlier resolution wrote for a version
+/// with this stem and these bytes: `{stem}.md` or the unique name the shared
+/// rule gave it, `{stem} (2).md` and on (ВК9). A retry after a failed settle
+/// uses it instead of writing a second copy (SPEC_DEEP_AUDIT.md, Е5.10).
+fn earlier_separate_note(vault: &VaultLayout, folder: &str, stem: &str, bytes: &[u8]) -> Option<String> {
+    let directory = if folder.is_empty() {
+        vault.root().to_path_buf()
+    } else {
+        vault.root().join(folder)
+    };
+    let mut names: Vec<String> = std::fs::read_dir(&directory)
+        .ok()?
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .filter(|file| {
+            let Some(file_stem) = file.strip_suffix(".md") else {
+                return false;
+            };
+            let file_stem: String = file_stem.nfc().collect();
+            let stem: String = stem.nfc().collect();
+            file_stem == stem
+                || file_stem
+                    .strip_prefix(&stem)
+                    .and_then(|rest| rest.strip_prefix(" ("))
+                    .and_then(|rest| rest.strip_suffix(')'))
+                    .is_some_and(|number| !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()))
+        })
+        .collect();
+    names.sort();
+    names.into_iter().find_map(|file| {
+        let held = std::fs::read(directory.join(&file)).ok()?;
+        (held == bytes).then(|| {
+            if folder.is_empty() {
+                file
+            } else {
+                format!("{folder}/{file}")
+            }
+        })
+    })
 }
 
 /// Claim a name for a separate note in `folder`, unique in the whole space
@@ -786,16 +850,28 @@ pub fn resolve_conflict(
     }
     let mut separate = Vec::with_capacity(separate_versions.len());
     for (version, bytes) in separate_versions {
-        let path = claim_separate_path(&mut occupied, &folder, &separate_stem(&name, version))?;
+        let stem = separate_stem(&name, version);
+        if let Some(path) = earlier_separate_note(vault, &folder, &stem, &bytes) {
+            separate.push(SeparateNote {
+                absolute: vault.root().join(&path),
+                relative: path,
+                bytes,
+                existing: true,
+            });
+            continue;
+        }
+        let path = claim_separate_path(&mut occupied, &folder, &stem)?;
         separate.push(SeparateNote {
             absolute: vault.root().join(&path),
             relative: path,
             bytes,
+            existing: false,
         });
     }
     writes.extend(
         separate
             .iter()
+            .filter(|note| !note.existing)
             .map(|note| SourceFileWrite::create(note.absolute.clone(), note.bytes.clone())),
     );
     let mut touched = vec![absolute.clone()];
@@ -836,9 +912,19 @@ pub fn resolve_conflict(
     }
 
     // 6. Settle every version, the chosen one too: its bytes are in the note.
-    helper
+    // The report is read (Е5.11): a version neither settled nor already gone
+    // is still a conflict version, and the conflict stays recorded.
+    let settled = helper
         .settle(&absolute, &tokens)
         .map_err(|error| error.into_resolution_error(&relative))?;
+    let accounted: BTreeSet<&String> = settled.settled.iter().chain(&settled.missing).collect();
+    let left = tokens.iter().filter(|token| !accounted.contains(token)).count();
+    if left > 0 {
+        return Err(VaultConflictError::HelperFailed {
+            // The window puts this after «iCloud did not answer:» (ВК12).
+            message: format!("versions of {relative} left unsettled: {left}"),
+        });
+    }
 
     // 7. The conflict is over.
     vault_conflicts::remove_conflicts(conn, std::slice::from_ref(&relative))?;

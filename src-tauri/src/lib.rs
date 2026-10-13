@@ -28,6 +28,8 @@ pub mod runtime_installation;
 pub mod runtime_protocol;
 pub mod space_registry;
 pub mod storage;
+#[cfg(test)]
+pub(crate) mod test_log;
 pub mod tool_process;
 #[cfg(feature = "desktop")]
 mod shutdown;

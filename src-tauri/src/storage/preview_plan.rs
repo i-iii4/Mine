@@ -19,10 +19,10 @@ use crate::storage::media_refs;
 pub const PREVIEW_TILE_LIMIT: usize = 4;
 pub const MICRO_PREVIEW_IMAGE_LIMIT: usize = 1;
 
-const IMAGE_EXTS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "tif", "heic", "heif", "avif",
-];
-const VIDEO_EXTS: &[&str] = &["mp4", "webm", "m4v", "mov"];
+/// The one list of what a picture and a video are, by extension
+/// (`mine_core::domain::block`): the feed, the index, the sizes, Orphans and
+/// the card kind all ask it (SPEC_DEEP_AUDIT.md, Е5.16).
+use mine_core::domain::block::{IMAGE_MEDIA_EXTS as IMAGE_EXTS, VIDEO_MEDIA_EXTS as VIDEO_EXTS};
 
 pub fn primary_preview_path(slug: &str) -> String {
     format!("{slug}.jpg")

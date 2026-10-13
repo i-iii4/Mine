@@ -648,15 +648,25 @@
       "command": "test:frontend"
     },
     {
-      "paths": ["scripts/finalize-local-bundle.mjs", "scripts/finalize-local-bundle.test.mjs"],
+      "paths": [
+        "scripts/finalize-local-bundle.mjs",
+        "scripts/finalize-local-bundle.test.mjs"
+      ],
       "requirement": "SPEC_DISTRIBUTION.md### D2. Подпись macOS",
-      "tests": ["scripts/finalize-local-bundle.test.mjs"],
+      "tests": [
+        "scripts/finalize-local-bundle.test.mjs"
+      ],
       "command": "test:startup-packaging"
     },
     {
-      "paths": ["scripts/finalize-local-bundle.mjs", "scripts/finalize-local-bundle.test.mjs"],
+      "paths": [
+        "scripts/finalize-local-bundle.mjs",
+        "scripts/finalize-local-bundle.test.mjs"
+      ],
       "requirement": "SPEC_SYSTEM_RELIABILITY.md### UPD-03. Независимая доставка",
-      "tests": ["scripts/finalize-local-bundle.test.mjs"],
+      "tests": [
+        "scripts/finalize-local-bundle.test.mjs"
+      ],
       "command": "test:startup-packaging"
     },
     {
@@ -668,19 +678,29 @@
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/standaloneVault.js"
       ],
       "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-08.",
-      "tests": ["scripts/verify-extension-mirrors.test.mjs"],
+      "tests": [
+        "scripts/verify-extension-mirrors.test.mjs"
+      ],
       "command": "verify:extension-mirrors"
     },
     {
-      "paths": ["src-tauri/tests/space_storage_acceptance.rs"],
+      "paths": [
+        "src-tauri/tests/space_storage_acceptance.rs"
+      ],
       "requirement": "SPEC_STORAGE.md### storage/reconcile: видимость файлов",
-      "tests": ["src-tauri/tests/space_storage_acceptance.rs"],
+      "tests": [
+        "src-tauri/tests/space_storage_acceptance.rs"
+      ],
       "command": "test:rust"
     },
     {
-      "paths": ["src/types/generated.ts"],
+      "paths": [
+        "src/types/generated.ts"
+      ],
       "requirement": "PRINCIPLES.md#### 4.",
-      "tests": ["src-tauri/src/tooling/export_bindings.rs"],
+      "tests": [
+        "src-tauri/src/tooling/export_bindings.rs"
+      ],
       "command": "bindings:check"
     },
     {
@@ -785,21 +805,69 @@
       "command": "test:reliability-updates"
     },
     {
-      "paths": ["extension/lib/standaloneVault.js", "extension/lib/standaloneVault.test.ts", "extension/lib/standaloneVault.recovery.test.ts", "extension/lib/saveProtocol.js", "extension/popup/lib/standalone.ts", "scripts/build-clipper-runtime-manifest.mjs", "scripts/clipper-runtime-manifest.test.mjs"],
+      "paths": [
+        "extension/lib/standaloneVault.js",
+        "extension/lib/standaloneVault.test.ts",
+        "extension/lib/standaloneVault.recovery.test.ts",
+        "extension/lib/saveProtocol.js",
+        "extension/popup/lib/standalone.ts",
+        "scripts/build-clipper-runtime-manifest.mjs",
+        "scripts/clipper-runtime-manifest.test.mjs"
+      ],
       "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-08.",
-      "tests": ["extension/popup/lib/protocol.test.ts", "extension/lib/standaloneVault.test.ts", "extension/lib/standaloneVault.recovery.test.ts", "scripts/clipper-runtime-manifest.test.mjs"],
+      "tests": [
+        "extension/popup/lib/protocol.test.ts",
+        "extension/lib/standaloneVault.test.ts",
+        "extension/lib/standaloneVault.recovery.test.ts",
+        "scripts/clipper-runtime-manifest.test.mjs"
+      ],
       "command": "test:reliability-updates"
     },
     {
-      "paths": ["src-tauri/src/update_activation.rs", "src-tauri/src/main.rs", "src-tauri/src/commands/startup.rs", "src-tauri/src/storage/source_mutation.rs", "src-tauri/src/storage/files.rs", "src-tauri/src/storage/thumbnails.rs", "src-tauri/src/storage/article_audio.rs", "src-tauri/src/commands/article_audio.rs", "src-tauri/src/commands/thumbnail_sweeps.rs", "src-tauri/src/commands/preview_reconcile.rs", "src-tauri/src/import/importer.rs", "src-tauri/src/cli_mutations.rs", "src-tauri/src/commands/settings.rs"],
+      "paths": [
+        "src-tauri/src/update_activation.rs",
+        "src-tauri/src/main.rs",
+        "src-tauri/src/commands/startup.rs",
+        "src-tauri/src/storage/source_mutation.rs",
+        "src-tauri/src/storage/files.rs",
+        "src-tauri/src/storage/thumbnails.rs",
+        "src-tauri/src/storage/article_audio.rs",
+        "src-tauri/src/commands/article_audio.rs",
+        "src-tauri/src/commands/thumbnail_sweeps.rs",
+        "src-tauri/src/commands/preview_reconcile.rs",
+        "src-tauri/src/import/importer.rs",
+        "src-tauri/src/cli_mutations.rs",
+        "src-tauri/src/commands/settings.rs"
+      ],
       "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-04.",
-      "tests": ["src-tauri/src/update_activation.rs", "src-tauri/src/updater.rs", "src-tauri/src/storage/source_mutation.rs"],
+      "tests": [
+        "src-tauri/src/update_activation.rs",
+        "src-tauri/src/updater.rs",
+        "src-tauri/src/storage/source_mutation.rs"
+      ],
       "command": "test:rust"
     },
     {
-      "paths": ["src/settings/UpdatesSection.tsx", "src/settings/UpdatesSection.test.tsx", "src/settings/SettingsApp.tsx", "src/settings/SettingsApp.test.tsx", "src/lib/settingsSections.ts", "src/lib/commands.ts", "src/lib/commands.test.ts", "src/lib/bindings.ts", "src/App.tsx", "src/App.test.tsx", "src/components/AppSettingsMenu.tsx", "src/components/AppSettingsMenu.test.tsx"],
+      "paths": [
+        "src/settings/UpdatesSection.tsx",
+        "src/settings/UpdatesSection.test.tsx",
+        "src/settings/SettingsApp.tsx",
+        "src/settings/SettingsApp.test.tsx",
+        "src/lib/settingsSections.ts",
+        "src/lib/commands.ts",
+        "src/lib/commands.test.ts",
+        "src/lib/bindings.ts",
+        "src/App.tsx",
+        "src/App.test.tsx",
+        "src/components/AppSettingsMenu.tsx",
+        "src/components/AppSettingsMenu.test.tsx"
+      ],
       "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-01.",
-      "tests": ["src/settings/UpdatesSection.test.tsx", "src/settings/SettingsApp.test.tsx", "src/lib/commands.test.ts"],
+      "tests": [
+        "src/settings/UpdatesSection.test.tsx",
+        "src/settings/SettingsApp.test.tsx",
+        "src/lib/commands.test.ts"
+      ],
       "command": "test"
     },
     {
@@ -813,7 +881,10 @@
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/youtubeSource.js"
       ],
       "requirement": "SPEC_CLIPPER.md### Согласованный источник захвата",
-      "tests": ["extension/lib/captureSource.test.ts", "src/lib/youtubeSource.test.ts"],
+      "tests": [
+        "extension/lib/captureSource.test.ts",
+        "src/lib/youtubeSource.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -822,13 +893,19 @@
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/manifest.json"
       ],
       "requirement": "SPEC_CLIPPER.md### Manifest V3",
-      "tests": ["scripts/clipper-worker-smoke.mjs"],
+      "tests": [
+        "scripts/clipper-worker-smoke.mjs"
+      ],
       "command": "test:clipper-worker-built"
     },
     {
-      "paths": ["extension/lib/productCapture.test.ts"],
+      "paths": [
+        "extension/lib/productCapture.test.ts"
+      ],
       "requirement": "SPEC_PRODUCT_EXTRACTION.md### Проверки и приёмка",
-      "tests": ["extension/lib/productCapture.test.ts"],
+      "tests": [
+        "extension/lib/productCapture.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -874,21 +951,38 @@
       "command": "test:frontend"
     },
     {
-      "paths": ["scripts/clipper-worker-smoke.mjs"],
+      "paths": [
+        "scripts/clipper-worker-smoke.mjs"
+      ],
       "requirement": "SPEC_CLIPPER.md### Исправление целостности захвата и восстановления",
-      "tests": ["scripts/clipper-worker-smoke.mjs"],
+      "tests": [
+        "scripts/clipper-worker-smoke.mjs"
+      ],
       "command": "test:clipper-worker-built"
     },
     {
-      "paths": ["scripts/native-capture-smoke.mjs"],
+      "paths": [
+        "scripts/native-capture-smoke.mjs"
+      ],
       "requirement": "SPEC_SAVE_CORE.md### Приёмка результата",
-      "tests": ["scripts/native-capture-smoke.mjs"],
+      "tests": [
+        "scripts/native-capture-smoke.mjs"
+      ],
       "command": "test:native-capture"
     },
     {
-      "paths": ["scripts/clipper-native-lifecycle.mjs", "scripts/clipper-native-relay.mjs", "scripts/clipper-native-relay.test.mjs", "scripts/clipper-card-render.mjs"],
+      "paths": [
+        "scripts/clipper-native-lifecycle.mjs",
+        "scripts/clipper-native-relay.mjs",
+        "scripts/clipper-native-relay.test.mjs",
+        "scripts/clipper-card-render.mjs"
+      ],
       "requirement": "SPEC_CLIPPER.md### Журнал операции Save и базовый протокол",
-      "tests": ["scripts/clipper-native-lifecycle.mjs", "scripts/clipper-native-relay.test.mjs", "scripts/clipper-card-render.mjs"],
+      "tests": [
+        "scripts/clipper-native-lifecycle.mjs",
+        "scripts/clipper-native-relay.test.mjs",
+        "scripts/clipper-card-render.mjs"
+      ],
       "command": "test:clipper-native-release"
     },
     {
@@ -902,7 +996,11 @@
         "src/lib/cardLayout.ts"
       ],
       "requirement": "SPEC_FRONTEND.md### Видеопрезентация источника карточки",
-      "tests": ["src/components/Detail.test.tsx", "src/lib/youtubeSource.test.ts", "src/lib/cardLayout.test.ts"],
+      "tests": [
+        "src/components/Detail.test.tsx",
+        "src/lib/youtubeSource.test.ts",
+        "src/lib/cardLayout.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -925,7 +1023,14 @@
         "src-tauri/tauri.conf.json"
       ],
       "requirement": "SPEC_FRONTEND.md### Видеопрезентация источника карточки",
-      "tests": ["mine-core/src/domain/video_source.rs", "src-tauri/src/storage/index.rs", "src-tauri/src/storage/thumbnails.rs", "src-tauri/src/youtube_embed.rs", "src-tauri/src/frame_context_menu.rs", "src-tauri/src/source_video_download.rs"],
+      "tests": [
+        "mine-core/src/domain/video_source.rs",
+        "src-tauri/src/storage/index.rs",
+        "src-tauri/src/storage/thumbnails.rs",
+        "src-tauri/src/youtube_embed.rs",
+        "src-tauri/src/frame_context_menu.rs",
+        "src-tauri/src/source_video_download.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -939,7 +1044,12 @@
         "src-tauri/tauri.conf.json"
       ],
       "requirement": "SPEC_CLIPPER.md#Сбой утилиты видео не останавливает клиппер",
-      "tests": ["src-tauri/src/tool_process.rs", "src-tauri/tests/native_host_video_tool.rs", "src-tauri/src/commands/clipper_setup.rs", "src-tauri/src/source_video_download.rs"],
+      "tests": [
+        "src-tauri/src/tool_process.rs",
+        "src-tauri/tests/native_host_video_tool.rs",
+        "src-tauri/src/commands/clipper_setup.rs",
+        "src-tauri/src/source_video_download.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -958,7 +1068,13 @@
         "package.json"
       ],
       "requirement": "SPEC_ONBOARDING.md#**О8.1. Утилита поставляется распакованной (07.10.2026).**",
-      "tests": ["scripts/fetch-ytdlp.test.mjs", "scripts/verify-bundle-binaries.test.mjs", "scripts/clipper-runtime-manifest.test.mjs", "scripts/finalize-local-bundle.test.mjs", "scripts/install-clipper-host.test.mjs"],
+      "tests": [
+        "scripts/fetch-ytdlp.test.mjs",
+        "scripts/verify-bundle-binaries.test.mjs",
+        "scripts/clipper-runtime-manifest.test.mjs",
+        "scripts/finalize-local-bundle.test.mjs",
+        "scripts/install-clipper-host.test.mjs"
+      ],
       "command": "test:reliability"
     },
     {
@@ -974,13 +1090,23 @@
         "extension/popup/PopupApp.test.tsx"
       ],
       "requirement": "SPEC_CLIPPER.md#Сбой утилиты видео не останавливает клиппер",
-      "tests": ["extension/popup/lib/videoTool.test.ts", "extension/popup/lib/twitterMedia.test.ts", "extension/popup/hooks/hydrateTwitterVideo.test.ts", "extension/popup/PopupApp.test.tsx"],
+      "tests": [
+        "extension/popup/lib/videoTool.test.ts",
+        "extension/popup/lib/twitterMedia.test.ts",
+        "extension/popup/hooks/hydrateTwitterVideo.test.ts",
+        "extension/popup/PopupApp.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
-      "paths": ["scripts/prepare-update-channel.mjs", "scripts/prepare-update-channel.test.mjs"],
+      "paths": [
+        "scripts/prepare-update-channel.mjs",
+        "scripts/prepare-update-channel.test.mjs"
+      ],
       "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-04.",
-      "tests": ["scripts/prepare-update-channel.test.mjs"],
+      "tests": [
+        "scripts/prepare-update-channel.test.mjs"
+      ],
       "command": "test:reliability"
     },
     {
@@ -995,7 +1121,11 @@
         "src/settings/ClipperStatus.test.tsx"
       ],
       "requirement": "SPEC_ONBOARDING.md#**О16.**",
-      "tests": ["src/components/EmptySpaceOnboarding.test.tsx", "src/components/EdgeStatesSection.test.tsx", "src/components/AppSettingsMenu.test.tsx"],
+      "tests": [
+        "src/components/EmptySpaceOnboarding.test.tsx",
+        "src/components/EdgeStatesSection.test.tsx",
+        "src/components/AppSettingsMenu.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1008,7 +1138,11 @@
         "src/components/Card.test.tsx"
       ],
       "requirement": "SPEC_CARD_MEDIA_GEOMETRY.md#**30.09.2026: видеокарточка принимает форму постера.**",
-      "tests": ["src/lib/cardLayout.test.ts", "src/lib/cardHeight.test.ts", "src/components/Card.test.tsx"],
+      "tests": [
+        "src/lib/cardLayout.test.ts",
+        "src/lib/cardHeight.test.ts",
+        "src/components/Card.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1024,13 +1158,23 @@
         "scripts/clipper-extension-payload.test.mjs"
       ],
       "requirement": "SPEC_GRID_LAYOUT_READINESS.md## Колонка карточки",
-      "tests": ["src/lib/cardAspect.test.ts", "src/lib/masonryLayout.test.ts", "src/lib/cardHeight.test.ts", "src/components/Grid.test.tsx"],
+      "tests": [
+        "src/lib/cardAspect.test.ts",
+        "src/lib/masonryLayout.test.ts",
+        "src/lib/cardHeight.test.ts",
+        "src/components/Grid.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
-      "paths": ["src-tauri/src/clipper_registration.rs"],
+      "paths": [
+        "src-tauri/src/clipper_registration.rs"
+      ],
       "requirement": "SPEC_CLIPPER.md#**К4. Рукопожатие версий.**",
-      "tests": ["src-tauri/src/clipper_registration.rs", "src-tauri/src/commands/clipper_setup.rs"],
+      "tests": [
+        "src-tauri/src/clipper_registration.rs",
+        "src-tauri/src/commands/clipper_setup.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -1040,7 +1184,10 @@
         "src-tauri/src/storage/cold_space_audit.rs"
       ],
       "requirement": "SPEC_FEED_DISPLAY.md#**Д8.**",
-      "tests": ["src-tauri/src/storage/index.rs", "src-tauri/src/storage/projection.rs"],
+      "tests": [
+        "src-tauri/src/storage/index.rs",
+        "src-tauri/src/storage/projection.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -1063,7 +1210,16 @@
         "src/settings/AppearanceSection.test.tsx"
       ],
       "requirement": "SPEC_FEED_DISPLAY.md#**Д1.**",
-      "tests": ["src/lib/feedDisplay.test.ts", "src/components/FeedDisplayMenu.test.tsx", "src/components/MainSecondaryChrome.test.tsx", "src/lib/cardLayout.test.ts", "src/lib/cardHeight.test.ts", "src/components/Card.test.tsx", "src/lib/gridLayoutReadiness.test.ts", "src/App.test.tsx"],
+      "tests": [
+        "src/lib/feedDisplay.test.ts",
+        "src/components/FeedDisplayMenu.test.tsx",
+        "src/components/MainSecondaryChrome.test.tsx",
+        "src/lib/cardLayout.test.ts",
+        "src/lib/cardHeight.test.ts",
+        "src/components/Card.test.tsx",
+        "src/lib/gridLayoutReadiness.test.ts",
+        "src/App.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1072,7 +1228,11 @@
         "src/lib/lineUnits.test.ts"
       ],
       "requirement": "SPEC_GRID.md### `src/workers/fontMetrics.worker.ts`",
-      "tests": ["src/lib/lineUnits.test.ts", "src/lib/wordWrap.test.ts", "src/lib/cardHeight.test.ts"],
+      "tests": [
+        "src/lib/lineUnits.test.ts",
+        "src/lib/wordWrap.test.ts",
+        "src/lib/cardHeight.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1090,7 +1250,12 @@
         "scripts/build-extension.mjs"
       ],
       "requirement": "SPEC_GRID.md## Системный шрифт (06.10.2026)",
-      "tests": ["src/lib/fontChoice.test.ts", "src/lib/fontMetrics.test.ts", "src/components/GraphView.test.tsx", "extension/popup/overlay-entry.test.tsx"],
+      "tests": [
+        "src/lib/fontChoice.test.ts",
+        "src/lib/fontMetrics.test.ts",
+        "src/components/GraphView.test.tsx",
+        "extension/popup/overlay-entry.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1113,7 +1278,16 @@
         "src/components/VideoFromBlob.test.tsx"
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#| Б5.1 |",
-      "tests": ["src/lib/fontMetrics.test.ts", "src/components/SearchOverlay.test.tsx", "src/components/Grid.test.tsx", "src/components/Grid.firstCards.test.tsx", "src/App.test.tsx", "src/lib/shortcutOverrides.test.ts", "src/components/ImagePreviewOverlay.test.tsx", "src/components/VideoFromBlob.test.tsx"],
+      "tests": [
+        "src/lib/fontMetrics.test.ts",
+        "src/components/SearchOverlay.test.tsx",
+        "src/components/Grid.test.tsx",
+        "src/components/Grid.firstCards.test.tsx",
+        "src/App.test.tsx",
+        "src/lib/shortcutOverrides.test.ts",
+        "src/components/ImagePreviewOverlay.test.tsx",
+        "src/components/VideoFromBlob.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1136,7 +1310,14 @@
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/standaloneVault.js"
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#| Б4.1 |",
-      "tests": ["extension/background.messaging.test.ts", "extension/lib/standaloneVault.test.ts", "extension/lib/cropCapture.test.ts", "extension/popup/components/ScreenshotPreview.test.tsx", "extension/popup/hooks/useClipperState.standalone.test.tsx", "extension/popup/overlay-entry.test.tsx"],
+      "tests": [
+        "extension/background.messaging.test.ts",
+        "extension/lib/standaloneVault.test.ts",
+        "extension/lib/cropCapture.test.ts",
+        "extension/popup/components/ScreenshotPreview.test.tsx",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx",
+        "extension/popup/overlay-entry.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1152,7 +1333,15 @@
         "src/types/generated.ts"
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#| Б1.1 |",
-      "tests": ["src-tauri/src/commands/blocks.rs", "src-tauri/src/storage/source_mutation.rs", "src-tauri/src/commands/settings.rs", "src-tauri/src/cli.rs", "mine-core/src/domain/source_patch.rs", "mine-core/src/domain/markdown.rs", "mine-core/src/domain/collection.rs"],
+      "tests": [
+        "src-tauri/src/commands/blocks.rs",
+        "src-tauri/src/storage/source_mutation.rs",
+        "src-tauri/src/commands/settings.rs",
+        "src-tauri/src/cli.rs",
+        "mine-core/src/domain/source_patch.rs",
+        "mine-core/src/domain/markdown.rs",
+        "mine-core/src/domain/collection.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -1166,7 +1355,15 @@
         "src-tauri/src/watcher/watch.rs"
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#| Б2.1 |",
-      "tests": ["src-tauri/src/commands/vault.rs", "src-tauri/src/space_registry.rs", "src-tauri/src/watcher/handler.rs", "src-tauri/src/watcher/watch.rs", "src-tauri/src/storage/search_engine.rs", "src-tauri/src/storage/search_projection.rs", "src-tauri/src/commands/state.rs"],
+      "tests": [
+        "src-tauri/src/commands/vault.rs",
+        "src-tauri/src/space_registry.rs",
+        "src-tauri/src/watcher/handler.rs",
+        "src-tauri/src/watcher/watch.rs",
+        "src-tauri/src/storage/search_engine.rs",
+        "src-tauri/src/storage/search_projection.rs",
+        "src-tauri/src/commands/state.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -1176,7 +1373,9 @@
         "Cargo.lock"
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#| Б4.4 |",
-      "tests": ["src-tauri/src/bin/native_host.rs"],
+      "tests": [
+        "src-tauri/src/bin/native_host.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -1184,7 +1383,10 @@
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/content.js"
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#| Б4.5 |",
-      "tests": ["extension/lib/cropCapture.test.ts", "extension/background.messaging.test.ts"],
+      "tests": [
+        "extension/lib/cropCapture.test.ts",
+        "extension/background.messaging.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1203,7 +1405,15 @@
         "src/lib/cardHeight.test.ts"
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#| В5.1 |",
-      "tests": ["src/App.test.tsx", "src/components/Card.test.tsx", "src/components/GraphView.test.tsx", "src/components/Grid.firstCards.test.tsx", "src/components/Grid.wordMetrics.test.tsx", "src/lib/cardLayout.test.ts", "src/lib/cardHeight.test.ts"],
+      "tests": [
+        "src/App.test.tsx",
+        "src/components/Card.test.tsx",
+        "src/components/GraphView.test.tsx",
+        "src/components/Grid.firstCards.test.tsx",
+        "src/components/Grid.wordMetrics.test.tsx",
+        "src/lib/cardLayout.test.ts",
+        "src/lib/cardHeight.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1225,7 +1435,14 @@
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/content.js"
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#| В4.2 |",
-      "tests": ["extension/background.messaging.test.ts", "extension/lib/cropCapture.test.ts", "extension/popup/PopupApp.test.tsx", "extension/popup/overlay-entry.test.tsx", "extension/popup/hooks/useClipperState.standalone.test.tsx", "extension/popup/overlayCropEscape.test.tsx"],
+      "tests": [
+        "extension/background.messaging.test.ts",
+        "extension/lib/cropCapture.test.ts",
+        "extension/popup/PopupApp.test.tsx",
+        "extension/popup/overlay-entry.test.tsx",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx",
+        "extension/popup/overlayCropEscape.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1237,7 +1454,11 @@
         "src-tauri/Cargo.toml"
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#| В4.1 |",
-      "tests": ["src-tauri/src/markdown_images.rs", "src-tauri/src/bin/native_host.rs", "src-tauri/src/tooling/localize_remote_media.rs"],
+      "tests": [
+        "src-tauri/src/markdown_images.rs",
+        "src-tauri/src/bin/native_host.rs",
+        "src-tauri/src/tooling/localize_remote_media.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -1258,7 +1479,17 @@
         "src-tauri/src/storage/index.rs"
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#| В1.1 |",
-      "tests": ["mine-core/src/domain/markdown_link.rs", "mine-core/src/domain/block.rs", "mine-core/src/domain/markdown.rs", "mine-core/src/links.rs", "src-tauri/src/commands/blocks.rs", "src-tauri/src/commands/settings.rs", "src-tauri/src/source_video_download.rs", "src-tauri/src/storage/source_mutation.rs", "src-tauri/src/storage/reference_spans.rs"],
+      "tests": [
+        "mine-core/src/domain/markdown_link.rs",
+        "mine-core/src/domain/block.rs",
+        "mine-core/src/domain/markdown.rs",
+        "mine-core/src/links.rs",
+        "src-tauri/src/commands/blocks.rs",
+        "src-tauri/src/commands/settings.rs",
+        "src-tauri/src/source_video_download.rs",
+        "src-tauri/src/storage/source_mutation.rs",
+        "src-tauri/src/storage/reference_spans.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -1287,7 +1518,18 @@
         "src/dev/SidebarReorderAuditRoute.tsx"
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#| Г4.1 |",
-      "tests": ["src/App.test.tsx", "src/components/Grid.test.tsx", "src/components/Card.test.tsx", "src/components/SearchOverlay.test.tsx", "src/components/YoutubeSourcePlayer.test.tsx", "src/components/GraphView.test.tsx", "src/components/IndexingProgress.test.tsx", "src/components/ImagePreviewOverlay.test.tsx", "src/lib/cardLayout.test.ts", "src/lib/tagRowDragOverlay.test.ts"],
+      "tests": [
+        "src/App.test.tsx",
+        "src/components/Grid.test.tsx",
+        "src/components/Card.test.tsx",
+        "src/components/SearchOverlay.test.tsx",
+        "src/components/YoutubeSourcePlayer.test.tsx",
+        "src/components/GraphView.test.tsx",
+        "src/components/IndexingProgress.test.tsx",
+        "src/components/ImagePreviewOverlay.test.tsx",
+        "src/lib/cardLayout.test.ts",
+        "src/lib/tagRowDragOverlay.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1302,7 +1544,12 @@
         "src/components/Detail.test.tsx"
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#| Г1.4 |",
-      "tests": ["src/lib/markdownWikilinks.test.ts", "src/lib/commands.test.ts", "src/components/Detail.test.tsx", "src-tauri/src/storage/media_refs.rs"],
+      "tests": [
+        "src/lib/markdownWikilinks.test.ts",
+        "src/lib/commands.test.ts",
+        "src/components/Detail.test.tsx",
+        "src-tauri/src/storage/media_refs.rs"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1310,7 +1557,9 @@
         "src-tauri/src/swipe_gesture.rs"
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#| Г5.3 |",
-      "tests": ["src-tauri/src/swipe_gesture.rs"],
+      "tests": [
+        "src-tauri/src/swipe_gesture.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -1323,7 +1572,14 @@
         "extension/content.js"
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#| Г3.1 |",
-      "tests": ["extension/popup/hooks/useClipperState.overlayCrop.test.tsx", "extension/popup/overlay-entry.instance.test.tsx", "extension/popup/overlay-entry.test.tsx", "extension/background.messaging.test.ts", "extension/lib/cropCapture.test.ts", "extension/popup/hooks/useClipperState.standalone.test.tsx"],
+      "tests": [
+        "extension/popup/hooks/useClipperState.overlayCrop.test.tsx",
+        "extension/popup/overlay-entry.instance.test.tsx",
+        "extension/popup/overlay-entry.test.tsx",
+        "extension/background.messaging.test.ts",
+        "extension/lib/cropCapture.test.ts",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1336,7 +1592,13 @@
         "src-tauri/src/commands/state.rs"
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#| Д2.1 |",
-      "tests": ["extension/popup/lib/folderState.test.ts", "extension/popup/hooks/useClipperState.standalone.test.tsx", "src-tauri/src/space_registry.rs", "src-tauri/src/bin/native_host.rs", "src-tauri/src/commands/vault.rs"],
+      "tests": [
+        "extension/popup/lib/folderState.test.ts",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx",
+        "src-tauri/src/space_registry.rs",
+        "src-tauri/src/bin/native_host.rs",
+        "src-tauri/src/commands/vault.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -1357,7 +1619,14 @@
         "src/lib/gridLayoutReadiness.ts"
       ],
       "requirement": "SPEC_FEED_DISPLAY.md#**Д19.**",
-      "tests": ["src/lib/feedDisplay.test.ts", "src/components/FeedDisplayMenu.test.tsx", "src/lib/cardLayout.test.ts", "src/lib/cardHeight.test.ts", "src/components/Card.test.tsx", "src/lib/layoutGeneration.test.ts"],
+      "tests": [
+        "src/lib/feedDisplay.test.ts",
+        "src/components/FeedDisplayMenu.test.tsx",
+        "src/lib/cardLayout.test.ts",
+        "src/lib/cardHeight.test.ts",
+        "src/components/Card.test.tsx",
+        "src/lib/layoutGeneration.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1374,7 +1643,11 @@
         "src/lib/cardHeight.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#CONTENT_CARD_TITLE_CLASSES",
-      "tests": ["src/components/Card.test.tsx", "src/components/SearchOverlay.test.tsx", "src/lib/fontMetrics.test.ts"],
+      "tests": [
+        "src/components/Card.test.tsx",
+        "src/components/SearchOverlay.test.tsx",
+        "src/lib/fontMetrics.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1386,7 +1659,10 @@
         "src/styles/global.css"
       ],
       "requirement": "SPEC_CARD_STATES.md#С8. Подъём карточки при наведении",
-      "tests": ["src/components/Card.test.tsx", "src/components/CardHoverMenu.test.tsx"],
+      "tests": [
+        "src/components/Card.test.tsx",
+        "src/components/CardHoverMenu.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1400,7 +1676,11 @@
         "src/styles/global.css"
       ],
       "requirement": "SPEC_CARD_STATES.md#С8.6. Быстрый пролёт не поднимает",
-      "tests": ["src/lib/hoverIntent.test.ts", "src/components/Card.test.tsx", "src/components/Grid.test.tsx"],
+      "tests": [
+        "src/lib/hoverIntent.test.ts",
+        "src/components/Card.test.tsx",
+        "src/components/Grid.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1411,7 +1691,9 @@
         "package.json"
       ],
       "requirement": "CLAUDE.md#bun run dev:side",
-      "tests": ["src-tauri/src/commands/startup.rs"],
+      "tests": [
+        "src-tauri/src/commands/startup.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -1435,7 +1717,11 @@
         "src/edgeStatesBench.tsx"
       ],
       "requirement": "SPEC_ONBOARDING.md#**О12.**",
-      "tests": ["src/components/VaultPicker.test.tsx", "src/components/IndexingProgress.test.tsx", "src/components/EdgeStatesSection.test.tsx"],
+      "tests": [
+        "src/components/VaultPicker.test.tsx",
+        "src/components/IndexingProgress.test.tsx",
+        "src/components/EdgeStatesSection.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1453,7 +1739,11 @@
         "src-tauri/src/commands/thumbnails.rs"
       ],
       "requirement": "SPEC_STORAGE.md#Один обход файлов пространства на проход",
-      "tests": ["src-tauri/src/storage/reconcile.rs", "src-tauri/src/storage/derived_preview.rs", "src-tauri/src/storage/media_refs.rs"],
+      "tests": [
+        "src-tauri/src/storage/reconcile.rs",
+        "src-tauri/src/storage/derived_preview.rs",
+        "src-tauri/src/storage/media_refs.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -1462,7 +1752,10 @@
         "src/components/NotificationCard.tsx"
       ],
       "requirement": "DESIGN_SYSTEM.md### Уведомления",
-      "tests": ["src/components/IndexingProgress.test.tsx", "src/components/NotificationCard.test.tsx"],
+      "tests": [
+        "src/components/IndexingProgress.test.tsx",
+        "src/components/NotificationCard.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1470,7 +1763,10 @@
         "src-tauri/src/storage/icloud_downloads.rs"
       ],
       "requirement": "SPEC_CLOUD_STORAGE.md## Первое открытие пространства из облака",
-      "tests": ["src-tauri/src/storage/reconcile.rs", "src-tauri/src/commands/freshness.rs"],
+      "tests": [
+        "src-tauri/src/storage/reconcile.rs",
+        "src-tauri/src/commands/freshness.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -1482,7 +1778,10 @@
         "src/lib/appLayout.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#Заглушки до прихода миниатюр",
-      "tests": ["src/components/Sidebar.test.tsx", "src/components/MicroPreviewThumbnail.test.tsx"],
+      "tests": [
+        "src/components/Sidebar.test.tsx",
+        "src/components/MicroPreviewThumbnail.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1494,7 +1793,10 @@
         "src/components/Card.test.tsx"
       ],
       "requirement": "SPEC_CARD_MEDIA_GEOMETRY.md#Карточка без превью",
-      "tests": ["src/lib/cardPreviewState.test.ts", "src/components/Card.test.tsx"],
+      "tests": [
+        "src/lib/cardPreviewState.test.ts",
+        "src/components/Card.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1509,7 +1811,12 @@
         "src/lib/appLayout.ts"
       ],
       "requirement": "SPEC_CARD_STATES.md#С8. Подъём карточки при наведении",
-      "tests": ["src/components/CardHoverMenu.test.tsx", "src/components/Card.test.tsx", "src/components/Sidebar.test.tsx", "src/lib/settingsChanged.test.ts"],
+      "tests": [
+        "src/components/CardHoverMenu.test.tsx",
+        "src/components/Card.test.tsx",
+        "src/components/Sidebar.test.tsx",
+        "src/lib/settingsChanged.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1520,7 +1827,10 @@
         "src/components/ComponentTestBench.tsx"
       ],
       "requirement": "DESIGN_SYSTEM.md#Скругления",
-      "tests": ["src/lib/cardRadius.test.ts", "src/settings/AppearanceSection.test.tsx"],
+      "tests": [
+        "src/lib/cardRadius.test.ts",
+        "src/settings/AppearanceSection.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1528,7 +1838,9 @@
         "src/lib/displayTitle.ts"
       ],
       "requirement": "SPEC_DISPLAY_TITLE.md#Image, Video, And File Blocks",
-      "tests": ["src/lib/cardLayout.test.ts"],
+      "tests": [
+        "src/lib/cardLayout.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1544,7 +1856,9 @@
         "src/dev/GraphAuditRoute.tsx"
       ],
       "requirement": "SPEC_STORAGE.md#storage/index",
-      "tests": ["src/lib/blockIdentity.test.ts"],
+      "tests": [
+        "src/lib/blockIdentity.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1552,7 +1866,9 @@
         "src/components/SidebarToggleButton.tsx"
       ],
       "requirement": "DESIGN_SYSTEM.md#Тулбар",
-      "tests": ["src/App.test.tsx"],
+      "tests": [
+        "src/App.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1581,7 +1897,10 @@
         "src/settings/SpacesSection.tsx"
       ],
       "requirement": "DESIGN_SYSTEM.md#Иконки 13 px",
-      "tests": ["src/components/FeedDisplayMenu.test.tsx", "src/App.test.tsx"],
+      "tests": [
+        "src/components/FeedDisplayMenu.test.tsx",
+        "src/App.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1592,7 +1911,10 @@
         "scripts/graph-view-audit.mjs"
       ],
       "requirement": "DESIGN_SYSTEM.md#### Карточка на графе",
-      "tests": ["src/components/graph/paintCardNode.test.ts", "src/components/GraphView.test.tsx"],
+      "tests": [
+        "src/components/graph/paintCardNode.test.ts",
+        "src/components/GraphView.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1603,7 +1925,12 @@
         "src/components/SpaceUnavailable.test.tsx"
       ],
       "requirement": "DESIGN_SYSTEM.md#### Полноэкранные состояния",
-      "tests": ["src/components/ScreenState.test.tsx", "src/components/SpaceUnavailable.test.tsx", "src/components/VaultPicker.test.tsx", "src/components/EmptySpaceOnboarding.test.tsx"],
+      "tests": [
+        "src/components/ScreenState.test.tsx",
+        "src/components/SpaceUnavailable.test.tsx",
+        "src/components/VaultPicker.test.tsx",
+        "src/components/EmptySpaceOnboarding.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1613,7 +1940,10 @@
         "src/dev/PopupsPage.tsx"
       ],
       "requirement": "SPEC_CLOUD_STORAGE.md#Первое открытие пространства из облака",
-      "tests": ["src/components/IndexingProgress.test.tsx", "src/components/Grid.test.tsx"],
+      "tests": [
+        "src/components/IndexingProgress.test.tsx",
+        "src/components/Grid.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1623,7 +1953,9 @@
         "src/lib/hoverPreviewTiming.test.ts"
       ],
       "requirement": "SPEC_CARD_STATES.md#**С7.10. Левое меню.**",
-      "tests": ["src/lib/hoverPreviewTiming.test.ts"],
+      "tests": [
+        "src/lib/hoverPreviewTiming.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1631,7 +1963,10 @@
         "src/lib/openMenus.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#### Открытое меню",
-      "tests": ["src/components/ui/dropdown-menu.test.tsx", "src/components/ui/context-menu.test.tsx"],
+      "tests": [
+        "src/components/ui/dropdown-menu.test.tsx",
+        "src/components/ui/context-menu.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1643,7 +1978,10 @@
         "src/lib/utils.test.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#### Система отступов поверхностей",
-      "tests": ["src/lib/utils.test.ts", "src/components/CollectionPicker.test.tsx"],
+      "tests": [
+        "src/lib/utils.test.ts",
+        "src/components/CollectionPicker.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1660,7 +1998,14 @@
         "src/dev/UiInventoryPage.tsx"
       ],
       "requirement": "DESIGN_SYSTEM.md#Объём кнопки",
-      "tests": ["src/components/ActionButton.style.test.tsx", "src/components/BottomBarCommands.test.tsx", "src/components/Detail.test.tsx", "src/components/Grid.test.tsx", "src/settings/ShortcutsSection.test.tsx", "src/dev/buttonsDecisionStyles.test.ts"],
+      "tests": [
+        "src/components/ActionButton.style.test.tsx",
+        "src/components/BottomBarCommands.test.tsx",
+        "src/components/Detail.test.tsx",
+        "src/components/Grid.test.tsx",
+        "src/settings/ShortcutsSection.test.tsx",
+        "src/dev/buttonsDecisionStyles.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1670,7 +2015,9 @@
         "src/dev/textLadderData.test.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#Цвет текста и значков",
-      "tests": ["src/dev/textLadderData.test.ts"],
+      "tests": [
+        "src/dev/textLadderData.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1681,7 +2028,10 @@
         "src/lib/sidebarSurface.test.ts"
       ],
       "requirement": "SPEC_COLOR_RULES.md#Правила цвета Mine",
-      "tests": ["src/styles/colorLaw.test.ts", "src/lib/sidebarSurface.test.ts"],
+      "tests": [
+        "src/styles/colorLaw.test.ts",
+        "src/lib/sidebarSurface.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1694,7 +2044,10 @@
         "src/components/ButtonStyleNotice.test.tsx"
       ],
       "requirement": "DESIGN_SYSTEM.md#Объём кнопки",
-      "tests": ["src/lib/buttonStyle.test.ts", "src/components/ButtonStyleNotice.test.tsx"],
+      "tests": [
+        "src/lib/buttonStyle.test.ts",
+        "src/components/ButtonStyleNotice.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1704,7 +2057,9 @@
         "extension/popup/lib/shadowRootCss.test.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#Цвет текста и значков",
-      "tests": ["extension/popup/lib/shadowRootCss.test.ts"],
+      "tests": [
+        "extension/popup/lib/shadowRootCss.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1728,7 +2083,18 @@
         "src/tabbar/tabbar.css"
       ],
       "requirement": "DESIGN_SYSTEM.md#Цвет от того, что под элементом",
-      "tests": ["src/styles/global.test.ts", "src/lib/sidebarSurface.test.ts", "src/components/ActionButton.test.tsx", "src/components/BottomBarCommands.test.tsx", "src/components/ui/dropdown-menu.test.tsx", "src/components/ui/context-menu.test.tsx", "src/components/ui/tabs.test.tsx", "src/tabbar/TabBar.test.tsx", "src/components/Sidebar.test.tsx", "src/components/GraphView.test.tsx"],
+      "tests": [
+        "src/styles/global.test.ts",
+        "src/lib/sidebarSurface.test.ts",
+        "src/components/ActionButton.test.tsx",
+        "src/components/BottomBarCommands.test.tsx",
+        "src/components/ui/dropdown-menu.test.tsx",
+        "src/components/ui/context-menu.test.tsx",
+        "src/components/ui/tabs.test.tsx",
+        "src/tabbar/TabBar.test.tsx",
+        "src/components/Sidebar.test.tsx",
+        "src/components/GraphView.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1747,7 +2113,13 @@
         "extension/popup/overlayUnits.test.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#Пилюля",
-      "tests": ["src/components/ui/tabs.test.tsx", "src/components/ui/button.test.tsx", "src/settings/AppearanceSection.test.tsx", "extension/popup/PopupApp.test.tsx", "extension/popup/overlayUnits.test.ts"],
+      "tests": [
+        "src/components/ui/tabs.test.tsx",
+        "src/components/ui/button.test.tsx",
+        "src/settings/AppearanceSection.test.tsx",
+        "extension/popup/PopupApp.test.tsx",
+        "extension/popup/overlayUnits.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1756,7 +2128,11 @@
         "src/lib/sidebarSearchMask.test.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#Создание коллекции",
-      "tests": ["src/components/Sidebar.test.tsx", "src/App.test.tsx", "src/lib/sidebarSearchMask.test.ts"],
+      "tests": [
+        "src/components/Sidebar.test.tsx",
+        "src/App.test.tsx",
+        "src/lib/sidebarSearchMask.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1764,7 +2140,10 @@
         "scripts/browser-audits.mjs"
       ],
       "requirement": "SPEC_GRID_LAYOUT_READINESS.md## Browser Acceptance Harness",
-      "tests": ["scripts/cold-space-browser-audit.mjs", "scripts/feed-scroll-audit.mjs"],
+      "tests": [
+        "scripts/cold-space-browser-audit.mjs",
+        "scripts/feed-scroll-audit.mjs"
+      ],
       "command": "test:browser"
     },
     {
@@ -1772,7 +2151,10 @@
         "src/components/NotificationCard.test.tsx"
       ],
       "requirement": "SPEC_ONBOARDING.md#**О13.**",
-      "tests": ["src/components/NotificationCard.test.tsx", "src/components/IndexingProgress.test.tsx"],
+      "tests": [
+        "src/components/NotificationCard.test.tsx",
+        "src/components/IndexingProgress.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1782,7 +2164,10 @@
         "src/components/VaultSwitcher.tsx"
       ],
       "requirement": "DESIGN_SYSTEM.md#Surface Search",
-      "tests": ["src/components/MenuTextTrigger.test.tsx", "src/components/VaultSwitcher.test.tsx"],
+      "tests": [
+        "src/components/MenuTextTrigger.test.tsx",
+        "src/components/VaultSwitcher.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1803,7 +2188,12 @@
         "extension/popup/components/VaultSelect.tsx"
       ],
       "requirement": "DESIGN_SYSTEM.md#Отступ от кнопки",
-      "tests": ["src/lib/floatingLayer.test.ts", "src/components/ui/dropdown-menu.test.tsx", "src/components/VaultSwitcher.test.tsx", "src/App.test.tsx"],
+      "tests": [
+        "src/lib/floatingLayer.test.ts",
+        "src/components/ui/dropdown-menu.test.tsx",
+        "src/components/VaultSwitcher.test.tsx",
+        "src/App.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1812,7 +2202,9 @@
         "src/lib/density.test.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#Плотность интерфейса — настройка",
-      "tests": ["src/lib/density.test.ts"],
+      "tests": [
+        "src/lib/density.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1825,7 +2217,11 @@
         "src/dev/shadcnButtonStyles.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#Подсказки",
-      "tests": ["src/App.test.tsx", "src/components/ui/button.test.tsx", "src/components/ui/button-tooltip.test.tsx"],
+      "tests": [
+        "src/App.test.tsx",
+        "src/components/ui/button.test.tsx",
+        "src/components/ui/button-tooltip.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1840,7 +2236,10 @@
         "src/lib/settingsSections.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#Сжатие ряда фильтра",
-      "tests": ["src/hooks/useSidebarRowFit.test.tsx", "src/App.test.tsx"],
+      "tests": [
+        "src/hooks/useSidebarRowFit.test.tsx",
+        "src/App.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1851,7 +2250,10 @@
         "src/lib/uiVersion.test.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#Верхние ряды",
-      "tests": ["src/tabbar/TabBar.test.tsx", "src/App.test.tsx"],
+      "tests": [
+        "src/tabbar/TabBar.test.tsx",
+        "src/App.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1864,7 +2266,11 @@
         "src-tauri/src/commands/import.rs"
       ],
       "requirement": "SPEC_TABS.md### Открытые пространства",
-      "tests": ["src-tauri/src/commands/spaces.rs", "src-tauri/src/commands/space_events.rs", "src-tauri/src/commands/effects.rs"],
+      "tests": [
+        "src-tauri/src/commands/spaces.rs",
+        "src-tauri/src/commands/space_events.rs",
+        "src-tauri/src/commands/effects.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -1882,7 +2288,13 @@
         "src-tauri/src/commands/window_chrome.rs"
       ],
       "requirement": "SPEC_TABS.md## Сохранённые окна",
-      "tests": ["src-tauri/src/domain/windows.rs", "src-tauri/src/storage/window_store.rs", "src-tauri/src/tabs/native.rs", "src-tauri/src/tabs/drag.rs", "src-tauri/src/commands/app_open.rs"],
+      "tests": [
+        "src-tauri/src/domain/windows.rs",
+        "src-tauri/src/storage/window_store.rs",
+        "src-tauri/src/tabs/native.rs",
+        "src-tauri/src/tabs/drag.rs",
+        "src-tauri/src/commands/app_open.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -1890,7 +2302,9 @@
         "src-tauri/src/commands/shortcuts.rs"
       ],
       "requirement": "SPEC_TABS.md## Сочетания клавиш",
-      "tests": ["src-tauri/src/commands/shortcuts.rs"],
+      "tests": [
+        "src-tauri/src/commands/shortcuts.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -1905,7 +2319,19 @@
         "vite.config.ts"
       ],
       "requirement": "SPEC_TABS.md## Полоса вкладок",
-      "tests": ["src/lib/chromeHeight.test.ts", "src/components/MineLogo.test.tsx", "src/tabbar/TabBar.test.tsx", "src/tabbar/TabBarApp.test.tsx", "src/tabbar/constants.test.ts", "src/tabbar/sourceGuard.test.ts", "src/tabbar/tabDrag.test.ts", "src/tabbar/tabKeyboard.test.ts", "src/tabbar/tabLabel.test.ts", "src/tabbar/tabLayout.test.ts", "src/tabbar/tabMenu.test.ts"],
+      "tests": [
+        "src/lib/chromeHeight.test.ts",
+        "src/components/MineLogo.test.tsx",
+        "src/tabbar/TabBar.test.tsx",
+        "src/tabbar/TabBarApp.test.tsx",
+        "src/tabbar/constants.test.ts",
+        "src/tabbar/sourceGuard.test.ts",
+        "src/tabbar/tabDrag.test.ts",
+        "src/tabbar/tabKeyboard.test.ts",
+        "src/tabbar/tabLabel.test.ts",
+        "src/tabbar/tabLayout.test.ts",
+        "src/tabbar/tabMenu.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1946,7 +2372,21 @@
         "src/lib/spaceSelection.test.ts"
       ],
       "requirement": "SPEC_TABS.md### Окно и страница",
-      "tests": ["src/App.test.tsx", "src/lib/placeHistory.test.ts", "src/lib/spaceSelection.test.ts", "src/lib/pageEvents.test.ts", "src/lib/pageEvents.lint.test.ts", "src/lib/tabPage.test.ts", "src/lib/tabVisibility.test.ts", "src/lib/controlCharGuard.test.ts", "src/hooks/useSidebarResize.test.tsx", "src/components/SidebarResizeHandle.test.tsx", "src/lib/nativeWindowChromeSurface.test.ts", "src/components/DropZone.test.tsx", "src/hooks/useChromeDragGesture.test.tsx"],
+      "tests": [
+        "src/App.test.tsx",
+        "src/lib/placeHistory.test.ts",
+        "src/lib/spaceSelection.test.ts",
+        "src/lib/pageEvents.test.ts",
+        "src/lib/pageEvents.lint.test.ts",
+        "src/lib/tabPage.test.ts",
+        "src/lib/tabVisibility.test.ts",
+        "src/lib/controlCharGuard.test.ts",
+        "src/hooks/useSidebarResize.test.tsx",
+        "src/components/SidebarResizeHandle.test.tsx",
+        "src/lib/nativeWindowChromeSurface.test.ts",
+        "src/components/DropZone.test.tsx",
+        "src/hooks/useChromeDragGesture.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1966,7 +2406,14 @@
         "src/lib/shortcutValidation.test.ts"
       ],
       "requirement": "SPEC_TABS.md## Связи с остальным приложением",
-      "tests": ["src/settings/SpacesSection.test.tsx", "src/settings/OrphansSection.test.tsx", "src/settings/LayoutSection.test.tsx", "src/settings/ShortcutsSection.test.tsx", "src/lib/commandRegistry.test.ts", "src/lib/shortcutValidation.test.ts"],
+      "tests": [
+        "src/settings/SpacesSection.test.tsx",
+        "src/settings/OrphansSection.test.tsx",
+        "src/settings/LayoutSection.test.tsx",
+        "src/settings/ShortcutsSection.test.tsx",
+        "src/lib/commandRegistry.test.ts",
+        "src/lib/shortcutValidation.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -1989,7 +2436,11 @@
         "src/lib/edgeFade.ts"
       ],
       "requirement": "SPEC_TABS.md### Окно и страница",
-      "tests": ["src/App.test.tsx", "src/components/VaultSwitcher.test.tsx", "src/lib/tabVisibility.test.ts"],
+      "tests": [
+        "src/App.test.tsx",
+        "src/components/VaultSwitcher.test.tsx",
+        "src/lib/tabVisibility.test.ts"
+      ],
       "command": "test:frontend"
     },
     {
@@ -2014,7 +2465,10 @@
         "src/lib/searchResultRow.test.ts"
       ],
       "requirement": "SPEC_SEARCH.md## Match Metadata",
-      "tests": ["src/lib/searchResultRow.test.ts", "src/components/SearchOverlay.test.tsx"],
+      "tests": [
+        "src/lib/searchResultRow.test.ts",
+        "src/components/SearchOverlay.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -2023,7 +2477,10 @@
         "src/components/CardRowActions.tsx"
       ],
       "requirement": "SPEC_SEARCH_OVERLAY.md### Команды строки",
-      "tests": ["src/components/SearchOverlay.test.tsx", "src/components/Detail.test.tsx"],
+      "tests": [
+        "src/components/SearchOverlay.test.tsx",
+        "src/components/Detail.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -2031,7 +2488,9 @@
         "src/hooks/useMenuTriggerPointerInside.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#### Нажатие",
-      "tests": ["src/components/MenuTextTrigger.test.tsx"],
+      "tests": [
+        "src/components/MenuTextTrigger.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -2181,9 +2640,13 @@
       "command": "test:frontend"
     },
     {
-      "paths": ["src-tauri/src/storage/index.rs"],
+      "paths": [
+        "src-tauri/src/storage/index.rs"
+      ],
       "requirement": "SPEC_CLIPPER.md#Пост с цитатой как в оригинале",
-      "tests": ["src-tauri/src/storage/index.rs"],
+      "tests": [
+        "src-tauri/src/storage/index.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -2434,7 +2897,9 @@
         "src/types/generated.ts"
       ],
       "requirement": "SPEC_GRAPH_VIEW.md#**ГП5.**",
-      "tests": ["src-tauri/src/storage/graph.rs"],
+      "tests": [
+        "src-tauri/src/storage/graph.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -2454,7 +2919,15 @@
         "extension/popup/components/VaultSelect.test.tsx"
       ],
       "requirement": "DESIGN_SYSTEM.md#Растворение кромок (edge fade)",
-      "tests": ["src/components/ui/fade-text.test.tsx", "src/components/MenuTextTrigger.test.tsx", "src/components/VaultSwitcher.test.tsx", "src/components/MainSecondaryChrome.test.tsx", "src/components/Grid.test.tsx", "src/tabbar/TabBar.test.tsx", "extension/popup/components/VaultSelect.test.tsx"],
+      "tests": [
+        "src/components/ui/fade-text.test.tsx",
+        "src/components/MenuTextTrigger.test.tsx",
+        "src/components/VaultSwitcher.test.tsx",
+        "src/components/MainSecondaryChrome.test.tsx",
+        "src/components/Grid.test.tsx",
+        "src/tabbar/TabBar.test.tsx",
+        "extension/popup/components/VaultSelect.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -2463,7 +2936,9 @@
         "scripts/clipper-worker-smoke.mjs"
       ],
       "requirement": "DESIGN_SYSTEM.md#Растворение кромок (edge fade)",
-      "tests": ["scripts/clipper-worker-smoke.mjs"],
+      "tests": [
+        "scripts/clipper-worker-smoke.mjs"
+      ],
       "command": "test:clipper-worker"
     },
     {
@@ -2488,7 +2963,12 @@
         "src/components/TopCollectionSwitcher.test.tsx"
       ],
       "requirement": "DESIGN_SYSTEM.md### Окна",
-      "tests": ["src/components/DeleteBlockDialog.test.tsx", "src/components/Detail.test.tsx", "src/App.test.tsx", "src/components/Grid.test.tsx"],
+      "tests": [
+        "src/components/DeleteBlockDialog.test.tsx",
+        "src/components/Detail.test.tsx",
+        "src/App.test.tsx",
+        "src/components/Grid.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -2498,7 +2978,11 @@
         "src/workers/thumbWorker.ts"
       ],
       "requirement": "SPEC_SAVE_CORE.md## Имя медиафайла по содержимому",
-      "tests": ["mine-core/src/domain/media_type.rs", "src-tauri/src/storage/derived_preview.rs", "src-tauri/src/commands/thumbnails.rs"],
+      "tests": [
+        "mine-core/src/domain/media_type.rs",
+        "src-tauri/src/storage/derived_preview.rs",
+        "src-tauri/src/commands/thumbnails.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -2511,7 +2995,12 @@
         "src/components/Detail.tsx"
       ],
       "requirement": "SPEC_THUMBNAILS.md#### Нет файла миниатюры (11.10.2026)",
-      "tests": ["src/components/MicroPreviewThumbnail.test.tsx", "src/components/Detail.test.tsx", "src/components/Sidebar.test.tsx", "src/components/SearchOverlay.test.tsx"],
+      "tests": [
+        "src/components/MicroPreviewThumbnail.test.tsx",
+        "src/components/Detail.test.tsx",
+        "src/components/Sidebar.test.tsx",
+        "src/components/SearchOverlay.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -2525,7 +3014,11 @@
         "src-tauri/src/watcher/handler.rs"
       ],
       "requirement": "SPEC_THUMBNAILS.md#**П8. Смена версии генератора ничего не удаляет (11.10.2026).**",
-      "tests": ["src-tauri/src/storage/thumbnails.rs", "src-tauri/src/storage/derived_preview.rs", "src-tauri/src/commands/thumbnails.rs"],
+      "tests": [
+        "src-tauri/src/storage/thumbnails.rs",
+        "src-tauri/src/storage/derived_preview.rs",
+        "src-tauri/src/commands/thumbnails.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -2539,7 +3032,10 @@
         "src/types/generated.ts"
       ],
       "requirement": "SPEC_GROUP_SELECTION.md#### Удаление",
-      "tests": ["src-tauri/src/commands/blocks.rs", "src-tauri/src/commands/effects.rs"],
+      "tests": [
+        "src-tauri/src/commands/blocks.rs",
+        "src-tauri/src/commands/effects.rs"
+      ],
       "command": "test:rust"
     },
     {
@@ -2567,7 +3063,12 @@
         "src/dev/OnboardingPage.tsx"
       ],
       "requirement": "SPEC_GROUP_SELECTION.md#### Точки входа",
-      "tests": ["src/components/Grid.test.tsx", "src/components/DeleteSelectedCardsDialog.test.tsx", "src/components/DeleteBlockDialog.test.tsx", "src/App.test.tsx"],
+      "tests": [
+        "src/components/Grid.test.tsx",
+        "src/components/DeleteSelectedCardsDialog.test.tsx",
+        "src/components/DeleteBlockDialog.test.tsx",
+        "src/App.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -2616,7 +3117,10 @@
         "src/App.test.tsx"
       ],
       "requirement": "DESIGN_SYSTEM.md#### Сбой после закрытия окна",
-      "tests": ["src/lib/deleteFailure.test.ts", "src/App.test.tsx"],
+      "tests": [
+        "src/lib/deleteFailure.test.ts",
+        "src/App.test.tsx"
+      ],
       "command": "test:frontend"
     },
     {
@@ -2672,23 +3176,35 @@
     {
       "paths": [
         "src/lib/thumbUpgradePlan.test.ts",
-        "src/lib/thumbUpgradePlan.ts"
+        "src/lib/thumbUpgradePlan.ts",
+        "scripts/disposable-app-home.mjs",
+        "scripts/disposable-app-home.test.mjs"
       ],
       "requirement": "SPEC_DEEP_AUDIT.md## Контракты",
       "tests": [
-        "src/lib/thumbUpgradePlan.test.ts"
+        "src/lib/thumbUpgradePlan.test.ts",
+        "scripts/disposable-app-home.test.mjs"
       ],
       "command": "test:frontend"
     },
     {
       "paths": [
         "src-tauri/src/domain/canvas.rs",
-        "src-tauri/src/shutdown.rs"
+        "src-tauri/src/shutdown.rs",
+        "src-tauri/native/icloud_progress_helper.swift",
+        "src-tauri/src/storage/root_guard.rs",
+        "src-tauri/src/watcher/events.rs",
+        "src-tauri/src/storage/cloud_files.rs",
+        "src-tauri/src/test_log.rs"
       ],
       "requirement": "SPEC_DEEP_AUDIT.md## Контракты",
       "tests": [
         "src-tauri/src/domain/canvas.rs",
-        "src-tauri/src/shutdown.rs"
+        "src-tauri/src/shutdown.rs",
+        "src-tauri/src/storage/root_guard.rs",
+        "src-tauri/src/watcher/events.rs",
+        "src-tauri/src/storage/cloud_files.rs",
+        "src-tauri/src/test_log.rs"
       ],
       "command": "test:rust"
     }

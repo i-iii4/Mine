@@ -1,7 +1,8 @@
 // Real native messaging, source files and the normal scanner; no browser or app UI.
 // Only new UUID-owned fixtures are written. Config, installed helper and browser
-// registrations are never changed. Artifacts are retained, including app-local
-// test journals because production native-host has no app-state path override.
+// registrations are never changed. The helper runs with a home of its own in the
+// run folder, so its derived stores and journals stay there with every other
+// artifact, out of the person's app data (SPEC_DEEP_AUDIT.md, Е5.17).
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -10,8 +11,10 @@ import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
+import { disposableAppHome } from './disposable-app-home.mjs';
+
 if (process.argv.includes('--help')) {
-  console.log('node scripts/native-capture-smoke.mjs [--bundle /absolute/Mine.app] [--scanner /absolute/cold-space-audit]\nUses the already-built .app helper and scanner.\nCreates new disposable vaults under output/playwright/ plus unique test-only derived/journal directories in the normal Mine app-data root.\nDoes not launch Mine or change config, installed helper, registrations or existing vaults. Retains all evidence.');
+  console.log('node scripts/native-capture-smoke.mjs [--bundle /absolute/Mine.app] [--scanner /absolute/cold-space-audit]\nUses the already-built .app helper and scanner.\nCreates new disposable vaults under output/playwright/; the helper runs with a home of its own there, so its derived stores and journals stay in the run folder.\nDoes not launch Mine or change config, installed helper, registrations or existing vaults. Retains all evidence.');
   process.exit(0);
 }
 const argumentsList = process.argv.slice(2);
@@ -24,19 +27,20 @@ for (let index = 0; index < argumentsList.length; index += 2) {
   argumentsMap.set(option, value);
 }
 assert.equal(process.platform, 'darwin', 'This acceptance uses the packaged macOS binaries');
-assert.ok(process.env.HOME, 'Production helper requires HOME; it is never overridden');
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const bundle = argumentsMap.get('--bundle') ?? join(root, 'target/debug/bundle/macos/Mine.app');
 const binaries = join(bundle, 'Contents/MacOS');
 const host = join(binaries, 'native-host');
 const scanner = argumentsMap.get('--scanner') ?? join(binaries, 'cold-space-audit');
-const appState = join(process.env.HOME, 'Library/Application Support/com.mine.app');
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 await Promise.all([access(host), access(scanner)]);
 const output = join(root, 'output/playwright');
 await mkdir(output, { recursive: true });
 const run = await mkdtemp(join(output, 'native-capture-'));
+const helperHome = disposableAppHome(run);
+await mkdir(helperHome.home, { recursive: true });
+const appState = helperHome.appState;
 const reportPath = join(run, 'report.json');
 const imageBytes = await readFile(join(root, 'extension/icons/icon-16.png'));
 // Read the shared resolver's compatibility generation, rather than copying its
@@ -54,10 +58,10 @@ const report = {
   indexGeneration, currentSchemaVersion, run, cases: [], ok: false,
 };
 
-function execute(binary, args, input) {
+function execute(binary, args, input, env = process.env) {
   return new Promise((resolve, reject) => {
     const child = execFile(binary, args, {
-      cwd: root, timeout: 20_000, maxBuffer: 8 * 1024 * 1024, encoding: 'buffer',
+      cwd: root, timeout: 20_000, maxBuffer: 8 * 1024 * 1024, encoding: 'buffer', env,
     }, (error, stdout, stderr) => {
       if (error) reject(new Error(`${binary}: ${error.message}\n${stderr.toString()}`));
       else resolve({ stdout, stderr: stderr.toString() });
@@ -72,7 +76,7 @@ async function wire(request) {
   header.writeUInt32LE(body.length);
   // Every call starts a fresh production process; lookup/replay cannot use RAM
   // left by the save. The launch origin is not forged and no ACK is requested.
-  const { stdout, stderr } = await execute(host, [], Buffer.concat([header, body]));
+  const { stdout, stderr } = await execute(host, [], Buffer.concat([header, body]), helperHome.env);
   assert.ok(stdout.length >= 4, 'Host must emit a native message');
   assert.equal(stdout.readUInt32LE(0), stdout.length - 4, 'Exactly one complete response');
   const response = JSON.parse(stdout.subarray(4).toString('utf8'));

@@ -77,6 +77,10 @@ struct VaultFreshnessChangedPayload {
     content_reads: usize,
     database_writes: usize,
     error_count: usize,
+    /// The notes the pass could not read or project, with why: the index is
+    /// ready without them (SPEC_DEEP_AUDIT.md, Н6), and the interface names
+    /// them (Е6.17).
+    error_files: Vec<crate::storage::reconcile::ReconcileFileError>,
     elapsed_ms: u64,
     fast_path_hits: usize,
 }
@@ -420,6 +424,7 @@ fn publish_freshness_outcome(
                         content_reads: report.content_reads,
                         database_writes: report.database_writes,
                         error_count: report.errors.len(),
+                        error_files: report.errors.clone(),
                         elapsed_ms: report.elapsed_ms,
                         fast_path_hits: outcome.fast_path_hits,
                     },
@@ -430,10 +435,16 @@ fn publish_freshness_outcome(
             // when it opens and when the person comes back to its window
             // (SPEC_ICLOUD_CONFLICTS.md, ВК4; SPEC_DEEP_AUDIT.md, Е2.18).
             if !report.is_fresh() {
+                let files: Vec<String> = report
+                    .errors
+                    .iter()
+                    .map(|error| format!("{} ({:?}: {})", error.path, error.kind, error.message))
+                    .collect();
                 log::warn!(
-                    "vault freshness degraded for {}: {} source error(s); serving last-good snapshot",
+                    "vault freshness degraded for {}: {} source error(s), the index is ready without them: {}",
                     outcome.vault_path,
-                    report.errors.len()
+                    report.errors.len(),
+                    files.join("; ")
                 );
             }
             if outcome.ran_reconcile && changed {
@@ -468,6 +479,7 @@ fn publish_freshness_outcome(
                         content_reads: 0,
                         database_writes: 0,
                         error_count: 1,
+                        error_files: Vec::new(),
                         elapsed_ms: 0,
                         fast_path_hits: outcome.fast_path_hits,
                     },

@@ -77,7 +77,7 @@ impl PreviewDimensions {
 /// file down, and no size is worth that wait (SPEC_CLOUD_STORAGE.md, Х25).
 /// Header-only read — does not decode the full image.
 pub fn extract_image_dimensions(path: &Path) -> Option<(u32, u32)> {
-    if is_content_offloaded(path) {
+    if crate::storage::cloud_files::is_content_offloaded(path) {
         return None;
     }
     // The format is sniffed, never taken from the name. Derived artifacts all
@@ -91,40 +91,6 @@ pub fn extract_image_dimensions(path: &Path) -> Option<(u32, u32)> {
         .into_dimensions()
         .ok()
 }
-
-/// Whether a file exists but its contents are not on this Mac.
-///
-/// iCloud evicts file contents when the disk fills up, leaving the name, size
-/// and attributes in place with no data behind them. Verified against a real
-/// evicted file: the name is unchanged (no `.icloud` suffix), the reported size
-/// is the full size, and no blocks are allocated. Reading even one byte
-/// materializes the whole file, so this check exists precisely to avoid
-/// touching contents. See SPEC_CLOUD_STORAGE.md Х3.
-pub fn is_content_offloaded(path: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    // Only files iCloud actually manages can be evicted. Without this check a
-    // sparse file — same signature: full logical size, no allocated blocks —
-    // would be reported as offloaded and silently lose its autoplay.
-    if !is_icloud_managed(path) {
-        return false;
-    }
-    let Ok(meta) = std::fs::metadata(path) else {
-        return false;
-    };
-    meta.len() > 0 && meta.blocks() == 0
-}
-
-/// Whether the path lives in the iCloud Drive container.
-///
-/// Everything synced by iCloud Drive — including Desktop and Documents when
-/// those are enabled — sits under `~/Library/Mobile Documents`.
-fn is_icloud_managed(path: &Path) -> bool {
-    path.components().any(|component| {
-        component.as_os_str().to_str() == Some(ICLOUD_CONTAINER_DIR)
-    })
-}
-
-const ICLOUD_CONTAINER_DIR: &str = "Mobile Documents";
 
 /// Extract the pixel size of a derived preview artifact. Header-only read, same
 /// cost as [`extract_image_dimensions`], but typed as preview geometry so it
@@ -144,7 +110,7 @@ pub fn extract_preview_dimensions(path: &Path) -> Option<PreviewDimensions> {
 /// container formats (WebM, MOV) are not supported here; the frontend falls
 /// back to a 16:9 aspect ratio for them.
 pub fn extract_video_dimensions(path: &Path) -> Option<(u32, u32)> {
-    if is_content_offloaded(path) {
+    if crate::storage::cloud_files::is_content_offloaded(path) {
         return None;
     }
     let file = std::fs::File::open(path).ok()?;
@@ -262,30 +228,26 @@ pub fn build_media_dimensions_json_from_sources(
     serde_json::to_string(&dims).ok()
 }
 
-/// Fast check whether a filename has an image extension. We only call the
-/// image decoder for files that look like images, so other file types don't
-/// trigger decoder failures. AVIF/HEIC are listed best-effort: the bundled
-/// `image` decoder may not read them, in which case dimension extraction simply
-/// returns `None`. This set is intentionally distinct from
-/// `preview_plan::is_image_ext` (feed classification) and `files::is_image_ext`
-/// (thumbnail-decodable formats) — each predicate serves a different purpose.
+/// Whether a filename names a picture, by the space's one list of picture
+/// extensions (`preview_plan::is_image_ext`, SPEC_DEEP_AUDIT.md, Е5.16).
+/// Until 13.10.2026 this kept a list of its own without TIFF. The decoder
+/// reads the header of whatever it can; a format it cannot read (HEIC, AVIF)
+/// gives no size.
 fn is_image_extension(name: &str) -> bool {
     let lower = name.to_lowercase();
-    matches!(
-        lower.rsplit_once('.').map(|(_, ext)| ext).unwrap_or(""),
-        "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" | "avif" | "heic" | "heif"
-    )
+    crate::storage::preview_plan::is_image_ext(lower.rsplit_once('.').map(|(_, ext)| ext).unwrap_or(""))
 }
 
-/// Check whether a filename has a video extension. We currently only extract
-/// dimensions for MP4 via the `mp4` crate; other containers (WebM, MOV) fall
-/// back to the frontend's default aspect ratio.
+/// The video containers whose header the `mp4` reader understands: the MP4
+/// ones of the space's video list. Other containers (WebM, MOV) fall back to
+/// the frontend's default aspect ratio.
+const MP4_CONTAINER_EXTS: &[&str] = &["mp4", "m4v"];
+
+/// Whether a filename names a video whose size this module reads.
 fn is_video_extension(name: &str) -> bool {
     let lower = name.to_lowercase();
-    matches!(
-        lower.rsplit_once('.').map(|(_, ext)| ext).unwrap_or(""),
-        "mp4" | "m4v"
-    )
+    let ext = lower.rsplit_once('.').map(|(_, ext)| ext).unwrap_or("");
+    MP4_CONTAINER_EXTS.contains(&ext) && crate::storage::preview_plan::is_video_ext(ext)
 }
 
 #[cfg(test)]
@@ -374,6 +336,23 @@ mod tests {
         assert!(!is_image_extension("video.mp4"));
         assert!(!is_image_extension("file.txt"));
         assert!(!is_image_extension("noext"));
+    }
+
+    /// Е5.16: the sizes of every picture the space's one list calls an
+    /// image are read, TIFF included: a scan saved as `.tiff` got no size.
+    #[test]
+    fn every_image_extension_of_the_one_list_is_measured() {
+        for extension in mine_core::domain::block::IMAGE_MEDIA_EXTS {
+            assert!(is_image_extension(&format!("picture.{extension}")), "{extension}");
+        }
+        let dir = tempdir().unwrap();
+        image::RgbImage::from_pixel(5, 3, image::Rgb([1, 2, 3]))
+            .save(dir.path().join("scan.tiff"))
+            .unwrap();
+        assert_eq!(
+            build_media_dimensions_json_from_sources(dir.path(), Some("scan.tiff"), &[]).as_deref(),
+            Some("{\"scan.tiff\":[5,3]}")
+        );
     }
 
     #[test]

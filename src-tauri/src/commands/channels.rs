@@ -573,7 +573,7 @@ fn rename_reconciled_collection(
         .map_err(|error| CommandError::Internal(error.to_string()))?;
 
     let retag = |tags: &mut Vec<String>| rename_membership(tags, &normalized_old, &normalized_new);
-    let mut planned = crate::commands::blocks::plan_note_move(vault, &old_slug, &new_slug, &retag)
+    let mut planned = crate::commands::blocks::plan_note_move(conn, vault, &old_slug, &new_slug, &retag)
         .map_err(|error| CommandError::Internal(error.to_string()))?;
     let reached: std::collections::BTreeSet<std::path::PathBuf> =
         planned.iter().map(|write| write.original_path.clone()).collect();

@@ -1417,7 +1417,7 @@ fn collection_page_on_disk(
                 return false;
             }
             if read == CloudRead::NoWait
-                && mine_lib::storage::media_dimensions::is_content_offloaded(&path)
+                && mine_lib::storage::cloud_files::is_content_offloaded(&path)
             {
                 return true;
             }
@@ -5248,15 +5248,9 @@ mod tests {
     }
 
     impl CopiedSpace {
-        /// `in_cloud` puts the folders under an iCloud container, so an
-        /// identity file without data counts as one only in iCloud.
-        fn new(in_cloud: bool) -> Self {
+        fn new() -> Self {
             let tmp = TempDir::new().unwrap();
-            let parent = if in_cloud {
-                tmp.path().join("Mobile Documents")
-            } else {
-                tmp.path().join("Spaces")
-            };
+            let parent = tmp.path().join("Spaces");
             let original = k_space(&parent, "Mine");
             for folder in ["Cards", "Collections"] {
                 std::fs::create_dir_all(Path::new(&original).join(folder)).unwrap();
@@ -5304,11 +5298,13 @@ mod tests {
         }
 
         /// Leave only the data an identity file iCloud moved off this Mac
-        /// keeps: its name and size, no blocks.
+        /// keeps: its name and size, no contents (`SF_DATALESS`, which only
+        /// the kernel sets).
         fn evict_identity(folder: &str) {
             let id = Path::new(folder).join(".mine/vault-id");
             std::fs::remove_file(&id).unwrap();
             std::fs::File::create(&id).unwrap().set_len(32).unwrap();
+            mine_lib::storage::cloud_files::test_seam::mark_offloaded(&id);
         }
     }
 
@@ -5323,7 +5319,7 @@ mod tests {
 
     #[test]
     fn a_copy_chosen_in_the_clipper_never_reads_or_writes_the_original_index() {
-        let space = CopiedSpace::new(false);
+        let space = CopiedSpace::new();
         let rows_before = space.original_rows();
 
         let request =
@@ -5403,14 +5399,14 @@ mod tests {
 
     #[test]
     fn a_copy_whose_identity_is_in_icloud_is_refused_until_it_arrives() {
-        let space = CopiedSpace::new(true);
+        let space = CopiedSpace::new();
         CopiedSpace::evict_identity(&space.copy);
         assert_refused_without_writes(&space, "identity_in_cloud");
     }
 
     #[test]
     fn a_copy_of_a_space_whose_identity_is_in_icloud_is_refused_until_it_arrives() {
-        let space = CopiedSpace::new(true);
+        let space = CopiedSpace::new();
         CopiedSpace::evict_identity(&space.original);
         assert_refused_without_writes(&space, "identity_in_cloud");
     }
@@ -5418,7 +5414,7 @@ mod tests {
     #[test]
     fn an_unreadable_identity_is_refused_and_never_replaced() {
         use std::os::unix::fs::PermissionsExt;
-        let space = CopiedSpace::new(false);
+        let space = CopiedSpace::new();
         let id = Path::new(&space.copy).join(".mine/vault-id");
         std::fs::set_permissions(&id, std::fs::Permissions::from_mode(0o000)).unwrap();
         assert!(std::fs::read(&id).is_err(), "the identity must be unreadable for this test");

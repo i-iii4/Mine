@@ -68,7 +68,7 @@ pub fn space_identity(folder: &Path) -> SpaceIdentity {
         if !path.is_file() {
             continue;
         }
-        if crate::storage::media_dimensions::is_content_offloaded(&path) {
+        if crate::storage::cloud_files::is_content_offloaded(&path) {
             return SpaceIdentity::InCloud;
         }
         if let Some(id) = read_id_file(&path) {
@@ -141,7 +141,7 @@ pub fn read_identity_file(path: &Path, read: CloudRead) -> Result<Option<String>
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(unreadable(error)),
     }
-    if read == CloudRead::NoWait && crate::storage::media_dimensions::is_content_offloaded(path) {
+    if read == CloudRead::NoWait && crate::storage::cloud_files::is_content_offloaded(path) {
         return Err(IdentityUnreadable::InCloud { path: path.to_path_buf() });
     }
     match std::fs::read_to_string(path) {
@@ -1033,14 +1033,14 @@ mod tests {
     }
 
     /// A space whose identity file iCloud moved off this Mac: the name and
-    /// size stay, no blocks are allocated.
+    /// size stay, the contents do not (`SF_DATALESS`, which a test stands in
+    /// for: only the kernel sets the flag).
     fn space_in_cloud(parent: &Path, name: &str) -> String {
-        let folder = parent.join("Mobile Documents").join(name);
+        let folder = parent.join(name);
         std::fs::create_dir_all(folder.join(".mine")).unwrap();
-        std::fs::File::create(folder.join(".mine/vault-id"))
-            .unwrap()
-            .set_len(32)
-            .unwrap();
+        let identity = folder.join(".mine/vault-id");
+        std::fs::File::create(&identity).unwrap().set_len(32).unwrap();
+        crate::storage::cloud_files::test_seam::mark_offloaded(&identity);
         folder.to_string_lossy().into_owned()
     }
 

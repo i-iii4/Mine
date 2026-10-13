@@ -33,6 +33,12 @@ impl SpaceFixture {
         self.root.join(relative)
     }
 
+    /// The history of renames this Mac keeps for the space, in its derived
+    /// store (SPEC_DEEP_AUDIT.md, Е5.7).
+    fn history(&self) -> PathBuf {
+        self.derived.join("file-identity.json")
+    }
+
     fn write(&self, relative: &str, bytes: &[u8]) {
         let path = self.path(relative);
         fs::create_dir_all(path.parent().expect("file parent")).expect("create fixture folder");
@@ -89,7 +95,7 @@ fn unique_paths_repair_after_history_and_derived_state_are_deleted_before_move()
     space.write("Cards/Card.md", b"---\ntype: image\nsaved_at: 2026-09-01T00:00:00Z\nfile: \"[[Media/photo.jpg]]\"\n---\n![[Media/photo.jpg|caption]]");
     space.write("Media/photo.jpg", b"original image");
     space.reconcile();
-    fs::remove_file(space.path(".mine/file-identity.json")).expect("delete temporary history");
+    fs::remove_file(space.history()).expect("delete temporary history");
     fs::remove_dir_all(&space.derived).expect("delete temporary derived state");
     space.move_file("Cards/Card.md", "Card.md");
     space.move_file("Media/photo.jpg", "photo.jpg");
@@ -112,12 +118,12 @@ fn corrupt_history_does_not_block_unique_source_repair() {
     );
     space.write("Media/photo.jpg", b"original image");
     space.reconcile();
-    space.write(".mine/file-identity.json", b"{broken json");
+    fs::write(space.history(), b"{broken json").expect("break the history");
     space.move_file("Media/photo.jpg", "Assets/photo.jpg");
     space.reconcile();
     let source = fs::read_to_string(space.path("Cards/Card.md")).expect("source after repair");
     assert_eq!(
-        fs::read(space.path(".mine/file-identity.json")).expect("preserved history"),
+        fs::read(space.history()).expect("preserved history"),
         b"{broken json"
     );
     assert!(source.contains("[[photo.jpg]]"));
@@ -185,7 +191,7 @@ fn known_bare_binding_is_written_as_explicit_link_when_duplicate_appears() {
     space.reconcile();
     let source = fs::read_to_string(space.path("Card.md")).expect("disambiguated source");
     assert!(source.contains("[[Media/photo.jpg]]"));
-    fs::remove_file(space.path(".mine/file-identity.json")).expect("delete temporary history");
+    fs::remove_file(space.history()).expect("delete temporary history");
     fs::remove_dir_all(&space.derived).expect("delete temporary derived state");
     space.reconcile();
     assert_source_path(
@@ -220,7 +226,7 @@ fn missing_history_never_guesses_between_duplicate_basenames() {
         b"---\ntype: image\nsaved_at: 2026-09-01T00:00:00Z\nfile: \"[[Old/photo.jpg]]\"\n---\n",
     );
     space.reconcile();
-    fs::remove_file(space.path(".mine/file-identity.json")).expect("delete temporary history");
+    fs::remove_file(space.history()).expect("delete temporary history");
     space.move_file("Old/photo.jpg", "A/photo.jpg");
     space.write("B/photo.jpg", b"other target");
     space.reconcile();
@@ -255,7 +261,7 @@ fn closed_space_moves_keep_the_same_media_and_source_links_after_index_loss() {
         b"---\ntype: article\nsaved_at: 2026-09-01T00:00:00Z\n---\nidentical text",
     );
     space.reconcile();
-    assert!(space.path(".mine/file-identity.json").is_file());
+    assert!(space.history().is_file());
 
     // These moves happen with no SQLite connection or application process open.
     space.write("Other/photo.jpg", distractor);

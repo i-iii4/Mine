@@ -53,6 +53,7 @@ const NOTE: VaultConflict = {
     { token: "tok-a", modified: "2026-10-10T12:54:00Z", device: "Anna’s MacBook Pro" },
     { token: "tok-b", modified: "2026-10-09T07:05:00Z", device: null },
   ],
+  unanswered: false,
 };
 
 const OTHER: VaultConflict = {
@@ -61,6 +62,17 @@ const OTHER: VaultConflict = {
   detected_at: "2026-10-10T09:00:00Z",
   current: { token: null, modified: "2026-10-10T08:00:00Z", device: null },
   versions: [{ token: "tok-c", modified: "2026-10-09T10:00:00Z", device: "iPhone" }],
+  unanswered: false,
+};
+
+/** A recorded conflict iCloud did not answer about this time (Е5.12). */
+const UNANSWERED: VaultConflict = {
+  path: "Cards/Busy.md",
+  name: "Busy",
+  detected_at: "2026-10-08T09:00:00Z",
+  current: { token: null, modified: null, device: null },
+  versions: [],
+  unanswered: true,
 };
 
 beforeEach(() => {
@@ -238,6 +250,28 @@ describe("the window", () => {
     fireEvent.click(within(group(OTHER.path)).getByRole("button", { name: "Keep all" }));
     expect(resolveMock).toHaveBeenLastCalledWith("Journal/Day.md", { kind: "keep_all" }, ["tok-c"]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  // SPEC_DEEP_AUDIT.md, Е5.12: the notice counted a conflict the window left
+  // out, and the window opened empty and closed at once.
+  it("shows a conflict iCloud did not answer about, with words and nothing to keep", async () => {
+    const dialog = await openWindow([UNANSWERED, NOTE]);
+    await waitFor(() => expect(group(UNANSWERED.path)).toBeInTheDocument());
+
+    expect(within(group(UNANSWERED.path)).getByText("Busy")).toBeInTheDocument();
+    expect(
+      within(group(UNANSWERED.path)).getByText(
+        "iCloud did not answer about this note. Mine asks again when you come back to the window.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(group(UNANSWERED.path)).queryAllByRole("button")).toHaveLength(0);
+    expect(within(dialog).getAllByRole("button", { name: "Keep all" })).toHaveLength(1);
+  });
+
+  it("stays open with only a conflict iCloud did not answer about", async () => {
+    const dialog = await openWindow([UNANSWERED]);
+    await waitFor(() => expect(group(UNANSWERED.path)).toBeInTheDocument());
+    expect(dialog).toBeInTheDocument();
   });
 
   it("asks iCloud for the versions once as it opens, not on every count", async () => {

@@ -135,6 +135,7 @@ local-arena/
 │   │   ├── net.rs              # validate_fetch_url и сетевые утилиты (native host, импорт)
 │   │   ├── markdown_selection.rs # Выделение в отрисованном тексте статьи: байты исходника, диапазоны Delete Text
 │   │   ├── util.rs             # Общие утилиты приложения и native host
+│   │   ├── test_log.rs         # Только для тестов: перехват журнала
 │   │   ├── app_config.rs       # Единственный владелец config.json: блокировка, сохранение чужих ключей, поколение
 │   │   ├── space_registry.rs   # Реестр пространств по vault_id, восстановление, поиск переехавшей папки
 │   │   ├── clipper_registration.rs # Регистрация помощника в браузерах: список браузеров, замена помощника
@@ -185,6 +186,7 @@ local-arena/
 │   │   │   ├── cloud_waits.rs  # Журнал ожиданий iCloud по сессиям (рекомендация Keep Downloaded)
 │   │   │   ├── vault_stats.rs  # Read model статистики хранилища
 │   │   │   ├── files.rs        # File operations (copy, move, delete)
+│   │   │   ├── cloud_files.rs  # Одно правило iCloud: выгрузка по флагу SF_DATALESS, принадлежность по isUbiquitousItem
 │   │   │   ├── graph.rs        # GraphSnapshot projection for Graph View
 │   │   │   ├── window_store.rs # windows.json: атомарная запись с задержкой, файлы corrupt и новее, состояние выхода
 │   │   │   └── thumbnails.rs   # Thumbnail generation + cache
@@ -296,6 +298,7 @@ local-arena/
 │   ├── cold-space-browser-audit.mjs # First/settled/deep cold Grid acceptance
 │   ├── edge-states-audit.mjs   # Витрина краевых состояний: варианты, контексты, обрезка, невидимый текст
 │   ├── fetch-ytdlp.mjs         # Загрузка распакованной сборки yt-dlp (onedir, сумма SHA-256) в ресурсы бандла
+│   ├── disposable-app-home.mjs # Свой HOME в папке прогона для скриптов, которые запускают помощника
 │   ├── ytdlp-layout.mjs        # Имена каталога yt-dlp и его запускающего файла (общие со сборкой и тестами)
 │   ├── verify-bundle-binaries.mjs # Гейт сборки: каждый Mach-O подписан, нет самораспаковывающихся PyInstaller onefile
 │   ├── native-shell-smoke.mjs  # Packaged macOS WKWebView + Tauri IPC smoke
@@ -449,6 +452,7 @@ bun run test                   # Полная проверка: Vitest + Rust wo
 bun run test:frontend          # Сборка actual WASM + Vitest
 bun run test:save-core         # Native/WASM byte/error/recovery parity
 bun run test:rust              # Только Rust workspace tests
+bun run test:scripts           # Тесты скриптов Node (свой HOME для прогонов помощника)
 bun run test:feed-scroll       # Browser Grid acceptance (requires running dev server)
 bun run test:graph             # Browser Graph Canvas acceptance (requires running dev server)
 bun run test:cold-space        # Browser cold first/settled/deep Grid acceptance (requires running dev server)

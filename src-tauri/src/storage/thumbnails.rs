@@ -555,10 +555,42 @@ pub enum GeneratorEpoch {
     NoneCurrent,
 }
 
+/// The moments this process adopted the current generator for caches whose
+/// marker it could not write, by preview folder (SPEC_DEEP_AUDIT.md, Е5.15).
+static UNRECORDED_ADOPTIONS: std::sync::Mutex<Option<std::collections::HashMap<std::path::PathBuf, SystemTime>>> =
+    std::sync::Mutex::new(None);
+
+fn unrecorded_adoption(thumbs_dir: &Path) -> Option<SystemTime> {
+    UNRECORDED_ADOPTIONS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()?
+        .get(thumbs_dir)
+        .copied()
+}
+
+fn remember_unrecorded_adoption(thumbs_dir: &Path, moment: Option<SystemTime>) {
+    let mut adoptions = UNRECORDED_ADOPTIONS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let adoptions = adoptions.get_or_insert_with(std::collections::HashMap::new);
+    match moment {
+        Some(moment) => {
+            adoptions.insert(thumbs_dir.to_path_buf(), moment);
+        }
+        None => {
+            adoptions.remove(thumbs_dir);
+        }
+    }
+}
+
 impl GeneratorEpoch {
-    /// The epoch recorded in `vault`'s preview cache.
+    /// The epoch recorded in `vault`'s preview cache. A version this process
+    /// adopted without being able to record it holds here from the moment it
+    /// did (`adopt_generator_version`), so the previews it rebuilt count as
+    /// current and are not rebuilt again on every pass.
     pub fn read(vault: &VaultLayout) -> Self {
-        match std::fs::read_to_string(vault.thumbs_dir().join(GENERATOR_MARKER)) {
+        let recorded = match std::fs::read_to_string(vault.thumbs_dir().join(GENERATOR_MARKER)) {
             Ok(marker) => Self::parse(&marker),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::AllCurrent,
             Err(error) => {
@@ -566,6 +598,11 @@ impl GeneratorEpoch {
                 log::warn!("failed to read the preview generator version: {error}");
                 Self::AllCurrent
             }
+        };
+        match (recorded, unrecorded_adoption(&vault.thumbs_dir())) {
+            (Self::NoneCurrent, Some(moment)) => Self::Since(moment),
+            (Self::Since(since), Some(moment)) if since > SystemTime::now() => Self::Since(moment),
+            (recorded, _) => recorded,
         }
     }
 
@@ -598,33 +635,50 @@ impl GeneratorEpoch {
 ///
 /// On a version change the cache keeps every file: the previews already there
 /// become outdated from this moment and are rebuilt in the background, each
-/// replaced only by its finished successor (П8). Returns true when the marker
-/// was written: a first cache, a version change, or a moment ahead of the
-/// clock (a clock set back would otherwise leave every new preview outdated).
-pub fn adopt_generator_version(vault: &VaultLayout) -> bool {
+/// replaced only by its finished successor (П8). Returns whether the marker
+/// was written: `Ok(true)` for a first cache, a version change, or a moment
+/// ahead of the clock (a clock set back would otherwise leave every new
+/// preview outdated); `Ok(false)` when there was nothing to adopt.
+///
+/// A marker that cannot be written is an error, not an adoption: until
+/// 13.10.2026 the function answered true, the cache kept the old version, and
+/// every preview, the rebuilt ones too, stayed outdated, so every pass rebuilt
+/// them all (SPEC_DEEP_AUDIT.md, Е5.15). The version change still holds in
+/// this process from this moment (`GeneratorEpoch::read`): the previews are
+/// rebuilt once, and the next opening tries to record it again.
+pub fn adopt_generator_version(vault: &VaultLayout) -> anyhow::Result<bool> {
     let marker = vault.thumbs_dir().join(GENERATOR_MARKER);
     let now = SystemTime::now();
-    let record = if marker.exists() {
+    let (record, changes_version) = if marker.exists() {
         match GeneratorEpoch::read(vault) {
-            GeneratorEpoch::AllCurrent => return false,
-            GeneratorEpoch::Since(since) if since <= now => return false,
+            GeneratorEpoch::AllCurrent => return Ok(false),
+            GeneratorEpoch::Since(since) if since <= now => return Ok(false),
             GeneratorEpoch::Since(_) | GeneratorEpoch::NoneCurrent => {}
         }
         let nanos = now
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_or(0, |elapsed| u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX));
         log::info!("preview generator {GENERATOR_VERSION} adopts the cache; earlier previews are outdated");
-        format!("{GENERATOR_VERSION}\n{nanos}\n")
+        (format!("{GENERATOR_VERSION}\n{nanos}\n"), true)
     } else {
         // A first cache: everything in it is current, as without a marker.
-        format!("{GENERATOR_VERSION}\n")
+        (format!("{GENERATOR_VERSION}\n"), false)
     };
-    // If this fails, the next opening adopts again: earlier previews stay
-    // outdated either way, the moment only moves later.
-    if let Err(error) = files::write_atomically(&marker, record.as_bytes()) {
-        log::warn!("failed to record the preview generator version: {error:#}");
+    match files::write_atomically(&marker, record.as_bytes()) {
+        Ok(()) => {
+            remember_unrecorded_adoption(&vault.thumbs_dir(), None);
+            Ok(true)
+        }
+        Err(error) => {
+            if changes_version {
+                remember_unrecorded_adoption(&vault.thumbs_dir(), Some(now));
+            }
+            Err(error.context(format!(
+                "record the preview generator version in {}",
+                marker.display()
+            )))
+        }
     }
-    true
 }
 
 fn carries_placeholder_record(png: &[u8]) -> bool {
@@ -2974,6 +3028,38 @@ mod tests {
         assert_eq!(preview_origin(path), Some(PreviewOrigin::Picture));
     }
 
+    /// Е5.15: a marker that could not be written left the cache of the old
+    /// version, and the function answered that it adopted the new one: every
+    /// preview, the ones just rebuilt included, stayed outdated, and every
+    /// pass rebuilt them all again. The adoption holds in this process
+    /// whether the marker took it or not.
+    #[test]
+    fn a_marker_that_cannot_be_written_does_not_outdate_every_new_preview() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let full = vault.thumb_path("photo");
+        create_test_image(&full, 40, 30);
+        written_by_version_7(&vault, &[&full]);
+        let marker = vault.thumbs_dir().join(GENERATOR_MARKER);
+        let immutable = |set: bool| {
+            let path = std::ffi::CString::new(marker.as_os_str().as_encoded_bytes()).unwrap();
+            let flags = if set { libc::UF_IMMUTABLE } else { 0 };
+            // SAFETY: `path` is a NUL-terminated path the call only reads.
+            assert_eq!(unsafe { libc::chflags(path.as_ptr(), flags) }, 0);
+        };
+        immutable(true);
+
+        let adopted = adopt_generator_version(&vault);
+        create_test_image(&full, 40, 30);
+        let epoch = GeneratorEpoch::read(&vault);
+        let marker_text = std::fs::read_to_string(&marker).unwrap();
+        immutable(false);
+
+        assert_eq!(marker_text, "7", "the marker could not be written");
+        assert!(adopted.is_err(), "an unrecorded version was answered as adopted");
+        assert_eq!(preview_readiness(&full, epoch), PreviewReadiness::Finished);
+    }
+
     #[test]
     fn a_version_change_deletes_no_preview_and_outdates_every_earlier_one() {
         let dir = tempfile::tempdir().unwrap();
@@ -2986,7 +3072,7 @@ mod tests {
         written_by_version_7(&vault, &[&full, &micro]);
         assert_eq!(GeneratorEpoch::read(&vault), GeneratorEpoch::NoneCurrent);
 
-        assert!(adopt_generator_version(&vault));
+        assert!(adopt_generator_version(&vault).unwrap());
 
         assert_eq!(std::fs::read(&full).unwrap(), before, "the old preview stays");
         assert!(micro.is_file(), "its levels stay too");
@@ -2998,7 +3084,7 @@ mod tests {
         // Whatever is written from now on is the current generator's.
         create_test_image(&full, 40, 30);
         assert_eq!(preview_readiness(&full, epoch), PreviewReadiness::Finished);
-        assert!(!adopt_generator_version(&vault), "adopted once");
+        assert!(!adopt_generator_version(&vault).unwrap(), "adopted once");
     }
 
     #[test]
@@ -3010,14 +3096,14 @@ mod tests {
         backdate(&full);
 
         assert_eq!(GeneratorEpoch::read(&vault), GeneratorEpoch::AllCurrent);
-        assert!(adopt_generator_version(&vault), "the first cache gets its marker");
+        assert!(adopt_generator_version(&vault).unwrap(), "the first cache gets its marker");
         assert_eq!(GeneratorEpoch::read(&vault), GeneratorEpoch::AllCurrent);
         assert!(is_finished_picture(&full, GeneratorEpoch::read(&vault)));
 
         // The version-8 migration emptied the cache and wrote "8" alone.
         std::fs::write(vault.thumbs_dir().join(GENERATOR_MARKER), "8").unwrap();
         assert_eq!(GeneratorEpoch::read(&vault), GeneratorEpoch::AllCurrent);
-        assert!(!adopt_generator_version(&vault));
+        assert!(!adopt_generator_version(&vault).unwrap());
     }
 
     #[test]
@@ -3032,7 +3118,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(adopt_generator_version(&vault));
+        assert!(adopt_generator_version(&vault).unwrap());
 
         let GeneratorEpoch::Since(since) = GeneratorEpoch::read(&vault) else {
             panic!("the marker keeps its moment");
@@ -3050,7 +3136,7 @@ mod tests {
         let thumb = vault.thumb_path("photo");
         recordless_placeholder(&thumb);
         written_by_version_7(&vault, &[&thumb]);
-        adopt_generator_version(&vault);
+        adopt_generator_version(&vault).unwrap();
         let epoch = GeneratorEpoch::read(&vault);
         let upgrade = preview_plan::resolve_upgrade_media(
             &vault,
@@ -3092,7 +3178,7 @@ mod tests {
         transparent_png(&thumb);
         let before = std::fs::read(&thumb).unwrap();
         written_by_version_7(&vault, &[&thumb]);
-        adopt_generator_version(&vault);
+        adopt_generator_version(&vault).unwrap();
         let epoch = GeneratorEpoch::read(&vault);
         let mut resolver = media_refs::MediaResolver::new(&vault);
         let upgrade = preview_plan::resolve_upgrade_media_with(
@@ -3127,7 +3213,7 @@ mod tests {
         create_test_image(&thumb, 40, 30);
         let before = std::fs::read(&thumb).unwrap();
         written_by_version_7(&vault, &[&thumb]);
-        adopt_generator_version(&vault);
+        adopt_generator_version(&vault).unwrap();
         let mut resolver = media_refs::MediaResolver::new(&vault);
         let upgrade = preview_plan::resolve_upgrade_media_with(
             &mut resolver,
@@ -3158,7 +3244,7 @@ mod tests {
         let thumb = vault.thumb_path("note");
         recordless_placeholder(&thumb);
         written_by_version_7(&vault, &[&thumb]);
-        adopt_generator_version(&vault);
+        adopt_generator_version(&vault).unwrap();
         let epoch = GeneratorEpoch::read(&vault);
         assert!(!is_finished_picture(&thumb, epoch));
 

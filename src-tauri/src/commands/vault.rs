@@ -1939,8 +1939,8 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
             // A new generator version deletes nothing: earlier previews stay
             // on screen as outdated and the passes below rebuild them
             // (SPEC_THUMBNAILS.md, П8).
-            if crate::storage::thumbnails::adopt_generator_version(&vault) {
-                append_startup_trace(
+            match crate::storage::thumbnails::adopt_generator_version(&vault) {
+                Ok(true) => append_startup_trace(
                     &app_for_thread,
                     "vault_sync_thread",
                     &format!(
@@ -1948,7 +1948,11 @@ fn start_background_sync(app: AppHandle, path: String) -> Result<bool, CommandEr
                         path_for_thread,
                         total.elapsed().as_millis()
                     ),
-                );
+                ),
+                Ok(false) => {}
+                // The previews are rebuilt once in this run all the same
+                // (SPEC_DEEP_AUDIT.md, Е5.15); the next opening records it.
+                Err(error) => log::warn!("{error:#}"),
             }
             let final_result = loop {
                 if let Err(err) = sync_state.begin_sync_pass(&path_for_thread) {
@@ -2693,7 +2697,10 @@ mod tests {
         let report = rebuild_index_projection(&conn, &vault).unwrap();
 
         assert_eq!(report.errors.len(), 1);
-        assert!(!db::index_is_ready(&conn).unwrap());
+        // A pass that finished with an error in one note publishes the index
+        // ready and names the note (SPEC_DEEP_AUDIT.md, Н6); the note keeps
+        // its last good row.
+        assert!(db::index_is_ready(&conn).unwrap());
         let indexed = index::get_block(&conn, "Stable").unwrap().unwrap();
         assert_eq!(indexed.body.trim(), "old body");
     }

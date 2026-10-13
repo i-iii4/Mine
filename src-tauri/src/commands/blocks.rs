@@ -2065,8 +2065,10 @@ pub fn check_block_rename(webview: tauri::Webview, state: State<'_, AppState>, o
 
 /// Prepare the delete window's plan for a block, from the index alone
 /// (decision of 11.10.2026): the window waits for it and opens at its final
-/// width, so it has to come at once. No note is read from disk here; the
-/// deletion itself checks the notes on disk (`build_delete_block_plan`).
+/// width, so it has to come at once. No note is read from disk here, only
+/// the space's canvases, which the index does not know (SPEC_DEEP_AUDIT.md,
+/// Е5.6); the deletion itself checks the notes on disk
+/// (`build_delete_block_plan`).
 #[tauri::command]
 pub async fn prepare_delete_block(
     webview: tauri::Webview,
@@ -2086,7 +2088,7 @@ pub async fn prepare_delete_block(
         })?;
         let block =
             block.ok_or_else(|| CommandError::Internal(format!("block not found: {slug}")))?;
-        Ok(delete_block_plan_from_index_rows(&vault, &block, &notes))
+        delete_block_plan_from_index_rows(&vault, &block, &notes)
     })
     .await
     .map_err(|error| CommandError::Internal(format!("delete plan task failed: {error}")))?
@@ -2142,8 +2144,9 @@ fn validated_slug_set(slugs: Vec<String>) -> Result<BTreeSet<String>, CommandErr
 
 /// Prepare the group delete window's plan, from the index alone, as
 /// `prepare_delete_block` for one card (SPEC_GROUP_SELECTION.md, «Batch
-/// Delete», decision of 11.10.2026). No note is read from disk here; the
-/// deletion itself checks the notes on disk (`build_delete_blocks_plan`).
+/// Delete», decision of 11.10.2026). No note is read from disk here, only
+/// the canvases; the deletion itself checks the notes on disk
+/// (`build_delete_blocks_plan`).
 #[tauri::command]
 pub async fn prepare_delete_blocks(
     webview: tauri::Webview,
@@ -2160,7 +2163,7 @@ pub async fn prepare_delete_blocks(
                 block_queries::list_note_file_mentions(conn, &slugs)?,
             ))
         })?;
-        Ok(delete_blocks_plan_from_index_rows(&vault, &blocks, &notes))
+        delete_blocks_plan_from_index_rows(&vault, &blocks, &notes)
     })
     .await
     .map_err(|error| CommandError::Internal(format!("delete plan task failed: {error}")))?
@@ -2463,18 +2466,22 @@ fn keep_media_the_window_did_not_offer(
     }
 }
 
-/// The plan the deletion acts on: the index's plan
-/// (`build_delete_block_plan_from_index`), with every file it calls unused
-/// checked against the notes on disk at this moment. The index may not have
-/// caught up with a note saved a moment ago; a file such a note uses moves to
-/// the shared media and stays (decision of 11.10.2026).
+/// The plan the deletion acts on: the index, first brought up to the files,
+/// gives the plan (`build_delete_block_plan_from_index`), and every file it
+/// calls unused is checked against the notes on disk that may use it. A note
+/// saved a moment ago is in the index once it is brought up to the files; a
+/// file such a note uses moves to the shared media and stays (decision of
+/// 11.10.2026). Only the notes the index names as maybe using one of the
+/// files are read (SPEC_DEEP_AUDIT.md, Н5, Е5.5).
 pub(crate) fn build_delete_block_plan(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     slug: &str,
 ) -> Result<DeleteBlockPlan, CommandError> {
+    bring_index_up_to_files(conn, vault)?;
     let mut plan = build_delete_block_plan_from_index(conn, vault, slug)?;
     check_unused_media_on_disk(
+        conn,
         vault,
         &mut plan.unused_media,
         &mut plan.shared_media,
@@ -2486,25 +2493,41 @@ pub(crate) fn build_delete_block_plan(
 /// The plan the group deletion acts on, as `build_delete_block_plan` for one
 /// card (SPEC_GROUP_SELECTION.md, «Batch Delete»): the index's plan of the
 /// whole selection, with every file it calls unused checked against the notes
-/// on disk at this moment, every selected note skipped since it goes too.
+/// on disk that may use it, every selected note skipped since it goes too.
 pub(crate) fn build_delete_blocks_plan(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     slugs: &BTreeSet<String>,
 ) -> Result<DeleteBlocksPlan, CommandError> {
+    bring_index_up_to_files(conn, vault)?;
     let blocks = indexed_blocks(conn, slugs)?;
     let notes = block_queries::list_note_file_mentions(conn, slugs)?;
-    let mut plan = delete_blocks_plan_from_index_rows(vault, &blocks, &notes);
+    let mut plan = delete_blocks_plan_from_index_rows(vault, &blocks, &notes)?;
     let going: BTreeSet<PathBuf> = slugs.iter().map(|slug| vault.block_path(slug)).collect();
-    check_unused_media_on_disk(vault, &mut plan.unused_media, &mut plan.shared_media, &going)?;
+    check_unused_media_on_disk(conn, vault, &mut plan.unused_media, &mut plan.shared_media, &going)?;
     Ok(plan)
 }
 
-/// Moves every file of `unused` that a note on disk uses to `shared`, with
-/// those notes as its `referenced_by`. The index may not have caught up with
-/// a note saved a moment ago; such a file stays (decision of 11.10.2026).
-/// `going` are the notes deleted with the media.
+/// Bring the index up to the files before an action takes from it the
+/// notes it reads (SPEC_DEEP_AUDIT.md, Н5): the pass reads only the notes
+/// changed since the last one, so a note that took a file or a link into its
+/// text in Obsidian while nothing watched the space is a candidate, as its
+/// file says. A note the pass cannot read does not stop the action.
+pub(crate) fn bring_index_up_to_files(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+) -> anyhow::Result<()> {
+    reconcile::reconcile_vault(conn, vault)
+        .map(|_| ())
+        .map_err(|error| anyhow::anyhow!("bring the index up to the files: {error}"))
+}
+
+/// Moves every file of `unused` that a note on disk or a canvas uses to
+/// `shared`, with those notes and canvases as its `referenced_by`. `going`
+/// are the notes deleted with the media. The index must be up to the files
+/// (`bring_index_up_to_files`): it names the notes to read.
 fn check_unused_media_on_disk(
+    conn: &rusqlite::Connection,
     vault: &VaultLayout,
     unused: &mut Vec<DeleteBlockMedia>,
     shared: &mut Vec<DeleteBlockMedia>,
@@ -2514,7 +2537,7 @@ fn check_unused_media_on_disk(
         .iter()
         .map(|media| media.absolute_path.clone())
         .collect();
-    let users = media_users_on_disk(vault, &candidates, going)?;
+    let users = media_users_on_disk(conn, vault, &candidates, going)?;
     let (still_used, left): (Vec<_>, Vec<_>) = std::mem::take(unused)
         .into_iter()
         .partition(|media| users.contains_key(&media.absolute_path));
@@ -2553,26 +2576,27 @@ pub(crate) fn build_delete_block_plan_from_index(
     let block = index::get_block(conn, slug)?
         .ok_or_else(|| CommandError::Internal(format!("block not found: {slug}")))?;
     let notes = block_queries::list_note_file_mentions(conn, &BTreeSet::from([slug.to_string()]))?;
-    Ok(delete_block_plan_from_index_rows(vault, &block, &notes))
+    delete_block_plan_from_index_rows(vault, &block, &notes)
 }
 
 /// `build_delete_block_plan_from_index` over rows already read: the card and
-/// every other indexed note. One resolver serves the card's own media and
-/// the notes that may use them, so the file list is walked at most once.
+/// every other indexed note. One resolver serves the card's own media, the
+/// notes and the canvases that may use them, so the file list is walked at
+/// most once.
 fn delete_block_plan_from_index_rows(
     vault: &VaultLayout,
     block: &IndexedBlock,
     notes: &[block_queries::NoteFileMentions],
-) -> DeleteBlockPlan {
+) -> Result<DeleteBlockPlan, CommandError> {
     let mut resolver = media_refs::MediaResolver::new(vault);
     let media = collect_delete_media_for_block(vault, block, &mut resolver);
-    let (unused_media, shared_media) = split_media_by_index_users(&mut resolver, media, notes);
-    DeleteBlockPlan {
+    let (unused_media, shared_media) = split_media_by_index_users(vault, &mut resolver, media, notes)?;
+    Ok(DeleteBlockPlan {
         slug: block.slug.clone(),
         markdown_file: format!("{}.md", block.slug),
         unused_media,
         shared_media,
-    }
+    })
 }
 
 /// The group delete window's plan over rows already read: the selected cards
@@ -2585,7 +2609,7 @@ fn delete_blocks_plan_from_index_rows(
     vault: &VaultLayout,
     blocks: &[IndexedBlock],
     notes: &[block_queries::NoteFileMentions],
-) -> DeleteBlocksPlan {
+) -> Result<DeleteBlocksPlan, CommandError> {
     let mut resolver = media_refs::MediaResolver::new(vault);
     let mut media: BTreeMap<String, DeleteBlockMedia> = BTreeMap::new();
     for block in blocks {
@@ -2602,25 +2626,29 @@ fn delete_blocks_plan_from_index_rows(
             }
         }
     }
-    let (unused_media, shared_media) = split_media_by_index_users(&mut resolver, media, notes);
+    let (unused_media, shared_media) = split_media_by_index_users(vault, &mut resolver, media, notes)?;
     let slugs: Vec<String> = blocks.iter().map(|block| block.slug.clone()).collect();
-    DeleteBlocksPlan {
+    Ok(DeleteBlocksPlan {
         markdown_files: slugs.iter().map(|slug| format!("{slug}.md")).collect(),
         slugs,
         unused_media,
         shared_media,
-    }
+    })
 }
 
-/// Splits `media` by the indexed notes that use each file: a file no note of
-/// `notes` uses is unused and keeps its `referenced_by`; a file some note
-/// uses is shared, and `referenced_by` names those notes. Path resolution runs
-/// only for a note whose references hold a candidate's name.
+/// Splits `media` by the indexed notes and the canvases that use each file: a
+/// file none of them uses is unused and keeps its `referenced_by`; a file some
+/// note or canvas uses is shared, and `referenced_by` names those notes by
+/// slug and those canvases by their path from the space root (`Board.canvas`).
+/// Path resolution runs only for a note whose references hold a candidate's
+/// name. The index does not know canvases: every one is read
+/// (SPEC_DEEP_AUDIT.md, Е5.6).
 fn split_media_by_index_users(
+    vault: &VaultLayout,
     resolver: &mut media_refs::MediaResolver<'_>,
     media: BTreeMap<String, DeleteBlockMedia>,
     notes: &[block_queries::NoteFileMentions],
-) -> (Vec<DeleteBlockMedia>, Vec<DeleteBlockMedia>) {
+) -> Result<(Vec<DeleteBlockMedia>, Vec<DeleteBlockMedia>), CommandError> {
     let candidates: Vec<PathBuf> = media
         .values()
         .map(|media| media.absolute_path.clone())
@@ -2647,6 +2675,7 @@ fn split_media_by_index_users(
                 },
             );
         }
+        users.add_canvases(vault, resolver, &read_canvases(vault)?);
     }
     let users = users.into_users();
 
@@ -2660,16 +2689,24 @@ fn split_media_by_index_users(
             unused_media.push(media);
         }
     }
-    (unused_media, shared_media)
+    Ok((unused_media, shared_media))
 }
 
-/// The notes on disk that use each of `media`, by slug (SPEC_AUDIT_FIXES.md,
-/// Ф4). Every note is read and parsed, so a reference counts in whatever form
-/// the parser reads it: a percent-encoded Markdown path, an escaped YAML
-/// value, another Unicode normalization, and any link form Obsidian reads, not
-/// only an embed (`iter_file_references`, Г1.1). `skip` are the notes going
-/// away with the media: one card, or a whole selection.
+/// The notes on disk and the canvases that use each of `media`: notes by
+/// slug, canvases by their path from the space root (SPEC_AUDIT_FIXES.md,
+/// Ф4; SPEC_DEEP_AUDIT.md, Н5, Е5.5, Е5.6). The index, which the caller
+/// brought up to the files (`bring_index_up_to_files`), names the notes that
+/// may use one of the files (`notes_that_may_name`); only they are read, and
+/// their text decides, so a reference counts in whatever form the parser
+/// reads it: a percent-encoded Markdown path, an escaped YAML value, another
+/// Unicode normalization, and any link form Obsidian reads, not only an
+/// embed (`iter_file_references`, Г1.1). A note outside the candidates is not
+/// read: one iCloud took away is not brought back, and one that cannot be
+/// read stops nothing. A candidate gone since the index named it uses
+/// nothing; one that cannot be read stops the action. `skip` are the notes
+/// going away with the media: one card, or a whole selection.
 pub(crate) fn media_users_on_disk(
+    conn: &rusqlite::Connection,
     vault: &VaultLayout,
     media: &[PathBuf],
     skip: &BTreeSet<PathBuf>,
@@ -2679,8 +2716,9 @@ pub(crate) fn media_users_on_disk(
         return Ok(users.into_users());
     }
     let mut resolver = media_refs::MediaResolver::new(vault);
-    for note in files::scan_md_files(vault)? {
-        if skip.contains(&note) {
+    let names = users.folded_names();
+    for note in notes_that_may_name(conn, vault, &names)? {
+        if skip.contains(&note) || !note.is_file() {
             continue;
         }
         let (slug, content) = files::read_block_file(vault, &note)?;
@@ -2688,7 +2726,147 @@ pub(crate) fn media_users_on_disk(
         let references = iter_file_references(&block.body);
         users.add_note(&mut resolver, &NoteFiles::of_block(&block, &references));
     }
+    users.add_canvases(vault, &mut resolver, &read_canvases(vault)?);
     Ok(users.into_users())
+}
+
+/// The notes that may name one of the files `names` (folded by
+/// `fold_media_name`), by the index alone: those whose frontmatter file or
+/// thumbnail, or a reference of whose text, holds one of the names, as
+/// written or percent-decoded (`media_reference_forms`), and every collection
+/// page, whose text the index does not hold. Every reference that resolves
+/// to a file holds its name, so every note that uses one of them is here,
+/// with maybe one that names another file of the same name. No note is read
+/// here.
+pub(crate) fn notes_that_may_name(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    names: &[String],
+) -> anyhow::Result<Vec<PathBuf>> {
+    let mut candidates = Vec::new();
+    if names.is_empty() {
+        return Ok(candidates);
+    }
+    for note in block_queries::list_note_file_mentions(conn, &BTreeSet::new())? {
+        if let Err(error) = validate_slug(&note.slug) {
+            log::warn!("skipped invalid indexed block slug {:?}: {}", note.slug, error);
+            continue;
+        }
+        let references = iter_file_references(&note.body);
+        let forms = media_reference_forms(&NoteFiles {
+            slug: &note.slug,
+            file: note.media_file.as_deref(),
+            thumbnail: note.thumbnail.as_deref(),
+            references: &references,
+        });
+        if forms
+            .iter()
+            .any(|form| names.iter().any(|name| form.contains(name.as_str())))
+        {
+            candidates.push(vault.block_path(&note.slug));
+        }
+    }
+    candidates.extend(collection_pages(conn, vault)?);
+    Ok(candidates)
+}
+
+/// The collection pages the index knows, by path. The index does not hold
+/// their text, so every action that reads the notes that may name something
+/// reads them too.
+fn collection_pages(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+) -> anyhow::Result<Vec<PathBuf>> {
+    let mut pages = Vec::new();
+    for slug in block_queries::list_collection_page_slugs(conn)? {
+        if validate_slug(&slug).is_ok() {
+            pages.push(vault.block_path(&slug));
+        }
+    }
+    Ok(pages)
+}
+
+/// The notes that may link to a note `moves` moves, or name a media file
+/// it moves (`moved_media_names`, folded), by the index alone: those whose
+/// text, `Mine Related Notes`, collections, file or thumbnail holds the name
+/// of a moved note (`NoteMoves::may_be_linked_from`) or of a moved file, and
+/// every collection page (SPEC_DEEP_AUDIT.md, Н5, Е5.5). Sorted, each once.
+/// No note is read here.
+fn notes_that_may_link(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    moves: &NoteMoves,
+    moved_media_names: &[String],
+) -> anyhow::Result<BTreeSet<PathBuf>> {
+    let mut candidates: BTreeSet<PathBuf> = notes_that_may_name(conn, vault, moved_media_names)?
+        .into_iter()
+        .collect();
+    for note in block_queries::list_note_link_texts(conn)? {
+        if validate_slug(&note.slug).is_ok() && moves.may_be_linked_from(&note.text) {
+            candidates.insert(vault.block_path(&note.slug));
+        }
+    }
+    candidates.extend(collection_pages(conn, vault)?);
+    Ok(candidates)
+}
+
+/// Every file a canvas of the space shows, as a path: what Orphans counts as
+/// in use besides the notes (SPEC_DEEP_AUDIT.md, Е5.6).
+pub(crate) fn files_canvases_show(vault: &VaultLayout) -> anyhow::Result<Vec<PathBuf>> {
+    let mut resolver = media_refs::MediaResolver::new(vault);
+    let mut shown = Vec::new();
+    for canvas in read_canvases(vault)? {
+        shown.extend(
+            canvas
+                .references
+                .root_paths
+                .iter()
+                .map(|root_path| vault.root().join(root_path)),
+        );
+        let Ok(beside) = vault.slug_for_path(&canvas.path.with_extension("md")) else {
+            continue;
+        };
+        for reference in &canvas.references.text_references {
+            shown.extend(resolver.resolve_file_reference(&beside, reference));
+        }
+    }
+    Ok(shown)
+}
+
+/// A canvas of the space with what it shows (`domain/canvas.rs`).
+struct ReadCanvas {
+    path: PathBuf,
+    references: crate::domain::canvas::CanvasFileReferences,
+}
+
+/// Every canvas of the space, read (SPEC_DEEP_AUDIT.md, Е5.6). The index does
+/// not know canvases, so each one is a candidate: the walk lists folders for
+/// `.canvas` names without opening a note, and only canvases are read. A
+/// canvas whose contents iCloud took away is not brought back for this, and
+/// one that cannot be read or is not JSON is left out; both are logged.
+fn read_canvases(vault: &VaultLayout) -> anyhow::Result<Vec<ReadCanvas>> {
+    let mut canvases = Vec::new();
+    for path in files::scan_canvas_files(vault)? {
+        if crate::storage::cloud_files::is_content_offloaded(&path) {
+            log::info!(
+                "left out a canvas whose contents are in iCloud: {}",
+                path.display()
+            );
+            continue;
+        }
+        let read = std::fs::read_to_string(&path)
+            .map_err(anyhow::Error::from)
+            .and_then(|json| {
+                crate::domain::canvas::canvas_file_references(&json).map_err(anyhow::Error::from)
+            });
+        match read {
+            Ok(references) => canvases.push(ReadCanvas { path, references }),
+            Err(error) => {
+                log::warn!("could not read the canvas {}: {error:#}", path.display());
+            }
+        }
+    }
+    Ok(canvases)
 }
 
 /// What one note says about files, wherever it was read: from disk
@@ -2736,6 +2914,34 @@ impl<'m> MediaUsers<'m> {
     /// needs reading.
     fn wanted(&self) -> bool {
         !self.names.is_empty()
+    }
+
+    /// The names of the files looked for, folded (`fold_media_name`).
+    fn folded_names(&self) -> Vec<String> {
+        self.names.iter().map(|(_, name)| name.clone()).collect()
+    }
+
+    /// The canvases among `canvases` that show each file: by their path from
+    /// the space root.
+    fn add_canvases(
+        &mut self,
+        vault: &VaultLayout,
+        resolver: &mut media_refs::MediaResolver<'_>,
+        canvases: &[ReadCanvas],
+    ) {
+        for canvas in canvases {
+            let Some(canvas_path) = vault.root_relative_reference(&canvas.path) else {
+                continue;
+            };
+            for (path, _) in &self.names {
+                if canvas_shows_media(vault, resolver, &canvas.path, &canvas.references, path) {
+                    self.users
+                        .entry((*path).clone())
+                        .or_default()
+                        .insert(canvas_path.clone());
+                }
+            }
+        }
     }
 
     fn add_note(&mut self, resolver: &mut media_refs::MediaResolver<'_>, note: &NoteFiles<'_>) {
@@ -2830,6 +3036,9 @@ fn plan_merge_blocks(
     ordered_slugs: Vec<String>,
 ) -> Result<MergePlan, MergeBlocksError> {
     let ordered_slugs = validate_merge_slugs(ordered_slugs)?;
+    // The notes that link the merged cards are taken from the index brought
+    // up to the files, and only they are read (SPEC_DEEP_AUDIT.md, Н5, Е5.5).
+    bring_index_up_to_files(conn, vault).map_err(internal_merge_error)?;
     let selected_slugs: BTreeSet<String> = ordered_slugs.iter().cloned().collect();
     let sources = load_merge_source_blocks(vault, &ordered_slugs)?;
     let merged_slug = merged_block_slug(conn, vault, &sources)?;
@@ -2837,7 +3046,7 @@ fn plan_merge_blocks(
     let mut merged_block = build_merged_block(&sources, &moves, merged_slug)?;
     merged_block.body = retarget_wikilinks(&merged_block.body, |target| moves.retarget(target));
     let merged_text = merged_card_text(&merged_block, &sources)?;
-    let reference_writes = build_merge_reference_writes(vault, &selected_slugs, &moves)?;
+    let reference_writes = build_merge_reference_writes(conn, vault, &selected_slugs, &moves)?;
     Ok(MergePlan {
         ordered_slugs,
         sources,
@@ -3212,17 +3421,22 @@ fn build_merged_block(
     })
 }
 
+/// The notes outside the merge whose links lead to a merged card, rewritten
+/// to the new card. The index names the notes that may link to one
+/// (`notes_that_may_link`), and only they are read (SPEC_DEEP_AUDIT.md, Н5,
+/// Е5.5); a candidate gone since is skipped.
 fn build_merge_reference_writes(
+    conn: &rusqlite::Connection,
     vault: &VaultLayout,
     selected_slugs: &BTreeSet<String>,
     moves: &NoteMoves,
 ) -> Result<Vec<MergeReferenceWrite>, MergeBlocksError> {
     let mut writes = Vec::new();
-    for path in files::scan_md_files(vault).map_err(internal_merge_error)? {
+    for path in notes_that_may_link(conn, vault, moves, &[]).map_err(internal_merge_error)? {
         let Some(slug) = vault.slug_for_path(&path).ok() else {
             continue;
         };
-        if selected_slugs.contains(&slug) {
+        if selected_slugs.contains(&slug) || !path.is_file() {
             continue;
         }
         let (_, content) = files::read_block_file(vault, &path).map_err(internal_merge_error)?;
@@ -3622,7 +3836,8 @@ fn rename_media_asset_inner(
         return Err(MediaAssetActionError::NameTaken { target: new_ref });
     }
 
-    let planned_writes = build_media_asset_reference_writes(vault, &old_path, &new_ref)?;
+    reconcile_before_media_action(conn, vault)?;
+    let planned_writes = build_media_asset_reference_writes(conn, vault, &old_path, &new_ref)?;
     state
         .suppress_paths(
             std::iter::once(old_path.clone())
@@ -4434,14 +4649,21 @@ fn renamed_media_ref(old_ref: &str, new_stem: &str) -> Result<String, MediaAsset
     )
 }
 
+/// The notes that name the renamed file, with their references to it
+/// rewritten. The notes come from the index brought up to the files, and only
+/// they are read (SPEC_DEEP_AUDIT.md, Н5, Е5.5), as for Delete of a media
+/// file; canvases are not rewritten.
 fn build_media_asset_reference_writes(
+    conn: &rusqlite::Connection,
     vault: &VaultLayout,
     old_path: &Path,
     new_ref: &str,
 ) -> Result<Vec<MediaAssetBlockWrite>, MediaAssetActionError> {
     let mut writes = Vec::new();
-    for path in files::scan_md_files(vault).map_err(internal_media_asset_error)? {
-        let (source, block) = read_media_asset_action_note(vault, &path)?;
+    for path in media_action_candidates(conn, vault, old_path)? {
+        let Some((source, block)) = read_media_action_candidate(vault, &path)? else {
+            continue;
+        };
         let rewritten = rewrite_block_media_asset_references(vault, &block, old_path, new_ref);
         if rewritten.frontmatter != block.frontmatter || rewritten.body != block.body {
             writes.push(MediaAssetBlockWrite {
@@ -4516,37 +4738,13 @@ fn media_action_candidates(
     vault: &VaultLayout,
     media_path: &Path,
 ) -> Result<Vec<PathBuf>, MediaAssetActionError> {
-    let Some(name) = media_path
+    let names: Vec<String> = media_path
         .file_name()
         .and_then(|name| name.to_str())
         .map(fold_media_name)
-    else {
-        return Ok(Vec::new());
-    };
-    let notes = block_queries::list_note_file_mentions(conn, &BTreeSet::new())
-        .map_err(internal_media_asset_error)?;
-    let mut candidates = Vec::new();
-    for note in &notes {
-        if let Err(error) = validate_slug(&note.slug) {
-            log::warn!(
-                "media action skipped invalid indexed block slug {:?}: {}",
-                note.slug,
-                error
-            );
-            continue;
-        }
-        let references = iter_file_references(&note.body);
-        let forms = media_reference_forms(&NoteFiles {
-            slug: &note.slug,
-            file: note.media_file.as_deref(),
-            thumbnail: note.thumbnail.as_deref(),
-            references: &references,
-        });
-        if forms.iter().any(|form| form.contains(name.as_str())) {
-            candidates.push(vault.block_path(&note.slug));
-        }
-    }
-    Ok(candidates)
+        .into_iter()
+        .collect();
+    notes_that_may_name(conn, vault, &names).map_err(internal_media_asset_error)
 }
 
 /// A candidate note's text and model, or `None` when the note is gone since
@@ -4631,31 +4829,9 @@ fn canvases_showing_media(
     media_path: &Path,
 ) -> Result<Vec<String>, MediaAssetActionError> {
     let mut canvases = Vec::new();
-    for path in files::scan_canvas_files(vault).map_err(internal_media_asset_error)? {
-        if crate::storage::media_dimensions::is_content_offloaded(&path) {
-            log::info!(
-                "media delete plan left out a canvas whose contents are in iCloud: {}",
-                path.display()
-            );
-            continue;
-        }
-        let read = std::fs::read_to_string(&path)
-            .map_err(anyhow::Error::from)
-            .and_then(|json| {
-                crate::domain::canvas::canvas_file_references(&json).map_err(anyhow::Error::from)
-            });
-        let references = match read {
-            Ok(references) => references,
-            Err(error) => {
-                log::warn!(
-                    "media delete plan could not read the canvas {}: {error:#}",
-                    path.display()
-                );
-                continue;
-            }
-        };
-        if canvas_shows_media(vault, resolver, &path, &references, media_path) {
-            canvases.extend(vault.root_relative_reference(&path));
+    for canvas in read_canvases(vault).map_err(internal_media_asset_error)? {
+        if canvas_shows_media(vault, resolver, &canvas.path, &canvas.references, media_path) {
+            canvases.extend(vault.root_relative_reference(&canvas.path));
         }
     }
     Ok(canvases)
@@ -4885,6 +5061,9 @@ pub(crate) fn rename_block_file_inner(
         });
     }
 
+    // The notes that link the card are taken from the index brought up to
+    // the files, and only they are read (SPEC_DEEP_AUDIT.md, Н5, Е5.5).
+    bring_index_up_to_files(conn, vault).map_err(internal_rename_error)?;
     refuse_taken_name(conn, vault, old_slug, &new_slug)?;
 
     let (read_slug, content) =
@@ -4896,7 +5075,8 @@ pub(crate) fn rename_block_file_inner(
         })?
         .block;
     let media_renames = collect_mine_owned_media_renames(vault, &old_block, old_slug, &new_slug)?;
-    let planned_writes = build_planned_block_writes(vault, old_slug, &new_slug, &media_renames, None)?;
+    let planned_writes =
+        build_planned_block_writes(conn, vault, old_slug, &new_slug, &media_renames, None)?;
     // A name with a folder moves the card there, as Obsidian does; a folder
     // made for it and left empty by a refused rename goes again.
     let new_folder = NewFolder::make(&vault.block_path(&new_slug)).map_err(internal_rename_error)?;
@@ -5669,20 +5849,28 @@ fn internal_rename_error(error: impl std::fmt::Display) -> RenameBlockError {
 /// and every note whose links, in the text or in `Mine Related Notes`, lead
 /// to it. `retag` changes the `Mine Collections` of every note the pass
 /// reads: a collection rename renames the collection in its members in the
-/// same plan (SPEC_DEEP_AUDIT.md, Н2).
+/// same plan (SPEC_DEEP_AUDIT.md, Н2). The index, brought up to the files by
+/// the caller, names the notes to read (Н5).
 pub(crate) fn plan_note_move(
+    conn: &rusqlite::Connection,
     vault: &VaultLayout,
     old_slug: &str,
     new_slug: &str,
     retag: Retag<'_>,
 ) -> Result<Vec<PlannedBlockWrite>, RenameBlockError> {
-    build_planned_block_writes(vault, old_slug, new_slug, &[], Some(retag))
+    build_planned_block_writes(conn, vault, old_slug, new_slug, &[], Some(retag))
 }
 
 /// A change of a note's `Mine Collections`, applied by a move's plan.
 type Retag<'a> = &'a dyn Fn(&mut Vec<String>);
 
+/// The writes of a move: the moved note and the notes the index names as
+/// maybe linking to it or to its media (`notes_that_may_link`), each read
+/// from disk, and decided by its text. Only those notes are read
+/// (SPEC_DEEP_AUDIT.md, Н5, Е5.5): a note outside them is not brought back
+/// from iCloud. A candidate gone since the index named it is skipped.
 fn build_planned_block_writes(
+    conn: &rusqlite::Connection,
     vault: &VaultLayout,
     old_slug: &str,
     new_slug: &str,
@@ -5713,14 +5901,20 @@ fn build_planned_block_writes(
         .filter_map(|rename| Some(fold_media_name(rename.from.file_name()?.to_str()?)))
         .collect();
     let mut resolver = media_refs::MediaResolver::new(vault);
+    let mut notes = notes_that_may_link(conn, vault, &moves, &moved_media_names)
+        .map_err(internal_rename_error)?;
+    notes.insert(old_path.clone());
     let mut writes = Vec::new();
-    for path in files::scan_md_files(vault).map_err(internal_rename_error)? {
+    for path in notes {
         let is_root = path == old_path;
+        if !is_root && !path.is_file() {
+            continue;
+        }
         let (slug, content) =
             files::read_block_file(vault, &path).map_err(internal_rename_error)?;
         // A media name can hide behind percent-encoding or a YAML escape, so
-        // while media moves every note is parsed, as `media_users_on_disk`
-        // does (SPEC_AUDIT_FIXES.md, Ф4).
+        // while media moves every candidate is parsed (SPEC_AUDIT_FIXES.md,
+        // Ф4).
         if !is_root && moved_media_names.is_empty() && !moves.may_be_linked_from(&content) {
             continue;
         }
@@ -5967,7 +6161,7 @@ mod tests {
         let slugs: BTreeSet<String> = slugs.iter().map(|slug| (*slug).to_string()).collect();
         let blocks = indexed_blocks(conn, &slugs).unwrap();
         let notes = block_queries::list_note_file_mentions(conn, &slugs).unwrap();
-        delete_blocks_plan_from_index_rows(vault, &blocks, &notes)
+        delete_blocks_plan_from_index_rows(vault, &blocks, &notes).unwrap()
     }
 
     fn media_paths(media: &[DeleteBlockMedia]) -> Vec<(&str, Vec<String>)> {
@@ -6650,7 +6844,7 @@ mod tests {
         merged_block.body =
             retarget_wikilinks(&merged_block.body, |target| moves.retarget(target));
         let mut reference_writes =
-            build_merge_reference_writes(&vault, &selected_slugs, &moves).unwrap();
+            build_merge_reference_writes(&conn, &vault, &selected_slugs, &moves).unwrap();
         // Inject a write failure: a path whose parent is an existing FILE, so
         // neither create_dir_all nor the write can succeed. (write_atomically
         // creates missing parent dirs, so a merely-missing parent now succeeds.)
@@ -7108,6 +7302,205 @@ mod tests {
         assert_eq!(slugs, ["Source Article"]);
         assert_eq!(deleted.unwrap().affected_slugs, ["Source Article"]);
         assert!(!vault.root().join("photo.png").exists());
+    }
+
+    /// A space of indexed notes for the Е5.5 tests: `notes` as written, five
+    /// notes that name no file, and `Evicted`, a note that names no file and
+    /// stands for one whose contents iCloud took away (the live case of
+    /// 13.10.2026: `@neomechanica.md`, `compressed,dataless`). The index is
+    /// brought up to the files before the note is marked, as it was before
+    /// iCloud evicted it. Returns the evicted note's path.
+    fn space_with_an_evicted_note(
+        conn: &rusqlite::Connection,
+        vault: &VaultLayout,
+        notes: &[Block],
+    ) -> PathBuf {
+        for note in notes {
+            persist_block(conn, vault, note);
+        }
+        for index in 0..5 {
+            persist_block(conn, vault, &article(&format!("Unrelated {index}"), "Plain text.\n"));
+        }
+        persist_block(conn, vault, &article("Evicted", "Nothing about any file.\n"));
+        crate::storage::reconcile::reconcile_vault(conn, vault).unwrap();
+        let evicted = vault.block_path("Evicted");
+        crate::storage::cloud_files::test_seam::mark_offloaded(&evicted);
+        files::take_note_reads();
+        evicted
+    }
+
+    /// The names of the notes read since the last call, each once.
+    fn notes_read() -> Vec<String> {
+        let mut names: Vec<String> = files::take_note_reads()
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// Н5, Е5.5: deleting a card with its media reads only the notes the
+    /// index names as maybe using the media, never an evicted note that
+    /// names no such file. The live case of 13.10.2026: `mine card delete
+    /// … --delete-unused-media` hung minutes reading `@neomechanica.md`.
+    /// `Namesake` names a file of the same name in another folder: the index
+    /// cannot tell, so it is read, and its text decides it uses another file.
+    #[test]
+    fn deleting_a_card_with_its_media_reads_only_the_candidates() {
+        let (_root, _derived, vault, conn) = make_vault();
+        std::fs::create_dir_all(vault.root().join("Other")).unwrap();
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+        std::fs::write(vault.root().join("Other/photo.png"), b"other-bytes").unwrap();
+        std::fs::write(vault.root().join("kept.png"), b"image-bytes").unwrap();
+        let evicted = space_with_an_evicted_note(
+            &conn,
+            &vault,
+            &[
+                article("Gone", "![[photo.png]]\n\n![[kept.png]]\n"),
+                article("Keeper", "Also ![[kept.png]]\n"),
+                article("Namesake", "![[Other/photo.png]]\n"),
+            ],
+        );
+
+        let outcome = delete_block_inner(None, &conn, &vault, "Gone", Some(true), None).unwrap();
+
+        assert!(outcome.removed);
+        assert!(!vault.root().join("photo.png").exists());
+        assert!(vault.root().join("Other/photo.png").exists());
+        assert!(vault.root().join("kept.png").exists());
+        assert_eq!(media_paths(&outcome.kept_media), [("kept.png", vec!["Keeper".to_string()])]);
+        assert_eq!(crate::storage::cloud_files::test_seam::reads_of(&evicted), 0);
+        assert_eq!(notes_read(), ["Namesake.md"]);
+    }
+
+    /// Н5, Е5.5: the group deletion reads only the candidates too.
+    #[test]
+    fn deleting_a_selection_with_its_media_reads_only_the_candidates() {
+        let (_root, _derived, vault, conn) = make_vault();
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+        let evicted = space_with_an_evicted_note(
+            &conn,
+            &vault,
+            &[article("One", "![[photo.png]]\n"), article("Two", "![[photo.png]]\n")],
+        );
+
+        let outcome =
+            delete_blocks_inner(None, &conn, &vault, vec!["One".into(), "Two".into()], true, None)
+                .unwrap();
+
+        assert_eq!(outcome.removed, 2);
+        assert!(!vault.root().join("photo.png").exists());
+        assert_eq!(crate::storage::cloud_files::test_seam::reads_of(&evicted), 0);
+        assert!(notes_read().is_empty());
+    }
+
+    /// Н5, Е5.5: renaming a card reads the card and the notes the index
+    /// names as maybe linking to it or to its media, nothing else.
+    #[test]
+    fn renaming_a_card_reads_only_the_candidates() {
+        let (_root, _derived, vault, conn) = make_vault();
+        std::fs::write(vault.root().join("Old (image 1).jpg"), b"img").unwrap();
+        let evicted = space_with_an_evicted_note(
+            &conn,
+            &vault,
+            &[
+                article("Old", "![[Old (image 1).jpg]]\n"),
+                article("Reference", "See [[Old]].\n"),
+            ],
+        );
+
+        rename_block_file_inner(None, None, &conn, &vault, "Old", "New").unwrap();
+
+        assert!(std::fs::read_to_string(vault.block_path("Reference"))
+            .unwrap()
+            .contains("[[New]]"));
+        assert!(vault.root().join("New (image 1).jpg").exists());
+        assert_eq!(crate::storage::cloud_files::test_seam::reads_of(&evicted), 0);
+        assert_eq!(notes_read(), ["Old.md", "Reference.md"]);
+    }
+
+    /// Н5, Е5.5: renaming a media file reads only the notes that may name
+    /// it.
+    #[test]
+    fn renaming_a_media_file_reads_only_the_candidates() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+        let evicted = space_with_an_evicted_note(
+            &conn,
+            &vault,
+            &[article("Shows", "![[photo.png]]\n")],
+        );
+
+        rename_media_asset_inner(&state, &conn, &vault, "photo.png".into(), "picture".into())
+            .unwrap();
+
+        assert!(std::fs::read_to_string(vault.block_path("Shows"))
+            .unwrap()
+            .contains("picture.png"));
+        assert_eq!(crate::storage::cloud_files::test_seam::reads_of(&evicted), 0);
+        assert_eq!(notes_read(), ["Shows.md"]);
+    }
+
+    /// Н5, Е5.5: a merge reads its cards and the notes that may link to
+    /// them, nothing else.
+    #[test]
+    fn merging_cards_reads_only_the_candidates() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let evicted = space_with_an_evicted_note(
+            &conn,
+            &vault,
+            &[
+                article("First", "Alpha\n"),
+                article("Second", "Beta\n"),
+                article("Linker", "See [[Second]].\n"),
+            ],
+        );
+
+        let merged = merge_blocks_inner(None, &conn, &vault, vec!["First".into(), "Second".into()])
+            .unwrap()
+            .result
+            .merged_slug;
+
+        assert!(!std::fs::read_to_string(vault.block_path("Linker"))
+            .unwrap()
+            .contains("[[Second]]"));
+        assert_eq!(crate::storage::cloud_files::test_seam::reads_of(&evicted), 0);
+        // The merged card is read back once written, as every written note.
+        let mut expected = vec![
+            format!("{merged}.md"),
+            "First.md".to_string(),
+            "Linker.md".to_string(),
+            "Second.md".to_string(),
+        ];
+        expected.sort();
+        assert_eq!(notes_read(), expected);
+    }
+
+    /// Е5.6: a canvas that shows a card's media uses it: deleting the card
+    /// with its media leaves that file, and the window does not offer it.
+    #[test]
+    fn deleting_a_card_keeps_media_a_canvas_shows() {
+        let (_root, _derived, vault, conn) = make_vault();
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+        persist_block(&conn, &vault, &article("Gone", "![[photo.png]]\n"));
+        std::fs::write(
+            vault.root().join("Board.canvas"),
+            r#"{"nodes":[{"id":"a","type":"file","file":"photo.png"}]}"#,
+        )
+        .unwrap();
+
+        let plan = build_delete_block_plan_from_index(&conn, &vault, "Gone").unwrap();
+        assert!(plan.unused_media.is_empty(), "{:?}", media_paths(&plan.unused_media));
+
+        let outcome = delete_block_inner(None, &conn, &vault, "Gone", Some(true), None).unwrap();
+
+        assert!(vault.root().join("photo.png").exists());
+        assert_eq!(
+            media_paths(&outcome.kept_media),
+            [("photo.png", vec!["Board.canvas".to_string()])]
+        );
     }
 
     /// Е5.6: a canvas that shows the file uses it, by a file node or by an
@@ -8908,7 +9301,7 @@ mod tests {
         write_note(&vault, "Other", "See [[Foo]].\n");
         crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
         let planned =
-            build_planned_block_writes(&vault, "Foo", "Bar", &[], None).unwrap();
+            build_planned_block_writes(&conn, &vault, "Foo", "Bar", &[], None).unwrap();
         write_note(&vault, "Other", "Edited in Obsidian: [[Foo]].\n");
 
         let writes = planned
@@ -9001,7 +9394,7 @@ mod tests {
 
     #[test]
     fn media_users_on_disk_reads_references_in_any_encoding() {
-        let (_root, _derived, vault, _conn) = make_vault();
+        let (_root, _derived, vault, conn) = make_vault();
         let photo = vault.root().join("Media/фото.jpg");
         std::fs::create_dir_all(photo.parent().unwrap()).unwrap();
         std::fs::write(&photo, b"photo bytes").unwrap();
@@ -9015,7 +9408,9 @@ mod tests {
         write_note(&vault, "Cards/Decomposed", &format!("![[{nfd}]]\n"));
         write_note(&vault, "Cards/Unrelated", "![](../Media/%D1%84.jpg) and фото elsewhere\n");
 
-        let users = media_users_on_disk(&vault, std::slice::from_ref(&photo), &BTreeSet::new()).unwrap();
+        bring_index_up_to_files(&conn, &vault).unwrap();
+        let users =
+            media_users_on_disk(&conn, &vault, std::slice::from_ref(&photo), &BTreeSet::new()).unwrap();
 
         assert_eq!(
             users.get(&photo).cloned().unwrap_or_default(),
@@ -10326,7 +10721,7 @@ mod tests {
     #[test]
     fn a_video_for_a_folder_whose_identity_is_only_in_icloud_is_kept_for_its_own_space() {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("Mobile Documents").join("space");
+        let root = dir.path().join("space");
         let first = VaultLayout::with_derived_root(
             root.clone(),
             dir.path().join("vaults").join("0123456789abcdef0123456789abcdef"),
@@ -10336,11 +10731,13 @@ mod tests {
             dir.path().join("vaults").join("fedcba9876543210fedcba9876543210"),
         );
         std::fs::create_dir_all(root.join(".mine")).unwrap();
-        // iCloud keeps the name and size of a file it moved off this Mac.
+        // iCloud keeps the name and size of a file it moved off this Mac
+        // (`SF_DATALESS`, which only the kernel sets).
         std::fs::File::create(root.join(".mine/vault-id"))
             .unwrap()
             .set_len(32)
             .unwrap();
+        crate::storage::cloud_files::test_seam::mark_offloaded(&root.join(".mine/vault-id"));
         assert_eq!(
             crate::space_registry::space_identity(&root),
             crate::space_registry::SpaceIdentity::InCloud

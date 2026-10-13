@@ -39,6 +39,12 @@ classify_notify_event(event: &notify::Event, vault: &VaultLayout) -> Vec<VaultEv
   legacy `.arena`, `.mine-migration-backup`) и build/vendor directories such as
   `node_modules`, `target`, `__pycache__`
 - Игнорирует директории
+- Игнорирует файлы, которые ни одна заметка не называет (SPEC_DEEP_AUDIT.md,
+  Е5.4): скрытый файл (`.DS_Store`, заглушка `.x.icloud`), кроме скрытой
+  заметки `.md`, которую видит сканирование; временный файл Mine рядом с
+  записываемым (`files::is_mine_temp_file_name`); расширение `md` в другом
+  регистре (`.MD`), которое ни Mine, ни Obsidian не читают как заметку. До
+  13.10.2026 каждый из них запускал полную сверку как изменение медиа.
 - `.md` файлы → `BlockChanged` / `BlockDeleted`
 - Остальные файлы → `MediaChanged` / `MediaDeleted`
 - Create/Modify → `*Changed`, Remove → `*Deleted`
@@ -85,7 +91,13 @@ handle_event(conn: &Connection, vault: &VaultLayout, event: &VaultEvent) -> Resu
 ### Поведение index_md_file
 
 - Читает файл, парсит блок, индексирует
-- Генерирует thumbnail через `generate_for_block` в фоновом потоке
+- Генерирует thumbnail через `generate_for_block` в очереди превью
+  пространства: один поток на пространство берёт задания по порядку, новое
+  задание карточки заменяет ждущее, а задание карточки или картинки,
+  изменившейся после постановки в очередь (размер и время файла), пропускается,
+  потому что изменение поставило своё (SPEC_DEEP_AUDIT.md, Е5.13). До
+  13.10.2026 каждое событие делало превью в своём потоке, и медленное превью
+  прежней версии ставило старую картинку поверх новой
 - Ошибки пробрасываются (не логируются)
 - Эмитит Tauri event `block:added { slug, tags, is_text }` после успешного `upsert_block`
 - Если `generate_for_block` вернул `ThumbSource::Text` но block имеет embedded media → эмитит `thumb:upgrade-requested { slug, media_path, kind }` для Phase 2 WebView upgrade (см. [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md))
@@ -94,8 +106,8 @@ handle_event(conn: &Connection, vault: &VaultLayout, event: &VaultEvent) -> Resu
 
 - `BlockChanged` → `index_md_file`
 - `BlockDeleted` → `storage::index::remove_block` (slug из имени файла) + Tauri event `block:removed { slug, tags }`
-- `MediaChanged` → `storage::thumbnails::generate_thumbnail` для image media, эмитит `thumb:updated { slug }` по завершении. **Note:** текущий handler использует `path_to_slug(media_file)` который некорректен для articles с multiple inline images (slug ≠ media filename). См. SPEC_THUMBNAILS.md для правильного routing через block-aware lookup.
-- `MediaDeleted` → удаление thumbnail
+- `MediaChanged` → сверка, затем превью карточек, чьим медиафайлом картинка является (`media_thumb_targets`), строится из неё в очереди превью пространства и эмитит `thumb:updated { slug }`. Владелец это карточка, у которой `media_file` в индексе равен пути файла от корня или ведёт к нему сейчас (SPEC_DEEP_AUDIT.md, Е5.3). Путь самого файла карточкой не считается: до 13.10.2026 картинка `x.jpg` в плоском пространстве становилась превью карточки `x`, что бы та ни показывала, а в раскладке по папкам владельца по голому имени не находилось. Превью остальных карточек, чья зависимость изменилась, пересобирает проход превью.
+- `MediaDeleted` → сверка и удаление превью карточек, которые показывали файл (по тому же правилу владельца и по изменённым зависимостям)
 - External rename `.md` файла проходит через pending-remove queue + `body_hash` match (подробности в [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md)): при match handler вызывает `storage::index::rename_slug`, переносит derived artifacts и эмитит `block:renamed { old_slug, new_slug }`. Другие `.md` файлы и source media не переписываются.
 - Событие переименования (`Modify(Name)`) означает место, которое файл покинул или занял; какое из двух, решает диск: путь без файла становится `BlockDeleted`, путь с файлом `BlockChanged`. Так перемещение в Корзину или за пределы пространства доходит до индекса удалением (SPEC_AUDIT_FIXES.md, Ф7).
 - Отложенное удаление исполняет таймер наблюдателя по окончании окна переименования (500 мс), без ожидания следующего события. Перед удалением из индекса проверяется, что заметки на диске нет: восстановленная заметка остаётся, а её событие появления отменяет отложенное удаление.
@@ -112,6 +124,8 @@ route-facing snapshots.
 - Three consecutive callback/handler errors within 30 seconds schedule one
   coalesced reconciliation pass.
 - A successful watcher event or reconciliation resets the consecutive counter.
+  A reconciliation that finished with errors in some notes is a finished one
+  (SPEC_DEEP_AUDIT.md, Н6): the index is ready without them.
 - Recovery first completes one coalesced reconciliation, then starts a
   replacement native watcher and atomically swaps the single `AppState.watcher`
   slot. Dropping the previous handle stops it; no two watcher slots remain
@@ -129,7 +143,8 @@ route-facing snapshots.
 | `block:renamed` | `{ old_slug: string, new_slug: string }` | watcher external rename path и `rename_block_file` |
 | `thumb:updated` | `{ slug: string }` | `save_thumb` command и фоновая генерация |
 | `thumb:upgrade-requested` | `{ slug: string, media_path: string, kind: "image" \| "video" }` | `index_md_file` когда Rust cascade дал text placeholder для block с embedded media |
-| `vault-conflicts-changed` | `{ count: number }` (`VaultConflictsChanged`) | вкладкам пространства: проход проверки конфликтов iCloud, изменивший множество путей; `list_vault_conflicts`, убравший путь; каждый `resolve_vault_conflict` (раздел «Конфликты iCloud») |
+| `vault-conflicts-changed` | `{ count: number, check_error: string \| null }` (`VaultConflictsChanged`) | вкладкам пространства: проход проверки конфликтов iCloud, изменивший множество путей или не прошедший (`check_error`, SPEC_DEEP_AUDIT.md, Е5.11); `list_vault_conflicts`, убравший путь; каждый `resolve_vault_conflict` (раздел «Конфликты iCloud») |
+| `vault-freshness-changed` | `{ vault_path, generation, state, …, error_count, error_files }` | координатор свежести после прохода: `error_files` перечисляет заметки, которые проход не прочитал или не спроецировал, с видом ошибки и причиной; индекс готов без них (SPEC_DEEP_AUDIT.md, Н6, Е5.1). Уведомление в интерфейсе входит в Е6.17 |
 
 ## commands/freshness coordinator
 
@@ -460,7 +475,10 @@ enum CommandError {
    deleted source files, external many-to-one wikilink rewrites.
 4. Записать новый `.md` create-new semantics.
 5. Применить external rewrites для parseable non-selected `.md` files that
-   reference selected source slugs.
+   reference selected source slugs. Индекс сначала приводится к файлам, и с
+   диска читаются только кандидаты, которые он называет как возможно
+   ссылающиеся на выбранные карточки, и страницы коллекций
+   (`notes_that_may_link`, SPEC_DEEP_AUDIT.md, Н5, Е5.5).
 6. Только после успешной записи и rewrites удалить selected source `.md` files.
 7. Не копировать, не переименовывать и не удалять media binaries.
 8. Проиндексировать новый блок и rewritten files, удалить index rows source
@@ -485,10 +503,10 @@ targets:
 
 Решение пользователя 11.10.2026: окно удаления открывается сразу и сразу нужного размера, без ожидания и без скачка ширины. Окну хватает индекса, диск проверяется в момент удаления.
 
-1. `prepare_delete_block` строит `DeleteBlockPlan` только из индекса: строка карточки (`get_block`) и для каждой другой заметки её `media_file`, `thumbnail` и тело (`block_queries::list_note_file_mentions`). Заметки с диска не читаются (`build_delete_block_plan_from_index`). Медиа карточки и ссылки других заметок разрешает один `MediaResolver`, поэтому список файлов пространства обходится не больше одного раза. Ссылки заметки разрешаются, только если среди них есть имя одного из файлов карточки (та же сверка имён, что у `media_users_on_disk`).
+1. `prepare_delete_block` строит `DeleteBlockPlan` только из индекса: строка карточки (`get_block`) и для каждой другой заметки её `media_file`, `thumbnail` и тело (`block_queries::list_note_file_mentions`). Заметки с диска не читаются (`build_delete_block_plan_from_index`); читаются только холсты Obsidian (`.canvas`), которых индекс не знает: файл, который показывает холст, используется и к удалению не предлагается, `referenced_by` называет холст его путём от корня (SPEC_DEEP_AUDIT.md, Е5.6; разбор холста в SPEC_MEDIA_ASSET_ACTIONS.md, «Холсты Obsidian»). Медиа карточки, ссылки других заметок и холстов разрешает один `MediaResolver`, поэтому список файлов пространства обходится не больше одного раза. Ссылки заметки разрешаются, только если среди них есть имя одного из файлов карточки (та же сверка имён, что у `media_users_on_disk`).
 2. Media refs резолвятся через общий backend resolver (`frontmatter.file`, `thumbnail`, `![[...]]`, `![](...)`, nested/relative/Obsidian basename lookup). Заметка пользуется файлом, если на него указывает любая форма ссылки, которую читает Obsidian (`iter_file_references`, SPEC_AUDIT_FIXES.md, Г1.1).
 3. Фронтенд открывает окно, когда пришёл план или ошибка; до этого окна нет. Ширина задаётся сразу: `content`, если в плане есть медиа к удалению, иначе `question`. Закрытое окно хранит свой план до следующего запроса и уходит в той же ширине.
-4. `delete_block(..., delete_unused_media=true)` строит план заново (`build_delete_block_plan`): план из индекса, затем каждый файл, который индекс считает неиспользуемым, сверяется с заметками на диске (`media_users_on_disk`). Файл, которым пользуется другая заметка (индекс отстал), не удаляется и переходит в shared media. Удаляются `.md` и только оставшиеся unused media. Окно передаёт `offered_media`, пути файлов, которые оно предложило удалить (`unused_media` своего плана), и удаление берёт ровно их (решение пользователя 13.10.2026, SPEC_DEEP_AUDIT.md, Е1.12). Файл, ставший ненужным, пока окно было открыто (заметка, которая им пользовалась, его отпустила), остаётся на месте, его покажет раздел Orphans. Показанный файл, которым за это время стала пользоваться другая заметка, остаётся и попадает в `kept_media`, окно говорит о нём уведомлением `Media kept`. Показанный файл, о котором свежий план уже не знает (карточка перестала на него ссылаться), тоже остаётся. Отказа нет: отказ `media_plan_changed` (Е1.10) удалён. Без `offered_media` (CLI) удаление идёт по свежему плану.
+4. `delete_block(..., delete_unused_media=true)` строит план заново (`build_delete_block_plan`): индекс сначала приводится к файлам (`bring_index_up_to_files`, сверка читает только заметки, изменившиеся после прошлой), затем план из индекса, затем каждый файл, который индекс считает неиспользуемым, сверяется с заметками на диске и холстами (`media_users_on_disk`). С диска читаются только кандидаты: заметки, у которых в индексе `media_file`, `thumbnail` или ссылка тела содержат имя одного из файлов, и страницы коллекций (`notes_that_may_name`, SPEC_DEEP_AUDIT.md, Н5, Е5.5). Заметка вне кандидатов не читается: выгруженная из iCloud не скачивается, нечитаемая ничего не останавливает. Живой случай 13.10.2026: `mine card delete … --delete-unused-media` на пространстве «Тест» минутами читал чужую выгруженную заметку. Файл, которым пользуется другая заметка (индекс отстал), не удаляется и переходит в shared media. Удаляются `.md` и только оставшиеся unused media. Окно передаёт `offered_media`, пути файлов, которые оно предложило удалить (`unused_media` своего плана), и удаление берёт ровно их (решение пользователя 13.10.2026, SPEC_DEEP_AUDIT.md, Е1.12). Файл, ставший ненужным, пока окно было открыто (заметка, которая им пользовалась, его отпустила), остаётся на месте, его покажет раздел Orphans. Показанный файл, которым за это время стала пользоваться другая заметка, остаётся и попадает в `kept_media`, окно говорит о нём уведомлением `Media kept`. Показанный файл, о котором свежий план уже не знает (карточка перестала на него ссылаться), тоже остаётся. Отказа нет: отказ `media_plan_changed` (Е1.10) удалён. Без `offered_media` (CLI) удаление идёт по свежему плану.
 5. `delete_block` возвращает `DeleteBlockOutcome { removed, kept_media }`. `kept_media` перечисляет медиа карточки, которые остались, потому что ими пользуется другая заметка; список заполняется только при `delete_unused_media=true`.
 6. Фронтенд сверяет `kept_media` с файлами, которые окно предлагало удалить (`unused_media` плана окна). Если такой файл остался, лента показывает уведомление `NotificationCard` в правом нижнем углу, как остальные уведомления ленты (DESIGN_SYSTEM.md, «Уведомления»): заголовок `Media kept`, текст `photo.jpg is used by another element and stayed in the space.` для одного файла и `N media files are used by other elements and stayed in the space.` для нескольких. Уведомление закрывается кнопкой и сбрасывается при новом запросе удаления или смене пространства. Файлы, о которых окно уже сказало, что они останутся, в уведомлении не упоминаются.
 7. `delete_block(..., delete_unused_media=false)` удаляет только `.md` и derived artifacts.
@@ -524,9 +542,12 @@ Delete».
    никогда.
 5. `delete_blocks(..., delete_unused_media=true)` строит план заново
    (`build_delete_blocks_plan`): план из индекса, затем каждый файл, который
-   индекс считает неиспользуемым, сверяется с заметками на диске
-   (`media_users_on_disk`, все выбранные `.md` пропускаются). Файл, которым
-   пользуется заметка на диске, переходит в shared media и остаётся. Как у
+   индекс считает неиспользуемым, сверяется с заметками на диске и холстами
+   (`media_users_on_disk`, все выбранные `.md` пропускаются). Как у одного
+   элемента, индекс сначала приводится к файлам и с диска читаются только
+   кандидаты и страницы коллекций (SPEC_DEEP_AUDIT.md, Н5, Е5.5). Файл,
+   которым пользуется заметка на диске или холст, переходит в shared media и
+   остаётся. Как у
    одного элемента, окно передаёт `offered_media`, и удаление берёт ровно
    показанные окном файлы: файл, которого окно не предлагало, остаётся на
    месте (решение пользователя 13.10.2026, SPEC_DEEP_AUDIT.md, Е1.12).
@@ -570,6 +591,7 @@ Delete».
    - переименовать `.md` файл блока; без изменений внутри он переносится целиком
    - переименовать Mine-owned rename-family (`old_slug.ext`, `old_slug (image N).*`, `old_slug (video N).*`)
    - переписать ссылки, которые разрешаются в переименованную заметку, включая короткую форму `[[Foo]]` (`NoteMoves`), и file references; правки переносятся в исходный текст (`apply_block_changes`), остальное остаётся байт в байт
+   - читать с диска только кандидатов: индекс, приведённый к файлам, называет заметки, в тексте, `Mine Related Notes`, коллекциях, `file` или `thumbnail` которых есть имя переименованной заметки или её медиафайла (`notes_that_may_link`), и все страницы коллекций (SPEC_DEEP_AUDIT.md, Н5, Е5.5); решение о ссылке принимает текст кандидата
 4. Временно suppress'ить затрагиваемые paths в `AppState`
 5. Записать переписанные `.md`, выполнить file renames, перенести derived artifacts
 6. Обновить индекс и эмитить `block:renamed { old_slug, new_slug }`

@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
+use unicode_normalization::UnicodeNormalization;
 use tauri::{AppHandle, Manager};
 
 use crate::commands::state::{schedule_preview_reconcile, AppState};
@@ -550,48 +551,217 @@ pub fn index_md_file(
             return Ok(true);
         }
 
-        // Generate thumbnail in background thread to avoid blocking file
-        // watcher. After the cascade runs, inspect the result and fire
-        // follow-up events (thumb:updated always, upgrade-requested if
-        // the thumb is a text placeholder and the block has upgradable
-        // media).
-        let vault = vault.clone();
-        let slug = job.block.slug.clone();
-        let app_clone = app.cloned();
-        std::thread::Builder::new()
-            .name(format!("thumb-{}", &slug))
-            .spawn(move || {
-                let Ok(_write) = crate::storage::source_mutation::begin_write() else {
-                    return;
-                };
-                let source = thumbnails::generate_for_block(&job.block, &vault);
-                let upgrade = match db::open_or_create(&vault.index_db_path()) {
-                    Ok(conn) => {
-                        if let Err(e) = index::sync_thumb_metadata(
-                            &conn,
-                            &slug,
-                            &thumb_path,
-                            Some(vault.root()),
-                        ) {
-                            log::warn!("thumb thread: sync metadata failed for {}: {e:#}", slug);
-                        }
-                        index::get_pending_thumb_upgrade_block(&conn, &slug)
-                            .ok()
-                            .flatten()
-                    }
-                    Err(e) => {
-                        log::warn!("thumb thread: open metadata db failed for {}: {e:#}", slug);
-                        None
-                    }
-                };
-                if let Some(app) = app_clone {
-                    emit_thumb_events(&app, &vault, &job.block, upgrade.as_ref(), source);
-                }
-            })
-            .ok();
+        // The preview is made off the watcher, in the space's preview queue
+        // (SPEC_DEEP_AUDIT.md, Е5.13). After the cascade runs, the result
+        // fires its events (thumb:updated always, upgrade-requested if the
+        // thumb is a text placeholder and the block has upgradable media).
+        let stamp = preview_queue::stamp_of(&job.source_path);
+        preview_queue::enqueue(
+            app,
+            vault,
+            job.block.slug.clone(),
+            preview_queue::Job::Card {
+                block: Box::new(job.block),
+                source_path: job.source_path,
+                stamp,
+            },
+        );
     }
 
     Ok(true)
+}
+
+/// The watcher's previews of a space, one at a time (SPEC_DEEP_AUDIT.md,
+/// Е5.13). Until 13.10.2026 every event made its preview on a thread of its
+/// own, with no queue and no look at whether the card was still what the
+/// event read: a slow preview of an earlier version finished last and put
+/// the old picture back. Now each space has one worker that takes the jobs
+/// in order; a newer job for a card replaces its waiting one, and a job whose
+/// card or picture changed since it was queued is dropped, since the change
+/// queued a job of its own.
+mod preview_queue {
+    use std::collections::{HashMap, VecDeque};
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, PoisonError};
+    use std::time::SystemTime;
+
+    use tauri::AppHandle;
+
+    use super::{emit_thumb_events, media_thumb_targets, ThumbUpdatedPayload};
+    use crate::domain::block::Block;
+    use crate::domain::vault::VaultLayout;
+    use crate::storage::{db, index, thumbnails};
+
+    /// What a file was when a job was queued: its size and its time.
+    pub(super) type Stamp = Option<(u64, SystemTime)>;
+
+    pub(super) fn stamp_of(path: &Path) -> Stamp {
+        let metadata = std::fs::metadata(path).ok()?;
+        Some((metadata.len(), metadata.modified().ok()?))
+    }
+
+    pub(super) enum Job {
+        /// The preview of a card from the card as the event read it.
+        Card {
+            block: Box<Block>,
+            source_path: PathBuf,
+            stamp: Stamp,
+        },
+        /// The preview of a card made from the picture that is its media
+        /// file, which just landed.
+        Picture { picture: PathBuf, stamp: Stamp },
+    }
+
+    struct Queue {
+        vault: VaultLayout,
+        app: Option<AppHandle>,
+        order: VecDeque<String>,
+        jobs: HashMap<String, Job>,
+    }
+
+    static QUEUES: Mutex<Option<HashMap<PathBuf, Queue>>> = Mutex::new(None);
+
+    /// Queue `job` for the card `slug` of `vault`, replacing the one it
+    /// waits with, and start the space's worker when none runs.
+    pub(super) fn enqueue(app: Option<&AppHandle>, vault: &VaultLayout, slug: String, job: Job) {
+        let root = vault.root().to_path_buf();
+        let start = {
+            let mut queues = QUEUES.lock().unwrap_or_else(PoisonError::into_inner);
+            let queues = queues.get_or_insert_with(HashMap::new);
+            let start = !queues.contains_key(&root);
+            let queue = queues.entry(root.clone()).or_insert_with(|| Queue {
+                vault: vault.clone(),
+                app: app.cloned(),
+                order: VecDeque::new(),
+                jobs: HashMap::new(),
+            });
+            if queue.jobs.insert(slug.clone(), job).is_none() {
+                queue.order.push_back(slug);
+            }
+            start
+        };
+        if !start {
+            return;
+        }
+        let worker_root = root.clone();
+        let spawned = std::thread::Builder::new()
+            .name("watcher-previews".to_string())
+            .spawn(move || run(&worker_root));
+        if let Err(error) = spawned {
+            log::error!("cannot start the preview worker of {}: {error}", root.display());
+            QUEUES
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get_or_insert_with(HashMap::new)
+                .remove(&root);
+        }
+    }
+
+    /// Take the jobs of the space at `root` until none is left.
+    fn run(root: &Path) {
+        loop {
+            let next = {
+                let mut queues = QUEUES.lock().unwrap_or_else(PoisonError::into_inner);
+                let queues = queues.get_or_insert_with(HashMap::new);
+                let Some(queue) = queues.get_mut(root) else {
+                    return;
+                };
+                match queue.order.pop_front() {
+                    Some(slug) => queue
+                        .jobs
+                        .remove(&slug)
+                        .map(|job| (slug, job, queue.vault.clone(), queue.app.clone())),
+                    None => {
+                        queues.remove(root);
+                        return;
+                    }
+                }
+            };
+            if let Some((slug, job, vault, app)) = next {
+                make(&vault, app.as_ref(), &slug, job);
+            }
+        }
+    }
+
+    fn make(vault: &VaultLayout, app: Option<&AppHandle>, slug: &str, job: Job) {
+        #[cfg(test)]
+        super::preview_hooks::run(super::preview_hooks::Moment::Before, slug);
+        match job {
+            Job::Card {
+                block,
+                source_path,
+                stamp,
+            } => {
+                if stamp_of(&source_path) == stamp {
+                    make_card_preview(vault, app, &block);
+                }
+            }
+            Job::Picture { picture, stamp } => {
+                if stamp_of(&picture) == stamp {
+                    make_picture_preview(vault, app, slug, &picture);
+                }
+            }
+        }
+        #[cfg(test)]
+        super::preview_hooks::run(super::preview_hooks::Moment::After, slug);
+    }
+
+    fn make_card_preview(vault: &VaultLayout, app: Option<&AppHandle>, block: &Block) {
+        let Ok(_write) = crate::storage::source_mutation::begin_write() else {
+            return;
+        };
+        let thumb_path = vault.thumb_path(&block.slug);
+        let source = thumbnails::generate_for_block(block, vault);
+        let upgrade = match db::open_or_create(&vault.index_db_path()) {
+            Ok(conn) => {
+                if let Err(error) =
+                    index::sync_thumb_metadata(&conn, &block.slug, &thumb_path, Some(vault.root()))
+                {
+                    log::warn!("preview: sync metadata failed for {}: {error:#}", block.slug);
+                }
+                index::get_pending_thumb_upgrade_block(&conn, &block.slug)
+                    .ok()
+                    .flatten()
+            }
+            Err(error) => {
+                log::warn!("preview: open metadata db failed for {}: {error:#}", block.slug);
+                None
+            }
+        };
+        if let Some(app) = app {
+            emit_thumb_events(app, vault, block, upgrade.as_ref(), source);
+        }
+    }
+
+    /// The card's preview from the picture, while the card still names the
+    /// picture as its media file.
+    fn make_picture_preview(vault: &VaultLayout, app: Option<&AppHandle>, slug: &str, picture: &Path) {
+        let owns = db::open_or_create(&vault.index_db_path())
+            .map(|conn| media_thumb_targets(&conn, vault, picture).iter().any(|owner| owner == slug))
+            .unwrap_or(false);
+        if !owns {
+            return;
+        }
+        if let Err(error) =
+            thumbnails::generate_thumbnail(picture, &vault.thumb_path(slug), thumbnails::DEFAULT_MAX_SIZE)
+        {
+            log::warn!("thumbnail failed for {slug}: {error}");
+            return;
+        }
+        if let Some(app) = app {
+            let event_path = vault.root().to_string_lossy().into_owned();
+            crate::commands::space_events::emit_to_space_path(
+                app,
+                &event_path.clone(),
+                "thumb:updated",
+                ThumbUpdatedPayload {
+                    path: event_path,
+                    slug: slug.to_string(),
+                    is_text: false,
+                },
+            );
+        }
+    }
 }
 
 /// Emit `thumb:updated` and (when applicable) `thumb:upgrade-requested`
@@ -1323,8 +1493,7 @@ fn report_changed(report: &ReconcileReport) -> bool {
 
 /// The cards whose preview may show the media file at `path`: those whose
 /// dependency on a media file the reconciliation just saw change, and the
-/// ones [`media_thumb_targets`] names (the cards that name it as their media
-/// file, and in a flat space the card that shares its name).
+/// ones [`media_thumb_targets`] names (the cards whose media file it is).
 fn media_preview_owners(
     conn: &Connection,
     vault: &VaultLayout,
@@ -1387,8 +1556,8 @@ fn schedule_owner_previews(
     }
 }
 
-/// Make the thumbnail of `slug` from the picture at `picture` in the
-/// background and tell the feed; a stale thumbnail otherwise stays on
+/// Make the thumbnail of `slug` from the picture at `picture` in the space's
+/// preview queue and tell the feed; a stale thumbnail otherwise stays on
 /// screen until a full refresh.
 fn spawn_thumb_from_picture(
     vault: &VaultLayout,
@@ -1396,64 +1565,66 @@ fn spawn_thumb_from_picture(
     slug: String,
     app: Option<&AppHandle>,
 ) {
-    let thumb_path = vault.thumb_path(&slug);
-    let picture = picture.to_path_buf();
-    let app = app.cloned();
-    let event_path = vault.root().to_string_lossy().into_owned();
-    let spawned = std::thread::Builder::new()
-        .name(format!("thumb-media-{slug}"))
-        .spawn(move || {
-            if let Err(error) =
-                thumbnails::generate_thumbnail(&picture, &thumb_path, thumbnails::DEFAULT_MAX_SIZE)
-            {
-                log::warn!("thumbnail failed for {slug}: {error}");
-                return;
-            }
-            if let Some(app) = app {
-                crate::commands::space_events::emit_to_space_path(
-                    &app,
-                    &event_path.clone(),
-                    "thumb:updated",
-                    ThumbUpdatedPayload {
-                        path: event_path,
-                        slug,
-                        is_text: false,
-                    },
-                );
-            }
-        });
-    if let Err(error) = spawned {
-        log::warn!("cannot start a thumbnail thread: {error}");
-    }
+    let stamp = preview_queue::stamp_of(picture);
+    preview_queue::enqueue(
+        app,
+        vault,
+        slug,
+        preview_queue::Job::Picture {
+            picture: picture.to_path_buf(),
+            stamp,
+        },
+    );
 }
 
 // ─── Private helpers ────────────────────────────────────────────────────────
 
-/// Which slugs a landed media file must refresh the thumbnail of.
+/// The cards whose media file is the file at `path`: the ones whose preview
+/// a landed picture is made into right away (SPEC_DEEP_AUDIT.md, Е5.3).
 ///
-/// Two answers, and both are needed. The media's own path-derived slug is what
-/// a flat vault uses: card and picture sit side by side and share it. A vault
-/// laid out in folders breaks that identity — the picture is `Media/x` while
-/// its card is `Cards/x` — so the owning cards are looked up by the indexed
-/// file name as well. Without that lookup a newly saved card waited for the
-/// slower reconciliation pass to notice its picture had arrived.
+/// The index holds a card's media file as its path from the space root when
+/// the file was found, and as the card wrote it when it was not there yet.
+/// A card owns the file when that path is the file's own, or when what it
+/// wrote leads to the file now. Until 13.10.2026 the owner was looked up by
+/// the bare file name, which a space laid out in folders never holds
+/// (`Media/x.jpg`), and the file's own path was taken for a card's: in a
+/// flat space a picture `x.jpg` became the preview of the card `x`, whatever
+/// that card showed, and in folders `Media/x` named no card at all.
 fn media_thumb_targets(conn: &Connection, vault: &VaultLayout, path: &Path) -> Vec<String> {
-    let mut targets: Vec<String> = Vec::new();
-    if let Some(slug) = path_to_slug(vault, path) {
-        targets.push(slug);
-    }
-    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-        return targets;
+    let (Some(relative), Some(name)) = (
+        vault.root_relative_reference(path),
+        path.file_name().and_then(|name| name.to_str()),
+    ) else {
+        return Vec::new();
     };
-    match index::list_slugs_by_media_file(conn, file_name) {
-        Ok(owners) => {
-            for owner in owners {
-                if !targets.contains(&owner) {
-                    targets.push(owner);
-                }
-            }
+    let fold = |text: &str| -> String { text.nfc().collect::<String>().to_lowercase() };
+    let relative = fold(&relative);
+    let name = fold(name);
+    let rows = match crate::storage::block_queries::list_media_files(conn) {
+        Ok(rows) => rows,
+        Err(error) => {
+            log::warn!("media owner lookup failed for {}: {error:#}", path.display());
+            return Vec::new();
         }
-        Err(e) => log::warn!("media owner lookup failed for {file_name}: {e:#}"),
+    };
+    let present = path.exists();
+    let mut resolver = media_refs::MediaResolver::new(vault);
+    let mut targets = Vec::new();
+    for (slug, media_file) in rows {
+        let written = fold(&media_file);
+        let decoded = fold(&percent_encoding::percent_decode_str(&media_file).decode_utf8_lossy());
+        if !written.contains(&name) && !decoded.contains(&name) {
+            continue;
+        }
+        let owns = written == relative
+            || (present
+                && crate::domain::vault::validate_slug(&slug).is_ok()
+                && resolver
+                    .resolve_indexed_media(&slug, &media_file)
+                    .is_some_and(|resolved| files::names_same_entry(&resolved, path) || resolved == path));
+        if owns && !targets.contains(&slug) {
+            targets.push(slug);
+        }
     }
     targets
 }
@@ -1487,6 +1658,41 @@ fn emit_article_audio_updated(app: &AppHandle, vault: &VaultLayout, slug: &str) 
 // Extension predicates (is_image_ext, is_video_ext) live in
 // storage::thumbnails as the single source of truth.
 
+/// Moments of a watcher preview a test holds or watches: before the preview
+/// of a card is made and after it is written.
+#[cfg(test)]
+pub(crate) mod preview_hooks {
+    use std::sync::{Arc, Mutex, PoisonError};
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Moment {
+        Before,
+        After,
+    }
+
+    type Hook = Arc<dyn Fn(Moment, &str) + Send + Sync>;
+
+    static HOOK: Mutex<Option<Hook>> = Mutex::new(None);
+
+    /// Run `hook` at every moment of every watcher preview, until `clear`.
+    pub(crate) fn set(hook: impl Fn(Moment, &str) + Send + Sync + 'static) {
+        *HOOK.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(hook));
+    }
+
+    pub(crate) fn clear() {
+        *HOOK.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
+    pub(crate) fn run(moment: Moment, slug: &str) {
+        // The hook runs outside the lock: it may hold its preview while
+        // another one runs.
+        let hook = HOOK.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        if let Some(hook) = hook {
+            hook(moment, slug);
+        }
+    }
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1494,6 +1700,74 @@ mod tests {
     use super::*;
     use crate::domain::block::{BlockType, DateTime, Frontmatter};
     use crate::storage::db;
+
+    /// Е5.13: the preview of a card made from an earlier version of it must
+    /// never replace the preview of its latest version. Until 13.10.2026
+    /// every watcher event made its preview on a thread of its own, with no
+    /// queue and no check that the card was still what the event read: a
+    /// slow first preview finished last and put back the old picture.
+    #[test]
+    fn a_late_preview_of_an_earlier_version_does_not_replace_the_latest() {
+        use std::sync::mpsc;
+        let dir = tempfile::tempdir().unwrap();
+        let derived = tempfile::tempdir().unwrap();
+        let vault =
+            VaultLayout::with_derived_root(dir.path().to_path_buf(), derived.path().to_path_buf());
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        image::RgbImage::from_pixel(40, 40, image::Rgb([220, 20, 20]))
+            .save(dir.path().join("red.png"))
+            .unwrap();
+        image::RgbImage::from_pixel(40, 40, image::Rgb([20, 20, 220]))
+            .save(dir.path().join("blue.png"))
+            .unwrap();
+        let card = dir.path().join("Late preview.md");
+        std::fs::write(&card, "---\nfile: \"[[red.png]]\"\nsaved_at: 2026-01-15T12:00:00Z\n---\n").unwrap();
+
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let go_rx = Mutex::new(Some(go_rx));
+        let (started_tx, started_rx) = mpsc::channel::<()>();
+        let started_tx = Mutex::new(started_tx);
+        let (after_tx, after_rx) = mpsc::channel::<()>();
+        let after_tx = Mutex::new(after_tx);
+        preview_hooks::set(move |moment, slug| {
+            if slug != "Late preview" {
+                return;
+            }
+            match moment {
+                // The first preview of the card is slow: it says it started
+                // and waits for `go`.
+                preview_hooks::Moment::Before => {
+                    // Taken out first: the lock is not held while it waits.
+                    let first = go_rx.lock().unwrap().take();
+                    if let Some(go) = first {
+                        let _ = started_tx.lock().unwrap().send(());
+                        let _ = go.recv();
+                    }
+                }
+                preview_hooks::Moment::After => {
+                    let _ = after_tx.lock().unwrap().send(());
+                }
+            }
+        });
+
+        index_md_file(&conn, &vault, &card, None).unwrap();
+        started_rx.recv_timeout(Duration::from_secs(30)).expect("the first preview starts");
+        std::fs::write(&card, "---\nfile: \"[[blue.png]]\"\nsaved_at: 2026-01-15T12:00:00Z\n---\n\n").unwrap();
+        index_md_file(&conn, &vault, &card, None).unwrap();
+        // A preview of the latest version may finish while the first waits;
+        // a queue keeps it behind the first, and this wait only times out.
+        let early = after_rx.recv_timeout(Duration::from_secs(2)).is_ok();
+        go_tx.send(()).unwrap();
+        let expected = if early { 1 } else { 2 };
+        for _ in 0..expected {
+            after_rx.recv_timeout(Duration::from_secs(30)).expect("the previews finish");
+        }
+        preview_hooks::clear();
+
+        let preview = image::open(vault.thumb_path("Late preview")).unwrap().to_rgb8();
+        let center = preview.get_pixel(preview.width() / 2, preview.height() / 2);
+        assert!(center[2] > center[0], "the preview shows the earlier picture: {center:?}");
+    }
 
     fn test_conn() -> Connection {
         db::open_memory().unwrap()
@@ -2172,55 +2446,47 @@ mod tests {
         }
     }
 
-    /// A vault laid out in folders keeps the picture in `Media/` and its card
-    /// in `Cards/`, so the media's own slug is not the card's. The landing
-    /// picture must still refresh the card it belongs to.
+    /// Е5.3: in a space laid out in folders the index holds the card's media
+    /// as the path from the root (`Media/shot.png`), so a lookup by the bare
+    /// file name never found the card the landing picture belongs to.
     #[test]
-    fn media_thumb_targets_include_the_owning_card_in_a_folder_layout() {
+    fn a_picture_landing_in_the_media_folder_refreshes_the_card_that_names_it() {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
+        std::fs::create_dir_all(dir.path().join("Cards")).unwrap();
+        std::fs::create_dir_all(dir.path().join("Media")).unwrap();
+        let media_path = dir.path().join("Media/shot.png");
+        std::fs::write(&media_path, b"picture").unwrap();
+        std::fs::write(
+            dir.path().join("Cards/shot.md"),
+            "---\nfile: \"[[Media/shot.png]]\"\nsaved_at: 2026-01-15T12:00:00Z\n---\n",
+        )
+        .unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
 
-        let mut block = crate::domain::block::Block {
-            slug: "Cards/shot".to_string(),
-            frontmatter: Frontmatter {
-                block_type: BlockType::Image,
-                title: None,
-                description: None,
-                url: None,
-                file: Some("shot.png".to_string()),
-                thumbnail: None,
-                tags: Vec::new(),
-                related_notes: Vec::new(),
-                source_media: None,
-                saved_at: DateTime::new("2026-01-15T12:00:00Z").unwrap(),
-                source: None,
-                width: None,
-                height: None,
-                author: None,
-                position: None,
-                color: None,
-                icon: None,
-            },
-            body: String::new(),
-        };
-        block.frontmatter.block_type =
-            crate::domain::block::derive_block_type(&block.frontmatter, &block.body);
-        index::upsert_block(&conn, &block, None).unwrap();
+        assert_eq!(media_thumb_targets(&conn, &vault, &media_path), ["Cards/shot"]);
+    }
 
-        let media_path = dir.path().join("Media").join("shot.png");
-        std::fs::create_dir_all(media_path.parent().unwrap()).unwrap();
-        std::fs::write(&media_path, b"not really a png").unwrap();
+    /// Е5.3: in a flat space a picture that only shares a card's name is not
+    /// that card's picture: `x.jpg` landing must not become the preview of
+    /// the card `x`, whose media is another file.
+    #[test]
+    fn a_picture_named_like_a_card_is_not_its_preview() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = test_conn();
+        std::fs::write(dir.path().join("other.jpg"), b"picture").unwrap();
+        std::fs::write(
+            dir.path().join("x.md"),
+            "---\nfile: \"[[other.jpg]]\"\nsaved_at: 2026-01-15T12:00:00Z\n---\n",
+        )
+        .unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let landed = dir.path().join("x.jpg");
+        std::fs::write(&landed, b"another picture").unwrap();
 
-        let targets = media_thumb_targets(&conn, &vault, &media_path);
-
-        assert!(
-            targets.contains(&"Cards/shot".to_string()),
-            "the owning card must be refreshed, got {targets:?}",
-        );
-        // The media's own slug stays in the list: a flat vault still resolves
-        // card and picture to the same slug, and that path must keep working.
-        assert!(targets.contains(&"Media/shot".to_string()), "{targets:?}");
+        assert!(media_thumb_targets(&conn, &vault, &landed).is_empty());
     }
 
     #[test]
@@ -2228,15 +2494,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = test_conn();
+        let media_path = vault.media_path("photo", "jpg");
+        std::fs::write(&media_path, b"picture").unwrap();
+        std::fs::write(
+            vault.block_path("photo"),
+            "---\nfile: \"[[photo.jpg]]\"\nsaved_at: 2026-01-15T12:00:00Z\n---\n",
+        )
+        .unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
 
-        // Create a fake thumbnail
+        // The card's preview stands for its picture.
         std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
         let thumb = vault.thumb_path("photo");
         std::fs::write(&thumb, b"fake thumb").unwrap();
         assert!(thumb.exists());
 
-        // Media deleted event should remove thumbnail
-        let media_path = vault.media_path("photo", "jpg");
+        // The picture deleted: the card's preview goes with it.
+        std::fs::remove_file(&media_path).unwrap();
         handle_event(&conn, &vault, &VaultEvent::MediaDeleted(media_path), None).unwrap();
         assert!(!thumb.exists());
     }

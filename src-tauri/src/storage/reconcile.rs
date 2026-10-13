@@ -66,7 +66,7 @@ impl DependencyStamp {
         Self {
             vault_relative_path,
             file: FileStamp::read(absolute).ok(),
-            offloaded: crate::storage::media_dimensions::is_content_offloaded(absolute),
+            offloaded: crate::storage::cloud_files::is_content_offloaded(absolute),
         }
     }
 }
@@ -132,6 +132,9 @@ pub struct ReconcileReport {
 }
 
 impl ReconcileReport {
+    /// Whether every file of the space was read and projected. A pass with
+    /// errors in some files still finishes the index (`ready`) and names
+    /// those files (SPEC_DEEP_AUDIT.md, Н6).
     pub fn is_fresh(&self) -> bool {
         self.errors.is_empty()
     }
@@ -241,6 +244,11 @@ fn reconcile_projection(
     let was_ready = db::index_is_ready(conn).map_err(ReconcileError::State)?;
     db::set_index_ready(conn, false).map_err(ReconcileError::State)?;
     let mut aggregate: Option<ReconcileReport> = None;
+    // Readiness does not hang on one note (SPEC_DEEP_AUDIT.md, Н6, Е5.1): a
+    // pass that read every other file publishes the index ready and names the
+    // files it could not read or project. Until 13.10.2026 one unreadable note
+    // kept `ready=false` for good, since every pass met it again, and the CLI
+    // and the clipper helper saw an index never built.
     for _ in 0..MAX_SOURCE_PASSES {
         let report = match reconcile_source_pass(conn, vault, on_progress, identity) {
             Ok(report) => report,
@@ -253,7 +261,7 @@ fn reconcile_projection(
             }
             Err(error) => return Err(error),
         };
-        let fresh = report.is_fresh();
+        let failed = failed_slugs(vault, &report.errors);
         match &mut aggregate {
             Some(total) => {
                 total.inventory_markdown = report.inventory_markdown;
@@ -268,24 +276,47 @@ fn reconcile_projection(
             }
             None => aggregate = Some(report),
         }
-        if !fresh || source_inventory_matches(conn, vault).map_err(ReconcileError::State)? {
-            db::set_index_ready(conn, fresh).map_err(ReconcileError::Commit)?;
+        if source_inventory_matches(conn, vault, &failed).map_err(ReconcileError::State)? {
+            db::set_index_ready(conn, true).map_err(ReconcileError::Commit)?;
             return aggregate.ok_or_else(|| {
                 ReconcileError::State(anyhow::anyhow!("source pass produced no report"))
             });
         }
     }
+    // The files kept changing: the index is exactly as ready as before the
+    // pass (Н6), and the next pass reads them again.
+    db::set_index_ready(conn, was_ready).map_err(ReconcileError::Commit)?;
     Err(ReconcileError::SourcesChanging {
         path: vault.root().to_path_buf(),
     })
 }
 
-fn source_inventory_matches(conn: &Connection, vault: &VaultLayout) -> Result<bool> {
-    let stored = load_source_states(conn)?;
+/// The notes of `errors`, by slug: their stored state is not what is on disk,
+/// and the next pass reads them again.
+fn failed_slugs(vault: &VaultLayout, errors: &[ReconcileFileError]) -> BTreeSet<String> {
+    errors
+        .iter()
+        .filter_map(|error| vault.slug_for_path(Path::new(&error.path)).ok())
+        .collect()
+}
+
+/// Whether the stored state of every note but `failed` is what is on disk.
+fn source_inventory_matches(
+    conn: &Connection,
+    vault: &VaultLayout,
+    failed: &BTreeSet<String>,
+) -> Result<bool> {
+    let mut stored = load_source_states(conn)?;
+    stored.retain(|slug, _| !failed.contains(slug));
     let paths = files::scan_md_files(vault)?;
     let mut live = BTreeSet::new();
     for path in paths {
-        let slug = vault.slug_for_path(&path)?;
+        let Ok(slug) = vault.slug_for_path(&path) else {
+            continue;
+        };
+        if failed.contains(&slug) {
+            continue;
+        }
         live.insert(slug.clone());
         let Some(state) = stored.get(&slug) else {
             return Ok(false);
@@ -327,7 +358,7 @@ fn reconcile_source_pass(
                 .slug_for_path(path)
                 .is_ok_and(|slug| !stored.contains_key(&slug))
         })
-        .filter(|path| crate::storage::media_dimensions::is_content_offloaded(path))
+        .filter(|path| crate::storage::cloud_files::is_content_offloaded(path))
         .collect::<Vec<_>>();
     if !cloud_notes.is_empty() {
         let accepted = crate::storage::icloud_downloads::request_downloads(
@@ -554,6 +585,11 @@ fn reconcile_source_pass(
         }
     }
     for slug in &removed {
+        // A row whose slug names no file of the space (a damaged index) has
+        // no derived files either: its preview path cannot even be formed.
+        if crate::domain::vault::validate_slug(slug).is_err() {
+            continue;
+        }
         let _ = std::fs::remove_file(vault.thumb_path(slug));
         let _ = article_audio::delete_all_artifacts(vault, slug);
     }
@@ -841,7 +877,7 @@ fn dependencies_changed(vault: &VaultLayout, dependencies: &[DependencyStamp]) -
         current != dependency.file
             || (dependency.offloaded
                 && current.is_some()
-                && !crate::storage::media_dimensions::is_content_offloaded(&path))
+                && !crate::storage::cloud_files::is_content_offloaded(&path))
     })
 }
 
@@ -972,19 +1008,18 @@ mod tests {
     /// Х25: a picture whose contents are in iCloud gives the index no size,
     /// and indexing it is not what brings it down. Once its contents arrive,
     /// the next pass reads the size, though the file's size and date are
-    /// what they were.
+    /// what they were. The picture stands for an evicted one with its real
+    /// contents on disk: any read of it would give the index its size.
     #[test]
     fn a_picture_in_icloud_gets_its_size_once_its_contents_arrive() {
-        const PICTURE_LEN: u64 = 64 * 1024;
         let tmp = TempDir::new().unwrap();
-        let root = tmp.path().join("Mobile Documents").join("Space");
+        let root = tmp.path().join("Space");
         std::fs::create_dir_all(&root).unwrap();
         let vault = VaultLayout::with_derived_root(root.clone(), tmp.path().join("derived"));
         let conn = db::open_or_create(&vault.index_db_path()).unwrap();
         let picture = root.join("cloud.png");
-        // iCloud keeps the name and the size and frees the blocks.
-        std::fs::File::create(&picture).unwrap().set_len(PICTURE_LEN).unwrap();
-        let modified = std::fs::metadata(&picture).unwrap().modified().unwrap();
+        image::RgbImage::new(3, 2).save(&picture).unwrap();
+        crate::storage::cloud_files::test_seam::mark_offloaded(&picture);
         std::fs::write(
             root.join("Cloud.md"),
             "---\ntype: image\nfile: \"[[cloud.png]]\"\n---\n",
@@ -1000,27 +1035,10 @@ mod tests {
         };
 
         reconcile_vault(&conn, &vault).unwrap();
-        assert!(
-            crate::storage::media_dimensions::is_content_offloaded(&picture),
-            "indexing did not bring the picture down"
-        );
-        assert_eq!(size(&conn), (None, None, None));
+        assert_eq!(size(&conn), (None, None, None), "indexing read the picture");
 
-        // The contents arrive: the same size and date, blocks on disk.
-        let mut bytes = std::io::Cursor::new(Vec::new());
-        image::RgbImage::new(3, 2)
-            .write_to(&mut bytes, image::ImageFormat::Png)
-            .unwrap();
-        let mut bytes = bytes.into_inner();
-        bytes.resize(usize::try_from(PICTURE_LEN).unwrap(), 0);
-        std::fs::write(&picture, &bytes).unwrap();
-        std::fs::File::options()
-            .write(true)
-            .open(&picture)
-            .unwrap()
-            .set_modified(modified)
-            .unwrap();
-        assert!(!crate::storage::media_dimensions::is_content_offloaded(&picture));
+        // The contents arrive: the same file, its size and date unchanged.
+        crate::storage::cloud_files::test_seam::mark_downloaded(&picture);
 
         reconcile_vault(&conn, &vault).unwrap();
         let (width, height, media) = size(&conn);
@@ -1566,6 +1584,59 @@ mod tests {
         assert_eq!(report.errors[0].kind, ReconcileFileErrorKind::Index);
         assert!(index::get_block(&conn, "Good").unwrap().is_some());
         assert!(index::get_block(&conn, "Rejected").unwrap().is_none());
+    }
+
+    /// Н6, Е5.1: a pass finished with an error in one note publishes the
+    /// index ready and names that note. Before 13.10.2026 one unreadable
+    /// note kept `ready=false` for good: every later pass met the same error,
+    /// and the CLI and the clipper helper saw an index never built.
+    #[test]
+    fn a_pass_with_one_bad_note_publishes_the_index_ready_and_names_the_note() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_dir, vault, conn) = setup();
+        write_note(&vault, "Good", "valid body");
+        write_note(&vault, "Locked", "unreadable body");
+        let locked = vault.block_path("Locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let first = reconcile_vault(&conn, &vault);
+        let first_ready = db::index_is_ready(&conn).unwrap();
+        let second = reconcile_vault(&conn, &vault);
+        let second_ready = db::index_is_ready(&conn).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let first = first.unwrap();
+        assert_eq!(first.errors.len(), 1, "{:?}", first.errors);
+        assert!(first.errors[0].path.ends_with("Locked.md"), "{:?}", first.errors);
+        assert_eq!(first.errors[0].kind, ReconcileFileErrorKind::Read);
+        assert!(first_ready, "one bad note kept the index from being ready");
+        assert_eq!(second.unwrap().errors.len(), 1);
+        assert!(second_ready);
+        assert!(index::get_block(&conn, "Good").unwrap().is_some());
+    }
+
+    /// Н6, Е5.1: notes that keep changing during the pass leave the index as
+    /// ready as it was before it, not unready.
+    #[test]
+    fn sources_that_keep_changing_leave_readiness_as_it_was() {
+        let (_dir, vault, conn) = setup();
+        write_note(&vault, "A busy", "first");
+        write_note(&vault, "B quiet", "first");
+        reconcile_vault(&conn, &vault).unwrap();
+        assert!(db::index_is_ready(&conn).unwrap());
+        let edits = std::sync::atomic::AtomicUsize::new(0);
+
+        // Each pass reads `A busy` first; it changes again while the pass
+        // reaches `B quiet`, so no pass ends on the files as they are.
+        let outcome = reconcile_vault_with_progress(&conn, &vault, &|processed, total| {
+            if processed == total {
+                let edit = edits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                write_note(&vault, "A busy", &format!("edit {edit} {}", "x".repeat(edit + 1)));
+            }
+        });
+
+        assert!(matches!(outcome, Err(ReconcileError::SourcesChanging { .. })), "{outcome:?}");
+        assert!(db::index_is_ready(&conn).unwrap());
     }
 
     #[test]

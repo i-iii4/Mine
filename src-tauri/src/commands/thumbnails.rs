@@ -932,7 +932,7 @@ mod tests {
                 .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
                 .unwrap();
         }
-        assert!(thumbnails::adopt_generator_version(&vault));
+        assert!(thumbnails::adopt_generator_version(&vault).unwrap());
 
         assert!(needs_upgrade(&vault, &logo), "only the browser decodes the AVIF");
         assert!(!needs_upgrade(&vault, &photo), "Rust rebuilds the PNG's picture");

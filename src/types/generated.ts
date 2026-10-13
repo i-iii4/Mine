@@ -961,7 +961,13 @@ current: ConflictVersion;
 /**
  * The hidden conflict versions.
  */
-versions: ConflictVersion[] }
+versions: ConflictVersion[];
+/**
+ * iCloud did not answer about the note this time: the conflict stays
+ * recorded and counted, no version can be kept until it answers
+ * (SPEC_DEEP_AUDIT.md, Е5.12).
+ */
+unanswered: boolean }
 
 /**
  * Why a conflict was not listed or resolved (ВК12).
@@ -992,7 +998,12 @@ export type VaultConflictError = { kind: "no_vault" } |
 /**
  * `vault-conflicts-changed`: how many notes of the space are in conflict now.
  */
-export type VaultConflictsChanged = { count: number }
+export type VaultConflictsChanged = { count: number;
+/**
+ * Why the last check of the space failed, when it did: the conflicts it
+ * would have found are not counted (SPEC_DEEP_AUDIT.md, Н11, Е5.11).
+ */
+check_error: string | null }
 
 export type VaultOpenResult = { indexed: number; errors: number; sync_in_progress: boolean;
 /**

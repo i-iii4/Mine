@@ -118,16 +118,130 @@ pub fn open_vault_index(
     vault: VaultLayout,
 ) -> std::result::Result<(VaultLayout, Connection, usize), IndexSelectionError> {
     let selected = resolve_vault_index(vault)?;
-    match open_snapshot(&selected.index_db_path()) {
-        Ok((conn, count)) => Ok((selected, conn, count)),
+    let opened = match open_snapshot(&selected.index_db_path()) {
+        Ok((conn, count)) => (selected, conn, count),
         Err(error) if is_index_corruption(&error) => {
             let recovered = recover_vault_index_after_error(selected, &error)?;
             let path = recovered.index_db_path();
             let (conn, count) = open_snapshot(&path).map_err(|error| unavailable(&path, error))?;
-            Ok((recovered, conn, count))
+            (recovered, conn, count)
         }
-        Err(error) => Err(unavailable(&selected.index_db_path(), error)),
+        Err(error) => return Err(unavailable(&selected.index_db_path(), error)),
+    };
+    remove_retired_generations(&opened.0);
+    Ok(opened)
+}
+
+/// Byte of a WAL database's shared memory file on which every connection to
+/// the database holds a read lock for as long as it is open: SQLite's
+/// dead-man switch (`UNIX_SHM_DMS` in `os_unix.c`, after the 8 lock bytes
+/// that start at 120).
+const SQLITE_SHM_DMS_BYTE: libc::off_t = 128;
+
+/// Remove every index generation of the space but the current one, once the
+/// current one opened (SPEC_DEEP_AUDIT.md, Н14, Е5.14). A generation another
+/// process still uses stays: one that chooses or builds a database there
+/// holds its lock files, and one with a database open holds SQLite's lock on
+/// its shared memory file. Before 13.10.2026 every schema change left the
+/// previous generation behind for good, 150 MB for one space. A failure is
+/// logged and leaves the generation for the next opening.
+fn remove_retired_generations(vault: &VaultLayout) {
+    let indexes = vault.derived_root().join("indexes");
+    let Ok(entries) = std::fs::read_dir(&indexes) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if entry.file_name() == crate::domain::vault::INDEX_GENERATION || !path.is_dir() {
+            continue;
+        }
+        match generation_in_use(&path) {
+            Ok(true) => log::info!("index generation {} is in use; kept", path.display()),
+            Ok(false) => match std::fs::remove_dir_all(&path) {
+                Ok(()) => log::info!("removed retired index generation {}", path.display()),
+                Err(error) => log::warn!(
+                    "retired index generation {} stays: {error}",
+                    path.display()
+                ),
+            },
+            Err(error) => log::warn!(
+                "retired index generation {} stays, its use is unknown: {error:#}",
+                path.display()
+            ),
+        }
     }
+}
+
+/// Whether another process chooses, builds or has open a database of the
+/// generation at `directory`.
+fn generation_in_use(directory: &Path) -> Result<bool> {
+    for name in ["selection.lock", "build.lock"] {
+        let path = directory.join(name);
+        let file = match OpenOptions::new().read(true).write(true).open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error).with_context(|| format!("open {}", path.display())),
+        };
+        // Closing the file at the end of the turn releases the lock.
+        if file.try_lock_exclusive().is_err() {
+            return Ok(true);
+        }
+    }
+    for shm in shared_memory_files(directory)? {
+        if locked_by_another_process(&shm)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The shared memory files of the databases of a generation: its own and
+/// its recovery slots'.
+fn shared_memory_files(directory: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    let mut folders = vec![directory.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder)
+            .with_context(|| format!("list {}", folder.display()))?
+            .flatten()
+        {
+            let path = entry.path();
+            if path.is_dir() {
+                if folder == directory {
+                    folders.push(path);
+                }
+            } else if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with("-shm"))
+            {
+                files.push(path);
+            }
+        }
+    }
+    Ok(files)
+}
+
+/// Whether a process other than this one holds SQLite's open-database lock
+/// on the shared memory file at `path`. POSIX record locks are per process:
+/// this process's own locks are never reported.
+fn locked_by_another_process(path: &Path) -> Result<bool> {
+    use std::os::unix::io::AsRawFd;
+    let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    // SAFETY: `flock` is plain data; zero is a valid value of every field.
+    let mut probe: libc::flock = unsafe { std::mem::zeroed() };
+    probe.l_type = libc::F_WRLCK as libc::c_short;
+    probe.l_whence = libc::SEEK_SET as libc::c_short;
+    probe.l_start = SQLITE_SHM_DMS_BYTE;
+    probe.l_len = 1;
+    // SAFETY: the descriptor is open for the call, and `probe` is a valid
+    // `flock` the call fills in.
+    let answer = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETLK, &mut probe) };
+    if answer == -1 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("ask the locks of {}", path.display()));
+    }
+    Ok(probe.l_type != libc::F_UNLCK as libc::c_short)
 }
 
 fn open_snapshot(path: &Path) -> Result<(Connection, usize)> {
@@ -444,6 +558,57 @@ mod tests {
         let source = directory.join("source");
         std::fs::create_dir_all(&source).unwrap();
         VaultLayout::with_derived_root(source, directory.join("derived"))
+    }
+
+    /// A process of its own that keeps the database at `path` open, as an
+    /// older Mine still running on its generation would. SQLite holds a
+    /// lock on the database's shared memory file for as long as it is open.
+    fn hold_open_elsewhere(path: &Path) -> std::process::Child {
+        use std::io::{BufRead, Write as _};
+        let mut child = std::process::Command::new("/usr/bin/sqlite3")
+            .arg(path)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("the system sqlite3");
+        let stdin = child.stdin.as_mut().unwrap();
+        writeln!(stdin, "SELECT 'open' FROM blocks LIMIT 1; SELECT 'ready';").unwrap();
+        stdin.flush().unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(child.stdout.as_mut().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        assert_eq!(line.trim(), "ready");
+        child
+    }
+
+    /// Н14, Е5.14: an index generation other than the current one is
+    /// removed once the current one opens, unless another process still has
+    /// it open. Before 13.10.2026 every schema change left the previous
+    /// generation behind for good, 150 MB for one space.
+    #[test]
+    fn opening_the_current_generation_removes_older_ones_nobody_uses() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = fixture_vault(directory.path());
+        let indexes = vault.derived_root().join("indexes");
+        let retired = indexes.join("schema-6-semantics-1");
+        drop(open_or_create(&retired.join("index.db")).unwrap());
+        drop(open_or_create(&retired.join("recovery-1").join("index.db")).unwrap());
+        let in_use = indexes.join("schema-5-semantics-1");
+        drop(open_or_create(&in_use.join("index.db")).unwrap());
+        let mut holder = hold_open_elsewhere(&in_use.join("index.db"));
+
+        let (opened, _conn, _) = open_vault_index(vault.clone()).unwrap();
+
+        assert!(opened.index_db_path().starts_with(vault.index_generation_dir()));
+        assert!(!retired.exists(), "a generation nobody uses stayed");
+        assert!(in_use.join("index.db").exists(), "a generation in use was removed");
+        drop(holder.stdin.take());
+        holder.wait().unwrap();
+
+        open_vault_index(vault.clone()).unwrap();
+        assert!(!in_use.exists());
+        assert!(vault.index_generation_dir().join("index.db").exists());
     }
 
     #[test]

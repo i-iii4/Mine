@@ -1,7 +1,16 @@
 //! Auxiliary native file history for repairing external renames.
 //!
-//! The manifest lives in `.mine`, alongside the vault ID. SQLite may be
-//! discarded without changing how a current source link resolves.
+//! The history keys every file by its device, inode and creation time: what
+//! only this Mac knows of the file. It lives in this Mac's derived store of
+//! the space (`vaults/<vault-id>/file-identity.json`), never in the space:
+//! kept in `.mine` until 13.10.2026, it synced to another Mac, whose every
+//! file then looked new, and each pass there reread and reindexed the notes
+//! and wrote its own keys back, for this Mac to do the same in turn
+//! (SPEC_DEEP_AUDIT.md, Е5.7; SPEC_IDENTITY_ROBUSTNESS.md, «Источники и
+//! производные данные»: the history only proves a move on the Mac that saw
+//! it). A history an earlier Mine left in the space is taken over by path
+//! once. SQLite may be discarded without changing how a current source link
+//! resolves.
 
 use anyhow::{Context, Result};
 use fs2::FileExt;
@@ -87,21 +96,31 @@ impl Default for Manifest {
     }
 }
 
+/// This Mac's history of the space, in its derived store.
 fn manifest_path(vault: &VaultLayout) -> PathBuf {
+    vault.derived_root().join(MANIFEST_NAME)
+}
+
+/// Where an earlier Mine kept the history: in the space, synced to every Mac.
+fn space_manifest_path(vault: &VaultLayout) -> PathBuf {
     vault.mine_dir().join(MANIFEST_NAME)
 }
 
+/// This Mac's history as it is now, for tests.
+#[cfg(test)]
 fn read_manifest(vault: &VaultLayout) -> Result<Manifest> {
-    let path = manifest_path(vault);
-    let bytes = match std::fs::read(&path) {
+    read_manifest_at(&manifest_path(vault)).map(Option::unwrap_or_default)
+}
+
+/// The history at `path`; `None` when there is none.
+fn read_manifest_at(path: &Path) -> Result<Option<Manifest>> {
+    let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Manifest::default())
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
     };
     match serde_json::from_slice::<Manifest>(&bytes) {
-        Ok(manifest) if manifest.version == MANIFEST_VERSION => Ok(manifest),
+        Ok(manifest) if manifest.version == MANIFEST_VERSION => Ok(Some(manifest)),
         Ok(manifest) => anyhow::bail!(
             "unsupported file identity history version {} at {}; preserved",
             manifest.version,
@@ -159,10 +178,58 @@ fn cached_manifest(vault: &VaultLayout) -> Result<Arc<Manifest>> {
 }
 
 fn write_manifest(vault: &VaultLayout, manifest: &Manifest) -> Result<()> {
-    let path = manifest_path(vault);
-    files::validate_vault_write_target(vault, &path)?;
-    std::fs::create_dir_all(vault.mine_dir())?;
-    files::write_atomically(&path, &serde_json::to_vec_pretty(manifest)?)
+    std::fs::create_dir_all(vault.derived_root())?;
+    files::write_atomically(&manifest_path(vault), &serde_json::to_vec_pretty(manifest)?)
+}
+
+/// This Mac's history, or, when it has none yet, the one an earlier Mine
+/// left in the space, taken over by path: its keys may be another Mac's, so
+/// every file still where it says gets this Mac's key, size and time as they
+/// are now, and the rest of it goes. Nothing is new afterwards and nothing is
+/// reread. The space's copy stays where it is and is never written again.
+fn read_or_adopt_manifest(vault: &VaultLayout) -> Result<Manifest> {
+    if let Some(manifest) = read_manifest_at(&manifest_path(vault))? {
+        return Ok(manifest);
+    }
+    let space_path = space_manifest_path(vault);
+    if space_path == manifest_path(vault) {
+        return Ok(Manifest::default());
+    }
+    let Some(mut adopted) = read_manifest_at(&space_path)? else {
+        return Ok(Manifest::default());
+    };
+    let mut kept = BTreeSet::new();
+    adopted.files.retain_mut(|entry| {
+        let path = vault.root().join(&entry.path);
+        let (Ok(key), Ok(metadata)) = (key_for(&path), std::fs::metadata(&path)) else {
+            return false;
+        };
+        let Ok(mtime_ns) = metadata
+            .modified()
+            .map_err(anyhow::Error::from)
+            .and_then(|modified| Ok(modified.duration_since(std::time::UNIX_EPOCH)?.as_nanos()))
+        else {
+            return false;
+        };
+        entry.key = key;
+        entry.size = metadata.len();
+        entry.mtime_ns = mtime_ns;
+        kept.insert(entry.id.clone());
+        true
+    });
+    adopted
+        .bindings
+        .retain(|binding| kept.contains(&binding.source_id) && kept.contains(&binding.target_id));
+    adopted.unresolved.retain(|reference| kept.contains(&reference.source_id));
+    adopted.pending_source_ids.retain(|id| kept.contains(id));
+    adopted.pending_revisions.retain(|id, _| kept.contains(id));
+    write_manifest(vault, &adopted)?;
+    log::info!(
+        "took over the file identity history {} by path for {}",
+        space_path.display(),
+        vault.root().display()
+    );
+    Ok(adopted)
 }
 
 #[cfg(unix)]
@@ -232,18 +299,23 @@ fn new_id() -> Result<String> {
 
 /// Reconcile the source manifest, then update established Markdown links whose
 /// targets moved. An ambiguous first observation remains unbound.
+/// A history that cannot be read or written is said in the log, with its
+/// cause (SPEC_DEEP_AUDIT.md, Н11, Е5.8): reading the notes goes on without
+/// it, and only a move it would have proved is not seen.
 pub fn reconcile(vault: &VaultLayout) -> Result<IdentityRefresh> {
     reconcile_auxiliary(vault).or_else(|error| {
-        eprintln!("file identity history unavailable: {error:#}");
+        log::warn!(
+            "file identity history unavailable for {}: {error:#}",
+            vault.root().display()
+        );
         Ok(IdentityRefresh::default())
     })
 }
 
 fn reconcile_auxiliary(vault: &VaultLayout) -> Result<IdentityRefresh> {
     let _write = crate::storage::source_mutation::begin_write()?;
-    let lock_path = vault.mine_dir().join("file-identity.lock");
-    files::validate_vault_write_target(vault, &lock_path)?;
-    std::fs::create_dir_all(vault.mine_dir())?;
+    let lock_path = vault.derived_root().join("file-identity.lock");
+    std::fs::create_dir_all(vault.derived_root())?;
     let lock = OpenOptions::new()
         .create(true)
         .write(true)
@@ -293,7 +365,7 @@ fn enroll_capture(vault: &VaultLayout, required_markdown: &Path) -> Result<()> {
 }
 
 fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
-    let (mut manifest, persist_history) = match read_manifest(vault) {
+    let (mut manifest, persist_history) = match read_or_adopt_manifest(vault) {
         Ok(manifest) => (manifest, true),
         Err(error) if error.downcast_ref::<serde_json::Error>().is_some() => {
             // A malformed history cannot establish identity. Current unique
@@ -1225,6 +1297,97 @@ mod tests {
         let rewritten = std::fs::read_to_string(&source).unwrap();
         assert!(rewritten.contains("file: \"[[A/photo.jpg]]\""));
         assert!(rewritten.contains("![[B/photo.jpg]]"));
+    }
+
+    /// The history `vault` uses now, as JSON with every file key of another
+    /// Mac: the device and inode of the same files there differ.
+    fn history_of_another_mac(vault: &VaultLayout) -> Vec<u8> {
+        let mut theirs = read_manifest(vault).unwrap();
+        assert!(!theirs.files.is_empty());
+        for entry in &mut theirs.files {
+            entry.key.device = entry.key.device.wrapping_add(7);
+            entry.key.inode = entry.key.inode.wrapping_add(1_000_003);
+        }
+        serde_json::to_vec_pretty(&theirs).unwrap()
+    }
+
+    fn space_with_a_picture() -> (tempfile::TempDir, tempfile::TempDir, VaultLayout) {
+        let directory = tempfile::tempdir().unwrap();
+        let derived = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::with_derived_root(
+            directory.path().to_path_buf(),
+            derived.path().to_path_buf(),
+        );
+        std::fs::write(directory.path().join("Card.md"), "---\nfile: \"[[photo.jpg]]\"\n---\n![[photo.jpg]]").unwrap();
+        std::fs::write(directory.path().join("photo.jpg"), b"picture").unwrap();
+        std::fs::write(directory.path().join("Plain.md"), "Nothing linked.").unwrap();
+        (directory, derived, vault)
+    }
+
+    /// Е5.7: the history keys files by device and inode, which only this
+    /// Mac knows. Kept in the space, it synced to another Mac, whose every
+    /// file then looked new: each pass there reread and reindexed the notes
+    /// and wrote its own keys back, and this Mac did the same in turn.
+    #[test]
+    fn a_history_another_mac_wrote_into_the_space_changes_nothing_here() {
+        let (_directory, _derived, vault) = space_with_a_picture();
+        reconcile(&vault).unwrap();
+        let theirs = history_of_another_mac(&vault);
+        std::fs::create_dir_all(vault.mine_dir()).unwrap();
+        std::fs::write(vault.mine_dir().join(MANIFEST_NAME), &theirs).unwrap();
+
+        let refresh = reconcile(&vault).unwrap();
+
+        assert!(refresh.affected_markdown.is_empty(), "{:?}", refresh.affected_markdown);
+        assert!(refresh.moved_markdown.is_empty());
+        assert_eq!(std::fs::read(vault.mine_dir().join(MANIFEST_NAME)).unwrap(), theirs);
+    }
+
+    /// Е5.7: a history an earlier Mine left in the space, with the keys of
+    /// whichever Mac wrote it, is taken over by path once: the files are
+    /// where it says, so nothing is new and nothing is reread.
+    #[test]
+    fn a_history_left_in_the_space_is_taken_over_by_path() {
+        let (directory, _derived, vault) = space_with_a_picture();
+        let in_space = VaultLayout::new(directory.path().to_path_buf());
+        reconcile(&in_space).unwrap();
+        let theirs = history_of_another_mac(&in_space);
+        std::fs::write(in_space.mine_dir().join(MANIFEST_NAME), &theirs).unwrap();
+
+        let refresh = reconcile(&vault).unwrap();
+
+        assert!(refresh.affected_markdown.is_empty(), "{:?}", refresh.affected_markdown);
+        let ids = |manifest: &Manifest| -> Vec<(String, String)> {
+            let mut ids: Vec<_> = manifest
+                .files
+                .iter()
+                .map(|entry| (entry.path.clone(), entry.id.clone()))
+                .collect();
+            ids.sort();
+            ids
+        };
+        let adopted: Manifest = serde_json::from_slice(&theirs).unwrap();
+        assert_eq!(ids(&read_manifest(&vault).unwrap()), ids(&adopted));
+    }
+
+    /// Е5.8: a history that cannot be read is said in the log, with its
+    /// cause, not only on standard error.
+    #[test]
+    fn a_history_that_cannot_be_read_is_logged() {
+        let capture = crate::test_log::capture();
+        let (directory, derived, vault) = space_with_a_picture();
+        // A folder where the history goes, wherever it is kept.
+        std::fs::create_dir_all(directory.path().join(".mine").join(MANIFEST_NAME)).unwrap();
+        std::fs::create_dir_all(derived.path().join(MANIFEST_NAME)).unwrap();
+
+        let refresh = reconcile(&vault).unwrap();
+
+        assert!(refresh.moved_markdown.is_empty());
+        let warnings = capture.warnings();
+        assert!(
+            warnings.iter().any(|line| line.contains("file identity history")),
+            "{warnings:?}"
+        );
     }
 
     #[test]

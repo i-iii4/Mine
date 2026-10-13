@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use unicode_normalization::UnicodeNormalization;
 
-use crate::commands::blocks::{collect_used_media_for_block, media_users_on_disk};
+use crate::commands::blocks::{
+    bring_index_up_to_files, collect_used_media_for_block, files_canvases_show, media_users_on_disk,
+};
 use crate::commands::state::{chosen_space, AppState, CommandError, VaultState};
 use crate::commands::vault::{
     canonical_space_path, derived_store_root, initialize_new_space_layout, load_config,
@@ -397,12 +399,18 @@ fn orphan_request_files(
     Ok(request.file_names)
 }
 
-/// Orphan candidates that some note on disk uses after all: the index the
-/// list came from may lag behind a note saved a moment ago.
+/// Orphan candidates that some note on disk or a canvas uses after all: the
+/// index the list came from may lag behind a note saved a moment ago. The
+/// index is brought up to the files first and names the notes to read; no
+/// other note is read (SPEC_DEEP_AUDIT.md, Н5, Е5.5).
 fn used_on_disk(vault: &VaultLayout, file_names: &[String]) -> Result<BTreeSet<String>, CommandError> {
     let paths: Vec<std::path::PathBuf> =
         file_names.iter().map(|name| vault.root().join(name)).collect();
-    let users = media_users_on_disk(vault, &paths, &BTreeSet::new())?;
+    // The orphan worker reads through a read-only connection; bringing the
+    // index up to the files writes it.
+    let writer = crate::storage::db::open_or_create(&vault.index_db_path())?;
+    bring_index_up_to_files(&writer, vault)?;
+    let users = media_users_on_disk(&writer, vault, &paths, &BTreeSet::new())?;
     Ok(file_names
         .iter()
         .zip(&paths)
@@ -415,18 +423,19 @@ fn nfc(value: &str) -> String {
     value.nfc().collect()
 }
 
-/// One pass over every indexed block: the set of media file names any block
-/// references (frontmatter file/thumbnail and every link form of the body
-/// Obsidian reads, `collect_used_media_for_block`; SPEC_AUDIT_FIXES.md, Г1.1).
+/// One pass over every indexed block and every canvas: the set of media file
+/// names any block references (frontmatter file/thumbnail and every link form
+/// of the body Obsidian reads, `collect_used_media_for_block`;
+/// SPEC_AUDIT_FIXES.md, Г1.1) or any canvas shows (SPEC_DEEP_AUDIT.md, Е5.6).
 fn referenced_media_file_names(vs: &VaultState) -> Result<BTreeSet<String>, CommandError> {
     let blocks = index::list_blocks(&vs.conn).map_err(|e| CommandError::Internal(e.to_string()))?;
-    Ok(referenced_media_file_names_from_blocks(&vs.vault, blocks))
+    referenced_media_file_names_from_blocks(&vs.vault, blocks)
 }
 
 fn referenced_media_file_names_from_blocks(
     vault: &VaultLayout,
     blocks: Vec<index::IndexedBlock>,
-) -> BTreeSet<String> {
+) -> Result<BTreeSet<String>, CommandError> {
     let mut resolver = media_refs::MediaResolver::new(vault);
     let mut referenced: BTreeSet<String> = BTreeSet::new();
     for block in blocks {
@@ -434,7 +443,12 @@ fn referenced_media_file_names_from_blocks(
             referenced.insert(nfc(&media.file_name));
         }
     }
-    referenced
+    for shown in files_canvases_show(vault)? {
+        if let Some(name) = shown.file_name().and_then(|name| name.to_str()) {
+            referenced.insert(nfc(name));
+        }
+    }
+    Ok(referenced)
 }
 
 fn is_media_ext(ext: &str) -> bool {
@@ -545,7 +559,7 @@ pub async fn list_orphan_media(
         })?;
         let orphans = scan_orphans_with_referenced(
             &vault,
-            referenced_media_file_names_from_blocks(&vault, blocks),
+            referenced_media_file_names_from_blocks(&vault, blocks)?,
         )?;
         Ok(OrphanMediaList { vault_id, orphans })
     })
@@ -618,8 +632,10 @@ pub(crate) fn promote_orphan_media_inner(
     vs: &VaultState,
     file_names: Vec<String>,
 ) -> Result<PromoteOrphanResult, CommandError> {
-    let referenced = referenced_media_file_names(vs)?;
+    // The index first comes up to the files (`used_on_disk`); the names in
+    // use are read from it after.
     let used = used_on_disk(&vs.vault, &file_names)?;
+    let referenced = referenced_media_file_names(vs)?;
     let write_vault = files::layout_for_new_files(&vs.vault)?;
     let mut created = Vec::new();
     let mut skipped = Vec::new();
@@ -755,8 +771,8 @@ fn delete_orphan_media_with(
     file_names: Vec<String>,
     trash_batch: impl FnOnce(&[std::path::PathBuf]) -> anyhow::Result<()>,
 ) -> Result<DeleteOrphanResult, CommandError> {
-    let referenced = referenced_media_file_names(vs)?;
     let used = used_on_disk(&vs.vault, &file_names)?;
+    let referenced = referenced_media_file_names(vs)?;
     let mut deleted = Vec::new();
     let mut skipped = Vec::new();
     let mut paths = Vec::new();
@@ -1338,6 +1354,67 @@ mod tests {
             std::fs::read(root.path().join("Media/фото.jpg")).unwrap(),
             b"fake-bytes"
         );
+    }
+
+    /// Н5, Е5.5: deleting and promoting orphans reads only the notes the
+    /// index names as maybe using the files, never an evicted note that names
+    /// none of them.
+    #[test]
+    fn orphan_actions_read_only_the_candidates() {
+        let (_root, _derived, vs) = make_vault();
+        write_media(&vs, "lonely.jpg");
+        write_media(&vs, "single.jpg");
+        for index in 0..5 {
+            index_markdown(
+                &vs,
+                &format!("Unrelated {index}"),
+                "---\nsaved_at: 2026-01-01T00:00:00Z\n---\nPlain text.\n",
+            );
+        }
+        index_markdown(
+            &vs,
+            "Evicted",
+            "---\nsaved_at: 2026-01-01T00:00:00Z\n---\nNothing about any file.\n",
+        );
+        crate::storage::reconcile::reconcile_vault(&vs.conn, &vs.vault).unwrap();
+        let evicted = vs.vault.block_path("Evicted");
+        crate::storage::cloud_files::test_seam::mark_offloaded(&evicted);
+        files::take_note_reads();
+
+        let deleted = delete_orphan_media_inner(&vs, vec!["lonely.jpg".into()]).expect("delete");
+        let promoted = promote_orphan_media_inner(&vs, vec!["single.jpg".into()]).expect("promote");
+
+        assert_eq!(deleted.deleted, vec!["lonely.jpg".to_string()]);
+        assert_eq!(promoted.created.len(), 1);
+        assert_eq!(crate::storage::cloud_files::test_seam::reads_of(&evicted), 0);
+        assert!(files::take_note_reads().is_empty());
+    }
+
+    /// Е5.6: a file an Obsidian canvas shows is in use: it is no orphan, and
+    /// a request to delete it is skipped.
+    #[test]
+    fn a_file_a_canvas_shows_is_no_orphan() {
+        let (root, _derived, vs) = make_vault();
+        std::fs::create_dir_all(root.path().join("Media")).unwrap();
+        write_media(&vs, "Media/shown.png");
+        write_media(&vs, "Media/lonely.png");
+        std::fs::write(
+            root.path().join("Board.canvas"),
+            r#"{"nodes":[{"id":"a","type":"file","file":"Media/shown.png"}]}"#,
+        )
+        .unwrap();
+
+        let names: Vec<String> = scan_orphans(&vs)
+            .expect("scan")
+            .into_iter()
+            .map(|orphan| orphan.file_name)
+            .collect();
+        assert_eq!(names, ["Media/lonely.png"]);
+
+        let result = delete_orphan_media_inner(&vs, vec!["Media/shown.png".into()]).expect("delete");
+        assert!(result.deleted.is_empty());
+        assert_eq!(result.skipped, ["Media/shown.png"]);
+        assert!(root.path().join("Media/shown.png").exists());
     }
 
     #[test]

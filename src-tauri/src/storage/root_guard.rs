@@ -76,7 +76,7 @@ pub fn root_gone(vault: &VaultLayout) -> bool {
     if expected_space_id(vault).is_some()
         && [vault.vault_id_path(), vault.legacy_vault_id_path()]
             .iter()
-            .any(|path| crate::storage::media_dimensions::is_content_offloaded(path))
+            .any(|path| crate::storage::cloud_files::is_content_offloaded(path))
     {
         return false;
     }
@@ -121,18 +121,18 @@ mod tests {
     #[test]
     fn a_space_whose_identity_is_only_in_icloud_is_not_gone() {
         let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().join("Mobile Documents").join("NSFV");
+        let root = tmp.path().join("NSFV");
         std::fs::create_dir_all(root.join(".mine")).unwrap();
-        std::fs::File::create(root.join(".mine/vault-id"))
-            .unwrap()
-            .set_len(32)
-            .unwrap();
+        let identity = root.join(".mine/vault-id");
+        std::fs::File::create(&identity).unwrap().set_len(32).unwrap();
+        // Its contents are in iCloud (`SF_DATALESS`, set only by the kernel).
+        crate::storage::cloud_files::test_seam::mark_offloaded(&identity);
         let vault = VaultLayout::with_derived_root(
             root.clone(),
             tmp.path().join("vaults").join("e7fc8f8bf1294aaa89f375ac9cfaf1b4"),
         );
         assert!(!root_gone(&vault));
-        std::fs::rename(&root, tmp.path().join("Mobile Documents").join("NSFV!")).unwrap();
+        std::fs::rename(&root, tmp.path().join("NSFV!")).unwrap();
         assert!(root_gone(&vault));
     }
 

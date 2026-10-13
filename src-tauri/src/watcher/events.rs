@@ -70,7 +70,7 @@ pub fn classify_notify_event(event: &notify::Event, vault: &VaultLayout) -> Vec<
     }
 
     for path in &event.paths {
-        if !is_in_vault(path, vault.root()) {
+        if !is_in_vault(path, vault.root()) || no_note_can_name(path) {
             continue;
         }
 
@@ -96,6 +96,25 @@ pub fn classify_notify_event(event: &notify::Event, vault: &VaultLayout) -> Vec<
 }
 
 // ─── Private helpers ────────────────────────────────────────────────────────
+
+/// Whether the file at `path` is one no note can name, so its change is
+/// neither a note's nor a media file's (SPEC_DEEP_AUDIT.md, Е5.4): a hidden
+/// file (Finder's `.DS_Store`, an iCloud placeholder `.x.icloud`), a temp file
+/// Mine writes next to a file before it takes its place, and a note
+/// extension in other letters (`.MD`), which neither Mine nor Obsidian reads
+/// as a note. Each of them used to run a full reconciliation of the space
+/// as a media change.
+fn no_note_can_name(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let extension = path.extension().and_then(|extension| extension.to_str());
+    let note = extension == Some("md");
+    let other_case_note =
+        extension.is_some_and(|extension| !note && extension.eq_ignore_ascii_case("md"));
+    // A hidden `.md` is still a note to the scan (`files::scan_md_files`).
+    (name.starts_with('.') && !note) || files::is_mine_temp_file_name(name) || other_case_note
+}
 
 /// Check that a path is inside the vault and outside ignored service dirs.
 fn is_in_vault(path: &Path, root: &Path) -> bool {
@@ -143,6 +162,32 @@ mod tests {
             kind,
             paths,
             attrs: Default::default(),
+        }
+    }
+
+    /// Е5.4: files no note can name raise no event: each of them used to run
+    /// a full reconciliation of the space as a media change. Finder's
+    /// `.DS_Store`, another hidden file, Mine's own temp file next to a note
+    /// it writes, and a `.MD` file, which neither Mine nor Obsidian reads as
+    /// a note.
+    #[test]
+    fn files_no_note_names_raise_no_event() {
+        for path in [
+            "/vault/.DS_Store",
+            "/vault/Cards/.DS_Store",
+            "/vault/Media/.photo.jpg.icloud",
+            "/vault/Cards/Note.md.tmp.4242.1760350000000000000.0",
+            "/vault/Media/photo.jpg.tmp.4242.1760350000000000000.7",
+            "/vault/Cards/Old Notes.MD",
+        ] {
+            for kind in [
+                EventKind::Create(CreateKind::File),
+                EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+                EventKind::Remove(RemoveKind::File),
+            ] {
+                let event = make_event(kind, vec![PathBuf::from(path)]);
+                assert!(classify_notify_event(&event, &vault()).is_empty(), "{path} {kind:?}");
+            }
         }
     }
 

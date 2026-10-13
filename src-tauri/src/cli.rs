@@ -933,9 +933,10 @@ fn cmd_card_delete(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     };
     let vault = resolve_space(env, flags.space.as_deref())?;
     let conn = open_index_rw(&vault)?;
-    let plan = crate::commands::blocks::build_delete_block_plan(&conn, &vault, slug)
-        .map_err(|e| CliError::not_found(format!("delete plan: {e:?}")))?;
     if flags.dry_run {
+        // The deletion builds its own plan: only a dry run needs one here.
+        let plan = crate::commands::blocks::build_delete_block_plan(&conn, &vault, slug)
+            .map_err(|e| CliError::not_found(format!("delete plan: {e:?}")))?;
         let unused: Vec<_> = plan
             .unused_media
             .iter()
@@ -978,6 +979,9 @@ fn cmd_card_delete(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     // backup records that the deletion left no file, and restore puts the
     // text back only while none took its place (SPEC_DEEP_AUDIT.md, Е1.9).
     cli_mutations::checked_slug(slug)?;
+    if !vault.block_path(slug).is_file() {
+        return Err(CliError::not_found(format!("no card {slug}")));
+    }
     let content = std::fs::read_to_string(vault.block_path(slug))
         .map_err(|error| CliError::internal(format!("read {slug} for its backup: {error}")))?;
     let backup = cli_mutations::CliBackup::record(&vault, slug, &content, &cli_mutations::Left::Absent)?;

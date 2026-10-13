@@ -146,6 +146,7 @@ const CONFLICTS: VaultConflict[] = [
     detected_at: "2026-10-11T09:00:00Z",
     current: { token: null, modified: "2026-10-10T15:00:00Z", device: null },
     versions: [{ token: "popup-a", modified: "2026-10-10T12:54:13Z", device: "Anna’s MacBook Pro" }],
+    unanswered: false,
   },
   {
     path: CONFLICT_BEING_KEPT,
@@ -156,6 +157,7 @@ const CONFLICTS: VaultConflict[] = [
       { token: "popup-b", modified: "2025-12-31T14:01:00Z", device: "MacBook Pro" },
       { token: "popup-c", modified: "2025-12-30T08:20:00Z", device: null },
     ],
+    unanswered: false,
   },
   {
     path: CONFLICT_REFUSED,
@@ -163,6 +165,7 @@ const CONFLICTS: VaultConflict[] = [
     detected_at: "2026-10-09T08:00:00Z",
     current: { token: null, modified: "2026-02-20T15:00:00Z", device: null },
     versions: [{ token: "popup-d", modified: "2026-02-20T09:54:18Z", device: "iPhone" }],
+    unanswered: false,
   },
 ];
 

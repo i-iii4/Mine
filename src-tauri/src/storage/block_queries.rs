@@ -345,20 +345,6 @@ pub fn list_preview_blocks(conn: &Connection, limit: usize) -> Result<Vec<Previe
     Ok(previews)
 }
 
-/// Slugs of the blocks whose primary media is this file name.
-///
-/// The watcher sees a media file land and has to reach the card that shows
-/// it. In a flat vault the two share a slug, so the path alone was enough;
-/// once a vault is laid out in folders they do not (`Media/x` against
-/// `Cards/x`), and the owner has to be looked up by the indexed file name
-/// instead of guessed from the path.
-pub fn list_slugs_by_media_file(conn: &Connection, media_file: &str) -> Result<Vec<String>> {
-    let mut stmt =
-        conn.prepare("SELECT slug FROM blocks WHERE media_file = ?1 AND slug != '' ORDER BY slug")?;
-    let rows = stmt.query_map([media_file], |row| row.get::<_, String>(0))?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
-}
-
 /// What one indexed note says about files: its frontmatter file and
 /// thumbnail as the index holds them, and the body the references are read
 /// from.
@@ -400,6 +386,59 @@ pub fn list_note_file_mentions(
         }
     }
     Ok(notes)
+}
+
+/// What one indexed note says that may link to another note: its body, its
+/// `Mine Related Notes`, its collections and its file and thumbnail, as the
+/// index holds them, joined in one text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteLinkText {
+    pub slug: String,
+    pub text: String,
+}
+
+/// Every indexed note with the text its links can stand in
+/// ([`NoteLinkText`]). A rename or a merge takes from it the notes that may
+/// link to the notes it moves, and reads only those (SPEC_DEEP_AUDIT.md, Н5).
+pub fn list_note_link_texts(conn: &Connection) -> Result<Vec<NoteLinkText>> {
+    let mut stmt = conn.prepare(
+        "SELECT b.slug,
+                COALESCE(b.body, '') || char(10) || COALESCE(b.related_notes, '') || char(10)
+                || COALESCE(b.media_file, '') || char(10) || COALESCE(b.thumbnail, '') || char(10)
+                || COALESCE((SELECT group_concat(t.tag, char(10)) FROM block_tags t WHERE t.block_id = b.id), '')
+         FROM blocks b
+         WHERE b.slug != '' ORDER BY b.slug",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(NoteLinkText {
+            slug: row.get(0)?,
+            text: row.get(1)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+/// The slugs of the collection pages the last reconciliation saw. The index
+/// does not hold their text, so an action that reads the notes that may name
+/// something reads every collection page as well (SPEC_DEEP_AUDIT.md, Н5).
+pub fn list_collection_page_slugs(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT slug FROM source_index_state WHERE source_kind = 'channel' ORDER BY slug",
+    )?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+/// Every indexed card with a media file, as the index holds it: the path
+/// from the space root when the file was found, the reference as written
+/// when it was not (yet).
+pub fn list_media_files(conn: &Connection) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT slug, media_file FROM blocks
+         WHERE slug != '' AND media_file IS NOT NULL AND media_file != '' ORDER BY slug",
+    )?;
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
 /// Return the newest previewable blocks per collection, members only

@@ -331,9 +331,11 @@ Graph View не содержит собственного поиска, scope sw
 
 **Определение сироты**: файл верхнего уровня vault с медиа-расширением
 (канон `preview_plan`: image + video; `.md` и служебные файлы исключены), на
-который не ссылается ни один блок ни одним способом учёта媒иа — frontmatter
-`file`/`thumbnail` и inline-ссылки тела (wikilinks/markdown) через тот же
-`MediaResolver`, что использует delete-план (`collect_delete_media_for_block`).
+который не ссылается ни один блок ни одним способом учёта медиа (frontmatter
+`file`/`thumbnail` и inline-ссылки тела, wikilinks и markdown, через тот же
+`MediaResolver`, что использует delete-план, `collect_delete_media_for_block`)
+и который не показывает ни один холст Obsidian (`.canvas`, файловый узел, фон
+группы или ссылка в тексте узла; SPEC_DEEP_AUDIT.md, Е5.6).
 
 Команда `list_orphan_media(vault_id) -> OrphanMediaList { vault_id, orphans:
 Vec<OrphanMedia { file_name, size_bytes, modified_at }> }`: один проход по
@@ -345,8 +347,12 @@ Vec<OrphanMedia { file_name, size_bytes, modified_at }> }`: один прохо�
 read-only SQLite-соединением. Общий `vault_state` mutex нужен только для
 снимка выбранного VaultLayout и не удерживается во время сканирования/Trash.
 Запрос привязан к пространству, выбранному в разделе (`vault_id`).
-Перед удалением worker заново
-собирает referenced-set и проверяет пути; повторные имена исключаются.
+Перед удалением и превращением в элементы worker приводит индекс к файлам,
+сверяет запрошенные файлы с заметками-кандидатами на диске и холстами
+(`media_users_on_disk`: с диска читаются только заметки, которые индекс
+называет как возможно использующие файл, и страницы коллекций;
+SPEC_DEEP_AUDIT.md, Н5, Е5.5), заново собирает referenced-set и проверяет
+пути; повторные имена исключаются.
 Проверка ссылок является снимком перед операцией, не транзакцией с внешними
 редакторами Markdown.
 

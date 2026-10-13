@@ -1047,65 +1047,47 @@ impl FileId {
 /// read: the file `read` names, holding `expected` (`SPEC_AUDIT_FIXES.md`,
 /// Ф2, В1.2), and say where the Trash put it.
 ///
-/// A comparison at the path proves nothing about the moment the Trash takes
-/// the file: an editor that saves by replacing the file (iCloud, safe-save
-/// editors, git) puts a new file there, and the Trash takes whatever stands
-/// at the path when it moves. So the file first leaves the path in one step,
-/// for a folder of its own next to it where no editor writes, and is checked
-/// there. A file that is not the one read goes back and the operation
-/// refuses; the one read goes to the Trash under its own name.
+/// The Trash takes the file from its own place, so Finder's Put Back has a
+/// place to return it to (SPEC_DEEP_AUDIT.md, Е5.9). Until 13.10.2026 the
+/// file first left for a hidden folder beside it and was trashed from there:
+/// Put Back pointed at that folder, gone a moment later. A comparison at the
+/// path proves nothing about the moment the Trash takes the file: an editor
+/// that saves by replacing the file (iCloud, safe-save editors, git) puts a
+/// new file there, and the Trash takes whatever stands at the path. So the
+/// file the Trash took is compared with the bytes read; another one goes
+/// back to the path and the operation refuses.
 ///
 /// The file has one name when the Trash is asked to take it, and the Trash
-/// must have taken that name: the iCloud Trash took a second name of a page
-/// and left the page in the holder, out of sight (SPEC_DEEP_AUDIT.md, Е1.11).
-/// A file the Trash left goes back to its path and the operation refuses.
+/// must have taken it: the iCloud Trash once took a second name of a page and
+/// left the page (SPEC_DEEP_AUDIT.md, Е1.11). A file the Trash left where it
+/// was refuses the operation.
 fn trash_if_unchanged(path: &Path, read: FileId, expected: &[u8]) -> Result<files::TrashedTo> {
-    let name = path
-        .file_name()
-        .with_context(|| format!("delete source has no file name: {}", path.display()))?;
-    let holder = files::aside_path(path, "checked-delete");
-    std::fs::create_dir(&holder).with_context(|| format!("create {}", holder.display()))?;
-    let aside = holder.join(name);
-    if let Err(error) = std::fs::rename(path, &aside) {
-        remove_holder(&holder);
-        if error.kind() == std::io::ErrorKind::NotFound {
+    let found = match std::fs::symlink_metadata(path) {
+        Ok(found) => FileId::of(&found),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Err(files::SourceChanged {
                 path: path.to_path_buf(),
                 preserved: None,
             }
             .into());
         }
-        return Err(error).with_context(|| format!("move aside {}", path.display()));
-    }
-    let still_read = FileId::at(&aside).is_ok_and(|found| found == read)
-        && std::fs::read(&aside).is_ok_and(|bytes| bytes == expected);
-    if !still_read {
-        let preserved = put_back(path, &holder, &aside);
+        Err(error) => return Err(error).with_context(|| format!("stat {}", path.display())),
+    };
+    if found != read || !std::fs::read(path).is_ok_and(|bytes| bytes == expected) {
         return Err(files::SourceChanged {
             path: path.to_path_buf(),
-            preserved,
+            preserved: None,
         }
         .into());
     }
-    let trashed = match files::trash_user_file(&aside) {
-        Ok(trashed) => trashed,
-        Err(error) => {
-            // Nothing reached the Trash: the file returns to its path.
-            return Err(match put_back(path, &holder, &aside) {
-                None => error,
-                Some(kept) => error.context(format!("the file is kept at {}", kept.display())),
-            })
-            .with_context(|| format!("delete {}", path.display()));
-        }
-    };
-    if std::fs::symlink_metadata(&aside).is_ok() {
+    let trashed = files::trash_user_file(path).with_context(|| format!("delete {}", path.display()))?;
+    if FileId::at(path).is_ok_and(|now| now == read) {
         return Err(NotTrashed {
             path: path.to_path_buf(),
-            kept: put_back(path, &holder, &aside),
+            kept: None,
         }
         .into());
     }
-    remove_holder(&holder);
     ensure_trashed_unchanged(path, &trashed, expected)?;
     Ok(trashed)
 }
@@ -1146,25 +1128,6 @@ fn kept_note(kept: &Option<PathBuf>) -> String {
         || "; the file stays where it was".to_string(),
         |kept| format!("; the file is kept at {}", kept.display()),
     )
-}
-
-/// Return a file moved aside to its path, unless a new file stands there
-/// now; then it stays aside and its place is returned.
-fn put_back(path: &Path, holder: &Path, aside: &Path) -> Option<PathBuf> {
-    match files::rename_exclusive(aside, path) {
-        Ok(()) => {
-            remove_holder(holder);
-            None
-        }
-        Err(_) => Some(aside.to_path_buf()),
-    }
-}
-
-/// Remove the emptied folder a checked delete set its file aside in.
-fn remove_holder(holder: &Path) {
-    if let Err(error) = std::fs::remove_dir(holder) {
-        log::warn!("checked delete left {}: {error}", holder.display());
-    }
 }
 
 /// After a checked delete: an edit written into the file in place while it
@@ -1709,6 +1672,29 @@ mod tests {
 
         assert!(!path.exists());
         assert!(hidden_leftovers(dir.path()).is_empty(), "{:?}", hidden_leftovers(dir.path()));
+        assert!(trash_holds(&page));
+    }
+
+    /// Е5.9: a checked delete asks the Trash for the file at its own place.
+    /// Finder's Put Back returns a file to where the Trash took it from;
+    /// until 13.10.2026 that was a hidden folder beside the note, gone a
+    /// moment later.
+    #[test]
+    fn a_checked_delete_trashes_the_file_from_its_own_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Put back.md");
+        let page = unique_bytes("put back");
+        std::fs::write(&path, &page).unwrap();
+        let staged = StagedSourceMutation::stage(vec![SourceFileWrite::delete_if_unchanged(
+            path.clone(),
+            page.clone(),
+        )])
+        .unwrap();
+        files::test_trash::hooks::take_asked();
+
+        staged.commit().unwrap().finalize();
+
+        assert_eq!(files::test_trash::hooks::take_asked(), vec![path]);
         assert!(trash_holds(&page));
     }
 

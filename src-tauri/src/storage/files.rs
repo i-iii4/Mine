@@ -706,6 +706,25 @@ pub(crate) fn prepare_replacement_temp_file(
     })
 }
 
+/// The infix of the temp file Mine writes next to a file before it takes the
+/// file's place: `<name>.tmp.<process>.<time>.<n>` ([`prepare_temp_file`]).
+const TEMP_FILE_INFIX: &str = ".tmp.";
+
+/// Whether `name` is a temp file Mine writes next to a file before it takes
+/// that file's place ([`prepare_temp_file`]): the watcher ignores such a
+/// file (SPEC_DEEP_AUDIT.md, Е5.4).
+pub fn is_mine_temp_file_name(name: &str) -> bool {
+    let Some(at) = name.rfind(TEMP_FILE_INFIX) else {
+        return false;
+    };
+    let parts: Vec<&str> = name[at + TEMP_FILE_INFIX.len()..].split('.').collect();
+    at > 0
+        && parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
 pub(crate) fn prepare_temp_file(
     path: &Path,
     writer: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
@@ -727,7 +746,7 @@ pub(crate) fn prepare_temp_file(
         .unwrap_or_default()
         .as_nanos();
     let tmp = path.with_file_name(format!(
-        "{file_name}.tmp.{}.{}.{}",
+        "{file_name}{TEMP_FILE_INFIX}{}.{}.{}",
         std::process::id(),
         nonce,
         TMP_SEQ.fetch_add(1, Ordering::Relaxed)
@@ -919,6 +938,8 @@ pub fn read_block_file(vault: &VaultLayout, path: &Path) -> Result<(String, Stri
         .with_context(|| format!("invalid vault-relative file path: {}", path.display()))?;
     #[cfg(test)]
     NOTE_READS.with(|reads| reads.borrow_mut().push(path.to_path_buf()));
+    #[cfg(debug_assertions)]
+    crate::storage::cloud_files::test_seam::note_read(path);
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read file: {}", path.display()))?;
 
@@ -1230,6 +1251,7 @@ pub(crate) mod test_trash {
 
     /// Move the file at `path` to the test Trash and return where it went.
     pub(super) fn move_one(path: &Path) -> Result<PathBuf> {
+        hooks::record_asked(path);
         std::fs::symlink_metadata(path)
             .with_context(|| format!("failed to move {} to the test trash", path.display()))?;
         let taken = name_the_trash_takes(path);
@@ -1276,6 +1298,17 @@ pub(crate) mod test_trash {
         thread_local! {
             static LEAVE_IN_PLACE: Cell<bool> = const { Cell::new(false) };
             static AFTER_MOVE: RefCell<Option<Hook>> = const { RefCell::new(None) };
+            static ASKED: RefCell<Vec<std::path::PathBuf>> = const { RefCell::new(Vec::new()) };
+        }
+
+        /// The paths the Trash was asked to take on this thread since the
+        /// last call: where Finder's Put Back brings each file back to.
+        pub(crate) fn take_asked() -> Vec<std::path::PathBuf> {
+            ASKED.with(|asked| std::mem::take(&mut *asked.borrow_mut()))
+        }
+
+        pub(super) fn record_asked(path: &Path) {
+            ASKED.with(|asked| asked.borrow_mut().push(path.to_path_buf()));
         }
 
         /// The next file the Trash is asked to take stays where it is, and
@@ -1442,8 +1475,10 @@ pub fn persist_new_block(
     // best effort and never rolls back the user-owned block/media files.
     if let Some(canonical) = canonical_source.as_ref() {
         let ext = canonical.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if is_image_ext(ext) {
-            let media_dest = vault.media_path(&block.slug, ext);
+        let media_dest = vault.media_path(&block.slug, ext);
+        // The rule of the preview cascade: a picture by the one list whose
+        // contents the bundled decoder reads (SPEC_DEEP_AUDIT.md, Е5.16).
+        if thumbnails::is_image_ext(&ext.to_lowercase()) && thumbnails::is_rust_decodable(&media_dest) {
             let thumb_dest = vault.thumb_path(&block.slug);
             let _ = thumbnails::generate_thumbnail(
                 &media_dest,
@@ -1515,18 +1550,6 @@ fn commit_new_block_source(
         index::upsert_block(index_conn, block, Some(vault.root())).map(|_| ())
     })?;
     Ok(())
-}
-
-/// Image extensions the bundled `image` crate can decode for thumbnail
-/// generation. Intentionally narrower than `preview_plan::is_image_ext` (which
-/// classifies feed media broadly): AVIF/HEIC are excluded here because the
-/// decoder cannot read them, so attempting a thumbnail would only fail. Kept
-/// separate from `media_dimensions` for the same decoder-capability reason.
-fn is_image_ext(ext: &str) -> bool {
-    matches!(
-        ext.to_lowercase().as_str(),
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif"
-    )
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

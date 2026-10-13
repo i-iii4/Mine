@@ -6,6 +6,7 @@ pub mod card_associations;
 pub mod channel_index;
 pub mod clipper_connection;
 pub mod clipper_uploads;
+pub mod cloud_files;
 pub mod cloud_waits;
 pub mod cold_space_audit;
 pub mod db;

@@ -40,7 +40,7 @@ pub use crate::storage::block_queries::{
     count_grid_blocks, get_all_tags, get_block, get_block_indexed_at_map,
     get_pending_thumb_upgrade_block, list_blocks, list_blocks_by_tag, list_blocks_light,
     list_grid_blocks, list_pending_thumb_upgrade_blocks, list_preview_blocks,
-    list_preview_blocks_by_tag, list_slugs_by_media_file, search_blocks,
+    list_preview_blocks_by_tag, search_blocks,
 };
 #[cfg(test)]
 pub(crate) use crate::storage::block_queries::{get_tags_for_block, list_grid_blocks_with_query};
@@ -1181,7 +1181,7 @@ fn feed_autoplay_profile_for_source(
             // fetches everything. The card shows its poster, which is local, and
             // the file is fetched only when the user asks for it.
             // See SPEC_CLOUD_STORAGE.md Х7.
-            if crate::storage::media_dimensions::is_content_offloaded(&root.join(source_path)) {
+            if crate::storage::cloud_files::is_content_offloaded(&root.join(source_path)) {
                 return None;
             }
             // A missing (evicted) source cannot be played back, so drop the
@@ -5785,9 +5785,7 @@ mod tests {
     #[test]
     fn video_whose_contents_are_in_icloud_never_autoplays() {
         let dir = tempfile::tempdir().unwrap();
-        // An evicted file only exists inside the iCloud container, and the
-        // vault has to be there too for the situation to be real.
-        let root = dir.path().join("Mobile Documents/com~apple~CloudDocs/Mine");
+        let root = dir.path().join("Mine");
         std::fs::create_dir_all(&root).unwrap();
         let clip = root.join("clip.mp4");
         std::fs::write(&clip, vec![0u8; 1024]).unwrap();
@@ -5802,13 +5800,10 @@ mod tests {
             Some(FeedPlaybackProfile::Standard)
         );
 
-        // A sparse file has an evicted file's signature: full logical size, no
-        // allocated blocks. iCloud has no partial materialization, so a
-        // <video src> would pull the whole clip down just to scroll past it.
-        std::fs::remove_file(&clip).unwrap();
-        let file = std::fs::File::create(&clip).unwrap();
-        file.set_len(8 * 1024 * 1024).unwrap();
-        drop(file);
+        // iCloud takes the contents away (`SF_DATALESS`, which only the kernel
+        // sets). iCloud has no partial materialization, so a <video src>
+        // would pull the whole clip down just to scroll past it.
+        crate::storage::cloud_files::test_seam::mark_offloaded(&clip);
 
         assert_eq!(
             feed_autoplay_profile_for_source(
@@ -5821,17 +5816,18 @@ mod tests {
         );
     }
 
+    /// Е5.2: a sparse file has the old signature of an evicted one (its full
+    /// size, no blocks) and is a local file.
     #[test]
-    fn a_sparse_file_outside_icloud_is_not_treated_as_offloaded() {
+    fn a_sparse_file_is_not_treated_as_offloaded() {
         let dir = tempfile::tempdir().unwrap();
         let clip = dir.path().join("big.mp4");
         let file = std::fs::File::create(&clip).unwrap();
         file.set_len(200 * 1024 * 1024).unwrap();
         drop(file);
 
-        // Same on-disk signature as an evicted file, but nothing here is
-        // managed by iCloud — treating it as offloaded would silently remove
-        // autoplay from ordinary local video.
+        // Treating it as offloaded would silently remove autoplay from
+        // ordinary local video.
         assert_eq!(
             feed_autoplay_profile_for_source(
                 Some(dir.path()),

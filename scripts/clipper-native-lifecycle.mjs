@@ -10,6 +10,7 @@ import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { renderCapturedCard } from './clipper-card-render.mjs';
+import { disposableAppHome } from './disposable-app-home.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const options = new Map();
@@ -38,8 +39,11 @@ await mkdir(join(source, '.mine'), { recursive: true });
 const vaultId = `clipper-lifecycle-${randomUUID()}`;
 await writeFile(join(source, '.mine/vault-id'), `${vaultId}\n`, { flag: 'wx' });
 const bindingId = digest(source);
-assert.ok(process.env.HOME, 'The production helper requires the existing HOME');
-const appState = join(process.env.HOME, 'Library/Application Support/com.mine.app');
+// The helper writes its derived store and journals under $HOME: a home of
+// its own in the run folder keeps them out of the person's app data (Е5.17).
+const helperHome = disposableAppHome(run);
+await mkdir(helperHome.home, { recursive: true });
+const appState = helperHome.appState;
 const fixtureDerived = join(appState, 'vaults', vaultId);
 const fixtureJournal = join(appState, 'vaults/operations/v1', bindingId);
 await Promise.all([fixtureDerived, fixtureJournal].map(path => assert.rejects(access(path), { code: 'ENOENT' }, `Refuse an existing fixture namespace: ${path}`)));
@@ -47,7 +51,7 @@ const log = join(run, 'native-wire.jsonl');
 const fault = join(run, 'response-loss');
 const launcher = join(profile, 'native-launcher');
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
-await writeFile(launcher, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(join(root, 'scripts/clipper-native-relay.mjs'))} ${quote(host)} ${quote(source)} ${quote(log)} ${quote(fault)} "$@"\n`, { flag: 'wx' });
+await writeFile(launcher, `#!/bin/sh\nexport HOME=${quote(helperHome.home)}\nexec ${quote(process.execPath)} ${quote(join(root, 'scripts/clipper-native-relay.mjs'))} ${quote(host)} ${quote(source)} ${quote(log)} ${quote(fault)} "$@"\n`, { flag: 'wx' });
 await chmod(launcher, 0o700);
 await mkdir(join(profile, 'NativeMessagingHosts'));
 await writeFile(join(profile, `NativeMessagingHosts/${hostName}.json`), JSON.stringify({

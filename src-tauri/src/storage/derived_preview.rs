@@ -977,7 +977,7 @@ fn source_waiting_for_cloud(
             continue;
         }
         if let Some(source) = resolver.resolve_indexed_media(slug, &tile.source_path) {
-            if media_dimensions::is_content_offloaded(&source) {
+            if crate::storage::cloud_files::is_content_offloaded(&source) {
                 return Ok(Some(tile.source_path.clone()));
             }
         }
@@ -1009,7 +1009,7 @@ fn primary_source_state(
     let Some(path) = resolver.resolve_indexed_media(&block.slug, reference) else {
         return PrimarySourceState::Missing(reference.to_string());
     };
-    if media_dimensions::is_content_offloaded(&path) {
+    if crate::storage::cloud_files::is_content_offloaded(&path) {
         return PrimarySourceState::InCloud(reference.to_string());
     }
     PrimarySourceState::Present
@@ -1339,18 +1339,20 @@ mod tests {
     #[test]
     fn a_card_waiting_for_icloud_is_marked_before_anything_is_downloaded() {
         let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().join("Mobile Documents").join("Space");
+        let root = tmp.path().join("Space");
         std::fs::create_dir_all(&root).unwrap();
         let vault = VaultLayout::with_derived_root(root.clone(), tmp.path().join("derived"));
         std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
         let conn = db::open_or_create(&vault.index_db_path()).unwrap();
         crate::storage::cloud_waits::begin_session(vault.derived_root(), "2026-09-29T12:00:00Z")
             .unwrap();
-        // iCloud keeps the name and size and frees the blocks.
+        // iCloud keeps the name and size and frees the contents
+        // (`SF_DATALESS`, which only the kernel sets).
         std::fs::File::create(root.join("cloud.jpg"))
             .unwrap()
             .set_len(64 * 1024)
             .unwrap();
+        crate::storage::cloud_files::test_seam::mark_offloaded(&root.join("cloud.jpg"));
         files::write_block_file(&vault, &image_block("Cloud", "cloud.jpg")).unwrap();
         files::write_block_file(&vault, &text_block("Local")).unwrap();
         reconcile::reconcile_vault(&conn, &vault).unwrap();
@@ -1774,7 +1776,7 @@ mod tests {
                 }
             }
         }
-        assert!(thumbnails::adopt_generator_version(vault));
+        assert!(thumbnails::adopt_generator_version(vault).unwrap());
     }
 
     fn readiness_of(vault: &VaultLayout, path: &Path) -> PreviewReadiness {

@@ -34,6 +34,12 @@ export const VAULT_CONFLICTS_TITLE = "Resolve iCloud sync conflicts";
 export const VAULT_CONFLICTS_DESCRIPTION =
   "iCloud kept more than one version of these notes. Keep one version of each: the others go to the Trash. Keep all puts the other versions next to the note as separate notes.";
 
+/** The words of a recorded conflict iCloud did not answer about this time:
+ *  the notice counts it, so the window shows it, with nothing to keep until
+ *  iCloud answers (SPEC_DEEP_AUDIT.md, Е5.12). */
+export const CONFLICT_UNANSWERED_TEXT =
+  "iCloud did not answer about this note. Mine asks again when you come back to the window.";
+
 /** The note's name from its path: `Cards/Note.md` is `Note`. */
 function noteName(path: string): string {
   const file = path.slice(path.lastIndexOf("/") + 1);
@@ -314,6 +320,23 @@ export function VaultConflictsDialog({
             name and path 4px apart, the rows and buttons 8px apart. */}
         <div className="flex max-h-[60vh] min-w-0 flex-col gap-2 overflow-y-auto">
           {conflicts.map((conflict) => {
+            if (conflict.unanswered) {
+              return (
+                <div
+                  key={conflict.path}
+                  className="grid min-w-0 gap-2 rounded-1 border border-border p-3"
+                  data-conflict-group={conflict.path}
+                >
+                  <div className="grid min-w-0 gap-1">
+                    <div className="min-w-0 truncate text-base text-foreground">{conflict.name}</div>
+                    <div className={MODAL_DETAIL_CLASS}>{conflict.path}</div>
+                  </div>
+                  <p className="text-sm text-muted-foreground" data-conflict-unanswered="">
+                    {CONFLICT_UNANSWERED_TEXT}
+                  </p>
+                </div>
+              );
+            }
             const pressed = busy[conflict.path];
             const resolving = pressed !== undefined;
             const label = (key: ConflictActionKey, idle: string) => (pressed === key ? "Keeping…" : idle);

@@ -32,6 +32,9 @@ pub const VAULT_CONFLICTS_CHANGED_EVENT: &str = "vault-conflicts-changed";
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct VaultConflictsChanged {
     pub count: u32,
+    /// Why the last check of the space failed, when it did: the conflicts it
+    /// would have found are not counted (SPEC_DEEP_AUDIT.md, Н11, Е5.11).
+    pub check_error: Option<String>,
 }
 
 /// One check of a space at a time; a request during it leaves exactly one
@@ -135,7 +138,13 @@ fn run_checks(app: &AppHandle, root: &Path) {
             Ok(outcome) if outcome.changed => announce_count(app, vault.root(), outcome.count),
             Ok(_) => {}
             Err(error) => {
+                // The failure reaches the log with its time and the tabs of
+                // the space (Н11, Е5.11), not only the log.
                 log::warn!("iCloud conflict check of {} failed: {error:#}", root.display());
+                let count = db::open_or_create(&vault.index_db_path())
+                    .and_then(|conn| vault_conflicts::list_conflict_paths(&conn))
+                    .map_or(0, |paths| paths.len());
+                announce(app, vault.root(), count, Some(format!("{error:#}")));
             }
         }
     }
@@ -153,12 +162,19 @@ fn conflicts_helper(app: &AppHandle) -> Result<ConflictsHelper, CommandError> {
 
 /// Tell the tabs of the space at `root` how many notes are in conflict now.
 fn announce_count(app: &AppHandle, root: &Path, count: usize) {
+    announce(app, root, count, None);
+}
+
+/// Tell the tabs of the space at `root` the count and, after a failed
+/// check, why it failed.
+fn announce(app: &AppHandle, root: &Path, count: usize, check_error: Option<String>) {
     crate::commands::space_events::emit_to_space_root(
         app,
         root,
         VAULT_CONFLICTS_CHANGED_EVENT,
         VaultConflictsChanged {
             count: u32::try_from(count).unwrap_or(u32::MAX),
+            check_error,
         },
     );
 }

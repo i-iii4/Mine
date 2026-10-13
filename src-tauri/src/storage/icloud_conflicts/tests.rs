@@ -39,8 +39,17 @@ settle)
     exit 1
   fi
   shift
-  echo "$*" >> "$dir/settled.log"
-  echo '{"settled":[],"missing":[]}'
+  path="$1"
+  shift
+  echo "$path $*" >> "$dir/settled.log"
+  if [ -f "$dir/settle-partial" ]; then
+    printf '{"settled":["%s"],"missing":[]}\n' "$1"
+  else
+    printf '{"settled":['
+    sep=''
+    for token in "$@"; do printf '%s"%s"' "$sep" "$token"; sep=','; done
+    printf '],"missing":[]}\n'
+  fi
   ;;
 *)
   exit 2
@@ -100,6 +109,12 @@ impl Fixture {
 
     fn fail_next_settle(&self) {
         std::fs::write(self.helper_dir.join("settle-fails"), "").unwrap();
+    }
+
+    /// The next settles report the first version settled and say nothing
+    /// of the others.
+    fn settle_partly(&self) {
+        std::fs::write(self.helper_dir.join("settle-partial"), "").unwrap();
     }
 
     fn edit_on_read(&self) {
@@ -195,11 +210,18 @@ fn separate_name(name: &str, device: &str, modified: &str) -> String {
 // ─── Signals and protocol ───────────────────────────────────────────────────
 
 #[test]
-fn a_space_in_icloud_drive_is_told_by_its_path() {
-    assert!(is_icloud_space(Path::new(
-        "/Users/someone/Library/Mobile Documents/iCloud~md~obsidian/Documents/Space"
-    )));
+fn a_folder_outside_icloud_is_no_icloud_space() {
     assert!(!is_icloud_space(Path::new("/tmp/mine-space-outside-icloud")));
+}
+
+/// Н7, Е5.2: a folder whose path merely holds `Mobile Documents` is not in
+/// iCloud; the system says which folders are.
+#[test]
+fn a_folder_merely_named_mobile_documents_is_no_icloud_space() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("Mobile Documents").join("Space");
+    std::fs::create_dir_all(&folder).unwrap();
+    assert!(!is_icloud_space(&folder));
 }
 
 #[test]
@@ -300,12 +322,21 @@ fn the_list_reads_versions_again_and_drops_conflicts_resolved_elsewhere() {
     let list = list_conflicts(&fixture.conn, &fixture.vault, &fixture.helper).unwrap();
 
     assert_eq!(list.removed, vec!["Resolved.md"]);
-    assert_eq!(list.conflicts.len(), 1);
-    let conflict = &list.conflicts[0];
-    assert_eq!((conflict.path.as_str(), conflict.name.as_str()), ("Cards/Note.md", "Note"));
+    assert_eq!(list.conflicts.len(), 2);
+    let conflict = list
+        .conflicts
+        .iter()
+        .find(|conflict| conflict.path == "Cards/Note.md")
+        .unwrap();
+    assert_eq!(conflict.name, "Note");
+    assert!(!conflict.unanswered);
     assert_eq!(conflict.current.token, None);
     assert_eq!(conflict.current.modified.as_deref(), Some("2026-10-11T08:00:00Z"));
     assert_eq!(conflict.versions.len(), 2);
+    // Е5.12: the note iCloud did not answer about is listed without versions.
+    let busy = list.conflicts.iter().find(|conflict| conflict.path == "Busy.md").unwrap();
+    assert!(busy.unanswered);
+    assert!(busy.versions.is_empty());
     assert_eq!(
         vault_conflicts::list_conflict_paths(&fixture.conn).unwrap(),
         vec!["Busy.md", "Cards/Note.md"]
@@ -512,4 +543,96 @@ fn a_separate_note_is_named_by_device_and_local_minute() {
         device: None,
     };
     assert_eq!(separate_stem("Note", &unknown), "Note (another device)");
+}
+
+// ─── Е5.10 by Е5.12 ─────────────────────────────────────────────────────────
+
+/// Е5.10: `Keep all` writes the separate notes before the settle; a settle
+/// that fails and the retry that follows leave one set of them, not two.
+#[test]
+fn keeping_all_again_after_a_failed_settle_makes_one_set_of_separate_notes() {
+    let fixture = Fixture::new();
+    fixture.conflict("Cards/Note.md");
+    fixture.fail_next_settle();
+
+    let failed = fixture.resolve("Cards/Note.md", ConflictChoice::KeepAll, &["tok-a", "tok-b"]);
+    assert!(matches!(failed, Err(VaultConflictError::HelperFailed { .. })), "{failed:?}");
+
+    let resolution = fixture
+        .resolve("Cards/Note.md", ConflictChoice::KeepAll, &["tok-a", "tok-b"])
+        .unwrap();
+
+    let laptop = format!("Cards/{}", separate_name("Note", "i_iii’s MacBook Pro", "2026-10-10T12:54:00Z"));
+    let unknown = format!("Cards/{}", separate_name("Note", "another device", "2026-10-09T07:05:00Z"));
+    let mut expected = vec!["Cards/Note.md".to_string(), laptop.clone(), unknown.clone()];
+    expected.sort();
+    assert_eq!(fixture.files(), expected);
+    assert_eq!(resolution.kept_separately, vec![laptop, unknown]);
+    assert!(vault_conflicts::list_conflict_paths(&fixture.conn).unwrap().is_empty());
+}
+
+/// Е5.11: one line of the helper's answer Mine cannot read does not fail the
+/// pass. The conflicts it read are recorded; a note the answer may have been
+/// about keeps what Mine knew of it.
+#[test]
+fn a_line_mine_cannot_read_does_not_fail_the_pass() {
+    let fixture = Fixture::new();
+    let conflicted = fixture.note("Cards/Note.md", NOTE);
+    fixture.note("Busy.md", NOTE);
+    fixture.record(&["Busy.md"]);
+    let mut text = format!("{}\n", conflict_line(&conflicted));
+    text.push_str("{\"path\": \"half a line\n");
+    text.push_str(&done_line(&[]));
+    std::fs::write(fixture.helper_dir.join("scan.jsonl"), text).unwrap();
+
+    let outcome = run_check(
+        &fixture.conn,
+        &fixture.vault,
+        &fixture.helper,
+        &CheckScope::Full,
+        "2026-10-11T10:00:00Z",
+    )
+    .unwrap();
+
+    assert_eq!(outcome.count, 2);
+    assert_eq!(
+        vault_conflicts::list_conflict_paths(&fixture.conn).unwrap(),
+        vec!["Cards/Note.md", "Busy.md"]
+    );
+}
+
+/// Е5.11: the settle's report is read. Versions it neither settled nor
+/// found gone are still conflict versions: the conflict stays recorded and
+/// the resolution says iCloud did not settle them.
+#[test]
+fn a_settle_that_leaves_versions_keeps_the_conflict() {
+    let fixture = Fixture::new();
+    fixture.conflict("Cards/Note.md");
+    fixture.settle_partly();
+
+    let refused = fixture.resolve(
+        "Cards/Note.md",
+        ConflictChoice::KeepVersion { token: None },
+        &["tok-a", "tok-b"],
+    );
+
+    assert!(matches!(refused, Err(VaultConflictError::HelperFailed { .. })), "{refused:?}");
+    assert_eq!(vault_conflicts::list_conflict_paths(&fixture.conn).unwrap(), vec!["Cards/Note.md"]);
+}
+
+/// Е5.12: a recorded conflict the helper cannot answer for is in the list:
+/// the notice counts it, so the window shows it, with no versions to keep.
+#[test]
+fn a_conflict_the_helper_cannot_answer_for_is_listed() {
+    let fixture = Fixture::new();
+    let conflicted = fixture.note("Cards/Note.md", NOTE);
+    let unanswered = fixture.note("Busy.md", NOTE);
+    fixture.record(&["Cards/Note.md", "Busy.md"]);
+    fixture.answer_scan(&[conflict_line(&conflicted)], &[&unanswered]);
+
+    let list = list_conflicts(&fixture.conn, &fixture.vault, &fixture.helper).unwrap();
+
+    let paths: Vec<&str> = list.conflicts.iter().map(|conflict| conflict.path.as_str()).collect();
+    assert_eq!(paths.len(), vault_conflicts::list_conflict_paths(&fixture.conn).unwrap().len());
+    assert!(paths.contains(&"Busy.md"), "{paths:?}");
 }

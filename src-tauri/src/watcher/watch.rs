@@ -413,9 +413,12 @@ fn record_watcher_error(
                 .state::<AppState>()
                 .freshness
                 .reconcile(&vault_for_recovery);
-            let (fresh, error_count) = match &outcome.result {
-                Ok(report) => (report.is_fresh(), report.errors.len()),
-                Err(_) => (false, 1),
+            // A pass that finished with errors in some notes finished: the
+            // index is ready without them (SPEC_DEEP_AUDIT.md, Н6). Only a pass
+            // that failed leaves the recovery unfinished.
+            let (finished, fresh, error_count) = match &outcome.result {
+                Ok(report) => (true, report.is_fresh(), report.errors.len()),
+                Err(_) => (false, false, 1),
             };
             let watcher_restarted = restart_watcher_after_recovery(
                 &app_for_recovery.state::<AppState>(),
@@ -426,7 +429,7 @@ fn record_watcher_error(
             tracker_for_recovery
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
-                .finish_recovery(fresh && watcher_restarted);
+                .finish_recovery(finished && watcher_restarted);
             let path = vault_for_recovery.root().to_string_lossy().into_owned();
             crate::commands::space_events::emit_to_space_path(
                 &app_for_recovery,
@@ -439,7 +442,7 @@ fn record_watcher_error(
                     watcher_restarted,
                 },
             );
-            if fresh {
+            if finished {
                 crate::commands::conflicts::schedule_conflict_check(
                     &app_for_recovery,
                     &vault_for_recovery,
