@@ -4533,17 +4533,17 @@ fn serve_request(req: Request, upload_server: Option<UploadServer>) {
 
 /// Tests of the helper's findings Е4 (SPEC_DEEP_AUDIT.md).
 #[cfg(test)]
-#[path = "native_host/e4_tests.rs"]
+#[path = "../native_host_tests/e4_tests.rs"]
 mod e4_tests;
 
 /// Tests of the requests' service files in iCloud (SPEC_CLOUD_STORAGE.md, Х12).
 #[cfg(test)]
-#[path = "native_host/cloud_tests.rs"]
+#[path = "../native_host_tests/cloud_tests.rs"]
 mod cloud_tests;
 
 /// The stand-in web of the helper's tests.
 #[cfg(test)]
-#[path = "native_host/fake_web.rs"]
+#[path = "../native_host_tests/fake_web.rs"]
 mod fake_web;
 
 #[cfg(test)]

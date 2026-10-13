@@ -731,9 +731,9 @@ Chromium без окна: оверлей со стилями на страниц
   ([SPEC_CLOUD_STORAGE.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CLOUD_STORAGE.md>), Х12).
 
 Проверки: тесты помощника
-[e4_tests.rs](</Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/bin/native_host/e4_tests.rs>)
+[e4_tests.rs](</Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/native_host_tests/e4_tests.rs>)
 на временных папках и подставном вебе
-([fake_web.rs](</Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/bin/native_host/fake_web.rs>):
+([fake_web.rs](</Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/native_host_tests/fake_web.rs>):
 ответ с типом, коды отказа, обрыв, медленная передача; никакой тест не
 ходит в настоящую сеть), проверка настоящего бинарника помощника
 [native_host_requests.rs](</Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/tests/native_host_requests.rs>)
