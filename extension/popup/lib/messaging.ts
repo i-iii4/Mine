@@ -142,6 +142,47 @@ export function requestYoutubeChannel(sourceUrl: string): Promise<string | null>
   });
 }
 
+/** What background answers to `readXSyndication`. */
+interface XSyndicationReply {
+  ok?: boolean;
+  data?: unknown;
+}
+
+/** The syndication answer of an X post, as the service gives it. */
+export type XSyndicationData = Record<string, unknown>;
+
+function isXSyndicationData(value: unknown): value is XSyndicationData {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Asks background for the syndication answer of the X post `tweetId`
+ * (SPEC_CLIPPER.md, «Кнопка Mine в ленте X», rule 6). The service answers
+ * only https://platform.twitter.com: the overlay runs in the page's content
+ * script, where a request of its own fails on CORS (13.10.2026). Every
+ * failure, a stopped background included, answers `null`.
+ */
+export function requestXSyndication(tweetId: string): Promise<XSyndicationData | null> {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage(
+        { target: "background", action: "readXSyndication", tweetId },
+        (response: XSyndicationReply | undefined) => {
+          if (chrome.runtime.lastError) {
+            resolve(null);
+            return;
+          }
+          resolve(response?.ok === true && isXSyndicationData(response.data) ? response.data : null);
+        },
+      );
+    } catch (error) {
+      // An invalidated extension context throws here instead of calling back.
+      console.warn("[Mine] X post request failed:", error);
+      resolve(null);
+    }
+  });
+}
+
 /**
  * The channel answer, waited for at most `timeoutMs`. No answer by then or a
  * failed request give `null`, so Save goes on without an author.

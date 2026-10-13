@@ -738,9 +738,10 @@ async function runOpeningsAfterReload() {
 // puts the content scripts of the manifest into every open tab their matches
 // name, top frame as declared, as soon as it is installed or updated. Each
 // page gets them in a world of its own; the content script there before gives
-// the page up (content.js). Scripts of the page's own world (lib/xThread.js
-// and lib/xThreadPage.js) are not put again: they do not depend on the
-// extension, and the feeds they already read stay theirs.
+// the page up (content.js). The scripts of the page's own world
+// (lib/xThread.js and lib/xThreadPage.js, the post cache of X) go only into a
+// page without that cache, such as a tab open before the install
+// (13.10.2026): a page that has it keeps it, with the feeds it already read.
 
 // Tabs being given the content scripts of this build, by tab, and the search
 // for those tabs.
@@ -759,7 +760,7 @@ async function pageRefreshed(tabId) {
 /// that excludes pages is left out: tabs are found by `matches` alone.
 async function contentScriptPlan() {
   const groups = (chrome.runtime.getManifest?.()?.content_scripts ?? []).filter((group) =>
-    (group.world ?? "ISOLATED") === "ISOLATED" && Array.isArray(group.js) && group.js.length > 0
+    ["ISOLATED", "MAIN"].includes(group.world ?? "ISOLATED") && Array.isArray(group.js) && group.js.length > 0
     && Array.isArray(group.matches) && group.matches.length > 0
     && !group.exclude_matches && !group.include_globs && !group.exclude_globs);
   const plan = new Map();
@@ -779,10 +780,26 @@ async function contentScriptPlan() {
   return plan;
 }
 
+/// Whether every frame of `target` already runs the post cache of X in its
+/// page world: lib/xThreadPage.js, the last of the manifest's page-world
+/// scripts, which also refuses to run twice in one page.
+async function pageWorldHasPostCache(target) {
+  const frames = await chrome.scripting.executeScript({ target, world: "MAIN",
+    func: () => globalThis.MineXThreadPage !== undefined });
+  return frames.length > 0 && frames.every((frame) => frame?.result === true);
+}
+
 async function injectContentScripts(tabId, groups) {
   for (const group of groups) {
+    const target = { tabId, allFrames: group.all_frames === true };
     try {
-      await chrome.scripting.executeScript({ target: { tabId, allFrames: group.all_frames === true }, files: group.js });
+      if (group.world === "MAIN") {
+        if (!(await pageWorldHasPostCache(target))) {
+          await chrome.scripting.executeScript({ target, world: "MAIN", files: group.js });
+        }
+      } else {
+        await chrome.scripting.executeScript({ target, files: group.js });
+      }
     } catch {
       // A page the browser keeps extensions out of (the extension store, a
       // file without file access, an error page), or a tab gone meanwhile.
@@ -1339,6 +1356,36 @@ async function resolveAuthenticatedTweetVideo({ tweetUrl, tweetId }) {
   });
 }
 
+// ── Syndication answer of an X post ───────────────────────────────────────
+//
+// The fallback of an X post its page's feeds did not deliver and of a post
+// page without collected thread data (SPEC_CLIPPER.md, «Кнопка Mine в ленте
+// X», rule 6). The service answers only the origin of X's embed widget
+// (`access-control-allow-origin: https://platform.twitter.com`), so a request
+// from a content script or the overlay, which goes with the page's origin,
+// always fails on CORS (13.10.2026). Asked here, it goes by the extension's
+// host permissions. Without cookies; the asker reads the answer. Any failure
+// answers `{ ok: false }`.
+const X_SYNDICATION_TIMEOUT_MS = 10_000;
+
+async function readXSyndication(tweetId) {
+  if (typeof tweetId !== "string" || !/^\d{1,25}$/.test(tweetId)) return { ok: false };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), X_SYNDICATION_TIMEOUT_MS);
+  try {
+    const response = await fetch(`https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&token=0`,
+      { credentials: "omit", signal: controller.signal });
+    if (!response.ok) return { ok: false, status: response.status };
+    const data = await response.json();
+    return data !== null && typeof data === "object" && !Array.isArray(data) ? { ok: true, data } : { ok: false };
+  } catch (error) {
+    console.warn("[Mine] X post unavailable from syndication:", String(error?.message ?? error));
+    return { ok: false };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // ── YouTube channel ───────────────────────────────────────────────────────
 //
 // The author of a YouTube clip is the channel of the video its address names
@@ -1470,6 +1517,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       args: [msg.tweetId],
     }).then(results => sendResponse({ post: results?.[0]?.result ?? null }))
       .catch(() => sendResponse({ post: null }));
+    return true;
+  }
+
+  // The syndication answer of an X post, for the content script and the
+  // clipper, wherever they run: an anonymous read by ID (rule 6).
+  if (msg.action === "readXSyndication") {
+    readXSyndication(msg.tweetId).then(sendResponse, () => sendResponse({ ok: false }));
     return true;
   }
 

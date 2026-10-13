@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { requestYoutubeChannel, sendToNative, waitForYoutubeChannel, YOUTUBE_CHANNEL_TIMEOUT_MS } from "./messaging";
+import { requestXSyndication, requestYoutubeChannel, sendToNative, waitForYoutubeChannel, YOUTUBE_CHANNEL_TIMEOUT_MS } from "./messaging";
 
 beforeEach(() => {
   const runtime = {
@@ -114,5 +114,42 @@ describe("YouTube channel of a capture", () => {
       await expect(waitForYoutubeChannel(Promise.reject(new Error("offline")))).resolves.toBeNull();
       expect(vi.getTimerCount()).toBe(0);
     } finally { vi.useRealTimers(); }
+  });
+});
+
+// SPEC_CLIPPER.md, «Кнопка Mine в ленте X», rule 6: the service refuses the
+// page the overlay runs in, so the clipper asks background.
+describe("syndication answer of an X post", () => {
+  function answering(response: unknown) {
+    const sendMessage = vi.fn((_message: unknown, callback: (reply: unknown) => void) => callback(response));
+    (globalThis as Record<string, unknown>).chrome = { runtime: { sendMessage } };
+    return sendMessage;
+  }
+
+  it("asks background for the post by its ID and answers the service's data", async () => {
+    const data = { text: "Post", mediaDetails: [] };
+    const sendMessage = answering({ ok: true, data });
+    await expect(requestXSyndication("2001")).resolves.toEqual(data);
+    expect(sendMessage).toHaveBeenCalledWith({ target: "background", action: "readXSyndication", tweetId: "2001" }, expect.any(Function));
+  });
+
+  it.each([
+    ["a refusal", { ok: false, status: 404 }],
+    ["data that is not an object", { ok: true, data: [1] }],
+    ["no reply", undefined],
+  ])("answers null for %s", async (_label, reply) => {
+    answering(reply);
+    await expect(requestXSyndication("2001")).resolves.toBeNull();
+  });
+
+  it("answers null when background stopped before replying", async () => {
+    await expect(requestXSyndication("2001")).resolves.toBeNull();
+  });
+
+  it("answers null when the extension context is gone", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    (globalThis as Record<string, unknown>).chrome = { runtime: { sendMessage: () => { throw new Error("Extension context invalidated."); } } };
+    await expect(requestXSyndication("2001")).resolves.toBeNull();
+    warn.mockRestore();
   });
 });

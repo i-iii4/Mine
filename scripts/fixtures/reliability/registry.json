@@ -2211,7 +2211,9 @@
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/content.js",
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/xFeedButton.js",
         "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/xThread.js",
-        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/xThreadPage.js"
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/xThreadPage.js",
+        "extension/popup/lib/twitterPhotoLightbox.test.ts",
+        "extension/popup/lib/twitterPhotoLightbox.ts"
       ],
       "requirement": "SPEC_CLIPPER.md#Кнопка Mine в ленте X (10.10.2026)",
       "tests": [

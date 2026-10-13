@@ -41,7 +41,7 @@ function xPage(origin = "https://x.com") {
   context.window = context;
   for (const source of sources) runInContext(source, context);
   const page = context.MineXThreadPage as PageApi;
-  return { page, fetch, Xhr, request: (url: string, init?: RequestInit) => (context.fetch as typeof globalThis.fetch)(url, init) };
+  return { page, fetch, Xhr, context, request: (url: string, init?: RequestInit) => (context.fetch as typeof globalThis.fetch)(url, init) };
 }
 
 const LIST = "/i/api/graphql/Q1/ListLatestTweetsTimeline?variables=%7B%22listId%22%3A%22123%22%2C%22count%22%3A20%7D";
@@ -106,5 +106,20 @@ describe("posts a feed of the page delivered", () => {
     expect(await page.post("1000")).toBeNull();
     expect((await page.post("1001"))?.text).toBe("post 1");
     expect((await page.post("1500"))?.text).toBe("post 500");
+  });
+
+  // Background puts the page world's scripts again only into a page without
+  // the cache (SPEC_CLIPPER.md, К4, «Открытые страницы после перезагрузки»);
+  // put twice anyway, the cache stays the one the page had.
+  it("runs once per page: a second run keeps the cache, its posts and the one observer of fetch and XHR", async () => {
+    const { page, request, fetch, context, Xhr } = xPage();
+    await request(`https://x.com${LIST}`);
+    const observed = { fetch: context.fetch, open: Xhr.prototype.open, send: Xhr.prototype.send };
+    for (const source of sources) runInContext(source, context);
+    expect(context.MineXThreadPage).toBe(page);
+    expect({ fetch: context.fetch, open: Xhr.prototype.open, send: Xhr.prototype.send }).toEqual(observed);
+    expect((await page.post(QUOTE_POST_ID))?.handle).toBe("artignatev");
+    await request(`https://x.com${LIST}`);
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });

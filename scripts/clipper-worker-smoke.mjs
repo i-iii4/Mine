@@ -588,8 +588,13 @@ process.stdin.on('data', (chunk) => {
 // 11.10.2026 (extension/lib/xFeed.fixtures.ts), served in place of x.com: the
 // page's content script puts the Mine button in each post's header
 // (SPEC_CLIPPER.md, «Кнопка Mine в ленте X»). Syndication answers the post a
-// button reads, since no feed of the page delivered it (rule 6).
+// button reads, since no feed of the page delivered it (rule 6). It answers
+// the way the real service does (checked on x.com and with curl 13.10.2026):
+// only to the origin of X's embed widget, so the browser refuses its answer
+// to a page of x.com, a content script's request included, on CORS.
 const X_POSTS = [{ id: '2001', text: 'Smoke post 2001' }, { id: '2002', text: 'Smoke post 2002' }];
+const SYNDICATION_ALLOWED_ORIGIN = 'https://platform.twitter.com';
+const X_POST_UNAVAILABLE = "Mine couldn't read this post here. Open the post and save it from its page.";
 const X_HEADER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" class="r-4qtqp9"><g><path d="M3 12c0-1.1.9-2 2-2"></path></g></svg>';
 
 function xCard({ id, text }) {
@@ -616,12 +621,162 @@ const X_FEED_PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Hom
 async function serveXFeed(browser) {
   await browser.route('https://x.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: X_FEED_PAGE }));
   await browser.route('https://cdn.syndication.twimg.com/**', (route) => {
+    const headers = { 'access-control-allow-origin': SYNDICATION_ALLOWED_ORIGIN };
     const post = X_POSTS.find(({ id }) => new URL(route.request().url()).searchParams.get('id') === id);
-    if (!post) return route.fulfill({ status: 404, body: '' });
-    return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
+    if (!post) return route.fulfill({ status: 404, headers, body: '' });
+    return route.fulfill({ status: 200, contentType: 'application/json', headers,
       body: JSON.stringify({ __typename: 'Tweet', id_str: post.id, text: post.text,
         user: { screen_name: 'smokeposter', name: 'Smoke Poster' }, mediaDetails: [] }) });
   });
+}
+
+/// The clip an open overlay keeps for `postUrl`, as background holds it
+/// (Р7), or `null` when none comes in time.
+function keptClipOf(worker, postUrl) {
+  return worker.evaluate(async (url) => {
+    for (let attempt = 0; attempt < 150; attempt += 1) {
+      const session = await chrome.storage.session.get(null);
+      const kept = Object.entries(session).find(([key, value]) => key.startsWith('mineOpenClip:') && value?.metadata?.url === url)?.[1];
+      if (kept) return kept;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return null;
+  }, postUrl);
+}
+
+// The Mine button of an X post no feed of its page delivered (SPEC_CLIPPER.md,
+// «Кнопка Mine в ленте X», rule 6, 13.10.2026). The page world's cache is
+// there and knows no post, so the post comes from the syndication service,
+// which refuses the page of x.com the way the real one does. Background asks
+// it by the extension's host permissions, and the clipper opens with the
+// post's text, not with the reason it could not be read.
+async function checkXPostWithoutPageCache(worker) {
+  await serveXFeed(context);
+  const feed = await context.newPage();
+  try {
+    await worker.evaluate(async () => {
+      const status = await globalThis.MineStandaloneVault.getStandaloneStatus();
+      await chrome.storage.local.set({ mineSaveDestination: { executor: 'browser', bindingId: status.bindingId } });
+    });
+    await feed.goto('https://x.com/home');
+    const buttons = feed.locator('[data-mine-x-post]');
+    await pollUntil(async () => (await buttons.count()) === X_POSTS.length || undefined, 'the feed did not get its Mine buttons');
+    const [post] = X_POSTS;
+    assert.equal(await feed.evaluate((id) => globalThis.MineXThreadPage.post(id), post.id), null,
+      'a feed of the page delivered the post');
+    assert.equal(await feed.evaluate((id) => fetch(`https://cdn.syndication.twimg.com/tweet-result?id=${id}&token=0`)
+      .then(() => 'answered', (error) => error.message), post.id), 'Failed to fetch', 'the service answered the page of x.com');
+
+    await feed.evaluate(() => document.querySelector('[data-mine-x-post] button').click());
+    const panel = feed.locator('[data-mine-clipper-panel]');
+    await panel.waitFor({ state: 'visible', timeout: 15_000 });
+    let shown = '';
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline && !shown.includes(post.text) && !shown.includes(X_POST_UNAVAILABLE)) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      shown = await panel.textContent();
+    }
+    assert.ok(shown.includes(post.text) && !shown.includes(X_POST_UNAVAILABLE),
+      `the Mine button did not open the clipper with the post: ${shown}`);
+    const clip = await keptClipOf(worker, `https://x.com/smokeposter/status/${post.id}`);
+    assert.ok(clip && JSON.stringify(clip).includes(post.text), `the clip lacks the post: ${JSON.stringify(clip).slice(0, 2000)}`);
+    await panel.getByRole('button', { name: 'Close', exact: true }).first().click({ timeout: 5_000 });
+    await panel.waitFor({ state: 'detached', timeout: 5_000 });
+  } finally {
+    await feed.close();
+    await worker.evaluate(async () => chrome.storage.local.remove(['mineSaveDestination']));
+    await context.unroute('https://x.com/**');
+    await context.unroute('https://cdn.syndication.twimg.com/**');
+  }
+}
+
+// A post of X's feed, delivered by the feed response the page reads after the
+// extension's reload; the syndication service has no answer for it.
+const X_FEED_POST = { id: '2003', text: 'Smoke feed post 2003' };
+const X_FEED_RESPONSE = { data: { home: { home_timeline_urt: { instructions: [{ type: 'TimelineAddEntries', entries: [{
+  entryId: `tweet-${X_FEED_POST.id}`,
+  content: { entryType: 'TimelineTimelineItem', itemContent: { itemType: 'TimelineTweet', tweet_results: { result: {
+    __typename: 'Tweet', rest_id: X_FEED_POST.id,
+    core: { user_results: { result: { rest_id: '77', core: { screen_name: 'smokeposter', name: 'Smoke Poster' } } } },
+    legacy: { id_str: X_FEED_POST.id, full_text: X_FEED_POST.text, entities: {} },
+  } } } },
+}] }] } } } };
+
+// A tab of X open while the extension did not run, the way a tab open before
+// its install is: no script of the extension is in it, its page world has no
+// post cache (13.10.2026). The reload of the extension puts the content
+// scripts of the manifest into it, those of the page world among them
+// (SPEC_CLIPPER.md, К4, «Открытые страницы после перезагрузки»): the feeds
+// the page reads from then on fill the cache, and the Mine button reads its
+// post from there. Runs on a copy in its own profile.
+async function checkXPageWorldAfterReload() {
+  const sandbox = mkdtempSync(join(tmpdir(), 'mine-clipper-x-reload-'));
+  const installed = join(sandbox, 'extension');
+  const profile = join(sandbox, 'profile');
+  let browser;
+  try {
+    cpSync(extension, installed, { recursive: true });
+    browser = await chromium.launchPersistentContext(profile, {
+      channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${installed}`, `--load-extension=${installed}`],
+    });
+    let worker = browser.serviceWorkers()[0] ?? await browser.waitForEvent('serviceworker', { timeout: 15_000 });
+    await enableDeveloperMode(browser);
+    const settings = await browser.newPage();
+    await settings.goto('chrome://extensions');
+    const setEnabled = (enabled) => settings.evaluate(async ([id, on]) => {
+      await chrome.management.setEnabled(id, on);
+      return (await chrome.management.get(id)).enabled;
+    }, [extensionId, enabled]);
+    assert.equal(await setEnabled(false), false);
+
+    await serveXFeed(browser);
+    await browser.route('https://x.com/i/api/graphql/**', (route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(X_FEED_RESPONSE) }));
+    const feed = await browser.newPage();
+    await feed.goto('https://x.com/home');
+    const pageState = () => feed.evaluate(() => ({ cache: typeof globalThis.MineXThreadPage?.post,
+      buttons: document.querySelectorAll('[data-mine-x-post]').length }));
+
+    const started = browser.waitForEvent('serviceworker', { timeout: 15_000, predicate: (candidate) => candidate.url() === workerUrl });
+    started.catch(() => undefined);
+    assert.equal(await setEnabled(true), true);
+    worker = await started;
+    // Turning the extension on puts nothing into the open tab.
+    assert.deepEqual(await pageState(), { cache: 'undefined', buttons: 0 });
+
+    const reloaded = browser.waitForEvent('serviceworker', { timeout: 15_000, predicate: (candidate) => candidate.url() === workerUrl });
+    reloaded.catch(() => undefined);
+    await worker.evaluate(() => { setTimeout(() => chrome.runtime.reload(), 50); });
+    worker = await reloaded;
+    let state;
+    const deadline = Date.now() + 10_000;
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      state = await pageState();
+    } while (Date.now() < deadline && !(state.cache === 'function' && state.buttons === X_POSTS.length));
+    assert.deepEqual(state, { cache: 'function', buttons: X_POSTS.length },
+      'the tab of X open before the reload did not get the scripts of the page world and of the content script');
+
+    // X reads the next part of its feed and shows its post.
+    await feed.evaluate(() => fetch('/i/api/graphql/smoke/HomeTimeline').then((response) => response.json()));
+    await feed.evaluate((html) => document.querySelector('main').insertAdjacentHTML('beforeend', html), xCard(X_FEED_POST));
+    await pollUntil(async () => (await pageState()).buttons === X_POSTS.length + 1 || undefined, 'the post of the feed got no Mine button');
+    assert.equal((await feed.evaluate((id) => globalThis.MineXThreadPage.post(id), X_FEED_POST.id))?.text, X_FEED_POST.text,
+      'the cache of the page world did not read the feed');
+    await feed.evaluate((id) => document.querySelector(`article:has(a[href$="/status/${id}"]) [data-mine-x-post] button`).click(), X_FEED_POST.id);
+    await feed.locator('[data-mine-clipper-panel]').waitFor({ state: 'visible', timeout: 15_000 });
+    // No space is chosen in this profile, so the panel shows no preview; the
+    // clip the overlay hands to the worker shows what it opened with (Р7).
+    const clip = await keptClipOf(worker, `https://x.com/smokeposter/status/${X_FEED_POST.id}`);
+    const kept = JSON.stringify(clip);
+    assert.ok(clip && kept.includes(X_FEED_POST.text) && !kept.includes(X_POST_UNAVAILABLE),
+      `the Mine button did not open the clipper with the post of the feed: ${kept?.slice(0, 2000)}`);
+  } finally {
+    await browser?.close();
+    // Allocated above for this check only, never a user profile or extension.
+    rmSync(sandbox, { recursive: true, force: true });
+  }
 }
 
 const CORE_COMMAND = { op: 'layout', layout: { cards: '', media: '', collections: '' } };
@@ -901,15 +1056,7 @@ async function checkUpdateReloadsWorker() {
     // No space is chosen in this profile, so the panel shows no preview; the
     // clip the overlay hands to the worker shows what it opened with (Р7).
     const postUrl = `https://x.com/smokeposter/status/${X_POSTS[0].id}`;
-    const clip = await worker.evaluate(async (url) => {
-      for (let attempt = 0; attempt < 150; attempt += 1) {
-        const session = await chrome.storage.session.get(null);
-        const kept = Object.entries(session).find(([key, value]) => key.startsWith('mineOpenClip:') && value?.metadata?.url === url)?.[1];
-        if (kept) return kept;
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      return null;
-    }, postUrl);
+    const clip = await keptClipOf(worker, postUrl);
     assert.ok(clip, `the Mine button did not open the clipper with ${postUrl}`);
     assert.ok(JSON.stringify(clip).includes(X_POSTS[0].text), `the clip of the Mine button lacks the post: ${JSON.stringify(clip).slice(0, 2000)}`);
 
@@ -1133,8 +1280,10 @@ try {
   await checkScreenshotForAnyClip(worker);
   await checkHeaderDragBySpaceName(worker);
   await checkCollectionsArePages(worker);
+  await checkXPostWithoutPageCache(worker);
   await context.close();
   context = undefined;
+  await checkXPageWorldAfterReload();
   await checkBrowserRestartRunsBuildOnDisk();
   await checkUpdateReloadsWorker();
   Object.assign(report, { ok: true, scope: 'chromium-extension-worker-wasm',
@@ -1151,7 +1300,8 @@ try {
     browserRestartRunsBuildOnDisk: true, restartedWorkerKeepsLoadedBuild: true, updateOnDiskReloadsWorker: true,
     keptSaveCoreOfRunningBuild: true, saveCoreOfAnotherBuildRefused: true, openingReloadsIntoBuildOnDisk: true,
     overlayOfRunningBuild: true, openPagesGetNewContentScript: true, oldContentScriptButtonsRemoved: true,
-    xButtonOfNewContentScriptOpensClipper: true,
+    xButtonOfNewContentScriptOpensClipper: true, xPostWithoutPageCacheReadThroughBackground: true,
+    pageWorldScriptsPutIntoTabOpenBeforeReload: true,
     filesystem: 'OPFS-not-OS-folder' });
 } catch (error) {
   report.error = error.stack ?? String(error);

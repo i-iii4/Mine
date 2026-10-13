@@ -406,18 +406,28 @@ type Message = Record<string, unknown> & { action?: string; preloaded?: { metada
 const knownPosts = new Map((globalThis as unknown as { MineXThread: { feed(data: unknown): Array<{ id: string }> } })
   .MineXThread.feed(listResponse()).map((post) => [post.id, post]));
 
+// The syndication service answers only the origin of X's embed widget
+// (`access-control-allow-origin`, checked on x.com 13.10.2026): the browser
+// refuses its answer to a page of X, a content script's request included.
+// Background reads it by the extension's host permissions.
+const SYNDICATION_ALLOWED_ORIGIN = "https://platform.twitter.com";
+
 function xPage(url: string, markup: string, options: { cached?: boolean; syndication?: unknown; storage?: ReturnType<typeof switchStorage> } = {}) {
   const dom = new JSDOM(`<html><head></head><body><main>${markup}</main></body></html>`, { url, pretendToBeVisual: true });
   const messages: Message[] = [];
   const sendMessage = vi.fn((message: Message, callback?: (response: unknown) => void) => {
     messages.push(message);
     if (message.action === "readXPost") callback?.({ post: options.cached === false ? null : knownPosts.get(String(message.tweetId)) ?? null });
+    else if (message.action === "readXSyndication") callback?.(options.syndication ? { ok: true, data: options.syndication } : { ok: false, status: 404 });
     else if (message.action === "showOverlayInThisTab") callback?.({ ok: true, mode: "overlay" });
     else callback?.(undefined);
   });
-  const fetch = vi.fn(async () => options.syndication
-    ? { ok: true, json: async () => options.syndication }
-    : { ok: false, json: async () => ({}) });
+  const fetch = vi.fn(async (input: unknown) => {
+    if (new URL(String(input)).host === "cdn.syndication.twimg.com" && dom.window.location.origin !== SYNDICATION_ALLOWED_ORIGIN) {
+      throw new TypeError("Failed to fetch");
+    }
+    return { ok: false, json: async () => ({}) };
+  });
   runInNewContext(`${libs}\n${shareWithWindow}\n${contentScript}`, {
     window: dom.window, document: dom.window.document, URL, Node: dom.window.Node,
     chrome: {
@@ -493,12 +503,14 @@ describe("pressing the Mine button of an X post", () => {
     expect(opened.preloaded?.metadata.url).toBe(`https://x.com/GasprArt/status/${VIDEO_POST_ID}`);
   });
 
-  it("falls back to syndication by ID for a post the feeds did not deliver", async () => {
+  it("falls back to syndication by ID, asked of background, for a post the feeds did not deliver", async () => {
     const id = "2108700000000000001";
     const page = xPage("https://pro.x.com/i/decks/1", card(GASPR, id, { base: "https://x.com", text: "Fallback text" }),
       { cached: false, syndication: syndication(id, GASPR, "Fallback text https://t.co/p") });
     const opened = await page.press(page.articles[0]);
-    expect(String(page.fetch.mock.calls[0]?.[0])).toBe(`https://cdn.syndication.twimg.com/tweet-result?id=${id}&token=0`);
+    expect(page.messages).toContainEqual({ target: "background", action: "readXSyndication", tweetId: id });
+    // The page's own request would fail on CORS: none is made.
+    expect(page.fetch).not.toHaveBeenCalled();
     expect(opened.preloaded?.article.content).toBe("Fallback text\n\n![](https://pbs.twimg.com/media/fallback.jpg?name=large)");
     expect(opened.preloaded?.article.unavailableReason).toBeUndefined();
   });

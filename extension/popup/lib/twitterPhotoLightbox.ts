@@ -5,6 +5,8 @@
 // photo from the URL, preferring the syndication API (full-res, indexed, no
 // dependency on lazy-loaded DOM).
 
+import { requestXSyndication } from "./messaging";
+
 export interface ResolvedLightboxImage {
   src: string;
   alt: string | null;
@@ -61,15 +63,14 @@ export function pickSyndicationPhoto(
   };
 }
 
-/** Fetch the indexed photo of a tweet via the syndication API. */
+/** Fetch the indexed photo of a tweet via the syndication API, asked of
+ *  background: the service refuses the page the overlay runs in. */
 export async function fetchTweetPhotoByIndex(
   tweetId: string,
   photoIndex: number,
 ): Promise<ResolvedLightboxImage | null> {
-  const resp = await fetch(
-    `https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&token=0`,
-  );
-  if (!resp.ok) return null;
-  const data = await resp.json();
-  return pickSyndicationPhoto((data.mediaDetails ?? []) as SyndicationPhoto[], photoIndex);
+  const data = await requestXSyndication(tweetId);
+  if (!data) return null;
+  // The service's own shape; the picker skips entries it cannot use.
+  return pickSyndicationPhoto((Array.isArray(data.mediaDetails) ? data.mediaDetails : []) as SyndicationPhoto[], photoIndex);
 }

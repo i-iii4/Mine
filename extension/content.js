@@ -564,14 +564,15 @@
    * Fetch all media URLs from Twitter syndication API.
    * Returns array of direct URLs (photos, GIFs as MP4, videos as MP4 highest bitrate).
    * More reliable than DOM parsing — doesn't depend on lazy-loaded elements.
+   * Background asks the service: it answers only https://platform.twitter.com,
+   * so a request from this page fails on CORS (SPEC_CLIPPER.md, «Кнопка Mine
+   * в ленте X», rule 6, 13.10.2026).
    */
   async function fetchTweetDetails(tweetId) {
     try {
-      const resp = await fetch(
-        `https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&token=0`
-      );
-      if (!resp.ok) return { mediaDetails: [], quotedTweet: null, text: "" };
-      const data = await resp.json();
+      const reply = await askBackground({ action: "readXSyndication", tweetId: String(tweetId) });
+      if (!reply?.ok) return { mediaDetails: [], quotedTweet: null, text: "" };
+      const data = reply.data;
       const media = [];
       for (const m of (data.mediaDetails || [])) {
         const entry = syndicationMediaEntry(m);
@@ -1339,8 +1340,9 @@
   }
 
   /// What the clipper opens with for one post of an X feed: the post as the
-  /// page's feeds delivered it, else as syndication gives it, else the reason
-  /// it could not be read (rules 4, 6, 7). Never the thread, never the feed.
+  /// page's feeds delivered it, else as syndication gives it through
+  /// background, else the reason it could not be read (rules 4, 6, 7). Never
+  /// the thread, never the feed.
   async function readXFeedPost(article, identity) {
     const snapshot = captureDocumentSnapshot();
     const { tweetId } = identity;

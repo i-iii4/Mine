@@ -404,6 +404,63 @@ describe("the post of an X feed is read only for X itself", () => {
   });
 });
 
+// SPEC_CLIPPER.md, «Кнопка Mine в ленте X», rule 6: the service answers only
+// https://platform.twitter.com, so the content script and the overlay, which
+// go with the page's origin, ask background (13.10.2026).
+describe("the syndication answer of an X post", () => {
+  const id = "2108700000000000001";
+  const service = `https://cdn.syndication.twimg.com/tweet-result?id=${id}&token=0`;
+  const ask = (tweetId: unknown) => ({ target: "background", action: "readXSyndication", tweetId });
+  const sender = { url: "https://x.com/home", frameId: 0, tab: { id: 4 } };
+
+  it("asks the service by the ID without cookies and answers its data", async () => {
+    const data = { __typename: "Tweet", id_str: id, text: "Fallback text", mediaDetails: [] };
+    const worker = background("promise", { fetch: async () => ({ ok: true, json: async () => data }) });
+    const request = worker.dispatch(ask(id), sender);
+    expect(request.keepAlive).toBe(true);
+    await expect(request.response).resolves.toEqual({ ok: true, data });
+    expect(worker.fetch).toHaveBeenCalledWith(service, expect.objectContaining({ credentials: "omit", signal: expect.anything() }));
+  });
+
+  it.each([["1; alert(1)"], [Number(id)], [undefined], ["1".repeat(26)]])("asks nothing for the ID %j", async (tweetId) => {
+    const worker = background("promise");
+    await expect(worker.dispatch(ask(tweetId), sender).response).resolves.toEqual({ ok: false });
+    expect(worker.fetch).not.toHaveBeenCalled();
+  });
+
+  it("answers no data when the service refuses the post or answers no object", async () => {
+    const refused = background("promise", { fetch: async () => ({ ok: false, status: 404, json: async () => ({}) }) });
+    await expect(refused.dispatch(ask(id), sender).response).resolves.toEqual({ ok: false, status: 404 });
+    const odd = background("promise", { fetch: async () => ({ ok: true, json: async () => [] }) });
+    await expect(odd.dispatch(ask(id), sender).response).resolves.toEqual({ ok: false });
+  });
+
+  it("answers no data when the request fails, and gives up after the bound", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.useFakeTimers();
+    try {
+      const offline = background("promise", { fetch: async () => { throw new Error("offline"); } });
+      await expect(offline.dispatch(ask(id), sender).response).resolves.toEqual({ ok: false });
+      expect(warn).toHaveBeenCalledWith("[Mine] X post unavailable from syndication:", "offline");
+      const silent = background("promise", {
+        fetch: (_url, init) => new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+      });
+      const settled = vi.fn();
+      const answered = silent.dispatch(ask(id), sender).response.then(settled);
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(settled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await answered;
+      expect(settled).toHaveBeenCalledWith({ ok: false });
+    } finally {
+      vi.useRealTimers();
+      warn.mockRestore();
+    }
+  });
+});
+
 describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)", () => {
   function launchWorker() {
     const worker = background("promise");
@@ -897,8 +954,10 @@ describe("files of the running build and the pages open before it (К4)", () => 
 
   /// The actual worker of `runningBuild` over files of `diskBuild`. Local
   /// storage outlives the reload; session storage is the worker's own. An
-  /// overlay answers in a tab once dist/overlay.js was put there.
-  function worker(runningBuild: string, diskBuild: string, local: Map<string, unknown>, tabs: Tab[]) {
+  /// overlay answers in a tab once dist/overlay.js was put there. The tabs of
+  /// `pageCaches` run the post cache of X in their page world.
+  function worker(runningBuild: string, diskBuild: string, local: Map<string, unknown>, tabs: Tab[],
+    pageCaches = new Set<number>()) {
     const host = background("promise", { runningBuild, diskBuild });
     const session = new Map<string, unknown>();
     const storage = host.chrome.storage as unknown as Record<"local" | "session", Record<string, ReturnType<typeof vi.fn>>>;
@@ -926,7 +985,8 @@ describe("files of the running build and the pages open before it (К4)", () => 
       return { ...tab };
     });
     const injected = new Map<number, string[]>();
-    chrome.scripting.executeScript.mockImplementation(async (options: { target: { tabId: number }; files?: string[] }) => {
+    chrome.scripting.executeScript.mockImplementation(async (options: { target: { tabId: number }; files?: string[]; func?: () => unknown }) => {
+      if (options.func) return [{ frameId: 0, result: pageCaches.has(options.target.tabId) }];
       injected.set(options.target.tabId, [...(injected.get(options.target.tabId) ?? []), ...(options.files ?? [])]);
       return [];
     });
@@ -950,17 +1010,25 @@ describe("files of the running build and the pages open before it (К4)", () => 
   it("puts the content scripts of the manifest into every open tab they match after an install or update", async () => {
     const tabs = [{ id: 1, url: "https://a.example/story" }, { id: 2, url: "https://x.com/home" },
       { id: 3, url: "https://www.instagram.com/" }, { id: 4, url: "https://c.example/", discarded: true },
-      { id: 5, url: "chrome://newtab/" }];
-    const { host, injected } = worker("build", "build", new Map(), tabs);
+      { id: 5, url: "chrome://newtab/" }, { id: 6, url: "https://pro.x.com/i/decks/1" }];
+    // The tab of X Pro was loaded with the page world's scripts; the tab of
+    // X was open before the install and has none.
+    const { host, injected } = worker("build", "build", new Map(), tabs, new Set([6]));
     host.install("update");
     await vi.waitFor(() => expect(injected.get(3)).toEqual([...contentScripts, ...instagramOverlay]));
+    await vi.waitFor(() => expect(injected.get(6)).toEqual(contentScripts));
     expect(injected.get(1)).toEqual(contentScripts);
-    expect(injected.get(2)).toEqual(contentScripts);
-    expect([...injected.keys()].sort()).toEqual([1, 2, 3]);
+    expect(injected.get(2)).toEqual([...pageWorld, ...contentScripts]);
+    expect([...injected.keys()].sort()).toEqual([1, 2, 3, 6]);
+    expect(host.chrome.scripting.executeScript).toHaveBeenCalledWith({ target: { tabId: 2, allFrames: false }, world: "MAIN", files: pageWorld });
     expect(host.chrome.scripting.executeScript).toHaveBeenCalledWith({ target: { tabId: 2, allFrames: false }, files: contentScripts });
-    // The scripts of the page's own world stay as the page loaded them.
-    expect([...injected.values()].flat()).not.toContain(pageWorld.find((file) => !contentScripts.includes(file)));
-    expect(host.chrome.scripting.executeScript.mock.calls.every(([options]) => (options as { world?: string }).world === undefined)).toBe(true);
+    // Only the tabs of X are asked about the page world's cache; a page that
+    // has it keeps the scripts it loaded.
+    const asked = host.chrome.scripting.executeScript.mock.calls
+      .map(([options]) => options as { target: { tabId: number }; world?: string; func?: unknown })
+      .filter((options) => options.func !== undefined)
+      .map((options) => [options.target.tabId, options.world]);
+    expect(asked.sort()).toEqual([[2, "MAIN"], [6, "MAIN"]]);
   });
 
   it("puts nothing after a browser update, nor from files of another build", async () => {
@@ -994,7 +1062,8 @@ describe("files of the running build and the pages open before it (К4)", () => 
     expect(before.host.chrome.runtime.reload).toHaveBeenCalledOnce();
     vi.useRealTimers();
 
-    const after = worker("new", "new", local, [tab]);
+    // The tab was loaded under the old build: its page world has the cache.
+    const after = worker("new", "new", local, [tab], new Set([tab.id]));
     after.host.install("update");
     await vi.waitFor(() => expect(after.shown).toHaveLength(1));
     // The content scripts of the new build come first, then its overlay.

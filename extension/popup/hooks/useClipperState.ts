@@ -32,6 +32,7 @@ import {
   pickVaultFolder,
   revealVault,
   requestYoutubeChannel,
+  requestXSyndication,
   waitForYoutubeChannel,
   currentCaptureDocument,
 } from "../lib/messaging";
@@ -1385,7 +1386,7 @@ export function useClipperState() {
       case "save-link":
         // The metadata is already the link's own (linkTargetMetadata).
         // Twitter/X tweet links: fetch full tweet (text + images) via
-        // syndication API directly from popup — no content script needed,
+        // syndication API, asked of background: no content script needed,
         // works even when current page is the feed, not the tweet page.
         if (ctx.linkUrl && /(?:twitter\.com|x\.com)\/(\w+)\/status\/(\d+)/i.test(ctx.linkUrl)) {
           meta.detectedType = "article";
@@ -2188,7 +2189,7 @@ export async function hydrateTwitterVideoPreviews(
   };
 }
 
-// ─── Twitter syndication API (direct fetch, no content script) ──────────
+// ─── Twitter syndication API (asked of background, no content script) ───
 
 interface SyndicationMedia {
   type: string;
@@ -2208,18 +2209,19 @@ function stripSyndicationMediaLinks(text: string, mediaDetails: SyndicationMedia
   return cleaned.trim();
 }
 
+// The service answers only https://platform.twitter.com; the overlay runs in
+// the page's content script, where a request of its own fails on CORS
+// (SPEC_CLIPPER.md, «Кнопка Mine в ленте X», rule 6, 13.10.2026).
 async function fetchTweetBySyndicationApi(
   tweetId: string,
   authorHandle: string,
 ): Promise<ArticleData | null> {
-  const resp = await fetch(
-    `https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&token=0`,
-  );
-  if (!resp.ok) return null;
-  const data = await resp.json();
-  const mediaDetails = (data.mediaDetails ?? []) as SyndicationMedia[];
+  const data = await requestXSyndication(tweetId);
+  if (!data) return null;
+  // The service's own shape, read as before.
+  const mediaDetails = (Array.isArray(data.mediaDetails) ? data.mediaDetails : []) as SyndicationMedia[];
 
-  const text = stripSyndicationMediaLinks(data.text ?? "", mediaDetails);
+  const text = stripSyndicationMediaLinks(typeof data.text === "string" ? data.text : "", mediaDetails);
   const media: string[] = [];
 
   for (const m of mediaDetails) {

@@ -92,27 +92,38 @@ describe("fetchTweetPhotoByIndex", () => {
     vi.unstubAllGlobals();
   });
 
-  it("fetches the syndication endpoint and returns the indexed photo", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
+  /// Background answers `reply`. The overlay's own request goes with the
+  /// page's origin, and the service, which answers only
+  /// https://platform.twitter.com, is refused it on CORS.
+  function background(reply: unknown) {
+    const sendMessage = vi.fn((_message: unknown, callback: (response: unknown) => void) => callback(reply));
+    vi.stubGlobal("chrome", { runtime: { sendMessage, lastError: undefined } });
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch"); }));
+    return sendMessage;
+  }
+
+  it("asks background for the syndication answer and returns the indexed photo", async () => {
+    const sendMessage = background({
       ok: true,
-      json: async () => ({
+      data: {
         mediaDetails: [
           { type: "photo", media_url_https: "https://pbs.twimg.com/media/AAA.jpg" },
           { type: "photo", media_url_https: "https://pbs.twimg.com/media/BBB.jpg" },
         ],
-      }),
+      },
     });
-    vi.stubGlobal("fetch", fetchMock);
 
     const result = await fetchTweetPhotoByIndex("999", 1);
     expect(result?.src).toBe("https://pbs.twimg.com/media/BBB.jpg?name=large");
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://cdn.syndication.twimg.com/tweet-result?id=999&token=0",
+    expect(sendMessage).toHaveBeenCalledWith(
+      { target: "background", action: "readXSyndication", tweetId: "999" },
+      expect.any(Function),
     );
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("returns null when the syndication response is not ok", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
+  it("returns null when background has no syndication answer", async () => {
+    background({ ok: false, status: 404 });
     expect(await fetchTweetPhotoByIndex("999", 0)).toBeNull();
   });
 });
