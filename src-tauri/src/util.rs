@@ -326,7 +326,9 @@ fn startup_trace_message(scope: &str, message: &str, detailed: bool) -> String {
     if detailed || matches!(scope, "process" | "setup" | "window" | "startup") {
         return message.to_string();
     }
-    if scope == "startup_maintenance" && message.starts_with("done ") {
+    // The mode and time of the launch pass, and what started it (a frame or
+    // the deadline): content-free, and what tells a launch apart.
+    if scope == "startup_maintenance" && (message.starts_with("done ") || message.starts_with("scheduled ")) {
         return message.to_string();
     }
     message
@@ -466,6 +468,10 @@ mod tests {
         assert_eq!(
             startup_trace_message("startup", "milestone=first_cards_painted", false),
             "milestone=first_cards_painted"
+        );
+        assert_eq!(
+            startup_trace_message("startup_maintenance", "scheduled trigger=no_frame", false),
+            "scheduled trigger=no_frame"
         );
     }
 }

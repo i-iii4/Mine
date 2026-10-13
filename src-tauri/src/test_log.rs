@@ -9,6 +9,7 @@ use std::thread::ThreadId;
 
 struct Record {
     thread: ThreadId,
+    level: log::Level,
     text: String,
 }
 
@@ -18,7 +19,7 @@ struct CapturingLogger {
 
 impl log::Log for CapturingLogger {
     fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-        metadata.level() <= log::Level::Warn
+        metadata.level() <= log::Level::Info
     }
 
     fn log(&self, record: &log::Record<'_>) {
@@ -30,6 +31,7 @@ impl log::Log for CapturingLogger {
             .unwrap_or_else(PoisonError::into_inner)
             .push(Record {
                 thread: std::thread::current().id(),
+                level: record.level(),
                 text: record.args().to_string(),
             });
     }
@@ -55,7 +57,7 @@ pub(crate) fn capture() -> Capture {
         // Another logger already installed would leave the records empty,
         // and the test that reads them fails, as it should.
         if log::set_logger(logger).is_ok() {
-            log::set_max_level(log::LevelFilter::Warn);
+            log::set_max_level(log::LevelFilter::Info);
         }
         logger
     });
@@ -74,14 +76,27 @@ pub(crate) fn capture() -> Capture {
 impl Capture {
     /// The warnings and errors the thread logged since the capture began.
     pub(crate) fn warnings(&self) -> Vec<String> {
+        self.records(log::Level::Warn)
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect()
+    }
+
+    /// Every line the thread logged since the capture began, at info and
+    /// above, with its level.
+    pub(crate) fn lines(&self) -> Vec<(log::Level, String)> {
+        self.records(log::Level::Info)
+    }
+
+    fn records(&self, least: log::Level) -> Vec<(log::Level, String)> {
         self.logger
             .records
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .iter()
             .skip(self.from)
-            .filter(|record| record.thread == self.thread)
-            .map(|record| record.text.clone())
+            .filter(|record| record.thread == self.thread && record.level <= least)
+            .map(|record| (record.level, record.text.clone()))
             .collect()
     }
 }

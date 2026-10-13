@@ -332,6 +332,10 @@ pub fn run() {
             app.manage(tabs::TabShell::new(saved_windows_dir));
             tabs::restore(app.handle())?;
             crate::util::append_startup_trace(app.handle(), "window", "created");
+            // The clipper maintenance starts after the page's first frame;
+            // a launch whose window nobody sees paints none and starts it at
+            // a deadline instead (SPEC_ONBOARDING.md, О5).
+            commands::startup::arm_launch_deadline(app.handle());
 
             crate::util::append_startup_trace(app.handle(), "setup", "done");
 

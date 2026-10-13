@@ -400,6 +400,12 @@ fn flush_payload_tree(root: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The name of the immutable package that holds `manifest`'s runtime.
+fn runtime_package_id(manifest: &RuntimeBuildManifest) -> std::io::Result<String> {
+    let bytes = serde_json::to_vec(manifest).map_err(std::io::Error::other)?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
 fn prepare_runtime_package(
     parent: &Path,
     manifest: &RuntimeBuildManifest,
@@ -407,8 +413,7 @@ fn prepare_runtime_package(
     extension_source: &Path,
     video_source: Option<&Path>,
 ) -> std::io::Result<String> {
-    let bytes = serde_json::to_vec(manifest).map_err(std::io::Error::other)?;
-    let package_id = format!("{:x}", Sha256::digest(bytes));
+    let package_id = runtime_package_id(manifest)?;
     let packages = parent.join("packages");
     std::fs::create_dir_all(&packages)?;
     let destination = packages.join(&package_id);
@@ -566,6 +571,7 @@ fn install_runtime_from_sources(
         register,
         |_, _| Ok(()),
     )
+    .map(|_| ())
 }
 
 fn install_runtime_from_sources_with_probe(
@@ -576,7 +582,7 @@ fn install_runtime_from_sources_with_probe(
     video: Option<&Path>,
     mut register: impl FnMut(&Path) -> std::io::Result<()>,
     mut probe: impl FnMut(&Path, &RuntimeBuildManifest) -> std::io::Result<()>,
-) -> std::io::Result<()> {
+) -> std::io::Result<ActiveRuntime> {
     let _writer = crate::storage::source_mutation::begin_write().map_err(std::io::Error::other)?;
     let _lock = runtime_install_lock(parent)?;
     let abandoned = settle_unfinished_install(parent, &mut register, &mut probe)?;
@@ -589,7 +595,7 @@ fn install_runtime_from_sources_with_probe(
         &mut register,
         &mut probe,
     )?;
-    if let Some(abandoned) = abandoned.filter(|package_id| *package_id != active) {
+    if let Some(abandoned) = abandoned.filter(|package_id| *package_id != active.package) {
         // Browsers now launch the repaired runtime; the package the
         // interrupted installation left is kept aside for diagnosis.
         let damaged = parent.join("packages").join(&abandoned);
@@ -600,7 +606,7 @@ fn install_runtime_from_sources_with_probe(
         }
     }
     prune_runtime_packages(parent);
-    Ok(())
+    Ok(active)
 }
 
 /// Remove the helper packages and retained copies that are neither the
@@ -783,7 +789,7 @@ fn verified_previous(
 }
 
 /// Install `candidate` from the bundle, or keep a newer installed runtime.
-/// Returns the package browsers launch afterwards.
+/// Returns the package browsers launch afterwards and how it came to be.
 fn install_or_reuse_runtime(
     parent: &Path,
     candidate: RuntimeBuildManifest,
@@ -792,7 +798,7 @@ fn install_or_reuse_runtime(
     video: Option<&Path>,
     register: &mut impl FnMut(&Path) -> std::io::Result<()>,
     probe: &mut impl FnMut(&Path, &RuntimeBuildManifest) -> std::io::Result<()>,
-) -> std::io::Result<String> {
+) -> std::io::Result<ActiveRuntime> {
     let marker = match std::fs::read(parent.join("runtime-install.json")) {
         Ok(bytes) => Some(
             serde_json::from_slice::<RuntimeInstallMarker>(&bytes).map_err(|error| {
@@ -817,8 +823,7 @@ fn install_or_reuse_runtime(
                 "the newer runtime failed verification and was preserved without downgrade",
             ));
         }
-        let bytes = serde_json::to_vec(&installed.manifest).map_err(std::io::Error::other)?;
-        let package_id = format!("{:x}", Sha256::digest(bytes));
+        let package_id = runtime_package_id(&installed.manifest)?;
         let package = parent.join("packages").join(&package_id);
         if !runtime_package_matches(&package, &installed.manifest) {
             return Err(std::io::Error::new(
@@ -842,8 +847,18 @@ fn install_or_reuse_runtime(
         } else {
             register(&package.join("native-host"))?;
         }
-        return Ok(package_id);
+        return Ok(ActiveRuntime {
+            package: package_id,
+            change: RuntimeChange::KeptNewer,
+        });
     }
+    let change = match &marker {
+        Some(installed) if installed.manifest == candidate => RuntimeChange::Reverified,
+        Some(installed) => RuntimeChange::Installed {
+            replaced: Some(runtime_package_id(&installed.manifest)?),
+        },
+        None => RuntimeChange::Installed { replaced: None },
+    };
     let package_id = prepare_runtime_package(parent, &candidate, host, extension, video)?;
     probe(
         &parent
@@ -863,7 +878,10 @@ fn install_or_reuse_runtime(
     };
     write_runtime_json(&parent.join("install-journal.json"), &journal)?;
     apply_runtime_journal(parent, &mut journal, &mut *register, |_| Ok(()))?;
-    Ok(package_id)
+    Ok(ActiveRuntime {
+        package: package_id,
+        change,
+    })
 }
 
 fn verify_candidate_launch(host: &Path, manifest: &RuntimeBuildManifest) -> std::io::Result<()> {
@@ -1029,6 +1047,63 @@ impl RuntimeMaintenanceMode {
         match self {
             Self::FastRegistration => "fast_registration",
             Self::VerifiedInstallation => "verified_installation",
+        }
+    }
+}
+
+/// The runtime browsers launch after a maintenance pass, and what the pass
+/// did to get there: Mine's log names it for every pass (SPEC_ONBOARDING.md,
+/// О5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveRuntime {
+    /// The package the browser registrations name.
+    pub package: String,
+    pub change: RuntimeChange,
+}
+
+/// What a maintenance pass changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeChange {
+    /// This build's runtime was in place and its helper starts; only the
+    /// browser registrations were renewed.
+    InPlace,
+    /// This build's package and extension copies were installed over the
+    /// runtime of the package `replaced`, or where there was none.
+    Installed { replaced: Option<String> },
+    /// This build's runtime was installed already; its files were written
+    /// and verified again (a part was missing, or the weekly check was due).
+    Reverified,
+    /// An installed runtime newer than this build's stays: no downgrade.
+    KeptNewer,
+}
+
+impl ActiveRuntime {
+    pub fn mode(&self) -> RuntimeMaintenanceMode {
+        match self.change {
+            RuntimeChange::InPlace => RuntimeMaintenanceMode::FastRegistration,
+            _ => RuntimeMaintenanceMode::VerifiedInstallation,
+        }
+    }
+
+    /// The pass in a few words, for one line of Mine's log.
+    pub fn describe(&self) -> String {
+        let package = &self.package;
+        match &self.change {
+            RuntimeChange::InPlace => {
+                format!("this build's helper package {package} is installed and starts; browsers registered")
+            }
+            RuntimeChange::Installed { replaced: Some(replaced) } => format!(
+                "installed this build's helper package {package} with its extension copies, replacing {replaced}"
+            ),
+            RuntimeChange::Installed { replaced: None } => {
+                format!("installed this build's helper package {package} with its extension copies")
+            }
+            RuntimeChange::Reverified => format!(
+                "this build's helper package {package} was installed already; its files were written and verified again"
+            ),
+            RuntimeChange::KeptNewer => {
+                format!("kept the newer installed helper package {package}; this build's is older")
+            }
         }
     }
 }
@@ -1585,8 +1660,11 @@ fn runtime_build_manifest(app: &AppHandle) -> Result<RuntimeBuildManifest, Comma
 fn read_runtime_install_marker(
     app: &AppHandle,
 ) -> Result<Option<RuntimeInstallMarker>, CommandError> {
-    let path = runtime_install_marker_path(app)?;
-    match std::fs::read(&path) {
+    read_runtime_marker_file(&runtime_install_marker_path(app)?)
+}
+
+fn read_runtime_marker_file(path: &Path) -> Result<Option<RuntimeInstallMarker>, CommandError> {
+    match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| {
             CommandError::Internal(format!(
                 "runtime marker is unreadable or unknown and has been preserved: {error}"
@@ -1615,16 +1693,12 @@ fn executable_with_size(path: &Path, expected_bytes: u64) -> bool {
     true
 }
 
-fn runtime_components_present(app: &AppHandle, manifest: &RuntimeBuildManifest) -> bool {
-    let Ok(host) = host_binary_path(app) else {
-        return false;
-    };
+fn runtime_components_present(parent: &Path, manifest: &RuntimeBuildManifest) -> bool {
+    let host = parent.join("native-host");
     if !executable_with_size(&host, manifest.native_host.bytes) {
         return false;
     }
-    let Ok(extension) = installed_extension_path(app) else {
-        return false;
-    };
+    let extension = parent.join("extension");
     let extension_bytes = payload_files(&extension).ok().and_then(|files| {
         files.iter().try_fold(0u64, |total, relative| {
             std::fs::metadata(extension.join(relative))
@@ -1711,21 +1785,73 @@ fn register_browser_manifests(destination: &Path) -> Result<(), CommandError> {
     }
 }
 
+/// Where a maintenance pass takes this build's runtime from and where it
+/// keeps the installed one (SPEC_ONBOARDING.md, О5).
+struct RuntimeSite {
+    /// This build's runtime manifest.
+    manifest: RuntimeBuildManifest,
+    bundled_host: PathBuf,
+    bundled_extension: PathBuf,
+    /// The bundle's unpacked `yt-dlp`, when this build carries one.
+    bundled_ytdlp: Option<PathBuf>,
+    /// The installation owner, `clipper/managed-v1`.
+    parent: PathBuf,
+}
+
+fn runtime_site(app: &AppHandle) -> Result<RuntimeSite, CommandError> {
+    // Tauri bundles every binary target of this crate next to the app
+    // executable, so the host is already inside the .app and installing it is
+    // a copy. Declaring it as a bundle resource instead would make the build
+    // script depend on its own output.
+    let manifest = runtime_build_manifest(app)?;
+    let bundled_host = bundled_host_path().ok_or_else(|| {
+        CommandError::Internal("clipper host is missing from the app bundle".into())
+    })?;
+    let bundled_extension = bundled_extension_path(app).ok_or_else(|| {
+        CommandError::Internal("clipper extension is missing from the app bundle".into())
+    })?;
+    let parent = host_binary_path(app)?
+        .parent()
+        .ok_or_else(|| CommandError::Internal("clipper directory has no parent".into()))?
+        .to_path_buf();
+    Ok(RuntimeSite {
+        manifest,
+        bundled_host,
+        bundled_extension,
+        bundled_ytdlp: std::env::current_exe()
+            .ok()
+            .and_then(|exe| bundled_ytdlp_path(&exe)),
+        parent,
+    })
+}
+
+/// Register the helper `host` with every browser found on this Mac.
+fn register_browsers(host: &Path) -> std::io::Result<()> {
+    register_browser_manifests(host).map_err(|error| std::io::Error::other(error.to_string()))
+}
+
 /// Maintain the installed clipper after first paint. A current installation
 /// reads its marker and metadata, then probes the registered immutable helper.
 /// Full byte verification runs on changes, missing parts and the weekly pass.
-pub fn maintain_installed_runtime(app: &AppHandle) -> Result<RuntimeMaintenanceMode, CommandError> {
-    let manifest = runtime_build_manifest(app)?;
-    let marker = read_runtime_install_marker(app)?;
-    let host = host_binary_path(app)?;
-    let parent = host
-        .parent()
-        .ok_or_else(|| CommandError::Internal("clipper directory has no parent".into()))?;
+pub fn maintain_installed_runtime(app: &AppHandle) -> Result<ActiveRuntime, CommandError> {
+    maintain_runtime(&runtime_site(app)?, register_browsers, verify_candidate_launch)
+}
+
+/// [`maintain_installed_runtime`] at `site`, registering with `register` and
+/// starting helpers with `probe`.
+fn maintain_runtime(
+    site: &RuntimeSite,
+    mut register: impl FnMut(&Path) -> std::io::Result<()>,
+    mut probe: impl FnMut(&Path, &RuntimeBuildManifest) -> std::io::Result<()>,
+) -> Result<ActiveRuntime, CommandError> {
+    let parent = site.parent.as_path();
+    let manifest = &site.manifest;
+    let marker = read_runtime_marker_file(&parent.join("runtime-install.json"))?;
     let pending = read_runtime_journal(parent)
         .map_err(|error| CommandError::Internal(error.to_string()))?
         .is_some_and(|journal| journal.stage != RuntimeInstallStage::FilesVerified);
-    if marker_allows_fast_registration(marker.as_ref(), &manifest, unix_seconds_now())
-        && runtime_components_present(app, &manifest)
+    if marker_allows_fast_registration(marker.as_ref(), manifest, unix_seconds_now())
+        && runtime_components_present(parent, manifest)
         && !pending
         && !parent
             .parent()
@@ -1733,22 +1859,24 @@ pub fn maintain_installed_runtime(app: &AppHandle) -> Result<RuntimeMaintenanceM
     {
         let _writer = crate::storage::source_mutation::begin_write()
             .map_err(|error| CommandError::Internal(error.to_string()))?;
-        let host = host_binary_path(app)?;
-        let _lock = runtime_install_lock(
-            host.parent()
-                .ok_or_else(|| CommandError::Internal("clipper directory has no parent".into()))?,
-        )
-        .map_err(|error| {
+        let _lock = runtime_install_lock(parent).map_err(|error| {
             CommandError::Internal(format!(
                 "another runtime installation is active or its lock is unavailable: {error}"
             ))
         })?;
-        let registered = registered_host_path(app)?;
-        match verify_candidate_launch(&registered, &manifest) {
+        // The marker names this build's manifest: its package is the one
+        // the browsers are registered with.
+        let package = runtime_package_id(manifest)
+            .map_err(|error| CommandError::Internal(error.to_string()))?;
+        let registered = parent.join("packages").join(&package).join("native-host");
+        match probe(&registered, manifest) {
             Ok(()) => {
-                register_browser_manifests(&registered)?;
+                register(&registered).map_err(|error| CommandError::Internal(error.to_string()))?;
                 prune_runtime_packages(parent);
-                return Ok(RuntimeMaintenanceMode::FastRegistration);
+                return Ok(ActiveRuntime {
+                    package,
+                    change: RuntimeChange::InPlace,
+                });
             }
             // The registered helper no longer starts: its package is damaged.
             // The verified installation below rebuilds it from the bundle
@@ -1757,8 +1885,29 @@ pub fn maintain_installed_runtime(app: &AppHandle) -> Result<RuntimeMaintenanceM
         }
     }
 
-    install_clipper_runtime(app)?;
-    Ok(RuntimeMaintenanceMode::VerifiedInstallation)
+    install_runtime(site, register, probe)
+}
+
+/// Install this build's runtime at `site` (see [`install_clipper_runtime`]).
+fn install_runtime(
+    site: &RuntimeSite,
+    register: impl FnMut(&Path) -> std::io::Result<()>,
+    probe: impl FnMut(&Path, &RuntimeBuildManifest) -> std::io::Result<()>,
+) -> Result<ActiveRuntime, CommandError> {
+    std::fs::create_dir_all(&site.parent)
+        .map_err(|e| CommandError::Internal(format!("failed to create clipper directory: {e}")))?;
+    install_runtime_from_sources_with_probe(
+        &site.parent,
+        site.manifest.clone(),
+        &site.bundled_host,
+        &site.bundled_extension,
+        site.bundled_ytdlp.as_deref(),
+        register,
+        probe,
+    )
+    .map_err(|error| {
+        CommandError::Internal(format!("runtime installation remains recoverable: {error}"))
+    })
 }
 
 /// What the periodic upkeep compares: the bundle against what browsers use.
@@ -1847,10 +1996,12 @@ fn runtime_upkeep_paths(app: &AppHandle) -> Result<Option<RuntimeUpkeepPaths>, C
     }))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeUpkeep {
+    /// Browsers run this build's helper and extension.
     Current,
-    Repaired,
+    /// Something differed from this build and was installed again.
+    Repaired(ActiveRuntime),
     /// The build has no helper to install; upkeep stops.
     NotBundled,
 }
@@ -1865,8 +2016,7 @@ pub fn keep_runtime_current(app: &AppHandle) -> Result<RuntimeUpkeep, CommandErr
     if runtime_matches_bundle(&paths) {
         return Ok(RuntimeUpkeep::Current);
     }
-    install_clipper_runtime(app)?;
-    Ok(RuntimeUpkeep::Repaired)
+    install_clipper_runtime(app).map(RuntimeUpkeep::Repaired)
 }
 
 /// The folder a browser loads once with Load unpacked; Mine keeps its
@@ -1881,43 +2031,8 @@ pub fn clipper_extension_folder(app: AppHandle) -> Result<String, CommandError> 
 /// Idempotent: running it again refreshes the binary and the manifests, which
 /// is exactly what an app update needs. A browser that is not installed is
 /// skipped rather than reported as a failure.
-pub fn install_clipper_runtime(app: &AppHandle) -> Result<(), CommandError> {
-    // Tauri bundles every binary target of this crate next to the app
-    // executable, so the host is already inside the .app and installing it is
-    // a copy. Declaring it as a bundle resource instead would make the build
-    // script depend on its own output.
-    let runtime_manifest = runtime_build_manifest(app)?;
-    let bundled = bundled_host_path().ok_or_else(|| {
-        CommandError::Internal("clipper host is missing from the app bundle".into())
-    })?;
-
-    let destination = host_binary_path(app)?;
-    let parent = destination
-        .parent()
-        .ok_or_else(|| CommandError::Internal("clipper directory has no parent".into()))?;
-    std::fs::create_dir_all(parent)
-        .map_err(|e| CommandError::Internal(format!("failed to create clipper directory: {e}")))?;
-    let extension = bundled_extension_path(app).ok_or_else(|| {
-        CommandError::Internal("clipper extension is missing from the app bundle".into())
-    })?;
-    let video = std::env::current_exe()
-        .ok()
-        .and_then(|exe| bundled_ytdlp_path(&exe));
-    install_runtime_from_sources_with_probe(
-        parent,
-        runtime_manifest,
-        &bundled,
-        &extension,
-        video.as_deref(),
-        |host| {
-            register_browser_manifests(host)
-                .map_err(|error| std::io::Error::other(error.to_string()))
-        },
-        verify_candidate_launch,
-    )
-    .map_err(|error| {
-        CommandError::Internal(format!("runtime installation remains recoverable: {error}"))
-    })
+pub fn install_clipper_runtime(app: &AppHandle) -> Result<ActiveRuntime, CommandError> {
+    install_runtime(&runtime_site(app)?, register_browsers, verify_candidate_launch)
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -2583,6 +2698,115 @@ mod tests {
         )
         .expect("the adopted copy is Mine's and is updated");
         assert_eq!(extension_manifest(&legacy), Some(candidate.extension));
+    }
+
+    /// О5, 13.10.2026: a Mine of a new build was opened behind other
+    /// windows. Its page painted no frame, nothing started the launch
+    /// maintenance, and for hours browsers kept the previous build's helper
+    /// and both extension copies, with no line in Mine's log. Here the
+    /// previous build is installed as it was on that Mac: its package, the
+    /// managed copy and the adopted `clipper/extension`, adopted before Mine
+    /// kept a record of it. The new build launches and its page never
+    /// paints: by the deadline its package and both copies are installed,
+    /// browsers are registered with it, and the log has one line saying so.
+    #[test]
+    fn a_launch_whose_page_never_paints_installs_this_builds_runtime() {
+        use crate::commands::startup::{
+            arm_no_frame_deadline, launch_outcome_line, log_line, LaunchClaim, LaunchTrigger,
+        };
+
+        let tmp = TempDir::new().unwrap();
+        let parent = tmp.path().join("app/clipper/managed-v1");
+        let adopted = parent.parent().unwrap().join("extension");
+        browser_payload(&adopted, "com.localarena.clipper", "loaded before managed packages");
+        // Local ad-hoc builds of one version, as `build:local-app` makes them.
+        let local_build = |name: &str, label: &str| {
+            let (source, mut manifest) = runtime_fixture(tmp.path(), name, "0.1.0");
+            manifest.build_profile = "local".into();
+            manifest.extension = browser_payload(&source.join("extension"), HOST_NAME, label);
+            (source, manifest)
+        };
+        let (previous_source, previous) = local_build("previous", "previous build");
+        install_runtime_from_sources(
+            &parent,
+            previous.clone(),
+            &previous_source.join("native-host"),
+            &previous_source.join("extension"),
+            Some(&previous_source.join(YTDLP_DIRECTORY)),
+            |_| Ok(()),
+        )
+        .unwrap();
+        std::fs::remove_file(parent.join(ADOPTED_EXTENSION_RECORD)).unwrap();
+        assert_eq!(extension_manifest(&adopted), Some(previous.extension.clone()));
+
+        let (next_source, next) = local_build("next", "next build");
+        let site = RuntimeSite {
+            manifest: next.clone(),
+            bundled_host: next_source.join("native-host"),
+            bundled_extension: next_source.join("extension"),
+            bundled_ytdlp: Some(next_source.join(YTDLP_DIRECTORY)),
+            parent: parent.clone(),
+        };
+        let claim: &'static LaunchClaim = Box::leak(Box::new(LaunchClaim::new()));
+        let (sender, received) = std::sync::mpsc::channel();
+        // The page never reports a frame: nothing claims the launch but the deadline.
+        let waiting = arm_no_frame_deadline(claim, std::time::Duration::from_millis(20), move |trigger| {
+            let capture = crate::test_log::capture();
+            let mut registered = Vec::new();
+            let outcome = maintain_runtime(
+                &site,
+                |host| {
+                    registered.push(host.to_path_buf());
+                    Ok(())
+                },
+                |_, _| Ok(()),
+            );
+            log_line(launch_outcome_line(trigger, &outcome));
+            sender.send((trigger, outcome, registered, capture.lines())).unwrap();
+        })
+        .unwrap();
+        let (trigger, outcome, registered, lines) = received
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("a launch whose page never paints started no clipper maintenance");
+        waiting.join().unwrap();
+
+        let next_package = runtime_package_id(&next).unwrap();
+        let previous_package = runtime_package_id(&previous).unwrap();
+        assert_eq!(trigger, LaunchTrigger::NoFrame);
+        assert_eq!(
+            outcome.unwrap(),
+            ActiveRuntime {
+                package: next_package.clone(),
+                change: RuntimeChange::Installed {
+                    replaced: Some(previous_package.clone())
+                },
+            }
+        );
+        let package = parent.join("packages").join(&next_package);
+        assert_eq!(registered, vec![package.join("native-host")]);
+        assert!(runtime_package_matches(&package, &next));
+        let marker: RuntimeInstallMarker =
+            serde_json::from_slice(&std::fs::read(parent.join("runtime-install.json")).unwrap()).unwrap();
+        assert_eq!(marker.manifest, next);
+        assert_eq!(
+            std::fs::read(parent.join("native-host")).unwrap(),
+            std::fs::read(next_source.join("native-host")).unwrap()
+        );
+        assert_eq!(extension_manifest(&parent.join("extension")), Some(next.extension.clone()));
+        assert_eq!(extension_manifest(&adopted), Some(next.extension.clone()));
+        let launch_lines: Vec<_> = lines
+            .iter()
+            .filter(|(_, line)| line.starts_with("clipper maintenance at launch"))
+            .collect();
+        assert_eq!(
+            launch_lines,
+            vec![&(
+                log::Level::Info,
+                format!(
+                    "clipper maintenance at launch (no frame within 15 s): installed this build's helper package {next_package} with its extension copies, replacing {previous_package}"
+                )
+            )]
+        );
     }
 
     /// Е4.7, Н14: maintenance keeps the helper packages of the current and
