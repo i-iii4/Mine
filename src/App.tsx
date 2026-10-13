@@ -4317,7 +4317,7 @@ export function AppWithVault({
       setDeleteKeptMedia(null);
       setDeleteBlockError(null);
       try {
-        // Only the files the window offered may go (SPEC_DEEP_AUDIT.md, Е1.10).
+        // Exactly the files the window offered go (SPEC_DEEP_AUDIT.md, Е1.12).
         const outcome = await deleteBlocks(
           slugs,
           deleteUnusedMedia,
@@ -4388,7 +4388,7 @@ export function AppWithVault({
       // truth (and self-heals the list if the delete failed).
       window.dispatchEvent(new CustomEvent("block-deleted", { detail: { slug } }));
       try {
-        // Only the files the window offered may go (SPEC_DEEP_AUDIT.md, Е1.10).
+        // Exactly the files the window offered go (SPEC_DEEP_AUDIT.md, Е1.12).
         const outcome = await deleteBlock(
           slug,
           deleteUnusedMedia,

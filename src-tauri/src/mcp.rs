@@ -551,6 +551,28 @@ mod tests {
         assert!(result["content"][1]["text"].as_str().unwrap().starts_with("warning:"));
     }
 
+    /// SPEC_DEEP_AUDIT.md, Е2.25: a server and an app of one source, built
+    /// with other features and so of other build ids, say nothing.
+    #[test]
+    fn a_server_and_an_app_of_one_source_say_nothing() {
+        let (_dir, env, _root) = fixture();
+        std::fs::write(
+            env.app_data_dir.join(crate::runtime_protocol::APP_BUILD_FILE),
+            format!(
+                r#"{{"version":"0.1.0","build_id":"231de455861f0000","commit":"{}","source_id":"{}"}}"#,
+                env!("MINE_BUILD_COMMIT"),
+                option_env!("MINE_SOURCE_ID").unwrap_or("none")
+            ),
+        )
+        .unwrap();
+
+        let response = request(&env, "initialize", json!({}));
+
+        assert!(response["result"].get("instructions").is_none(), "{response}");
+        let result = call(&env, "collections", json!({}));
+        assert_eq!(result["content"].as_array().unwrap().len(), 1, "{result}");
+    }
+
     #[test]
     fn initialize_and_list_all_tools() {
         let (_dir, env, _root) = fixture();

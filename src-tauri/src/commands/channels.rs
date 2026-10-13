@@ -1776,6 +1776,83 @@ mod tests {
         );
     }
 
+    /// SPEC_DEEP_AUDIT.md, Е1.11, live in the CLI on 13.10.2026: a collection
+    /// created and deleted, then created again under the same name and
+    /// deleted again, while the Trash already holds the first page. The
+    /// iCloud Trash took the second name the delete kept of the page and left
+    /// the page in a hidden folder. Each page goes to the Trash, nothing
+    /// hidden is left in the collections folder, and no collection remains.
+    #[test]
+    fn deleting_a_collection_whose_name_the_trash_holds_sends_the_page_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        let state = app_state(&vault);
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+        let page = vault.block_path("Collections/Проба 2");
+
+        for round in ["first", "second"] {
+            let created = create_channel_inner(&vs.conn, &vs.vault, "Проба 2").unwrap();
+            assert_eq!(created.tag, "Проба 2", "{round}");
+            assert!(page.exists(), "{round}");
+
+            let deleted = delete_channel_inner(None, &vs.conn, &vs.vault, "Проба 2");
+
+            assert_eq!(
+                deleted.unwrap(),
+                CollectionDeleted {
+                    deleted: true,
+                    kept_links: Vec::new(),
+                },
+                "{round}"
+            );
+            assert!(!page.exists(), "{round}");
+            let hidden: Vec<String> = std::fs::read_dir(vault.root().join("Collections"))
+                .unwrap()
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.starts_with('.'))
+                .collect();
+            assert!(hidden.is_empty(), "{round}: {hidden:?}");
+            assert!(index::list_channels(&vs.conn).unwrap().is_empty(), "{round}");
+        }
+    }
+
+    /// Е1.11: the Trash answers that it took the page and leaves it. The
+    /// deletion changes nothing: the page stays in its place, the member
+    /// keeps its link, the collection stays, and the refusal says why.
+    #[test]
+    fn a_collection_page_the_trash_left_keeps_the_collection_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        let member = "---\nMine Collections:\n  - \"[[Photos]]\"\nsaved_at: 2026-04-25T14:00:40Z\n---\nBody\n";
+        std::fs::write(vault.block_path("Cards/Sunset"), member).unwrap();
+        let state = app_state(&vault);
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+        crate::storage::files::test_trash::hooks::leave_next_in_place();
+
+        let refused = delete_channel_inner(None, &vs.conn, &vs.vault, "Photos").unwrap_err();
+
+        assert!(refused.to_string().contains("the Trash did not take"), "{refused}");
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Collections/Photos")).unwrap(),
+            WRITTEN_PAGE
+        );
+        assert_eq!(std::fs::read_to_string(vault.block_path("Cards/Sunset")).unwrap(), member);
+        assert_eq!(
+            index::list_channels(&vs.conn)
+                .unwrap()
+                .into_iter()
+                .map(|channel| channel.tag)
+                .collect::<Vec<_>>(),
+            vec!["Photos".to_string()]
+        );
+    }
+
     /// SPEC_DEEP_AUDIT.md, Е1.4 (Н2): the rename takes its members from the
     /// index brought up to the files first; a member written while nothing
     /// watched the space follows the collection to its new name.

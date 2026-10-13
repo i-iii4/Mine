@@ -85,6 +85,10 @@ fn emit_build_identity() {
     ] {
         hash_path(root, &root.join(input), &mut digest);
     }
+    // The source alone, before the features and the profile: the app and the
+    // CLI of one checkout are different builds of the same source, and only
+    // a different source is worth a warning (SPEC_DEEP_AUDIT.md, Е2.25).
+    let source = digest.clone().finalize();
     let mut environment: Vec<_> = std::env::vars()
         .filter(|(key, _)| {
             key.starts_with("CARGO_FEATURE_") || matches!(key.as_str(), "TARGET" | "PROFILE")
@@ -141,6 +145,7 @@ fn emit_build_identity() {
         }
     }
     println!("cargo:rustc-env=MINE_BUILD_ID={:x}", digest.finalize());
+    println!("cargo:rustc-env=MINE_SOURCE_ID={source:x}");
     println!("cargo:rustc-env=MINE_BUILD_COMMIT={commit}");
 }
 

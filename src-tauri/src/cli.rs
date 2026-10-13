@@ -1313,6 +1313,38 @@ pub(crate) mod tests {
         assert!(version.stdout.contains("Mine app 0.1.0 build 0123456789abcdef"), "{}", version.stdout);
     }
 
+    /// The app's record of a build of `source` other than this CLI's build:
+    /// the app is built with other features than the CLI, so its build id
+    /// never equals the CLI's.
+    fn app_build_of_source(source: &str) -> String {
+        format!(
+            r#"{{"version":"0.1.0","build_id":"231de455861f0000","commit":"{}","source_id":"{source}"}}"#,
+            env!("MINE_BUILD_COMMIT")
+        )
+    }
+
+    /// SPEC_DEEP_AUDIT.md, Е2.25, live on 13.10.2026: the CLI and the app
+    /// installed from one commit warned that they were different builds, and
+    /// would on every call: they are built with different features, so their
+    /// build ids never match. A CLI and an app of one source say nothing; an
+    /// app of another source is named.
+    #[test]
+    fn a_cli_and_an_app_of_one_source_say_nothing() {
+        let (_dir, env, _root) = fixture();
+        let record = env.app_data_dir.join(crate::runtime_protocol::APP_BUILD_FILE);
+        std::fs::write(&record, app_build_of_source(option_env!("MINE_SOURCE_ID").unwrap_or("none"))).unwrap();
+
+        let out = run(&env, &args(&["collections", "--json"]));
+
+        assert_eq!(out.code, EXIT_OK);
+        assert!(out.stderr.is_empty(), "{}", out.stderr);
+        assert!(env.build_warning().is_none());
+
+        std::fs::write(&record, app_build_of_source("0123456789abcdef")).unwrap();
+        let out = run(&env, &args(&["collections", "--json"]));
+        assert!(out.stderr.starts_with("warning: this mine CLI is build"), "{}", out.stderr);
+    }
+
     #[test]
     fn refuses_a_space_outside_the_known_list() {
         // The CLI must not wander the file system: unknown paths are refused,

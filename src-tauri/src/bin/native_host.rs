@@ -3631,6 +3631,100 @@ fn replaced_by_newer_helper() -> bool {
         })
 }
 
+/// A short clipper request slower than this is written to the journal with
+/// its steps (SPEC_DEEP_AUDIT.md, Е4.17).
+const SLOW_CLIPPER_REQUEST: Duration = Duration::from_secs(1);
+
+/// Where the time of a short clipper request went: from the clipper's
+/// opening (`_openedAt`) and the moment the clipper sent it (`_sentAt`),
+/// both in milliseconds since the Unix epoch, to the helper's answer, step by
+/// step. The first openings after an install waited 9 to 15 s for the
+/// collections while the helper answered in 0.03 s when asked directly
+/// (SPEC_DEEP_AUDIT.md, Е4.17): the line says whether the time went before
+/// the helper read the request or inside it, and in which step.
+struct RequestTiming {
+    action: String,
+    received: std::time::SystemTime,
+    started: std::time::Instant,
+    last: std::time::Instant,
+    opened_at: Option<u64>,
+    sent_at: Option<u64>,
+    steps: Vec<(&'static str, Duration)>,
+}
+
+impl RequestTiming {
+    fn begin(action: &str, params: &serde_json::Value) -> Self {
+        let now = std::time::Instant::now();
+        let stamp = |key: &str| params.get(key).and_then(serde_json::Value::as_u64);
+        Self {
+            action: action.to_string(),
+            received: std::time::SystemTime::now(),
+            started: now,
+            last: now,
+            opened_at: stamp("_openedAt"),
+            sent_at: stamp("_sentAt"),
+            steps: Vec::new(),
+        }
+    }
+
+    /// The step `name` ended now.
+    fn step(&mut self, name: &'static str) {
+        let now = std::time::Instant::now();
+        self.steps.push((name, now - self.last));
+        self.last = now;
+    }
+
+    /// The journal line, when any span reached `SLOW_CLIPPER_REQUEST`.
+    fn slow_report(&self) -> Option<String> {
+        let received = self
+            .received
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let before = |stamp: Option<u64>| {
+            stamp.map(|at| received.saturating_sub(Duration::from_millis(at)))
+        };
+        let since_open = before(self.opened_at);
+        let in_transit = before(self.sent_at);
+        let handled = self.last - self.started;
+        let slow = [Some(handled), since_open, in_transit]
+            .into_iter()
+            .flatten()
+            .any(|span| span >= SLOW_CLIPPER_REQUEST);
+        if !slow {
+            return None;
+        }
+        let ms = |span: Duration| span.as_millis();
+        let mut line = format!(
+            "{}.{:03} slow {}:",
+            mine_lib::util::local_timestamp(self.received),
+            received.subsec_millis(),
+            self.action
+        );
+        if let Some(span) = since_open {
+            line.push_str(&format!(" clipper opened {} ms before the helper read it,", ms(span)));
+        }
+        if let Some(span) = in_transit {
+            line.push_str(&format!(" sent {} ms before,", ms(span)));
+        }
+        for (name, span) in &self.steps {
+            line.push_str(&format!(" {name} {} ms,", ms(*span)));
+        }
+        line.push_str(&format!(" answered in {} ms", ms(handled)));
+        Some(line)
+    }
+
+    /// Write the line of a slow request to the helper's journal.
+    fn log_if_slow(&self) {
+        if let Some(line) = self.slow_report() {
+            // Tests never write the person's journal (SPEC_DEEP_AUDIT.md, Н12).
+            #[cfg(not(test))]
+            host_log(&line);
+            #[cfg(test)]
+            let _ = line;
+        }
+    }
+}
+
 fn main() {
     STARTED_FROM.get_or_init(|| {
         let path = std::env::current_exe().ok()?;
@@ -3733,14 +3827,18 @@ fn main() {
             space
         };
 
+        let mut timing = RequestTiming::begin(&req.action, &req.params);
         match req.action.as_str() {
             "get_status" => {
                 let space = request_space();
+                timing.step("space");
                 handle_get_status_with_upload(
                     &upload_server,
                     &space,
                     config_generation(&read_app_settings()),
                 );
+                timing.step("answer");
+                timing.log_if_slow();
             }
             "list_known_vaults" => handle_list_known_vaults(),
             "pick_vault_folder" => handle_pick_vault_folder(),
@@ -3755,18 +3853,22 @@ fn main() {
 
             "list_channels" | "save_block" | "create_channel" | "get_save_operation" => {
                 let space = request_space();
+                timing.step("space");
                 let writes = matches!(req.action.as_str(), "save_block" | "create_channel");
                 let opened = native_app_data_dir()
                     .map_err(SpaceRefusal::Failed)
                     .and_then(|state| open_request_vault(&space, writes, state));
+                timing.step("open");
                 let vault = match opened {
                     Ok(vault) => vault,
                     Err(SpaceRefusal::Space(space)) => {
                         send_space_error(&space);
+                        timing.log_if_slow();
                         continue;
                     }
                     Err(SpaceRefusal::Failed(error)) => {
                         send_error(&error);
+                        timing.log_if_slow();
                         continue;
                     }
                 };
@@ -3781,6 +3883,11 @@ fn main() {
                     "get_save_operation" => handle_get_save_operation(&vault, params),
                     "create_channel" => handle_create_channel(&vault, params),
                     _ => unreachable!(),
+                }
+                timing.step("answer");
+                // A save is long by nature; the short requests are timed.
+                if req.action != "save_block" {
+                    timing.log_if_slow();
                 }
             }
 
@@ -3797,6 +3904,61 @@ fn main() {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// A request the helper read at `received` (ms since the epoch), sent by
+    /// a clipper opened at `opened_at` and posted at `sent_at`, whose steps
+    /// took `steps` ms.
+    fn timing(received: u64, opened_at: u64, sent_at: u64, steps: &[(&'static str, u64)]) -> RequestTiming {
+        let started = std::time::Instant::now();
+        let spans: Vec<(&'static str, Duration)> = steps
+            .iter()
+            .map(|(name, ms)| (*name, Duration::from_millis(*ms)))
+            .collect();
+        let total: Duration = spans.iter().map(|(_, span)| *span).sum();
+        RequestTiming {
+            action: "list_channels".into(),
+            received: std::time::UNIX_EPOCH + Duration::from_millis(received),
+            started,
+            last: started + total,
+            opened_at: Some(opened_at),
+            sent_at: Some(sent_at),
+            steps: spans,
+        }
+    }
+
+    /// SPEC_DEEP_AUDIT.md, Е4.17: a fast opening writes nothing.
+    #[test]
+    fn a_fast_clipper_request_writes_no_journal_line() {
+        let fast = timing(10_250, 10_000, 10_240, &[("space", 2), ("open", 5), ("answer", 3)]);
+        assert_eq!(fast.slow_report(), None);
+        let unstamped = RequestTiming::begin("get_status", &serde_json::json!({}));
+        assert_eq!(unstamped.slow_report(), None);
+    }
+
+    /// Е4.17: the collections waited 9 s after the clipper opened. The line
+    /// says whether the time went before the helper read the request or in
+    /// which of its steps.
+    #[test]
+    fn a_slow_clipper_request_names_where_the_time_went() {
+        let waited = timing(19_000, 10_000, 18_990, &[("space", 2), ("open", 5), ("answer", 3)])
+            .slow_report()
+            .expect("a request read 9 s after the clipper opened is slow");
+        assert!(waited.contains(" slow list_channels:"), "{waited}");
+        assert!(waited.contains("clipper opened 9000 ms before the helper read it"), "{waited}");
+        assert!(waited.contains("sent 10 ms before"), "{waited}");
+        assert!(waited.ends_with("answered in 10 ms"), "{waited}");
+
+        let inside = timing(10_020, 10_000, 10_010, &[("space", 2), ("open", 9_001), ("answer", 3)])
+            .slow_report()
+            .expect("a request the helper took 9 s over is slow");
+        assert!(inside.contains("open 9001 ms"), "{inside}");
+        assert!(inside.ends_with("answered in 9006 ms"), "{inside}");
+
+        let queued = timing(19_000, 18_000, 18_000, &[("space", 2)])
+            .slow_report()
+            .expect("a request read a second after it was sent is slow");
+        assert!(queued.contains("sent 1000 ms before"), "{queued}");
+    }
 
     #[test]
     fn native_first_space_creates_defaults_once() {

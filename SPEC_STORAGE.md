@@ -754,6 +754,20 @@ not started», а выход ждёт окончания начатых запи
   publication stays, and the rollback reports it as incomplete.
 - A version displaced by a race with the restore itself is kept in
   `.mine/source-conflicts/` of the space.
+- Удаление (`delete`, `delete_if_unchanged`) не создаёт второго имени файла
+  (жёсткой ссылки): 13.10.2026 Корзина iCloud унесла вторую ссылку страницы
+  коллекции и оставила саму страницу в скрытой папке, где её нет ни на
+  месте, ни в Корзине (SPEC_DEEP_AUDIT.md, Е1.11). Сверяемое удаление
+  отодвигает файл в свою скрытую папку рядом, проверяет, что это прочитанный
+  файл с прочитанными байтами, и просит Корзину взять его
+  (`files::trash_user_file`, `NSFileManager trashItemAtURL` с местом в
+  Корзине). После ответа файл обязан уйти: файл, который Корзина оставила,
+  возвращается на своё место, операция отказывает `NotTrashed` («the Trash
+  did not take …»), ничего не удалено. Файл в Корзине сравнивается с
+  прочитанными байтами: правка, записанная в файл на месте во время
+  переноса, возвращает его на место, отказ `Changed`. Удаление без сверки
+  (медиа) тоже требует, чтобы файл ушёл с места. Откат возвращает файл из
+  Корзины на его путь; в Корзине копии не остаётся.
 
 ### Runtime/card kind derivation
 
@@ -1096,6 +1110,15 @@ rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) ->
   файл в iCloud Drive уходит в Корзину за время от 10 до 30 мс.
 - Ограничение: Finder может не предложить «Put Back» для файла, перенесённого
   `NSFileManager`; файл возвращается из Корзины перетаскиванием.
+- Мутации источников переносят файл в Корзину по одному
+  (`files::trash_user_file`) и получают место, куда Корзина его положила:
+  по нему проверяется, что ушёл именно этот файл, и делается откат
+  («Checked publication», SPEC_DEEP_AUDIT.md, Е1.11).
+- Корзина модульных тестов (`files::test_trash`) ведёт себя как настоящие
+  (13.10.2026): занятое имя не заменяется, файл получает имя вида
+  `Проба 2.md 15-15-18-508.md`, как в Корзине тома APFS; у файла со второй
+  жёсткой ссылкой рядом уходит вторая ссылка, как в Корзине iCloud (худший
+  случай: Корзина iCloud сделала так один раз из двух).
 - `delete_block_files` сохраняет legacy contract: удаляет `.md`, slug-owned primary media `<slug>.<ext>` и derived thumbnail.
 - `delete_block_files_with_media_paths` получает уже проверенный higher-level deletion plan и удаляет `.md`, перечисленные media paths и derived thumbnail.
 - Shared/orphan решение не принимается в storage layer; оно принадлежит `commands::blocks::prepare_delete_block`.

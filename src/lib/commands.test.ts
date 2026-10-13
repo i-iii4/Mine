@@ -45,24 +45,6 @@ describe("IPC command adapter", () => {
     await expect(getVaultPath()).rejects.toThrow("The properties of “Flow.md” are written in a form Mine cannot edit in place");
   });
 
-  it("says a deletion stopped because the files to delete changed (Е1.10)", async () => {
-    mockInvoke.mockRejectedValueOnce({
-      kind: "media_plan_changed",
-      message: { files: ["photo.jpg"] },
-    });
-    await expect(getVaultPath()).rejects.toThrow(
-      "“photo.jpg” is no longer used by another element, and the window did not offer it. Nothing was deleted; delete again to see the files.",
-    );
-
-    mockInvoke.mockRejectedValueOnce({
-      kind: "media_plan_changed",
-      message: { files: ["one.jpg", "two.jpg"] },
-    });
-    await expect(getVaultPath()).rejects.toThrow(
-      "2 files are no longer used by other elements, and the window did not offer them. Nothing was deleted; delete again to see the files.",
-    );
-  });
-
   it("names the space whose identity file Mine cannot read (Д2.1)", async () => {
     mockInvoke.mockRejectedValueOnce({
       kind: "space_identity_unreadable",

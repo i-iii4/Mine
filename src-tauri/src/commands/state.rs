@@ -359,12 +359,6 @@ pub enum CommandError {
     /// was written (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
     #[error("collection \"{collection}\" has no page; nothing was written")]
     CollectionNotFound { collection: String },
-    /// A deletion would take media its window did not offer: a file the
-    /// window said stays lost its other user while the window was open.
-    /// Nothing was deleted (SPEC_DEEP_AUDIT.md, Е1.10). `files` names the
-    /// files the window did not offer.
-    #[error("the files to delete changed after the window showed them; nothing was deleted")]
-    MediaPlanChanged { files: Vec<String> },
     #[error("{0}")]
     Internal(String),
 }

@@ -35,6 +35,7 @@ import {
   requestXSyndication,
   waitForYoutubeChannel,
   currentCaptureDocument,
+  openingStamps,
 } from "../lib/messaging";
 import {
   clearOpenClip, OPEN_CLIP_VERSION, OpenClipContext, writeOpenClip, type OpenClip, type OpenClipScreenshot, type OpenClipWrite,
@@ -155,6 +156,11 @@ export function useClipperState() {
   const [collectionError, setCollectionError] = useState<string | null>(null);
   const channelsRecheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channelsRequestRef = useRef(0);
+  // When this clipper opened, and the kinds of helper request already sent
+  // since: the helper's journal times a slow opening (SPEC_DEEP_AUDIT.md,
+  // Е4.17).
+  const openedAtRef = useRef(Date.now());
+  const openingAskedRef = useRef(new Set<string>());
   const [selectedTags, setSelectedTagsValue] = useState<string[]>([]);
   // The collections chosen now, so that Save reads them in one snapshot with
   // the destination after its awaits, not from the render it began in
@@ -538,7 +544,12 @@ export function useClipperState() {
     try {
       const result = mode === "standalone"
         ? await standaloneListChannels()
-        : await sendToNative({ action: "list_channels", vault_path: vaultPath, binding_id: bindingIdRef.current });
+        : await sendToNative({
+          action: "list_channels",
+          vault_path: vaultPath,
+          binding_id: bindingIdRef.current,
+          ...openingStamps(openedAtRef.current, openingAskedRef.current, "list_channels"),
+        });
       if (!isCurrent()) return;
       if (result.ok && Array.isArray(result.channels)) {
         setChannels(result.channels);
@@ -661,7 +672,12 @@ export function useClipperState() {
         if (destinationRef.current !== "native" && standalone.configured && standalone.permission === "granted") {
           if (destinationHeld()) return true;
           enterStandaloneMode(standalone);
-          void sendToNative({ action: "get_status", vault_path: null, binding_id: null }).then((status) => {
+          void sendToNative({
+            action: "get_status",
+            vault_path: null,
+            binding_id: null,
+            ...openingStamps(openedAtRef.current, openingAskedRef.current, "get_status"),
+          }).then((status) => {
             if (generation !== destinationGenerationRef.current) return;
             setNativeConnected(status.ok && status.connected !== false);
             setCanOpenApp(status.ok && status.features?.includes("open_app_v1") === true);
@@ -674,6 +690,7 @@ export function useClipperState() {
           action: "get_status",
           vault_path: vaultRef.current,
           binding_id: destinationRef.current === "native" ? bindingIdRef.current : null,
+          ...openingStamps(openedAtRef.current, openingAskedRef.current, "get_status"),
         });
         if (generation !== destinationGenerationRef.current) return false;
         if (typeof status.config_generation === "number") configGenerationRef.current = status.config_generation;

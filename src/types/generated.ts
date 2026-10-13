@@ -179,14 +179,7 @@ export type CommandError = { kind: "no_vault" } |
  * page (`type: channel`): a collection exists only as its page. Nothing
  * was written (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
  */
-{ kind: "collection_not_found"; message: { collection: string } } |
-/**
- * A deletion would take media its window did not offer: a file the
- * window said stays lost its other user while the window was open.
- * Nothing was deleted (SPEC_DEEP_AUDIT.md, Е1.10). `files` names the
- * files the window did not offer.
- */
-{ kind: "media_plan_changed"; message: { files: string[] } } | { kind: "internal"; message: string }
+{ kind: "collection_not_found"; message: { collection: string } } | { kind: "internal"; message: string }
 
 /**
  * How the person resolves a conflict (ВК8).

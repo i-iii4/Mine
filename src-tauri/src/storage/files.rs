@@ -1070,6 +1070,60 @@ pub fn delete_user_files(paths: &[PathBuf]) -> Result<()> {
     }
 }
 
+/// Where the Trash put a file it took.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrashedTo {
+    /// The file's place in the Trash, as the Trash answered.
+    Path(PathBuf),
+    /// The Trash took the file and did not say where it put it.
+    Unreported,
+}
+
+/// Move one user-owned file to the Trash and say where it went, so that an
+/// operation can check that the Trash took this very file and bring it back
+/// on rollback (SPEC_DEEP_AUDIT.md, Е1.11). A missing file is an error: the
+/// caller decides what a file gone before its deletion means.
+pub fn trash_user_file(path: &Path) -> Result<TrashedTo> {
+    let _write = crate::storage::source_mutation::begin_write()?;
+    #[cfg(test)]
+    {
+        test_trash::move_one(path).map(TrashedTo::Path)
+    }
+    #[cfg(all(not(test), target_os = "macos"))]
+    {
+        file_manager_trash(path)
+    }
+    #[cfg(all(not(test), not(target_os = "macos"), not(target_os = "ios")))]
+    {
+        system_trash()
+            .delete(path)
+            .context("failed to move the file to the system Trash")?;
+        Ok(TrashedTo::Unreported)
+    }
+    #[cfg(all(not(test), target_os = "ios"))]
+    {
+        anyhow::bail!("system Trash is unavailable; {} was not deleted", path.display())
+    }
+}
+
+/// The file manager's Trash for one file, with the place it put the file:
+/// the same call `system_trash` makes, which the crate makes without asking
+/// for that place.
+#[cfg(all(not(test), target_os = "macos"))]
+fn file_manager_trash(path: &Path) -> Result<TrashedTo> {
+    use objc2_foundation::{NSFileManager, NSURL};
+    let url = NSURL::from_file_path(path)
+        .with_context(|| format!("no file URL for {}", path.display()))?;
+    let mut resulting = None;
+    NSFileManager::defaultManager()
+        .trashItemAtURL_resultingItemURL_error(&url, Some(&mut resulting))
+        .map_err(|error| anyhow::anyhow!("{}", error.localizedDescription()))
+        .context("failed to move the file to the system Trash")?;
+    Ok(resulting
+        .and_then(|url| url.to_file_path())
+        .map_or(TrashedTo::Unreported, TrashedTo::Path))
+}
+
 /// How Mine reaches the system Trash. On macOS the file manager moves the
 /// file itself, the way the Trash of any app does. The crate's default asks
 /// Finder through an Apple Event instead: that needs the person's consent to
@@ -1089,41 +1143,162 @@ fn system_trash() -> trash::TrashContext {
     context
 }
 
-/// The Trash of unit tests: a folder in the system temp directory. A file
-/// moved here leaves its path exactly as a trashed one does, and its bytes
-/// stay readable, so rollback and "changed while trashing" checks behave as
-/// with the system Trash.
+/// The Trash of unit tests: one folder of the test process in the system
+/// temp directory, never the person's own Trash. It behaves as the real ones
+/// were seen to (13.10.2026):
+///
+/// - a file moved here leaves its path exactly as a trashed one does, and its
+///   bytes stay readable;
+/// - a name the folder already holds is not replaced: the file gets the name
+///   an APFS volume's Trash gave it, `Проба 2.md 15-15-18-508.md`;
+/// - a file with a second name (a hard link) loses that other name, not the
+///   one it was asked to take, as the iCloud Trash did to a collection page
+///   (SPEC_DEEP_AUDIT.md, Е1.11). The iCloud Trash did it once in two; this
+///   one always does, the worst case.
 #[cfg(test)]
-mod test_trash {
+pub(crate) mod test_trash {
+    use std::ffi::OsString;
+    use std::os::unix::fs::MetadataExt;
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     use anyhow::{Context, Result};
 
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-
-    fn slot() -> Result<PathBuf> {
-        let slot = std::env::temp_dir()
+    /// The folder of this test process.
+    fn folder() -> Result<PathBuf> {
+        let folder = std::env::temp_dir()
             .join("mine-test-trash")
-            .join(format!("{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
-        std::fs::create_dir_all(&slot).with_context(|| format!("create {}", slot.display()))?;
-        Ok(slot)
+            .join(std::process::id().to_string());
+        std::fs::create_dir_all(&folder).with_context(|| format!("create {}", folder.display()))?;
+        Ok(folder)
     }
 
-    fn move_one(path: &Path) -> Result<()> {
-        let name = path
+    /// The name of the `attempt`-th try for a file called `name`: the name
+    /// itself first, then the whole name with the time of day and the
+    /// extension again, and a number when one millisecond saw two of them.
+    fn trash_name(name: &std::ffi::OsStr, attempt: u32) -> OsString {
+        if attempt == 0 {
+            return name.to_os_string();
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let of_day = now.as_secs() % 86_400;
+        let mut named = name.to_os_string();
+        named.push(format!(
+            " {:02}-{:02}-{:02}-{:03}",
+            of_day / 3_600,
+            of_day / 60 % 60,
+            of_day % 60,
+            now.subsec_millis()
+        ));
+        if attempt > 1 {
+            named.push(format!(" {attempt}"));
+        }
+        if let Some(extension) = Path::new(name).extension() {
+            named.push(".");
+            named.push(extension);
+        }
+        named
+    }
+
+    /// The name of the file at `path` that the Trash moves: another name of
+    /// the same file next to `path` or next to its folder when there is one
+    /// (the iCloud Trash, Е1.11), `path` otherwise.
+    fn name_the_trash_takes(path: &Path) -> PathBuf {
+        let Ok(file) = std::fs::symlink_metadata(path) else {
+            return path.to_path_buf();
+        };
+        if file.is_dir() || file.nlink() < 2 {
+            return path.to_path_buf();
+        }
+        let near = path.parent().into_iter().chain(path.parent().and_then(Path::parent));
+        for folder in near {
+            let Ok(entries) = std::fs::read_dir(folder) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let other = entry.path();
+                let same_file = std::fs::symlink_metadata(&other)
+                    .is_ok_and(|found| (found.dev(), found.ino()) == (file.dev(), file.ino()));
+                if same_file && other != path {
+                    return other;
+                }
+            }
+        }
+        path.to_path_buf()
+    }
+
+    /// Move the file at `path` to the test Trash and return where it went.
+    pub(super) fn move_one(path: &Path) -> Result<PathBuf> {
+        std::fs::symlink_metadata(path)
+            .with_context(|| format!("failed to move {} to the test trash", path.display()))?;
+        let taken = name_the_trash_takes(path);
+        let name = taken
             .file_name()
-            .with_context(|| format!("no file name: {}", path.display()))?;
-        let target = slot()?.join(name);
-        if std::fs::rename(path, &target).is_ok() {
-            return Ok(());
+            .with_context(|| format!("no file name: {}", taken.display()))?
+            .to_os_string();
+        let folder = folder()?;
+        if hooks::take_leave_in_place() {
+            return Ok(folder.join(name));
         }
-        // Another volume: copy, then remove the original, as the Trash does.
-        if path.is_dir() {
-            anyhow::bail!("test trash cannot move a folder across volumes: {}", path.display());
+        let mut attempt = 0;
+        loop {
+            let target = folder.join(trash_name(&name, attempt));
+            attempt += 1;
+            if std::fs::symlink_metadata(&target).is_ok() {
+                continue;
+            }
+            let moved = if taken.is_dir() {
+                super::rename_exclusive(&taken, &target)
+            } else {
+                // Another volume: copy, then remove the original, as the
+                // Trash does.
+                super::move_exclusive(&taken, &target)
+            };
+            match moved {
+                Ok(()) => {
+                    hooks::run_after_move(&target);
+                    return Ok(target);
+                }
+                Err(_) if target.exists() && taken.exists() => continue,
+                Err(error) => return Err(error),
+            }
         }
-        std::fs::copy(path, &target).with_context(|| format!("copy {}", path.display()))?;
-        std::fs::remove_file(path).with_context(|| format!("remove {}", path.display()))
+    }
+
+    /// Moments a test makes the Trash misbehave, on the test's own thread.
+    pub(crate) mod hooks {
+        use std::cell::{Cell, RefCell};
+        use std::path::Path;
+
+        type Hook = Box<dyn FnOnce(&Path)>;
+
+        thread_local! {
+            static LEAVE_IN_PLACE: Cell<bool> = const { Cell::new(false) };
+            static AFTER_MOVE: RefCell<Option<Hook>> = const { RefCell::new(None) };
+        }
+
+        /// The next file the Trash is asked to take stays where it is, and
+        /// the Trash answers that it took it.
+        pub(crate) fn leave_next_in_place() {
+            LEAVE_IN_PLACE.with(|slot| slot.set(true));
+        }
+
+        pub(super) fn take_leave_in_place() -> bool {
+            LEAVE_IN_PLACE.with(|slot| slot.replace(false))
+        }
+
+        /// Run `hook` with the place in the Trash of the next file it takes,
+        /// right after the move: an editor still writing into the file.
+        pub(crate) fn after_next_move(hook: impl FnOnce(&Path) + 'static) {
+            AFTER_MOVE.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+        }
+
+        pub(super) fn run_after_move(target: &Path) {
+            if let Some(hook) = AFTER_MOVE.with(|slot| slot.borrow_mut().take()) {
+                hook(target);
+            }
+        }
     }
 
     pub(super) fn move_all(paths: &[PathBuf]) -> Result<()> {
@@ -1133,7 +1308,7 @@ mod test_trash {
                 .with_context(|| format!("failed to move {} to the test trash", path.display()))?;
         }
         for path in paths {
-            move_one(path).with_context(|| format!("failed to move {} to the test trash", path.display()))?;
+            move_one(path)?;
         }
         Ok(())
     }
@@ -1366,16 +1541,62 @@ mod tests {
         let note = temp.path().join("Note.md");
         std::fs::write(&note, b"note bytes").unwrap();
 
-        delete_user_file(&note).unwrap();
+        let trashed = trash_user_file(&note).unwrap();
 
         assert!(!note.exists());
         let test_trash = std::env::temp_dir().join("mine-test-trash");
-        let kept = std::fs::read_dir(&test_trash)
-            .unwrap()
-            .flatten()
-            .map(|slot| slot.path().join("Note.md"))
-            .find(|candidate| std::fs::read(candidate).is_ok_and(|bytes| bytes == b"note bytes"));
-        assert!(kept.is_some(), "the note must land in {}", test_trash.display());
+        let TrashedTo::Path(kept) = trashed else {
+            panic!("the test Trash says where it put the note");
+        };
+        assert!(kept.starts_with(&test_trash), "{}", kept.display());
+        assert_eq!(std::fs::read(kept).unwrap(), b"note bytes");
+    }
+
+    /// The test Trash keeps the name it already holds and gives the second
+    /// file the name an APFS volume's Trash gave it (13.10.2026).
+    #[test]
+    fn the_test_trash_never_replaces_a_name_it_holds() {
+        let temp = tempfile::tempdir().unwrap();
+        let name = format!("Проба {}.md", std::process::id());
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(first.join(&name), b"first").unwrap();
+        std::fs::write(second.join(&name), b"second").unwrap();
+
+        let TrashedTo::Path(one) = trash_user_file(&first.join(&name)).unwrap() else {
+            panic!("the test Trash says where it put the file");
+        };
+        let TrashedTo::Path(two) = trash_user_file(&second.join(&name)).unwrap() else {
+            panic!("the test Trash says where it put the file");
+        };
+
+        assert_ne!(one, two);
+        assert_eq!(std::fs::read(&one).unwrap(), b"first");
+        assert_eq!(std::fs::read(&two).unwrap(), b"second");
+        let given = two.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(given.starts_with(&format!("{name} ")) && given.ends_with(".md"), "{given}");
+    }
+
+    /// The iCloud Trash took the other name of a file with two names and
+    /// left the one it was asked to take (SPEC_DEEP_AUDIT.md, Е1.11); the
+    /// test Trash does the same.
+    #[test]
+    fn the_test_trash_takes_another_name_of_the_file_as_the_icloud_trash_did() {
+        let temp = tempfile::tempdir().unwrap();
+        let page = temp.path().join("Page.md");
+        let other = temp.path().join(".Page.md.second-name");
+        std::fs::write(&page, b"page").unwrap();
+        std::fs::hard_link(&page, &other).unwrap();
+
+        let TrashedTo::Path(kept) = trash_user_file(&page).unwrap() else {
+            panic!("the test Trash says where it put the file");
+        };
+
+        assert!(page.exists());
+        assert!(!other.exists());
+        assert!(kept.file_name().unwrap().to_string_lossy().starts_with(".Page.md.second-name"));
     }
 
     /// 06.10.2026: one entry is one file under one name, in any spelling the

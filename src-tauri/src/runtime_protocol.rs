@@ -30,10 +30,16 @@ pub const APP_BUILD_FILE: &str = "app-build.json";
 pub struct BuildIdentity {
     /// The package version; it rarely changes between builds.
     pub version: String,
-    /// The compiled source identity: what tells two builds apart.
+    /// The compiled identity: the source with the features and the profile
+    /// it was built with. The app and the CLI of one source differ here.
     pub build_id: String,
     /// The source commit, or `source-archive`.
     pub commit: String,
+    /// The source alone, uncommitted work included: the same for the app
+    /// and the CLI built from one checkout (SPEC_DEEP_AUDIT.md, Е2.25).
+    /// `None` in a record an app wrote before it was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
 }
 
 impl BuildIdentity {
@@ -44,6 +50,7 @@ impl BuildIdentity {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             build_id: option_env!("MINE_BUILD_ID").unwrap_or("unidentified-build").to_owned(),
             commit: option_env!("MINE_BUILD_COMMIT").unwrap_or("unknown").to_owned(),
+            source_id: option_env!("MINE_SOURCE_ID").map(str::to_owned),
         }
     }
 
@@ -82,13 +89,17 @@ pub fn recorded_app_build(app_data_dir: &std::path::Path) -> Option<BuildIdentit
     serde_json::from_slice(&bytes).ok()
 }
 
-/// What a program of `own` build says when the app is another build: one
-/// line for its user, or nothing when the builds match or the app recorded
-/// none.
+/// What a program of `own` build says when the app is built from another
+/// source: one line for its user, or nothing when the sources match or the
+/// app recorded no build. The app and the CLI of one checkout are different
+/// builds (other features) of one source and say nothing (Е2.25). An app
+/// record without a source is from a build before the source was kept, so
+/// from another source.
 #[must_use]
 pub fn build_mismatch_warning(own: &BuildIdentity, app: Option<&BuildIdentity>) -> Option<String> {
     let app = app?;
-    (app.build_id != own.build_id).then(|| {
+    let same_source = app.source_id.is_some() && app.source_id == own.source_id;
+    (!same_source).then(|| {
         format!(
             "warning: this mine CLI is build {} and the Mine app is build {}; reinstall the CLI from the app's build (bun run cli:install)",
             own.label(),
@@ -161,10 +172,29 @@ mod tests {
         let app = recorded_app_build(dir.path()).unwrap();
         assert_eq!(app, own);
         assert_eq!(build_mismatch_warning(&own, Some(&app)), None);
-        let older = BuildIdentity { build_id: "0123456789abcdef".into(), ..own.clone() };
+        let older = BuildIdentity {
+            build_id: "0123456789abcdef".into(),
+            source_id: Some("fedcba9876543210".into()),
+            ..own.clone()
+        };
         let warning = build_mismatch_warning(&own, Some(&older)).unwrap();
         let older_label = format!("{}+0123456789ab", own.version);
         assert!(warning.contains(&own.label()) && warning.contains(&older_label), "{warning}");
+    }
+
+    /// Е2.25: the app and the CLI of one source are other builds (other
+    /// features) and say nothing; another source, or an app record from
+    /// before the source was kept, is named.
+    #[test]
+    fn programs_of_one_source_say_nothing() {
+        let own = BuildIdentity::this_build();
+        assert!(own.source_id.is_some());
+        let app = BuildIdentity { build_id: "231de455861f0000".into(), ..own.clone() };
+        assert_eq!(build_mismatch_warning(&own, Some(&app)), None);
+        let other_source = BuildIdentity { source_id: Some("0123456789abcdef".into()), ..app.clone() };
+        assert!(build_mismatch_warning(&own, Some(&other_source)).is_some());
+        let before_sources = BuildIdentity { source_id: None, ..app };
+        assert!(build_mismatch_warning(&own, Some(&before_sources)).is_some());
     }
 
     #[test]

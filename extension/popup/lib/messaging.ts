@@ -79,6 +79,32 @@ export async function sendToNative(payload: NativeRequest): Promise<NativeRespon
   });
 }
 
+/** Milliseconds since the Unix epoch, the clock the helper reads too. */
+export interface OpeningStamps {
+  /** When the clipper opened; only on its first request of a kind. */
+  _openedAt?: number;
+  /** When the clipper sent the request. */
+  _sentAt: number;
+}
+
+/**
+ * The stamps of a short helper request (`get_status`, `list_channels`): the
+ * helper writes a slow one to its journal with the time spent before it read
+ * the request and in each of its steps (SPEC_DEEP_AUDIT.md, Е4.17). The
+ * first request of each kind since the clipper opened carries the opening
+ * time; a later one, a refresh, carries only its own.
+ */
+export function openingStamps(
+  openedAt: number,
+  asked: Set<string>,
+  action: string,
+  now: number = Date.now(),
+): OpeningStamps {
+  if (asked.has(action)) return { _sentAt: now };
+  asked.add(action);
+  return { _openedAt: openedAt, _sentAt: now };
+}
+
 /// One opening of the clipper (SPEC_AUDIT_FIXES.md, Ф6): the page it opened
 /// for and what that opening brought along. Only the clipper that opened for
 /// the source tab receives it.

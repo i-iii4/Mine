@@ -3512,7 +3512,7 @@ describe("AppWithVault", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
-      // SPEC_DEEP_AUDIT.md, Е1.10: the files the window offered go with the
+      // SPEC_DEEP_AUDIT.md, Е1.12: the files the window offered go with the
       // deletion, which takes no other.
       expect(commandMocks.deleteBlock).toHaveBeenCalledWith(
         "alpha-block",

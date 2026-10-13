@@ -2120,7 +2120,7 @@ fn delete_block_unannounced(
 /// [`delete_block_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15). `offered_media` are the paths of the files the
 /// window offered to delete (`unused_media` of its plan): the deletion takes
-/// no other (SPEC_DEEP_AUDIT.md, Е1.10).
+/// no other (SPEC_DEEP_AUDIT.md, Е1.12).
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn delete_block(webview: tauri::Webview, state: State<'_, AppState>, slug: String, delete_unused_media: Option<bool>, offered_media: Option<Vec<String>>) -> Result<DeleteBlockOutcome, CommandError> {
     let announcing = super::effects::ChangeNews::before(&webview);
@@ -2224,9 +2224,9 @@ pub async fn delete_blocks(
 /// Delete the selected cards in one batch (SPEC_GROUP_SELECTION.md, «Batch
 /// Delete»). With `delete_unused_media`, the plan is built again from the
 /// index and every file it calls unused is checked against the notes on disk
-/// at this moment, as for one card (`build_delete_blocks_plan`); the files
-/// left unused go to the Trash with the cards, never one the window did not
-/// offer (`offered_media`, SPEC_DEEP_AUDIT.md, Е1.10). Without it no media is
+/// at this moment, as for one card (`build_delete_blocks_plan`); of the files
+/// left unused, those the window offered go to the Trash with the cards
+/// (`offered_media`, SPEC_DEEP_AUDIT.md, Е1.12). Without it no media is
 /// touched and no note of the space is read. The files and the index rows go
 /// in one `StagedSourceMutation`: a failure leaves every one of them.
 pub(crate) fn delete_blocks_inner(
@@ -2246,8 +2246,8 @@ pub(crate) fn delete_blocks_inner(
     }
     // Retaining media needs no vault-wide media reference analysis.
     let plan = if delete_unused_media {
-        let plan = build_delete_blocks_plan(conn, vault, &slugs)?;
-        refuse_media_the_window_did_not_offer(&plan.unused_media, offered_media)?;
+        let mut plan = build_delete_blocks_plan(conn, vault, &slugs)?;
+        keep_media_the_window_did_not_offer(&mut plan.unused_media, offered_media);
         Some(plan)
     } else {
         None
@@ -2300,9 +2300,9 @@ pub(crate) fn delete_blocks_inner(
 /// Delete one card and, when asked, the media only it uses. The media are
 /// checked against the notes on disk at this moment (decision of
 /// 11.10.2026): a file another note uses stays, and the outcome names it. A
-/// file the window did not offer (`offered_media`) is never taken: when the
-/// plan grew while the window was open, the deletion refuses
-/// (SPEC_DEEP_AUDIT.md, Е1.10).
+/// file the window did not offer (`offered_media`) is never taken: one that
+/// lost its other user while the window was open stays where it is
+/// (SPEC_DEEP_AUDIT.md, Е1.12).
 pub(crate) fn delete_block_inner(
     state: Option<&AppState>,
     conn: &rusqlite::Connection,
@@ -2321,9 +2321,9 @@ pub(crate) fn delete_block_inner(
             },
         );
     }
-    let plan = build_delete_block_plan(conn, vault, slug)?;
+    let mut plan = build_delete_block_plan(conn, vault, slug)?;
     if delete_unused_media == Some(true) {
-        refuse_media_the_window_did_not_offer(&plan.unused_media, offered_media)?;
+        keep_media_the_window_did_not_offer(&mut plan.unused_media, offered_media);
     }
 
     let media_paths: BTreeSet<PathBuf> = match delete_unused_media {
@@ -2446,28 +2446,20 @@ pub fn merge_blocks(webview: tauri::Webview, app: AppHandle, state: State<'_, Ap
     outcome
 }
 
-/// A deletion takes to the Trash only files its window offered
-/// (SPEC_DEEP_AUDIT.md, Е1.10). A file the fresh plan calls unused that the
-/// window did not offer, because the note that used it let it go while the
-/// window was open, refuses the whole deletion: nothing goes, and the window
-/// opened again shows the new list. `offered` is `None` where no window
-/// showed a plan: the CLI deletes by the plan it builds itself.
-fn refuse_media_the_window_did_not_offer(
-    unused: &[DeleteBlockMedia],
+/// A deletion takes to the Trash exactly the files its window offered
+/// (decision of 13.10.2026, SPEC_DEEP_AUDIT.md, Е1.12): `unused` keeps only
+/// them. A file the fresh plan calls unused that the window did not offer,
+/// because the note that used it let it go while the window was open, stays
+/// where it is (Orphans shows it). An offered file another note took up
+/// meanwhile is already among the plan's shared media, which the outcome
+/// names (`Media kept`). `offered` is `None` where no window showed a plan:
+/// the CLI deletes by the plan it builds itself.
+fn keep_media_the_window_did_not_offer(
+    unused: &mut Vec<DeleteBlockMedia>,
     offered: Option<&[String]>,
-) -> Result<(), CommandError> {
-    let Some(offered) = offered else {
-        return Ok(());
-    };
-    let files: Vec<String> = unused
-        .iter()
-        .filter(|media| !offered.contains(&media.path))
-        .map(|media| media.file_name.clone())
-        .collect();
-    if files.is_empty() {
-        Ok(())
-    } else {
-        Err(CommandError::MediaPlanChanged { files })
+) {
+    if let Some(offered) = offered {
+        unused.retain(|media| offered.contains(&media.path));
     }
 }
 
@@ -9216,12 +9208,25 @@ mod tests {
         );
     }
 
-    /// SPEC_DEEP_AUDIT.md, Е1.10: the deletion takes to the Trash only what
-    /// the window offered. A file the window said stays, which the other note
-    /// let go while the window was open, is not taken: the deletion refuses
-    /// and nothing goes.
+    /// The hidden entries of `folder`: what a delete must never leave.
+    fn hidden_entries(folder: &Path) -> Vec<String> {
+        std::fs::read_dir(folder)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .filter(|name| name.starts_with('.'))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// SPEC_DEEP_AUDIT.md, Е1.12 (decision of 13.10.2026): the deletion takes
+    /// exactly the files the window showed. A file the window said stays,
+    /// which the other note let go while the window was open, stays where it
+    /// is; the card and the offered file go, and nothing is refused.
     #[test]
-    fn delete_never_takes_a_file_the_window_said_stays() {
+    fn delete_takes_what_the_window_showed_and_leaves_a_file_freed_meanwhile() {
         let (_root, _derived, vault, conn) = make_vault();
         let photo = write_media(&vault, "Media/photo.jpg");
         let lone = write_media(&vault, "Media/lone.jpg");
@@ -9239,21 +9244,52 @@ mod tests {
         crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
 
         let offered: Vec<String> = window.unused_media.iter().map(|media| media.path.clone()).collect();
-        let outcome = delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true), Some(&offered));
+        let outcome =
+            delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true), Some(&offered)).unwrap();
 
-        assert!(
-            matches!(&outcome, Err(CommandError::MediaPlanChanged { files }) if files == &vec!["photo.jpg".to_string()]),
-            "{outcome:?}"
-        );
-        assert!(vault.block_path("Cards/Owner").exists());
-        assert!(photo.exists());
-        assert!(lone.exists());
+        assert!(outcome.removed);
+        assert!(!vault.block_path("Cards/Owner").exists());
+        assert!(!lone.exists());
+        assert_eq!(std::fs::read(&photo).unwrap(), b"Media/photo.jpg");
+        assert!(outcome.kept_media.is_empty(), "{:?}", media_paths(&outcome.kept_media));
     }
 
-    /// Е1.10 for a selection: the group deletion takes only the files its
-    /// window offered and refuses when the set grew.
+    /// Е1.12: a file the window offered, which another card took up while
+    /// the window was open, stays; the outcome names it and that card, and
+    /// the window says so with `Media kept`. The rest of what it showed goes.
     #[test]
-    fn group_delete_never_takes_a_file_the_window_said_stays() {
+    fn delete_keeps_an_offered_file_another_card_took_up_and_names_it() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let photo = write_media(&vault, "Media/photo.jpg");
+        let lone = write_media(&vault, "Media/lone.jpg");
+        write_note(&vault, "Cards/Owner", "![[photo.jpg]]\n\n![[lone.jpg]]\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let window = build_delete_block_plan_from_index(&conn, &vault, "Cards/Owner").unwrap();
+        assert_eq!(
+            window.unused_media.iter().map(|media| media.path.as_str()).collect::<BTreeSet<_>>(),
+            BTreeSet::from(["Media/lone.jpg", "Media/photo.jpg"])
+        );
+        write_note(&vault, "Cards/Late", "![[photo.jpg]]\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let offered: Vec<String> = window.unused_media.iter().map(|media| media.path.clone()).collect();
+        let outcome =
+            delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true), Some(&offered)).unwrap();
+
+        assert!(!vault.block_path("Cards/Owner").exists());
+        assert!(!lone.exists());
+        assert_eq!(std::fs::read(&photo).unwrap(), b"Media/photo.jpg");
+        assert_eq!(
+            media_paths(&outcome.kept_media),
+            vec![("Media/photo.jpg", vec!["Cards/Late".to_string()])]
+        );
+    }
+
+    /// Е1.12 for a selection: the group deletion takes the cards and the
+    /// files its window showed, and a file freed while the window was open
+    /// stays.
+    #[test]
+    fn group_delete_takes_what_the_window_showed_and_leaves_a_file_freed_meanwhile() {
         let (_root, _derived, vault, conn) = make_vault();
         let photo = write_media(&vault, "Media/photo.jpg");
         let lone = write_media(&vault, "Media/lone.jpg");
@@ -9277,16 +9313,98 @@ mod tests {
             vec!["Cards/One".into(), "Cards/Two".into()],
             true,
             Some(&offered),
-        );
+        )
+        .unwrap();
 
-        assert!(
-            matches!(&outcome, Err(CommandError::MediaPlanChanged { files }) if files == &vec!["photo.jpg".to_string()]),
-            "{outcome:?}"
+        assert_eq!(outcome.removed, 2);
+        assert!(!vault.block_path("Cards/One").exists());
+        assert!(!vault.block_path("Cards/Two").exists());
+        assert!(!lone.exists());
+        assert_eq!(std::fs::read(&photo).unwrap(), b"Media/photo.jpg");
+        assert!(outcome.kept_media.is_empty(), "{:?}", media_paths(&outcome.kept_media));
+    }
+
+    /// Е1.12 for a selection: an offered file a card outside the selection
+    /// took up while the window was open stays and is named.
+    #[test]
+    fn group_delete_keeps_an_offered_file_another_card_took_up_and_names_it() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let photo = write_media(&vault, "Media/photo.jpg");
+        write_note(&vault, "Cards/One", "![[photo.jpg]]\n");
+        write_note(&vault, "Cards/Two", "![[photo.jpg]]\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let window = group_window_plan(&conn, &vault, &["Cards/One", "Cards/Two"]);
+        write_note(&vault, "Cards/Late", "![[photo.jpg]]\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let offered: Vec<String> = window.unused_media.iter().map(|media| media.path.clone()).collect();
+        let outcome = delete_blocks_inner(
+            None,
+            &conn,
+            &vault,
+            vec!["Cards/One".into(), "Cards/Two".into()],
+            true,
+            Some(&offered),
+        )
+        .unwrap();
+
+        assert_eq!(outcome.removed, 2);
+        assert_eq!(std::fs::read(&photo).unwrap(), b"Media/photo.jpg");
+        assert_eq!(
+            media_paths(&outcome.kept_media),
+            vec![("Media/photo.jpg", vec!["Cards/Late".to_string()])]
         );
-        assert!(vault.block_path("Cards/One").exists());
-        assert!(vault.block_path("Cards/Two").exists());
-        assert!(photo.exists());
-        assert!(lone.exists());
+    }
+
+    /// SPEC_DEEP_AUDIT.md, Е1.11: deleting a card with its media while the
+    /// Trash already holds files of the same names, the way the collection
+    /// page failed. The test Trash takes any second name of a file, as the
+    /// iCloud Trash did; the card and its media go to the Trash, and nothing
+    /// hidden is left beside them.
+    #[test]
+    fn deleting_a_card_whose_names_the_trash_holds_sends_it_and_its_media_there() {
+        let (_root, _derived, vault, conn) = make_vault();
+        for round in ["first", "second"] {
+            let photo = write_media(&vault, "Media/photo.jpg");
+            write_note(&vault, "Cards/Owner", "![[photo.jpg]]\n");
+            crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+            let window = build_delete_block_plan_from_index(&conn, &vault, "Cards/Owner").unwrap();
+            let offered: Vec<String> =
+                window.unused_media.iter().map(|media| media.path.clone()).collect();
+
+            let outcome =
+                delete_block_inner(None, &conn, &vault, "Cards/Owner", Some(true), Some(&offered))
+                    .unwrap();
+
+            assert!(outcome.removed, "{round}");
+            assert!(!vault.block_path("Cards/Owner").exists(), "{round}");
+            assert!(!photo.exists(), "{round}");
+            assert!(hidden_entries(&vault.root().join("Cards")).is_empty(), "{round}");
+            assert!(hidden_entries(&vault.root().join("Media")).is_empty(), "{round}");
+        }
+    }
+
+    /// Е1.11 for a merge: its sources go to the Trash through the checked
+    /// delete; none of them is left hidden beside the merged card.
+    #[test]
+    fn merging_cards_sends_the_sources_to_the_trash_and_leaves_nothing_hidden() {
+        let (_root, _derived, vault, conn) = make_vault();
+        write_note(&vault, "Cards/A", "---\nsaved_at: 2026-04-22T00:00:00Z\n---\n# A\n\nAlpha.\n");
+        write_note(&vault, "Cards/B", "---\nsaved_at: 2026-04-22T00:00:00Z\n---\n# B\n\nBeta.\n");
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let mutation = merge_blocks_inner(
+            None,
+            &conn,
+            &vault,
+            vec!["Cards/A".to_string(), "Cards/B".to_string()],
+        )
+        .unwrap();
+
+        assert!(!vault.block_path("Cards/A").exists());
+        assert!(!vault.block_path("Cards/B").exists());
+        assert!(vault.block_path(&mutation.result.merged_slug).exists());
+        assert!(hidden_entries(&vault.root().join("Cards")).is_empty(), "{:?}", hidden_entries(&vault.root().join("Cards")));
     }
 
     /// SPEC_DEEP_AUDIT.md, Е1.8 (SPEC_CARD_MERGE.md, «New Frontmatter»): the

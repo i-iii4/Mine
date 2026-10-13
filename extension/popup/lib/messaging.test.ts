@@ -1,8 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  CONTENT_SCRIPT_CONTEXT, extractMetadata, requestXSyndication, requestYoutubeChannel, sendToNative, waitForYoutubeChannel,
-  YOUTUBE_CHANNEL_TIMEOUT_MS,
+  CONTENT_SCRIPT_CONTEXT, extractMetadata, openingStamps, requestXSyndication, requestYoutubeChannel, sendToNative,
+  waitForYoutubeChannel, YOUTUBE_CHANNEL_TIMEOUT_MS,
 } from "./messaging";
+
+// SPEC_DEEP_AUDIT.md, Е4.17: the first openings waited 9 to 15 s for the
+// collections. The first status and list requests of an opening carry its
+// time, so the helper's journal tells where a slow opening spent it; a later
+// refresh carries only its own send time and is never taken for the opening.
+describe("stamps of an opening's helper requests", () => {
+  it("carries the opening time once per kind of request", () => {
+    const asked = new Set<string>();
+    expect(openingStamps(1_000, asked, "get_status", 1_200)).toEqual({ _openedAt: 1_000, _sentAt: 1_200 });
+    expect(openingStamps(1_000, asked, "list_channels", 1_300)).toEqual({ _openedAt: 1_000, _sentAt: 1_300 });
+    expect(openingStamps(1_000, asked, "list_channels", 9_000)).toEqual({ _sentAt: 9_000 });
+  });
+});
 
 beforeEach(() => {
   const runtime = {
