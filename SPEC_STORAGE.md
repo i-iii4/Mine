@@ -43,9 +43,9 @@ open_memory() -> Result<Connection>                  // для тестов
 
 ### Готовность пересборки
 
-`index_build_state.ready` из схемы версии 5 становится `false` до прохода. Межпроцессная `build.lock` сериализует пересборку поколения. `ready=true` публикуется после прохода и повторной проверки метаданных и зависимостей исходных файлов. Готовность не зависит от одной заметки (SPEC_DEEP_AUDIT.md, Н6, Е5.1): проход, который не смог прочитать или спроецировать отдельные файлы, тоже публикует `ready=true`, отчёт перечисляет эти файлы (`errors`), а повторная проверка их не ждёт. До 13.10.2026 одна нечитаемая заметка держала `ready=false` навсегда: каждый следующий проход встречал её снова, и CLI с помощником клиппера видели неготовый индекс. Изменение исходников во время прохода требует нового прохода, максимум 3; затем возвращается `SourcesChanging`, и готовность становится такой, какой была до прохода. Прерванная работа остаётся незавершённой и продолжает использовать те же сохранённые состояния исходников после повторного открытия. Блокировки освобождаются ядром при завершении процесса, постоянные флаги блокировки не создаются.
+`index_build_state.ready` из схемы версии 5 становится `false` до прохода. Межпроцессная `build.lock` сериализует пересборку поколения. `ready=true` публикуется после прохода и повторной проверки метаданных и зависимостей исходных файлов. Готовность не зависит от одной заметки (SPEC_DEEP_AUDIT.md, Н6, Е5.1): проход, который не смог прочитать или спроецировать отдельные файлы, тоже публикует `ready=true`, отчёт перечисляет эти файлы (`errors`), а повторная проверка их не ждёт. До 13.10.2026 одна нечитаемая заметка держала `ready=false` навсегда: каждый следующий проход встречал её снова, и CLI с помощником клиппера видели неготовый индекс. Заметки, которые сверка в действии оставила непрочитанными, потому что их содержимое в iCloud, повторная проверка тоже не ждёт; такой проход публикует `ready=true`, только если индекс был готов до него (SPEC_CLOUD_STORAGE.md, Х12). Изменение исходников во время прохода требует нового прохода, максимум 3; затем возвращается `SourcesChanging`, и готовность становится такой, какой была до прохода. Прерванная работа остаётся незавершённой и продолжает использовать те же сохранённые состояния исходников после повторного открытия. Блокировки освобождаются ядром при завершении процесса, постоянные флаги блокировки не создаются.
 
-Координатор свежести шлёт вкладкам пространства событие `vault-freshness-changed` со списком файлов с ошибкой (`error_files`: путь, вид ошибки, причина) и пишет их в журнал; уведомление интерфейса с этими файлами входит в Е6.17.
+Координатор свежести шлёт вкладкам пространства событие `vault-freshness-changed` (тип `VaultFreshnessChanged` в привязках Specta) со списком файлов с ошибкой (`error_files`: путь, вид ошибки, причина) и пишет их в журнал. Ведущая вкладка пространства называет эти файлы уведомлением `IndexErrorsNotice` (SPEC_DEEP_AUDIT.md, Е6.17, 13.10.2026): заголовок `Could not read 1 note` или `Could not read {N} notes`, строка `Mine shows the space without them.`, первые пять файлов строками `“{имя}”: {причина}` и `And {K} more.` за ними. Проход без ошибок убирает уведомление, проход, который не удался целиком, его не трогает, крестик прячет его до другого набора файлов.
 
 Перечисленные правила реализованы в Rust. Они не подтверждают приёмку интерфейса, установленных версий, холодного запуска или принудительного завершения на каждой фазе. Критерии остаются в [SPEC_SYSTEM_RELIABILITY.md](/Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SYSTEM_RELIABILITY.md). Журналы и история не считаются кэшем.
 
@@ -329,11 +329,18 @@ iCloud: сверка, проход превью, метка `In iCloud`, про�
 (`~/Desktop/Тест`, заметки `compressed,dataless`) каждая выгруженная заметка
 читалась с загрузкой.
 
+- `read_contents(path)`: чтение служебного файла пространства (`.mine/layout.json`,
+  `.mine/vault-id`). Кто не должен ждать, сначала спрашивает
+  `is_content_offloaded`.
+
 Флаг ставит только ядро, поэтому тесты не могут сделать выгруженный файл.
 Сборка без оптимизаций (`debug_assertions`) несёт `cloud_files::test_seam`:
 тест называет файлы, которые стоят за выгруженные, а `files::read_block_file`
-считает чтения таких заметок, так что заметка, которую нельзя было
-скачивать, видна в счёте. В выпускной сборке этого кода нет.
+(заметки) и `read_contents` (служебные файлы) считают чтения таких файлов, так
+что файл, который нельзя было скачивать, виден в счёте. Счётное чтение
+скачивает файл, как на Маке: дальше он локальный. Тест может задержать
+чтения одного файла (`hold_reads_of`), как их держит долгая загрузка. В
+выпускной сборке этого кода нет.
 
 ## storage/reconcile: видимость файлов
 
@@ -342,6 +349,10 @@ iCloud: сверка, проход превью, метка `In iCloud`, про�
 `reconcile_runtime_vault_with_progress` сначала проверяет доступность исходников, затем отдельно согласует вспомогательную историю и подтверждённые внешние переименования. История лежит в производном хранилище этого Мака (`file-identity.json` рядом с `indexes/`), а не в пространстве (SPEC_IDENTITY_ROBUSTNESS.md, «История переименований на этом Маке»); её сбой пишется в журнал (`log::warn!`) и чтения не останавливает. Этот этап работает и для перемещения при выключенном приложении, независимо от поколения индекса. Повтор после повреждения SQLite выполняет только чистую пересборку, не повторяет исправление исходников. Неподдерживаемая или повреждённая история сохраняется без перезаписи; отсутствие пригодной истории не блокирует чтение документов.
 
 Первое поколение приложения ожидает согласование исходников. При наличии готового снимка последующие чтения используют его сразу, а загрязнение или проверка по сроку запускают один фоновый проход через [freshness.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/commands/freshness.rs). Те же сохранённые метаданные исходников определяют обновление производных превью.
+
+`reconcile_vault_for_action` приводит индекс к файлам перед действием пользователя (удаление с медиа, переименование, склейка, действия с медиафайлом, сироты, переименование и удаление коллекции, те же команды CLI) и никогда не ждёт iCloud (SPEC_CLOUD_STORAGE.md, Х12; SPEC_DEEP_AUDIT.md, Е5.18). Заметку, которую проходу надо прочитать (новую для индекса, изменившуюся по штампу или по зависимости), но чьё содержимое в iCloud, он не читает: она остаётся в индексе такой, какой была, попадает в `ActionReconcile.deferred`, и iCloud просят её скачать. Её читает следующий фоновый проход: наблюдатель, проверка по сроку координатора свежести, открытие пространства. Остальные проходы (`reconcile_vault`, `reconcile_vault_with_progress`, `reconcile_runtime_vault_with_progress`) по уже готовому индексу сначала скачивают такие заметки, не держа `build.lock`: просят iCloud о всех сразу и дожидаются каждой, затем занимают индекс и читают их с этого Мака. Действие, пришедшее за это время, не ждёт загрузки за фоновым проходом. Первая сборка индекса (индекс не готов) читает заметки внутри прохода под своим ходом (SPEC_ONBOARDING.md, О13).
+
+Страж корня (`root_guard::root_state`) не читает выгруженный `.mine/vault-id`: папку, которую производное хранилище обслуживало последней (`owner-path.json`), он считает пространством, другую папку с выгруженной идентичностью считает пропавшей.
 
 `VaultReconciler` is the only storage primitive allowed to claim that the local
 derived index reflects the current source vault. It compares a metadata-only
@@ -384,6 +395,16 @@ fn reconcile_vault(
     conn: &Connection,
     vault: &VaultLayout,
 ) -> Result<ReconcileReport, ReconcileError>;
+
+struct ActionReconcile {
+    report: ReconcileReport,
+    deferred: Vec<PathBuf>, // notes left unread: their contents are in iCloud
+}
+
+fn reconcile_vault_for_action(
+    conn: &Connection,
+    vault: &VaultLayout,
+) -> Result<ActionReconcile, ReconcileError>;
 ```
 
 ### Source stamp rules
@@ -857,7 +878,7 @@ list_pending_thumb_upgrade_blocks(conn: &Connection) -> Result<Vec<PendingThumbU
 search_blocks(conn: &Connection, query: &SearchQuery) -> Result<Vec<IndexedBlock>>
 upsert_channel(conn: &Connection, channel: &Channel) -> Result<i64>
 list_channels(conn: &Connection) -> Result<Vec<Channel>>
-next_channel_position(conn: &Connection) -> Result<u32>
+new_channel_position(conn: &Connection) -> Result<i64>
 remove_channel(conn: &Connection, tag: &str) -> Result<bool>
 ```
 
@@ -894,13 +915,22 @@ remove_channel(conn: &Connection, tag: &str) -> Result<bool>
 - Не переписывает другие `.md` файлы и не трогает source vault
 - Используется как low-level primitive для watcher-based external rename; in-app rename поверх него дополнительно переписывает vault refs и source media
 
-### Поведение list_channels / next_channel_position
+### Поведение list_channels / new_channel_position
 
 - `list_channels` возвращает каналы в порядке `position ASC`, затем стабильный
   `CollectionRef` tie-breaker. Legacy DB column `channels.title` is not a
   display-title source.
-- `next_channel_position` возвращает `max(position) + 1`, либо `0` для пустого списка.
-- Новые каналы должны получать append-position через `next_channel_position`; `position = 0` допустим только для первого канала или explicit reorder.
+- `new_channel_position` даёт место новой коллекции по правилу mine-core
+  `new_collection_position`: на единицу меньше самой малой `position` строк
+  `channels`, `0` для пустого списка. Новая коллекция встаёт первой, и пишется
+  только её страница: позиции других страниц не меняются (SPEC_DEEP_AUDIT.md,
+  Е6.2, 13.10.2026). Им пользуются `create_channel` приложения, CLI и MCP,
+  импорт Are.na и `create_channel` помощника клиппера. До 13.10.2026 функция
+  называлась `next_channel_position` и давала `max(position) + 1`, а
+  приложение после создания переписывало позиции всех страниц.
+- `position` знаковая (`i64`, в SQLite `INTEGER`): после созданий самая малая
+  позиция уходит ниже нуля. Страница без `position` читается как `0`, как
+  прежде; страницы с позициями от нуля читаются, как читались.
 
 The implementation still uses `channels.tag` and `block_tags.tag` physical
 column names for compatibility, but their semantic value is now
@@ -1108,7 +1138,38 @@ delete_block_files_with_media_paths(vault: &VaultLayout, slug: &str, media_paths
 persist_new_block(conn: &Connection, vault: &VaultLayout, block: &Block, source_file: Option<&Path>) -> Result<IndexedBlock>
 persist_new_reference_block(conn: &Connection, vault: &VaultLayout, block: &Block) -> Result<IndexedBlock>
 rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &str) -> Result<()>
+load_vault_write_layout(vault: &VaultLayout) -> Result<VaultWriteLayout>          // никогда не ждёт iCloud
+load_vault_write_layout_waiting(vault: &VaultLayout) -> Result<VaultWriteLayout>  // открытие пространства
+layout_for_new_files(vault: &VaultLayout) -> Result<VaultLayout>
+ensure_vault_write_layout(vault: &VaultLayout, requested: &VaultWriteLayout) -> Result<()>
 ```
+
+### Раскладка записи и копия этого Мака
+
+`.mine/layout.json` синхронизируется вместе с пространством, и iCloud
+выгружает его, как любой файл (SPEC_CLOUD_STORAGE.md, Х12; SPEC_DEEP_AUDIT.md,
+Е5.18). Каждое чтение файла, пока его содержимое здесь, оставляет раскладку и
+штамп файла (размер, время изменения) в производном хранилище этого Мака:
+`<derived_root>/space-layout.json` ([layout_copy.rs](/Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/storage/layout_copy.rs)).
+Производное хранилище внутри пространства (`.mine`) копии не держит.
+
+- Файла нет: раскладка по умолчанию (корень), копия удаляется.
+- Содержимое здесь: файл читается, копия обновляется. Некорректный файл
+  отказывает, как раньше, и копию удаляет.
+- Содержимое в iCloud, копия есть: раскладка из копии. Другой штамп (файл
+  изменили на другом Маке): копия служит, пока новый файл не приедет, iCloud
+  просят его скачать.
+- Содержимое в iCloud, копии нет: `load_vault_write_layout` отвечает
+  `LayoutInCloud` и просит iCloud скачать файл; `load_vault_write_layout_waiting`
+  (только открытие пространства) ждёт файл и делает копию.
+
+То, что не создаёт файлов (чтения CLI, удаление, переименование, список
+коллекций помощника), на `LayoutInCloud` идёт с раскладкой по умолчанию:
+она ему не нужна. Создание файла (`layout_for_new_files`, команды CLI
+`card create`, `collection create`, `merge`, сохранение и новая коллекция
+помощника) отказывает с причиной и не пишет в корень (SPEC_VAULT_LIFECYCLE.md,
+П2). `ensure_vault_write_layout` сверяет план сохранения с копией, пока файл в
+iCloud, и не скачивает его.
 
 ### Поведение write_block_file
 

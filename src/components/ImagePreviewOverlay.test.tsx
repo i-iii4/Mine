@@ -348,4 +348,17 @@ describe("ImagePreviewOverlay", () => {
     document.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(false);
   });
+
+  // SPEC_DEEP_AUDIT.md, Е6.8.
+  it("shows no broken-image icon for a picture whose file will not load", () => {
+    const { container } = render(
+      <ImagePreviewOverlay
+        preview={{ src: "asset://localhost/gone.jpg", mediaRef: "gone.jpg" }}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.error(container.querySelector("[data-image-preview-image]") as HTMLImageElement);
+    expect(container.querySelector("[data-image-preview-image]")).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Image preview" })).toBeInTheDocument();
+  });
 });

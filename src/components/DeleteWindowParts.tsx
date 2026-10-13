@@ -1,3 +1,4 @@
+import { MissingAwareImage } from "./MissingAwareImage";
 import { NotificationCard } from "@/components/NotificationCard";
 import { fallbackThumbsRoot, mediaUrl, thumbnailUrl } from "@/lib/assets";
 import { selectedElementCountLabel } from "@/lib/groupSelection";
@@ -108,9 +109,9 @@ export function DeleteMediaPreviewGrid({
             title={item.path}
           >
             {item.kind === "image" ? (
-              <img
+              // A file that will not load keeps the tile's fill (Е6.8).
+              <MissingAwareImage
                 src={mediaUrl(vaultPath, item.path)}
-                alt=""
                 className="size-full object-cover"
                 draggable={false}
               />

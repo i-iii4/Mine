@@ -191,7 +191,7 @@ fn plan_legacy_extension(
         .ok_or_else(|| std::io::Error::other("unverifiable legacy extension preserved"))?;
     let previously_adopted = read_runtime_journal(parent)?.is_some_and(|journal| {
         journal.legacy_extension_previous.is_some() && journal.candidate.extension == actual
-    });
+    }) || written_by_mine(parent, &actual);
     if !recognized_extension(&destination, "com.localarena.clipper")
         && !(previously_adopted && recognized_extension(&destination, HOST_NAME))
     {
@@ -210,6 +210,39 @@ fn plan_legacy_extension(
         ));
     }
     Ok(Some(actual))
+}
+
+/// What Mine last wrote into the adopted `clipper/extension`, kept beside the
+/// install journal: the journal of the next installation replaces the one
+/// that adopted the folder, and an installation that could be neither
+/// finished nor rolled back sets its journal aside (SPEC_DEEP_AUDIT.md,
+/// Е4.10).
+const ADOPTED_EXTENSION_RECORD: &str = "adopted-extension.json";
+
+fn record_adopted_extension(parent: &Path, written: &RuntimeComponentManifest) -> std::io::Result<()> {
+    write_runtime_json(&parent.join(ADOPTED_EXTENSION_RECORD), written)
+}
+
+/// Whether the adopted folder holds exactly what Mine wrote there: the
+/// payload its record names, or the extension of a Mine package, which only
+/// Mine copies there. Before 13.10.2026 only the latest install journal
+/// proved it, and once that journal was gone every self-repair refused the
+/// folder (SPEC_DEEP_AUDIT.md, Е4.10).
+fn written_by_mine(parent: &Path, actual: &RuntimeComponentManifest) -> bool {
+    let recorded = std::fs::read(parent.join(ADOPTED_EXTENSION_RECORD))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<RuntimeComponentManifest>(&bytes).ok());
+    if recorded.as_ref() == Some(actual) {
+        return true;
+    }
+    let Ok(packages) = std::fs::read_dir(parent.join("packages")) else {
+        return false;
+    };
+    packages.flatten().any(|package| {
+        let extension = package.path().join("extension");
+        extension.join("manifest.json").is_file()
+            && extension_manifest(&extension).as_ref() == Some(actual)
+    })
 }
 
 fn activate_legacy_extension(
@@ -258,6 +291,7 @@ fn activate_legacy_extension(
             "legacy stable payload readback failed",
         ));
     }
+    record_adopted_extension(parent, &journal.candidate.extension)?;
     // Injection here covers a crash after the exchange but before journal advance.
     checkpoint(RuntimeInstallStage::LegacyExtensionActivated)?;
     journal.stage = RuntimeInstallStage::LegacyExtensionActivated;
@@ -289,7 +323,8 @@ fn restore_legacy_extension(parent: &Path, journal: &RuntimeInstallJournal) -> s
             "legacy rollback backup failed verification",
         ));
     }
-    install_extension_directory_checked(&retained, &destination, Some(&journal.candidate.extension))
+    install_extension_directory_checked(&retained, &destination, Some(&journal.candidate.extension))?;
+    record_adopted_extension(parent, previous)
 }
 
 fn write_runtime_json<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
@@ -564,7 +599,96 @@ fn install_runtime_from_sources_with_probe(
             }
         }
     }
+    prune_runtime_packages(parent);
     Ok(())
+}
+
+/// Remove the helper packages and retained copies that are neither the
+/// current runtime nor the previous verified one (SPEC_DEEP_AUDIT.md, Н14,
+/// Е4.7): until 13.10.2026 every build stayed, 3.2 GB on one Mac. Runs
+/// under the installation lock, only after a verified installation whose
+/// journal names the runtime the marker does; anything else is left. The
+/// CLI's packages in the same folder (`cli-manifest.json`) and unknown
+/// folders stay. A helper the browser still runs from a removed package
+/// answers its next request with `host_replaced`: its file is gone, and the
+/// registrations name another package (SPEC_CLIPPER.md, К4).
+fn prune_runtime_packages(parent: &Path) {
+    let current = match std::fs::read(parent.join("runtime-install.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<RuntimeInstallMarker>(&bytes).ok())
+    {
+        Some(marker) => marker.manifest,
+        None => return,
+    };
+    let Ok(Some(journal)) = read_runtime_journal(parent) else {
+        return;
+    };
+    if journal.stage != RuntimeInstallStage::FilesVerified || journal.candidate != current {
+        return;
+    }
+    let previous = journal.previous.map(|marker| marker.manifest);
+    let package_id = |manifest: &RuntimeBuildManifest| {
+        serde_json::to_vec(manifest).map(|bytes| format!("{:x}", Sha256::digest(bytes)))
+    };
+    let mut kept = vec![journal.package_id.clone()];
+    for manifest in std::iter::once(&current).chain(previous.iter()) {
+        match package_id(manifest) {
+            Ok(id) => kept.push(id),
+            Err(_) => return,
+        }
+    }
+    let remove = |path: &Path| match std::fs::remove_dir_all(path).or_else(|_| std::fs::remove_file(path)) {
+        Ok(()) => log::info!("removed retired clipper runtime {}", path.display()),
+        Err(error) => log::warn!("retired clipper runtime {} stays: {error}", path.display()),
+    };
+
+    if let Ok(packages) = std::fs::read_dir(parent.join("packages")) {
+        for entry in packages.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = entry.path();
+            let abandoned_preparation =
+                name.starts_with(".preparing-") && !name.starts_with(".preparing-cli-");
+            let helper_package = path.join("native-host").is_file() && path.join("manifest.json").is_file();
+            if !kept.contains(&name) && (abandoned_preparation || helper_package) {
+                remove(&path);
+            }
+        }
+    }
+
+    // The copies retained before each replacement: those of the kept
+    // runtimes stay, with the adopted folder's previous payload.
+    let kept_hosts: Vec<&str> = std::iter::once(&current)
+        .chain(previous.iter())
+        .map(|manifest| manifest.native_host.sha256.as_str())
+        .collect();
+    let mut kept_extensions: Vec<&str> = std::iter::once(&current)
+        .chain(previous.iter())
+        .map(|manifest| manifest.extension.sha256.as_str())
+        .collect();
+    if let Some(legacy) = &journal.legacy_extension_previous {
+        kept_extensions.push(legacy.sha256.as_str());
+    }
+    let retained_folders = [parent.join("retained"), parent.parent().map_or_else(PathBuf::new, |clipper| clipper.join("retained"))];
+    for folder in retained_folders.iter().filter(|folder| !folder.as_os_str().is_empty()) {
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let stays = if let Some(sha) = name.strip_prefix("native-host-") {
+                kept_hosts.contains(&sha)
+            } else if let Some(sha) = name.strip_prefix("extension-") {
+                kept_extensions.contains(&sha)
+            } else {
+                // A single-file `yt-dlp` an older installation retained, or
+                // a copy whose retention never finished.
+                !(name.starts_with("yt-dlp-") || name.starts_with(".retaining-"))
+            };
+            if !stays {
+                remove(&entry.path());
+            }
+        }
+    }
 }
 
 /// Finish or undo an installation a previous run left unfinished. Returns the
@@ -1623,6 +1747,7 @@ pub fn maintain_installed_runtime(app: &AppHandle) -> Result<RuntimeMaintenanceM
         match verify_candidate_launch(&registered, &manifest) {
             Ok(()) => {
                 register_browser_manifests(&registered)?;
+                prune_runtime_packages(parent);
                 return Ok(RuntimeMaintenanceMode::FastRegistration);
             }
             // The registered helper no longer starts: its package is damaged.
@@ -1643,7 +1768,8 @@ struct RuntimeUpkeepPaths {
     installed_host: PathBuf,
     /// The helper the browser manifests name, inside its immutable package.
     registered_host: PathBuf,
-    installed_extension: PathBuf,
+    /// Every extension copy browsers may load ([`upkeep_extension_copies`]).
+    installed_extensions: Vec<PathBuf>,
     /// The bundle's unpacked `yt-dlp`, when this build carries one.
     bundled_ytdlp: Option<PathBuf>,
     /// Manifests of the browsers found on this Mac, installed or not yet.
@@ -1658,7 +1784,10 @@ struct RuntimeUpkeepPaths {
 fn runtime_matches_bundle(paths: &RuntimeUpkeepPaths) -> bool {
     installed_binary_matches(&paths.bundled_host, &paths.installed_host)
         && installed_binary_matches(&paths.bundled_host, &paths.registered_host)
-        && installed_extension_matches(&paths.bundled_extension, &paths.installed_extension)
+        && paths
+            .installed_extensions
+            .iter()
+            .all(|copy| installed_extension_matches(&paths.bundled_extension, copy))
         && paths.bundled_ytdlp.as_ref().is_none_or(|bundled| {
             let installed = paths
                 .registered_host
@@ -1675,6 +1804,24 @@ fn runtime_matches_bundle(paths: &RuntimeUpkeepPaths) -> bool {
             .all(|manifest| manifest_is_registered(manifest, &paths.registered_host))
 }
 
+/// The extension copies the upkeep compares with the bundle, given the
+/// managed copy `managed`: the managed one, and the Mine extension adopted
+/// from before managed packages (`clipper/extension`) when it is there. An
+/// existing Load unpacked keeps loading the adopted copy, and the helper
+/// reports the build both copies name (SPEC_DEEP_AUDIT.md, Е4.11). A folder
+/// there that is not a Mine extension is not Mine's to repair.
+fn upkeep_extension_copies(managed: &Path) -> Vec<PathBuf> {
+    let mut copies = vec![managed.to_path_buf()];
+    let adopted = managed
+        .parent()
+        .and_then(Path::parent)
+        .map(|clipper| clipper.join("extension"));
+    if let Some(adopted) = adopted.filter(|folder| crate::runtime_installation::is_mine_extension(folder)) {
+        copies.push(adopted);
+    }
+    copies
+}
+
 /// `None` when this build carries no helper or extension: there is nothing
 /// to repair with.
 fn runtime_upkeep_paths(app: &AppHandle) -> Result<Option<RuntimeUpkeepPaths>, CommandError> {
@@ -1688,7 +1835,7 @@ fn runtime_upkeep_paths(app: &AppHandle) -> Result<Option<RuntimeUpkeepPaths>, C
         bundled_extension,
         installed_host: host_binary_path(app)?,
         registered_host: registered_host_path(app)?,
-        installed_extension: installed_extension_path(app)?,
+        installed_extensions: upkeep_extension_copies(&installed_extension_path(app)?),
         bundled_ytdlp: std::env::current_exe()
             .ok()
             .and_then(|exe| bundled_ytdlp_path(&exe)),
@@ -1800,7 +1947,7 @@ mod tests {
             bundled_extension: root.join("Mine.app/clipper-extension"),
             installed_host: root.join("clipper/native-host"),
             registered_host: root.join("clipper/packages/current/native-host"),
-            installed_extension: root.join("clipper/extension"),
+            installed_extensions: vec![root.join("clipper/managed-v1/extension")],
             // A build without `yt-dlp`; the tool's own upkeep is tested below.
             bundled_ytdlp: None,
             browser_manifests: vec![root.join("Chrome/NativeMessagingHosts/com.mine.host.json")],
@@ -1809,7 +1956,7 @@ mod tests {
             executable(host, b"THIS BUILD");
         }
         extension_payload(&paths.bundled_extension, "current()");
-        extension_payload(&paths.installed_extension, "current()");
+        extension_payload(&paths.installed_extensions[0], "current()");
         let manifest = &paths.browser_manifests[0];
         std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
         std::fs::write(
@@ -1854,7 +2001,7 @@ mod tests {
     fn upkeep_repairs_a_stale_extension_copy_or_a_foreign_registration() {
         let temp = TempDir::new().unwrap();
         let paths = current_runtime(temp.path());
-        extension_payload(&paths.installed_extension, "older()");
+        extension_payload(&paths.installed_extensions[0], "older()");
         assert!(!runtime_matches_bundle(&paths));
 
         let paths = current_runtime(temp.path());
@@ -1865,6 +2012,27 @@ mod tests {
         )
         .unwrap();
         assert!(!runtime_matches_bundle(&paths));
+    }
+
+    /// Е4.11: the copy an existing Load unpacked keeps loading
+    /// (`clipper/extension`) is checked as the managed one is: a stale copy
+    /// there is repaired. Before 13.10.2026 the upkeep looked at the managed
+    /// copy only, while the helper reported the build of the adopted one.
+    #[test]
+    fn upkeep_checks_the_adopted_extension_copy_browsers_load() {
+        let temp = TempDir::new().unwrap();
+        let mut paths = current_runtime(temp.path());
+        let managed = temp.path().join("clipper/managed-v1/extension");
+        let adopted = temp.path().join("clipper/extension");
+        extension_payload(&adopted, "older()");
+        paths.installed_extensions = upkeep_extension_copies(&managed);
+        assert!(!runtime_matches_bundle(&paths), "a stale adopted copy went unnoticed");
+
+        extension_payload(&adopted, "current()");
+        assert!(runtime_matches_bundle(&paths));
+        std::fs::remove_dir_all(&adopted).unwrap();
+        paths.installed_extensions = upkeep_extension_copies(&managed);
+        assert!(runtime_matches_bundle(&paths), "a Mac without the adopted copy needs none");
     }
 
     #[test]
@@ -2376,6 +2544,113 @@ mod tests {
         std::fs::write(retained.join("dist/popup.js"), "damaged backup").unwrap();
         assert!(activate_legacy_extension(&parent, &mut journal, &mut |_| Ok(())).is_err());
         assert_eq!(extension_manifest(&legacy), Some(candidate.extension));
+    }
+
+    /// Е4.10: the adopted `clipper/extension` stays Mine's when the journal
+    /// that adopted it is gone: an installation that could be neither
+    /// finished nor rolled back sets its journal aside
+    /// (`settle_unfinished_install`). Before 13.10.2026 only that journal
+    /// proved the adoption, and every later self-repair refused the folder.
+    #[test]
+    fn an_adopted_extension_stays_mine_when_its_journal_is_gone() {
+        let tmp = TempDir::new().unwrap();
+        let parent = tmp.path().join("app/clipper/managed-v1");
+        let legacy = parent.parent().unwrap().join("extension");
+        browser_payload(&legacy, "com.localarena.clipper", "original");
+        let (first, mut adopted) = runtime_fixture(tmp.path(), "first", "1.0.0");
+        adopted.extension = browser_payload(&first.join("extension"), HOST_NAME, "first adopted build");
+        install_runtime_from_sources(
+            &parent,
+            adopted.clone(),
+            &first.join("native-host"),
+            &first.join("extension"),
+            Some(&first.join(YTDLP_DIRECTORY)),
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(extension_manifest(&legacy), Some(adopted.extension.clone()));
+        std::fs::remove_file(parent.join("install-journal.json")).unwrap();
+
+        let (next, mut candidate) = runtime_fixture(tmp.path(), "next", "1.1.0");
+        candidate.extension = browser_payload(&next.join("extension"), HOST_NAME, "next build");
+        install_runtime_from_sources(
+            &parent,
+            candidate.clone(),
+            &next.join("native-host"),
+            &next.join("extension"),
+            Some(&next.join(YTDLP_DIRECTORY)),
+            |_| Ok(()),
+        )
+        .expect("the adopted copy is Mine's and is updated");
+        assert_eq!(extension_manifest(&legacy), Some(candidate.extension));
+    }
+
+    /// Е4.7, Н14: maintenance keeps the helper packages of the current and
+    /// the previous verified runtime and removes the rest, with their
+    /// retained copies and abandoned preparations. The CLI's packages in the
+    /// same folder are the CLI's and stay.
+    #[test]
+    fn maintenance_keeps_the_current_and_previous_packages_only() {
+        let tmp = TempDir::new().unwrap();
+        let parent = tmp.path().join("app/clipper/managed-v1");
+        let package_of = |manifest: &RuntimeBuildManifest| {
+            format!("{:x}", Sha256::digest(serde_json::to_vec(manifest).unwrap()))
+        };
+        let mut installed = Vec::new();
+        for version in ["1.0.0", "1.1.0", "1.2.0", "1.3.0"] {
+            let (source, manifest) = runtime_fixture(tmp.path(), &format!("build-{version}"), version);
+            install_runtime_from_sources(
+                &parent,
+                manifest.clone(),
+                &source.join("native-host"),
+                &source.join("extension"),
+                Some(&source.join(YTDLP_DIRECTORY)),
+                |_| Ok(()),
+            )
+            .unwrap();
+            installed.push(manifest);
+        }
+        let packages = parent.join("packages");
+        let cli = packages.join("c".repeat(64));
+        std::fs::create_dir_all(&cli).unwrap();
+        std::fs::write(cli.join("cli-manifest.json"), "{}").unwrap();
+        std::fs::write(cli.join("mine-cli"), "cli").unwrap();
+        std::fs::create_dir_all(packages.join(".preparing-abandoned")).unwrap();
+        let (source, last) = runtime_fixture(tmp.path(), "build-1.4.0", "1.4.0");
+        install_runtime_from_sources(
+            &parent,
+            last.clone(),
+            &source.join("native-host"),
+            &source.join("extension"),
+            Some(&source.join(YTDLP_DIRECTORY)),
+            |_| Ok(()),
+        )
+        .unwrap();
+
+        let mut left: Vec<String> = std::fs::read_dir(&packages)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        let mut expected = vec![package_of(&last), package_of(&installed[3]), "c".repeat(64)];
+        expected.sort();
+        assert_eq!(left, expected);
+        let retained: Vec<String> = std::fs::read_dir(parent.join("retained"))
+            .map(|entries| {
+                entries
+                    .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let kept_hosts = [&last.native_host.sha256, &installed[3].native_host.sha256];
+        let kept_extensions = [&last.extension.sha256, &installed[3].extension.sha256];
+        for name in &retained {
+            assert!(
+                kept_hosts.iter().any(|sha| *name == format!("native-host-{sha}"))
+                    || kept_extensions.iter().any(|sha| *name == format!("extension-{sha}")),
+                "{name} outlived its runtime"
+            );
+        }
     }
 
     #[test]
@@ -3410,7 +3685,7 @@ mod tests {
             bundled_extension: source.join("extension"),
             installed_host: parent.join("native-host"),
             registered_host: package.join("native-host"),
-            installed_extension: parent.join("extension"),
+            installed_extensions: vec![parent.join("extension")],
             bundled_ytdlp: Some(source.join(YTDLP_DIRECTORY)),
             browser_manifests: vec![],
         };

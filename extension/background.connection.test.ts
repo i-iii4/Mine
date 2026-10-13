@@ -92,6 +92,54 @@ describe("native connection-check acknowledgement", () => {
   });
 });
 
+describe("a Save waits as long as the helper works (SPEC_DEEP_AUDIT.md, Н9)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+
+  async function helperWith(features: string[]) {
+    const host = nativeTransport();
+    const status = host.send("get_status");
+    host.respond({ _messageId: 1, ok: true, connected: true, features });
+    await status;
+    const save = host.send("save_block");
+    let settled = false;
+    void save.then(() => { settled = true; });
+    const sent = host.port.postMessage.mock.calls.at(-1)![0];
+    return { host, save, sent, settled: async () => { await Promise.resolve(); await Promise.resolve(); return settled; } };
+  }
+
+  it("asks for signs of work and waits while they come, however long the save", async () => {
+    const { host, save, sent, settled } = await helperWith(["save_progress_v1"]);
+    expect(sent._progress).toBe(true);
+    for (let minute = 0; minute < 10; minute += 1) {
+      await vi.advanceTimersByTimeAsync(50_000);
+      host.respond({ _messageId: sent._messageId, progress: true });
+    }
+    expect(await settled()).toBe(false);
+    host.respond({ _messageId: sent._messageId, ok: true, outcome: "committed", slug: "Card" });
+    await expect(save).resolves.toMatchObject({ outcome: "committed", slug: "Card" });
+    expect(host.warn).not.toHaveBeenCalled();
+  });
+
+  it("gives up a minute after the last sign of work", async () => {
+    const { host, save, sent, settled } = await helperWith(["save_progress_v1"]);
+    await vi.advanceTimersByTimeAsync(59_000);
+    host.respond({ _messageId: sent._messageId, progress: true });
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(await settled()).toBe(false);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(save).resolves.toMatchObject({ code: "native_timeout", outcome: "unknown" });
+  });
+
+  it("keeps the old three minutes for a helper that sends no signs", async () => {
+    const { save, settled } = await helperWith([]);
+    await vi.advanceTimersByTimeAsync(179_000);
+    expect(await settled()).toBe(false);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(save).resolves.toMatchObject({ code: "native_timeout", outcome: "unknown" });
+  });
+});
+
 describe("helper replaced during a session (SPEC_CLIPPER.md, К4)", () => {
   function replaceableTransport() {
     const ports: Array<{

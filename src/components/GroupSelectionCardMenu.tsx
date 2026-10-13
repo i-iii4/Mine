@@ -18,6 +18,7 @@ import { selectedElementCountLabel } from "@/lib/groupSelection";
 import {
   BatchCollectionPicker,
   COLLECTION_PICKER_CONTENT_CLASS,
+  type MembershipAnswer,
 } from "./CollectionPicker";
 
 interface GroupSelectionCardMenuProps {
@@ -26,8 +27,8 @@ interface GroupSelectionCardMenuProps {
   currentTag?: string;
   openRequestSequence?: number;
   onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
-  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
-  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
+  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => MembershipAnswer;
+  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<unknown>;
   /** The feed's `requestDeleteSelection()`: the menu only asks; the window
    *  is the feed's (SPEC_GROUP_SELECTION.md, «Точки входа»). */
   onRequestDeleteSelection: () => void;
@@ -73,10 +74,12 @@ export function GroupSelectionCardMenu({
     updateMenuOpen(!menuOpenRef.current);
   }, [openRequestSequence, updateMenuOpen]);
 
+  // The selection stays until the answer (SPEC_DEEP_AUDIT.md, Е6.1).
   const handleDisconnectFromCollection = () => {
-    actions.disconnectFromCurrentCollection();
     updateMenuOpen(false);
-    onClearSelection();
+    void actions.disconnectFromCurrentCollection().then((applied) => {
+      if (applied) onClearSelection();
+    });
   };
 
   const handleDelete = () => {

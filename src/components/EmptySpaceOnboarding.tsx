@@ -21,6 +21,7 @@ import { useState } from "react";
 import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScreenState } from "@/components/ScreenState";
+import { errorMessage } from "@/lib/errorMessage";
 
 /** How a browser takes the extension while it is not in the store. */
 export const EXTENSION_INSTALL_STEP =
@@ -28,8 +29,9 @@ export const EXTENSION_INSTALL_STEP =
 
 interface EmptySpaceOnboardingProps {
   viewportHeight: number;
-  /** Shows the extension folder in Finder. */
-  onInstallClipper: () => void;
+  /** Shows the extension folder in Finder; answers once Finder has shown it,
+   *  and rejects with why it did not. */
+  onInstallClipper: () => void | Promise<void>;
   /** The steps start open (the edge-states showcase). */
   initialStepsOpen?: boolean;
 }
@@ -40,6 +42,10 @@ export function EmptySpaceOnboarding({
   initialStepsOpen = false,
 }: EmptySpaceOnboardingProps) {
   const [stepsOpen, setStepsOpen] = useState(initialStepsOpen);
+  // Why Finder did not show the folder: the step names a folder that
+  // "opened in Finder", so it shows only after it did (SPEC_DEEP_AUDIT.md,
+  // Е6.6).
+  const [failure, setFailure] = useState<string | null>(null);
   return (
     <div
       className="grid place-items-center px-[var(--edge-rhythm,32px)]"
@@ -55,8 +61,14 @@ export function EmptySpaceOnboarding({
         actions={
           <Button
             onClick={() => {
-              setStepsOpen(true);
-              onInstallClipper();
+              setFailure(null);
+              void Promise.resolve(onInstallClipper()).then(
+                () => setStepsOpen(true),
+                (error: unknown) => {
+                  setStepsOpen(false);
+                  setFailure(errorMessage(error));
+                },
+              );
             }}
           >
             <Download className="size-[13px]" />
@@ -67,6 +79,13 @@ export function EmptySpaceOnboarding({
         {stepsOpen && (
           <p className="text-sm text-foreground" role="status" data-empty-space-install-step="">
             {EXTENSION_INSTALL_STEP}
+          </p>
+        )}
+        {failure !== null && (
+          // After the buttons, the error of the screen (DESIGN_SYSTEM.md,
+          // «Полноэкранные состояния»).
+          <p className="text-sm text-destructive" role="alert" data-empty-space-install-failure="">
+            {failure}
           </p>
         )}
         <p className="text-sm text-muted-foreground">

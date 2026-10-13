@@ -7,7 +7,6 @@
 // here; their handlers do nothing. The two calls a window makes on opening
 // get fixed answers.
 
-import { useState } from "react";
 import { DndContext } from "@dnd-kit/core";
 import { MemoryRouter } from "react-router";
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -22,9 +21,8 @@ import {
 import { MergeCardsDialog } from "@/components/MergeCardsDialog";
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
 import { DeleteCollectionDialog } from "@/components/Sidebar";
-import { CreateCollectionNameDialog } from "@/components/TopCollectionSwitcher";
 import { KEEP_ALL, VaultConflictsDialog } from "@/components/VaultConflictsNotice";
-import { RemoveSpaceDialog } from "@/components/VaultSwitcher";
+import { RemoveSpaceDialog } from "@/components/RemoveSpaceDialog";
 import { DeleteSourceVideoDialog } from "@/components/YoutubeSourcePlayer";
 import { DeleteOrphansDialog } from "@/settings/OrphansSection";
 import type {
@@ -196,8 +194,7 @@ tauriWindow.__TAURI_INTERNALS__.convertFileSrc = (filePath) => {
 const POPUPS = [
   { id: "rename", title: "Rename file (RenameBlockDialog)" },
   { id: "rename-media", title: "Rename media (Detail, RenameMediaAssetDialog)" },
-  { id: "create-collection", title: "New collection (CreateCollectionDialog)" },
-  { id: "create-collection-switcher", title: "New collection from the path (TopCollectionSwitcher)" },
+  { id: "create-collection", title: "New collection (CreateCollectionDialog, every path)" },
   { id: "merge", title: "Merge (MergeCardsDialog)" },
   { id: "conflicts", title: "iCloud conflicts (VaultConflictsDialog)" },
   { id: "delete-element", title: "Delete element (DeleteBlockDialog)" },
@@ -216,7 +213,6 @@ const POPUPS = [
 type PopupId = (typeof POPUPS)[number]["id"];
 
 function OnePopup({ id }: { id: PopupId }) {
-  const [collectionName, setCollectionName] = useState("Typography");
   return (
     <MemoryRouter initialEntries={["/"]}>
       <DndContext>
@@ -228,18 +224,7 @@ function OnePopup({ id }: { id: PopupId }) {
           <RenameMediaAssetDialog asset={MEDIA_ASSET} open onOpenChange={noop} onRename={noopAsync} />
         )}
         {id === "create-collection" && (
-          <CreateCollectionDialog open onOpenChange={noop} onCreate={noop} />
-        )}
-        {id === "create-collection-switcher" && (
-          <CreateCollectionNameDialog
-            open
-            name={collectionName}
-            error={null}
-            creating={false}
-            onOpenChange={noop}
-            onNameChange={setCollectionName}
-            onSubmit={noop}
-          />
+          <CreateCollectionDialog open initialName="Typography" onOpenChange={noop} onCreate={noopAsync} />
         )}
         {id === "merge" && (
           <MergeCardsDialog open selectedBlocks={BLOCKS} onOpenChange={noop} onConfirm={noopAsync} />

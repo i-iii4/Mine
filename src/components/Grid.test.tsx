@@ -2193,16 +2193,20 @@ describe("Grid — no collapse after add / revisit", () => {
       await Promise.resolve();
     });
 
+    // The menu closes; the selection waits for the answer (SPEC_DEEP_AUDIT.md,
+    // Е6.1).
     expect(document.querySelector("[data-feed-grid-batch-menu]")).not.toBeInTheDocument();
-    expect(document.querySelector("[data-feed-selection-action-bar]")).toBeNull();
+    expect(document.querySelector("[data-feed-selection-action-bar]")).not.toBeNull();
     expect(onBatchSetTag).not.toHaveBeenCalled();
 
     await act(async () => {
       vi.runOnlyPendingTimers();
       await Promise.resolve();
+      await Promise.resolve();
     });
 
     expect(onBatchSetTag).toHaveBeenCalledWith(["block-9533"], "test", false);
+    expect(document.querySelector("[data-feed-selection-action-bar]")).toBeNull();
   });
 
   it("exports selected cards as the drag group and hides the action island while dragging", async () => {
@@ -2569,11 +2573,13 @@ describe("Grid — no collapse after add / revisit", () => {
       await Promise.resolve();
     });
 
-    expect(document.querySelector("[data-feed-selection-action-bar]")).toBeNull();
+    // The selection waits for the answer (SPEC_DEEP_AUDIT.md, Е6.1).
+    expect(document.querySelector("[data-feed-selection-action-bar]")).not.toBeNull();
     expect(onBatchSetTag).not.toHaveBeenCalled();
 
     await act(async () => {
       vi.runOnlyPendingTimers();
+      await Promise.resolve();
       await Promise.resolve();
     });
 
@@ -2582,6 +2588,7 @@ describe("Grid — no collapse after add / revisit", () => {
       "test",
       false,
     );
+    expect(document.querySelector("[data-feed-selection-action-bar]")).toBeNull();
   });
 
   it("connects or disconnects every selected slug from the batch picker without mixed counts", async () => {

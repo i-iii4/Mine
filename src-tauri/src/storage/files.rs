@@ -853,25 +853,107 @@ pub fn shortest_vault_link(vault: &VaultLayout, target: &str, omit_md_ext: bool)
         .ok_or_else(|| anyhow::anyhow!("vault link target is missing: {target}"))
 }
 
+/// The space's saved layout is in iCloud and this Mac has no copy of it yet
+/// (SPEC_CLOUD_STORAGE.md, Х12). What writes no new file needs no layout and
+/// goes on; a new file waits for the layout with this reason, never for the
+/// download and never into the space root (SPEC_VAULT_LIFECYCLE.md, П2).
+/// iCloud has been asked for the file.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "the layout of this space ({}) is still in iCloud and this Mac has no copy of it yet; \
+     Mine asked iCloud for it, try again once it arrives",
+    .path.display()
+)]
+pub struct LayoutInCloud {
+    pub path: PathBuf,
+}
+
+/// Whether `error` says the saved layout is in iCloud with no copy here.
+#[must_use]
+pub fn is_layout_in_cloud(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<LayoutInCloud>().is_some()
+}
+
 /// Read explicit write destinations. Missing configuration and missing fields
-/// mean the space root, regardless of directory names on disk.
+/// mean the space root, regardless of directory names on disk. Never waits
+/// for iCloud: while the contents of `.mine/layout.json` are in iCloud, this
+/// Mac's copy of it answers (`layout_copy`), and without one the answer is
+/// [`LayoutInCloud`] (SPEC_CLOUD_STORAGE.md, Х12).
 pub fn load_vault_write_layout(
     vault: &VaultLayout,
 ) -> Result<crate::domain::vault::VaultWriteLayout> {
+    read_saved_write_layout(vault, crate::space_registry::CloudRead::NoWait)
+}
+
+/// [`load_vault_write_layout`] for opening a space, which may wait for
+/// iCloud: a layout this Mac has no copy of yet is brought down and read.
+pub fn load_vault_write_layout_waiting(
+    vault: &VaultLayout,
+) -> Result<crate::domain::vault::VaultWriteLayout> {
+    read_saved_write_layout(vault, crate::space_registry::CloudRead::Wait)
+}
+
+fn read_saved_write_layout(
+    vault: &VaultLayout,
+    read: crate::space_registry::CloudRead,
+) -> Result<crate::domain::vault::VaultWriteLayout> {
+    use crate::storage::{cloud_files, layout_copy};
     let marker = vault.write_layout_path();
     validate_vault_write_target(vault, &marker)?;
-    let stored: crate::domain::vault::VaultWriteLayout = match std::fs::read(&marker) {
-        Ok(raw) => serde_json::from_slice(&raw).context("invalid saved write layout")?,
+    let stamp = match std::fs::metadata(&marker) {
+        Ok(metadata) => layout_copy::LayoutStamp::of(&metadata),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            crate::domain::vault::VaultWriteLayout::flat()
+            layout_copy::forget(vault);
+            return Ok(crate::domain::vault::VaultWriteLayout::flat());
         }
         Err(error) => return Err(error.into()),
     };
-    stored.validate().map_err(|error| anyhow::anyhow!(error))
+    if cloud_files::is_content_offloaded(&marker) {
+        if let Some(copy) = layout_copy::read(vault) {
+            if copy.stamp != stamp {
+                // Another Mac changed the layout: this Mac's copy serves
+                // until the new contents arrive.
+                crate::storage::icloud_downloads::request_downloads([marker.as_path()]);
+                log::info!(
+                    "the layout {} changed elsewhere and is in iCloud; this Mac's copy serves until it arrives",
+                    marker.display()
+                );
+            }
+            return Ok(copy.layout);
+        }
+        if read == crate::space_registry::CloudRead::NoWait {
+            crate::storage::icloud_downloads::request_downloads([marker.as_path()]);
+            return Err(LayoutInCloud { path: marker }.into());
+        }
+    }
+    let raw = match cloud_files::read_contents(&marker) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            layout_copy::forget(vault);
+            return Ok(crate::domain::vault::VaultWriteLayout::flat());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let parsed = serde_json::from_slice::<crate::domain::vault::VaultWriteLayout>(&raw)
+        .context("invalid saved write layout")
+        .and_then(|stored| stored.validate().map_err(|error| anyhow::anyhow!(error)));
+    match parsed {
+        Ok(layout) => {
+            layout_copy::record(vault, &stamp, &layout);
+            Ok(layout)
+        }
+        Err(error) => {
+            // An invalid layout is refused, here and while it is in iCloud.
+            layout_copy::forget(vault);
+            Err(error)
+        }
+    }
 }
 
 /// Snapshot the latest saved destinations immediately before creating files.
 /// Native host and the desktop app may both change the shared layout marker.
+/// A layout in iCloud this Mac has no copy of refuses the new file
+/// ([`LayoutInCloud`]).
 pub fn layout_for_new_files(vault: &VaultLayout) -> Result<VaultLayout> {
     Ok(vault
         .clone()
@@ -880,6 +962,9 @@ pub fn layout_for_new_files(vault: &VaultLayout) -> Result<VaultLayout> {
 
 /// Anchor the layout agreed by a durable capture plan. This is idempotent
 /// initialization, never permission to replace a user's saved configuration.
+/// A saved layout whose contents are in iCloud was anchored before it went
+/// there: the plan is compared with this Mac's copy of it, never with a
+/// download (SPEC_CLOUD_STORAGE.md, Х12).
 pub fn ensure_vault_write_layout(
     vault: &VaultLayout,
     requested: &crate::domain::vault::VaultWriteLayout,
@@ -890,7 +975,13 @@ pub fn ensure_vault_write_layout(
         .map_err(|error| anyhow::anyhow!(error))?;
     let marker = vault.write_layout_path();
     validate_vault_write_target(vault, &marker)?;
-    match std::fs::read(&marker) {
+    if crate::storage::cloud_files::is_content_offloaded(&marker) {
+        if load_vault_write_layout(vault)? != expected {
+            anyhow::bail!("saved write layout differs from prepared capture");
+        }
+        return Ok(());
+    }
+    match std::fs::symlink_metadata(&marker) {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             // Concurrent initialization may win, but the marker is never
@@ -904,10 +995,7 @@ pub fn ensure_vault_write_layout(
         Err(error) => return Err(error.into()),
     }
     validate_vault_write_target(vault, &marker)?;
-    let stored: crate::domain::vault::VaultWriteLayout =
-        serde_json::from_slice(&std::fs::read(&marker)?).context("invalid saved write layout")?;
-    let stored = stored.validate().map_err(|error| anyhow::anyhow!(error))?;
-    if stored != expected {
+    if load_vault_write_layout(vault)? != expected {
         anyhow::bail!("saved write layout differs from prepared capture");
     }
     // A new .mine entry must itself be anchored in the vault directory.
@@ -1678,6 +1766,51 @@ mod tests {
         )
         .is_err());
         assert_eq!(std::fs::read(external).unwrap(), b"untouched");
+    }
+
+    /// SPEC_CLOUD_STORAGE.md, Х12: the layout of a space whose
+    /// `.mine/layout.json` iCloud took away comes from this Mac's copy, made
+    /// at the last read of the file here. Another stamp (another Mac changed
+    /// the file) still takes the copy until the file arrives. Without a copy
+    /// the answer is `LayoutInCloud`, and only opening a space waits. An
+    /// invalid layout leaves no copy behind. A store inside the space keeps
+    /// none. The evicted file is read only by the opening that may wait.
+    #[test]
+    fn an_evicted_layout_comes_from_this_macs_copy() {
+        use crate::domain::vault::VaultWriteLayout;
+        use crate::storage::cloud_files::test_seam;
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::with_derived_root(tmp.path().join("space"), tmp.path().join("derived"));
+        std::fs::create_dir_all(vault.mine_dir()).unwrap();
+        let marker = vault.write_layout_path();
+        std::fs::write(&marker, br#"{"cards":"Cards","media":"Media","collections":"Collections"}"#).unwrap();
+        assert_eq!(load_vault_write_layout(&vault).unwrap(), VaultWriteLayout::standard());
+
+        test_seam::mark_offloaded(&marker);
+        assert_eq!(load_vault_write_layout(&vault).unwrap(), VaultWriteLayout::standard());
+        ensure_vault_write_layout(&vault, &VaultWriteLayout::standard()).unwrap();
+        assert!(ensure_vault_write_layout(&vault, &VaultWriteLayout::flat()).is_err());
+        std::fs::OpenOptions::new().append(true).open(&marker).unwrap().write_all(b"\n").unwrap();
+        assert_eq!(load_vault_write_layout(&vault).unwrap(), VaultWriteLayout::standard());
+        assert_eq!(test_seam::reads_of(&marker), 0);
+
+        crate::storage::layout_copy::forget(&vault);
+        let error = load_vault_write_layout(&vault).unwrap_err();
+        assert!(is_layout_in_cloud(&error), "{error:#}");
+        assert!(layout_for_new_files(&vault).is_err());
+        assert_eq!(test_seam::reads_of(&marker), 0);
+        assert_eq!(load_vault_write_layout_waiting(&vault).unwrap(), VaultWriteLayout::standard());
+        assert_eq!(test_seam::reads_of(&marker), 1);
+        assert!(crate::storage::layout_copy::read(&vault).is_some());
+
+        std::fs::write(&marker, b"broken").unwrap();
+        assert!(load_vault_write_layout(&vault).is_err());
+        assert!(crate::storage::layout_copy::read(&vault).is_none());
+
+        let inside = VaultLayout::new(tmp.path().join("space"));
+        std::fs::write(&marker, br#"{"cards":"Cards"}"#).unwrap();
+        load_vault_write_layout(&inside).unwrap();
+        assert!(crate::storage::layout_copy::read(&inside).is_none());
     }
 
     #[test]

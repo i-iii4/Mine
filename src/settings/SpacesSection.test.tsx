@@ -76,6 +76,12 @@ function emitOpenSpaces(ids: string[]) {
   });
 }
 
+/** `Remove` in the question the press opened. */
+function confirmRemove(name: string) {
+  const question = screen.getByRole("alertdialog", { name: `Remove ${name} from the list?` });
+  fireEvent.click(within(question).getByRole("button", { name: "Remove" }));
+}
+
 describe("SpacesSection", () => {
   beforeEach(() => {
     vi.mocked(listSpaces)
@@ -284,7 +290,30 @@ describe("SpacesSection", () => {
     renderSpaces();
     await screen.findByText("Archive");
     fireEvent.click(spaceRowOf("Archive"));
-    expect(await screen.findByText(/no window/)).toBeInTheDocument();
+    // Its own words, not `Error: no window` (SPEC_DEEP_AUDIT.md, Е6.15).
+    expect(await screen.findByText("no window")).toBeInTheDocument();
+  });
+
+  /// SPEC_DEEP_AUDIT.md, Е6.9: Remove Space asks first, the same question as
+  /// the space switcher; before, Settings removed the space on the press.
+  it("asks before removing a space, as the space switcher does", async () => {
+    vi.mocked(forgetKnownVault).mockResolvedValue(["/Users/me/Mine"]);
+    renderSpaces();
+    await screen.findByText("Archive");
+
+    openRowMenu(spaceRowOf("Archive"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Remove Space/ }));
+
+    const question = await screen.findByRole("alertdialog", { name: "Remove Archive from the list?" });
+    expect(question).toHaveTextContent(
+      "The folder and its files stay where they are. Open tabs of this space switch to choosing a space. You can add it back with Add space.",
+    );
+    expect(forgetKnownVault).not.toHaveBeenCalled();
+
+    fireEvent.click(within(question).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(forgetKnownVault).not.toHaveBeenCalled();
+    expect(screen.getByText("Archive")).toBeInTheDocument();
   });
 
   it("removes a space that is not open", async () => {
@@ -296,6 +325,7 @@ describe("SpacesSection", () => {
     const remove = await screen.findByRole("menuitem", { name: /Remove Space/ });
     expect(remove).toHaveTextContent("Files stay on disk");
     fireEvent.click(remove);
+    confirmRemove("Archive");
 
     await waitFor(() => {
       expect(forgetKnownVault).toHaveBeenCalledWith("/Users/me/Archive");
@@ -315,6 +345,7 @@ describe("SpacesSection", () => {
 
     openRowMenu(spaceRowOf("Mine"));
     fireEvent.click(await screen.findByRole("menuitem", { name: /Remove Space/ }));
+    confirmRemove("Mine");
 
     await waitFor(() => {
       expect(forgetKnownVault).toHaveBeenCalledWith("/Users/me/Mine");
@@ -348,6 +379,7 @@ describe("SpacesSection", () => {
 
     openRowMenu(spaceRowOf("Mine"));
     fireEvent.click(await screen.findByRole("menuitem", { name: /Remove Space/ }));
+    confirmRemove("Mine");
 
     await waitFor(() => {
       expect(forgetKnownVault).toHaveBeenCalledWith("/Users/me/Mine");

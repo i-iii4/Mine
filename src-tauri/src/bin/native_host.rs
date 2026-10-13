@@ -28,7 +28,7 @@ use mine_core::domain::media_type::{extension_for_content_type, stored_media_ext
 use mine_lib::markdown_images::{build_inline_wikilink, replaceable_body_images};
 use mine_lib::net;
 use mine_lib::space_registry::{CloudRead, IdentityUnreadable};
-use mine_lib::storage::{clipper_uploads, db, file_identity, files, index, save_operations, thumbnails};
+use mine_lib::storage::{clipper_uploads, db, files, index, save_operations, thumbnails};
 use mine_lib::tool_process::{RunningTools, ToolFailure};
 use mine_lib::util::now_saved_at;
 use percent_encoding::percent_decode_str;
@@ -173,18 +173,38 @@ struct ResolveTwitterMediaResponse {
 
 /// Read a native message from stdin: 4-byte LE length + JSON bytes.
 fn read_message() -> io::Result<Option<String>> {
+    read_message_from(&mut io::stdin().lock())
+}
+
+/// The largest message a browser sends to a native host: 64 MiB
+/// (Chrome's native messaging limit for messages to the host).
+const MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Read one native message from `input`; `None` when the input has ended.
+///
+/// A message up to [`MAX_MESSAGE_BYTES`] is read whole; before 13.10.2026
+/// every message over 10 MiB ended the helper, an article with large inline
+/// pictures among them (SPEC_DEEP_AUDIT.md, Е4.12). A longer one, which no
+/// browser sends, is passed over and read as an empty message, which is
+/// answered as invalid: the next message is read from its own start.
+fn read_message_from(input: &mut impl Read) -> io::Result<Option<String>> {
     let mut len_buf = [0u8; 4];
-    match io::stdin().read_exact(&mut len_buf) {
+    match input.read_exact(&mut len_buf) {
         Ok(()) => {}
         Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
         Err(e) => return Err(e),
     }
     let len = u32::from_le_bytes(len_buf) as usize;
-    if len == 0 || len > 10 * 1024 * 1024 {
-        return Ok(None);
+    if len > MAX_MESSAGE_BYTES {
+        host_log(&format!("a message of {len} bytes is over the {MAX_MESSAGE_BYTES}-byte limit; passed over"));
+        let skipped = io::copy(&mut input.by_ref().take(len as u64), &mut io::sink())?;
+        if skipped < len as u64 {
+            return Ok(None);
+        }
+        return Ok(Some(String::new()));
     }
     let mut buf = vec![0u8; len];
-    io::stdin().read_exact(&mut buf)?;
+    input.read_exact(&mut buf)?;
     Ok(Some(String::from_utf8_lossy(&buf).to_string()))
 }
 
@@ -370,6 +390,10 @@ impl RequestSpace {
                 "“{}” is a copy of another space, and Mine cannot give it an identity of its own. Allow access to the folder or choose another space.",
                 name(path)
             )),
+            (COPY_UNSETTLED, Some(path)) => Some(format!(
+                "“{}” is a copy of another space. Open it in Mine or add it with Add space to give it an identity of its own.",
+                name(path)
+            )),
             _ => None,
         }
     }
@@ -385,6 +409,7 @@ impl RequestSpace {
             }
             IdentityRefusal::Unreadable(IdentityUnreadable::Unreadable { .. }) => IDENTITY_UNREADABLE,
             IdentityRefusal::CopyIdentity { .. } => IDENTITY_UNWRITABLE,
+            IdentityRefusal::CopyUnsettled { .. } => COPY_UNSETTLED,
         };
         Self {
             path: None,
@@ -400,6 +425,9 @@ impl RequestSpace {
 const IDENTITY_IN_CLOUD: &str = "identity_in_cloud";
 const IDENTITY_UNREADABLE: &str = "identity_unreadable";
 const IDENTITY_UNWRITABLE: &str = "identity_unwritable";
+/// A copy of a space without an identity of its own, seen by a request that
+/// writes nothing (`get_status`, an upload).
+const COPY_UNSETTLED: &str = "copy_unsettled";
 
 /// Why which space a folder is cannot be settled now. The request is refused
 /// with a state saying so, never answered with a guess (Д2.1, П22).
@@ -415,6 +443,10 @@ enum IdentityRefusal {
         folder: PathBuf,
         source: mine_lib::space_registry::MintIdentityError,
     },
+    /// The folder is a copy of the space at `owner` and has no identity of
+    /// its own yet; a read-only request does not give it one (Е4.15).
+    #[error("the folder is a copy of the space at {} without an identity of its own", .owner.display())]
+    CopyUnsettled { owner: PathBuf },
 }
 
 /// Why the helper does not open a folder as a space.
@@ -562,13 +594,30 @@ fn locate_request_space_in(
 /// the app gives it when it opens a copy, so the copy never reads or writes
 /// the original's index (Д2.1). When the rule cannot tell, nothing is
 /// written and the request is refused.
-fn settled_identity(folder: &Path, vaults_dir: Option<&Path>) -> Result<Option<String>, IdentityRefusal> {
+fn settled_identity(
+    folder: &Path,
+    vaults_dir: Option<&Path>,
+    settle: Settle,
+) -> Result<Option<String>, IdentityRefusal> {
     let Some(id) = mine_lib::space_registry::read_identity(folder, CloudRead::NoWait)? else {
         return Ok(None);
     };
-    match vaults_dir {
-        Some(vaults) => claim_space_identity(folder, vaults, id).map(Some),
-        None => Ok(Some(id)),
+    match (vaults_dir, settle) {
+        (Some(vaults), Settle::Write) => claim_space_identity(folder, vaults, id).map(Some),
+        (Some(vaults), Settle::ReadOnly) => observed_identity(folder, vaults, id).map(Some),
+        (None, _) => Ok(Some(id)),
+    }
+}
+
+/// The copy rule (П22) read without writing: the identity `folder` carries
+/// when it is the space or the space moved; a copy that has no identity of
+/// its own yet is refused, never given one here.
+fn observed_identity(folder: &Path, vaults_dir: &Path, id: String) -> Result<String, IdentityRefusal> {
+    use mine_lib::space_registry::{self, IdentityClaim};
+    match space_registry::identity_claim(folder, &vaults_dir.join(&id), &id, CloudRead::NoWait) {
+        IdentityClaim::Owned | IdentityClaim::Adopted => Ok(id),
+        IdentityClaim::Undecided { cause, .. } => Err(cause.into()),
+        IdentityClaim::Copy { owner } => Err(IdentityRefusal::CopyUnsettled { owner }),
     }
 }
 
@@ -597,11 +646,33 @@ fn claim_space_identity(folder: &Path, vaults_dir: &Path, id: String) -> Result<
     }
 }
 
+/// Whether resolving a request's space may write the identity of a copy
+/// (П22).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Settle {
+    /// A request that opens the space: a copy gets an identity of its own
+    /// now, as the app gives it when it opens one.
+    Write,
+    /// `get_status` and an upload write nothing: a copy without an identity
+    /// of its own is reported, not given one (SPEC_DEEP_AUDIT.md, Е4.15).
+    ReadOnly,
+}
+
 fn resolve_request_space_in(
     cfg: &serde_json::Map<String, serde_json::Value>,
     vaults_dir: Option<&Path>,
     requested: Option<String>,
     binding: Option<&str>,
+) -> RequestSpace {
+    resolve_request_space_with(cfg, vaults_dir, requested, binding, Settle::Write)
+}
+
+fn resolve_request_space_with(
+    cfg: &serde_json::Map<String, serde_json::Value>,
+    vaults_dir: Option<&Path>,
+    requested: Option<String>,
+    binding: Option<&str>,
+    settle: Settle,
 ) -> RequestSpace {
     let identity = binding.filter(|value| !save_operations::is_legacy_binding(value));
     let Some(hint) = request_hint(cfg, requested, identity) else {
@@ -619,7 +690,7 @@ fn resolve_request_space_in(
         Ok(found) => found,
         Err(lost) => return lost,
     };
-    let identity = match settled_identity(Path::new(&path), vaults_dir) {
+    let identity = match settled_identity(Path::new(&path), vaults_dir, settle) {
         Ok(identity) => identity,
         Err(cause) => return RequestSpace::refused_identity(&cause, path),
     };
@@ -645,6 +716,37 @@ fn resolve_request_space_in(
         binding_accepted,
         identity,
     }
+}
+
+/// The space `get_status` reports for the request, found without writing
+/// anything: the status is read-only (SPEC_ONBOARDING.md, О7; Е4.15).
+fn status_space_in(
+    cfg: &serde_json::Map<String, serde_json::Value>,
+    vaults_dir: Option<&Path>,
+    requested: Option<String>,
+    binding: Option<&str>,
+) -> RequestSpace {
+    resolve_request_space_with(cfg, vaults_dir, requested, binding, Settle::ReadOnly)
+}
+
+/// The space an upload at `path` is staged for, with its derived store
+/// under `app_state`; why not, as the text the upload answers with.
+///
+/// The upload writes only its pending payload into the derived store of the
+/// space's identity: nothing goes into the space folder, not an identity
+/// file either, until the Save publishes the clip (SPEC_DEEP_AUDIT.md,
+/// Е4.15). A folder whose identity is not settled takes no upload.
+fn upload_space_in(
+    cfg: &serde_json::Map<String, serde_json::Value>,
+    app_state: &Path,
+    path: String,
+) -> Result<VaultLayout, String> {
+    let vaults = mine_lib::space_registry::vaults_dir(app_state);
+    let space = resolve_request_space_with(cfg, Some(&vaults), Some(path), None, Settle::ReadOnly);
+    let unavailable = || "Space not configured or not available".to_string();
+    let located = space.path.ok_or_else(unavailable)?;
+    let identity = space.identity.ok_or_else(unavailable)?;
+    Ok(VaultLayout::with_derived_root(PathBuf::from(located), vaults.join(identity)))
 }
 
 /// Why a request cannot use its space.
@@ -679,7 +781,7 @@ fn open_request_vault(
         initialize_native_new_space_layout(&VaultLayout::new(path.clone()))
             .map_err(SpaceRefusal::Failed)?;
     }
-    resolve_native_vault_layout_at(path, app_state).map_err(|error| match error {
+    resolve_native_space(path, app_state, writes).map_err(|error| match error {
         OpenSpaceError::Identity(cause) => {
             SpaceRefusal::Space(RequestSpace::refused_identity(&cause, located.clone()))
         }
@@ -781,28 +883,42 @@ fn load_known_vaults_in(
     unique
 }
 
-fn resolve_native_vault_layout(root: PathBuf) -> Result<VaultLayout, String> {
-    resolve_native_vault_layout_at(root, native_app_data_dir()?).map_err(|error| error.to_string())
-}
-
 /// The space at `root` with its derived store under `app_state`, chosen by
 /// the same identity and copy rule as the app's (П22): a copy of a space
-/// alive elsewhere never shares its store (Д2.1).
+/// alive elsewhere never shares its store (Д2.1). Requests open their space
+/// through [`resolve_native_space`]; an upload writes nothing into the space
+/// ([`upload_space_in`]).
+#[cfg(test)]
 fn resolve_native_vault_layout_at(
     root: PathBuf,
     app_state: PathBuf,
 ) -> Result<VaultLayout, OpenSpaceError> {
+    resolve_native_space(root, app_state, true)
+}
+
+/// As [`resolve_native_vault_layout_at`]. The layout never waits for iCloud:
+/// while `.mine/layout.json` is there, this Mac's copy of it answers
+/// (SPEC_CLOUD_STORAGE.md, Х12). Without a copy, a request that writes
+/// (`writes`) is refused with the reason, and one that writes nothing goes
+/// on with the default layout, which it needs for nothing it answers
+/// (SPEC_VAULT_LIFECYCLE.md, П2; SPEC_DEEP_AUDIT.md, Е4.17).
+fn resolve_native_space(root: PathBuf, app_state: PathBuf, writes: bool) -> Result<VaultLayout, OpenSpaceError> {
     let base = VaultLayout::new(root.clone());
     let vault_id = ensure_space_identity(&base)?;
     let vaults = mine_lib::space_registry::vaults_dir(&app_state);
     let vault_id = claim_space_identity(&root, &vaults, vault_id)?;
     let derived_root = vaults.join(vault_id);
     mine_lib::space_registry::record_owner_path(&derived_root, &root);
-    let write_layout = files::load_vault_write_layout(&base)
-        .map_err(|error| OpenSpaceError::Failed(error.to_string()))?;
-    let layout = VaultLayout::with_derived_root(root, derived_root).with_write_layout(write_layout);
+    let layout = VaultLayout::with_derived_root(root, derived_root);
+    let write_layout = match files::load_vault_write_layout(&layout) {
+        Ok(write_layout) => write_layout,
+        Err(error) if !writes && files::is_layout_in_cloud(&error) => {
+            mine_lib::domain::vault::VaultWriteLayout::flat()
+        }
+        Err(error) => return Err(OpenSpaceError::Failed(format!("{error:#}"))),
+    };
 
-    db::resolve_vault_index(layout)
+    db::resolve_vault_index(layout.with_write_layout(write_layout))
         .map_err(|error| OpenSpaceError::Failed(format!("index selection failed: {error:#}")))
 }
 
@@ -833,26 +949,31 @@ fn initialize_native_new_space_layout(vault: &VaultLayout) -> Result<(), String>
 }
 
 /// The build of the installed extension, from the identity file the
-/// extension build writes next to its bundle. The copy browsers load first
-/// (`clipper/extension`), then the managed one.
+/// extension build writes next to its bundle: the build every copy Mine
+/// keeps for browsers names (`runtime_installation::extension_copies`), the
+/// copy adopted before managed packages and the managed one. Copies that disagree, or a
+/// copy without a build, name none: which one a browser loaded cannot be
+/// told, and Mine's upkeep brings them back to one build (SPEC_DEEP_AUDIT.md,
+/// Е4.11). Before 13.10.2026 the helper read the adopted copy first while the
+/// upkeep checked only the managed one.
 fn installed_extension_build(app_data: &Path) -> Option<String> {
-    let clipper = app_data.join("clipper");
-    [
-        clipper.join("extension"),
-        clipper
-            .join(mine_lib::runtime_installation::MANAGED_RUNTIME_DIRECTORY)
-            .join("extension"),
-    ]
-    .iter()
-    .find_map(|extension| {
-        let bytes = std::fs::read(extension.join("dist/runtime-identity.json")).ok()?;
-        let identity: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-        identity
-            .get("buildId")
-            .and_then(serde_json::Value::as_str)
-            .filter(|id| !id.is_empty())
-            .map(str::to_string)
-    })
+    let mut builds = mine_lib::runtime_installation::extension_copies(app_data)
+        .into_iter()
+        .map(|extension| {
+            let bytes = std::fs::read(extension.join("dist/runtime-identity.json")).ok()?;
+            let identity: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+            identity
+                .get("buildId")
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(str::to_string)
+        })
+        .collect::<Option<Vec<String>>>()?;
+    builds.dedup();
+    match builds.as_slice() {
+        [build] => Some(build.clone()),
+        _ => None,
+    }
 }
 
 fn native_app_data_dir() -> Result<PathBuf, String> {
@@ -943,14 +1064,10 @@ fn handle_list_known_vaults() {
     });
 }
 
-/// Lists a space in the shared app settings through their one owner: under
-/// the lock the app uses too, changing only the space list, never over a file
-/// it cannot read (SPEC_VAULT_LIFECYCLE.md, П28). Returns the updated list.
-fn add_known_vault(path: &str) -> Result<Vec<String>, String> {
-    add_known_vault_in(&native_app_data_dir()?, path)
-}
-
-/// [`add_known_vault`] with the settings of the app data folder `app_data`.
+/// Lists a space in the shared settings of the app data folder `app_data`
+/// through their one owner: under the lock the app uses too, changing only
+/// the space list, never over a file it cannot read
+/// (SPEC_VAULT_LIFECYCLE.md, П28). Returns the updated list.
 fn add_known_vault_in(app_data: &Path, path: &str) -> Result<Vec<String>, String> {
     let path = canonical_native_space_path(path)?;
     // Never wait for iCloud: an identity still in the cloud is learned later.
@@ -968,6 +1085,46 @@ fn add_known_vault_in(app_data: &Path, path: &str) -> Result<Vec<String>, String
                 .collect()
         })
         .map_err(|error| error.to_string())
+}
+
+/// What the folder chooser came to.
+#[derive(Debug, PartialEq, Eq)]
+enum FolderChoice {
+    /// The folder the person chose, without a trailing slash.
+    Chosen(String),
+    /// The person pressed Cancel.
+    Cancelled,
+    /// The chooser did not open or ended with an error that is not Cancel:
+    /// why, as osascript said it.
+    Failed(String),
+}
+
+/// Read the outcome of the folder chooser from its osascript run. Only
+/// Cancel, which osascript reports as error -128, is a cancel; any other
+/// failure is told with osascript's reason (SPEC_DEEP_AUDIT.md, Е4.5).
+fn folder_choice(output: &std::process::Output) -> FolderChoice {
+    if output.status.success() {
+        let picked = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return FolderChoice::Chosen(picked.trim_end_matches('/').to_string());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("(-128)") {
+        return FolderChoice::Cancelled;
+    }
+    let reason = stderr
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| {
+            line.split_once("execution error: ")
+                .map_or(line, |(_, reason)| reason)
+                .to_string()
+        })
+        .unwrap_or_else(|| match output.status.code() {
+            Some(code) => format!("osascript exited with status {code}"),
+            None => format!("osascript ended: {}", output.status),
+        });
+    FolderChoice::Failed(reason)
 }
 
 /// Shows the native macOS folder chooser and registers the picked folder as a
@@ -996,51 +1153,82 @@ fn handle_pick_vault_folder() {
         Ok(output) => output,
         Err(e) => return send_error(&format!("cannot run osascript: {e}")),
     };
-    if !output.status.success() {
-        // The only non-zero path a plain `choose folder` produces is the user
-        // pressing Cancel (-128).
-        send_response(&PickVaultResponse {
-            ok: true,
-            cancelled: true,
-            path: None,
-            vaults: load_known_vaults(),
-        });
-        return;
-    }
-    let picked = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let picked = picked.trim_end_matches('/').to_string();
-    if picked.is_empty() || !PathBuf::from(&picked).is_dir() {
-        return send_error("folder chooser returned no usable path");
-    }
-    let picked = match canonical_native_space_path(&picked) {
-        Ok(path) => path,
-        Err(error) => return send_error(&error),
+    let picked = match folder_choice(&output) {
+        FolderChoice::Chosen(picked) => picked,
+        FolderChoice::Cancelled => {
+            send_response(&PickVaultResponse {
+                ok: true,
+                cancelled: true,
+                path: None,
+                vaults: load_known_vaults(),
+            });
+            return;
+        }
+        FolderChoice::Failed(reason) => {
+            host_log(&format!(
+                "pick_vault_folder: the folder chooser failed ({}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+            send_response(&serde_json::json!({
+                "ok": false,
+                "code": "folder_chooser_failed",
+                "error": format!("The folder chooser did not open: {reason}"),
+            }));
+            return;
+        }
     };
-    let chosen = VaultLayout::new(PathBuf::from(&picked));
-    if let Err(error) = initialize_native_new_space_layout(&chosen) {
-        return send_error(&error);
+    if picked.is_empty() || !PathBuf::from(&picked).is_dir() {
+        return send_journaled_error("pick_vault_folder", "folder chooser returned no usable path");
     }
-    // The person chose this folder: it becomes a space with its identity now,
-    // as a folder chosen in the app does. Requests then find it by identity;
-    // a folder without one is never taken for a space (Ф8). An identity
-    // still in iCloud is the folder's own: the folder is listed now, and
-    // requests can use it once the identity is here (Д2.1).
-    match ensure_space_identity(&chosen) {
-        Ok(_)
-        | Err(OpenSpaceError::Identity(IdentityRefusal::Unreadable(
-            IdentityUnreadable::InCloud { .. },
-        ))) => {}
-        Err(error) => return send_error(&error.to_string()),
-    }
-    match add_known_vault(&picked) {
-        Ok(vaults) => send_response(&PickVaultResponse {
+    let registered = native_app_data_dir()
+        .and_then(|app_data| register_chosen_folder_in(&app_data, &picked));
+    match registered {
+        Ok((path, vaults)) => send_response(&PickVaultResponse {
             ok: true,
             cancelled: false,
-            path: Some(picked),
+            path: Some(path),
             vaults,
         }),
-        Err(e) => send_error(&e),
+        Err(error) => send_journaled_error("pick_vault_folder", &error),
     }
+}
+
+/// Make the folder the person chose at `picked` a space and list it in the
+/// settings of the app data folder `app_data`. Returns the canonical path
+/// and the updated list.
+///
+/// The person chose this folder: it becomes a space with its identity now,
+/// as a folder chosen in the app does. Requests then find it by identity; a
+/// folder without one is never taken for a space (Ф8). An identity still in
+/// iCloud is the folder's own: the folder is listed now, and requests can
+/// use it once the identity is here (Д2.1). A copy of a space gets an
+/// identity of its own here, by the copy rule (П22): the choice is the
+/// person's act, while `get_status` writes nothing (SPEC_DEEP_AUDIT.md, Е4.15).
+fn register_chosen_folder_in(app_data: &Path, picked: &str) -> Result<(String, Vec<String>), String> {
+    let picked = canonical_native_space_path(picked)?;
+    let chosen = VaultLayout::new(PathBuf::from(&picked));
+    initialize_native_new_space_layout(&chosen)?;
+    match ensure_space_identity(&chosen) {
+        Ok(id) => {
+            let vaults = mine_lib::space_registry::vaults_dir(app_data);
+            if let Err(cause) = claim_space_identity(Path::new(&picked), &vaults, id) {
+                host_log(&format!("pick_vault_folder: {picked} is listed; its identity is not settled: {cause}"));
+            }
+        }
+        Err(OpenSpaceError::Identity(IdentityRefusal::Unreadable(IdentityUnreadable::InCloud { .. }))) => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    let vaults = add_known_vault_in(app_data, &picked)?;
+    Ok((picked, vaults))
+}
+
+/// Answer a failed request with `message` and write it to the journal: no
+/// failure of the person's action is only in the answer (SPEC_DEEP_AUDIT.md,
+/// Н11).
+fn send_journaled_error(action: &str, message: &str) {
+    host_log(&format!("{action}: {message}"));
+    send_error(message);
 }
 
 /// Reveals a known vault in Finder. Restricted to paths the config already
@@ -1219,6 +1407,9 @@ fn handle_get_status_with_upload(
             "local_saved_at_v1".into(),
             // Spaces are found by identity and the status reports moves (К1).
             "space_identity_v1".into(),
+            // A Save asked with `_progress` sends signs of work, and the
+            // clipper's deadline counts from the last one (Н9).
+            "save_progress_v1".into(),
         ],
         upload_port: upload.as_ref().map(|u| u.port),
         upload_token: upload.as_ref().map(|u| u.token.clone()),
@@ -1227,10 +1418,43 @@ fn handle_get_status_with_upload(
 
 fn handle_list_channels(vault: &VaultLayout) {
     let response = list_channels_response(vault);
-    if response["indexing"] == true {
+    if response["indexing"] == true && !indexed_by_another_build(vault) {
         index_in_background(vault);
     }
     send_response(&response);
+}
+
+/// Whether a newer build of Mine has indexed this space under a newer index
+/// generation: then this helper is the old one the browser runs until the
+/// updated app installs its own (SPEC_ONBOARDING.md, О5). The app owns the
+/// index; the helper answers from the collections folder and builds nothing.
+/// An old generation beside the app's would read every card of the space,
+/// possibly from iCloud, and the app removes it again (SPEC_DEEP_AUDIT.md,
+/// Е4.9, Е5.14). An older generation left behind does not stop a helper
+/// from indexing a space the app has not opened since.
+fn indexed_by_another_build(vault: &VaultLayout) -> bool {
+    let Some(own) = generation_order(mine_lib::domain::vault::INDEX_GENERATION) else {
+        return false;
+    };
+    let Ok(entries) = std::fs::read_dir(vault.derived_root().join("indexes")) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        entry.file_type().is_ok_and(|kind| kind.is_dir())
+            && entry
+                .file_name()
+                .to_str()
+                .and_then(generation_order)
+                .is_some_and(|other| other > own)
+    })
+}
+
+/// The order of an index generation `schema-<N>-semantics-<M>`: by schema,
+/// then by semantics.
+fn generation_order(name: &str) -> Option<(u32, u32)> {
+    let rest = name.strip_prefix("schema-")?;
+    let (schema, semantics) = rest.split_once("-semantics-")?;
+    Some((schema.parse().ok()?, semantics.parse().ok()?))
 }
 
 /// The popup needs collection names and card counts, and the index has both
@@ -1283,7 +1507,6 @@ fn read_indexed_channels(vault: &VaultLayout) -> anyhow::Result<Option<Vec<Chann
                 vault,
                 &channel.tag,
                 indexed.get(&channel.tag).map(String::as_str),
-                CloudRead::NoWait,
             )
         })
         .collect();
@@ -1315,10 +1538,18 @@ fn folder_collections(vault: &VaultLayout) -> Vec<String> {
     names
 }
 
+#[cfg(test)]
+std::thread_local! {
+    // Background index builds this test thread asked for.
+    static BACKGROUND_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Build the index of a space the app has not indexed yet, off the request
 /// path: the popup asks again and gets the counts once it is ready. One
 /// build per process at a time.
 fn index_in_background(vault: &VaultLayout) {
+    #[cfg(test)]
+    BACKGROUND_BUILDS.with(|builds| builds.set(builds.get() + 1));
     static BUILDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if BUILDING.swap(true, Ordering::SeqCst) {
         return;
@@ -1359,7 +1590,6 @@ fn collections_with_pages(vault: &VaultLayout, selected: &[String]) -> Vec<Strin
                 vault,
                 &collection_ref,
                 indexed.get(&collection_ref).map(String::as_str),
-                CloudRead::Wait,
             )
         })
         .cloned()
@@ -1393,16 +1623,12 @@ fn indexed_page_slugs(vault: &VaultLayout) -> HashMap<String, String> {
 /// watcher saw it (a space the app has not open), and a collection is its
 /// page (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1).
 ///
-/// With [`CloudRead::NoWait`] a note whose contents iCloud keeps off this
-/// Mac counts without being read: its type is known only by downloading it,
-/// and the clipper's list never waits for that. The Save reads it
-/// ([`CloudRead::Wait`]).
-fn collection_page_on_disk(
-    vault: &VaultLayout,
-    collection: &str,
-    indexed: Option<&str>,
-    read: CloudRead,
-) -> bool {
+/// One rule for the list, the Save and a new collection (SPEC_DEEP_AUDIT.md,
+/// Н7, Е4.6): a note whose contents iCloud keeps off this Mac
+/// (`storage::cloud_files`) counts without being read. Its type is known
+/// only by downloading it, and no clipper request waits for iCloud; before
+/// 13.10.2026 the list took such a page unread while the Save downloaded it.
+fn collection_page_on_disk(vault: &VaultLayout, collection: &str, indexed: Option<&str>) -> bool {
     let mut slugs: Vec<String> = indexed.map(str::to_string).into_iter().collect();
     slugs.push(vault.new_collection_slug(collection));
     if collection.contains('/') {
@@ -1416,12 +1642,10 @@ fn collection_page_on_disk(
             if !path.is_file() {
                 return false;
             }
-            if read == CloudRead::NoWait
-                && mine_lib::storage::cloud_files::is_content_offloaded(&path)
-            {
+            if mine_lib::storage::cloud_files::is_content_offloaded(&path) {
                 return true;
             }
-            let Ok(content) = std::fs::read_to_string(&path) else {
+            let Ok((_, content)) = files::read_block_file(vault, &path) else {
                 return false;
             };
             let Ok(read_at) = DateTime::new(&now_saved_at()) else {
@@ -1539,15 +1763,18 @@ fn check_binding(params: &serde_json::Value, binding: &str) -> anyhow::Result<()
 }
 
 fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
+    send_response(&save_block_response(vault, params));
+}
+
+/// The answer to a Save, made without sending it.
+fn save_block_response(vault: &VaultLayout, params: serde_json::Value) -> serde_json::Value {
     if let Err(error) = mine_lib::runtime_protocol::validate_save_request(&params) {
-        send_response(&incompatible_save_response(&params, error));
-        return;
+        return incompatible_save_response(&params, error);
     }
-    let response = match operation_store(vault) {
+    match operation_store(vault) {
         Ok(store) => save_block_with_store(vault, params, &store),
         Err(error) => operation_failure("", "unknown", "operation_unknown", error),
-    };
-    send_response(&response);
+    }
 }
 
 fn save_block_with_store(
@@ -1741,7 +1968,34 @@ fn handle_get_save_operation(vault: &VaultLayout, params: serde_json::Value) {
         let binding = save_operations::binding_id(vault)?;
         check_binding(&params, &binding)?;
         let store = operation_store(vault)?;
-        let locked = store.lock(&binding)?;
+        // A lookup never waits for a save: a save holds the journal while it
+        // downloads (SPEC_DEEP_AUDIT.md, Н9). A finished operation answers
+        // from its receipt; one under way is unknown for now.
+        let finished = store.peek(&binding, id)?.and_then(|record| match record.phase {
+            save_operations::OperationPhase::Committed { response } => {
+                Some((response, record.pending_upload_id))
+            }
+            save_operations::OperationPhase::Rejected { response } => Some((response, None)),
+            _ => None,
+        });
+        if let Some((response, upload)) = finished {
+            if response["ok"] == true && response["durability_warning"].is_null() {
+                if let Some(upload) = upload {
+                    if let Err(error) = clipper_uploads::mark_pending_upload_committed(vault, &upload) {
+                        log::warn!("operation confirmed; staging cleanup deferred: {error:#}");
+                    }
+                }
+            }
+            return Ok(Some(response));
+        }
+        let Some(locked) = store.try_lock(&binding)? else {
+            return Ok(Some(operation_failure(
+                id,
+                "unknown",
+                "operation_busy",
+                "Mine is saving to this space now. Check this save again in a moment.",
+            )));
+        };
         let Some(mut record) = locked.load(id)? else {
             return Ok(None);
         };
@@ -1900,7 +2154,7 @@ fn perform_save_block_with_publisher(
             let referer = p.url.as_deref().unwrap_or(image_url);
             match download_file(image_url, &dest_path, referer) {
                 Ok(()) => {
-                    if bt == BlockType::Video && thumbnails::is_image_ext(&ext) {
+                    if bt == BlockType::Video && thumbnails::is_image_ext(ext) {
                         thumbnail_file = Some(vault.new_media_stem(&dest_name));
                     } else {
                         media_file = Some(vault.new_media_stem(&dest_name));
@@ -1917,8 +2171,8 @@ fn perform_save_block_with_publisher(
     // person saw: post video is resolved while the preview is prepared
     // (`resolve_twitter_media`), never added here (Ф5).
     let raw = p.body.unwrap_or_default();
-    let (body, inline_files, unresolved_videos) = if raw.trim().is_empty() {
-        (raw, Vec::new(), Vec::new())
+    let LocalizedBody { body, files: inline_files, unresolved_videos, mut remote } = if raw.trim().is_empty() {
+        LocalizedBody { body: raw, files: Vec::new(), unresolved_videos: Vec::new(), remote: Vec::new() }
     } else {
         let page_url = p.url.as_deref().unwrap_or("");
         localize_body_images(&raw, vault, &name, page_url, source_vault)
@@ -1927,7 +2181,8 @@ fn perform_save_block_with_publisher(
     // A video too large to store leaves the note pointing at someone else's
     // server. Nothing can be done about the video itself here, but its poster
     // is small and always fits, so the feed still gets a real card instead of
-    // a text-only one.
+    // a text-only one. A poster that cannot be saved is named in the answer
+    // with the video (Н10).
     if thumbnail_file.is_none() && !unresolved_videos.is_empty() {
         if let Some(poster_url) = p.video_posters.as_ref().and_then(|posters| {
             posters
@@ -1938,18 +2193,30 @@ fn perform_save_block_with_publisher(
             let ext = ext_from_url(&poster_url);
             let mut occupied = files::scan_vault_file_paths(source_vault)?;
             occupied.extend(files::scan_vault_file_paths(vault)?);
-            let poster_name = mine_core::save::select_unique_file_stem(
-                &format!("{name} (poster)"),
-                &ext,
-                &occupied,
-            )?;
-            let dest_name = format!("{poster_name}.{ext}");
-            let dest_path = vault.new_media_path(&dest_name);
-            files::validate_vault_write_target(vault, &dest_path)?;
-            let referer = p.url.as_deref().unwrap_or(&poster_url);
-            match download_file(&poster_url, &dest_path, referer) {
-                Ok(()) => thumbnail_file = Some(vault.new_media_stem(&dest_name)),
-                Err(e) => log::warn!("inline-media: poster download failed err={e}"),
+            let target = mine_core::save::select_unique_file_stem(&format!("{name} (poster)"), ext, &occupied)
+                .map_err(|error| anyhow::anyhow!("{error}"))
+                .and_then(|poster_name| {
+                    let dest_name = format!("{poster_name}.{ext}");
+                    let dest_path = vault.new_media_path(&dest_name);
+                    files::validate_vault_write_target(vault, &dest_path)?;
+                    Ok((dest_name, dest_path))
+                });
+            let poster = |reason| RemoteMedia { url: poster_url.clone(), kind: "poster", reason };
+            match target {
+                Ok((dest_name, dest_path)) => {
+                    let referer = p.url.as_deref().unwrap_or(&poster_url);
+                    match download_file(&poster_url, &dest_path, referer) {
+                        Ok(()) => thumbnail_file = Some(vault.new_media_stem(&dest_name)),
+                        Err(e) => {
+                            log::warn!("inline-media: poster download failed err={e:#}");
+                            remote.push(poster(REMOTE_DOWNLOAD_FAILED));
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::warn!("inline-media: no name for the poster {poster_url}: {error:#}");
+                    remote.push(poster(REMOTE_NAME));
+                }
             }
         }
     }
@@ -1995,9 +2262,13 @@ fn perform_save_block_with_publisher(
             artifacts.push(save_operations::PlannedArtifact::inspect(vault, &path)?);
         }
     }
+    // Saved means saved whole, or the answer says what was not: every
+    // medium that stayed a link to its server is named (SPEC_DEEP_AUDIT.md,
+    // Н10). The answer is the receipt a lost reply is recovered from.
     let response = serde_json::json!({
         "ok": true, "outcome": "committed", "operation_id": record.operation_id,
         "slug": slug, "block_type": p.block_type, "warning": warning,
+        "remote_media": remote,
     });
     let markdown_path = files::write_new_block_file(vault, &block)?;
     locked.prepare_plan(
@@ -2010,7 +2281,13 @@ fn perform_save_block_with_publisher(
         },
     )?;
     let vault = source_vault;
-    let committed = locked.publish_plan_with(record, vault, publish)?;
+    note_work();
+    let mut publish = publish;
+    let committed = locked.publish_plan_with(record, vault, |staged, destination| {
+        let published = publish(staged, destination);
+        note_work();
+        published
+    })?;
     if committed["ok"] != true {
         // A terminal pre-effect name conflict is a valid protocol response,
         // but is not authority for upload cleanup or disposable-index writes.
@@ -2021,20 +2298,29 @@ fn perform_save_block_with_publisher(
             log::warn!("capture committed; staging cleanup deferred: {error:#}");
         }
     }
+    // A card whose name another writer took at publication went under the
+    // next free one (SPEC_DEEP_AUDIT.md, Е4.14): the index takes it there.
+    let mut block = block;
+    if let Some(published) = committed["slug"].as_str() {
+        block.slug = published.to_string();
+    }
     // The source receipt precedes every disposable-index/preview side effect.
     // Index failures do not change the already confirmed save response.
     match db::open_or_create(&vault.index_db_path()) {
         Ok(conn) => {
-            if let Err(error) = index::upsert_block_with_diagnostics(
-                &conn,
-                &block,
-                Some(vault.root()),
-                Some("clipper"),
-                None,
-            ) {
+            // The card goes into the index as a pass of the app puts it, with
+            // the stamp of its file, read just after it was written and so
+            // on this Mac: the next pass knows it unchanged and does not read
+            // it again. A row without the stamp made the next pass take the
+            // card for a new one, and an action in an iCloud space wait for
+            // its download (SPEC_CLOUD_STORAGE.md, Х12).
+            let note = vault.block_path(&block.slug);
+            if let Err(error) = mine_lib::storage::reconcile::project_source_path(&conn, vault, &note) {
                 log::warn!("capture committed; index catch-up deferred: {error:#}");
             }
+            note_work();
             let thumb_source = thumbnails::generate_for_block(&block, vault);
+            note_work();
             if thumb_source != thumbnails::ThumbSource::None {
                 let _ = index::sync_thumb_metadata(
                     &conn,
@@ -2049,71 +2335,127 @@ fn perform_save_block_with_publisher(
     Ok(committed)
 }
 
+/// Create a collection: its page is the collection, the index row is derived
+/// from it. Without a working index the page is written all the same, the
+/// row comes with the next indexing, and the index failure goes to the
+/// journal; every refusal goes there too (SPEC_DEEP_AUDIT.md, Е4.8). Before
+/// 13.10.2026 a helper that could not open SQLite refused the collection and
+/// said so only in its answer.
 fn handle_create_channel(vault: &VaultLayout, params: serde_json::Value) {
+    let refuse = |message: String| send_journaled_error("create_channel", &message);
     let p: CreateChannelParams = match serde_json::from_value(params) {
         Ok(p) => p,
-        Err(e) => return send_error(&format!("invalid create_channel params: {e}")),
+        Err(e) => return refuse(format!("invalid create_channel params: {e}")),
     };
 
     let conn = match db::open_or_create(&vault.index_db_path()) {
-        Ok(c) => c,
-        Err(e) => return send_error(&format!("failed to open database: {e}")),
+        Ok(conn) => Some(conn),
+        Err(error) => {
+            host_log(&format!(
+                "create_channel: the index cannot be opened; the page is written without it: {error:#}"
+            ));
+            None
+        }
     };
 
     let created_at = match DateTime::new(&now_saved_at()) {
         Ok(dt) => dt,
-        Err(e) => return send_error(&format!("failed to create timestamp: {e}")),
+        Err(e) => return refuse(format!("failed to create timestamp: {e}")),
     };
     let tag = match validate_collection_ref(&p.tag) {
         Ok(tag) => tag,
-        Err(error) => return send_error(&format!("invalid collection ref: {error}")),
+        Err(error) => return refuse(format!("invalid collection ref: {error}")),
     };
     // Whether the collection is there is the disk's answer: a page removed
     // while no watcher saw it leaves its index row behind, and its name is
     // free again (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1).
-    let indexed = match index::channel_page_slugs(&conn) {
-        Ok(indexed) => indexed,
-        Err(error) => return send_error(&format!("failed to inspect collections: {error}")),
-    };
-    if collection_page_on_disk(vault, &tag, indexed.get(&tag).map(String::as_str), CloudRead::Wait) {
-        return send_error(&format!("channel already exists: {tag}"));
+    let indexed = conn
+        .as_ref()
+        .map(index::channel_page_slugs)
+        .transpose()
+        .unwrap_or_else(|error| {
+            host_log(&format!("create_channel: the index rows cannot be read: {error:#}"));
+            None
+        })
+        .unwrap_or_default();
+    if collection_page_on_disk(vault, &tag, indexed.get(&tag).map(String::as_str)) {
+        return refuse(format!("channel already exists: {tag}"));
     }
 
     let existing = match files::scan_vault_file_paths(vault) {
         Ok(existing) => existing,
-        Err(e) => return send_error(&format!("failed to inspect existing vault files: {e}")),
+        Err(e) => return refuse(format!("failed to inspect existing vault files: {e}")),
     };
     let tag = match mine_core::save::select_unique_file_stem(&tag, "md", &existing) {
         Ok(tag) => tag,
-        Err(e) => return send_error(&format!("failed to select collection name: {e}")),
+        Err(e) => return refuse(format!("failed to select collection name: {e}")),
     };
     let mut channel = match Channel::new(&tag, created_at) {
         Ok(channel) => channel,
-        Err(e) => return send_error(&format!("invalid channel: {e}")),
+        Err(e) => return refuse(format!("invalid channel: {e}")),
     };
-    channel.position = match index::next_channel_position(&conn) {
-        Ok(position) => position,
-        Err(e) => return send_error(&format!("failed to resolve channel position: {e}")),
+    let indexed_position = conn.as_ref().map(index::new_channel_position).transpose();
+    channel.position = match indexed_position {
+        Ok(Some(position)) => position,
+        Ok(None) => mine_core::domain::channel::new_collection_position(page_positions_on_disk(vault)),
+        Err(error) => {
+            host_log(&format!("create_channel: the index positions cannot be read: {error:#}"));
+            mine_core::domain::channel::new_collection_position(page_positions_on_disk(vault))
+        }
     };
 
     let block = channel_to_block(vault, &channel);
     if let Err(e) = files::write_new_block_file(vault, &block) {
-        return send_error(&format!("failed to write channel file: {e}"));
+        return refuse(format!("failed to write channel file: {e}"));
     }
-    if let Err(error) = file_identity::reconcile(vault) {
-        log::warn!("channel file created; identity enrollment deferred: {error:#}");
-    }
+    // The page enters the identity history with the app's next pass, as a
+    // Save's card and any note written beside Mine do: enrolling it here read
+    // every new note of the space, and in an iCloud space waited for their
+    // download (SPEC_CLOUD_STORAGE.md, Х12).
 
     // The row names the page just written, also over the row of a page that
-    // left: the next look finds this one.
-    if let Err(e) = index::upsert_channel_with_source(&conn, &channel, Some(block.slug.as_str())) {
-        return send_error(&format!("failed to create channel: {e}"));
+    // left: the next look finds this one. The page is the collection: a row
+    // that cannot be written comes with the next indexing.
+    if let Some(conn) = &conn {
+        if let Err(error) = index::upsert_channel_with_source(conn, &channel, Some(block.slug.as_str())) {
+            host_log(&format!("create_channel: page written; its index row deferred: {error:#}"));
+        }
     }
 
     send_response(&CreateChannelResponse {
         ok: true,
         tag: channel.tag,
     });
+}
+
+/// The positions of the collection pages in the collections folder whose
+/// contents are on this Mac, a page without `position` at `0`; for a new
+/// collection when the index cannot say. A page iCloud keeps off this Mac is
+/// not read (Н7). A flat space keeps its pages among the cards and gives
+/// none.
+fn page_positions_on_disk(vault: &VaultLayout) -> Vec<i64> {
+    let layout = vault.write_layout();
+    if layout.collections.is_empty() || layout.collections == layout.cards {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(vault.collections_dir()) else {
+        return Vec::new();
+    };
+    let Ok(read_at) = DateTime::new(&now_saved_at()) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+        .filter(|path| !mine_lib::storage::cloud_files::is_content_offloaded(path))
+        .filter_map(|path| {
+            let (slug, content) = files::read_block_file(vault, &path).ok()?;
+            let parsed = parse_markdown_document(&slug, &content, read_at.clone()).ok()?;
+            (parsed.block.frontmatter.block_type == BlockType::Channel)
+                .then(|| parsed.block.frontmatter.position.unwrap_or(0))
+        })
+        .collect()
 }
 
 fn channel_to_block(vault: &VaultLayout, channel: &Channel) -> Block {
@@ -2240,12 +2582,21 @@ fn decode_data_url(data_url: &str) -> anyhow::Result<(Vec<u8>, String)> {
     let (header, data) = rest
         .split_once(',')
         .ok_or_else(|| anyhow::anyhow!("malformed data URL: no comma"))?;
+    let mut parameters = header.split(';');
+    let media_type = parameters.next().unwrap_or_default().trim();
+    let in_base64 = parameters.any(|parameter| parameter.trim().eq_ignore_ascii_case("base64"));
     // The declared type names the file for now; the bytes settle it
     // (`settle_prepared_media_name`).
-    let ext = extension_for_content_type(header).unwrap_or("png");
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data)
-        .map_err(|e| anyhow::anyhow!("base64 decode failed: {e}"))?;
+    let ext = extension_for_content_type(media_type).unwrap_or("png");
+    // Without `;base64` the bytes are written percent-encoded (RFC 2397), as
+    // pages write inline SVG (SPEC_DEEP_AUDIT.md, Е4.13).
+    let bytes = if in_base64 {
+        base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|e| anyhow::anyhow!("base64 decode failed: {e}"))?
+    } else {
+        percent_decode_str(data).collect()
+    };
     Ok((bytes, ext.to_string()))
 }
 
@@ -2264,11 +2615,17 @@ fn ext_from_url(url: &str) -> &str {
 /// "the URL says nothing and jpg is a guess". API-style URLs such as
 /// `.../xrpc/com.atproto.sync.getBlob` are the case that matters: their last
 /// dotted segment is a method name, not a file type.
+///
+/// Only letters and digits make an extension: a file cannot be named with
+/// anything else (`select_unique_file_stem`), and before 13.10.2026 one
+/// address such as `photo.j-pg` left every picture of an article remote and
+/// a poster at such an address failed the whole save (SPEC_DEEP_AUDIT.md,
+/// Е4.1). Such an address states no type; the server and the bytes say it.
 fn ext_from_url_opt(url: &str) -> Option<&str> {
     let path = url.split('?').next().unwrap_or(url);
     let path = path.split('#').next().unwrap_or(path);
     let (_, ext) = path.rsplit_once('.')?;
-    if ext.is_empty() || ext.len() > 5 || ext.contains('/') {
+    if ext.is_empty() || ext.len() > 5 || !ext.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
         return None;
     }
     Some(ext)
@@ -2278,20 +2635,32 @@ fn ext_from_url_opt(url: &str) -> Option<&str> {
 ///
 /// A failure here is not an error: the caller falls back to its own assumption,
 /// so a server that refuses HEAD costs nothing beyond one request.
+#[cfg(not(test))]
 fn probe_ext_over_network(url: &str) -> Option<&'static str> {
-    let resp = mine_lib::net::fetch_validated_head(url, INLINE_REQUEST_TIMEOUT, &[]).ok()?;
-    extension_for_content_type(resp.header("Content-Type")?)
+    let resp = mine_lib::net::fetch_validated_head(url, INLINE_REQUEST_TIMEOUT, &[]).ok();
+    note_work();
+    extension_for_content_type(resp?.header("Content-Type")?)
+}
+
+/// Tests ask the stand-in web ([`fake_web`]), never the real one.
+#[cfg(test)]
+fn probe_ext_over_network(url: &str) -> Option<&'static str> {
+    note_work();
+    extension_for_content_type(fake_web::head(url)?)
 }
 
 /// Whole-request timeout for the HEAD probe of inline media. ureq 2.x default
 /// is 30s: too long for one stuck CDN to monopolize a worker slot when the
-/// parallel pool only has 3 workers serving 15+ images.
+/// parallel pool only has 3 workers serving 15+ images. Tests use the
+/// stand-in web ([`fake_web`]) and no timeout.
+#[cfg_attr(test, allow(dead_code))]
 const INLINE_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// How long an inline-media download may stall: connecting, or waiting for the
 /// next bytes. It is not a deadline for the whole file. A 25 MB clip needs
 /// longer than 15 seconds on an ordinary link, and a whole-request deadline
 /// threw it away at 22 MB, then again on every retry.
+#[cfg_attr(test, allow(dead_code))]
 const INLINE_DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Per-request timeout for the Twitter syndication API. Without it a hung
@@ -2304,13 +2673,31 @@ const TWITTER_API_TIMEOUT: Duration = Duration::from_secs(10);
 /// Retries, resuming from the bytes already received, SSRF validation of every
 /// redirect hop and the body-size cap live in
 /// `mine_lib::net::download_validated_to_file`.
+/// Every part that arrives is a sign of the helper's work (Н9).
+#[cfg(not(test))]
 fn download_file(url: &str, dest: &std::path::Path, referer: &str) -> anyhow::Result<()> {
     let headers = [
         ("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
         ("Referer", referer),
         ("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"),
     ];
-    net::download_validated_to_file(url, dest, INLINE_DOWNLOAD_IDLE_TIMEOUT, &headers)
+    let result = net::download_validated_to_file_reporting(
+        url,
+        dest,
+        INLINE_DOWNLOAD_IDLE_TIMEOUT,
+        &headers,
+        &note_work,
+    );
+    note_work();
+    result
+}
+
+/// Tests download from the stand-in web ([`fake_web`]), never the real one.
+#[cfg(test)]
+fn download_file(url: &str, dest: &std::path::Path, _referer: &str) -> anyhow::Result<()> {
+    let result = fake_web::download(url, dest, &note_work);
+    note_work();
+    result
 }
 
 /// Kind of inline media embedded in an article body, used to produce
@@ -2474,23 +2861,64 @@ fn scan_inline_tasks(body: &str, vault: &VaultLayout, slug: &str) -> Vec<InlineT
 /// The probe is a parameter so the scan stays a pure function over the body:
 /// tests pass one that answers nothing, and only the save path pays for the
 /// network round-trip — and only for the rare URL that needs it.
+#[cfg(test)]
 fn scan_inline_tasks_with(
     body: &str,
     vault: &VaultLayout,
     slug: &str,
     probe: &dyn Fn(&str) -> Option<&'static str>,
 ) -> Vec<InlineTask> {
+    scan_inline_media(body, vault, slug, probe).0
+}
+
+/// A picture, video, file or poster of a clip that stays a link to someone
+/// else's server: the Save answer names each, with why, and the clipper
+/// shows how many (SPEC_DEEP_AUDIT.md, Н10).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+struct RemoteMedia {
+    url: String,
+    /// `image`, `video`, `file` or `poster`.
+    kind: &'static str,
+    /// [`REMOTE_DOWNLOAD_FAILED`], [`REMOTE_LIMIT`] or [`REMOTE_NAME`].
+    reason: &'static str,
+}
+
+/// The download failed: the server refused, the transfer broke or stalled.
+const REMOTE_DOWNLOAD_FAILED: &str = "download_failed";
+/// Past the first `MAX_INLINE_IMAGES` media of the body.
+const REMOTE_LIMIT: &str = "limit";
+/// No file name could be given to it in the space.
+const REMOTE_NAME: &str = "name";
+
+impl RemoteMedia {
+    fn of(url: &str, kind: InlineMediaKind, reason: &'static str) -> Self {
+        Self { url: url.to_string(), kind: kind.label(), reason }
+    }
+}
+
+/// The inline-media tasks of the body, consulting `probe` for URLs that
+/// carry no extension of their own, and the media past `MAX_INLINE_IMAGES`,
+/// which stay links and are named in the Save answer (Н10).
+fn scan_inline_media(
+    body: &str,
+    vault: &VaultLayout,
+    slug: &str,
+    probe: &dyn Fn(&str) -> Option<&'static str>,
+) -> (Vec<InlineTask>, Vec<RemoteMedia>) {
     let mut tasks = Vec::new();
+    let mut past_limit = Vec::new();
     let mut image_idx: u32 = 0;
     let mut video_idx: u32 = 0;
     let mut file_idx: u32 = 0;
 
     for image in replaceable_body_images(body) {
-        if tasks.len() >= MAX_INLINE_IMAGES as usize {
-            break;
-        }
         let url = image.url.as_str();
         if !(url.starts_with("http://") || url.starts_with("https://")) {
+            continue;
+        }
+        if tasks.len() >= MAX_INLINE_IMAGES as usize {
+            let kind = ext_from_url_opt(url).map_or(InlineMediaKind::Image, inline_media_kind_from_ext);
+            past_limit.push(RemoteMedia::of(url, kind, REMOTE_LIMIT));
             continue;
         }
 
@@ -2530,7 +2958,7 @@ fn scan_inline_tasks_with(
             dest_path,
         });
     }
-    tasks
+    (tasks, past_limit)
 }
 
 /// Phase B: spawn a fixed worker pool, drain a shared queue of task
@@ -2697,42 +3125,67 @@ fn apply_rewrites_with_links(
 
 /// Localize inline body media. Returns the rewritten body and the paths of the
 /// inline files that physically remain on disk for publication verification.
+/// What localizing a body came to.
+struct LocalizedBody {
+    /// The body, every downloaded medium embedded as a local file.
+    body: String,
+    /// The inline files that remain in staging for publication.
+    files: Vec<PathBuf>,
+    /// The videos that stayed remote, for a local poster.
+    unresolved_videos: Vec<String>,
+    /// Every medium that stayed a link, with why (Н10).
+    remote: Vec<RemoteMedia>,
+}
+
 fn localize_body_images(
     body: &str,
     vault: &VaultLayout,
     slug: &str,
     page_url: &str,
     source_vault: &VaultLayout,
-) -> (String, Vec<std::path::PathBuf>, Vec<String>) {
-    let mut tasks = scan_inline_tasks_with(body, vault, slug, &probe_ext_over_network);
+) -> LocalizedBody {
+    let (scanned, mut remote) = scan_inline_media(body, vault, slug, &probe_ext_over_network);
+    note_work();
+    let unlocalized = |tasks: &[InlineTask], mut remote: Vec<RemoteMedia>| {
+        remote.extend(tasks.iter().map(|task| RemoteMedia::of(&task.url, task.kind, REMOTE_NAME)));
+        LocalizedBody { body: body.to_string(), files: Vec::new(), unresolved_videos: Vec::new(), remote }
+    };
     let mut paths = match files::scan_vault_file_paths(source_vault) {
         Ok(paths) => paths,
         Err(error) => {
             log::warn!("inline media names unavailable: {error:#}");
-            return (body.to_string(), Vec::new(), Vec::new());
+            return unlocalized(&scanned, remote);
         }
     };
-    for task in &mut tasks {
+    // One medium that cannot be named stays a link alone: the rest are
+    // still saved (SPEC_DEEP_AUDIT.md, Н10).
+    let mut tasks = Vec::with_capacity(scanned.len());
+    for mut task in scanned {
         let filename = task.dest_name.rsplit('/').next().unwrap_or(&task.dest_name);
         let (stem, ext) = filename.rsplit_once('.').unwrap_or((filename, ""));
-        let Ok(name) = mine_core::save::select_unique_file_stem(stem, ext, &paths) else {
-            log::warn!("inline media name exhausted");
-            return (body.to_string(), Vec::new(), Vec::new());
-        };
-        let filename = if ext.is_empty() { name } else { format!("{name}.{ext}") };
-        task.dest_path = vault.new_media_path(&filename);
-        task.dest_name = vault.new_media_stem(&filename);
-        paths.push(task.dest_name.clone());
-    }
-    if tasks
-        .iter()
-        .any(|task| files::validate_vault_write_target(vault, &task.dest_path).is_err())
-    {
-        log::warn!("inline media targets are unsafe; retaining remote references");
-        return (body.to_string(), Vec::new(), Vec::new());
+        let named = mine_core::save::select_unique_file_stem(stem, ext, &paths)
+            .map_err(|error| anyhow::anyhow!("{error}"))
+            .and_then(|name| {
+                let filename = if ext.is_empty() { name } else { format!("{name}.{ext}") };
+                let dest_path = vault.new_media_path(&filename);
+                files::validate_vault_write_target(vault, &dest_path)?;
+                Ok((dest_path, vault.new_media_stem(&filename)))
+            });
+        match named {
+            Ok((dest_path, dest_name)) => {
+                task.dest_path = dest_path;
+                task.dest_name = dest_name;
+                paths.push(task.dest_name.clone());
+                tasks.push(task);
+            }
+            Err(error) => {
+                log::warn!("inline-media: no name for {}: {error:#}; it stays a link", task.url);
+                remote.push(RemoteMedia::of(&task.url, task.kind, REMOTE_NAME));
+            }
+        }
     }
     if tasks.is_empty() {
-        return (body.to_string(), Vec::new(), Vec::new());
+        return unlocalized(&[], remote);
     }
     let started = std::time::Instant::now();
     log::info!(
@@ -2748,14 +3201,19 @@ fn localize_body_images(
     // someone else's server for it, and the caller can at least keep a local
     // poster so the feed has something to show.
     let mut unresolved_videos = Vec::new();
+    let mut failed = Vec::new();
     for (task, outcome) in tasks.iter().zip(outcomes.iter()) {
         if let Err(e) = outcome {
             log::warn!("inline-media: download failed url={} err={}", task.url, e);
+            failed.push(RemoteMedia::of(&task.url, task.kind, REMOTE_DOWNLOAD_FAILED));
             if task.kind == InlineMediaKind::Video {
                 unresolved_videos.push(task.url.clone());
             }
         }
     }
+    // The failed downloads in the order of the body, then the media past
+    // the limit and those without a name.
+    failed.extend(remote);
     let links = mine_core::links::LinkIndex::new(paths);
     let (result, inline_files) = apply_rewrites_with_links(body, &tasks, &outcomes, &links);
     log::info!(
@@ -2764,7 +3222,7 @@ fn localize_body_images(
         ok,
         tasks.len()
     );
-    (result, inline_files, unresolved_videos)
+    LocalizedBody { body: result, files: inline_files, unresolved_videos, remote: failed }
 }
 
 /// Rename each downloaded inline file to the extension its bytes call for
@@ -2983,10 +3441,92 @@ const YTDLP_PROBE_DEADLINE: Duration = Duration::from_secs(25);
 /// ends, so a tool stuck behind a system dialog does not outlive it (3d, В2).
 static RUNNING_TOOLS: std::sync::LazyLock<RunningTools> = std::sync::LazyLock::new(RunningTools::new);
 
-/// Handle a request on a thread of its own, so the loop keeps answering the
-/// others while it waits on an external tool (SPEC_CLIPPER.md, 3d, В1). The
-/// request's correlation id goes with it: its response names its own request.
-fn spawn_off_loop(handle: impl FnOnce() + Send + 'static) {
+/// Signs of the helper's work: every part of a download that arrives, every
+/// type probe and every step of a save adds one (SPEC_DEEP_AUDIT.md, Н9).
+/// A save that goes on producing them tells the clipper so, and the
+/// clipper's deadline counts from the last sign, not from the start.
+static WORK_SIGNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// One more sign of the helper's work.
+fn note_work() {
+    WORK_SIGNS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// How often a save that keeps working says so, at most. The clipper waits
+/// `SAVE_IDLE_TIMEOUT_MS` (60 s, `extension/background.js`) from the last
+/// sign it heard; a stalled read of a download ends at 15 s
+/// (`INLINE_DOWNLOAD_IDLE_TIMEOUT`), and its failure is a sign too.
+const PROGRESS_INTERVAL: Duration = Duration::from_secs(5);
+
+/// How often the reporter looks at the signs of work.
+const PROGRESS_TICK: Duration = Duration::from_millis(250);
+
+/// Run `work`, calling `report` at most every `interval` while new signs of
+/// the helper's work come in (SPEC_DEEP_AUDIT.md, Н9). Nothing is reported
+/// for a helper that stopped working, so the clipper's deadline runs out for
+/// a stuck save and not for a long one. The reporter stops before `work`'s
+/// answer is sent: no report follows the answer.
+fn reporting_progress<T>(
+    signs: &'static std::sync::atomic::AtomicU64,
+    interval: Duration,
+    report: impl Fn() + Send + 'static,
+    work: impl FnOnce() -> T,
+) -> T {
+    let finished = Arc::new((Mutex::new(false), Condvar::new()));
+    let watching = Arc::clone(&finished);
+    let tick = (interval / 4).min(PROGRESS_TICK);
+    let reporter = std::thread::Builder::new()
+        .name("mine-host-progress".into())
+        .spawn(move || {
+            let (lock, wake) = &*watching;
+            let mut seen = signs.load(Ordering::Relaxed);
+            let mut last_report = std::time::Instant::now();
+            let Ok(mut done) = lock.lock() else {
+                return;
+            };
+            while !*done {
+                done = match wake.wait_timeout(done, tick) {
+                    Ok((done, _)) => done,
+                    Err(_) => return,
+                };
+                let now = signs.load(Ordering::Relaxed);
+                if !*done && now != seen && last_report.elapsed() >= interval {
+                    report();
+                    seen = now;
+                    last_report = std::time::Instant::now();
+                }
+            }
+        });
+    let result = work();
+    {
+        let (lock, wake) = &*finished;
+        if let Ok(mut done) = lock.lock() {
+            *done = true;
+        }
+        wake.notify_all();
+    }
+    if let Ok(reporter) = reporter {
+        let _ = reporter.join();
+    }
+    result
+}
+
+/// Whether the clipper asked for signs of work while this Save runs: only a
+/// clipper that knows them asks (`_progress`), since an older one would take
+/// the first sign for the answer (SPEC_CLIPPER.md, «Срок сохранения»).
+fn wants_progress(params: &serde_json::Value) -> bool {
+    params.get("_progress").and_then(serde_json::Value::as_bool) == Some(true)
+}
+
+/// The requests that write to the space: the helper finishes them before
+/// it ends. Every request runs on a thread of its own, so a Save, the
+/// folder chooser or a request waiting for iCloud never holds the others
+/// (SPEC_DEEP_AUDIT.md, Н9, Е4.2).
+static WRITERS: Mutex<Vec<std::thread::JoinHandle<()>>> = Mutex::new(Vec::new());
+
+/// Start `handle` on a thread of its own with the current correlation id;
+/// a writer is kept to be waited for before the helper ends.
+fn spawn_request(writes: bool, handle: impl FnOnce() + Send + 'static) {
     let id = current_message_id();
     let spawned = std::thread::Builder::new()
         .name("mine-host-request".into())
@@ -2994,8 +3534,24 @@ fn spawn_off_loop(handle: impl FnOnce() + Send + 'static) {
             set_current_message_id(id);
             handle();
         });
-    if let Err(error) = spawned {
-        send_error(&format!("could not start the request: {error}"));
+    match spawned {
+        Ok(thread) if writes => {
+            if let Ok(mut writers) = WRITERS.lock() {
+                writers.retain(|writer| !writer.is_finished());
+                writers.push(thread);
+            }
+        }
+        Ok(_) => {}
+        Err(error) => send_journaled_error("request", &format!("could not start the request: {error}")),
+    }
+}
+
+/// Wait for the writing requests already started: a Save cut short leaves
+/// its operation to recovery instead of finishing it.
+fn finish_writers() {
+    let writers = WRITERS.lock().map(|mut writers| std::mem::take(&mut *writers)).unwrap_or_default();
+    for writer in writers {
+        let _ = writer.join();
     }
 }
 
@@ -3174,26 +3730,89 @@ fn resolve_tweet_video_via_ytdlp(
     Ok(urls)
 }
 
-/// Append a line to the host's own log.
+/// The helper's journal file: `~/Library/Logs/com.mine.app/native-host.log`.
+/// A test build has none: tests never write the person's journal, their
+/// lines stay with the test that made them (SPEC_DEEP_AUDIT.md, Н12, Е4.16).
+fn journal_file() -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join("Library/Logs/com.mine.app/native-host.log"))
+}
+
+#[cfg(test)]
+std::thread_local! {
+    // The journal lines this test thread wrote, in order.
+    static JOURNAL_CAPTURE: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The journal lines this test thread wrote since the last call.
+#[cfg(test)]
+fn take_journal_lines() -> Vec<String> {
+    JOURNAL_CAPTURE.with(|lines| std::mem::take(&mut *lines.borrow_mut()))
+}
+
+/// The helper's log records (`log::warn!` and the rest) go to its journal:
+/// before 13.10.2026 no logger was set, and they went nowhere
+/// (SPEC_DEEP_AUDIT.md, Е4.4).
+struct JournalLogger;
+
+impl log::Log for JournalLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Info
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            host_log(&format!("{} {}: {}", record.level(), record.target(), record.args()));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static JOURNAL_LOGGER: JournalLogger = JournalLogger;
+
+/// Send the helper's log records to its journal, once per process.
+fn install_journal_logger() {
+    if log::set_logger(&JOURNAL_LOGGER).is_ok() {
+        log::set_max_level(log::LevelFilter::Info);
+    }
+}
+
+/// The local time a journal line starts with, to the millisecond.
+fn journal_time(at: std::time::SystemTime) -> String {
+    let millis = at
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_millis();
+    format!("{}.{millis:03}", mine_lib::util::local_timestamp(at))
+}
+
+/// Append a line to the host's own journal, stamped with the local time
+/// (SPEC_DEEP_AUDIT.md, Н11).
 ///
 /// The host talks over stdin/stdout, so anything printed there corrupts the
 /// protocol, and stderr disappears into the browser. Without a file there is no
 /// way to see what the extension actually asked for.
 fn host_log(line: &str) {
     use std::io::Write as _;
-    let Ok(home) = std::env::var("HOME") else {
+    let stamped = format!("{} {line}", journal_time(std::time::SystemTime::now()));
+    #[cfg(test)]
+    JOURNAL_CAPTURE.with(|lines| lines.borrow_mut().push(stamped.clone()));
+    let Some(path) = journal_file() else {
         return;
     };
-    let mut path = std::path::PathBuf::from(home);
-    path.push("Library/Logs/com.mine.app");
-    let _ = std::fs::create_dir_all(&path);
-    path.push("native-host.log");
+    if let Some(folder) = path.parent() {
+        let _ = std::fs::create_dir_all(folder);
+    }
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
     {
-        let _ = writeln!(file, "{line}");
+        let _ = writeln!(file, "{stamped}");
     }
 }
 
@@ -3267,6 +3886,7 @@ fn handle_resolve_twitter_media(params: serde_json::Value) {
 
 // ─── Upload server ─────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 struct UploadServer {
     port: u16,
     token: String,
@@ -3452,8 +4072,7 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
     // open (another space or a folder without an identity) gets nothing, not
     // even an identity file.
     let vault_path = query_param(request.url(), "vault_path")
-        .or_else(|| UPLOAD_VAULT.lock().ok().and_then(|v| v.clone()))
-        .and_then(|path| resolve_request_space(Some(path), None).path);
+        .or_else(|| UPLOAD_VAULT.lock().ok().and_then(|v| v.clone()));
 
     // Read body
     let mut body = Vec::new();
@@ -3486,19 +4105,11 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
 
     // Write to local derived pending storage. The source vault is touched only
     // when save_block commits the matching markdown file.
-    let Some(vp) = vault_path else {
-        let response = tiny_http::Response::from_string("Space not configured or not available")
-            .with_status_code(500)
-            .with_header(
-                "Access-Control-Allow-Origin: *"
-                    .parse::<tiny_http::Header>()
-                    .unwrap(),
-            );
-        let _ = request.respond(response);
-        return;
-    };
-
-    let vault = match resolve_native_vault_layout(PathBuf::from(&vp)) {
+    let upload_space = native_app_data_dir().and_then(|app_state| {
+        let path = vault_path.ok_or_else(|| "Space not configured or not available".to_string())?;
+        upload_space_in(&read_app_settings(), &app_state, path)
+    });
+    let vault = match upload_space {
         Ok(vault) => vault,
         Err(e) => {
             let response = tiny_http::Response::from_string(e)
@@ -3716,16 +4327,13 @@ impl RequestTiming {
     /// Write the line of a slow request to the helper's journal.
     fn log_if_slow(&self) {
         if let Some(line) = self.slow_report() {
-            // Tests never write the person's journal (SPEC_DEEP_AUDIT.md, Н12).
-            #[cfg(not(test))]
             host_log(&line);
-            #[cfg(test)]
-            let _ = line;
         }
     }
 }
 
 fn main() {
+    install_journal_logger();
     STARTED_FROM.get_or_init(|| {
         let path = std::env::current_exe().ok()?;
         let stamp = ExecutableStamp::of(&path)?;
@@ -3803,102 +4411,140 @@ fn main() {
             continue;
         }
 
-        if req.action == "save_block" {
-            if let Err(error) = mine_lib::runtime_protocol::validate_save_request(&req.params) {
-                send_response(&incompatible_save_response(&req.params, error));
-                continue;
-            }
-        }
-
-        // The space is found by identity; the path the popup sent is where
-        // to look first (SPEC_CLIPPER.md, К1).
-        let binding_hint = req
-            .params
-            .get("binding_id")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string);
-        let request_space = || {
-            let space = resolve_request_space(req.vault_path.clone(), binding_hint.as_deref());
-            if let Some(ref vp) = space.path {
-                if let Ok(mut v) = UPLOAD_VAULT.lock() {
-                    *v = Some(vp.clone());
-                }
-            }
-            space
-        };
-
-        let mut timing = RequestTiming::begin(&req.action, &req.params);
-        match req.action.as_str() {
-            "get_status" => {
-                let space = request_space();
-                timing.step("space");
-                handle_get_status_with_upload(
-                    &upload_server,
-                    &space,
-                    config_generation(&read_app_settings()),
-                );
-                timing.step("answer");
-                timing.log_if_slow();
-            }
-            "list_known_vaults" => handle_list_known_vaults(),
-            "pick_vault_folder" => handle_pick_vault_folder(),
-            "reveal_vault" => handle_reveal_vault(req.params),
-            "open_app" => handle_open_app(req.params),
-            // External tools run off the loop (SPEC_CLIPPER.md, 3d, В1).
-            "resolve_twitter_media" => {
-                let params = req.params;
-                spawn_off_loop(move || handle_resolve_twitter_media(params));
-            }
-            "video_tool_status" => spawn_off_loop(handle_video_tool_status),
-
-            "list_channels" | "save_block" | "create_channel" | "get_save_operation" => {
-                let space = request_space();
-                timing.step("space");
-                let writes = matches!(req.action.as_str(), "save_block" | "create_channel");
-                let opened = native_app_data_dir()
-                    .map_err(SpaceRefusal::Failed)
-                    .and_then(|state| open_request_vault(&space, writes, state));
-                timing.step("open");
-                let vault = match opened {
-                    Ok(vault) => vault,
-                    Err(SpaceRefusal::Space(space)) => {
-                        send_space_error(&space);
-                        timing.log_if_slow();
-                        continue;
-                    }
-                    Err(SpaceRefusal::Failed(error)) => {
-                        send_error(&error);
-                        timing.log_if_slow();
-                        continue;
-                    }
-                };
-
-                let mut params = req.params;
-                if matches!(req.action.as_str(), "save_block" | "get_save_operation") {
-                    adopt_space_journal(&vault, &space, &mut params);
-                }
-                match req.action.as_str() {
-                    "list_channels" => handle_list_channels(&vault),
-                    "save_block" => handle_save_block(&vault, params),
-                    "get_save_operation" => handle_get_save_operation(&vault, params),
-                    "create_channel" => handle_create_channel(&vault, params),
-                    _ => unreachable!(),
-                }
-                timing.step("answer");
-                // A save is long by nature; the short requests are timed.
-                if req.action != "save_block" {
-                    timing.log_if_slow();
-                }
-            }
-
-            other => send_error(&format!("unknown action: {other}")),
-        }
+        // Every request runs on a thread of its own: a Save, the folder
+        // chooser, an external tool or a request waiting for iCloud never
+        // holds the others (SPEC_CLIPPER.md, 3d, В1; SPEC_DEEP_AUDIT.md, Н9).
+        let writes = matches!(req.action.as_str(), "save_block" | "create_channel");
+        let upload = upload_server.clone();
+        spawn_request(writes, move || serve_request(req, upload));
     }
-    // The browser closed the connection or a newer helper took over: a tool
-    // still running for a request nobody waits for any more ends with this
-    // process (SPEC_CLIPPER.md, 3d, В2).
+    // The browser closed the connection or a newer helper took over. A save
+    // or a new collection already begun is finished; a tool still running
+    // for a request nobody waits for any more ends with this process
+    // (SPEC_CLIPPER.md, 3d, В2).
+    finish_writers();
     RUNNING_TOOLS.kill_all();
 }
+
+/// Answer one request of the clipper.
+fn serve_request(req: Request, upload_server: Option<UploadServer>) {
+    if req.action == "save_block" {
+        if let Err(error) = mine_lib::runtime_protocol::validate_save_request(&req.params) {
+            send_response(&incompatible_save_response(&req.params, error));
+            return;
+        }
+    }
+
+    // The space is found by identity; the path the popup sent is where to
+    // look first (SPEC_CLIPPER.md, К1).
+    let binding_hint = req
+        .params
+        .get("binding_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let remember_for_uploads = |space: &RequestSpace| {
+        if let Some(ref vp) = space.path {
+            if let Ok(mut v) = UPLOAD_VAULT.lock() {
+                *v = Some(vp.clone());
+            }
+        }
+    };
+
+    let mut timing = RequestTiming::begin(&req.action, &req.params);
+    match req.action.as_str() {
+        "get_status" => {
+            // Read-only: the status writes nothing (SPEC_ONBOARDING.md, О7).
+            let space = status_space_in(
+                &read_app_settings(),
+                native_vaults_dir().as_deref(),
+                req.vault_path.clone(),
+                binding_hint.as_deref(),
+            );
+            remember_for_uploads(&space);
+            timing.step("space");
+            handle_get_status_with_upload(&upload_server, &space, config_generation(&read_app_settings()));
+            timing.step("answer");
+            timing.log_if_slow();
+        }
+        "list_known_vaults" => handle_list_known_vaults(),
+        "pick_vault_folder" => handle_pick_vault_folder(),
+        "reveal_vault" => handle_reveal_vault(req.params),
+        "open_app" => handle_open_app(req.params),
+        "resolve_twitter_media" => handle_resolve_twitter_media(req.params),
+        "video_tool_status" => handle_video_tool_status(),
+
+        "list_channels" | "save_block" | "create_channel" | "get_save_operation" => {
+            let space = resolve_request_space(req.vault_path.clone(), binding_hint.as_deref());
+            remember_for_uploads(&space);
+            timing.step("space");
+            let writes = matches!(req.action.as_str(), "save_block" | "create_channel");
+            let opened = native_app_data_dir()
+                .map_err(SpaceRefusal::Failed)
+                .and_then(|state| open_request_vault(&space, writes, state));
+            timing.step("open");
+            let vault = match opened {
+                Ok(vault) => vault,
+                Err(SpaceRefusal::Space(space)) => {
+                    send_space_error(&space);
+                    timing.log_if_slow();
+                    return;
+                }
+                Err(SpaceRefusal::Failed(error)) => {
+                    send_journaled_error(&req.action, &error);
+                    timing.log_if_slow();
+                    return;
+                }
+            };
+
+            let mut params = req.params;
+            if matches!(req.action.as_str(), "save_block" | "get_save_operation") {
+                adopt_space_journal(&vault, &space, &mut params);
+            }
+            match req.action.as_str() {
+                "list_channels" => handle_list_channels(&vault),
+                "save_block" if wants_progress(&params) => {
+                    // Signs of work while the Save runs: the clipper's
+                    // deadline counts from the last of them (Н9).
+                    let id = current_message_id();
+                    let report = move || {
+                        set_current_message_id(id);
+                        send_response(&serde_json::json!({ "progress": true }));
+                    };
+                    let response = reporting_progress(&WORK_SIGNS, PROGRESS_INTERVAL, report, || {
+                        save_block_response(&vault, params)
+                    });
+                    send_response(&response);
+                }
+                "save_block" => handle_save_block(&vault, params),
+                "get_save_operation" => handle_get_save_operation(&vault, params),
+                "create_channel" => handle_create_channel(&vault, params),
+                _ => unreachable!(),
+            }
+            timing.step("answer");
+            // A save is long by nature; the short requests are timed.
+            if req.action != "save_block" {
+                timing.log_if_slow();
+            }
+        }
+
+        other => send_journaled_error("request", &format!("unknown action: {other}")),
+    }
+}
+
+/// Tests of the helper's findings Е4 (SPEC_DEEP_AUDIT.md).
+#[cfg(test)]
+#[path = "native_host/e4_tests.rs"]
+mod e4_tests;
+
+/// Tests of the requests' service files in iCloud (SPEC_CLOUD_STORAGE.md, Х12).
+#[cfg(test)]
+#[path = "native_host/cloud_tests.rs"]
+mod cloud_tests;
+
+/// The stand-in web of the helper's tests.
+#[cfg(test)]
+#[path = "native_host/fake_web.rs"]
+mod fake_web;
 
 #[cfg(test)]
 mod tests {
@@ -3924,6 +4570,19 @@ mod tests {
             sent_at: Some(sent_at),
             steps: spans,
         }
+    }
+
+    /// Н12, Е4.16: a test never writes the person's journal, whatever path
+    /// it takes; its lines stay with the test.
+    #[test]
+    fn tests_never_write_the_persons_journal() {
+        let persons = std::env::var_os("HOME")
+            .map(|home| PathBuf::from(home).join("Library/Logs"));
+        let journal = journal_file();
+        assert!(
+            persons.is_none() || journal.as_ref().is_none_or(|path| !path.starts_with(persons.as_ref().unwrap())),
+            "tests write the journal at {journal:?}"
+        );
     }
 
     /// SPEC_DEEP_AUDIT.md, Е4.17: a fast opening writes nothing.
@@ -5008,10 +5667,15 @@ mod tests {
         std::fs::create_dir_all(&managed).unwrap();
         std::fs::write(managed.join("runtime-identity.json"), r#"{"buildId":"managed","commit":"c"}"#).unwrap();
         assert_eq!(installed_extension_build(tmp.path()).as_deref(), Some("managed"));
+        // The adopted copy of another build: which one a browser loaded
+        // cannot be told (SPEC_DEEP_AUDIT.md, Е4.11).
         let loaded = tmp.path().join("clipper/extension/dist");
         std::fs::create_dir_all(&loaded).unwrap();
+        std::fs::write(tmp.path().join("clipper/extension/manifest.json"), r#"{"name":"Mine"}"#).unwrap();
         std::fs::write(loaded.join("runtime-identity.json"), r#"{"buildId":"loaded","commit":"c"}"#).unwrap();
-        assert_eq!(installed_extension_build(tmp.path()).as_deref(), Some("loaded"));
+        assert_eq!(installed_extension_build(tmp.path()), None);
+        std::fs::write(loaded.join("runtime-identity.json"), r#"{"buildId":"managed","commit":"c"}"#).unwrap();
+        assert_eq!(installed_extension_build(tmp.path()).as_deref(), Some("managed"));
     }
 
     #[test]
@@ -6770,7 +7434,7 @@ mod tests {
         let body = "no images here";
         assert_eq!(apply_rewrites(body, &[], &[]).0, body);
         assert_eq!(
-            localize_body_images(body, &vault_at(tmp.path()), "S", "", &vault_at(tmp.path())).0,
+            localize_body_images(body, &vault_at(tmp.path()), "S", "", &vault_at(tmp.path())).body,
             body
         );
     }

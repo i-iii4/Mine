@@ -17,6 +17,7 @@ pub mod graph;
 pub mod icloud_conflicts;
 pub mod icloud_downloads;
 pub mod index;
+pub mod layout_copy;
 pub mod media_dimensions;
 pub mod media_refs;
 pub(crate) mod migrations;

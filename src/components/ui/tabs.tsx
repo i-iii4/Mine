@@ -7,9 +7,14 @@ import { Tabs as TabsPrimitive } from "radix-ui"
 // `chrome`, the pill every segmented switch of the app is (DESIGN_SYSTEM.md,
 // «Пилюля»). `default` and `line` stay as the registry drew them.
 
+// Focus alone never chooses (`activationMode="manual"` by default): a press,
+// Enter or Space does, and the arrows move the focus between segments. Focus
+// coming back to a segment, a menu closing or a window giving the keyboard
+// back, switched the view and the theme (SPEC_DEEP_AUDIT.md, Е6.11).
 function Tabs({
   className,
   orientation = "horizontal",
+  activationMode = "manual",
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.Root>) {
   return (
@@ -17,6 +22,7 @@ function Tabs({
       data-slot="tabs"
       data-orientation={orientation}
       orientation={orientation}
+      activationMode={activationMode}
       className={cn(
         "group/tabs flex gap-2 data-[orientation=horizontal]:flex-col",
         className

@@ -187,6 +187,7 @@ local-arena/
 │   │   │   ├── vault_stats.rs  # Read model статистики хранилища
 │   │   │   ├── files.rs        # File operations (copy, move, delete)
 │   │   │   ├── cloud_files.rs  # Одно правило iCloud: выгрузка по флагу SF_DATALESS, принадлежность по isUbiquitousItem
+│   │   │   ├── layout_copy.rs  # Копия раскладки .mine/layout.json на этом Маке: действия не ждут iCloud
 │   │   │   ├── graph.rs        # GraphSnapshot projection for Graph View
 │   │   │   ├── window_store.rs # windows.json: атомарная запись с задержкой, файлы corrupt и новее, состояние выхода
 │   │   │   └── thumbnails.rs   # Thumbnail generation + cache
@@ -277,6 +278,9 @@ local-arena/
 │   │   ├── FirstCardMarker.tsx # Одноразовая пометка первой карточки (О19)
 │   │   ├── CloudRecommendation.tsx # Рекомендация Keep Downloaded по журналу ожиданий
 │   │   ├── VaultConflictsNotice.tsx # Уведомление ведущей вкладки о конфликтах iCloud и окно Resolve iCloud sync conflicts
+│   │   ├── ActionFailureNotices.tsx, IndexErrorsNotice.tsx # Уведомления сбоев действий вкладки; заметки, которые проход пространства не прочитал
+│   │   ├── CreateCollectionDialog.tsx, RemoveSpaceDialog.tsx # Окно New collection для всех путей; вопрос Remove … from the list? для переключателя и настроек
+│   │   ├── MissingAwareImage.tsx # Картинка файла, которого может не быть: заливка вместо значка битой картинки
 │   │   ├── CloudBadge.tsx      # Метка «содержимое в iCloud» в левом верхнем углу карточки
 │   │   ├── IndexingProgress.tsx # Уведомление о ходе индексации в правом нижнем углу
 │   │   ├── SpaceUnavailable.tsx # Экран недоступной папки: missing и access_denied
@@ -285,7 +289,7 @@ local-arena/
 │   │   └── EdgeStatesSection.tsx # Витрина краевых состояний (гейт test:edge-states)
 │   ├── hooks/                  # useSidebarResize, useGridScroll, useChannelPreviewsEvents, useProjectionRevisionOwner, useThumbnailUpgrade, usePreviewFileRetry (нет файла превью: заливка вместо битой картинки, повтор по thumb:updated) и др.
 │   ├── types/                  # generated.ts from Rust/Specta + frontend-owned index.ts
-│   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()), pageEvents.ts (события своей страницы), tabPage.ts (память вкладки), tabVisibility.ts (показ и пауза медиа), chromeHeight.ts (высота хрома окна), controlCharGuard.ts, floatingLayer.ts (ширина меню, зазор от плашки кнопки), deleteFailure.ts (уведомления о сбое удаления) и др.
+│   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()), pageEvents.ts (события своей страницы), tabPage.ts (память вкладки), tabVisibility.ts (показ и пауза медиа), chromeHeight.ts (высота хрома окна), controlCharGuard.ts, floatingLayer.ts (ширина меню, зазор от плашки кнопки), deleteFailure.ts (уведомления о сбое удаления), actionFailures.ts (уведомления о сбоях действий вкладки), createElements.ts (очередь новых элементов из броска и ⌘V), systemActions.ts (ссылка в браузер, файл в Finder), tabBarFailure.ts (сбой полосы вкладок видимой вкладке), errorMessage.ts (слова ошибки) и др.
 │   ├── workers/                # fontMetrics.worker.ts (Canvas measureText), thumbWorker.ts
 │   ├── dev/                    # Dev-only Feed, Graph, ColdSpace and SidebarReorder acceptance routes; страницы сравнения на dev-сервере: /__buttons (кнопки shadcn), /__cloud-open (первое открытие пространства из облака), /__onboarding (онбординг по экранам), /__popups (модальные окна приложения по кнопкам)
 │   ├── test/                   # Vitest setup

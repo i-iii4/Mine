@@ -28,7 +28,31 @@ export interface NativeResponse {
   outcome?: SaveOutcome;
   code?: string;
   warning?: string;
+  /** The media a committed Save left as links to their sites (Н10). */
+  remote_media?: RemoteMedia[];
   [key: string]: unknown;
+}
+
+/**
+ * A picture, video, file or poster a Save left as a link to someone else's
+ * server, and why (SPEC_DEEP_AUDIT.md, Н10).
+ */
+export interface RemoteMedia {
+  url: string;
+  kind: "image" | "video" | "file" | "poster";
+  reason: "download_failed" | "limit" | "name";
+}
+
+/**
+ * What the clipper says about the media a committed Save left as links:
+ * how many, or `null` when every one was saved.
+ */
+export function remoteMediaNotice(response: NativeResponse): string | null {
+  const count = Array.isArray(response.remote_media) ? response.remote_media.length : 0;
+  if (count === 0) return null;
+  return count === 1
+    ? "1 picture or video was not saved: it stays a link to its site."
+    : `${count} pictures or videos were not saved: they stay links to their sites.`;
 }
 
 export interface ChannelInfo {
@@ -48,11 +72,16 @@ export function extensionTransportFailure(transportError?: string): NativeRespon
   };
 }
 
-// save_block в native_host синхронно качает inline-картинки статьи —
-// must mirror background.js timeoutForAction(). Остальные actions —
-// быстрый read-only IPC через bg.js port.
-function timeoutForAction(action: string): number {
-  if (action === "save_block") return 180_000;
+/**
+ * How long the clipper waits for the background's answer, mirroring
+ * `timeoutForAction` of background.js; `null` for a Save. The background
+ * waits for a Save as long as the helper says it works and answers when its
+ * deadline, counted from the last sign of work, runs out; a stopped
+ * background answers through the transport error. A deadline of the
+ * clipper's own would cut a long Save short (SPEC_DEEP_AUDIT.md, Н9).
+ */
+function timeoutForAction(action: string): number | null {
+  if (action === "save_block") return null;
   // The folder chooser waits on a human: the promise resolves when the
   // dialog does, not on IPC speed.
   if (action === "pick_vault_folder") return 300_000;
@@ -61,9 +90,10 @@ function timeoutForAction(action: string): number {
 
 export async function sendToNative(payload: NativeRequest): Promise<NativeResponse> {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => {
+    const deadline = timeoutForAction(payload.action);
+    const timer = deadline === null ? undefined : setTimeout(() => {
       resolve({ ok: false, error: "Mine helper did not respond in time", outcome: "unknown", code: "native_timeout" });
-    }, timeoutForAction(payload.action));
+    }, deadline);
 
     chrome.runtime.sendMessage(
       { target: "background", action: "nativeMessage", payload },

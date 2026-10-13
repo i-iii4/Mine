@@ -104,8 +104,8 @@ vi.mock("@/lib/commands", () => ({
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
-  openUrl: vi.fn(),
-  revealItemInDir: vi.fn(),
+  openUrl: vi.fn(async () => undefined),
+  revealItemInDir: vi.fn(async () => undefined),
 }));
 
 // A card's preview opens at once, except in the test of its timing, which runs

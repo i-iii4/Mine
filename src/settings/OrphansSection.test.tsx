@@ -227,4 +227,25 @@ describe("DeleteOrphansDialog", () => {
 
     expect(screen.getByRole("alertdialog", { name: title })).toHaveAccessibleDescription(description);
   });
+
+  // SPEC_DEEP_AUDIT.md, Е6.8: an orphan whose file will not load keeps the
+  // placeholder slot.
+  it("shows no broken-image icon for an orphan whose file will not load", async () => {
+    render(<OrphansSection />);
+    expect(await screen.findByText("loose-photo.jpg")).toBeInTheDocument();
+    fireEvent.error(document.querySelector("img") as HTMLImageElement);
+    expect(document.querySelector("img")).toBeNull();
+    expect(screen.getByText("loose-photo.jpg")).toBeInTheDocument();
+  });
+
+  // SPEC_DEEP_AUDIT.md, Е6.15: the section scans every folder of the space,
+  // not its root, and an error says its own words, never `Error: …`.
+  it("describes the media of the whole space and shows an error in its own words", async () => {
+    vi.mocked(listOrphanMedia).mockRejectedValueOnce(new Error("index is locked"));
+    render(<OrphansSection />);
+
+    expect(await screen.findByText("index is locked")).toBeInTheDocument();
+    expect(screen.queryByText(/Error:/)).toBeNull();
+    expect(screen.getByText("Media files in the space that no element references.")).toBeInTheDocument();
+  });
 });

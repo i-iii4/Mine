@@ -1,11 +1,12 @@
 import { commandById, setCommandOverrides } from "@/lib/commandRegistry";
-import { reloadFeedDisplay, setFeedSort } from "@/lib/feedDisplay";
+import { getFeedDisplay, reloadFeedDisplay, setFeedSort } from "@/lib/feedDisplay";
 import {
   GRAPH_PREFERENCES_STORAGE_KEY,
   reloadGraphPreferences,
   type GraphPreferences,
 } from "@/lib/graphPreferences";
 import { reportCardsRendered } from "@/lib/startup";
+import { clearActionFailures } from "@/lib/actionFailures";
 import { isTabVisible, setTabVisible } from "@/lib/tabVisibility";
 import { TAB_VIEW_REPORT_DEBOUNCE_MS } from "@/lib/tabPage";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
@@ -79,6 +80,9 @@ const commandMocks = vi.hoisted(() => ({
   mergeBlocks: vi.fn<(orderedSlugs: string[]) => Promise<unknown>>(),
   getBlock: vi.fn(),
   addTag: vi.fn(async (_slug: string, _tag: string) => undefined),
+  removeTag: vi.fn(async (_slug: string, _tag: string) => undefined),
+  setBlocksMembership: vi.fn(async (_slugs: string[], _tag: string, _connected: boolean) => undefined),
+  checkCollectionName: vi.fn(async (_oldTag: string | null, _name: string): Promise<string | null> => null),
   extractInlineMedia: vi.fn(),
   extractTextSelection: vi.fn(),
   deleteTextSelection: vi.fn(),
@@ -153,10 +157,11 @@ vi.mock("@/lib/commands", () => ({
   deleteChannel: commandMocks.deleteChannel,
   reorderCollections: vi.fn(),
   renameChannel: vi.fn(),
-  checkCollectionName: vi.fn(async () => null),
+  checkCollectionName: commandMocks.checkCollectionName,
   renameBlockFile: commandMocks.renameBlockFile,
   addTag: commandMocks.addTag,
-  removeTag: vi.fn(),
+  removeTag: commandMocks.removeTag,
+  setBlocksMembership: commandMocks.setBlocksMembership,
   isCollectionNotFound: (error: unknown) => Boolean(error) && typeof error === "object"
     && (error as { kind?: unknown }).kind === "collection_not_found",
   prepareDeleteBlock: commandMocks.prepareDeleteBlock,
@@ -291,7 +296,11 @@ vi.mock("@/components/Grid", async () => {
     onCreateAndAssign,
     onCreateAndAssignBatch,
     onDeleteSelectedBlocks,
+    onBatchSetTag,
+    onToggleTag,
   }: {
+    onBatchSetTag?: (slugs: string[], tag: string, connected: boolean) => void | Promise<unknown>;
+    onToggleTag?: (slug: string, tag: string, hasTag: boolean) => void | Promise<unknown>;
     onCreateAndAssign?: (tag: string, blockSlug: string) => void | Promise<void>;
     onCreateAndAssignBatch?: (tag: string, slugs: string[]) => void | Promise<void>;
     onDeleteSelectedBlocks?: (
@@ -375,6 +384,34 @@ vi.mock("@/components/Grid", async () => {
           onClick={() => void onCreateAndAssignBatch?.("gamma", ["alpha-block", "beta-block"])}
         >
           Create gamma for the selection
+        </button>
+        {/* The group selection's Disconnect and Connect, and one card's
+            Connect in its picker, as Grid hands them on. */}
+        <button
+          type="button"
+          onClick={() => {
+            void Promise.resolve(onBatchSetTag?.(["alpha-block", "beta-block"], "alpha", false))
+              .catch(() => undefined);
+          }}
+        >
+          Disconnect the selection from alpha
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            void Promise.resolve(onBatchSetTag?.(["alpha-block", "beta-block"], "beta", true))
+              .catch(() => undefined);
+          }}
+        >
+          Connect the selection to beta
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            void Promise.resolve(onToggleTag?.("alpha-block", "beta", false)).catch(() => undefined);
+          }}
+        >
+          Connect alpha-block to beta
         </button>
         {/* The group delete window's `Delete`, which offered one file. */}
         <button
@@ -518,6 +555,7 @@ vi.mock("@/components/Sidebar", async () => {
       topRow = null,
       isDropDragging = false,
       onDeleteTag,
+      onCreateChannel,
     }: {
       orderedTags: Array<{ tag: string; count: number }>;
       totalBlocks: number;
@@ -525,6 +563,7 @@ vi.mock("@/components/Sidebar", async () => {
       topRow?: ReactNode;
       isDropDragging?: boolean;
       onDeleteTag?: (tag: string) => void | Promise<void>;
+      onCreateChannel?: (tag: string) => void | Promise<void>;
     }) => {
       const normalizedSearchQuery = searchQuery.trim().toLowerCase();
       const showEverything = !normalizedSearchQuery
@@ -534,6 +573,15 @@ vi.mock("@/components/Sidebar", async () => {
       return (
         <nav data-sidebar-mock="" data-sidebar-mock-drop-dragging={String(isDropDragging)}>
           {topRow}
+          {/* The creation row's `Create`: a refusal comes back to the row. */}
+          <button
+            type="button"
+            onClick={() => {
+              void Promise.resolve(onCreateChannel?.("gamma")).catch(() => undefined);
+            }}
+          >
+            Create collection gamma
+          </button>
           {showEverything && <Link to="/">Everything {totalBlocks}</Link>}
           {orderedTags
             .filter((tag) => !normalizedSearchQuery || tag.tag.toLowerCase().includes(normalizedSearchQuery))
@@ -634,6 +682,8 @@ function bottomBarEntry(label: string): HTMLElement | null {
 describe("AppWithVault", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // A tab's notices live in its page; each test is a page of its own.
+    clearActionFailures();
     commandMocks.gridPlaces.length = 0;
     gridScroll.atEnd = false;
     sidebarMockState.thumbnails = [];
@@ -1798,7 +1848,10 @@ describe("AppWithVault", () => {
     expect(screen.queryByTestId("graph-view")).not.toBeInTheDocument();
   });
 
-  it("toggles the connections filter with Tab while an element is open", async () => {
+  // SPEC_DEEP_AUDIT.md, Е6.14: the connections filter of an open element is
+  // gone (07.10.2026); Tab there stays the system's focus traversal, and the
+  // view does not flip underneath the element. Before, the key was swallowed.
+  it("leaves Tab to the system while an element is open", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
@@ -1812,10 +1865,10 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
     });
 
-    fireEvent.keyDown(window, { key: "Tab" });
+    const notPrevented = fireEvent.keyDown(window, { key: "Tab" });
 
+    expect(notPrevented).toBe(true);
     // The view must not flip underneath the open element.
-    expect(screen.queryByTestId("graph-view")).not.toBeInTheDocument();
     expect(screen.queryByTestId("graph-view")).not.toBeInTheDocument();
   });
 
@@ -2918,7 +2971,7 @@ describe("AppWithVault", () => {
     expect(commandMocks.startWindowDrag).toHaveBeenCalledTimes(1);
   });
 
-  it("creates a collection from the filter on Enter, first in the list, and opens one already called that", async () => {
+  it("creates a collection from the filter on Enter and opens one already called that", async () => {
     commandMocks.createChannel.mockClear();
     commandMocks.reorderChannels.mockClear();
     render(
@@ -2938,15 +2991,11 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(commandMocks.createChannel).toHaveBeenCalledWith("Gamma");
     });
-    // The new collection takes the first place; the others move down by one.
-    await waitFor(() => {
-      expect(commandMocks.reorderChannels).toHaveBeenCalledWith([
-        { tag: "Gamma", position: 0 },
-        { tag: "alpha", position: 1 },
-        { tag: "beta", position: 2 },
-      ]);
-    });
+    // The backend writes the new page first in the manual order; no reorder
+    // rewrites the pages of the rest (SPEC_DEEP_AUDIT.md, Е6.2).
+    expect(commandMocks.checkCollectionName).toHaveBeenCalledWith(null, "Gamma");
     expect(input).toHaveValue("");
+    expect(commandMocks.reorderChannels).not.toHaveBeenCalled();
 
     // A name already taken, in any case, opens that collection instead.
     fireEvent.change(input, { target: { value: "ALPHA" } });
@@ -2954,30 +3003,247 @@ describe("AppWithVault", () => {
     expect(commandMocks.createChannel).toHaveBeenCalledTimes(1);
   });
 
-  it("creates a new channel from the pinned collection switcher action", async () => {
+  describe("a membership change whose menu has closed (SPEC_DEEP_AUDIT.md, Н11)", () => {
+    async function renderFeed() {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+    }
+
+    it("sends the selection's Disconnect as one command and says when it changed nothing (Е6.1)", async () => {
+      commandMocks.setBlocksMembership.mockRejectedValueOnce(
+        new Error("“beta-block.md” changed outside Mine; nothing was changed. Try again."),
+      );
+      await renderFeed();
+
+      fireEvent.click(screen.getByRole("button", { name: "Disconnect the selection from alpha" }));
+
+      expect(await screen.findByText("Could not disconnect 2 elements")).toBeInTheDocument();
+      expect(screen.getByText("Nothing changed.")).toBeInTheDocument();
+      expect(screen.getByText("“beta-block.md” changed outside Mine; nothing was changed. Try again."))
+        .toBeInTheDocument();
+      // One command for the whole selection: no card is changed before
+      // another fails.
+      expect(commandMocks.setBlocksMembership).toHaveBeenCalledTimes(1);
+      expect(commandMocks.setBlocksMembership).toHaveBeenCalledWith(["alpha-block", "beta-block"], "alpha", false);
+      expect(commandMocks.removeTag).not.toHaveBeenCalled();
+    });
+
+    it("hides the last notice of its kind when the next change succeeds or fails (Е6.1)", async () => {
+      commandMocks.setBlocksMembership.mockRejectedValueOnce(new Error("first refusal"));
+      await renderFeed();
+      fireEvent.click(screen.getByRole("button", { name: "Disconnect the selection from alpha" }));
+      expect(await screen.findByText("first refusal")).toBeInTheDocument();
+
+      commandMocks.setBlocksMembership.mockRejectedValueOnce(new Error("second refusal"));
+      fireEvent.click(screen.getByRole("button", { name: "Connect the selection to beta" }));
+      expect(await screen.findByText("Could not connect 2 elements")).toBeInTheDocument();
+      expect(screen.queryByText("first refusal")).toBeNull();
+      expect(screen.getByText("second refusal")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Connect the selection to beta" }));
+      await waitFor(() => expect(screen.queryByText("second refusal")).toBeNull());
+    });
+
+    it("says when one card's Connect failed (Е6.3)", async () => {
+      commandMocks.addTag.mockRejectedValueOnce(new Error("Collection “beta” has no page; nothing was written."));
+      await renderFeed();
+
+      fireEvent.click(screen.getByRole("button", { name: "Connect alpha-block to beta" }));
+
+      expect(await screen.findByText("Could not connect the element")).toBeInTheDocument();
+      expect(screen.getByText("Collection “beta” has no page; nothing was written.")).toBeInTheDocument();
+    });
+  });
+
+  /// SPEC_DEEP_AUDIT.md, Е6.10: the tab bar has no room for a notice; the
+  /// visible tab of its window shows what the bar could not do.
+  it("shows the failure of a tab bar command in the visible tab", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
       </MemoryRouter>,
     );
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
 
-    await waitFor(() => {
+    act(() => {
+      window.dispatchEvent(new CustomEvent("tab-bar-action-failed", {
+        detail: { payload: { title: "Could not open a new tab", message: "no window" } },
+      }));
+    });
+
+    expect(await screen.findByText("Could not open a new tab")).toBeInTheDocument();
+    expect(screen.getByText("no window")).toBeInTheDocument();
+  });
+
+  // SPEC_DEEP_AUDIT.md, Е6.15: the opening screen speaks of a space.
+  it("says the space is opening in the words of the dictionary", async () => {
+    commandMocks.openVault.mockImplementation(() => new Promise<VaultOpenResult>(() => {}));
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Opening space…")).toBeInTheDocument();
+    expect(screen.queryByText(/vault/i)).toBeNull();
+  });
+
+  /// SPEC_DEEP_AUDIT.md, Е6.17: the notes a pass could not read are named by
+  /// the space's notice; a pass that reads them takes it away. Before, they
+  /// were in the journal only.
+  it("names the notes a pass of the space could not read", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+    const pass = (errorFiles: Array<{ path: string; kind: string; message: string }>) => {
+      act(() => {
+        window.dispatchEvent(new CustomEvent("vault-freshness-changed", {
+          detail: {
+            payload: {
+              vault_path: "/vault",
+              generation: 2,
+              state: errorFiles.length > 0 ? "degraded" : "fresh",
+              joined_callers: 0,
+              inventory_markdown: 3,
+              content_reads: 1,
+              database_writes: 0,
+              error_count: errorFiles.length,
+              error_files: errorFiles,
+              elapsed_ms: 5,
+              fast_path_hits: 0,
+            },
+          },
+        }));
+      });
+    };
+
+    pass([{ path: "Cards/Broken.md", kind: "parse", message: "the properties are not valid YAML" }]);
+
+    expect(await screen.findByText("Could not read 1 note")).toBeInTheDocument();
+    expect(screen.getByText("Mine shows the space without them.")).toBeInTheDocument();
+    expect(screen.getByText("“Broken.md”: the properties are not valid YAML")).toBeInTheDocument();
+
+    pass([]);
+    await waitFor(() => expect(screen.queryByText("Could not read 1 note")).toBeNull());
+  });
+
+  describe("⌘V into the feed (SPEC_DEEP_AUDIT.md, Е6.4)", () => {
+    async function renderFeed() {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+    }
+
+    it("says when the pasted element could not be created", async () => {
+      commandMocks.readClipboardPayload.mockResolvedValueOnce({ kind: "text", text: "A note" } as never);
+      commandMocks.createBlock.mockRejectedValueOnce(new Error("The disk is full."));
+      await renderFeed();
+
+      fireEvent.keyDown(window, { key: "v", code: "KeyV", metaKey: true });
+
+      expect(await screen.findByText("Could not create an element")).toBeInTheDocument();
+      expect(screen.getByText("The disk is full.")).toBeInTheDocument();
+    });
+
+    it("pastes again when ⌘V comes while the last paste is still being created", async () => {
+      let finishFirst!: () => void;
+      commandMocks.readClipboardPayload.mockResolvedValue({ kind: "text", text: "A note" } as never);
+      commandMocks.createBlock
+        .mockImplementationOnce(() => new Promise<IndexedBlock>((resolve) => {
+          finishFirst = () => resolve({} as IndexedBlock);
+        }))
+        .mockResolvedValueOnce({} as IndexedBlock);
+      await renderFeed();
+
+      fireEvent.keyDown(window, { key: "v", code: "KeyV", metaKey: true });
+      await waitFor(() => expect(commandMocks.createBlock).toHaveBeenCalledTimes(1));
+      fireEvent.keyDown(window, { key: "v", code: "KeyV", metaKey: true });
+      await act(async () => finishFirst());
+
+      await waitFor(() => expect(commandMocks.createBlock).toHaveBeenCalledTimes(2));
+      commandMocks.readClipboardPayload.mockResolvedValue({ kind: "empty" } as never);
+    });
+  });
+
+  describe("one way to create a collection (SPEC_DEEP_AUDIT.md, Е6.2)", () => {
+    async function renderFeed() {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+    }
+
+    it("creates from the sidebar without rewriting the other collection pages or leaving the place", async () => {
+      await renderFeed();
+
+      fireEvent.click(screen.getByRole("button", { name: "Create collection gamma" }));
+
+      await waitFor(() => expect(commandMocks.createChannel).toHaveBeenCalledWith("gamma"));
+      // The new page takes the first place itself: no reorder writes the
+      // pages of the rest.
+      await waitFor(() => expect(commandMocks.listTaxonomySnapshot.mock.calls.length).toBeGreaterThan(1));
+      expect(commandMocks.reorderChannels).not.toHaveBeenCalled();
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Switch collection: Everything" }));
-    const search = await screen.findByRole("textbox", { name: "Search collections" });
-    fireEvent.change(search, { target: { value: "gamma" } });
-    fireEvent.click(screen.getByRole("menuitem", { name: "Create collection" }));
-    const channelName = await screen.findByRole("textbox", { name: "Collection name" });
-    expect(channelName).toHaveValue("gamma");
-    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    it("creates from the collection switcher the same way: no reorder, the place stays", async () => {
+      // The collection lists read after the creation hold its page.
+      const taxonomy = await commandMocks.listTaxonomySnapshot();
+      commandMocks.listTaxonomySnapshot.mockResolvedValue({
+        ...taxonomy,
+        tags: [{ tag: "gamma", count: 0 }, ...taxonomy.tags],
+        channels: [{ ...taxonomy.channels[0]!, tag: "gamma", title: "gamma", position: -1, block_count: 0 }, ...taxonomy.channels],
+      });
+      await renderFeed();
 
-    await waitFor(() => {
-      expect(commandMocks.createChannel).toHaveBeenCalledWith("gamma");
+      fireEvent.click(screen.getByRole("button", { name: "Switch collection: Everything" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Create collection" }));
+      fireEvent.change(await screen.findByRole("textbox", { name: "Collection name" }), {
+        target: { value: "gamma" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+      await waitFor(() => expect(commandMocks.createChannel).toHaveBeenCalledWith("gamma"));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "New collection" })).toBeNull());
+      // The lists read again, the feed stays where it was.
+      await waitFor(() => expect(commandMocks.listTaxonomySnapshot.mock.calls.length).toBeGreaterThan(2));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(commandMocks.reorderChannels).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Switch collection: Everything" })).toBeInTheDocument();
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Switch collection: gamma" })).toBeInTheDocument();
+
+    it("refuses a taken name in the collection switcher by the one check, in the words of the dictionary", async () => {
+      commandMocks.checkCollectionName.mockImplementation(async (_oldTag, name) => (
+        name.toLowerCase() === "alpha" ? "A collection named \"alpha\" already exists." : null
+      ));
+      await renderFeed();
+
+      fireEvent.click(screen.getByRole("button", { name: "Switch collection: Everything" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Create collection" }));
+      fireEvent.change(await screen.findByRole("textbox", { name: "Collection name" }), {
+        target: { value: "Alpha" },
+      });
+
+      const dialog = await screen.findByRole("dialog", { name: "New collection" });
+      await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent("A collection named \"alpha\" already exists."));
+      expect(dialog.textContent ?? "").not.toMatch(/channel/i);
+      expect(within(dialog).getByRole("button", { name: "Create" })).toBeDisabled();
+      expect(commandMocks.createChannel).not.toHaveBeenCalled();
+      commandMocks.checkCollectionName.mockImplementation(async () => null);
     });
   });
 
@@ -3079,13 +3345,14 @@ describe("AppWithVault", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Create gamma for the selection" }));
 
-      await waitFor(() => expect(commandMocks.addTag).toHaveBeenCalledTimes(2));
+      // The selection joins in one command (SPEC_DEEP_AUDIT.md, Е6.1).
+      await waitFor(() => expect(commandMocks.setBlocksMembership).toHaveBeenCalledTimes(1));
       expect(commandMocks.createChannel).toHaveBeenCalledWith("gamma");
-      expect(commandMocks.addTag).toHaveBeenNthCalledWith(1, "alpha-block", "gamma");
-      expect(commandMocks.addTag).toHaveBeenNthCalledWith(2, "beta-block", "gamma");
+      expect(commandMocks.setBlocksMembership).toHaveBeenCalledWith(["alpha-block", "beta-block"], "gamma", true);
       expect(commandMocks.createChannel.mock.invocationCallOrder[0]).toBeLessThan(
-        commandMocks.addTag.mock.invocationCallOrder[0]!,
+        commandMocks.setBlocksMembership.mock.invocationCallOrder[0]!,
       );
+      expect(commandMocks.addTag).not.toHaveBeenCalled();
     });
 
     it("connects nothing when the page cannot be made (К5)", async () => {
@@ -3104,6 +3371,10 @@ describe("AppWithVault", () => {
         expect(commandMocks.listTaxonomySnapshot.mock.calls.length).toBeGreaterThan(taxonomyReads);
       });
       expect(commandMocks.addTag).not.toHaveBeenCalled();
+      // The picker's row was cleared by the press: the refusal is a notice
+      // of this tab (SPEC_DEEP_AUDIT.md, Е6.2, Н11).
+      expect(await screen.findByText("Could not create the collection")).toBeInTheDocument();
+      expect(screen.getByText("A collection named \"gamma\" already exists.")).toBeInTheDocument();
     });
   });
 
@@ -3730,6 +4001,50 @@ describe("AppWithVault", () => {
     }
   });
 
+  /// SPEC_DEEP_AUDIT.md, Е6.7: Sort and Show are the whole app's (SPEC_TABS.md,
+  /// В78), so the order another tab chose reaches this one; before, each
+  /// tab kept the one it read at its start.
+  it("takes Sort and Show chosen in another tab (Д18)", async () => {
+    commandMocks.listGridBlocks.mockImplementation(async (_tag, _offset, limit, order) => {
+      if (isSearchOverlayQuery(limit, order)) return gridSnapshot([]);
+      return order === "oldest"
+        ? gridSnapshot([block(1, "oldest-card"), block(2, "newest-card")])
+        : gridSnapshot([block(2, "newest-card"), block(1, "oldest-card")]);
+    });
+    try {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith(undefined, 0, 200, "newest");
+
+      // The other tab's write may reach this page's storage after the event:
+      // the event carries the value.
+      act(() => {
+        window.dispatchEvent(new CustomEvent("settings-changed", {
+          detail: { payload: { key: "mine.feed.sort", value: "oldest" } },
+        }));
+      });
+
+      await waitFor(() => {
+        expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith(undefined, 0, 200, "oldest");
+      });
+      expect(getFeedDisplay().sort).toBe("oldest");
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("settings-changed", {
+          detail: { payload: { key: "mine.feed.show", value: "media" } },
+        }));
+      });
+      expect(getFeedDisplay().show).toBe("media");
+    } finally {
+      window.localStorage.clear();
+      reloadFeedDisplay();
+    }
+  });
+
   it("keeps the feed continuous when the order changes with pages loaded (Д8, В5.1)", async () => {
     const cards = Array.from({ length: 600 }, (_, index) => block(index + 1, `card-${index + 1}`));
     const ordered = (order?: string) => (order === "oldest" ? cards : [...cards].reverse());
@@ -4140,7 +4455,7 @@ describe("AppWithVault", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("This card is a file")).toBeInTheDocument();
+      expect(screen.getByText("This element is a file")).toBeInTheDocument();
     });
     expect(screen.getByText(/First clip\.md/)).toBeInTheDocument();
     expect(vi.mocked(commands.completeFirstCardMarker)).toHaveBeenCalledTimes(1);
@@ -4154,7 +4469,7 @@ describe("AppWithVault", () => {
       }),
     );
     await waitFor(() => {
-      expect(screen.queryByText("This card is a file")).not.toBeInTheDocument();
+      expect(screen.queryByText("This element is a file")).not.toBeInTheDocument();
     });
     expect(vi.mocked(commands.completeFirstCardMarker)).toHaveBeenCalledTimes(1);
   });
@@ -4706,7 +5021,7 @@ describe("AppWithVault", () => {
           await vi.advanceTimersByTimeAsync(INDEXING_NOTICE_DELAY_MS);
         });
         expect(screen.queryByText("Indexing “vault”")).toBeNull();
-        expect(screen.queryByText("This card is a file")).toBeNull();
+        expect(screen.queryByText("This element is a file")).toBeNull();
         expect(vi.mocked(commands.completeFirstCardMarker)).not.toHaveBeenCalled();
 
         // This tab starts leading: the notice shows here, and it cannot be

@@ -14,6 +14,7 @@ import type { LightBlock, TagCount } from "@/types";
 import {
   BatchCollectionPicker,
   COLLECTION_PICKER_CONTENT_CLASS,
+  type MembershipAnswer,
 } from "./CollectionPicker";
 
 interface GroupSelectionContextMenuProps {
@@ -21,8 +22,8 @@ interface GroupSelectionContextMenuProps {
   tags: TagCount[];
   currentTag?: string;
   onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
-  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
-  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
+  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => MembershipAnswer;
+  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<unknown>;
   onRequestDeleteSelected: () => void;
   onMergeSelectedBlocks: () => void;
   onClearSelection: () => void;
@@ -59,9 +60,11 @@ export function GroupSelectionContextMenu({
     onCreateAndAssignBatch,
   });
 
+  // The selection stays until the answer (SPEC_DEEP_AUDIT.md, Е6.1).
   const handleDisconnectFromCollection = () => {
-    actions.disconnectFromCurrentCollection();
-    onClearSelection();
+    void actions.disconnectFromCurrentCollection().then((applied) => {
+      if (applied) onClearSelection();
+    });
   };
 
   return (

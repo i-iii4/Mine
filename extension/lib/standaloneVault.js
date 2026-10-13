@@ -353,8 +353,11 @@
       }
       const file = media ? (await core({ op: "shortest_link", target: media.path,
         paths: [...paths, media.path], omit_md_ext: false })).target : null;
+      // A new collection stands first, by the core's one rule over the
+      // positions of the pages there are (SPEC_DEEP_AUDIT.md, Е6.2).
       const document = kind === "collection"
-        ? await core({ op: "collection", slug: named.slug, saved_at: request.saved_at ?? now() })
+        ? await core({ op: "collection", slug: named.slug, saved_at: request.saved_at ?? now(),
+          positions: (await readNotes(binding, options)).pages.map((page) => page.position ?? 0) })
         : await core({ op: "capture", request: { slug: named.slug, block_type: request.block_type,
           title: request.title ?? null, url: request.url ?? null, body: request.body ?? "", file,
           thumbnail: null, tags: request.tags ?? [], saved_at: request.saved_at ?? now(),
@@ -456,6 +459,42 @@
     try { await notesStorage(options)?.put("notes", bindingId, notes); }
     catch (failure) { console.warn("[Mine] collection list could not keep what it read:", String(failure?.message ?? failure)); }
   }
+  // The collection pages of the folder, with their positions, and each
+  // card's `Mine Collections`, read through the notes cache.
+  async function readNotes(binding, options) {
+    const pages = [];
+    const memberships = [];
+    const known = await knownNotes(binding.id, options);
+    const seen = {};
+    async function scan(handle, prefix = "") {
+      for await (const [name, entry] of handle.entries()) {
+        if (name.startsWith(".")) continue;
+        if (entry.kind === "directory") { await scan(await handle.getDirectoryHandle(name), join(prefix, name)); continue; }
+        if (!name.endsWith(".md")) continue;
+        const slug = join(prefix, name.slice(0, -3));
+        const file = await (await handle.getFileHandle(name)).getFile();
+        const stamped = typeof file.lastModified === "number";
+        const previous = known[slug];
+        let note;
+        if (stamped && previous && previous.lastModified === file.lastModified && previous.size === file.size) {
+          note = previous.note;
+        } else {
+          note = null;
+          try {
+            const inspected = await core({ op: "inspect", slug, markdown: await file.text() });
+            note = { collection: Boolean(inspected.collection), position: inspected.position ?? null,
+              collections: Array.isArray(inspected.collections) ? inspected.collections : [] };
+          } catch (failure) { if (failure.code !== "invalid_request") throw failure; }
+        }
+        if (stamped) seen[slug] = { lastModified: file.lastModified, size: file.size, note };
+        if (note?.collection) pages.push({ slug, position: note.position });
+        else if (note?.collections.length) memberships.push(note.collections);
+      }
+    }
+    await scan(binding.handle);
+    await rememberNotes(binding.id, seen, options);
+    return { pages, memberships };
+  }
   async function listStandaloneChannels(options) {
     try {
       const binding = await selectedBinding(options);
@@ -465,37 +504,7 @@
       // and how many cards each holds. A collection exists only as its page:
       // a name cards link without one is not listed
       // (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К1 and К9).
-      const pages = [];
-      const memberships = [];
-      const known = await knownNotes(binding.id, options);
-      const seen = {};
-      async function scan(handle, prefix = "") {
-        for await (const [name, entry] of handle.entries()) {
-          if (name.startsWith(".")) continue;
-          if (entry.kind === "directory") { await scan(await handle.getDirectoryHandle(name), join(prefix, name)); continue; }
-          if (!name.endsWith(".md")) continue;
-          const slug = join(prefix, name.slice(0, -3));
-          const file = await (await handle.getFileHandle(name)).getFile();
-          const stamped = typeof file.lastModified === "number";
-          const previous = known[slug];
-          let note;
-          if (stamped && previous && previous.lastModified === file.lastModified && previous.size === file.size) {
-            note = previous.note;
-          } else {
-            note = null;
-            try {
-              const inspected = await core({ op: "inspect", slug, markdown: await file.text() });
-              note = { collection: Boolean(inspected.collection), position: inspected.position ?? null,
-                collections: Array.isArray(inspected.collections) ? inspected.collections : [] };
-            } catch (failure) { if (failure.code !== "invalid_request") throw failure; }
-          }
-          if (stamped) seen[slug] = { lastModified: file.lastModified, size: file.size, note };
-          if (note?.collection) pages.push({ slug, position: note.position });
-          else if (note?.collections.length) memberships.push(note.collections);
-        }
-      }
-      await scan(binding.handle);
-      await rememberNotes(binding.id, seen, options);
+      const { pages, memberships } = await readNotes(binding, options);
       const channels = await core({ op: "collections", pages, memberships });
       return { ok: true, channels };
     } catch (failure) { return failed(undefined, failure); }

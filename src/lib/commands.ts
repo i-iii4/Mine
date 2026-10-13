@@ -72,6 +72,7 @@ import type {
   UpdateStatus,
 } from "@/types";
 import { createSelectionStamps } from "./spaceSelection";
+import { NO_SPACE_OPEN_TEXT } from "./mediaAssetErrors";
 
 function isCommandError(error: unknown): error is CommandError {
   if (!error || typeof error !== "object" || !("kind" in error)) return false;
@@ -119,7 +120,7 @@ function noteName(path: string): string {
 function commandErrorMessage(error: CommandError): string {
   switch (error.kind) {
     case "no_vault":
-      return "no vault selected";
+      return NO_SPACE_OPEN_TEXT;
     case "space_changed":
       return "the open space changed; refresh and try again";
     case "source_changed":
@@ -511,6 +512,12 @@ export const addTag = (slug: string, tag: string) =>
 
 export const removeTag = (slug: string, tag: string) =>
   invoke<void>("remove_tag", { slug, tag });
+
+/** Connect every card of `slugs` to the collection `tag`, or disconnect them
+ *  all, in one source mutation: all of them change or none does
+ *  (SPEC_DEEP_AUDIT.md, Е6.1). */
+export const setBlocksMembership = (slugs: string[], tag: string, connected: boolean) =>
+  invoke<void>("set_blocks_membership", { slugs, tag, connected });
 
 export const renameTag = (old_tag: string, new_tag: string) =>
   invoke<void>("rename_tag", { old_tag, new_tag });

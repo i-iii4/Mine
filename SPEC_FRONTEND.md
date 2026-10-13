@@ -194,6 +194,8 @@ renameBlockFile(oldSlug: string, newStem: string): Promise<RenameBlockResult>
 listTags(): Promise<TagCount[]>
 addTag(slug: string, tag: string): Promise<void>
 removeTag(slug: string, tag: string): Promise<void>
+setBlocksMembership(slugs: string[], tag: string, connected: boolean): Promise<void> // all or none
+checkCollectionName(oldTag: string | null, name: string): Promise<string | null>
 listChannels(): Promise<ChannelDto[]>
 createChannel(tag: string): Promise<ChannelDto>
 deleteChannel(tag: string): Promise<boolean>
@@ -296,6 +298,15 @@ the Tauri `enter` event carrying at least one path. Plain native drags inside
 the WebView, including selected text extraction drags, must not show the `Drop
 files to add` overlay. While the overlay is visible, `Escape` cancels the
 overlay state without importing anything.
+
+A drop that comes while another is still being added waits its turn; every
+file of a drop becomes an element past one that fails; the import overlay
+shows `Importing...` while any drop is being added. Files that could not
+become elements are the tab's notice (`createElementsInTurn` in
+`src/lib/createElements.ts`, shared with ⌘V; DESIGN_SYSTEM.md, «Сбой после
+закрытия окна»; SPEC_DEEP_AUDIT.md, Е6.4, Е6.5). Before 13.10.2026 a second
+drop was thrown away, a failure stopped the drop, and a red `Failed to import`
+card over the feed did not name what had already come in.
 
 One mounted `DropZone` owns exactly one Tauri subscription. React rerenders and
 callback identity changes must not resubscribe it. If the asynchronous
@@ -528,7 +539,11 @@ opacity, ни layout. Вход/выход text-state анимируется
 К2 и К9; часть `noPos` убрана 10.10.2026, PLAN.md, Phase 44). Место `/channel/<имя>` существует, только
 если имя есть в `channels`; иначе место становится Everything. Перестановка
 вызывает `reorderChannels` только со страницами, и бэкенд пишет `position`
-только в существующие страницы, файлов не создавая (К6). Runtime использует `CollectionRef`
+только в существующие страницы, файлов не создавая (К6). Позиции перестановки
+нумеруются от самой малой позиции списка (`reorderedPositions` в
+`src/lib/collectionOrder.ts`), поэтому пишутся только сдвинутые страницы,
+и после создания коллекции с позицией ниже нуля тоже (SPEC_DEEP_AUDIT.md,
+Е6.2). Runtime использует `CollectionRef`
 из `Mine Collections` wikilinks. Изменение количества карточек в канале не
 должно менять порядок каналов в sidebar.
 Если локальный индекс был создан старой версией, `block_tags` может временно
@@ -798,26 +813,26 @@ mr-2"`, `8px` от правого края колонки, которая выз
 канале это карточки, прикреплённые к этому каналу. Active Grid search не меняет
 этот счётчик.
 
-**Создание коллекции в `App`.** `beginCreateCollection` (`+`, ⇧⌘N) ставит
-`pendingCreateChannelDrop` равным открытой карточке, только если её коллекции
-показаны в режиме `Connected` (`detailLinkMode === "linked"`), иначе `null`.
-`handleCreateChannel(tag, drop?)` берёт переданный `drop`, а без него ожидающий.
-После `createChannel` он вызывает `reorderChannels`: новая коллекция получает
-позицию 0, остальные сдвигаются на одну, затем ожидающая карточка
-прикрепляется к коллекции. `Sidebar` показывает строку создания под
-`Everything` и передаёт ей набранный фильтр как начальное имя
-(`defaultName={searchQuery.trim()}`). Остальные пути создания (меню `Connect`
-карточки, `Create collection` в переключателе коллекций верхней панели,
-создание из перетащенного медиа или выделенного текста, расширение)
-`reorderChannels` не вызывают: коллекция получает `MAX(position) + 1` и встаёт
-в конец списка. Каждый путь создания сначала создаёт страницу коллекции
-(`createChannel`), затем присоединяет карточку. `Create collection` в меню
-`Connect` карточки и группового выделения (`handleCreateTagFromMenu`,
-`handleCreateTagFromBatchMenu`) вызывает `createChannel`, затем присоединяет
-к коллекции, которую вернула страница (первое свободное имя, если имя занято
-заметкой); до 10.10.2026 он вызывал только `addTag` и писал ссылку без
-страницы ([SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md), К5;
-PLAN.md, Phase 44).
+**Создание коллекции в `App`.** Один путь для всех мест (SPEC_DEEP_AUDIT.md,
+Е6.2, 13.10.2026; контракт в DESIGN_SYSTEM.md, «Создание коллекции»):
+`createCollection(name, contents)` создаёт страницу (`createChannel`), кладёт в
+неё, что коллекция берёт сразу (`contents`: брошенную карточку или карточки
+одной командой `setBlocksMembership`, медиа, выделенный текст), и перечитывает
+снимки. Отказ имени отклоняет обещание, и место, где имя набирали, показывает
+причину: строка создания бокового меню (`handleSidebarCreateCollection`, она
+же берёт ожидающий бросок `pendingCreateChannelDrop`), окно `New collection`
+при свёрнутом меню и из переключателя коллекций (`handleWindowCreateCollection`,
+`CreateCollectionDialog`). Выбор коллекций карточки и выделения, у которых поля
+для причины после нажатия нет, идут через `createCollectionReporting`: отказ
+это уведомление вкладки `Could not create the collection`, затем снимки
+перечитываются. `Enter` в фильтре сначала проверяет имя
+(`checkNewCollectionName`); отклонённое имя открывает строку создания с ним,
+и причина стоит под именем. Новая коллекция встаёт первой по правилу бэкенда
+(`new_collection_position`, одна запись своей страницы); `reorderChannels` при
+создании не вызывается. Ни один путь не переходит в новую коллекцию. До
+13.10.2026 путь бокового меню вызывал `reorderChannels` и переписывал позиции
+всех страниц, переключатель коллекций переходил в новую коллекцию, а меню
+`Connect` карточки и выделения, медиа и текст ставили её последней.
 
 Тот же правый segment держит единственный main view-mode switcher:
 `View:` + пилюля `Grid / Graph` (`Tabs` chrome, размер `row`; DESIGN_SYSTEM.md,
@@ -1036,6 +1051,20 @@ text+media paragraphs remain block `<div>` wrappers to avoid invalid
 - Overflow `…` menu содержит `Connect` submenu, `Source`, `Reveal in Finder`,
   `Copy Path`, `Rename…`, collection-scoped `Disconnect from “…”` и `Delete`.
   Правый клик (`CardTagMenu`) зеркалит этот контракт.
+- Членство карточки в меню, в правом клике и в плюсе `Connect` берёт один хук
+  `useCardMembership`: с первого кадра это коллекции, которые знает лента
+  (`collections` лёгкой карточки, `tags` полной), а пока меню открыто, файл
+  карточки читается заново (`getBlock`) и его ответ их заменяет; чтение,
+  которое не удалось, оставляет коллекции ленты (SPEC_DEEP_AUDIT.md, Е6.12; до
+  13.10.2026 меню до ответа показывало карточку ни в одной коллекции, а сбой
+  чтения был необработанным отказом).
+- `Source`, `Reveal in Finder` и `Copy Path` идут через `openLinkInBrowser`,
+  `revealInFinder` (`src/lib/systemActions.ts`) и `copyTextToClipboard`
+  (`src/lib/clipboard.ts`): сбой это уведомление вкладки (DESIGN_SYSTEM.md,
+  «Сбой после закрытия окна»; Е6.16). Те же помощники у `Open Original` и
+  `Copy Link` проигрывателя YouTube, `Source` открытой карточки и строки
+  поиска, Reveal in Finder медиафайла, коллекции, пространства и первой
+  карточки, `⌘L`.
 - Overflow `…` menu uses the shared `DropdownMenu` focus surface: item
   hover/focus and open submenu trigger render `bg-active`, not `bg-accent`.
 - Overflow `…` dropdown and right-click context menu shells use the feed card
@@ -1168,6 +1197,18 @@ Image media expansion:
   (`createChannel`), затем `addTag`; присоединения к имени без страницы не
   бывает ([SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md),
   К5 и К7).
+- Имя новой коллекции проверяется по мере набора той же командой, что во всех
+  местах создания (`check_collection_name`, SPEC_DEEP_AUDIT.md, Е6.2): проверку
+  даёт приложение через контекст `CollectionNameCheckContext`
+  (`src/hooks/useCollectionNameRefusal.ts`) или свойство `onCheckName`; у
+  клиппера проверки нет, его помощник проверяет имя при записи. Отклонённое
+  имя не даёт строки `Create collection`, а причина стоит строкой ошибки
+  `text-sm text-destructive` (`role="alert"`) под полем поиска.
+- `onToggleTag` и `onBatchSetTag` отвечают, сделано ли изменение
+  (`MembershipAnswer`): ответ `false` значит «не сделано, вызывающий уже
+  сказал почему», и picker снимает показанное сразу состояние строки
+  (SPEC_DEEP_AUDIT.md, Е6.1, Е6.3; до 13.10.2026 после сбоя строка оставалась
+  `Connected`).
 - `Escape` внутри submenu закрывает только Connect submenu и возвращает фокус
   на parent `Connect` item в overflow menu. В standalone DropdownMenu content
   `Escape` отдаётся родительскому меню.
@@ -1196,7 +1237,8 @@ Image media expansion:
   не уходило в parent card, dropdown/context menu trigger или sidebar row.
 - UI оптимистически обновляет selected membership внутри открытого picker после
   клика и не откатывается от stale `selectedTags`, пока backend mutation и
-  snapshot reload догоняют состояние.
+  snapshot reload догоняют состояние. Откатывается он только по ответу
+  `false`: изменение не сделано.
 
 ### RenameBlockDialog
 

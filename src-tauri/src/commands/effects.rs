@@ -100,6 +100,7 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("list_tags", Effect::Reads),
     ("add_tag", Effect::ChangesSources),
     ("remove_tag", Effect::ChangesSources),
+    ("set_blocks_membership", Effect::ChangesSources),
     ("rename_tag", Effect::ChangesSources),
     ("search", Effect::Reads),
     ("search_grid_blocks", Effect::Reads),

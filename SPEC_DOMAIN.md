@@ -147,7 +147,7 @@ struct Channel {
     description: Option<String>,
     color: Option<String>,     // hex-цвет, например "#FF5733"
     icon: Option<String>,      // имя иконки
-    position: u32,             // порядок в sidebar (0 = верх)
+    position: i64,             // ручной порядок в sidebar: меньше значит выше; может быть меньше нуля
     created_at: DateTime,      // из domain::block::DateTime
 }
 ```
@@ -156,7 +156,10 @@ struct Channel {
 
 ```rust
 Channel::new(tag: &str, created_at: DateTime) -> Result<Channel, ChannelError>
-Channel::update_position(&mut self, position: u32)
+Channel::update_position(&mut self, position: i64)
+new_collection_position(positions: impl IntoIterator<Item = i64>) -> i64
+    // место новой коллекции: на единицу меньше самой малой позиции, 0 без
+    // коллекций; одно правило для всех путей создания (SPEC_DEEP_AUDIT.md, Е6.2)
 validate_color(color: &str) -> bool   // hex: #RGB или #RRGGBB
 ```
 

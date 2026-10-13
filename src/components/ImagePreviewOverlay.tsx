@@ -1,3 +1,4 @@
+import { MissingAwareImage } from "./MissingAwareImage";
 import {
   useCallback,
   useEffect,
@@ -485,10 +486,12 @@ export function ImagePreviewOverlay({
         className="relative z-10 flex h-full w-full items-center justify-center overflow-hidden p-8 pb-20"
         data-image-preview-stage
       >
-        <img
+        {/* A file that will not load leaves the plane, never the
+            broken-image icon (SPEC_DEEP_AUDIT.md, Е6.8). */}
+        <MissingAwareImage
+          key={shown.src}
           ref={imageRef}
           src={shown.src}
-          alt=""
           className="image-preview-primary-media max-h-[calc(100vh-8rem)] max-w-[calc(100vw-4rem)] origin-center cursor-grab select-none object-contain will-change-transform active:cursor-grabbing"
           draggable={false}
           data-image-preview-image

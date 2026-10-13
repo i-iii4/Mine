@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import { DropZone } from "./DropZone";
+import { ActionFailureNoticeStack } from "./ActionFailureNotices";
+import { clearActionFailures } from "@/lib/actionFailures";
 
 type DragDropPayload =
   | { type: "enter"; paths: string[]; position: { x: number; y: number } }
@@ -51,6 +53,7 @@ function emitDrag(payload: DragDropPayload) {
 describe("DropZone", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearActionFailures();
     mocks.dragHandler = null;
     mocks.listen.mockImplementation(
       async (event: string, handler: (event: { payload: TabFileDragPayload }) => void) => {
@@ -157,5 +160,54 @@ describe("DropZone", () => {
     fireEvent.keyDown(document, { key: "Escape" });
 
     expect(screen.queryByText("Drop files to add")).not.toBeInTheDocument();
+  });
+
+  /// SPEC_DEEP_AUDIT.md, Е6.5: a file that cannot become an element does not
+  /// stop the others, and the tab's notice names it and says the rest came
+  /// in; before, the drop stopped at the first failure and said nothing of
+  /// what was already created.
+  it("keeps adding past a file that fails and names it in the tab's notice", async () => {
+    mocks.createBlock.mockImplementation(async ({ file_path }: { file_path: string }) => {
+      if (file_path.endsWith("b.png")) throw new Error("The disk is full.");
+    });
+    const onBlocksCreated = vi.fn();
+    render(
+      <>
+        <DropZone onBlocksCreated={onBlocksCreated} />
+        <ActionFailureNoticeStack />
+      </>,
+    );
+    await waitFor(() => expect(mocks.dragHandler).not.toBeNull());
+
+    emitDrag({ type: "drop", paths: ["/tmp/a.png", "/tmp/b.png", "/tmp/c.png"], position: { x: 0, y: 0 } });
+
+    expect(await screen.findByText("Could not create an element")).toBeInTheDocument();
+    expect(mocks.createBlock).toHaveBeenCalledTimes(3);
+    expect(screen.getByText("2 other elements were created.")).toBeInTheDocument();
+    expect(screen.getByText("“b.png”: The disk is full.")).toBeInTheDocument();
+    expect(onBlocksCreated).toHaveBeenCalledOnce();
+  });
+
+  /// Е6.5: a drop that arrives while the last one is still being added
+  /// waits its turn; before, it was thrown away.
+  it("adds a second drop that arrives during the first", async () => {
+    let finishFirst!: () => void;
+    mocks.createBlock.mockImplementation(({ file_path }: { file_path: string }) => (
+      file_path.endsWith("first.png")
+        ? new Promise<void>((resolve) => { finishFirst = resolve; })
+        : Promise.resolve()
+    ));
+    const onBlocksCreated = vi.fn();
+    render(<DropZone onBlocksCreated={onBlocksCreated} />);
+    await waitFor(() => expect(mocks.dragHandler).not.toBeNull());
+
+    emitDrag({ type: "drop", paths: ["/tmp/first.png"], position: { x: 0, y: 0 } });
+    await waitFor(() => expect(mocks.createBlock).toHaveBeenCalledOnce());
+    emitDrag({ type: "drop", paths: ["/tmp/second.png"], position: { x: 0, y: 0 } });
+    await act(async () => finishFirst());
+
+    await waitFor(() => expect(mocks.createBlock).toHaveBeenCalledTimes(2));
+    expect(mocks.createBlock).toHaveBeenLastCalledWith(expect.objectContaining({ file_path: "/tmp/second.png" }));
+    await waitFor(() => expect(onBlocksCreated).toHaveBeenCalledTimes(2));
   });
 });

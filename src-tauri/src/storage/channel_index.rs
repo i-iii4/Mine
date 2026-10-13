@@ -33,7 +33,7 @@ pub fn upsert_channel_with_source(
             channel.description,
             channel.color,
             channel.icon,
-            channel.position as i64,
+            channel.position,
             channel.created_at.as_str(),
         ],
     )?;
@@ -154,7 +154,7 @@ pub fn list_channels(conn: &Connection) -> Result<Vec<Channel>> {
         channel.description = description;
         channel.color = color;
         channel.icon = icon;
-        channel.position = position as u32;
+        channel.position = position;
         channels.push(channel);
     }
 
@@ -166,21 +166,24 @@ pub fn list_channels(conn: &Connection) -> Result<Vec<Channel>> {
     Ok(channels)
 }
 
-pub fn next_channel_position(conn: &Connection) -> Result<u32> {
-    let max_position: Option<i64> =
-        conn.query_row("SELECT MAX(position) FROM channels", [], |row| row.get(0))?;
-    Ok(max_position
-        .and_then(|value| u32::try_from(value).ok())
-        .map_or(0, |value| value.saturating_add(1)))
+/// The position a new collection takes: first in the manual order, by the
+/// one rule of mine-core ([`crate::domain::channel::new_collection_position`])
+/// over the positions the index holds.
+pub fn new_channel_position(conn: &Connection) -> Result<i64> {
+    let mut statement = conn.prepare("SELECT position FROM channels")?;
+    let positions = statement
+        .query_map([], |row| row.get::<_, i64>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(crate::domain::channel::new_collection_position(positions))
 }
 
-pub fn update_channel_positions(conn: &Connection, positions: &[(String, u32)]) -> Result<()> {
+pub fn update_channel_positions(conn: &Connection, positions: &[(String, i64)]) -> Result<()> {
     let transaction = conn.unchecked_transaction()?;
     {
         let mut statement =
             transaction.prepare("UPDATE channels SET position = ?1 WHERE tag = ?2")?;
         for (tag, position) in positions {
-            statement.execute(params![*position as i64, tag])?;
+            statement.execute(params![*position, tag])?;
         }
     }
     transaction.commit()?;

@@ -64,6 +64,13 @@ vi.mock("./settingsMenu", () => ({ createSettingsMenu: settingsMenu.create }));
 const settingsChanged = vi.hoisted(() => ({ broadcastSettingsChange: vi.fn() }));
 vi.mock("@/lib/settingsChanged", () => settingsChanged);
 
+// The visible tab of the window hears a failed command of the bar (Е6.10).
+const tabBarFailure = vi.hoisted(() => ({ tellVisibleTab: vi.fn(async () => undefined) }));
+vi.mock("@/lib/tabBarFailure", async (original) => ({
+  ...(await original<typeof import("@/lib/tabBarFailure")>()),
+  tellVisibleTabOfFailure: tabBarFailure.tellVisibleTab,
+}));
+
 /** The zone the tabs and `+` share, and the slot `+` takes from it. */
 const NEW_TAB_SLOT_PX = 32;
 let zoneWidth = 1000;
@@ -609,6 +616,45 @@ describe("reorder (В60)", () => {
       expect(node.style.transition).toBe("");
     }
     expect(container.querySelector("[data-reordering]")).toBeNull();
+  });
+
+  /// SPEC_DEEP_AUDIT.md, Е6.10: a reorder the backend refused puts the tabs
+  /// back in their order, and the visible tab says why; before, the bar kept
+  /// the refused order and the failure went to the console.
+  it("puts the tabs back and tells the visible tab when the move was refused", async () => {
+    commands.moveTab.mockRejectedValueOnce(new Error("the saved windows could not be written"));
+    renderBar(barState([tab("a"), tab("b"), tab("c")], { active_tab: "b" }));
+    const gesture = press(tabById("a"), 100);
+    gesture.move(230);
+    gesture.release(230);
+    expect(tabsShown().map((node) => node.dataset.tabId)).toEqual(["b", "a", "c"]);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(tabsShown().map((node) => node.dataset.tabId)).toEqual(["a", "b", "c"]);
+    expect(tabBarFailure.tellVisibleTab).toHaveBeenCalledWith("b", {
+      title: "Could not move the tab",
+      message: "the saved windows could not be written",
+    });
+  });
+
+  it("tells the visible tab when a command of the bar failed", async () => {
+    commands.newTab.mockRejectedValueOnce(new Error("no window"));
+    renderBar(barState([tab("a"), tab("b")], { active_tab: "a" }));
+
+    fireEvent.click(screen.getByRole("button", { name: NEW_TAB_LABEL }));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(tabBarFailure.tellVisibleTab).toHaveBeenCalledWith("a", {
+      title: "Could not open a new tab",
+      message: "no window",
+    });
   });
 
   it("returns the tab to its place on Escape", () => {

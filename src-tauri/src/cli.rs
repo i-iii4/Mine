@@ -78,6 +78,8 @@ impl CliEnv {
 struct SpaceConfig {
     active: Option<PathBuf>,
     known: Vec<PathBuf>,
+    /// The identity the app recorded for each space it opened, by path.
+    identities: Vec<(String, String)>,
 }
 
 fn load_space_config(env: &CliEnv) -> SpaceConfig {
@@ -87,7 +89,12 @@ fn load_space_config(env: &CliEnv) -> SpaceConfig {
         .read()
         .unwrap_or_default();
     let active = crate::space_registry::current_path(&settings).map(PathBuf::from);
-    let mut known: Vec<PathBuf> = crate::space_registry::records(&settings)
+    let records = crate::space_registry::records(&settings);
+    let identities = records
+        .iter()
+        .filter_map(|record| Some((record.path.clone(), record.vault_id.clone()?)))
+        .collect();
+    let mut known: Vec<PathBuf> = records
         .into_iter()
         .map(|record| PathBuf::from(record.path))
         .collect();
@@ -96,7 +103,46 @@ fn load_space_config(env: &CliEnv) -> SpaceConfig {
             known.insert(0, active.clone());
         }
     }
-    SpaceConfig { active, known }
+    SpaceConfig {
+        active,
+        known,
+        identities,
+    }
+}
+
+/// The identity of the space at `root`, never waited for
+/// (SPEC_CLOUD_STORAGE.md, Х12): while the contents of `.mine/vault-id` are
+/// in iCloud, the identity the app recorded when it opened the space at this
+/// folder answers, as the registry takes a folder whose identity is in
+/// iCloud for the space recorded there (`space_registry::is_available`).
+fn space_identity_of(config: &SpaceConfig, root: &std::path::Path) -> Result<String, CliError> {
+    use crate::space_registry::{read_identity_file, CloudRead, IdentityUnreadable};
+    let not_initialized = || {
+        CliError::space(format!(
+            "{} has no .mine/vault-id — not an initialized space",
+            root.display()
+        ))
+    };
+    match read_identity_file(&root.join(".mine/vault-id"), CloudRead::NoWait) {
+        Ok(Some(id)) => Ok(id),
+        Ok(None) | Err(IdentityUnreadable::Unreadable { .. }) => Err(not_initialized()),
+        Err(IdentityUnreadable::InCloud { path }) => {
+            let root_text = root.to_string_lossy();
+            config
+                .identities
+                .iter()
+                .find(|(path, _)| crate::space_registry::same_path(path, &root_text))
+                .map(|(_, id)| id.clone())
+                .ok_or_else(|| {
+                    crate::storage::icloud_downloads::request_downloads([path.as_path()]);
+                    CliError::space(format!(
+                        "the identity of {} is still in iCloud and Mine has not opened this space on this Mac; \
+                         Mine asked iCloud for it, try again once it arrives",
+                        root.display()
+                    ))
+                })
+        }
+    }
 }
 
 /// A space the CLI may read: the app's active vault or one of the known ones.
@@ -120,18 +166,21 @@ pub(crate) fn resolve_space(
             CliError::space("no active space in the app config; pass --space".to_string())
         })?,
     };
-    let vault_id = std::fs::read_to_string(root.join(".mine/vault-id"))
-        .map(|s| s.trim().to_string())
-        .map_err(|_| {
-            CliError::space(format!(
-                "{} has no .mine/vault-id — not an initialized space",
-                root.display()
-            ))
-        })?;
+    let vault_id = space_identity_of(&config, &root)?;
     let derived = env.app_data_dir.join("vaults").join(vault_id);
     let vault = VaultLayout::with_derived_root(root, derived);
-    let layout = crate::storage::files::load_vault_write_layout(&vault)
-        .map_err(|error| CliError::space(format!("invalid write layout: {error:#}")))?;
+    // What writes no new file needs no layout: one in iCloud this Mac has
+    // no copy of leaves the default, and every command that creates a file
+    // reads it again strictly (`for_new_files`), so a new file never lands
+    // in the root by default (SPEC_VAULT_LIFECYCLE.md, П2;
+    // SPEC_CLOUD_STORAGE.md, Х12).
+    let layout = match crate::storage::files::load_vault_write_layout(&vault) {
+        Ok(layout) => layout,
+        Err(error) if crate::storage::files::is_layout_in_cloud(&error) => {
+            crate::domain::vault::VaultWriteLayout::flat()
+        }
+        Err(error) => return Err(CliError::space(format!("invalid write layout: {error:#}"))),
+    };
     let vault = vault.with_write_layout(layout);
     // The index generation Mine selected, looked up without creating,
     // migrating or recovering anything: the index belongs to the app
@@ -143,6 +192,15 @@ pub(crate) fn resolve_space(
         Ok(None) => Ok(vault),
         Err(error) => Err(CliError::space(format!("index of {}: {error:#}", vault.root().display()))),
     }
+}
+
+/// The space with the layout new files go by, read again strictly: a layout
+/// in iCloud this Mac has no copy of refuses the new file with the reason,
+/// never waiting for it (SPEC_VAULT_LIFECYCLE.md, П2; SPEC_CLOUD_STORAGE.md,
+/// Х12).
+fn for_new_files(vault: &VaultLayout) -> Result<VaultLayout, CliError> {
+    crate::storage::files::layout_for_new_files(vault)
+        .map_err(|error| CliError::space(format!("{error:#}")))
 }
 
 /// What a read says when the space has no index it can read.
@@ -834,7 +892,7 @@ fn open_index_rw(vault: &VaultLayout) -> Result<rusqlite::Connection, CliError> 
 }
 
 fn cmd_card_create(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
-    let vault = resolve_space(env, flags.space.as_deref())?;
+    let vault = for_new_files(&resolve_space(env, flags.space.as_deref())?)?;
     let conn = open_index_rw(&vault)?;
     let body = match flags.from_file.as_deref() {
         Some(path) => std::fs::read_to_string(path)
@@ -1008,7 +1066,7 @@ fn cmd_merge(env: &CliEnv, flags: &Flags) -> Result<String, CliError> {
     if flags.positional.len() < 2 {
         return Err(CliError::usage("merge needs at least two slugs".into()));
     }
-    let vault = resolve_space(env, flags.space.as_deref())?;
+    let vault = for_new_files(&resolve_space(env, flags.space.as_deref())?)?;
     let conn = open_index_rw(&vault)?;
     let mutation =
         crate::commands::blocks::merge_blocks_inner(None, &conn, &vault, flags.positional.clone())
@@ -1030,7 +1088,7 @@ fn cmd_collection_create(env: &CliEnv, flags: &Flags) -> Result<String, CliError
     let Some(name) = flags.positional.get(1) else {
         return Err(CliError::usage("collection create needs a name".into()));
     };
-    let vault = resolve_space(env, flags.space.as_deref())?;
+    let vault = for_new_files(&resolve_space(env, flags.space.as_deref())?)?;
     let conn = open_index_rw(&vault)?;
     let dto = crate::commands::channels::create_channel_inner(&conn, &vault, name)
         .map_err(|e| CliError::internal(format!("collection create: {e:?}")))?;
@@ -1618,6 +1676,119 @@ mod mutation_tests {
         let vault = resolve_space(&env, None).map_err(|e| e.message).unwrap();
         let backup = vault.derived_root().join("cli-backups/Cards/plain.md");
         assert_eq!(std::fs::read_to_string(backup).unwrap(), before);
+    }
+
+    const CLOUD_SPACE_ID: &str = "0123456789abcdef0123456789abcdef";
+
+    /// A space of the standard layout as the app leaves it after opening it:
+    /// its identity in the registry and in the derived store, the folder the
+    /// store serves recorded, the index built, and this Mac's copy of the
+    /// layout made when the layout was read. The card `Cards/Gone` uses
+    /// `Media/Gone (image 1).jpg`.
+    fn cloud_fixture() -> (tempfile::TempDir, CliEnv, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = dir.path().join("appdata");
+        let root = dir.path().join("Space");
+        for folder in [".mine", "Cards", "Collections", "Media"] {
+            std::fs::create_dir_all(root.join(folder)).unwrap();
+        }
+        std::fs::write(root.join(".mine/vault-id"), format!("{CLOUD_SPACE_ID}\n")).unwrap();
+        std::fs::write(
+            root.join(".mine/layout.json"),
+            r#"{"cards":"Cards","media":"Media","collections":"Collections"}"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("Media/Gone (image 1).jpg"), b"\xff\xd8\xff\xdbphoto").unwrap();
+        std::fs::write(
+            root.join("Cards/Gone.md"),
+            "---\nsaved_at: 2026-01-01T00:00:00Z\nfile: \"[[Gone (image 1).jpg]]\"\n---\nA photo.",
+        )
+        .unwrap();
+        std::fs::write(root.join("Cards/Other.md"), "---\nsaved_at: 2026-01-02T00:00:00Z\n---\nText.").unwrap();
+        std::fs::create_dir_all(&app_data).unwrap();
+        std::fs::write(
+            app_data.join("config.json"),
+            serde_json::to_string(&json!({
+                "vault_path": root,
+                "known_vaults": [root],
+                "spaces": [{ "vault_id": CLOUD_SPACE_ID, "path": root }],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let derived = app_data.join("vaults").join(CLOUD_SPACE_ID);
+        crate::space_registry::record_owner_path(&derived, &root);
+        let vault = VaultLayout::with_derived_root(root.clone(), derived);
+        let layout = crate::storage::files::load_vault_write_layout(&vault).unwrap();
+        let vault = vault.with_write_layout(layout);
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        drop(conn);
+        (dir, CliEnv::in_dir(app_data), root)
+    }
+
+    /// SPEC_CLOUD_STORAGE.md, Х12: the live case of 13.10.2026. On «Тест»
+    /// macOS took away `.mine/layout.json`, `.mine/vault-id` and the notes,
+    /// and `mine card delete … --delete-unused-media` waited minutes: for
+    /// the layout, then for `Oct 15th! ⌨️.md`, a note the clipper saved
+    /// while no pass read it. The deletion reads none of them: the identity
+    /// comes from the registry, the layout from this Mac's copy, and the
+    /// note is left to the background pass.
+    #[test]
+    fn card_delete_waits_for_no_evicted_service_file_or_other_note() {
+        use crate::storage::cloud_files::test_seam;
+        let (_dir, env, root) = cloud_fixture();
+        let arrived = root.join("Cards/Oct 15th! ⌨️.md");
+        std::fs::write(&arrived, "---\nsaved_at: 2026-01-03T00:00:00Z\n---\nSaved by the clipper.").unwrap();
+        let layout = root.join(".mine/layout.json");
+        let identity = root.join(".mine/vault-id");
+        for evicted in [&arrived, &layout, &identity] {
+            test_seam::mark_offloaded(evicted);
+        }
+        let space = root.to_string_lossy().into_owned();
+
+        let out = run(
+            &env,
+            &args(&["card", "delete", "Cards/Gone", "--delete-unused-media", "--space", &space]),
+        );
+
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert!(!root.join("Cards/Gone.md").exists());
+        assert!(!root.join("Media/Gone (image 1).jpg").exists());
+        assert_eq!(test_seam::reads_of(&layout), 0, "the layout was brought down");
+        assert_eq!(test_seam::reads_of(&identity), 0, "the identity was brought down");
+        assert_eq!(test_seam::reads_of(&arrived), 0, "another note was brought down");
+    }
+
+    /// Х12 and SPEC_VAULT_LIFECYCLE.md, П2: with no copy of an evicted
+    /// layout on this Mac yet, what writes no new file goes on, and a new
+    /// file waits for the layout with a reason, never landing in the root
+    /// silently. Nothing waits for the download.
+    #[test]
+    fn without_a_copy_of_an_evicted_layout_only_new_files_wait_for_it() {
+        use crate::storage::cloud_files::test_seam;
+        let (_dir, env, root) = cloud_fixture();
+        let derived = env.app_data_dir.join("vaults").join(CLOUD_SPACE_ID);
+        for entry in std::fs::read_dir(&derived).unwrap().flatten() {
+            if entry.file_name().to_string_lossy().contains("layout") {
+                std::fs::remove_file(entry.path()).unwrap();
+            }
+        }
+        let layout = root.join(".mine/layout.json");
+        test_seam::mark_offloaded(&layout);
+
+        let out = run(&env, &args(&["collections"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        let out = run(&env, &args(&["card", "rename", "Cards/Other", "Renamed"]));
+        assert_eq!(out.code, EXIT_OK, "{}", out.stderr);
+        assert!(root.join("Cards/Renamed.md").exists());
+
+        let out = run(&env, &args(&["card", "create", "--title", "New"]));
+        assert_ne!(out.code, EXIT_OK, "{}", out.stdout);
+        assert!(out.stderr.contains("iCloud"), "{}", out.stderr);
+        assert!(!root.join("New.md").exists() && !root.join("Cards/New.md").exists());
+        assert_eq!(test_seam::reads_of(&layout), 0, "the layout was brought down");
+        test_seam::mark_downloaded(&layout);
     }
 
     #[test]

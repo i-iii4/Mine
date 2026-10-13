@@ -155,3 +155,46 @@ describe("the pill", () => {
     expect(list.querySelector("[data-tabs-indicator]")).toBeNull();
   });
 });
+
+/// SPEC_DEEP_AUDIT.md, Е6.11: focus alone never chooses a segment. The pill
+/// is the view switch and the theme in Settings: focus coming back to a
+/// segment (a menu closing, a window giving the keyboard back) switched the
+/// view; the clipper had to opt out of it on its own (SPEC_CLIPPER.md).
+describe("the pill's choice", () => {
+  function renderPill(onValueChange: (value: string) => void) {
+    render(
+      <Tabs value="grid" onValueChange={onValueChange}>
+        <TabsList variant="chrome" aria-label="View mode">
+          <TabsTrigger value="grid">Grid</TabsTrigger>
+          <TabsTrigger value="graph">Graph</TabsTrigger>
+        </TabsList>
+      </Tabs>,
+    );
+  }
+
+  it("is not made by a segment that only takes the focus", () => {
+    const onValueChange = vi.fn();
+    renderPill(onValueChange);
+
+    fireEvent.focus(screen.getByRole("tab", { name: "Graph" }));
+
+    expect(onValueChange).not.toHaveBeenCalled();
+  });
+
+  it("is made by a press, Enter or Space", () => {
+    const onValueChange = vi.fn();
+    renderPill(onValueChange);
+    const graph = screen.getByRole("tab", { name: "Graph" });
+
+    fireEvent.keyDown(graph, { key: "Enter" });
+    expect(onValueChange).toHaveBeenLastCalledWith("graph");
+
+    onValueChange.mockClear();
+    fireEvent.keyDown(graph, { key: " " });
+    expect(onValueChange).toHaveBeenLastCalledWith("graph");
+
+    onValueChange.mockClear();
+    fireEvent.mouseDown(graph, { button: 0 });
+    expect(onValueChange).toHaveBeenLastCalledWith("graph");
+  });
+});

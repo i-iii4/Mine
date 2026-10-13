@@ -101,7 +101,8 @@ impl SourceKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+/// What went wrong with one note of a pass.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ReconcileFileErrorKind {
     Metadata,
@@ -111,7 +112,9 @@ pub enum ReconcileFileErrorKind {
     DependencyOutsideVault,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+/// A note a pass could not read or project, and why: the index is ready
+/// without it (SPEC_DEEP_AUDIT.md, Н6), and the interface names it (Е6.17).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, specta::Type)]
 pub struct ReconcileFileError {
     pub path: String,
     pub kind: ReconcileFileErrorKind,
@@ -178,6 +181,28 @@ struct PreparedSource {
     dependency_changed: bool,
 }
 
+/// What a pass does with a note it must read whose contents iCloud keeps
+/// off this Mac (SPEC_CLOUD_STORAGE.md, Х12, Х24).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EvictedNotes {
+    /// Read it, waiting for the download, but never while holding the
+    /// index: such notes are brought down before the pass takes `build.lock`
+    /// ([`bring_down_notes_to_read`]). Every pass but an action's.
+    Read,
+    /// Leave it as the index holds it, for the next pass of the first kind:
+    /// an action never waits for a note it does not own.
+    Defer,
+}
+
+/// What the pass before an action did ([`reconcile_vault_for_action`]).
+#[derive(Debug, Clone)]
+pub struct ActionReconcile {
+    pub report: ReconcileReport,
+    /// The notes the pass had to read and left as the index holds them,
+    /// their contents being in iCloud. iCloud has been asked for them.
+    pub deferred: Vec<PathBuf>,
+}
+
 /// Reconcile source Markdown inventory with the rebuildable SQLite projection.
 ///
 /// Unchanged files are compared using metadata only. Content is read and parsed
@@ -187,6 +212,37 @@ pub fn reconcile_vault(
     vault: &VaultLayout,
 ) -> std::result::Result<ReconcileReport, ReconcileError> {
     reconcile_vault_with_progress(conn, vault, &|_, _| {})
+}
+
+/// Bring the index up to the files before an action takes from it the notes
+/// it acts on (SPEC_DEEP_AUDIT.md, Н5), never waiting for iCloud
+/// (SPEC_CLOUD_STORAGE.md, Х12). A note whose contents are in iCloud and
+/// which the pass would read (new to the index, or changed on another Mac
+/// since the last pass) is left as the index holds it: the next background
+/// pass reads it, and iCloud is asked for it meanwhile. A note unchanged by
+/// its metadata is unchanged and read by no pass. The live case of
+/// 13.10.2026: `mine card delete … --delete-unused-media` on «Тест» waited
+/// minutes reading `Oct 15th! ⌨️.md`, a note the clipper saved while no pass
+/// read it, whose contents macOS had taken away.
+pub fn reconcile_vault_for_action(
+    conn: &Connection,
+    vault: &VaultLayout,
+) -> std::result::Result<ActionReconcile, ReconcileError> {
+    let (report, deferred) = reconcile_projection(
+        conn,
+        vault,
+        &|_, _| {},
+        &file_identity::IdentityRefresh::default(),
+        EvictedNotes::Defer,
+    )?;
+    if !deferred.is_empty() {
+        log::info!(
+            "left {} notes whose contents are in iCloud to the background pass of {}",
+            deferred.len(),
+            vault.root().display()
+        );
+    }
+    Ok(ActionReconcile { report, deferred })
 }
 
 /// Reconcile with a progress callback: `(processed, total)` over the markdown
@@ -204,7 +260,9 @@ pub fn reconcile_vault_with_progress(
         vault,
         on_progress,
         &file_identity::IdentityRefresh::default(),
+        EvictedNotes::Read,
     )
+    .map(|(report, _)| report)
 }
 
 /// Runtime source maintenance repairs confirmed offline renames before indexing.
@@ -219,16 +277,22 @@ pub fn reconcile_runtime_vault_with_progress(
         source,
     })?;
     let identity = file_identity::reconcile(vault).map_err(ReconcileError::State)?;
-    reconcile_projection(conn, vault, on_progress, &identity)
+    reconcile_projection(conn, vault, on_progress, &identity, EvictedNotes::Read)
+        .map(|(report, _)| report)
 }
 
+/// The pass, and the notes it left unread ([`EvictedNotes::Defer`]).
 fn reconcile_projection(
     conn: &Connection,
     vault: &VaultLayout,
     on_progress: &(dyn Fn(usize, usize) + Sync),
     identity: &file_identity::IdentityRefresh,
-) -> std::result::Result<ReconcileReport, ReconcileError> {
+    evicted: EvictedNotes,
+) -> std::result::Result<(ReconcileReport, Vec<PathBuf>), ReconcileError> {
     const MAX_SOURCE_PASSES: usize = 3;
+    if evicted == EvictedNotes::Read {
+        bring_down_notes_to_read(conn, vault);
+    }
     let _write = crate::storage::source_mutation::begin_write().map_err(ReconcileError::State)?;
     let directory = vault.index_generation_dir();
     std::fs::create_dir_all(&directory).map_err(|error| ReconcileError::State(error.into()))?;
@@ -250,8 +314,8 @@ fn reconcile_projection(
     // kept `ready=false` for good, since every pass met it again, and the CLI
     // and the clipper helper saw an index never built.
     for _ in 0..MAX_SOURCE_PASSES {
-        let report = match reconcile_source_pass(conn, vault, on_progress, identity) {
-            Ok(report) => report,
+        let (report, deferred) = match reconcile_source_pass(conn, vault, on_progress, identity, evicted) {
+            Ok(pass) => pass,
             // The folder is gone and the pass rolled back without touching the
             // index: it is exactly as ready as before, and a space reopened
             // under its new name shows it at once (П31).
@@ -261,7 +325,10 @@ fn reconcile_projection(
             }
             Err(error) => return Err(error),
         };
-        let failed = failed_slugs(vault, &report.errors);
+        // The notes left unread are as the index held them, like those with
+        // an error: the check after the pass does not wait for them.
+        let mut skipped = failed_slugs(vault, &report.errors);
+        skipped.extend(deferred.iter().filter_map(|path| vault.slug_for_path(path).ok()));
         match &mut aggregate {
             Some(total) => {
                 total.inventory_markdown = report.inventory_markdown;
@@ -276,11 +343,16 @@ fn reconcile_projection(
             }
             None => aggregate = Some(report),
         }
-        if source_inventory_matches(conn, vault, &failed).map_err(ReconcileError::State)? {
-            db::set_index_ready(conn, true).map_err(ReconcileError::Commit)?;
-            return aggregate.ok_or_else(|| {
-                ReconcileError::State(anyhow::anyhow!("source pass produced no report"))
-            });
+        if source_inventory_matches(conn, vault, &skipped).map_err(ReconcileError::State)? {
+            // An action that left notes unread never makes an index that was
+            // not ready look complete (SPEC_CLOUD_STORAGE.md, Х12).
+            db::set_index_ready(conn, was_ready || deferred.is_empty())
+                .map_err(ReconcileError::Commit)?;
+            return aggregate
+                .map(|report| (report, deferred))
+                .ok_or_else(|| {
+                    ReconcileError::State(anyhow::anyhow!("source pass produced no report"))
+                });
         }
     }
     // The files kept changing: the index is exactly as ready as before the
@@ -335,7 +407,8 @@ fn reconcile_source_pass(
     vault: &VaultLayout,
     on_progress: &(dyn Fn(usize, usize) + Sync),
     identity: &file_identity::IdentityRefresh,
-) -> std::result::Result<ReconcileReport, ReconcileError> {
+    evicted: EvictedNotes,
+) -> std::result::Result<(ReconcileReport, Vec<PathBuf>), ReconcileError> {
     let started = Instant::now();
     crate::storage::root_guard::ensure_root_present(vault)?;
     let identity_affected = identity.affected_markdown.iter().collect::<BTreeSet<_>>();
@@ -395,6 +468,7 @@ fn reconcile_source_pass(
         ));
     }
     let mut content_reads = 0usize;
+    let mut deferred = Vec::new();
 
     for (path_index, path) in paths.iter().enumerate() {
         on_progress(path_index + 1, total_paths);
@@ -445,6 +519,12 @@ fn reconcile_source_pass(
             unchanged += 1;
             continue;
         }
+        // An action does not wait for a note iCloud took away: it stays as
+        // the index holds it, for the background pass (Х12).
+        if evicted == EvictedNotes::Defer && crate::storage::cloud_files::is_content_offloaded(path) {
+            deferred.push(path.clone());
+            continue;
+        }
 
         content_reads += 1;
         match prepare_source(
@@ -457,6 +537,20 @@ fn reconcile_source_pass(
             Ok(source) => prepared.push(source),
             Err(error) => errors.push(error),
         }
+    }
+    // The background pass will read the changed notes left here: iCloud
+    // brings them meanwhile. The new ones were asked for above.
+    let changed_in_cloud = deferred
+        .iter()
+        .filter(|path| {
+            vault
+                .slug_for_path(path)
+                .is_ok_and(|slug| stored.contains_key(&slug))
+        })
+        .map(PathBuf::as_path)
+        .collect::<Vec<_>>();
+    if !changed_in_cloud.is_empty() {
+        crate::storage::icloud_downloads::request_downloads(changed_in_cloud);
     }
 
     let prepared_slugs = prepared
@@ -594,7 +688,7 @@ fn reconcile_source_pass(
         let _ = article_audio::delete_all_artifacts(vault, slug);
     }
 
-    Ok(ReconcileReport {
+    let report = ReconcileReport {
         inventory_markdown: live_slugs.len(),
         unchanged,
         upserted,
@@ -604,7 +698,61 @@ fn reconcile_source_pass(
         content_reads,
         database_writes,
         elapsed_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-    })
+    };
+    Ok((report, deferred))
+}
+
+/// Bring down, before the pass takes the index for itself (`build.lock`),
+/// the notes it will read whose contents are in iCloud: new to the index or
+/// changed since the last pass (SPEC_CLOUD_STORAGE.md, Х12, Х24). iCloud is
+/// asked for all of them at once, and each is read once it arrives, with no
+/// lock held: the pass then reads them from this Mac, and an action that
+/// comes meanwhile does not wait behind the download. Until 13.10.2026 the
+/// pass read them holding the lock, and every action of the space, the
+/// CLI's too, waited for the download. Only an index already built does
+/// this: the first build reads every note under its progress
+/// (SPEC_ONBOARDING.md, О13), and no action has an index to wait on yet. A
+/// note that cannot be read here is left to the pass, which reports it.
+fn bring_down_notes_to_read(conn: &Connection, vault: &VaultLayout) {
+    if !db::index_is_ready(conn).unwrap_or(false) {
+        return;
+    }
+    let (Ok(stored), Ok(paths)) = (load_source_states(conn), files::scan_md_files(vault)) else {
+        return;
+    };
+    let evicted = paths
+        .into_iter()
+        .filter(|path| crate::storage::cloud_files::is_content_offloaded(path))
+        .filter(|path| must_be_read(vault, &stored, path))
+        .collect::<Vec<_>>();
+    if evicted.is_empty() {
+        return;
+    }
+    let accepted =
+        crate::storage::icloud_downloads::request_downloads(evicted.iter().map(PathBuf::as_path));
+    log::info!(
+        "bringing down {} notes from iCloud ({accepted} requests accepted) before the pass of {}",
+        evicted.len(),
+        vault.root().display()
+    );
+    for path in &evicted {
+        if let Err(error) = files::read_block_file(vault, path) {
+            log::debug!("{} did not come down before the pass: {error:#}", path.display());
+        }
+    }
+}
+
+/// Whether a pass reads the note at `path`: new to the index, or its file or
+/// a file it shows changed since the pass that read it.
+fn must_be_read(vault: &VaultLayout, stored: &BTreeMap<String, StoredSourceState>, path: &Path) -> bool {
+    let Ok(slug) = vault.slug_for_path(path) else {
+        return false;
+    };
+    let Some(state) = stored.get(&slug) else {
+        return true;
+    };
+    FileStamp::read(path).map_or(true, |stamp| stamp != state.stamp.markdown)
+        || dependencies_changed(vault, &state.stamp.dependencies)
 }
 
 /// Project one already-committed Markdown source and its dependency stamp.
@@ -975,6 +1123,43 @@ mod tests {
         let vault = VaultLayout::new(dir.path().to_path_buf());
         let conn = db::open_or_create(&vault.index_db_path()).unwrap();
         (dir, vault, conn)
+    }
+
+    /// SPEC_CLOUD_STORAGE.md, Х12: an action's pass reads no note iCloud
+    /// took away. A note new to the index or changed since the last pass
+    /// stays as the index holds it, for the background pass, which reads it.
+    /// An index never built is not called ready by an action that left notes
+    /// unread; a built one stays ready.
+    #[test]
+    fn an_actions_pass_leaves_evicted_notes_to_the_background_pass() {
+        use crate::storage::cloud_files::test_seam;
+        let (_dir, vault, conn) = setup();
+        std::fs::write(vault.root().join("Here.md"), "# Here\n\nLocal text.\n").unwrap();
+        let away = vault.root().join("Away.md");
+        std::fs::write(&away, "# Away\n\nFirst text.\n").unwrap();
+        test_seam::mark_offloaded(&away);
+
+        let pass = reconcile_vault_for_action(&conn, &vault).unwrap();
+        assert_eq!(pass.deferred, [away.clone()]);
+        assert!(!db::index_is_ready(&conn).unwrap());
+        assert!(index::get_block(&conn, "Here").unwrap().is_some());
+        assert!(index::get_block(&conn, "Away").unwrap().is_none());
+        assert_eq!(test_seam::reads_of(&away), 0);
+
+        reconcile_vault(&conn, &vault).unwrap();
+        assert!(db::index_is_ready(&conn).unwrap());
+        assert!(index::get_block(&conn, "Away").unwrap().is_some());
+
+        std::fs::write(&away, "# Away\n\nChanged on another Mac.\n").unwrap();
+        test_seam::mark_offloaded(&away);
+        let pass = reconcile_vault_for_action(&conn, &vault).unwrap();
+        assert_eq!(pass.deferred, [away.clone()]);
+        assert!(db::index_is_ready(&conn).unwrap());
+        assert!(index::get_block(&conn, "Away").unwrap().unwrap().body.contains("First text"));
+        assert_eq!(test_seam::reads_of(&away), 1, "only the background pass read it");
+
+        reconcile_vault(&conn, &vault).unwrap();
+        assert!(index::get_block(&conn, "Away").unwrap().unwrap().body.contains("another Mac"));
     }
 
     /// П29: a space renamed in Finder reads as every card deleted. Nothing is

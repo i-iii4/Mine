@@ -160,7 +160,7 @@ Native Messaging сохраняет API v2 и объявляет `save_operation
 |---|---|
 | Запрос `save_block` | `operation_id`, `operation_mode: start/resume`, `binding_id`, `executor_id`, необязательный pinned `saved_at` плюс прежние поля контента и upload. Подготовленный документ передаётся ядру как `CaptureRequest`; Blob/файлы остаются у исполнителя |
 | `SpaceBinding` | Непрозрачный `binding_id`, проверенная идентичность папки, snapshot раскладки; абсолютный путь/handle хранит исполнитель. Копия vault с тем же marker не автоматически та же папка |
-| Ответ операции | `operation_id`, `outcome: not_committed/committed/unknown`, `slug`, `block_type`, `code/error/warning`. `terminal_rejected` подтверждает отказ до source effects; только он снимает неуспешную pinned operation. `resumable` разрешает продолжение сохранённого pre-effect payload |
+| Ответ операции | `operation_id`, `outcome: not_committed/committed/unknown`, `slug`, `block_type`, `code/error/warning`. `terminal_rejected` подтверждает отказ до source effects; только он снимает неуспешную pinned operation. `resumable` разрешает продолжение сохранённого pre-effect payload. Нативный `committed` несёт `remote_media`: медиа тела и постеры, оставшиеся ссылкой на чужой сервер, с причиной (SPEC_DEEP_AUDIT.md, Н10); он хранится в квитанции и возвращается при проверке исхода |
 | Возможности исполнителя | Native features включают `save_operation_v1`, `operation_lookup_v1`, прежний `pending_uploads_v1`. Browser status явно сообщает `atomic_no_clobber:false`, `durable_flush:false`, `serialized_extension_writes:true`; отсутствие системной гарантии не подменяется поддержкой |
 | Operation record исполнителя | Версия, ID и fingerprint неизменяемого запроса, сохранённый запрос, привязка, исполнитель, фаза, цели `{relative_path, size, sha256, staged_resource, publication_state, ownership_evidence?}`, результат и при наличии `legacy_upload_id`. Native различает legacy `Preparing` и новые `StagingV2`/`PlannedV2` |
 
@@ -168,7 +168,11 @@ Native Messaging сохраняет API v2 и объявляет `save_operation
 папка — отдельные состояния. Отсутствие ответа не является проверкой установки.
 
 `outcome=committed` означает подтверждённую публикацию полного Markdown
-и обязательных медиа. Ошибка синхронизации каталога **после** успешной
+и обязательных медиа. Имя карточки, которое другой писатель занял в момент
+публикации (`EEXIST`) или после публикации её медиа, нативный исполнитель
+меняет на следующее свободное по правилу ядра и публикует карточку там, не
+больше трёх раз за публикацию; ответ называет новый `slug` (SPEC_DEEP_AUDIT.md,
+Е4.14). Ошибка синхронизации каталога **после** успешной
 публикации означает committed с предупреждением о durability, не разрешение удалить
 медиа как при отсутствии карточки. Если наблюдатель не знает, произошла ли
 публикация, результат `unknown`. `not_committed` относится к карточке;

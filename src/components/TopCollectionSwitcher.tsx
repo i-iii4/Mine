@@ -12,28 +12,14 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Dialog,
-  DialogCancel,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { MODAL_ERROR_CLASS } from "@/components/ui/modal-window";
-import { NEW_COLLECTION_DESCRIPTION } from "@/components/CreateCollectionDialog";
+import { CreateCollectionDialog } from "@/components/CreateCollectionDialog";
+import type { CollectionNameCheck } from "@/hooks/useCollectionNameRefusal";
 import { MenuTextTrigger } from "@/components/MenuTextTrigger";
 import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
-import {
-  filterAndRankChannelSearch,
-  normalizeChannelSearchText,
-} from "@/lib/channelSearch";
+import { filterAndRankChannelSearch } from "@/lib/channelSearch";
 import { collectionRefLabel } from "@/lib/collections";
 import { cn } from "@/lib/utils";
 import type { TagCount } from "@/types";
@@ -52,7 +38,11 @@ interface TopCollectionSwitcherProps {
   currentAuthor?: string;
   orderedTags: readonly TagCount[];
   onNavigate: (tag?: string) => void;
-  onCreateCollection: (tag: string) => void | Promise<void>;
+  /** Makes the collection the window named; a refusal rejects, and the
+   *  window shows why (SPEC_DEEP_AUDIT.md, Е6.2). */
+  onCreateCollection: (tag: string) => Promise<unknown>;
+  /** The check of a new collection's name as it is typed. */
+  onCheckCollectionName?: CollectionNameCheck;
   /// The path goes on after it with no padding of its own: an open card's
   /// name stands past a line the half over the feed draws, the feed's own
   /// controls at the far right. Outer padding stands only toward a boundary,
@@ -76,6 +66,7 @@ export function TopCollectionSwitcher({
   orderedTags,
   onNavigate,
   onCreateCollection,
+  onCheckCollectionName,
   joinsNext = false,
 }: TopCollectionSwitcherProps) {
   const [open, setOpen] = useState(false);
@@ -83,8 +74,6 @@ export function TopCollectionSwitcher({
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createName, setCreateName] = useState("");
-  const [createNameError, setCreateNameError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
   const actionIdPrefix = useId();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const topChromeTrigger = useTopChromeTriggerInteraction({
@@ -117,16 +106,6 @@ export function TopCollectionSwitcher({
     )
   ), [items, query]);
 
-  const normalizedExistingCollections = useMemo(() => (
-    new Set([
-      normalizeChannelSearchText("Everything"),
-      normalizeChannelSearchText("__all__"),
-      ...orderedTags.flatMap((tag) => [
-        normalizeChannelSearchText(tag.tag),
-        normalizeChannelSearchText(collectionRefLabel(tag.tag)),
-      ]),
-    ])
-  ), [orderedTags]);
   const actionCount = visibleItems.length + 1;
   const createActionIndex = visibleItems.length;
   const activeActionId = activeIndex === null
@@ -173,35 +152,8 @@ export function TopCollectionSwitcher({
     setOpen(false);
     setActiveIndex(null);
     setCreateName(trimmedQuery);
-    setCreateNameError(null);
     setCreateDialogOpen(true);
   }, [trimmedQuery]);
-
-  const handleCreateSubmit = useCallback(async () => {
-    if (creating) return;
-    const nextName = createName.trim().replace(/\s+/g, " ");
-    if (!nextName) {
-      setCreateNameError("Enter a channel name");
-      return;
-    }
-    if (normalizedExistingCollections.has(normalizeChannelSearchText(nextName))) {
-      setCreateNameError("Channel already exists");
-      return;
-    }
-    setCreating(true);
-    try {
-      await onCreateCollection(nextName);
-      setCreateDialogOpen(false);
-      setCreateName("");
-      setCreateNameError(null);
-      setQuery("");
-    } catch (error) {
-      console.error("Failed to create collection:", error);
-      setCreateNameError("Could not create channel");
-    } finally {
-      setCreating(false);
-    }
-  }, [createName, creating, normalizedExistingCollections, onCreateCollection]);
 
   const moveActiveIndex = useCallback((direction: 1 | -1) => {
     if (actionCount <= 0) return;
@@ -338,79 +290,16 @@ export function TopCollectionSwitcher({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <CreateCollectionNameDialog
+      <CreateCollectionDialog
         open={createDialogOpen}
-        name={createName}
-        error={createNameError}
-        creating={creating}
+        initialName={createName}
         onOpenChange={setCreateDialogOpen}
-        onNameChange={(name) => {
-          setCreateName(name);
-          setCreateNameError(null);
+        onCheckName={onCheckCollectionName}
+        onCreate={async (name) => {
+          await onCreateCollection(name);
+          setQuery("");
         }}
-        onSubmit={() => void handleCreateSubmit()}
       />
     </>
-  );
-}
-
-/** Naming the collection `Create collection` makes: the same window as the
- *  sidebar's New collection (CreateCollectionDialog), with the refusal of an
- *  empty or taken name under the field. */
-export function CreateCollectionNameDialog({
-  open,
-  name,
-  error,
-  creating,
-  onOpenChange,
-  onNameChange,
-  onSubmit,
-}: {
-  open: boolean;
-  name: string;
-  error: string | null;
-  creating: boolean;
-  onOpenChange: (open: boolean) => void;
-  onNameChange: (name: string) => void;
-  onSubmit: () => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <form
-          className="grid gap-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onSubmit();
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>New collection</DialogTitle>
-            <DialogDescription className="sr-only">{NEW_COLLECTION_DESCRIPTION}</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-2">
-            <Input
-              aria-label="Collection name"
-              placeholder="Collection name"
-              autoFocus
-              variant="default"
-              value={name}
-              onChange={(event) => onNameChange(event.target.value)}
-            />
-            {error && (
-              <p role="alert" className={MODAL_ERROR_CLASS}>
-                {error}
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <DialogCancel>Cancel</DialogCancel>
-            <Button type="submit" disabled={creating}>
-              Create
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
 }

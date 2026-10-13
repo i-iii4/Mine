@@ -252,7 +252,12 @@ SPEC_IDENTITY_ROBUSTNESS.md, «Запись и уникальность имён
   стопке уведомлений `NotificationAnchor` в `App.tsx` при `lead`, как
   `CloudRecommendation`; число конфликтов он читает `list_vault_conflict_paths`
   (пути из таблицы, без запуска помощника) при открытии вкладки и по событию
-  `vault-conflicts-changed`.
+  `vault-conflicts-changed`;
+- проверка пространства, которая не удалась, приходит тем же событием
+  (`check_error`, SPEC_DEEP_AUDIT.md, Е5.11) и показывает второе уведомление
+  того же компонента: заголовок `Could not check for iCloud sync conflicts`,
+  строка `text-sm text-destructive` со словами сбоя; удачная проверка его
+  убирает, крестик прячет его до другой причины (Е6.17, 13.10.2026).
 
 **ВК11. Окно `Resolve iCloud sync conflicts`.** `Dialog`, ширина `content`,
 крестик, `Cancel` нет, ряда кнопок внизу нет: окно закрывают крестик и Escape

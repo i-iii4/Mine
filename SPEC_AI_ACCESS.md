@@ -258,6 +258,12 @@ watcher приложения видит те же изменения и сход
 - `mine card create [--title] [--url] [--collection] [--file] [--from]` —
   карточка без поля `type` (решение 044), слаг по правилам приложения,
   раскладка по `layout.json`;
+- CLI не ждёт iCloud ради служебных файлов пространства (13.10.2026,
+  [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md), Х12): идентичность при
+  выгруженном `.mine/vault-id` берётся из реестра пространств по пути папки,
+  раскладка при выгруженном `.mine/layout.json` берётся из копии этого Мака.
+  Без копии команды, которые не создают файлов, идут дальше, а `card create`,
+  `collection create` и `merge` отказывают с причиной;
 - `mine card rename <slug> <new-name>`: файл и индекс вместе; страница
   коллекции переименовывается как коллекция (ниже);
 - `mine card delete <slug> [--delete-unused-media] [--dry-run]` — тот же план

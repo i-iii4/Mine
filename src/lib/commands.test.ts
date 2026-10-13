@@ -22,6 +22,12 @@ describe("IPC command adapter", () => {
     mockInvoke.mockResolvedValue(null);
   });
 
+  // SPEC_DEEP_AUDIT.md, Е6.15: the words of the dictionary, Space not vault.
+  it("says no space is open in the words of the dictionary", async () => {
+    mockInvoke.mockRejectedValueOnce({ kind: "no_vault" });
+    await expect(getVaultPath()).rejects.toThrow("No space is open.");
+  });
+
   it("turns the generated generic command error into a readable Error", async () => {
     mockInvoke.mockRejectedValueOnce({
       kind: "internal",

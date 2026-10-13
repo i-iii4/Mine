@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen } from "@testing-library/react";
-import { sourceVideoDownloadStatus } from "@/lib/commands";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { sourceVideoDownloadStatus, youtubePlayerUrl } from "@/lib/commands";
 import { parseYoutubeSource } from "@/lib/youtubeSource";
 import { DeleteSourceVideoDialog, YoutubeSourcePlayer } from "./YoutubeSourcePlayer";
 
@@ -84,5 +84,26 @@ describe("DeleteSourceVideoDialog", () => {
     expect(dialog).toHaveAccessibleDescription(
       "The video link and its poster are removed from this element and cannot be restored. The poster file goes to the Trash unless another element uses it.",
     );
+  });
+
+  // SPEC_DEEP_AUDIT.md, Е6.8: the poster shown while the player loads.
+  it("shows no broken-image icon for a poster whose file will not load", async () => {
+    vi.mocked(youtubePlayerUrl).mockImplementationOnce(() => new Promise<string>(() => {}));
+    const source = parseYoutubeSource(SOURCE_URL);
+    if (!source) throw new Error("The test source must be a YouTube video");
+    const { container } = render(
+      <YoutubeSourcePlayer
+        slug="film"
+        source={source}
+        poster="asset://localhost/Media/film.jpg"
+        title="Film"
+        onDelete={vi.fn(async () => {})}
+        onDownloaded={vi.fn(async () => {})}
+      />,
+    );
+    const poster = container.querySelector("img") as HTMLImageElement;
+    expect(poster).not.toBeNull();
+    fireEvent.error(poster);
+    expect(container.querySelector("img")).toBeNull();
   });
 });

@@ -15,7 +15,7 @@ pub mod clipper_setup;
 pub mod cloud_recommendation;
 pub mod conflicts;
 pub mod effects;
-mod freshness;
+pub mod freshness;
 pub mod graph;
 pub mod icloud_progress;
 pub mod import;

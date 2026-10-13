@@ -35,7 +35,9 @@ pub struct ChannelDto {
     pub description: Option<String>,
     pub color: Option<String>,
     pub icon: Option<String>,
-    pub position: u32,
+    /// Manual order, smallest first; a new collection takes one before the
+    /// first (SPEC_DEEP_AUDIT.md, Е6.2), so it may be below zero.
+    pub position: i64,
     pub created_at: String,
     /// Number of blocks with this tag.
     pub block_count: usize,
@@ -241,7 +243,8 @@ pub(crate) fn create_channel_inner(
     let tag = mine_core::save::select_unique_file_stem(&tag, "md", &occupied)
         .map_err(|error| CommandError::Internal(error.to_string()))?;
     let mut channel = Channel::new(&tag, dt).map_err(|e| CommandError::Internal(e.to_string()))?;
-    channel.position = index::next_channel_position(conn)?;
+    // First in the manual order, one write of this page only (Е6.2).
+    channel.position = index::new_channel_position(conn)?;
 
     let block = channel_to_block(&channel);
     // Existing documents keep their paths; new ones follow the configured layout.
@@ -273,7 +276,7 @@ pub(crate) fn create_channel_inner(
 #[derive(Debug, Deserialize)]
 pub struct ReorderItem {
     pub tag: String,
-    pub position: u32,
+    pub position: i64,
 }
 
 /// Reorder collections by writing each moved one's new `position` into its
@@ -507,13 +510,14 @@ struct CollectionRenamed {
 /// Bring the index up to the files before a collection mutation reads the
 /// collection's members and pages from it: a card connected in Obsidian
 /// while nothing watched the space is a member, as its file says
-/// (SPEC_DEEP_AUDIT.md, Н2). Notes the pass cannot read stay as the index
-/// held them; the mutation reads its candidates again from disk.
+/// (SPEC_DEEP_AUDIT.md, Н2). Notes the pass cannot read, or whose contents
+/// are in iCloud, stay as the index held them (SPEC_CLOUD_STORAGE.md, Х12);
+/// the mutation reads its candidates again from disk.
 fn reconcile_before_collection_mutation(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
 ) -> Result<(), CommandError> {
-    crate::storage::reconcile::reconcile_vault(conn, vault)
+    crate::storage::reconcile::reconcile_vault_for_action(conn, vault)
         .map(|_| ())
         .map_err(|error| {
             CommandError::Internal(format!("bring the index up to the files: {error}"))
@@ -1377,7 +1381,7 @@ mod tests {
         assert!(art.contains("position: 2"), "{art}");
         let guard = main_space.vault_state.lock().unwrap();
         let conn = &guard.as_ref().unwrap().conn;
-        let listed: Vec<(String, u32)> = index::list_channels(conn)
+        let listed: Vec<(String, i64)> = index::list_channels(conn)
             .unwrap()
             .into_iter()
             .map(|channel| (channel.tag, channel.position))

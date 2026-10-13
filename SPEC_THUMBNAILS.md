@@ -907,6 +907,15 @@ Cache-buster заставляет browser refetch thumb from disk (new JPEG cont
 рамка остаётся такой же, как при загрузке, а `thumb:updated` этой карточки
 загружает подложку снова.
 
+С 13.10.2026 правило держит каждая картинка файла, которого может не быть
+(SPEC_DEEP_AUDIT.md, Е6.8): превью медиа окон `Delete element?` и `Delete
+selected elements?` (`DeleteMediaPreviewGrid`), окна `Delete media file?`,
+картинка просмотрщика (`ImagePreviewOverlay`), постер проигрывателя YouTube и
+превью сирот в настройках. Их рисует общий `MissingAwareImage`
+(`src/components/MissingAwareImage.tsx`, тот же `usePreviewFileRetry`): файл,
+который не загрузился, прячет картинку, ячейка остаётся со своей заливкой,
+значка битой картинки WebKit нет нигде.
+
 ### Initial load
 
 At app startup, frontend still calls `listChannelPreviews(20)` once to populate initial state. After that, updates happen via events. Initial call needed because startup may load a vault with existing blocks that have no pending events.

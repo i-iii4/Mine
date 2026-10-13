@@ -32,8 +32,10 @@ pub struct Channel {
     pub color: Option<String>,
     /// Icon identifier.
     pub icon: Option<String>,
-    /// Position in sidebar (0 = top).
-    pub position: u32,
+    /// Place in the manual order of the sidebar: the smallest stands on top.
+    /// Signed, so a new collection takes the first place with a write of its
+    /// own page only ([`new_collection_position`]).
+    pub position: i64,
     /// When the channel was created.
     pub created_at: DateTime,
 }
@@ -57,7 +59,7 @@ impl Channel {
     }
 
     /// Set the channel's sidebar position.
-    pub fn update_position(&mut self, position: u32) {
+    pub fn update_position(&mut self, position: i64) {
         self.position = position;
     }
 
@@ -74,6 +76,24 @@ impl Channel {
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
+
+/// The position of a new collection: first in the manual order, one before
+/// the smallest position of the collections there are, `0` in a space
+/// without any. `positions` are the positions as the index reads them, a page
+/// without `position` at `0`.
+///
+/// One rule for every way a collection is made: the app, the CLI and the
+/// MCP, the clipper's helper and the browser folder
+/// (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, «Место новой коллекции»). Only the
+/// new page is written: the others keep their positions, so making a
+/// collection never rewrites the pages of the rest (SPEC_DEEP_AUDIT.md,
+/// Е6.2).
+pub fn new_collection_position<I: IntoIterator<Item = i64>>(positions: I) -> i64 {
+    positions
+        .into_iter()
+        .min()
+        .map_or(0, |smallest| smallest.saturating_sub(1))
+}
 
 /// Validate a hex color string: #RGB or #RRGGBB.
 pub fn validate_color(color: &str) -> bool {
@@ -93,6 +113,25 @@ mod tests {
 
     fn dt() -> DateTime {
         DateTime::new("2026-02-26T14:30:00Z").unwrap()
+    }
+
+    // ── new_collection_position ─────────────────────────────────────────
+
+    #[test]
+    fn a_new_collection_takes_the_place_before_the_first() {
+        assert_eq!(new_collection_position([0, 1, 2]), -1);
+        assert_eq!(new_collection_position([3, 7]), 2);
+        assert_eq!(new_collection_position([-2, -1, 0, 5]), -3);
+    }
+
+    #[test]
+    fn the_first_collection_of_a_space_stands_at_zero() {
+        assert_eq!(new_collection_position(std::iter::empty()), 0);
+    }
+
+    #[test]
+    fn the_smallest_position_does_not_wrap() {
+        assert_eq!(new_collection_position([i64::MIN]), i64::MIN);
     }
 
     // ── Channel::new ────────────────────────────────────────────────────

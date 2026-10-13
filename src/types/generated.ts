@@ -84,7 +84,12 @@ export type CardKind = "article" | "media" | "link" | "channel"
 /**
  * Serializable channel data for the frontend.
  */
-export type ChannelDto = { tag: string; description: string | null; color: string | null; icon: string | null; position: number; created_at: string;
+export type ChannelDto = { tag: string; description: string | null; color: string | null; icon: string | null;
+/**
+ * Manual order, smallest first; a new collection takes one before the
+ * first (SPEC_DEEP_AUDIT.md, Е6.2), so it may be below zero.
+ */
+position: number; created_at: string;
 /**
  * Number of blocks with this tag.
  */
@@ -218,7 +223,7 @@ device?: string | null }
 /**
  * Commands supported by the JSON/WASM bridge, generated into TypeScript.
  */
-export type CoreCommand = { op: "capture"; request: CaptureRequest } | { op: "name"; title: string | null; url: string | null; layout: VaultWriteLayout; existing: string[] } | { op: "unique_file_name"; name: string; extension: string; existing: string[] } | { op: "shortest_link"; target: string; paths: string[]; omit_md_ext: boolean } | { op: "layout"; layout: VaultWriteLayout } | { op: "detect_layout"; stored: VaultWriteLayout | null; empty: boolean; cards: boolean; media: boolean; collections: boolean } | { op: "collection"; slug: string; saved_at: string } | { op: "inspect"; slug: string; markdown: string } |
+export type CoreCommand = { op: "capture"; request: CaptureRequest } | { op: "name"; title: string | null; url: string | null; layout: VaultWriteLayout; existing: string[] } | { op: "unique_file_name"; name: string; extension: string; existing: string[] } | { op: "shortest_link"; target: string; paths: string[]; omit_md_ext: boolean } | { op: "layout"; layout: VaultWriteLayout } | { op: "detect_layout"; stored: VaultWriteLayout | null; empty: boolean; cards: boolean; media: boolean; collections: boolean } | { op: "collection"; slug: string; saved_at: string; positions?: number[] } | { op: "inspect"; slug: string; markdown: string } |
 /**
  * The collection list of a space read without an index.
  */
@@ -583,6 +588,17 @@ export type PromoteOrphanResult = { created: IndexedBlock[]; skipped: string[] }
  * What the executor can actually establish about the expected Markdown file.
  */
 export type PublicationEvidence = "not_required" | "missing" | "matches" | "conflict" | "unreadable"
+
+/**
+ * A note a pass could not read or project, and why: the index is ready
+ * without it (SPEC_DEEP_AUDIT.md, Н6), and the interface names it (Е6.17).
+ */
+export type ReconcileFileError = { path: string; kind: ReconcileFileErrorKind; message: string }
+
+/**
+ * What went wrong with one note of a pass.
+ */
+export type ReconcileFileErrorKind = "metadata" | "read" | "parse" | "index" | "dependency_outside_vault"
 
 export type RemoveMediaAssetFromCardParams = { media_ref: string; source_slug: string; reference_kind: MediaAssetReferenceKind;
 /**
@@ -1004,6 +1020,21 @@ export type VaultConflictsChanged = { count: number;
  * would have found are not counted (SPEC_DEEP_AUDIT.md, Н11, Е5.11).
  */
 check_error: string | null }
+
+/**
+ * `vault-freshness-changed`: a pass of the space against its files ended.
+ */
+export type VaultFreshnessChanged = { vault_path: string; generation: number;
+/**
+ * `fresh`, `degraded` (some notes failed) or `failed` (the pass failed).
+ */
+state: string; joined_callers: number; inventory_markdown: number; content_reads: number; database_writes: number; error_count: number;
+/**
+ * The notes the pass could not read or project, with why: the index is
+ * ready without them (SPEC_DEEP_AUDIT.md, Н6), and the interface names
+ * them (Е6.17).
+ */
+error_files: ReconcileFileError[]; elapsed_ms: number; fast_path_hits: number }
 
 export type VaultOpenResult = { indexed: number; errors: number; sync_in_progress: boolean;
 /**

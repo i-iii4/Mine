@@ -39,7 +39,7 @@ describe("VaultPicker (SPEC_ONBOARDING.md, О9 to О12)", () => {
     const { container } = render(<VaultPicker onVaultSelected={vi.fn()} />);
     const lines = container.querySelectorAll("p");
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toHaveTextContent("Mine keeps your cards as files in a folder.");
+    expect(lines[0]).toHaveTextContent("Mine keeps your elements as files in a folder.");
     // The text size of the type scale, as on every screen that stands in
     // for the window (ScreenState, 09.10.2026); 12px is for meta.
     expect(lines[0]).toHaveClass("text-base", "text-foreground");

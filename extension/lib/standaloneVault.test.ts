@@ -283,6 +283,16 @@ describe("browser executor backed by actual WASM", () => {
     expect(await vault.createStandaloneChannel("Reference", null, options())).toMatchObject({ ok: true, tag: "Reference" });
     expect(await vault.listStandaloneChannels(options())).toMatchObject({ ok: true, channels: [{ tag: "Reference" }] });
   });
+  it("puts a new collection first, as the app does, and writes no other page (Е6.2)", async () => {
+    expect(await vault.createStandaloneChannel("Alpha", null, options())).toMatchObject({ ok: true, tag: "Alpha" });
+    const alpha = await folder.text("Collections/Alpha.md");
+    expect(await vault.createStandaloneChannel("Zeta", null, options())).toMatchObject({ ok: true, tag: "Zeta" });
+    expect(alpha).toContain("\nposition: 0\n");
+    expect(await folder.text("Collections/Zeta.md")).toContain("\nposition: -1\n");
+    expect(await folder.text("Collections/Alpha.md")).toBe(alpha);
+    const listed = await vault.listStandaloneChannels(options());
+    expect(listed).toMatchObject({ ok: true, channels: [{ tag: "Zeta" }, { tag: "Alpha" }] });
+  });
   it.each([
     ["an empty folder", async () => undefined],
     ["a folder with the standard layout recorded", async () => {

@@ -383,7 +383,19 @@ pub struct OrphanMediaBatchRequest {
     pub file_names: Vec<String>,
 }
 
+/// The identity of the open space: the name of the derived store it was
+/// opened with (`vaults/<vault-id>`), never the identity file, whose contents
+/// iCloud may have taken away (SPEC_CLOUD_STORAGE.md, Х12). A store inside
+/// the space (tools, tests) bears no such name, and the file answers.
 fn space_id_of(vault: &VaultLayout) -> Result<String, CommandError> {
+    if let Some(id) = vault
+        .derived_root()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| crate::space_registry::is_space_id(name))
+    {
+        return Ok(id.to_string());
+    }
     crate::space_registry::read_space_id(vault.root())
         .ok_or_else(|| CommandError::Internal("the open space has no identity file".into()))
 }
@@ -1388,6 +1400,43 @@ mod tests {
         assert_eq!(promoted.created.len(), 1);
         assert_eq!(crate::storage::cloud_files::test_seam::reads_of(&evicted), 0);
         assert!(files::take_note_reads().is_empty());
+    }
+
+    /// SPEC_CLOUD_STORAGE.md, Х12: the orphan batch tells the open space by
+    /// the derived store it was opened with, not by reading the identity
+    /// file, which iCloud may have taken away.
+    #[test]
+    fn an_orphan_batch_never_reads_an_evicted_space_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Space");
+        std::fs::create_dir_all(root.join(".mine")).unwrap();
+        let id = "0123456789abcdef0123456789abcdef";
+        let identity = root.join(".mine/vault-id");
+        std::fs::write(&identity, id).unwrap();
+        crate::storage::cloud_files::test_seam::mark_offloaded(&identity);
+        let vault = VaultLayout::with_derived_root(root, dir.path().join("vaults").join(id));
+
+        let files = orphan_request_files(
+            &vault,
+            OrphanMediaBatchRequest {
+                vault_id: id.to_string(),
+                file_names: vec!["lonely.jpg".to_string()],
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error:?}"));
+
+        assert_eq!(files, ["lonely.jpg"]);
+        assert!(matches!(
+            orphan_request_files(
+                &vault,
+                OrphanMediaBatchRequest {
+                    vault_id: "fedcba9876543210fedcba9876543210".to_string(),
+                    file_names: Vec::new(),
+                },
+            ),
+            Err(CommandError::SpaceChanged)
+        ));
+        assert_eq!(crate::storage::cloud_files::test_seam::reads_of(&identity), 0);
     }
 
     /// Е5.6: a file an Obsidian canvas shows is in use: it is no orphan, and

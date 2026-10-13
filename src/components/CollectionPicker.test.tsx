@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  BatchCollectionPicker,
   COLLECTION_PICKER_INLINE_SURFACE_CLASS,
   CollectionPicker,
 } from "./CollectionPicker";
@@ -346,5 +347,88 @@ describe("CollectionPicker", () => {
     expect(picker).toHaveClass("h-full");
     expect(input).toHaveClass("h-10", "rounded-0", "px-3", "py-0");
     expect(input).not.toHaveClass("focus-visible:border-border-accent");
+  });
+
+  /// SPEC_DEEP_AUDIT.md, Е6.3: a Connect the app could not make leaves the
+  /// row as it was; before, the row said Connected after a failure.
+  it("takes back a Connect that was not made", async () => {
+    let answer!: (applied: boolean) => void;
+    const onToggleTag = vi.fn(() => new Promise<boolean>((resolve) => { answer = resolve; }));
+    render(
+      <CollectionPicker
+        blockSlug="alpha"
+        selectedTags={[]}
+        tags={[tag("tools", 1)]}
+        onToggleTag={onToggleTag}
+        onCreateAndAssign={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect tools" }));
+    // Shown at once, while the command is on its way.
+    expect(screen.getByRole("button", { name: "Disconnect tools" })).toBeInTheDocument();
+
+    await act(async () => answer(false));
+
+    expect(screen.getByRole("button", { name: "Connect tools" })).toBeInTheDocument();
+  });
+
+  /// Е6.2: the name of a new collection is checked as it is typed, by the
+  /// rule of every other place a collection is named, and the reason shows
+  /// where it is typed; a refused name offers no Create.
+  it("checks the name of a new collection as it is typed and shows why it is refused", async () => {
+    const onCheckName = vi.fn(async (name: string) => (
+      name.includes("/") ? "A new collection cannot be in a folder: type its name without /." : null
+    ));
+    const onCreateAndAssign = vi.fn();
+    render(
+      <CollectionPicker
+        blockSlug="alpha"
+        selectedTags={[]}
+        tags={[tag("tools", 1)]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={onCreateAndAssign}
+        onCheckName={onCheckName}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Search collections..."), { target: { value: "a/b" } });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A new collection cannot be in a folder: type its name without /.",
+    );
+    expect(onCheckName).toHaveBeenCalledWith("a/b");
+    expect(screen.queryByRole("button", { name: /Create/ })).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText("Search collections..."), { target: { value: "Fresh" } });
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /Create/ }));
+    expect(onCreateAndAssign).toHaveBeenCalledWith("Fresh", "alpha");
+  });
+});
+
+describe("BatchCollectionPicker", () => {
+  /// Е6.1: a Connect of the selection the app could not make leaves the row
+  /// as it was.
+  it("takes back a Connect of the selection that was not made", async () => {
+    let answer!: (applied: boolean) => void;
+    const onBatchSetTag = vi.fn(() => new Promise<boolean>((resolve) => { answer = resolve; }));
+    render(
+      <BatchCollectionPicker
+        selectedSlugs={["alpha", "beta"]}
+        tags={[tag("tools", 1)]}
+        tagLookup={new Map()}
+        onBatchSetTag={onBatchSetTag}
+        onCreateAndAssign={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect tools" }));
+    expect(screen.getByRole("button", { name: "Disconnect tools" })).toBeInTheDocument();
+
+    await act(async () => answer(false));
+
+    expect(screen.getByRole("button", { name: "Connect tools" })).toBeInTheDocument();
+    expect(onBatchSetTag).toHaveBeenCalledWith(["alpha", "beta"], "tools", true);
   });
 });

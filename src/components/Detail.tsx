@@ -89,7 +89,6 @@ import type {
   MediaAssetRef,
   TagCount,
 } from "@/types";
-import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { preprocessWikilinks, inlineMediaOccurrenceIndex, markdownSourceByteOffset, firstImageOffset } from "@/lib/markdownWikilinks";
 import { decodeLocalMarkdownUrl, decodeWikilinkHref } from "@/lib/markdownWikilinks";
 import {
@@ -110,6 +109,8 @@ import {
 import { cn } from "@/lib/utils";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { usePreviewFileRetry } from "@/hooks/usePreviewFileRetry";
+import { mediaAssetErrorMessage } from "@/lib/mediaAssetErrors";
+import { MissingAwareImage } from "./MissingAwareImage";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset, resolveNoteLink } from "@/lib/commands";
@@ -161,6 +162,13 @@ import { associationHeading, authorFeedHint } from "@/lib/cardAssociations";
 import { useCardAssociations } from "@/hooks/useCardAssociations";
 import type { ImagePreviewRequest, ImagePreviewSibling } from "./ImagePreviewOverlay";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import {
+  COPY_PATH_FAILED_TITLE,
+  READ_ELEMENT_FAILED_TITLE,
+  dismissActionFailure,
+  reportActionError,
+} from "@/lib/actionFailures";
+import { openLinkInBrowser, revealInFinder } from "@/lib/systemActions";
 
 // The open card's layout (SPEC_FRONTEND.md, Detail; user's decision of
 // 07.10.2026): the side panel never takes space from the content. The content
@@ -230,6 +238,20 @@ interface DetailProps {
 function isIndexedBlock(block: LightBlock | IndexedBlock): block is IndexedBlock {
   return "tags" in block;
 }
+
+/// A light card's body this long may be the start the feed carries: the
+/// index cuts it at `LIGHT_BLOCK_BODY_PREVIEW_CHARS` (220) characters
+/// (storage/index.rs); counted here in UTF-16 units, with room for a cut
+/// that ends inside a pair.
+const LIGHT_BODY_PREVIEW_MIN_LENGTH = 218;
+
+function mayBeLightBodyPreview(body: string): boolean {
+  return body.length >= LIGHT_BODY_PREVIEW_MIN_LENGTH;
+}
+
+/** The quiet line of the notice when the card shows only the feed's start
+ *  of its text (Е6.13). */
+export const ONLY_TEXT_BEGINNING_SHOWN = "The open element shows only the beginning of its text.";
 
 /// Only the feed's light shape carries this: a block fetched by slug does not
 /// know where its media currently lives, and absence means nothing claims it
@@ -447,33 +469,44 @@ export function Detail({
     return () => window.cancelAnimationFrame(frame);
   }, [isClosing]);
 
-  const refreshFullBlock = useCallback((slug: string) => {
-    void getBlock(slug)
-      .then((full) => {
+  // The card's file, read whole: the feed's light card carries only the start
+  // of its text. A read that fails is the tab's notice, which says when the
+  // text shown is only that start (SPEC_DEEP_AUDIT.md, Н11, Е6.13).
+  const refreshFullBlock = useCallback((slug: string, shown: LightBlock | IndexedBlock) => {
+    void getBlock(slug).then(
+      (full) => {
         if (!full || currentBlockSlugRef.current !== slug) {
           return;
         }
+        dismissActionFailure("read-element");
         setFullBlock(full);
-      })
-      .catch((error) => {
-        console.error("Failed to refresh block:", error);
-      });
+      },
+      (error: unknown) => {
+        if (currentBlockSlugRef.current !== slug) return;
+        reportActionError(
+          "read-element",
+          READ_ELEMENT_FAILED_TITLE,
+          error,
+          !isIndexedBlock(shown) && mayBeLightBodyPreview(shown.body) ? ONLY_TEXT_BEGINNING_SHOWN : undefined,
+        );
+      },
+    );
   }, []);
 
   useEffect(() => {
     if (isIndexedBlock(block)) return;
-    refreshFullBlock(block.slug);
+    refreshFullBlock(block.slug, block);
   }, [block, refreshFullBlock]);
 
   useEffect(() => {
     const handleVaultRefreshed = () => {
-      refreshFullBlock(block.slug);
+      refreshFullBlock(block.slug, block);
     };
     window.addEventListener("vault-refreshed", handleVaultRefreshed);
     return () => {
       window.removeEventListener("vault-refreshed", handleVaultRefreshed);
     };
-  }, [block.slug, refreshFullBlock]);
+  }, [block, refreshFullBlock]);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const topFade = useTopFadeMask(panelRef, scrollEdgeFade);
@@ -920,7 +953,7 @@ function MetadataPanel({
                   <MetadataRow label="Source">
                     <MetadataLinkValue
                       value={domainFromUrl(displayBlock.url)}
-                      onClick={() => openUrl(displayBlock.url!)}
+                      onClick={() => openLinkInBrowser(displayBlock.url!)}
                     />
                   </MetadataRow>
                 )}
@@ -1088,7 +1121,7 @@ function DetailActionRow({
           // Opens the browser, so it carries the pointing hand; every other
           // control in this bar acts inside Mine and keeps the arrow.
           className="min-w-0 flex-1 cursor-pointer"
-          onClick={() => openUrl(block.url!)}
+          onClick={() => openLinkInBrowser(block.url!)}
         >
           Source
           <ExternalLink className="size-[13px]" />
@@ -1712,29 +1745,10 @@ function BlockContent({
     () => deriveCardContent(fullBlock ?? block),
     [block, fullBlock],
   );
-  // Lazy-load full body if truncated (LightBlock carries only a short preview).
-  const [fullBody, setFullBody] = useState<string | null>(fullBlock?.body ?? null);
-  useEffect(() => {
-    setFullBody(fullBlock?.body ?? null);
-    if (fullBlock) {
-      return;
-    }
-    if (block.body.length >= 218) {
-      let cancelled = false;
-      getBlock(block.slug)
-        .then((full) => {
-          if (!cancelled && full) setFullBody(full.body);
-        })
-        .catch((error) => {
-          console.error("Failed to load full block body:", error);
-        });
-      return () => {
-        cancelled = true;
-      };
-    }
-  }, [block.slug, block.body.length, fullBlock]);
-
-  const body = fullBody ?? block.body;
+  // The whole text comes with the card read from its file (`fullBlock`,
+  // read by Detail, which reports a read that fails); until then the feed's
+  // start of it.
+  const body = fullBlock?.body ?? block.body;
   const description = "description" in block ? (block as IndexedBlock).description : null;
   const displayTitle = getDisplayTitle(block);
   const navigationLabel = getNavigationLabel(block);
@@ -2440,11 +2454,11 @@ function MediaAssetMenuItems({
 
       <Separator />
 
-      <Item onSelect={() => revealItemInDir(mediaPath)}>
+      <Item onSelect={() => revealInFinder(mediaPath)}>
         <MenuIconSlot />
         Reveal in Finder
       </Item>
-      <Item onSelect={() => copyTextToClipboard(mediaPath)}>
+      <Item onSelect={() => copyTextToClipboard(mediaPath, COPY_PATH_FAILED_TITLE)}>
         <MenuIconSlot />
         Copy Path
       </Item>
@@ -2941,9 +2955,9 @@ export function DeleteMediaAssetDialog({
         <div className="flex min-w-0">
           <div className="flex h-24 w-32 items-center justify-center overflow-hidden rounded-1 border border-border bg-component-fill">
             {asset.media_kind === "image" ? (
-              <img
+              // A file that will not load keeps the tile's fill (Е6.8).
+              <MissingAwareImage
                 src={previewSrc}
-                alt=""
                 className="h-full w-full object-cover"
               />
             ) : asset.media_kind === "video" ? (
@@ -4113,40 +4127,6 @@ function mediaExtension(mediaRef: string): string {
 
 function mediaAssetReferenceTitle(reference: DeleteMediaAssetPlan["referenced_by"][number]): string {
   return reference.display_title ?? reference.title ?? reference.fallback_label ?? reference.slug;
-}
-
-function mediaAssetErrorMessage(error: unknown): string {
-  if (error && typeof error === "object" && "kind" in error) {
-    const typed = error as { kind: string } & Record<string, unknown>;
-    switch (typed.kind) {
-      case "no_vault":
-        return "No vault is open.";
-      case "invalid_media_ref":
-        return typeof typed.reason === "string" ? typed.reason : "Invalid media reference.";
-      case "media_not_found":
-        return "Media file was not found.";
-      case "unsupported_media_kind":
-        return "This media kind is not supported.";
-      case "name_taken":
-        return typeof typed.target === "string"
-          ? `A file named ${typed.target} already exists.`
-          : "A file with this name already exists.";
-      case "invalid_filename":
-        return typeof typed.reason === "string" ? typed.reason : "Invalid filename.";
-      case "clipboard_unsupported":
-        return "Native media copy is not supported on this platform.";
-      case "collection_not_found":
-        return typeof typed.collection === "string"
-          ? `Collection “${typed.collection}” has no page; nothing was written.`
-          : "The collection has no page; nothing was written.";
-      case "internal":
-        return typeof typed.message === "string" ? typed.message : "Media action failed.";
-    }
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return "Media action failed.";
 }
 
 function isLocalMediaRef(src: string): boolean {

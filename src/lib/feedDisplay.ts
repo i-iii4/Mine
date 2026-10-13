@@ -68,9 +68,13 @@ export function setFeedShow(show: FeedShow) {
   publish({ ...current, show });
 }
 
-/// Re-read storage; for tests that change it underneath the module.
+/// Re-read storage: another tab or window chose (`settings-changed`,
+/// SPEC_DEEP_AUDIT.md, Е6.7), or a test changed it underneath the module. The
+/// same values publish nothing.
 export function reloadFeedDisplay() {
-  publish(readStoredFeedDisplay());
+  const next = readStoredFeedDisplay();
+  if (next.sort === current.sort && next.show === current.show) return;
+  publish(next);
 }
 
 function subscribe(listener: () => void): () => void {

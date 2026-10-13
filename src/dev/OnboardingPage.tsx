@@ -314,7 +314,7 @@ function SpacePage({ path, blocks, totalBlocks, previews, indexing, previewsPend
                 <TopCollectionSwitcher
                   orderedTags={[]}
                   onNavigate={noop}
-                  onCreateCollection={noop}
+                  onCreateCollection={async () => undefined}
                   joinsNext
                 />
                 <MainSecondaryTopBar

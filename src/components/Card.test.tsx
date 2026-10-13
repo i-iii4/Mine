@@ -24,8 +24,8 @@ vi.mock("@/lib/commands", () => ({
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
-  openUrl: vi.fn(),
-  revealItemInDir: vi.fn(),
+  openUrl: vi.fn(async () => undefined),
+  revealItemInDir: vi.fn(async () => undefined),
 }));
 
 function cardKindForBlockType(blockType: LightBlock["block_type"]): LightBlock["card_kind"] {

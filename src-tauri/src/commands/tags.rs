@@ -94,6 +94,116 @@ pub fn remove_tag(webview: tauri::Webview, state: State<'_, AppState>, slug: Str
     outcome
 }
 
+/// [`set_blocks_membership_inner`] on the calling tab's space.
+fn set_blocks_membership_unannounced(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    slugs: Vec<String>,
+    tag: String,
+    connected: bool,
+) -> Result<(), CommandError> {
+    let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
+    let vault_state = space
+        .vault_state
+        .lock()
+        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
+    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
+    set_blocks_membership_inner(&vs.conn, &vs.vault, &slugs, &tag, connected)
+}
+
+/// Connect every card of `slugs` to the collection `tag`, or disconnect them
+/// all, then the other tabs of the space hear of the change (SPEC_TABS.md,
+/// В15). One command for the group selection's Connect and Disconnect and a
+/// drop of several cards (SPEC_DEEP_AUDIT.md, Е6.1).
+#[tauri::command(async)]
+pub fn set_blocks_membership(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    slugs: Vec<String>,
+    tag: String,
+    connected: bool,
+) -> Result<(), CommandError> {
+    let announcing = super::effects::ChangeNews::before(&webview);
+    let outcome = set_blocks_membership_unannounced(webview, state, slugs, tag, connected);
+    if outcome.is_ok() {
+        announcing.send(Vec::new());
+    }
+    outcome
+}
+
+/// The membership of many cards in one source mutation: every card changes,
+/// or none does (SPEC_DEEP_AUDIT.md, Е6.1). Before 13.10.2026 the interface
+/// called `add_tag` or `remove_tag` card after card, and a failure in the
+/// middle left the first cards changed and the rest not.
+///
+/// A card that already is as asked is not written: a stale selection may
+/// hold a card already out of the collection (SPEC_GROUP_SELECTION.md,
+/// «Collection-Scoped Disconnect»). A card whose file is gone is skipped:
+/// there is nothing left to connect. Connecting needs the collection's page,
+/// as for one card (К7); a card that cannot take the change refuses the
+/// whole batch, nothing written.
+pub(crate) fn set_blocks_membership_inner(
+    conn: &Connection,
+    vault: &VaultLayout,
+    slugs: &[String],
+    tag: &str,
+    connected: bool,
+) -> Result<(), CommandError> {
+    let collection_ref = normalize_collection_ref(tag);
+    if collection_ref.is_empty() {
+        return Err(CommandError::Internal("collection ref is empty".to_string()));
+    }
+    validate_collection_ref(&collection_ref).map_err(CommandError::Internal)?;
+    if connected {
+        require_collection_page(conn, vault, &collection_ref)?;
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut writes = Vec::with_capacity(slugs.len());
+    let mut projections = Vec::with_capacity(slugs.len());
+    for slug in slugs {
+        if !seen.insert(slug.as_str()) {
+            continue;
+        }
+        validate_slug(slug).map_err(|e| CommandError::Internal(e.to_string()))?;
+        let path = vault.block_path(slug);
+        if !path.exists() {
+            continue;
+        }
+        let (_, content) = files::read_block_file(vault, &path)?;
+        let parsed = parse_markdown_document(slug, &content, file_saved_at(&path))
+            .map_err(|e| CommandError::Internal(e.to_string()))?;
+        let mut collections = parsed.block.frontmatter.tags;
+        if collections.contains(&collection_ref) == connected {
+            continue;
+        }
+        if connected {
+            collections.push(collection_ref.clone());
+        } else {
+            collections.retain(|t| t != &collection_ref);
+        }
+        let (write, projection) =
+            MembershipRewrite::prepare(vault, slug, path, content, &collections)?.into_source_write();
+        writes.push(write);
+        projections.push(projection);
+    }
+    if writes.is_empty() {
+        return Ok(());
+    }
+
+    StagedSourceMutation::stage(writes)?.commit_with_index(
+        conn,
+        "set_blocks_membership",
+        |index_conn| {
+            for projection in &projections {
+                projection.upsert(index_conn, vault)?;
+            }
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
 /// Connect the card `slug` to the collection `tag`, or disconnect it.
 ///
 /// Connecting needs the collection's page and refuses before anything is
@@ -656,6 +766,92 @@ mod tests {
                 vec!["Old"]
             );
         }
+    }
+
+    /// A space with cards `slug -> source`, indexed.
+    fn space_with_cards(cards: &[(&str, &str)]) -> (tempfile::TempDir, VaultLayout, Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        for (slug, source) in cards {
+            let path = vault.block_path(slug);
+            std::fs::write(&path, source).unwrap();
+            let parsed = parse_markdown_document(slug, source, file_saved_at(&path)).unwrap();
+            index::upsert_block(&conn, &parsed.block, Some(vault.root())).unwrap();
+        }
+        (dir, vault, conn)
+    }
+
+    fn tags_on_disk(vault: &VaultLayout, slug: &str) -> Vec<String> {
+        let path = vault.block_path(slug);
+        let source = std::fs::read_to_string(&path).unwrap();
+        parse_markdown_document(slug, &source, file_saved_at(&path))
+            .unwrap()
+            .block
+            .frontmatter
+            .tags
+    }
+
+    /// Е6.1: the group selection's Connect and Disconnect change every card
+    /// at once, file and index.
+    #[test]
+    fn many_cards_join_and_leave_a_collection_in_one_mutation() {
+        let plain = "---\nsaved_at: 2026-07-10T00:00:00Z\n---\nBody";
+        let (_dir, vault, conn) = space_with_cards(&[("A", plain), ("B", plain), ("C", plain)]);
+        collection_page(&vault, &conn, "Design");
+        let slugs = vec!["A".to_string(), "B".to_string(), "C".to_string(), "A".to_string()];
+
+        set_blocks_membership_inner(&conn, &vault, &slugs, "Design", true).unwrap();
+        for slug in ["A", "B", "C"] {
+            assert_eq!(tags_on_disk(&vault, slug), vec!["Design"], "{slug}");
+        }
+        assert_eq!(index::list_blocks_by_tag(&conn, "Design").unwrap().len(), 3);
+
+        set_blocks_membership_inner(&conn, &vault, &slugs, "Design", false).unwrap();
+        for slug in ["A", "B", "C"] {
+            assert!(tags_on_disk(&vault, slug).is_empty(), "{slug}");
+        }
+        assert!(index::list_blocks_by_tag(&conn, "Design").unwrap().is_empty());
+    }
+
+    /// Е6.1: one card that cannot take the change leaves every card as it
+    /// was; card after card, the cards before it were already changed.
+    #[test]
+    fn one_card_that_cannot_change_leaves_the_whole_selection_as_it_was() {
+        let plain = "---\nsaved_at: 2026-07-10T00:00:00Z\nMine Collections:\n  - \"[[Design]]\"\n---\nBody";
+        let unwritable = "---\n  saved_at: 2026-07-10T00:00:00Z\n  Mine Collections: [\"[[Design]]\"]\n---\nBody";
+        let (_dir, vault, conn) = space_with_cards(&[("A", plain), ("B", unwritable), ("C", plain)]);
+        collection_page(&vault, &conn, "Design");
+        let slugs = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+
+        let refused = set_blocks_membership_inner(&conn, &vault, &slugs, "Design", false);
+
+        assert!(matches!(refused, Err(CommandError::FrontmatterNotWritable { .. })), "{refused:?}");
+        assert_eq!(std::fs::read_to_string(vault.block_path("A")).unwrap(), plain);
+        assert_eq!(std::fs::read_to_string(vault.block_path("B")).unwrap(), unwritable);
+        assert_eq!(std::fs::read_to_string(vault.block_path("C")).unwrap(), plain);
+        assert_eq!(index::list_blocks_by_tag(&conn, "Design").unwrap().len(), 3);
+    }
+
+    /// Е6.1: a card already out of the collection (a stale selection) and a
+    /// card gone from the space are skipped; the rest leave it. Connecting to
+    /// a name without a page refuses before anything is written (К7).
+    #[test]
+    fn a_stale_or_vanished_card_is_skipped_and_a_pageless_name_refuses() {
+        let member = "---\nsaved_at: 2026-07-10T00:00:00Z\nMine Collections:\n  - \"[[Design]]\"\n---\nBody";
+        let outsider = "---\nsaved_at: 2026-07-10T00:00:00Z\n---\nBody";
+        let (_dir, vault, conn) = space_with_cards(&[("A", member), ("B", outsider), ("Gone", member)]);
+        collection_page(&vault, &conn, "Design");
+        std::fs::remove_file(vault.block_path("Gone")).unwrap();
+        let slugs = vec!["A".to_string(), "B".to_string(), "Gone".to_string()];
+
+        set_blocks_membership_inner(&conn, &vault, &slugs, "Design", false).unwrap();
+        assert!(tags_on_disk(&vault, "A").is_empty());
+        assert_eq!(std::fs::read_to_string(vault.block_path("B")).unwrap(), outsider);
+
+        let refused = set_blocks_membership_inner(&conn, &vault, &slugs, "Pageless", true);
+        assert!(matches!(refused, Err(CommandError::CollectionNotFound { .. })), "{refused:?}");
+        assert_eq!(std::fs::read_to_string(vault.block_path("B")).unwrap(), outsider);
     }
 
     /// The links of the card on disk, in file order, pages or not.

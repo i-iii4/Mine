@@ -81,7 +81,7 @@ pub fn validate_collection_ref(raw: &str) -> Result<String, String> {
 pub struct CollectionPage {
     pub slug: String,
     #[serde(default)]
-    pub position: Option<u32>,
+    pub position: Option<i64>,
 }
 
 /// One collection of a space: the reference cards use and how many name it.
@@ -111,11 +111,11 @@ pub fn list_collections(pages: &[CollectionPage], memberships: &[Vec<String>]) -
         }
     }
     let page_slugs: BTreeSet<String> = pages.iter().map(|page| page.slug.clone()).collect();
-    let mut listed: Vec<(u32, String)> = pages
+    let mut listed: Vec<(i64, String)> = pages
         .iter()
         .map(|page| {
             (
-                page.position.unwrap_or(u32::MAX),
+                page.position.unwrap_or(i64::MAX),
                 collection_ref_for_slug(&page.slug, &page_slugs),
             )
         })

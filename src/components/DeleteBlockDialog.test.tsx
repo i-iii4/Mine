@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { DeleteBlockDialog } from "./DeleteBlockDialog";
-import { DeleteKeptMediaNotice, keptOfferedMedia } from "./DeleteWindowParts";
+import { DeleteKeptMediaNotice, DeleteMediaPreviewGrid, keptOfferedMedia } from "./DeleteWindowParts";
 import type { DeleteBlockMedia, DeleteBlockPlan } from "@/types";
 
 const PHOTO: DeleteBlockMedia = { path: "Media/photo.jpg", file_name: "photo.jpg", kind: "image", referenced_by: [] };
@@ -105,5 +105,19 @@ describe("files Delete kept", () => {
 
     rerender(<DeleteKeptMediaNotice media={[PHOTO, PAPER]} onClose={() => {}} />);
     expect(screen.getByText("2 media files are used by other elements and stayed in the space.")).toBeInTheDocument();
+  });
+});
+
+// SPEC_DEEP_AUDIT.md, Е6.8: a media file that will not load leaves its tile's
+// fill, never the broken-image icon.
+describe("DeleteMediaPreviewGrid", () => {
+  it("hides a picture whose file will not load and keeps the tile", () => {
+    const { container } = render(
+      <DeleteMediaPreviewGrid media={[PHOTO]} vaultPath="/vault" posterSlug={() => null} />,
+    );
+    const picture = container.querySelector("img") as HTMLImageElement;
+    fireEvent.error(picture);
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("photo.jpg")).toBeInTheDocument();
   });
 });

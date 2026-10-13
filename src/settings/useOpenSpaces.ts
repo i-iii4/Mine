@@ -2,6 +2,7 @@
 // them: Orphans and New files (SPEC_TABS.md, В71). Only an open space has an
 // open index, so only open spaces can be chosen.
 
+import { errorMessage } from "@/lib/errorMessage";
 import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { listSpaces, spacesInTabs } from "@/lib/commands";
@@ -47,7 +48,7 @@ export function useOpenSpaces(): OpenSpaces {
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        setError(String(e));
+        setError(errorMessage(e));
         setOpenIds((previous) => previous ?? []);
       });
 
@@ -60,7 +61,7 @@ export function useOpenSpaces(): OpenSpaces {
           if (!cancelled) setKnown(entries);
         })
         .catch((e: unknown) => {
-          if (!cancelled) setError(String(e));
+          if (!cancelled) setError(errorMessage(e));
         });
     });
     // The space's folder moved (В73): previews read files by absolute path.

@@ -933,6 +933,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 // Uses connectNative for persistent connection within a session.
 // Responses must match the echoed messageId; no FIFO acknowledgement of saves.
 let nativePort = null;
+// What the helper on `nativePort` declared in its status (`features`).
+let nativePortFeatures = null;
 const pendingCallbacks = new Map();
 let messageId = 0;
 const screenshotUploads = new Map();
@@ -972,18 +974,26 @@ function getNativePort() {
   }
 
   const port = nativePort;
+  nativePortFeatures = null;
   port.onMessage.addListener((msg) => {
     if (msg?.code === "host_replaced") {
       retireReplacedHost(port, msg);
       return;
     }
     const id = msg._messageId;
+    // A sign that the helper still works on a Save: its deadline starts
+    // again. Never an answer (SPEC_DEEP_AUDIT.md, Н9).
+    if (msg?.progress === true) {
+      pendingCallbacks.get(id)?.restart?.();
+      return;
+    }
     if (id !== undefined && pendingCallbacks.has(id)) {
       const { resolve, timeout, action } = pendingCallbacks.get(id);
       pendingCallbacks.delete(id);
       clearTimeout(timeout);
       resolve(msg);
       if (action === "get_status") {
+        if (nativePort === port && Array.isArray(msg.features)) nativePortFeatures = new Set(msg.features);
         confirmNativeConnection(msg, port);
         void noteInstalledExtension(msg).catch(() => undefined);
       }
@@ -1002,6 +1012,7 @@ function getNativePort() {
     }
     pendingCallbacks.clear();
     nativePort = null;
+    nativePortFeatures = null;
   });
 
   return nativePort;
@@ -1143,8 +1154,10 @@ async function anyEditorOpen() {
 
 // A newer helper was installed while this connection stayed open (К4). The
 // old process answers `host_replaced` to the first request it reads and ends
-// without acting on it; the requests still waiting were never read. Every one
-// of them goes again, once, to the new helper.
+// without acting on it. Every request still waiting goes again, once, to the
+// new helper: one the old helper never read, and a Save it had already begun,
+// which the operation journal answers with the same receipt rather than a
+// second card.
 function retireReplacedHost(port, reply) {
   if (nativePort === port) nativePort = null;
   try {
@@ -1161,11 +1174,20 @@ function retireReplacedHost(port, reply) {
   }
 }
 
-// save_block может последовательно/параллельно качать до 30 inline-картинок.
-// Worst case: ureq retry × 15s × per-domain ограничения ≈ 150s. 180s — буфер.
-// Остальные actions короткие; только явный diagnostic ACK сохраняет отметку связи.
+// A Save waits as long as the helper works: a helper that declares
+// `save_progress_v1` sends a sign of work at most every 5 s while bytes keep
+// arriving and steps keep ending, and the deadline counts from the last sign
+// (SPEC_DEEP_AUDIT.md, Н9). A 500 MiB video (net.rs, MAX_MEDIA_BYTES) on a
+// slow link is never cut off while its bytes come; a stalled download read
+// ends at 15 s in the helper and its failure is a sign too. A helper that
+// sends no signs keeps the former three minutes from the start.
+const SAVE_IDLE_TIMEOUT_MS = 60_000;
+const LEGACY_SAVE_TIMEOUT_MS = 180_000;
+
 function timeoutForAction(action) {
-  if (action === "save_block") return 180_000;
+  if (action === "save_block") {
+    return nativePortFeatures?.has("save_progress_v1") ? SAVE_IDLE_TIMEOUT_MS : LEGACY_SAVE_TIMEOUT_MS;
+  }
   // The folder chooser waits on a human, not on IPC.
   if (action === "pick_vault_folder") return 300_000;
   return 30_000;
@@ -1205,20 +1227,32 @@ function sendNativeMessage(message, expectedPort = null, afterReplacement = fals
     }
 
     const id = ++messageId;
+    const action = message?.action;
+    const isSave = action === "save_block";
 
-    const timeout = setTimeout(() => {
+    const expire = () => {
       if (pendingCallbacks.has(id)) {
         pendingCallbacks.delete(id);
         resolve({ ok: false, error: "Mine helper did not respond in time", code: "native_timeout", outcome: "unknown" });
       }
-    }, timeoutForAction(message?.action));
-
-    pendingCallbacks.set(id, { resolve, timeout, action: message?.action });
+    };
+    const entry = { resolve, timeout: setTimeout(expire, timeoutForAction(action)), action, restart: null };
+    // Each sign of work starts the Save's deadline again (Н9).
+    if (isSave) {
+      entry.restart = () => {
+        clearTimeout(entry.timeout);
+        entry.timeout = setTimeout(expire, SAVE_IDLE_TIMEOUT_MS);
+      };
+    }
+    pendingCallbacks.set(id, entry);
 
     try {
-      port.postMessage({ ...message, _messageId: id });
+      // A Save asks for signs of work; a helper that does not know them
+      // ignores the field, and an older one never sends what this one
+      // would take for an answer.
+      port.postMessage(isSave ? { ...message, _progress: true, _messageId: id } : { ...message, _messageId: id });
     } catch (error) {
-      clearTimeout(timeout);
+      clearTimeout(entry.timeout);
       pendingCallbacks.delete(id);
       resolve({ ok: false, error: String(error?.message ?? error), code: "native_disconnected", outcome: "unknown" });
     }

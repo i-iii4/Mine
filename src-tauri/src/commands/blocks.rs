@@ -2512,12 +2512,14 @@ pub(crate) fn build_delete_blocks_plan(
 /// notes it reads (SPEC_DEEP_AUDIT.md, Н5): the pass reads only the notes
 /// changed since the last one, so a note that took a file or a link into its
 /// text in Obsidian while nothing watched the space is a candidate, as its
-/// file says. A note the pass cannot read does not stop the action.
+/// file says. A note the pass cannot read does not stop the action, and one
+/// whose contents are in iCloud is not waited for: it stays as the index
+/// holds it until the background pass reads it (SPEC_CLOUD_STORAGE.md, Х12).
 pub(crate) fn bring_index_up_to_files(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
 ) -> anyhow::Result<()> {
-    reconcile::reconcile_vault(conn, vault)
+    reconcile::reconcile_vault_for_action(conn, vault)
         .map(|_| ())
         .map_err(|error| anyhow::anyhow!("bring the index up to the files: {error}"))
 }
@@ -4714,12 +4716,13 @@ fn prepare_delete_media_asset_inner(
 /// does (Н2): a note that took the file into its text in Obsidian while
 /// nothing watched the space is a candidate, as its file says. The pass
 /// reads only the notes changed since the last one; a note it cannot read
-/// does not stop the action.
+/// does not stop the action, and one whose contents are in iCloud is not
+/// waited for (SPEC_CLOUD_STORAGE.md, Х12).
 fn reconcile_before_media_action(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
 ) -> Result<(), MediaAssetActionError> {
-    reconcile::reconcile_vault(conn, vault)
+    reconcile::reconcile_vault_for_action(conn, vault)
         .map(|_| ())
         .map_err(|error| MediaAssetActionError::Internal {
             message: format!("bring the index up to the files: {error}"),
@@ -7476,6 +7479,169 @@ mod tests {
         ];
         expected.sort();
         assert_eq!(notes_read(), expected);
+    }
+
+    /// SPEC_CLOUD_STORAGE.md, Х12: an action brings the index up to the
+    /// files without reading a note iCloud took away. The live case of
+    /// 13.10.2026: `mine card delete … --delete-unused-media` on «Тест» read
+    /// `Oct 15th! ⌨️.md`, a note the clipper saved while no pass read it, and
+    /// waited for its download. `Arrived` stands for such a note (not in the
+    /// index), `Edited` for one changed on another Mac since the last pass.
+    /// The deletion leaves both to the background pass, which reads them.
+    #[test]
+    fn deleting_a_card_with_its_media_never_reads_an_evicted_note_the_index_lacks() {
+        let (_root, _derived, vault, conn) = make_vault();
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+        persist_block(&conn, &vault, &article("Gone", "![[photo.png]]\n"));
+        persist_block(&conn, &vault, &article("Edited", "Before.\n"));
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let arrived = vault.block_path("Arrived");
+        std::fs::write(&arrived, "# Arrived\n\nSaved by the clipper.\n").unwrap();
+        let edited = vault.block_path("Edited");
+        std::fs::write(&edited, "# Edited\n\nChanged on another Mac, longer now.\n").unwrap();
+        crate::storage::cloud_files::test_seam::mark_offloaded(&arrived);
+        crate::storage::cloud_files::test_seam::mark_offloaded(&edited);
+
+        let outcome = delete_block_inner(None, &conn, &vault, "Gone", Some(true), None).unwrap();
+
+        assert!(outcome.removed);
+        assert!(!vault.root().join("photo.png").exists());
+        assert_eq!(crate::storage::cloud_files::test_seam::reads_of(&arrived), 0);
+        assert_eq!(crate::storage::cloud_files::test_seam::reads_of(&edited), 0);
+        assert!(index::get_block(&conn, "Arrived").unwrap().is_none());
+
+        // The background pass reads them, waiting for iCloud if it must.
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        assert!(index::get_block(&conn, "Arrived").unwrap().is_some());
+        assert!(index::get_block(&conn, "Edited").unwrap().unwrap().body.contains("longer now"));
+    }
+
+    /// Х12: every action that brings the index up to the files before it
+    /// acts leaves unread a note iCloud took away that the index lacks: the
+    /// group deletion with media, renaming a card, a merge, renaming and
+    /// deleting a media file, renaming a collection, deleting orphans.
+    #[test]
+    fn no_action_reads_an_evicted_note_the_index_lacks() {
+        type Action = fn(&rusqlite::Connection, &VaultLayout);
+        let actions: [(&str, Action); 7] = [
+            ("group deletion with media", |conn, vault| {
+                delete_blocks_inner(None, conn, vault, vec!["Gone".into()], true, None).unwrap();
+            }),
+            ("card rename", |conn, vault| {
+                rename_block_file_inner(None, None, conn, vault, "Kept", "Renamed").unwrap();
+            }),
+            ("merge", |conn, vault| {
+                merge_blocks_inner(None, conn, vault, vec!["Kept".into(), "Gone".into()]).unwrap();
+            }),
+            ("media rename", |conn, vault| {
+                rename_media_asset_inner(&AppState::new(), conn, vault, "photo.png".into(), "picture".into())
+                    .unwrap();
+            }),
+            ("media deletion", |conn, vault| {
+                delete_media_asset_inner(&AppState::new(), conn, vault, "photo.png".into()).unwrap();
+            }),
+            ("collection rename", |conn, vault| {
+                crate::commands::channels::rename_channel_inner(None, conn, vault, "Art", "Design").unwrap();
+            }),
+            ("orphan deletion", |_, vault| {
+                let vs = crate::commands::state::VaultState {
+                    conn: db::open_or_create(&vault.index_db_path()).unwrap(),
+                    vault: vault.clone(),
+                };
+                crate::commands::settings::delete_orphan_media_inner(&vs, vec!["lonely.jpg".into()]).unwrap();
+            }),
+        ];
+        let mut waited = Vec::new();
+        for (name, action) in actions {
+            let (_root, _derived, vault, conn) = make_vault();
+            std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+            std::fs::write(vault.root().join("lonely.jpg"), b"lonely-bytes").unwrap();
+            persist_block(&conn, &vault, &article("Gone", "![[photo.png]]\n"));
+            persist_block(&conn, &vault, &article("Kept", "Plain.\n"));
+            collection_page(&conn, &vault, "Art");
+            crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+            let arrived = vault.block_path("Arrived");
+            std::fs::write(&arrived, "# Arrived\n\nSaved on another Mac.\n").unwrap();
+            crate::storage::cloud_files::test_seam::mark_offloaded(&arrived);
+
+            action(&conn, &vault);
+
+            if crate::storage::cloud_files::test_seam::reads_of(&arrived) > 0 {
+                waited.push(name);
+            }
+        }
+        assert!(waited.is_empty(), "brought down a note they do not own: {waited:?}");
+    }
+
+    /// Х12: the space identity iCloud took away is not read by an action.
+    /// The derived store says which space it serves and which folder it last
+    /// served; the identity file there, evicted, is that space's.
+    #[test]
+    fn an_action_never_reads_an_evicted_space_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Space");
+        std::fs::create_dir_all(root.join(".mine")).unwrap();
+        let id = "0123456789abcdef0123456789abcdef";
+        let identity = root.join(".mine/vault-id");
+        std::fs::write(&identity, format!("{id}\n")).unwrap();
+        let derived = dir.path().join("vaults").join(id);
+        crate::space_registry::record_owner_path(&derived, &root);
+        let vault = VaultLayout::with_derived_root(root.clone(), derived);
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
+        persist_block(&conn, &vault, &article("Gone", "![[photo.png]]\n"));
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        crate::storage::cloud_files::test_seam::mark_offloaded(&identity);
+
+        let outcome = delete_block_inner(None, &conn, &vault, "Gone", Some(true), None).unwrap();
+
+        assert!(outcome.removed);
+        assert_eq!(crate::storage::cloud_files::test_seam::reads_of(&identity), 0);
+    }
+
+    /// Х12, Х24: a background pass that waits for a note's download does not
+    /// hold the action that comes meanwhile. The pass brings the notes it
+    /// must read down before it takes the index for itself; until 13.10.2026
+    /// it read them holding `build.lock`, and every action of the space, the
+    /// CLI's too, waited behind the download.
+    #[test]
+    fn an_action_does_not_wait_behind_a_pass_waiting_for_a_download() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let (_root, _derived, vault, conn) = make_vault();
+        persist_block(&conn, &vault, &article("Kept", "Plain.\n"));
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let arrived = vault.block_path("Arrived");
+        std::fs::write(&arrived, "# Arrived\n").unwrap();
+        crate::storage::cloud_files::test_seam::mark_offloaded(&arrived);
+        let download = crate::storage::cloud_files::test_seam::hold_reads_of(&arrived);
+
+        let background = {
+            let vault = vault.clone();
+            std::thread::spawn(move || {
+                let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+                crate::storage::reconcile::reconcile_vault(&conn, &vault).map(|_| ())
+            })
+        };
+        assert!(download.reached_within(Duration::from_secs(10)), "the pass never read the note");
+        let (done, finished) = mpsc::channel();
+        let action = {
+            let vault = vault.clone();
+            std::thread::spawn(move || {
+                let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+                let _ = done.send(bring_index_up_to_files(&conn, &vault).map_err(|e| format!("{e:#}")));
+            })
+        };
+        let action_result = finished.recv_timeout(Duration::from_secs(10));
+        drop(download);
+        background.join().unwrap().unwrap();
+        action.join().unwrap();
+
+        assert!(
+            matches!(action_result, Ok(Ok(()))),
+            "the action waited behind the download: {action_result:?}"
+        );
+        assert!(index::get_block(&conn, "Arrived").unwrap().is_some());
     }
 
     /// Е5.6: a canvas that shows a card's media uses it: deleting the card

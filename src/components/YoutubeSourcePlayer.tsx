@@ -1,6 +1,6 @@
+import { MissingAwareImage } from "./MissingAwareImage";
 import { useEffect, useRef, useState } from "react";
 import { listenPage } from "@/lib/pageEvents";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { Trash2 } from "lucide-react";
 import {
   AlertDialog,
@@ -24,6 +24,8 @@ import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import { MODAL_ERROR_CLASS } from "@/components/ui/modal-window";
 import { Progress } from "@/components/ui/progress";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import { COPY_LINK_FAILED_TITLE } from "@/lib/actionFailures";
+import { openLinkInBrowser } from "@/lib/systemActions";
 import {
   cancelSourceVideoDownload,
   sourceVideoDownloadStatus,
@@ -44,7 +46,7 @@ type PlayerPage =
   | { status: "failed" };
 
 function openSource(url: string) {
-  void openUrl(url).catch((error) => console.error("Could not open video source:", error));
+  openLinkInBrowser(url);
 }
 
 function isRunning(download: SourceVideoDownloadState | null) {
@@ -174,7 +176,8 @@ export function YoutubeSourcePlayer({ slug, source, poster, title, onDelete, onD
               />
             ) : (
               <>
-                {poster && <img src={poster} alt="" className="absolute h-full w-full object-contain" />}
+                {/* A poster that will not load leaves the black frame (Е6.8). */}
+                {poster && <MissingAwareImage src={poster} className="absolute h-full w-full object-contain" />}
                 {page.status === "failed" && (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <p className="rounded-1 bg-black/70 px-3 py-2 text-sm text-white">This video can't play inside Mine.</p>
@@ -189,7 +192,7 @@ export function YoutubeSourcePlayer({ slug, source, poster, title, onDelete, onD
             <MenuIconSlot />
             Open Original
           </ContextMenuItem>
-          <ContextMenuItem onSelect={() => copyTextToClipboard(source.sourceUrl)}>
+          <ContextMenuItem onSelect={() => copyTextToClipboard(source.sourceUrl, COPY_LINK_FAILED_TITLE)}>
             <MenuIconSlot />
             Copy Link
           </ContextMenuItem>

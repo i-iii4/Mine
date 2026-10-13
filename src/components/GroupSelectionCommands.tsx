@@ -1,9 +1,3 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,24 +8,22 @@ import {
 import {
   BatchCollectionPicker,
   COLLECTION_PICKER_CONTENT_CLASS,
+  type MembershipAnswer,
 } from "./CollectionPicker";
 import { ChromeCloseButton } from "./ChromeCloseButton";
 import { ChromeActions } from "./ChromeRow";
 import { commandById } from "@/lib/commandRegistry";
 import type { LightBlock, TagCount } from "@/types";
-import {
-  patchTagLookup,
-  scheduleAfterOptimisticUiUpdate,
-  selectedElementCountLabel,
-} from "@/lib/groupSelection";
+import { selectedElementCountLabel } from "@/lib/groupSelection";
+import { useGroupSelectionMenuActions } from "@/hooks/useGroupSelectionMenuActions";
 
 interface GroupSelectionCommandsProps {
   selectedBlocks: LightBlock[];
   tags: TagCount[];
   currentTag?: string;
   onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
-  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
-  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
+  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => MembershipAnswer;
+  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<unknown>;
   /** The feed's `requestDeleteSelection()`: the window is the feed's, not
    *  the row's (SPEC_GROUP_SELECTION.md, «Точки входа»). */
   onRequestDeleteSelection: () => void;
@@ -50,63 +42,21 @@ export function GroupSelectionCommands({
   onMergeSelectedBlocks,
   onClearSelection,
 }: GroupSelectionCommandsProps) {
-  const selectedSlugs = useMemo(
-    () => selectedBlocks.map((block) => block.slug),
-    [selectedBlocks],
-  );
-  const [connectOpen, setConnectOpen] = useState(false);
-  const [tagLookup, setTagLookup] = useState<Map<string, string[]>>(new Map());
-  const [actionError, setActionError] = useState<string | null>(null);
+  const actions = useGroupSelectionMenuActions({
+    selectedBlocks,
+    currentTag,
+    onLoadBlockTags,
+    onBatchSetTag,
+    onCreateAndAssignBatch,
+  });
 
-  useEffect(() => {
-    if (!connectOpen || selectedSlugs.length === 0) return;
-    let cancelled = false;
-    void onLoadBlockTags(selectedSlugs)
-      .then((lookup) => {
-        if (!cancelled) {
-          setTagLookup(lookup);
-          setActionError(null);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setActionError(err instanceof Error ? err.message : String(err));
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [connectOpen, onLoadBlockTags, selectedSlugs]);
-
-  const reportActionError = useCallback((err: unknown) => {
-    setActionError(err instanceof Error ? err.message : String(err));
-  }, []);
-
-  const handleBatchSetTag = (
-    targetSlugs: string[],
-    tag: string,
-    connected: boolean,
-  ) => {
-    if (targetSlugs.length === 0) return;
-    setTagLookup((current) => patchTagLookup(current, targetSlugs, tag, connected));
-    setActionError(null);
-    scheduleAfterOptimisticUiUpdate(() => {
-      void Promise.resolve(onBatchSetTag(targetSlugs, tag, connected)).catch(reportActionError);
-    });
-  };
-
-  const handleCreateAndAssignBatch = (tag: string) => {
-    setTagLookup((current) => patchTagLookup(current, selectedSlugs, tag, true));
-    setActionError(null);
-    scheduleAfterOptimisticUiUpdate(() => {
-      void Promise.resolve(onCreateAndAssignBatch(tag, selectedSlugs)).catch(reportActionError);
-    });
-  };
-
+  // The selection stays until the answer: a Disconnect that was not made
+  // keeps it, to be tried again, and the tab's notice says why
+  // (SPEC_DEEP_AUDIT.md, Е6.1).
   const handleRemoveFromCollection = () => {
-    if (!currentTag) return;
-    handleBatchSetTag(selectedSlugs, currentTag, false);
-    onClearSelection();
+    void actions.disconnectFromCurrentCollection().then((applied) => {
+      if (applied) onClearSelection();
+    });
   };
 
   if (selectedBlocks.length === 0) return null;
@@ -134,7 +84,7 @@ export function GroupSelectionCommands({
           </div>
 
           <ChromeActions data-feed-selection-actions="">
-            <DropdownMenu open={connectOpen} onOpenChange={setConnectOpen} modal={false}>
+            <DropdownMenu open={actions.connectOpen} onOpenChange={actions.setConnectOpen} modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button
                   type="button"
@@ -148,11 +98,11 @@ export function GroupSelectionCommands({
               </DropdownMenuTrigger>
               <DropdownMenuContent widthRole="search" className={COLLECTION_PICKER_CONTENT_CLASS} align="end">
                 <BatchCollectionPicker
-                  selectedSlugs={selectedSlugs}
+                  selectedSlugs={actions.selectedSlugs}
                   tags={tags}
-                  tagLookup={tagLookup}
-                  onBatchSetTag={handleBatchSetTag}
-                  onCreateAndAssign={handleCreateAndAssignBatch}
+                  tagLookup={actions.tagLookup}
+                  onBatchSetTag={actions.batchSetTag}
+                  onCreateAndAssign={actions.createAndAssignBatch}
                 />
               </DropdownMenuContent>
             </DropdownMenu>
@@ -163,9 +113,7 @@ export function GroupSelectionCommands({
                 variant="default"
                 size="xs"
                 className="shrink-0 text-detach"
-                onClick={() => {
-                  void handleRemoveFromCollection();
-                }}
+                onClick={handleRemoveFromCollection}
               >
                 Disconnect
               </Button>
@@ -201,9 +149,9 @@ export function GroupSelectionCommands({
           </ChromeActions>
         </div>
       </div>
-      {actionError && (
+      {actions.actionError && (
         <p className="absolute left-1/2 top-full z-40 mt-2 -translate-x-1/2 rounded-1 border border-destructive bg-background px-3 py-1 text-sm text-destructive">
-          {actionError}
+          {actions.actionError}
         </p>
       )}
     </div>

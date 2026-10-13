@@ -13,6 +13,7 @@ import { ScreenshotPreview } from "./components/ScreenshotPreview";
 import { VaultSelect } from "./components/VaultSelect";
 import { StandaloneSetup, StandaloneFolderRow } from "./components/StandaloneSetup";
 import { emptyContentMessage } from "./lib/articleExtractionState";
+import { remoteMediaNotice as remoteMediaNoticeOf } from "./lib/messaging";
 import { buildEmbeddedVideoPreviewMap, isVideoUrl, markdownMediaKeys, videoPreviewKey } from "./lib/videoPreview";
 
 function VideoPosterPreview({
@@ -73,6 +74,8 @@ export function PopupApp() {
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
+  // How many media the Save left as links to their sites (SPEC_DEEP_AUDIT.md, Н10).
+  const [remoteMediaNotice, setRemoteMediaNotice] = useState<string | null>(null);
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
   // Access to the folder of the waiting save came back (SPEC_DEEP_AUDIT.md,
   // Е3.7): the refusal it answered with no longer holds.
@@ -104,7 +107,10 @@ export function PopupApp() {
     if (result.ok) {
       setSaved(true);
       setSaveWarning(result.warning ?? null);
-      if (!result.warning) setTimeout(closeClipper, 1200);
+      const remoteMedia = "remoteMedia" in result && typeof result.remoteMedia === "string" ? result.remoteMedia : null;
+      setRemoteMediaNotice(remoteMedia);
+      // A Save that says something stays open for it to be read.
+      if (!result.warning && !remoteMedia) setTimeout(closeClipper, 1200);
     } else if (!("shownWithCollections" in result)) {
       setSaveError(result.error ?? "Failed to save");
     }
@@ -280,7 +286,8 @@ export function PopupApp() {
             : result.terminal_rejected === true
               ? "The previous clip was rejected before writing files. This new clip has not been saved."
               : result.error ?? "The previous save outcome is still unknown.";
-          setRecoveryMessage(result.warning ? `${message} ${result.warning}` : message);
+          const said = [message, result.warning, remoteMediaNoticeOf(result)].filter(Boolean).join(" ");
+          setRecoveryMessage(said);
         }).catch((cause) => setRecoveryMessage(cause instanceof Error ? cause.message : String(cause)));
       }}>Check previous save</Button>
       {previous.executor === "browser" && <Button variant="secondary" disabled={clipper.saving} onClick={() => {
@@ -527,6 +534,9 @@ export function PopupApp() {
             <p role="status" className="text-sm text-muted-foreground" data-clipper-open-clip-notice="">{clipper.openClipNotice}</p>
           )}
           {saveWarning && <p className="text-sm text-muted-foreground" role="status">{saveWarning}</p>}
+          {remoteMediaNotice && (
+            <p className="text-sm text-muted-foreground" role="status" data-clipper-remote-media="">{remoteMediaNotice}</p>
+          )}
           {clipper.pendingOperation && clipper.saveMode === "standalone" && !clipper.saving && !saved && (
             <Button variant="secondary" disabled={clipper.saving} onClick={() => {
               void clipper.regrantFolder().then((result) => { if (!result.ok && result.error) setSaveError(result.error); });

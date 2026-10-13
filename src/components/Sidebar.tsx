@@ -22,7 +22,7 @@ import { useDndContext, useDraggable, useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { FolderOpen, Pencil, Plus, Trash2 } from "lucide-react";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { revealInFinder } from "@/lib/systemActions";
 import { bindingLabel } from "@/lib/commandBinding";
 import {
   ContextMenu,
@@ -41,7 +41,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
+import type { MembershipAnswer } from "@/components/CollectionPicker";
 import { collectionPagePath, getBlock, nameRefusal } from "@/lib/commands";
+import { errorMessage } from "@/lib/errorMessage";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { NAME_REFUSED_SHAKE_MS, useNameEdit, type NameEdit } from "@/hooks/useNameEdit";
 import { collectionRefLabel } from "@/lib/collections";
@@ -249,7 +251,7 @@ interface SidebarProps {
   linkedTags?: string[];
   onToggleLinkedTag?: (slug: string, tag: string, hasTag: boolean) => void;
   /** Connects or disconnects every selected feed card (SPEC_CARD_STATES.md, С6). */
-  onBatchSetTag?: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
+  onBatchSetTag?: (slugs: string[], tag: string, connected: boolean) => MembershipAnswer;
   detailChromeClosing?: boolean;
   /** Dissolve rows into transparency as they scroll up under the chrome. */
   scrollEdgeFade?: boolean;
@@ -445,7 +447,7 @@ const SidebarCore = memo(function SidebarCore({
     save: async (typed) => {
       await onCreateChannel(typed);
     },
-    reasonOf: (error) => collectionNameRefusal(error, "Could not create the collection."),
+    reasonOf: collectionNameRefusal,
     end: () => onSetCreatingChannel(false),
   });
 
@@ -470,10 +472,11 @@ const SidebarCore = memo(function SidebarCore({
       onToggle: () => {
         const slugs = [...cardSelection.slugs];
         applySelectionMembership(tag, !checked);
+        // A change that was not made is the tab's notice, and the
+        // collections read after it put the rows back (SPEC_DEEP_AUDIT.md,
+        // Е6.1).
         scheduleAfterOptimisticUiUpdate(() => {
-          void Promise.resolve(onBatchSetTag(slugs, tag, !checked)).catch((err: unknown) => {
-            console.error("Failed to update the selection's collection:", err);
-          });
+          void onBatchSetTag(slugs, tag, !checked);
         });
       },
     };
@@ -1506,12 +1509,10 @@ function SidebarRowBody({
 }
 
 /// What a refused collection name shows under the name: the reason the
-/// command gave, or `fallback` when it failed without one.
-function collectionNameRefusal(error: unknown, fallback: string): string {
-  const reason = nameRefusal(error);
-  if (reason !== null) return reason;
-  console.error(fallback, error);
-  return fallback;
+/// command gave, or, for a failure that is no refusal of the name, its own
+/// words; never the console only (SPEC_DEEP_AUDIT.md, Н11).
+function collectionNameRefusal(error: unknown): string {
+  return nameRefusal(error) ?? errorMessage(error);
 }
 
 /// The reason a typed name is refused, right under the row being named: the
@@ -1760,7 +1761,7 @@ const TagNavItem = memo(function TagNavItem({
     current: label,
     check: onRenameCheck ? (typed) => onRenameCheck(tag, typed) : undefined,
     save: (typed) => onRenameSubmit(tag, typed),
-    reasonOf: (error) => collectionNameRefusal(error, "Could not rename the collection."),
+    reasonOf: collectionNameRefusal,
     end: () => onRenameEnd(tag),
   });
   const deleteTag = useCallback(() => onDelete(tag), [onDelete, tag]);
@@ -1888,7 +1889,7 @@ const TagNavItem = memo(function TagNavItem({
           <ContextMenuItem
             disabled={!pagePath}
             onSelect={() => {
-              if (pagePath) void revealItemInDir(pagePath);
+              if (pagePath) revealInFinder(pagePath);
             }}
             data-sidebar-collection-reveal=""
           >

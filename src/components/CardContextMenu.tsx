@@ -6,11 +6,8 @@ import {
   ContextMenuSubContent,
   ContextMenuSubTrigger,
 } from "@/components/ui/context-menu";
-import { useEffect, useState } from "react";
 import { ExternalLink, Plus, Trash2, Unlink } from "lucide-react";
-import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { LightBlock, TagCount } from "@/types";
-import { getBlock } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
 import { isSafeUrl } from "@/lib/assets";
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
@@ -19,6 +16,9 @@ import {
   CollectionPicker,
 } from "./CollectionPicker";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import { COPY_PATH_FAILED_TITLE } from "@/lib/actionFailures";
+import { openLinkInBrowser, revealInFinder } from "@/lib/systemActions";
+import { useCardMembership } from "@/hooks/useCardMembership";
 
 interface CardTagMenuProps {
   block: LightBlock;
@@ -47,21 +47,10 @@ export function CardTagMenu({
   onRequestRename,
   onRequestDelete,
 }: CardTagMenuProps) {
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  // The collections the feed knows, then what the file says (Е6.12).
+  const selectedTags = useCardMembership(block, true);
   const filePath = `${vaultPath}/${block.slug}.md`;
   const hasUrl = block.url != null && isSafeUrl(block.url);
-
-  useEffect(() => {
-    let cancelled = false;
-    void getBlock(block.slug).then((full) => {
-      if (!cancelled) {
-        setSelectedTags(full?.tags ?? []);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [block.slug]);
 
   return (
     <ContextMenuContent>
@@ -86,7 +75,7 @@ export function CardTagMenu({
       </ContextMenuSub>
 
       {hasUrl && (
-        <ContextMenuItem onSelect={() => openUrl(block.url!)}>
+        <ContextMenuItem onSelect={() => openLinkInBrowser(block.url!)}>
           <MenuIconSlot>
             <ExternalLink className="size-[13px]" />
           </MenuIconSlot>
@@ -96,12 +85,12 @@ export function CardTagMenu({
 
       <ContextMenuSeparator />
 
-      <ContextMenuItem onSelect={() => revealItemInDir(filePath)}>
+      <ContextMenuItem onSelect={() => revealInFinder(filePath)}>
         <MenuIconSlot />
         Reveal in Finder
       </ContextMenuItem>
 
-      <ContextMenuItem onSelect={() => copyTextToClipboard(filePath)}>
+      <ContextMenuItem onSelect={() => copyTextToClipboard(filePath, COPY_PATH_FAILED_TITLE)}>
         <MenuIconSlot />
         Copy Path
       </ContextMenuItem>

@@ -604,6 +604,10 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
             continue;
         }
         let path = vault.root().join(&source.path);
+        // A note iCloud keeps off this Mac is brought down by this read:
+        // tests count it (`cloud_files::test_seam`).
+        #[cfg(debug_assertions)]
+        crate::storage::cloud_files::test_seam::note_read(&path);
         let content = match std::fs::read_to_string(&path) {
             Ok(content) => content,
             Err(error) => {

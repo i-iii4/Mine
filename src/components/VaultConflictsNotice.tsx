@@ -14,7 +14,13 @@ import {
   listVaultConflicts,
   resolveVaultConflict,
 } from "@/lib/commands";
-import type { ConflictChoice, ConflictVersion, VaultConflict, VaultConflictError } from "@/types";
+import type {
+  ConflictChoice,
+  ConflictVersion,
+  VaultConflict,
+  VaultConflictError,
+  VaultConflictsChanged,
+} from "@/types";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +36,10 @@ import { NotificationCard } from "@/components/NotificationCard";
 export const VAULT_CONFLICTS_CHANGED_EVENT = "vault-conflicts-changed";
 
 export const VAULT_CONFLICTS_TITLE = "Resolve iCloud sync conflicts";
+
+/** The notice of a check of the space that failed (SPEC_DEEP_AUDIT.md,
+ *  Е5.11, Е6.17): the conflicts it would have found are not counted. */
+export const CONFLICTS_CHECK_FAILED_TITLE = "Could not check for iCloud sync conflicts";
 
 export const VAULT_CONFLICTS_DESCRIPTION =
   "iCloud kept more than one version of these notes. Keep one version of each: the others go to the Trash. Keep all puts the other versions next to the note as separate notes.";
@@ -125,6 +135,10 @@ export function VaultConflictsNotice({ vaultReady }: { vaultReady: boolean }) {
   const [paths, setPaths] = useState<string[]>([]);
   const [closedWith, setClosedWith] = useState<ReadonlySet<string> | null>(null);
   const [open, setOpen] = useState(false);
+  // Why the last check of the space failed; a check that did not takes it
+  // away, and the cross hides it until another reason comes.
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const [closedCheckError, setClosedCheckError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -139,7 +153,10 @@ export function VaultConflictsNotice({ vaultReady }: { vaultReady: boolean }) {
   useEffect(() => {
     if (!vaultReady) return;
     void refresh();
-    const subscription = listenPage(VAULT_CONFLICTS_CHANGED_EVENT, () => void refresh());
+    const subscription = listenPage<VaultConflictsChanged>(VAULT_CONFLICTS_CHANGED_EVENT, (event) => {
+      setCheckError(event.payload.check_error);
+      void refresh();
+    });
     return () => {
       void subscription.then((stop) => stop());
     };
@@ -157,6 +174,13 @@ export function VaultConflictsNotice({ vaultReady }: { vaultReady: boolean }) {
                 Review
               </Button>
             </div>
+          </NotificationCard>
+        </div>
+      )}
+      {checkError !== null && checkError !== closedCheckError && (
+        <div data-vault-conflicts-check-failed="">
+          <NotificationCard title={CONFLICTS_CHECK_FAILED_TITLE} onClose={() => setClosedCheckError(checkError)}>
+            <p className="text-sm text-destructive">{checkError}</p>
           </NotificationCard>
         </div>
       )}

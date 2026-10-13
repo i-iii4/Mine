@@ -42,6 +42,8 @@ use crate::tabs::{
 use crate::updater::{UpdateError, UpdateStage, UpdateStatus};
 use crate::commands::cloud_recommendation::CloudRecommendationState;
 use crate::commands::conflicts::VaultConflictsChanged;
+use crate::commands::freshness::VaultFreshnessChanged;
+use crate::storage::reconcile::{ReconcileFileError, ReconcileFileErrorKind};
 use crate::commands::icloud_progress::{IcloudDownloadProgress, IcloudDownloadStatus};
 use crate::storage::icloud_conflicts::{ConflictChoice, ConflictVersion, VaultConflict, VaultConflictError};
 use crate::commands::vault::{SpaceEntry, UnavailableVault, UnavailableVaultReason, VaultOpenResult, VaultWriteLayoutDto};
@@ -177,6 +179,9 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<ConflictChoice>()
         .register::<VaultConflictError>()
         .register::<VaultConflictsChanged>()
+        .register::<VaultFreshnessChanged>()
+        .register::<ReconcileFileError>()
+        .register::<ReconcileFileErrorKind>()
         .register::<ArenaChannelInfo>()
         .register::<ImportChannelRequest>()
         .register::<ImportChannelResult>()

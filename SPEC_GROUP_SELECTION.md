@@ -438,9 +438,16 @@ Ownership and mechanics:
   selected card;
 - hidden while a block drag is active, so the stack preview/drop operation is
   the only primary drag affordance;
-- the action error renders as a single line anchored under the row; ошибка
-  удаления сюда не попадает: её показывает окно удаления (раздел «Batch
-  Delete»), потому что строку под рядом закрывает затемнение окна;
+- the error line anchored under the row says only why the selection's
+  collections could not be read for `Connect`; a Connect or Disconnect that
+  failed is the tab's notice, because the menu that made it may be closed by
+  then (SPEC_DEEP_AUDIT.md, Н11, Е6.1; DESIGN_SYSTEM.md, «Сбой после закрытия
+  окна»); ошибка удаления сюда не попадает: её показывает окно удаления
+  (раздел «Batch Delete»), потому что строку под рядом закрывает затемнение
+  окна;
+- the row, the ⌘K menu and the right-click menu share one hook
+  `useGroupSelectionMenuActions`: the same optimistic collection lookup and
+  the same batch command;
 - при сужении ряда первым обрезается счётчик, команды сохраняют размер; ряд
   прокручивается по горизонтали, только когда не помещаются сами команды.
 
@@ -690,13 +697,31 @@ starts; persistence runs after the UI update, and App refreshes grid/taxonomy/
 previews through the coalesced refresh queue instead of blocking the open menu
 with `reloadAllSnapshots()`.
 
+All the selected cards change in one backend command,
+`set_blocks_membership(slugs, tag, connected)` (`commands/tags.rs`): one
+source mutation, every card or none. A card already as asked is not written,
+a card whose file is gone is skipped, connecting needs the collection's page
+(SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7), and one card that cannot take the
+change refuses the whole batch with nothing written. A batch that was not made
+answers `false`: the picker takes back the state it showed, the lookup is read
+again, and the tab's notice says `Could not connect {N} elements` or `Could not
+disconnect {N} elements` with `Nothing changed.` and the reason
+(SPEC_DEEP_AUDIT.md, Е6.1). Before 13.10.2026 App called `addTag` or
+`removeTag` card after card: a failure in the middle left the first cards
+changed, and the reason went to the console only. A drop of several cards on a
+collection uses the same command.
+
 ## Collection-Scoped Disconnect
 
 `Disconnect` is only available inside a concrete collection route
 (`currentTag` exists).
 
 The operation removes every selected card from that current collection and then
-clears selection. If a selected card is not in the current collection because of
+clears selection, only after the command answered that it was made: a
+Disconnect that was not made keeps the selection, to be tried again, and the
+tab's notice says why (SPEC_DEEP_AUDIT.md, Е6.1; before 13.10.2026 the
+selection was cleared on the press, and the error line had nothing left to
+stand under). If a selected card is not in the current collection because of
 a stale UI snapshot, the operation skips it without failing the whole batch.
 
 ## Testing Requirements
@@ -746,7 +771,13 @@ Frontend tests must cover:
   `false` без них (раздел «Решения реализации»); `Keep media` передаёт `false`;
 - пока команда идёт, окно открыто и показывает `Deleting…`; сбой оставляет окно
   открытым с ошибкой в окне и выделение целым;
-- непустой `kept_media` показывает уведомление `Media kept`.
+- непустой `kept_media` показывает уведомление `Media kept`;
+- Disconnect ряда команд, меню ⌘K и правого щелчка ждёт ответа: сделанный
+  снимает выделение, несделанный оставляет его (`GroupSelectionCommands.test.tsx`);
+- Connect и Disconnect выделения идут одной командой `setBlocksMembership`, а
+  сбой показывает уведомление вкладки (`App.test.tsx`); строка выбора
+  коллекций выделения после ответа `false` возвращается к прежнему виду
+  (`CollectionPicker.test.tsx`).
 
 Rust tests (`commands/blocks.rs`) must cover `prepare_delete_blocks` and
 `delete_blocks`:

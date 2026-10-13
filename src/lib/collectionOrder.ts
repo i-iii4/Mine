@@ -1,5 +1,24 @@
 import type { TagCount } from "@/types";
 
+/// The positions a drag writes for `order`, the collections top to bottom:
+/// numbered on from the smallest position there is, so the collections the
+/// drag did not move keep the positions they have and their pages are not
+/// written (`reorder_channels` skips a page whose position stays). A new
+/// collection takes the place before the first, below zero once the first is
+/// at zero (SPEC_DEEP_AUDIT.md, Е6.2); numbering from zero would rewrite every
+/// page after such a creation.
+export function reorderedPositions(
+  order: readonly string[],
+  positions: ReadonlyMap<string, number>,
+): { tag: string; position: number }[] {
+  const known = order.flatMap((tag) => {
+    const position = positions.get(tag);
+    return position === undefined ? [] : [position];
+  });
+  const start = known.length > 0 ? Math.min(...known) : 0;
+  return order.map((tag, index) => ({ tag, position: start + index }));
+}
+
 /// Applies the collection order a drop just produced on top of the order the
 /// vault currently reports.
 ///

@@ -8,7 +8,7 @@
 // silences the advice everywhere (Х19). See SPEC_CLOUD_STORAGE.md Х16–Х22.
 
 import { useCallback, useEffect, useState } from "react";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { revealInFinder } from "@/lib/systemActions";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { NotificationAnchor, NotificationCard } from "@/components/NotificationCard";
@@ -55,7 +55,7 @@ export function CloudRecommendation({ vaultPath, refreshToken = 0 }: CloudRecomm
         <CloudRecommendationCard
           neverAgain={neverAgain}
           onNeverAgainChange={setNeverAgain}
-          onReveal={() => void revealItemInDir(vaultPath)}
+          onReveal={() => revealInFinder(vaultPath)}
           onClose={close}
         />
       </div>
@@ -79,7 +79,7 @@ export function CloudRecommendationCard({
   return (
     <div data-cloud-recommendation-card="">
       <NotificationCard
-        title="Cards are loading slowly"
+        title="Elements are loading slowly"
         onClose={onClose}
         closeLabel="Dismiss recommendation"
       >

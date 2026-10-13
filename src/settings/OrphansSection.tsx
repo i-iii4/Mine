@@ -1,3 +1,4 @@
+import { MissingAwareImage } from "@/components/MissingAwareImage";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -18,6 +19,7 @@ import {
 } from "@/lib/commands";
 import { mediaUrl } from "@/lib/assets";
 import { formatBytes } from "@/lib/formatBytes";
+import { errorMessage } from "@/lib/errorMessage";
 import type { OrphanMedia } from "@/types";
 import { OpenSpaceSelect } from "./OpenSpaceSelect";
 import { useOpenSpaces, type OpenSpace } from "./useOpenSpaces";
@@ -33,7 +35,8 @@ function fileExt(name: string): string {
   return index >= 0 ? name.slice(index + 1).toLowerCase() : "";
 }
 
-const DESCRIPTION = "Media files in the space root that no element references.";
+// Every folder of the space is scanned, not its root only (Е6.15).
+const DESCRIPTION = "Media files in the space that no element references.";
 
 type BatchAction = "promote" | "delete";
 
@@ -86,7 +89,7 @@ function SpaceOrphans({ space, selector }: { space: OpenSpace; selector: ReactNo
         return new Set([...previous].filter((name) => names.has(name)));
       });
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     }
   }, [space.vaultId]);
 
@@ -129,7 +132,7 @@ function SpaceOrphans({ space, selector }: { space: OpenSpace; selector: ReactNo
       setSummary(`Converted ${result.created.length}, skipped ${result.skipped.length}`);
       await reload();
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
       await reload();
     } finally {
       setWorking(null);
@@ -146,7 +149,7 @@ function SpaceOrphans({ space, selector }: { space: OpenSpace; selector: ReactNo
       const result = await deleteOrphanMedia(listSpace, selectedNames);
       setSummary(`Deleted ${result.deleted.length}, skipped ${result.skipped.length}`);
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     } finally {
       // Trash may move some files before reporting an error.
       await reload();
@@ -195,12 +198,15 @@ function SpaceOrphans({ space, selector }: { space: OpenSpace; selector: ReactNo
                       onCheckedChange={() => toggleOne(item.file_name)}
                     />
                     {isImage ? (
-                      <img
-                        src={mediaUrl(space.path, item.file_name)}
-                        alt=""
-                        loading="lazy"
-                        className="size-8 shrink-0 rounded-[2px] bg-component-fill object-cover"
-                      />
+                      // A file that will not load keeps the placeholder
+                      // slot under it (Е6.8).
+                      <span className="size-8 shrink-0 rounded-[2px] bg-component-fill">
+                        <MissingAwareImage
+                          src={mediaUrl(space.path, item.file_name)}
+                          loading="lazy"
+                          className="size-8 rounded-[2px] object-cover"
+                        />
+                      </span>
                     ) : (
                       <div
                         aria-hidden="true"

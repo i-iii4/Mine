@@ -16,7 +16,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { X } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openLinkInBrowser } from "@/lib/systemActions";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ReadOnlyCardPreview } from "@/components/Card";
@@ -35,6 +35,7 @@ import { deriveSearchResultRow } from "@/lib/searchResultRow";
 import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { commandById } from "@/lib/commandRegistry";
 import { CardRow } from "@/components/CardRow";
+import type { MembershipAnswer } from "@/components/CollectionPicker";
 import { CardRowActions, cardRowActionsReservePx } from "@/components/CardRowActions";
 import { cn } from "@/lib/utils";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
@@ -74,8 +75,8 @@ interface SearchOverlayProps {
   /** A result row's commands (Connect, Source, More) are the feed card's. */
   tags?: TagCount[];
   currentTag?: string;
-  onToggleTag?: (slug: string, tag: string, hasTag: boolean) => void | Promise<void>;
-  onCreateAndAssign?: (tag: string, blockSlug: string) => void | Promise<void>;
+  onToggleTag?: (slug: string, tag: string, hasTag: boolean) => MembershipAnswer;
+  onCreateAndAssign?: (tag: string, blockSlug: string) => void | Promise<unknown>;
   onRequestRename?: (block: LightBlock) => void;
   onRequestDelete?: (slug: string) => void;
   /** Dissolve results into transparency as they scroll up under the query row. */
@@ -345,9 +346,12 @@ export function SearchOverlay({
   );
 
   const handleToggleTag = useCallback(
-    (slug: string, tag: string, hasTag: boolean) => {
+    async (slug: string, tag: string, hasTag: boolean): Promise<boolean> => {
       applyTagsDelta(slug, tag, !hasTag);
-      void onToggleTag?.(slug, tag, hasTag);
+      const applied = (await onToggleTag?.(slug, tag, hasTag)) !== false;
+      // Not made: the row shows the card as it is (SPEC_DEEP_AUDIT.md, Е6.3).
+      if (!applied) applyTagsDelta(slug, tag, hasTag);
+      return applied;
     },
     [applyTagsDelta, onToggleTag],
   );
@@ -705,7 +709,7 @@ export function SearchOverlay({
                     <MetadataRow label="Source" spacing="compact">
                       <MetadataLinkValue
                         value={domainFromUrl(activeBlock.url)}
-                        onClick={() => void openUrl(activeBlock.url!)}
+                        onClick={() => openLinkInBrowser(activeBlock.url!)}
                       />
                     </MetadataRow>
                   )}

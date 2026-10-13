@@ -9,7 +9,7 @@
 //! When in doubt the guard says "not present": keeping a stale row costs one
 //! reconcile later, deleting a live one costs the user their space.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::domain::vault::VaultLayout;
 
@@ -38,7 +38,14 @@ pub struct RootUnavailable {
 /// (`vaults/<vault-id>`); the folder's `.mine/vault-id` (or the legacy
 /// `.arena/vault-id`) must then name the same space. A derived store inside
 /// the space (`.mine`) belongs to whatever folder holds it.
+///
+/// Every pass before an action asks here, so the identity file is never
+/// waited for (SPEC_CLOUD_STORAGE.md, Х12): while its contents are in
+/// iCloud, the folder the store last served (`owner-path.json`, П22) holds
+/// the space, as the registry takes it (`space_registry::is_available`), and
+/// any other folder cannot be told and counts as missing.
 pub fn root_state(vault: &VaultLayout) -> RootState {
+    use crate::space_registry::SpaceIdentity;
     let root = vault.root();
     if !root.is_dir() {
         return RootState::Missing;
@@ -46,10 +53,13 @@ pub fn root_state(vault: &VaultLayout) -> RootState {
     let Some(expected) = expected_space_id(vault) else {
         return RootState::Present;
     };
-    match read_space_id(vault) {
-        Some(id) if id == expected => RootState::Present,
-        Some(_) => RootState::Foreign,
-        None => RootState::Missing,
+    match crate::space_registry::space_identity(root) {
+        SpaceIdentity::Known(id) if id == expected => RootState::Present,
+        SpaceIdentity::Known(_) => RootState::Foreign,
+        SpaceIdentity::InCloud if crate::space_registry::store_served(vault.derived_root(), root) => {
+            RootState::Present
+        }
+        SpaceIdentity::InCloud | SpaceIdentity::Absent => RootState::Missing,
     }
 }
 
@@ -99,16 +109,6 @@ fn expected_space_id(vault: &VaultLayout) -> Option<&str> {
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| is_space_id(name))
-}
-
-fn read_space_id(vault: &VaultLayout) -> Option<String> {
-    read_id_file(&vault.vault_id_path()).or_else(|| read_id_file(&vault.legacy_vault_id_path()))
-}
-
-fn read_id_file(path: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let id = text.trim();
-    (!id.is_empty()).then(|| id.to_string())
 }
 
 /// Space identifiers are 32 lowercase hex digits.
@@ -177,6 +177,25 @@ mod tests {
     fn another_space_at_the_path_is_foreign() {
         let (_source, _derived, vault) = space(Some("0123456789abcdef0123456789abcdef"));
         assert_eq!(root_state(&vault), RootState::Foreign);
+    }
+
+    /// SPEC_CLOUD_STORAGE.md, Х12: every action's pass asks the guard, so
+    /// the guard never waits for an identity iCloud took away. The folder the
+    /// store last served, holding the evicted identity file, is the space;
+    /// any other folder with an evicted identity cannot be told and counts as
+    /// missing. Neither is read.
+    #[test]
+    fn an_evicted_identity_is_never_read() {
+        let (source, _derived, vault) = space(Some(ID));
+        let identity = source.path().join(".mine/vault-id");
+        crate::space_registry::record_owner_path(vault.derived_root(), source.path());
+        crate::storage::cloud_files::test_seam::mark_offloaded(&identity);
+        assert_eq!(root_state(&vault), RootState::Present);
+        assert!(ensure_root_present(&vault).is_ok());
+
+        crate::space_registry::record_owner_path(vault.derived_root(), &source.path().join("elsewhere"));
+        assert_eq!(root_state(&vault), RootState::Missing);
+        assert_eq!(crate::storage::cloud_files::test_seam::reads_of(&identity), 0);
     }
 
     #[test]

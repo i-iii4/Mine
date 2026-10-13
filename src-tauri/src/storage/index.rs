@@ -45,7 +45,7 @@ pub use crate::storage::block_queries::{
 #[cfg(test)]
 pub(crate) use crate::storage::block_queries::{get_tags_for_block, list_grid_blocks_with_query};
 pub use crate::storage::channel_index::{
-    channel_page_slugs, channel_source_slug, list_channels, next_channel_position, remove_channel, sweep_channels_without_documents,
+    channel_page_slugs, channel_source_slug, list_channels, new_channel_position, remove_channel, sweep_channels_without_documents,
     update_channel_positions, upsert_channel, upsert_channel_from_block,
     upsert_channel_from_block_in_vault,
     upsert_channel_from_block_with_ref, upsert_channel_with_source,
@@ -6309,20 +6309,28 @@ mod tests {
         assert_eq!(tags, vec!["gamma", "alpha", "beta"]);
     }
 
+    /// A new collection stands first: one before the smallest position, so
+    /// no other page moves (SPEC_DEEP_AUDIT.md, Е6.2).
     #[test]
-    fn next_channel_position_appends_after_current_max() {
+    fn new_channel_position_stands_before_the_first() {
         let conn = test_conn();
-        assert_eq!(next_channel_position(&conn).unwrap(), 0);
+        assert_eq!(new_channel_position(&conn).unwrap(), 0);
 
         let dt = DateTime::new("2026-01-01T00:00:00Z").unwrap();
         let mut ch_a = Channel::new("alpha", dt.clone()).unwrap();
         ch_a.position = 4;
         upsert_channel(&conn, &ch_a).unwrap();
 
-        let mut ch_b = Channel::new("beta", dt).unwrap();
+        let mut ch_b = Channel::new("beta", dt.clone()).unwrap();
         ch_b.position = 9;
         upsert_channel(&conn, &ch_b).unwrap();
+        assert_eq!(new_channel_position(&conn).unwrap(), 3);
 
-        assert_eq!(next_channel_position(&conn).unwrap(), 10);
+        let mut ch_c = Channel::new("gamma", dt).unwrap();
+        ch_c.position = -2;
+        upsert_channel(&conn, &ch_c).unwrap();
+        assert_eq!(new_channel_position(&conn).unwrap(), -3);
+        let tags: Vec<String> = list_channels(&conn).unwrap().into_iter().map(|c| c.tag).collect();
+        assert_eq!(tags, vec!["gamma", "alpha", "beta"]);
     }
 }

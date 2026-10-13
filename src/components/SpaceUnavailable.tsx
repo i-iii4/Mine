@@ -15,6 +15,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
 import { ScreenState } from "@/components/ScreenState";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { errorMessage } from "@/lib/errorMessage";
 import { forgetUnavailableVault, listSpaces, selectVault } from "@/lib/commands";
 import type { SpaceEntry, UnavailableVaultReason } from "@/types";
 
@@ -165,7 +166,12 @@ export function SpaceUnavailable({
             {accessDenied ? (
               <>
                 <Button
-                  onClick={() => void openUrl(PRIVACY_SETTINGS_URL)}
+                  onClick={() => {
+                    setError(null);
+                    // The screen's own error line says why it did not open
+                    // (SPEC_DEEP_AUDIT.md, Н11, Е6.16).
+                    void openUrl(PRIVACY_SETTINGS_URL).catch((e: unknown) => setError(errorMessage(e)));
+                  }}
                   disabled={busy}
                   data-space-unavailable-open-settings=""
                 >

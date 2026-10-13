@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { FeedDisplayMenu } from "./FeedDisplayMenu";
 import { getFeedDisplay, reloadFeedDisplay } from "@/lib/feedDisplay";
 import { applyDensity } from "@/lib/density";
+import { emit } from "@tauri-apps/api/event";
 
 vi.mock("@tauri-apps/api/event", () => ({
   emit: vi.fn(() => Promise.resolve()),
@@ -118,5 +119,18 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     // an outside click lands on the document root instead.
     await user.click(document.documentElement);
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  /// SPEC_DEEP_AUDIT.md, Е6.7: a choice of Sort or Show reaches the other
+  /// tabs and windows, with its value, as Spacing does.
+  it("tells the other tabs the Sort and the Show chosen", async () => {
+    const user = await openMenu();
+    vi.mocked(emit).mockClear();
+
+    await user.click(screen.getByRole("menuitemradio", { name: "Oldest first" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Media" }));
+
+    expect(emit).toHaveBeenCalledWith("settings-changed", { key: "mine.feed.sort", value: "oldest" });
+    expect(emit).toHaveBeenCalledWith("settings-changed", { key: "mine.feed.show", value: "media" });
   });
 });

@@ -79,7 +79,7 @@ import {
   TAG_ROW_OVERLAY_MODIFIERS,
 } from "@/lib/tagRowDragOverlay";
 import { arrayMove } from "@dnd-kit/sortable";
-import { applyPendingTagOrder } from "@/lib/collectionOrder";
+import { applyPendingTagOrder, reorderedPositions } from "@/lib/collectionOrder";
 import { collectionRefLabel } from "@/lib/collections";
 import {
   DELETE_COLLECTION_FAILED_TITLE,
@@ -119,7 +119,13 @@ import {
   getStoredScrollEdgeFade,
 } from "@/lib/scrollEdgeFade";
 import { DENSITY_STORAGE_KEY, applyDensity, getStoredDensity } from "@/lib/density";
-import { getFeedDisplay, useFeedDisplay } from "@/lib/feedDisplay";
+import {
+  FEED_SHOW_STORAGE_KEY,
+  FEED_SORT_STORAGE_KEY,
+  getFeedDisplay,
+  reloadFeedDisplay,
+  useFeedDisplay,
+} from "@/lib/feedDisplay";
 import {
   CONTENT_FONT_STORAGE_KEY,
   INTERFACE_FONT_STORAGE_KEY,
@@ -168,12 +174,6 @@ function blockMarkdownPath(vaultPath: string, slug: string): string {
 
 /// Keys come from the command registry, the user's rebinding included: a
 /// rebound command no longer answers its old chord (SPEC_AUDIT_FIXES.md, Ф11).
-/** What a failed command says, for a notice: `Error.message`, which
- *  `commandErrorMessage` composes for a `CommandError`. */
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 function commandPressed(id: string, e: KeyboardEvent): boolean {
   return commandById(id).matches?.(e) ?? false;
 }
@@ -232,6 +232,7 @@ function fetchGridBlocks(
 }
 
 import type {
+  ClipboardPayload,
   UnavailableVault,
   UnavailableVaultReason,
   DeleteBlockMedia,
@@ -289,6 +290,7 @@ import {
   prepareDeleteBlocks,
   addTag,
   removeTag,
+  setBlocksMembership,
   isCollectionNotFound,
   deleteBlock,
   deleteBlocks,
@@ -304,7 +306,6 @@ import {
   sweepVaultThumbnails,
   openSettingsWindow,
   clipperExtensionFolder,
-  createBlock,
   readClipboardPayload,
   getTabBootstrap,
   activateAdjacentTab,
@@ -348,6 +349,26 @@ import { SpaceUnavailable } from "@/components/SpaceUnavailable";
 import { CloudRecommendation } from "@/components/CloudRecommendation";
 import { FirstCardMarkerCard } from "@/components/FirstCardMarker";
 import { NotificationAnchor, NotificationCard } from "@/components/NotificationCard";
+import { ActionFailureNotices } from "@/components/ActionFailureNotices";
+import { IndexErrorsNotice } from "@/components/IndexErrorsNotice";
+import type { MembershipAnswer } from "@/components/CollectionPicker";
+import { CollectionNameCheckContext } from "@/hooks/useCollectionNameRefusal";
+import { errorMessage } from "@/lib/errorMessage";
+import { createElementsInTurn } from "@/lib/createElements";
+import { revealInFinder } from "@/lib/systemActions";
+import { TAB_BAR_ACTION_FAILED_EVENT, tabBarFailureTitle, type TabBarActionFailed } from "@/lib/tabBarFailure";
+import { mediaAssetErrorMessage } from "@/lib/mediaAssetErrors";
+import {
+  reportActionError,
+  reportActionFailure,
+  dismissActionFailure,
+  membershipFailureTitle,
+  createElementsFailureTitle,
+  useActionFailures,
+  NOTHING_CHANGED,
+  CREATE_COLLECTION_FAILED_TITLE,
+  COPY_PATH_FAILED_TITLE,
+} from "@/lib/actionFailures";
 import {
   IndexingProgress,
   openingStep,
@@ -697,8 +718,10 @@ export function App() {
       if (direction === null) return;
       event.preventDefault();
       event.stopPropagation();
+      // A tab command that failed is this tab's notice, as one of the tab
+      // bar's (SPEC_DEEP_AUDIT.md, Н11, Е6.10).
       void activateAdjacentTab(direction === "forward").catch((error: unknown) => {
-        console.error("Could not show the adjacent tab:", error);
+        reportActionError("tab-bar", tabBarFailureTitle("switch tabs"), error);
       });
     };
     window.addEventListener("keydown", onKeyDown, true);
@@ -1564,6 +1587,9 @@ export function AppWithVault({
   const indexingNotice = useErrorNotice(indexingError);
   const gridLoadNotice = useErrorNotice(gridLoadError);
   const taxonomyLoadNotice = useErrorNotice(taxonomyLoadError);
+  // Failures of actions whose menu or window had closed: this tab's own,
+  // lead or not (SPEC_DEEP_AUDIT.md, Н11).
+  const actionFailures = useActionFailures();
 
   useEffect(() => {
     if (!loadError) return;
@@ -2149,10 +2175,11 @@ export function AppWithVault({
 
   // The empty-space onboarding shows where the extension is: the folder a
   // browser loads once (SPEC_ONBOARDING.md, О16).
-  const revealClipperExtensionFolder = useCallback(() => {
-    void clipperExtensionFolder()
-      .then((folder) => revealItemInDir(folder))
-      .catch((error) => console.error("Could not show the extension folder:", error));
+  // Answers once Finder has shown it: the screen says so only then, and says
+  // why it did not otherwise (SPEC_DEEP_AUDIT.md, Е6.6).
+  const revealClipperExtensionFolder = useCallback(async () => {
+    const folder = await clipperExtensionFolder();
+    await revealItemInDir(folder);
   }, []);
 
   const checkSpaceOnboarding = useCallback(() => {
@@ -2874,7 +2901,7 @@ export function AppWithVault({
   // this tab keeps its own (SPEC_TABS.md, В52).
   const openSpaceInNewTab = useCallback((vaultId: string) => {
     void newTab(vaultId).catch((error: unknown) => {
-      console.error("Could not open the space in a new tab:", error);
+      reportActionError("tab-bar", tabBarFailureTitle("open a new tab"), error);
     });
   }, []);
 
@@ -2968,7 +2995,11 @@ export function AppWithVault({
       collection_filter: "",
     };
     void openPlace(view, newWindow).catch((error: unknown) => {
-      console.error("Could not open the place elsewhere:", error);
+      reportActionError(
+        "tab-bar",
+        tabBarFailureTitle(newWindow ? "open a new window" : "open a new tab"),
+        error,
+      );
     });
   }, [mainViewMode]);
   const handleOpenBlockElsewhere = useCallback(
@@ -2980,8 +3011,8 @@ export function AppWithVault({
   }, [openPlaceElsewhere]);
 
   const handleOpenSettings = useCallback((section?: SettingsSection) => {
-    void openSettingsWindow(section).catch((error) => {
-      console.error("Failed to open settings window:", error);
+    void openSettingsWindow(section).catch((error: unknown) => {
+      reportActionError("tab-bar", tabBarFailureTitle("open Settings"), error);
     });
   }, []);
 
@@ -3011,6 +3042,9 @@ export function AppWithVault({
         applyCardRadius(getStoredCardRadius());
       } else if (key === DENSITY_STORAGE_KEY) {
         applyDensity(getStoredDensity());
+      } else if (key === FEED_SORT_STORAGE_KEY || key === FEED_SHOW_STORAGE_KEY) {
+        // Sort and Show chosen in another tab (SPEC_DEEP_AUDIT.md, Е6.7).
+        reloadFeedDisplay();
       } else if (key === CONTENT_FONT_STORAGE_KEY) {
         applyContentFont(getStoredContentFont());
       } else if (key === INTERFACE_FONT_STORAGE_KEY) {
@@ -3023,6 +3057,17 @@ export function AppWithVault({
     return () => {
       cancelled = true;
       unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  // The tab bar of this window could not do what was asked: this tab, the
+  // visible one, says so (SPEC_DEEP_AUDIT.md, Е6.10).
+  useEffect(() => {
+    const unlisten = listenPage<TabBarActionFailed>(TAB_BAR_ACTION_FAILED_EVENT, (event) => {
+      reportActionFailure({ kind: "tab-bar", title: event.payload.title, messages: [event.payload.message] });
+    });
+    return () => {
+      void unlisten.then((stop) => stop());
     };
   }, []);
 
@@ -3074,7 +3119,7 @@ export function AppWithVault({
       if (commandPressed("copy-path", e) && selectedBlock) {
         if (isDetailShortcutBlockedTarget(e.target)) return;
         e.preventDefault();
-        copyTextToClipboard(blockMarkdownPath(vaultPath, selectedBlock.slug));
+        copyTextToClipboard(blockMarkdownPath(vaultPath, selectedBlock.slug), COPY_PATH_FAILED_TITLE);
         return;
       }
       if (isOverlayKeyboardTarget(e.target)) return;
@@ -3288,19 +3333,13 @@ export function AppWithVault({
     navigate(tag ? `/channel/${encodeURIComponent(tag)}` : "/");
   }, [navigate]);
 
-  const handleTopCollectionCreate = useCallback(async (tag: string) => {
-    const channel = await createChannel(tag);
-    await reloadAllSnapshots();
-    navigate(`/channel/${encodeURIComponent(channel.tag)}`);
-  }, [navigate, reloadAllSnapshots]);
-
-  // ── Tab — the mode of the current surface ─────────────────────────────
+  // ── Tab — the mode of the feed ────────────────────────────────────────
   //
-  // One rule instead of three shortcuts: Tab cycles the mode of whatever the
-  // window is showing. Over the feed and the graph it toggles Grid ↔ Graph;
-  // inside an open element it toggles the connections filter. Inside inputs,
-  // dialogs, menus and overlays Tab stays native — those surfaces keep the
-  // system's focus traversal.
+  // Over the feed and the graph Tab toggles Grid ↔ Graph. Inside an open
+  // element, inputs, dialogs, menus and overlays Tab stays native: those
+  // surfaces keep the system's focus traversal. The open element's
+  // connections filter it once toggled is gone (07.10.2026), and the key it
+  // swallowed there goes back to the system (SPEC_DEEP_AUDIT.md, Е6.14).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!commandPressed("toggle-view", e)) return;
@@ -3309,12 +3348,11 @@ export function AppWithVault({
         || isEditableKeyboardTarget(e.target)
         || isOverlayKeyboardTarget(e.target)
         || isDetailShortcutBlockedTarget(e.target)
+        || renderedDetailBlock
       ) {
         return;
       }
       e.preventDefault();
-      // With a card open the key did switch All / Connected, gone now.
-      if (renderedDetailBlock) return;
       // An author's feed has no graph to switch to.
       if (onAuthorPlace) return;
       handleMainViewModeChange(mainViewMode === "grid" ? "graph" : "grid");
@@ -3328,7 +3366,6 @@ export function AppWithVault({
   // Files import like drops, a bitmap becomes an image element, a lone URL a
   // link element, other text a markdown element titled by its first line. In
   // inputs, dialogs and over an open element ⌘V stays native.
-  const pasteBusyRef = useRef(false);
   useEffect(() => {
     // The chord is read at the keypress: a rebind in Settings changes the
     // registry without re-rendering this window (SPEC_AUDIT_FIXES.md, Ф11).
@@ -3343,22 +3380,20 @@ export function AppWithVault({
       ) {
         return;
       }
-      if (pasteBusyRef.current) return;
-      pasteBusyRef.current = true;
+      // A paste during another waits its turn, and what could not be created
+      // is this tab's notice (SPEC_DEEP_AUDIT.md, Е6.4).
       void (async () => {
+        let payload: ClipboardPayload;
         try {
-          const payload = await readClipboardPayload();
-          const paramsList = createParamsForClipboardPayload(payload, currentTag);
-          if (paramsList.length === 0) return;
-          for (const params of paramsList) {
-            await createBlock(params);
-          }
-          await reloadAllSnapshots();
+          payload = await readClipboardPayload();
         } catch (err) {
-          console.error("Paste into feed failed:", err);
-        } finally {
-          pasteBusyRef.current = false;
+          reportActionError("create-elements", createElementsFailureTitle(1), err);
+          return;
         }
+        const paramsList = createParamsForClipboardPayload(payload, currentTag);
+        if (paramsList.length === 0) return;
+        const outcome = await createElementsInTurn(paramsList);
+        if (outcome.created > 0) await reloadAllSnapshots();
       })();
     };
     window.addEventListener("keydown", handler);
@@ -3450,79 +3485,104 @@ export function AppWithVault({
 
   // ── Channel management ─────────────────────────────────────────────────
 
-  const attachBlocksToTag = useCallback(
-    async (slugs: string[], tag: string) => {
+  /// Connect cards to a collection or disconnect them: one card through its
+  /// own command, several through one command that changes all of them or
+  /// none (SPEC_DEEP_AUDIT.md, Е6.1). A failure is a notice of this tab,
+  /// whose menu has closed by then (Н11, Е6.3); the answer says whether the
+  /// change was made, so a picker can take back what it showed at once.
+  const applyMembership = useCallback(
+    async (slugs: string[], tag: string, connected: boolean): Promise<boolean> => {
       const uniqueSlugs = uniqueDragSlugs(slugs);
-      if (uniqueSlugs.length === 0) return;
-
-      for (const slug of uniqueSlugs) {
-        await addTag(slug, tag);
+      const [only] = uniqueSlugs;
+      if (only === undefined) return true;
+      try {
+        if (uniqueSlugs.length > 1) {
+          await setBlocksMembership(uniqueSlugs, tag, connected);
+        } else if (connected) {
+          await addTag(only, tag);
+        } else {
+          await removeTag(only, tag);
+        }
+      } catch (err) {
+        reportActionFailure({
+          kind: "membership",
+          title: membershipFailureTitle(connected, uniqueSlugs.length),
+          summary: NOTHING_CHANGED,
+          messages: [errorMessage(err)],
+        });
+        return false;
       }
-
-      if (selectedBlock && uniqueSlugs.includes(selectedBlock.slug)) {
-        setSelectedBlockTags((current) => (
-          current.includes(tag) ? current : [...current, tag]
-        ));
+      dismissActionFailure("membership");
+      const openSlug = selectedBlockRef.current?.slug;
+      if (openSlug !== undefined && uniqueSlugs.includes(openSlug)) {
+        const nextTags = (current: string[]) => (
+          connected
+            ? (current.includes(tag) ? current : [...current, tag])
+            : current.filter((item) => item !== tag)
+        );
+        setSelectedBlockTags(nextTags);
         setSelectedBlock((current) => (
           current && uniqueSlugs.includes(current.slug) && "tags" in current
-            ? {
-                ...current,
-                tags: current.tags.includes(tag) ? current.tags : [...current.tags, tag],
-              }
+            ? { ...current, tags: nextTags(current.tags) }
             : current
         ));
       }
+      return true;
     },
-    [selectedBlock],
+    [],
   );
 
-  // A refused name rejects: the sidebar keeps the name's field and shows the
-  // reason under it (05.10.2026). What follows a creation that was taken does
-  // not make it refused.
+  const attachBlocksToTag = useCallback(
+    (slugs: string[], tag: string) => applyMembership(slugs, tag, true),
+    [applyMembership],
+  );
+
+  // ── Creating a collection: one way for every place (SPEC_DEEP_AUDIT.md,
+  // Е6.2). The sidebar's row, the window of the closed sidebar and of the
+  // collection switcher, Enter in the filter, `Create collection` in a card's
+  // or the selection's picker, and a new card from dragged media or text all
+  // make it here: the name checked by `check_collection_name` where it is
+  // typed, the page written first in the manual order by the backend (one
+  // write of that page, no reorder of the rest), what the collection takes at
+  // once put in it, and the feed staying where it was.
+
+  /// The one check of a new collection's name (`check_collection_name`).
+  const checkNewCollectionName = useCallback(
+    (name: string) => checkCollectionName(null, name),
+    [],
+  );
+
+  /// Make the collection `name` and put `contents` in it. A refused name
+  /// rejects before anything is written, and the place where the name was
+  /// typed shows why (05.10.2026); what follows a creation that was taken
+  /// does not make it refused: its own failure is a notice of this tab.
   const createCollection = useCallback(
-    // `drop` names what the new collection takes at once when the caller
-    // knows it (Enter in the filter); otherwise the pending one applies.
-    async (tag: string, drop?: PendingCreateChannelDrop | null) => {
-      const pendingDrop = drop !== undefined ? drop : pendingCreateChannelDrop;
-      const channel = await createChannel(tag);
-      // Only now: a refused name keeps what the collection was to take for
-      // the name that follows.
-      setPendingCreateChannelDrop(null);
-      try {
-        // Named at the top of the list, it takes the first place there
-        // instead of the last: the others move down by one.
-        const order = [channel.tag, ...orderedTags.map((t) => t.tag).filter((t) => t !== channel.tag)];
-        await reorderChannels(order.map((name, position) => ({ tag: name, position })));
-
-        if (pendingDrop?.type === "block") {
-          await attachBlocksToTag([pendingDrop.slug], channel.tag);
-          await reloadAllSnapshots();
-          return;
-        }
-
-        if (pendingDrop?.type === "blocks") {
-          await attachBlocksToTag(pendingDrop.slugs, channel.tag);
-          await reloadAllSnapshots();
-          return;
-        }
-
-        if (pendingDrop?.type === "media_asset") {
+    async (name: string, contents: PendingCreateChannelDrop | null): Promise<ChannelDto> => {
+      const channel = await createChannel(name);
+      dismissActionFailure("create-collection");
+      if (contents?.type === "block" || contents?.type === "blocks") {
+        await attachBlocksToTag(
+          contents.type === "block" ? [contents.slug] : contents.slugs,
+          channel.tag,
+        );
+      } else if (contents?.type === "media_asset") {
+        try {
           const block = await createMediaAssetCard({
-            source_slug: pendingDrop.payload.asset.source_slug,
-            media_ref: pendingDrop.payload.asset.media_ref,
+            source_slug: contents.payload.asset.source_slug,
+            media_ref: contents.payload.asset.media_ref,
             target_tag: channel.tag,
           });
           invalidateRoutesForTags(block.tags);
-          scheduleRefresh({
-            grid: currentTagRef.current === undefined || block.tags.includes(currentTagRef.current),
-            taxonomy: true,
-            previews: true,
-          }, 0, { force: true });
-          return;
+        } catch (err) {
+          reportActionFailure({
+            kind: "create-elements",
+            title: createElementsFailureTitle(1),
+            messages: [mediaAssetErrorMessage(err)],
+          });
         }
-
-        if (pendingDrop?.type === "text_selection") {
-          const payload = pendingDrop.payload;
+      } else if (contents?.type === "text_selection") {
+        const payload = contents.payload;
+        try {
           const block = await extractTextSelection({
             source_slug: payload.sourceSlug,
             target_tag: channel.tag,
@@ -3532,39 +3592,47 @@ export function AppWithVault({
             source_body_hash: payload.sourceBodyHash,
           });
           invalidateRoutesForTags(block.tags);
-          scheduleRefresh({
-            grid: currentTagRef.current === undefined || block.tags.includes(currentTagRef.current),
-            taxonomy: true,
-            previews: true,
-          }, 0, { force: true });
-          return;
+        } catch (err) {
+          setSelectionCardError(err instanceof Error ? err.message : "Could not create an element from this selection.");
         }
-
-        await reloadAllSnapshots();
-      } catch (err) {
-        console.error("Failed to create collection:", err);
       }
+      await reloadAllSnapshots();
+      return channel;
     },
-    [
-      attachBlocksToTag,
-      invalidateRoutesForTags,
-      orderedTags,
-      pendingCreateChannelDrop,
-      reloadAllSnapshots,
-      scheduleRefresh,
-    ],
+    [attachBlocksToTag, invalidateRoutesForTags, reloadAllSnapshots],
   );
 
-  // Every other way to create one (Enter in the filter, the dialog): it has
-  // no field to keep, so a refusal is logged.
-  const handleCreateChannel = useCallback(
-    async (tag: string, drop?: PendingCreateChannelDrop | null) => {
+  /// A creation whose place for the name is gone by the time it is refused:
+  /// a picker's row, which the press cleared. Its failure is a notice.
+  const createCollectionReporting = useCallback(
+    async (name: string, contents: PendingCreateChannelDrop | null): Promise<ChannelDto | null> => {
       try {
-        await createCollection(tag, drop);
+        return await createCollection(name, contents);
       } catch (err) {
-        console.error("Failed to create collection:", err);
+        reportActionError("create-collection", CREATE_COLLECTION_FAILED_TITLE, err, NOTHING_CHANGED);
+        // What a picker showed at once for the name goes back to the files.
+        await reloadAllSnapshots();
+        return null;
       }
     },
+    [createCollection, reloadAllSnapshots],
+  );
+
+  // The sidebar's row: what is dragged onto it goes into the collection. A
+  // refusal rejects, so the row keeps its field with the reason, and keeps
+  // what the collection was to take for the name that follows.
+  const handleSidebarCreateCollection = useCallback(
+    async (name: string) => {
+      await createCollection(name, pendingCreateChannelDrop);
+      setPendingCreateChannelDrop(null);
+    },
+    [createCollection, pendingCreateChannelDrop],
+  );
+
+  // The window of the closed sidebar and of the collection switcher: a
+  // refusal rejects, and the window shows it.
+  const handleWindowCreateCollection = useCallback(
+    (name: string) => createCollection(name, null),
     [createCollection],
   );
 
@@ -3675,12 +3743,22 @@ export function AppWithVault({
       activateSidebarSearchNavigationRow(`tag:${existing.tag}`);
       return;
     }
-    void handleCreateChannel(name, null);
-    handleClearSidebarSearch();
+    // The one check first: a refused name opens the creation row with it,
+    // where the reason stands under the name, as for any name typed there.
+    void checkNewCollectionName(name).then((refusal) => {
+      if (refusal !== null) {
+        setPendingCreateChannelDrop(null);
+        setIsCreatingChannel(true);
+        return;
+      }
+      handleClearSidebarSearch();
+      void createCollectionReporting(name, null);
+    });
   }, [
     activateSidebarSearchNavigationRow,
+    checkNewCollectionName,
+    createCollectionReporting,
     handleClearSidebarSearch,
-    handleCreateChannel,
     moveSidebarSearchNavigationRow,
     orderedTags,
     selectedBlock,
@@ -3712,7 +3790,12 @@ export function AppWithVault({
       // round trip, which reads as the drop snapping back and then jumping.
       setPendingTagOrder(newOrder);
       try {
-        const items = newOrder.map((tag, i) => ({ tag, position: i }));
+        // From the smallest position on: the collections the drag did not
+        // move keep theirs, and their pages are not written (Е6.2).
+        const items = reorderedPositions(
+          newOrder,
+          new Map(channels.map((channel) => [channel.tag, channel.position])),
+        );
         await reorderChannels(items);
         trace("tag_reorder_written");
         // The order of collections changes the collection list only. Reloading
@@ -3729,18 +3812,14 @@ export function AppWithVault({
         setPendingTagOrder(null);
       }
     },
-    [loadTaxonomySnapshotState, orderedTags],
+    [channels, loadTaxonomySnapshotState, orderedTags],
   );
 
   // ── Card drag-to-tag (dnd-kit) ──────────────────────────────────────────
 
   const handleCardDrop = useCallback(
     async (slug: string, tag: string) => {
-      try {
-        await attachBlocksToTag([slug], tag);
-      } catch (err) {
-        console.error("Failed to add tag:", err);
-      }
+      await attachBlocksToTag([slug], tag);
       await reloadAllSnapshots();
     },
     [attachBlocksToTag, reloadAllSnapshots],
@@ -3755,7 +3834,14 @@ export function AppWithVault({
       try {
         card = await getBlock(slug);
       } catch (err) {
-        console.error("Failed to read the dropped card:", err);
+        // The drop connected nothing: the tab says so (SPEC_DEEP_AUDIT.md,
+        // Н11, Е6.3).
+        reportActionFailure({
+          kind: "membership",
+          title: membershipFailureTitle(true, 1),
+          summary: NOTHING_CHANGED,
+          messages: [errorMessage(err)],
+        });
         return;
       }
       if (!card || card.tags.includes(tag)) return;
@@ -3766,11 +3852,7 @@ export function AppWithVault({
 
   const handleCardsDrop = useCallback(
     async (slugs: string[], tag: string) => {
-      try {
-        await attachBlocksToTag(slugs, tag);
-      } catch (err) {
-        console.error("Failed to add tags:", err);
-      }
+      await attachBlocksToTag(slugs, tag);
       await reloadAllSnapshots();
     },
     [attachBlocksToTag, reloadAllSnapshots],
@@ -3791,7 +3873,12 @@ export function AppWithVault({
           previews: true,
         }, 0, { force: true });
       } catch (err) {
-        console.error("Failed to create media asset card:", err);
+        // The drop made no element: the tab says so (Н11).
+        reportActionFailure({
+          kind: "create-elements",
+          title: createElementsFailureTitle(1),
+          messages: [mediaAssetErrorMessage(err)],
+        });
         // The collection's page went (deleted outside Mine): the lists read
         // again and it leaves them, as after any refused connect (К7).
         if (isCollectionNotFound(err)) await reloadAllSnapshots();
@@ -3823,12 +3910,13 @@ export function AppWithVault({
     [invalidateRoutesForTags, reloadAllSnapshots, scheduleRefresh],
   );
 
+  // The new card's own failure stays in its menu, which waits for it.
   const handleMediaAssetCreateChannelAndCard = useCallback(
     async (asset: MediaAssetRef, tag: string) => {
-      const channel = await createChannel(tag);
+      const channel = await createCollection(tag, null);
       await handleMediaAssetCreateCard(asset, channel.tag);
     },
-    [handleMediaAssetCreateCard],
+    [createCollection, handleMediaAssetCreateCard],
   );
 
   const handleMediaAssetRename = useCallback(
@@ -3935,10 +4023,10 @@ export function AppWithVault({
 
   const handleTextSelectionCreateChannelAndCard = useCallback(
     async (payload: MineTextSelectionDragPayload, tag: string) => {
-      const channel = await createChannel(tag);
+      const channel = await createCollection(tag, null);
       await handleTextSelectionDrop(payload, channel.tag);
     },
-    [handleTextSelectionDrop],
+    [createCollection, handleTextSelectionDrop],
   );
 
   const handleTextSelectionDelete = useCallback(
@@ -4176,41 +4264,15 @@ export function AppWithVault({
 
   // ── Card tag management (context menu) ───────────────────────────────────
 
+  // One card's Connect or Disconnect. The answer says whether it was made:
+  // a picker takes back the state it showed at once (Е6.3).
   const handleToggleTag = useCallback(
-    async (slug: string, tag: string, hasTag: boolean) => {
-      try {
-        if (hasTag) {
-          await removeTag(slug, tag);
-          if (selectedBlock?.slug === slug) {
-            setSelectedBlockTags((current) => current.filter((item) => item !== tag));
-            setSelectedBlock((current) => (
-              current && current.slug === slug && "tags" in current
-                ? { ...current, tags: current.tags.filter((item) => item !== tag) }
-                : current
-            ));
-          }
-        } else {
-          await addTag(slug, tag);
-          if (selectedBlock?.slug === slug) {
-            setSelectedBlockTags((current) => (
-              current.includes(tag) ? current : [...current, tag]
-            ));
-            setSelectedBlock((current) => (
-              current && current.slug === slug && "tags" in current
-                ? {
-                    ...current,
-                    tags: current.tags.includes(tag) ? current.tags : [...current.tags, tag],
-                  }
-                : current
-            ));
-          }
-        }
-      } catch (err) {
-        console.error("Failed to toggle tag:", err);
-      }
+    async (slug: string, tag: string, hasTag: boolean): Promise<boolean> => {
+      const applied = await applyMembership([slug], tag, !hasTag);
       await reloadAllSnapshots();
+      return applied;
     },
-    [reloadAllSnapshots, selectedBlock?.slug],
+    [applyMembership, reloadAllSnapshots],
   );
 
   // `Create collection` in a card's collection picker makes the collection's
@@ -4219,28 +4281,9 @@ export function AppWithVault({
   // is refused (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К5 and К7).
   const handleCreateTagFromMenu = useCallback(
     async (requested: string, blockSlug: string) => {
-      try {
-        const { tag } = await createChannel(requested);
-        await addTag(blockSlug, tag);
-        if (selectedBlock?.slug === blockSlug) {
-          setSelectedBlockTags((current) => (
-            current.includes(tag) ? current : [...current, tag]
-          ));
-          setSelectedBlock((current) => (
-            current && current.slug === blockSlug && "tags" in current
-              ? {
-                  ...current,
-                  tags: current.tags.includes(tag) ? current.tags : [...current.tags, tag],
-                }
-              : current
-          ));
-        }
-      } catch (err) {
-        console.error("Failed to create tag:", err);
-      }
-      await reloadAllSnapshots();
+      await createCollectionReporting(requested, { type: "block", slug: blockSlug });
     },
-    [reloadAllSnapshots, selectedBlock?.slug],
+    [createCollectionReporting],
   );
 
   const handleLoadBlockTags = useCallback(async (slugs: string[]) => {
@@ -4253,38 +4296,14 @@ export function AppWithVault({
     return new Map(entries);
   }, []);
 
+  // The group selection's Connect and Disconnect: one command for all the
+  // selected cards (Е6.1). The answer says whether it was made, so the
+  // selection is cleared only after a Disconnect that was.
   const handleBatchSetTag = useCallback(
-    async (slugs: string[], tag: string, connected: boolean) => {
-      if (slugs.length === 0) return;
+    async (slugs: string[], tag: string, connected: boolean): Promise<boolean> => {
+      if (slugs.length === 0) return true;
       try {
-        for (const slug of slugs) {
-          if (connected) {
-            await addTag(slug, tag);
-          } else {
-            await removeTag(slug, tag);
-          }
-        }
-        if (selectedBlock && slugs.includes(selectedBlock.slug)) {
-          setSelectedBlockTags((current) => {
-            if (connected) {
-              return current.includes(tag) ? current : [...current, tag];
-            }
-            return current.filter((item) => item !== tag);
-          });
-          setSelectedBlock((current) => (
-            current && slugs.includes(current.slug) && "tags" in current
-              ? {
-                  ...current,
-                  tags: connected
-                    ? (current.tags.includes(tag) ? current.tags : [...current.tags, tag])
-                    : current.tags.filter((item) => item !== tag),
-                }
-              : current
-          ));
-        }
-      } catch (err) {
-        console.error("Failed to batch update tags:", err);
-        throw err;
+        return await applyMembership(slugs, tag, connected);
       } finally {
         invalidateRoutesForTags([tag]);
         scheduleRefresh({
@@ -4294,17 +4313,16 @@ export function AppWithVault({
         }, BATCH_TAG_REFRESH_DELAY_MS);
       }
     },
-    [invalidateRoutesForTags, scheduleRefresh, selectedBlock],
+    [applyMembership, invalidateRoutesForTags, scheduleRefresh],
   );
 
   // The group selection's `Create collection`: the page first, then the
   // selected cards join the collection it is (К5 and К7).
   const handleCreateTagFromBatchMenu = useCallback(
     async (requested: string, slugs: string[]) => {
-      const { tag } = await createChannel(requested);
-      await handleBatchSetTag(slugs, tag, true);
+      await createCollectionReporting(requested, { type: "blocks", slugs });
     },
-    [handleBatchSetTag],
+    [createCollectionReporting],
   );
 
   // The group delete window (SPEC_GROUP_SELECTION.md, «Batch Delete»): one
@@ -4467,7 +4485,7 @@ export function AppWithVault({
           {!tabPage && <AppSettingsMenu onSelectSection={handleOpenSettings} />}
         </ChromeRow>
         <div className="flex min-h-0 flex-1 items-center justify-center">
-          <p className="text-sm text-muted-foreground">Opening vault…</p>
+          <p className="text-sm text-muted-foreground">Opening space…</p>
         </div>
       </ChromeShell>
     );
@@ -4497,6 +4515,7 @@ export function AppWithVault({
   const showConflictsNotice = lead && vaultReady;
   const showNotifications = showConflictsNotice
     || feedErrorNotices.length > 0
+    || actionFailures.length > 0
     || selectionCardError !== null
     || deleteKeptMedia !== null
     || deleteBlockError !== null
@@ -4541,6 +4560,9 @@ export function AppWithVault({
   return (
     // Cards tell a preview still being built from a lost file (SPEC_CARD_MEDIA_GEOMETRY.md).
     <PreviewsPendingContext.Provider value={previewsPending}>
+    {/* Every collection picker of the tab checks a new name by the one rule
+        (SPEC_DEEP_AUDIT.md, Е6.2). */}
+    <CollectionNameCheckContext.Provider value={checkNewCollectionName}>
     <DndContext
       sensors={sensors}
       collisionDetection={sidebarPointerWithin}
@@ -4685,7 +4707,8 @@ export function AppWithVault({
             currentAuthor={currentLocation.kind === "author" ? currentLocation.author : undefined}
             orderedTags={orderedTags}
             onNavigate={handleTopCollectionNavigate}
-            onCreateCollection={handleTopCollectionCreate}
+            onCreateCollection={handleWindowCreateCollection}
+            onCheckCollectionName={checkNewCollectionName}
             joinsNext={foldedMetadataRow}
           />
           {compactDetailTopMenuActive && renderedDetailBlock ? (
@@ -4741,7 +4764,7 @@ export function AppWithVault({
         onSetCreatingChannel={handleSetCreatingChannel}
         onDeleteTag={handleDeleteTagFromAll}
         onRenameTag={handleRenameTag}
-        onCreateChannel={createCollection}
+        onCreateChannel={handleSidebarCreateCollection}
         onCheckCollectionName={checkCollectionName}
         onOpenBlock={openDetailBlock}
         onOpenCardMenu={openCardActionsMenu}
@@ -4932,6 +4955,7 @@ export function AppWithVault({
                 <p className="text-sm text-destructive" data-feed-error-notice={key}>{message}</p>
               </NotificationCard>
             ))}
+            <ActionFailureNotices failures={actionFailures} />
             {selectionCardError !== null && (
               // An action's failure, never the feed's state: a notice whether
               // or not the feed shows cards.
@@ -4987,6 +5011,11 @@ export function AppWithVault({
               // A new space starts with a notice that was never closed.
               <VaultConflictsNotice key={vaultPath} vaultReady={vaultReady} />
             )}
+            {showConflictsNotice && (
+              // The notes the space's passes could not read (Е6.17): a
+              // notice of the space, so its lead tab gives it.
+              <IndexErrorsNotice key={`${vaultPath}:index-errors`} />
+            )}
             {showIndexingNotice && indexingStep !== null && (
               // The opening counts out loud in the corner (О13): one card,
               // notes and then previews.
@@ -4999,7 +5028,7 @@ export function AppWithVault({
               <FirstCardMarkerCard
                 fileName={`${firstCardSlug.split("/").pop() ?? firstCardSlug}.md`}
                 onReveal={() => {
-                  void revealItemInDir(`${vaultPath}/${firstCardSlug}.md`);
+                  revealInFinder(`${vaultPath}/${firstCardSlug}.md`);
                   setFirstCardSlug(null);
                 }}
                 onClose={() => setFirstCardSlug(null)}
@@ -5238,7 +5267,8 @@ export function AppWithVault({
       <CreateCollectionDialog
         open={isNamingCollection}
         onOpenChange={setIsNamingCollection}
-        onCreate={handleCreateChannel}
+        onCheckName={checkNewCollectionName}
+        onCreate={handleWindowCreateCollection}
       />
 
       {/* An author's feed is a computed selection a dropped file cannot
@@ -5312,6 +5342,7 @@ export function AppWithVault({
       )}
     </DragOverlay>
     </DndContext>
+    </CollectionNameCheckContext.Provider>
     </PreviewsPendingContext.Provider>
   );
 }
@@ -5343,8 +5374,8 @@ interface RouteContext {
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
-  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
-  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
+  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => MembershipAnswer;
+  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<unknown>;
   onPrepareDeleteSelectedBlocks: (slugs: string[]) => Promise<DeleteBlocksPlan>;
   onDeleteSelectedBlocks: DeleteSelectionAction;
   onMergeSelectedBlocks: (orderedSlugs: string[]) => void | Promise<void>;
@@ -5368,7 +5399,7 @@ interface RouteContext {
   selectionCommandsHost: HTMLElement | null;
   /// Offered by the empty-space onboarding, which is the only place in the app
   /// that can introduce the clipper to someone who has never seen it.
-  onInstallClipper: () => void;
+  onInstallClipper: () => void | Promise<void>;
   spaceOnboardingOwed: boolean | null;
   firstIndexProgress: { processed: number; total: number } | null;
   vaultIndexing: boolean;

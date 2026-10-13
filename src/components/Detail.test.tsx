@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  DeleteMediaAssetDialog,
   Detail,
   MediaAssetCollectionPicker,
   computeHoverPreviewPosition,
@@ -17,6 +18,8 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { COLLECTION_PICKER_CONTENT_CLASS } from "./CollectionPicker";
+import { ActionFailureNoticeStack } from "./ActionFailureNotices";
+import { clearActionFailures } from "@/lib/actionFailures";
 import { cancelSourceVideoDownload, copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, listCardAssociations, prepareDeleteMediaAsset, resolveNoteLink, sourceVideoDownloadStatus, startSourceVideoDownload, youtubePlayerUrl } from "@/lib/commands";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
@@ -30,8 +33,8 @@ const INTENT_TIMERS = {
 } as const;
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
-  openUrl: vi.fn(),
-  revealItemInDir: vi.fn(),
+  openUrl: vi.fn(async () => undefined),
+  revealItemInDir: vi.fn(async () => undefined),
 }));
 
 const writeText = vi.hoisted(() => vi.fn(async () => {}));
@@ -3431,5 +3434,61 @@ describe("Detail association blocks", () => {
     expect(container.querySelector("[data-card-association-block]")).toBeNull();
     expect(await screen.findByText("Related notes")).toBeInTheDocument();
     error.mockRestore();
+  });
+});
+
+// SPEC_DEEP_AUDIT.md, Е6.8: the file `Delete media file?` names may be gone or
+// in iCloud; its preview keeps the tile, never the broken-image icon.
+describe("Delete media file? preview", () => {
+  it("shows no broken-image icon for a file that will not load", () => {
+    vi.mocked(prepareDeleteMediaAsset).mockReturnValue(new Promise(() => {}));
+    const asset: MediaAssetRef = {
+      media_ref: "Media/gone.jpg",
+      media_kind: "image",
+      source_slug: "note",
+      reference_kind: "body_embed",
+    };
+    render(
+      <DeleteMediaAssetDialog
+        asset={asset}
+        vaultPath="/vault"
+        open
+        onOpenChange={vi.fn()}
+        onDelete={vi.fn(async () => {})}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+    const dialog = screen.getByRole("alertdialog");
+    fireEvent.error(dialog.querySelector("img") as HTMLImageElement);
+    expect(dialog.querySelector("img")).toBeNull();
+  });
+});
+
+// SPEC_DEEP_AUDIT.md, Е6.13: an open card of the feed carries only the start
+// of its text. When the file cannot be read, the card says it shows only
+// that start, in the tab's notice; before, the start stood as the whole text
+// and the failure went to the console.
+describe("an open card whose text could not be read", () => {
+  it("says it shows only the beginning of the text", async () => {
+    clearActionFailures();
+    vi.mocked(getBlock).mockRejectedValue(new Error("The file is in iCloud and could not be read."));
+    const { tags: _tags, ...light } = block({ body: "A long beginning ".repeat(20) });
+    render(
+      <>
+        <Detail
+          block={light as LightBlock}
+          vaultPath="/tmp/fixture" thumbsRootPath="/tmp/thumbs" tags={[]}
+          onClose={vi.fn()} onNavigate={vi.fn()} onToggleTag={vi.fn()} onCreateAndAssign={vi.fn()}
+          onTagsChanged={vi.fn()} onRequestRename={vi.fn()} onRequestDelete={vi.fn()}
+        />
+        <ActionFailureNoticeStack />
+      </>,
+    );
+
+    expect(await screen.findByText("Could not read the element")).toBeInTheDocument();
+    expect(screen.getByText("The open element shows only the beginning of its text.")).toBeInTheDocument();
+    expect(screen.getByText("The file is in iCloud and could not be read.")).toBeInTheDocument();
+    vi.mocked(getBlock).mockReset();
+    clearActionFailures();
   });
 });

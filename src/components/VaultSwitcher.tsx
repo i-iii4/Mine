@@ -1,3 +1,4 @@
+import { RemoveSpaceDialog } from "./RemoveSpaceDialog";
 import {
   useCallback,
   useEffect,
@@ -8,7 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { revealInFinder } from "@/lib/systemActions";
 import { FolderOpen, FolderPlus, Plus, X } from "lucide-react";
 import {
   DropdownMenu,
@@ -24,16 +25,6 @@ import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import { filterAndRankChannelSearch } from "@/lib/channelSearch";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -182,13 +173,10 @@ export function VaultSwitcher({
     void handleSwitch(path);
   }, [handleSwitch, newTabOpener, onOpenInNewTab]);
 
-  const handleReveal = useCallback(async (path: string) => {
-    try {
-      await revealItemInDir(path);
-    } catch {
-      // Finder refused to open it; nothing here can recover, and the menu
-      // staying put is better than an error the user cannot act on.
-    }
+  // A folder Finder could not show is the tab's notice (SPEC_DEEP_AUDIT.md,
+  // Н11, Е6.16); the menu stays put.
+  const handleReveal = useCallback((path: string) => {
+    revealInFinder(path);
   }, []);
 
   const handleForget = useCallback(async (path: string) => {
@@ -208,7 +196,7 @@ export function VaultSwitcher({
   const handleRevealCurrent = useCallback(() => {
     setOpen(false);
     resetMenuSearch();
-    void handleReveal(currentPath);
+    handleReveal(currentPath);
   }, [currentPath, handleReveal, resetMenuSearch]);
 
   const handleAddSpace = useCallback(async () => {
@@ -436,7 +424,7 @@ export function VaultSwitcher({
                   onSwitch={({ metaKey }) => handleChoose(path, metaKey)}
                   newTab={onOpenInNewTab ? { open: newTabOpener(path) } : null}
                   onReveal={() => {
-                    void handleReveal(path);
+                    handleReveal(path);
                   }}
                   onRequestForget={() => setPendingForget(path)}
                 />
@@ -543,57 +531,6 @@ export function VaultSwitcher({
       onConfirm={(path) => void handleForget(path)}
     />
     </TooltipProvider>
-  );
-}
-
-/** The question before a space leaves the list: open while `path` names
- *  the space. */
-export function RemoveSpaceDialog({
-  path,
-  onCancel,
-  onConfirm,
-}: {
-  path: string | null;
-  onCancel: () => void;
-  onConfirm: (path: string) => void;
-}) {
-  return (
-    <AlertDialog
-      open={path !== null}
-      onOpenChange={(next) => {
-        if (!next) onCancel();
-      }}
-    >
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            Remove {path ? vaultName(path) : "space"} from the list?
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            The folder and its files stay where they are. Open tabs of this
-            space switch to choosing a space. You can add it back with Add
-            space.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          {/* Deliberately not destructive: red would say "data is about to be
-              lost", which is the exact misreading this dialog exists to
-              prevent. It breaks a link and keeps the folder, so it takes the
-              detach colour, as the menu item that opened it (DESIGN_SYSTEM.md,
-              «Два уровня опасных действий»). */}
-          <AlertDialogAction
-            variant="default"
-            className="text-detach"
-            onClick={() => {
-              if (path) onConfirm(path);
-            }}
-          >
-            Remove
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
   );
 }
 

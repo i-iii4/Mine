@@ -174,4 +174,11 @@ describe("command registry", () => {
   it("throws on an unknown id instead of returning undefined", () => {
     expect(() => commandById("no-such-command")).toThrow("no-such-command");
   });
+
+  // SPEC_DEEP_AUDIT.md, Е6.14: the open element's connections filter is gone,
+  // so no command of that name is listed or bound.
+  it("lists no command for the retired connections filter", () => {
+    expect(DEFAULT_COMMANDS.some((command) => command.id === "toggle-connections")).toBe(false);
+    expect(allCommands().some((command) => command.id === "toggle-connections")).toBe(false);
+  });
 });

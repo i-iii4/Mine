@@ -3178,12 +3178,38 @@
         "src/lib/thumbUpgradePlan.test.ts",
         "src/lib/thumbUpgradePlan.ts",
         "scripts/disposable-app-home.mjs",
-        "scripts/disposable-app-home.test.mjs"
+        "scripts/disposable-app-home.test.mjs",
+        "src/components/ChannelIcon.classic.tsx",
+        "src/components/CloudRecommendation.test.tsx",
+        "src/components/CloudRecommendation.tsx",
+        "src/components/FirstCardMarker.tsx",
+        "src/hooks/useGroupSelectionMenuActions.ts",
+        "src/lib/clipboard.ts",
+        "src/lib/collectionOrder.test.ts",
+        "src/lib/collectionOrder.ts",
+        "src/components/ActionFailureNotices.tsx",
+        "src/components/GroupSelectionCommands.test.tsx",
+        "src/components/IndexErrorsNotice.test.tsx",
+        "src/components/IndexErrorsNotice.tsx",
+        "src/components/MissingAwareImage.tsx",
+        "src/components/RemoveSpaceDialog.tsx",
+        "src/hooks/useCardMembership.ts",
+        "src/hooks/useCollectionNameRefusal.ts",
+        "src/lib/actionFailures.ts",
+        "src/lib/createElements.ts",
+        "src/lib/errorMessage.ts",
+        "src/lib/mediaAssetErrors.ts",
+        "src/lib/systemActions.ts",
+        "src/lib/tabBarFailure.ts"
       ],
       "requirement": "SPEC_DEEP_AUDIT.md## Контракты",
       "tests": [
         "src/lib/thumbUpgradePlan.test.ts",
-        "scripts/disposable-app-home.test.mjs"
+        "scripts/disposable-app-home.test.mjs",
+        "src/components/CloudRecommendation.test.tsx",
+        "src/lib/collectionOrder.test.ts",
+        "src/components/GroupSelectionCommands.test.tsx",
+        "src/components/IndexErrorsNotice.test.tsx"
       ],
       "command": "test:frontend"
     },
@@ -3195,7 +3221,15 @@
         "src-tauri/src/storage/root_guard.rs",
         "src-tauri/src/watcher/events.rs",
         "src-tauri/src/storage/cloud_files.rs",
-        "src-tauri/src/test_log.rs"
+        "src-tauri/src/test_log.rs",
+        "mine-core/src/domain/channel.rs",
+        "src-tauri/src/net.rs",
+        "src-tauri/src/storage/save_operations.rs",
+        "src-tauri/src/bin/native_host/cloud_tests.rs",
+        "src-tauri/src/bin/native_host/e4_tests.rs",
+        "src-tauri/src/bin/native_host/fake_web.rs",
+        "src-tauri/src/storage/layout_copy.rs",
+        "src-tauri/tests/native_host_requests.rs"
       ],
       "requirement": "SPEC_DEEP_AUDIT.md## Контракты",
       "tests": [
@@ -3204,7 +3238,15 @@
         "src-tauri/src/storage/root_guard.rs",
         "src-tauri/src/watcher/events.rs",
         "src-tauri/src/storage/cloud_files.rs",
-        "src-tauri/src/test_log.rs"
+        "src-tauri/src/test_log.rs",
+        "mine-core/src/domain/channel.rs",
+        "src-tauri/src/net.rs",
+        "src-tauri/src/storage/save_operations.rs",
+        "src-tauri/src/bin/native_host/cloud_tests.rs",
+        "src-tauri/src/bin/native_host/e4_tests.rs",
+        "src-tauri/src/bin/native_host/fake_web.rs",
+        "src-tauri/src/storage/layout_copy.rs",
+        "src-tauri/tests/native_host_requests.rs"
       ],
       "command": "test:rust"
     }

@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 
-import { createBlock } from "@/lib/commands";
+import { createElementsInTurn } from "@/lib/createElements";
 import { listenPage } from "@/lib/pageEvents";
 import { fileNameToTitle, inferBlockType } from "@/lib/pasteImport";
+import { createElementsFailureTitle, reportActionError } from "@/lib/actionFailures";
 import type { TabFileDrag } from "@/types";
 
 /** Files dragged over the window, sent by the backend to the tab the window
@@ -16,50 +17,36 @@ interface DropZoneProps {
 
 export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
   const [dragging, setDragging] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Drops still being added: a drop during another waits its turn
+  // (SPEC_DEEP_AUDIT.md, Е6.5).
+  const [importing, setImporting] = useState(0);
 
   // Refs to avoid re-registering the Tauri listener on navigation
   const currentTagRef = useRef(currentTag);
   currentTagRef.current = currentTag;
   const onBlocksCreatedRef = useRef(onBlocksCreated);
   onBlocksCreatedRef.current = onBlocksCreated;
-  const importingRef = useRef(false);
   const fileDragActiveRef = useRef(false);
 
+  // Every file of the drop becomes an element, past one that fails; what
+  // failed is the tab's notice (src/lib/createElements.ts, Н11).
   const handleDrop = useCallback(
     async (paths: string[]) => {
-      if (paths.length === 0 || importingRef.current) return;
-      importingRef.current = true;
-
       setDragging(false);
-      setImporting(true);
-      setError(null);
-
+      if (paths.length === 0) return;
+      setImporting((count) => count + 1);
       const tags = currentTagRef.current ? [currentTagRef.current] : [];
-
       try {
-        for (const filePath of [...new Set(paths)]) {
-          const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
-          const blockType = inferBlockType(ext);
-          const title = fileNameToTitle(filePath);
-
-          await createBlock({
-            block_type: blockType,
-            title,
-            url: null,
-            tags,
-            file_path: filePath,
-          });
-        }
-        onBlocksCreatedRef.current();
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error("Failed to create block from drop:", msg);
-        setError(msg);
+        const outcome = await createElementsInTurn([...new Set(paths)].map((filePath) => ({
+          block_type: inferBlockType(filePath.split(".").pop()?.toLowerCase() ?? ""),
+          title: fileNameToTitle(filePath),
+          url: null,
+          tags,
+          file_path: filePath,
+        })));
+        if (outcome.created > 0) onBlocksCreatedRef.current();
       } finally {
-        importingRef.current = false;
-        setImporting(false);
+        setImporting((count) => count - 1);
       }
     },
     [],
@@ -86,7 +73,7 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
         const shouldHandleDrop = fileDragActiveRef.current || drag.paths.length > 0;
         fileDragActiveRef.current = false;
         if (shouldHandleDrop) {
-          handleDrop(drag.paths);
+          void handleDrop(drag.paths);
         } else {
           setDragging(false);
         }
@@ -102,10 +89,10 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
           unlisten = fn;
         }
       })
-      .catch((cause) => {
-        if (!disposed) {
-          setError(cause instanceof Error ? cause.message : String(cause));
-        }
+      .catch((cause: unknown) => {
+        // The page hears no drops: the person sees that a drop does nothing
+        // and is told why (Н11).
+        if (!disposed) reportActionError("create-elements", createElementsFailureTitle(1), cause);
       });
 
     return () => {
@@ -125,39 +112,23 @@ export function DropZone({ currentTag, onBlocksCreated }: DropZoneProps) {
     return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [dragging]);
 
-  // Auto-hide error after 4 seconds
-  useEffect(() => {
-    if (!error) return;
-    const timer = setTimeout(() => setError(null), 4000);
-    return () => clearTimeout(timer);
-  }, [error]);
-
-  if (!dragging && !importing && !error) return null;
+  if (!dragging && importing === 0) return null;
 
   return (
     <div className="fixed top-8 right-0 bottom-8 left-0 z-50 flex items-center justify-center bg-glass">
       {dragging && (
         <div className="pointer-events-none absolute inset-2 rounded-[4px] border border-dashed border-border dark:border-muted-foreground" />
       )}
-      {error ? (
-        <div className="max-w-sm rounded-1 bg-destructive p-6 shadow-lg">
-          <p className="text-lg font-semibold text-white">
-            Failed to import
+      <div className="rounded-1 border border-border bg-background p-6 shadow-lg">
+        <p className="text-lg font-semibold text-foreground">
+          {dragging ? "Drop files to add" : "Importing..."}
+        </p>
+        {dragging && (
+          <p className="mt-1 text-base text-muted-foreground">
+            Images, videos, PDFs, documents
           </p>
-          <p className="mt-1 text-base text-white/80">{error}</p>
-        </div>
-      ) : (
-        <div className="rounded-1 border border-border bg-background p-6 shadow-lg">
-          <p className="text-lg font-semibold text-foreground">
-            {importing ? "Importing..." : "Drop files to add"}
-          </p>
-          {!importing && (
-            <p className="mt-1 text-base text-muted-foreground">
-              Images, videos, PDFs, documents
-            </p>
-          )}
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

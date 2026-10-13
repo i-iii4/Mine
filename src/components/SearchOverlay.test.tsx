@@ -45,10 +45,10 @@ vi.mock("@/components/Card", () => ({
   ),
 }));
 
-const openUrlMock = vi.fn();
+const openUrlMock = vi.fn(async (_url: string) => undefined);
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: (url: string) => openUrlMock(url),
-  revealItemInDir: vi.fn(),
+  revealItemInDir: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/components/CollectionPicker", () => ({

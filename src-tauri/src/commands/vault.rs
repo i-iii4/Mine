@@ -2172,11 +2172,9 @@ fn resolve_space_layout(
         ))),
         IdentityClaim::Owned | IdentityClaim::Adopted => {
             record_owner_path(&derived_root, root);
-            let write_layout = load_write_layout(&base)?;
-            db::resolve_vault_index(
-                VaultLayout::with_derived_root(root.to_path_buf(), derived_root)
-                    .with_write_layout(write_layout),
-            )
+            let vault = VaultLayout::with_derived_root(root.to_path_buf(), derived_root);
+            let write_layout = load_opening_write_layout(&vault)?;
+            db::resolve_vault_index(vault.with_write_layout(write_layout))
             .map_err(|error| CommandError::Internal(error.to_string()))
         }
         IdentityClaim::Copy { owner } => {
@@ -2196,11 +2194,9 @@ fn resolve_space_layout(
             vault_id = new_id;
             let fresh_derived = vaults_dir.join(&vault_id);
             record_owner_path(&fresh_derived, root);
-            let write_layout = load_write_layout(&base)?;
-            db::resolve_vault_index(
-                VaultLayout::with_derived_root(root.to_path_buf(), fresh_derived)
-                    .with_write_layout(write_layout),
-            )
+            let vault = VaultLayout::with_derived_root(root.to_path_buf(), fresh_derived);
+            let write_layout = load_opening_write_layout(&vault)?;
+            db::resolve_vault_index(vault.with_write_layout(write_layout))
             .map_err(|error| CommandError::Internal(error.to_string()))
         }
     }
@@ -2236,9 +2232,19 @@ pub(crate) fn initialize_new_space_layout(vault: &VaultLayout) -> Result<(), Com
 }
 
 /// Use the same strict layout reader as capture and CLI; invalid settings
-/// must not silently redirect writes to a different folder.
+/// must not silently redirect writes to a different folder. Never waits for
+/// iCloud (SPEC_CLOUD_STORAGE.md, Х12).
 fn load_write_layout(vault: &VaultLayout) -> Result<VaultWriteLayout, CommandError> {
     files::load_vault_write_layout(vault)
+        .map_err(|error| CommandError::Internal(format!("invalid write layout: {error:#}")))
+}
+
+/// [`load_write_layout`] for opening a space, which may wait for iCloud: a
+/// layout this Mac has no copy of yet is brought down; with a copy, the copy
+/// answers at once. Read with the space's own derived store, where this
+/// Mac's copy is kept.
+fn load_opening_write_layout(vault: &VaultLayout) -> Result<VaultWriteLayout, CommandError> {
+    files::load_vault_write_layout_waiting(vault)
         .map_err(|error| CommandError::Internal(format!("invalid write layout: {error:#}")))
 }
 
@@ -2255,7 +2261,10 @@ fn save_write_layout(vault: &VaultLayout, layout: &VaultWriteLayout) -> Result<(
     std::fs::create_dir_all(vault.mine_dir())
         .map_err(|e| CommandError::Internal(format!("failed to create Mine metadata dir: {e}")))?;
     files::write_atomically(&vault.write_layout_path(), &raw)
-        .map_err(|e| CommandError::Internal(format!("failed to save write layout: {e:#}")))
+        .map_err(|e| CommandError::Internal(format!("failed to save write layout: {e:#}")))?;
+    // Reading it back leaves this Mac's copy of the new layout, for when
+    // iCloud takes the file away (SPEC_CLOUD_STORAGE.md, Х12).
+    load_write_layout(vault).map(|_| ())
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

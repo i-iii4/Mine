@@ -36,6 +36,7 @@ import {
   waitForYoutubeChannel,
   currentCaptureDocument,
   openingStamps,
+  remoteMediaNotice,
 } from "../lib/messaging";
 import {
   clearOpenClip, OPEN_CLIP_VERSION, OpenClipContext, writeOpenClip, type OpenClip, type OpenClipScreenshot, type OpenClipWrite,
@@ -982,16 +983,18 @@ export function useClipperState() {
     // The executor has confirmed the source commit. A failed recovery receipt
     // cannot turn that outcome into failure or allocate another operation.
     operation.terminalResult = result;
+    // The media the Save left as links are said, not hidden (Н10).
+    const saved = { ok: true as const, warning: result.warning, remoteMedia: remoteMediaNotice(result) };
     try {
       await persistSaveReceipt(operation, result);
     } catch (cause) {
       console.warn("Committed clip receipt deferred; original save journal retained", cause);
-      return { ok: true as const, warning: result.warning };
+      return saved;
     }
     // The record goes at once. One that a failed removal leaves carries the
     // committed receipt and is removed the next time a clipper opens (Ч4).
     void clearPendingSave(operation).catch(cause => console.warn("Saved clip record removal deferred", cause));
-    return { ok: true as const, warning: result.warning };
+    return saved;
   }, [endOpenClip]);
 
   // Records whose save is committed have nothing left to check (Ч4).
@@ -1642,7 +1645,11 @@ export function useClipperState() {
     const pending = operationRef.current ?? preparedOperationRef.current;
     if (pending) {
       if (pending.terminalResult?.ok || pending.terminalResult?.outcome === "committed") {
-        return { ok: true as const, warning: pending.terminalResult.warning };
+        return {
+          ok: true as const,
+          warning: pending.terminalResult.warning,
+          remoteMedia: remoteMediaNotice(pending.terminalResult),
+        };
       }
       if (preparedOperationRef.current === pending) {
         await persistPendingSave(pending);

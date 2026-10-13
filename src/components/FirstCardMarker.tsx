@@ -17,7 +17,7 @@ interface FirstCardMarkerCardProps {
 
 export function FirstCardMarkerCard({ fileName, onReveal, onClose }: FirstCardMarkerCardProps) {
   return (
-    <NotificationCard title="This card is a file" onClose={onClose}>
+    <NotificationCard title="This element is a file" onClose={onClose}>
       <p className="text-sm text-muted-foreground">
         “{fileName}” is already in your folder. Open it, move it or copy it
         with any app — same as everything you save from now on.

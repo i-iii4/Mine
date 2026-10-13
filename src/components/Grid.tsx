@@ -33,6 +33,7 @@ import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
 import { createPortal } from "react-dom";
 import { GroupSelectionCommands } from "./GroupSelectionCommands";
+import type { MembershipAnswer } from "./CollectionPicker";
 import { GroupSelectionCardMenu } from "./GroupSelectionCardMenu";
 import { GroupSelectionContextMenu } from "./GroupSelectionContextMenu";
 import {
@@ -209,7 +210,7 @@ interface GridProps {
   vaultPath: string;
   thumbsRootPath?: string;
   /// Start the clipper setup flow from the empty-space onboarding.
-  onInstallClipper?: () => void;
+  onInstallClipper?: () => void | Promise<void>;
   /// Whether the space never had a card (О14): its empty feed introduces the
   /// clipper. `false` once it had one: an emptied feed says so plainly and
   /// the introduction never returns (О15). `null` while unknown.
@@ -258,8 +259,8 @@ interface GridProps {
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
-  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
-  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
+  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => MembershipAnswer;
+  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<unknown>;
   /// The group delete window's plan, read from the index alone
   /// (SPEC_GROUP_SELECTION.md, «Batch Delete», «План»).
   onPrepareDeleteSelectedBlocks: (slugs: string[]) => Promise<DeleteBlocksPlan>;
@@ -326,8 +327,8 @@ interface GridContext {
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
   onLoadBlockTags: (slugs: string[]) => Promise<Map<string, string[]>>;
-  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
-  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<void>;
+  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => MembershipAnswer;
+  onCreateAndAssignBatch: (tag: string, slugs: string[]) => void | Promise<unknown>;
   /** `requestDeleteSelection()` of the feed: the ⌘K menu's `Delete`. */
   onRequestDeleteSelection: () => void;
   onMergeSelectedBlocks: () => void;

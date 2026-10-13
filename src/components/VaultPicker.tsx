@@ -12,6 +12,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { selectVault } from "@/lib/commands";
 import { Button } from "@/components/ui/button";
 import { ScreenState } from "@/components/ScreenState";
+import { errorMessage } from "@/lib/errorMessage";
 
 interface VaultPickerProps {
   onVaultSelected: (path: string) => void;
@@ -35,7 +36,7 @@ export function VaultPicker({ onVaultSelected, onBack }: VaultPickerProps) {
       await selectVault(selected);
       onVaultSelected(selected);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -44,7 +45,7 @@ export function VaultPicker({ onVaultSelected, onBack }: VaultPickerProps) {
   return (
     <div className="grid h-screen w-screen place-items-center bg-background px-[var(--edge-rhythm,32px)]" data-vault-picker="">
       <ScreenState
-        description="Mine keeps your cards as files in a folder."
+        description="Mine keeps your elements as files in a folder."
         actions={
           <>
             <Button onClick={() => void choose()} disabled={loading}>

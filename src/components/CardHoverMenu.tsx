@@ -11,7 +11,6 @@ import {
 } from "react";
 import type { ComponentProps } from "react";
 import { MoreHorizontal, Plus, ExternalLink, Trash2, Unlink } from "lucide-react";
-import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import {
@@ -26,7 +25,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { IndexedBlock, LightBlock, TagCount } from "@/types";
-import { getBlock } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
 import { isSafeUrl } from "@/lib/assets";
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
@@ -35,6 +33,9 @@ import {
   CollectionPicker,
 } from "./CollectionPicker";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import { COPY_PATH_FAILED_TITLE } from "@/lib/actionFailures";
+import { openLinkInBrowser, revealInFinder } from "@/lib/systemActions";
+import { useCardMembership } from "@/hooks/useCardMembership";
 import { CardCollectionsContext } from "@/lib/cardCollections";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
 import { useContextMenuPresence } from "@/lib/openMenus";
@@ -265,24 +266,13 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
   const hasUrl = block.url != null && isSafeUrl(block.url);
   const filePath = `${vaultPath}/${block.slug}.md`;
   const [connectSubmenuOpen, setConnectSubmenuOpen] = useState(false);
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  // The collections the feed knows, then what the file says (Е6.12).
+  const selectedTags = useCardMembership(block, menuOpen);
   const connectTriggerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!menuOpen) {
-      setConnectSubmenuOpen(false);
-      return;
-    }
-    let cancelled = false;
-    void getBlock(block.slug).then((full) => {
-      if (!cancelled) {
-        setSelectedTags(full?.tags ?? []);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [block.slug, menuOpen]);
+    if (!menuOpen) setConnectSubmenuOpen(false);
+  }, [menuOpen]);
 
   return (
     <DropdownMenuContent
@@ -319,7 +309,7 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
       </DropdownMenuSub>
 
       {hasUrl && (
-        <DropdownMenuItem onSelect={() => openUrl(block.url!)}>
+        <DropdownMenuItem onSelect={() => openLinkInBrowser(block.url!)}>
           <MenuIconSlot>
             <ExternalLink className="size-[13px]" />
           </MenuIconSlot>
@@ -329,12 +319,12 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
 
       <DropdownMenuSeparator />
 
-      <DropdownMenuItem onSelect={() => revealItemInDir(filePath)}>
+      <DropdownMenuItem onSelect={() => revealInFinder(filePath)}>
         <MenuIconSlot />
         Reveal in Finder
       </DropdownMenuItem>
 
-      <DropdownMenuItem onSelect={() => copyTextToClipboard(filePath)}>
+      <DropdownMenuItem onSelect={() => copyTextToClipboard(filePath, COPY_PATH_FAILED_TITLE)}>
         <MenuIconSlot />
         Copy Path
       </DropdownMenuItem>
@@ -600,7 +590,7 @@ export function CardSourceButton({ url, onPress }: { url: string; onPress?: () =
       className="cursor-pointer"
       onClick={() => {
         onPress?.();
-        void openUrl(url);
+        openLinkInBrowser(url);
       }}
     >
       <ExternalLink aria-hidden="true" />
@@ -626,19 +616,9 @@ export function CardConnectMenu({
   onCloseAutoFocus?: ComponentProps<typeof DropdownMenuContent>["onCloseAutoFocus"];
 }) {
   const [open, setOpen] = useState(false);
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-
-  // The picker shows the card's collections ticked: read them when it opens.
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    void getBlock(block.slug).then((full) => {
-      if (!cancelled) setSelectedTags(full?.tags ?? []);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [block.slug, open]);
+  // The picker shows the card's collections ticked: the feed's, then what
+  // the file says when it opens (Е6.12).
+  const selectedTags = useCardMembership(block, open);
 
   return (
     <DropdownMenu

@@ -62,7 +62,7 @@ const dndContextState = vi.hoisted(() => ({
   over: null as { id: string } | null,
 }));
 
-vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir: vi.fn() }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ revealItemInDir: vi.fn(async () => undefined) }));
 
 vi.mock("@dnd-kit/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@dnd-kit/core")>();
@@ -529,20 +529,19 @@ describe("Sidebar", () => {
       expect(nameNotice()).not.toBeInTheDocument();
     });
 
-    it("shows a failure without a reason in plain words", async () => {
+    // A failure that is no refusal of the name says its own words under the
+    // name, never in the console only (SPEC_DEEP_AUDIT.md, Н11).
+    it("shows a failure without a reason in its own words", async () => {
       const error = new Error("index is locked");
       const onRenameTag = vi.fn(async () => {
         throw error;
       });
-      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
       const input = startRenaming({ onRenameTag });
 
       fireEvent.change(input, { target: { value: "beta" } });
       fireEvent.keyDown(input, { key: "Enter" });
 
-      await waitFor(() => expect(nameNotice()).toHaveTextContent("Could not rename the collection."));
-      expect(logged).toHaveBeenCalledWith("Could not rename the collection.", error);
-      logged.mockRestore();
+      await waitFor(() => expect(nameNotice()).toHaveTextContent("index is locked"));
     });
 
     it("keeps a new collection's field after a refused Enter and closes the row when it is left", async () => {

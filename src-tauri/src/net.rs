@@ -298,7 +298,20 @@ pub fn download_validated_to_file(
     idle_timeout: Duration,
     headers: &[(&str, &str)],
 ) -> Result<()> {
-    download_resumable(dest, DOWNLOAD_RETRY_BACKOFF, |resume| {
+    download_validated_to_file_reporting(url, dest, idle_timeout, headers, &|| ())
+}
+
+/// [`download_validated_to_file`], calling `progress` each time bytes
+/// arrive: the clipper's helper counts them as signs that a save is still
+/// working (SPEC_DEEP_AUDIT.md, Н9).
+pub fn download_validated_to_file_reporting(
+    url: &str,
+    dest: &Path,
+    idle_timeout: Duration,
+    headers: &[(&str, &str)],
+    progress: &(dyn Fn() + Sync),
+) -> Result<()> {
+    download_resumable(dest, DOWNLOAD_RETRY_BACKOFF, progress, |resume| {
         let range;
         let mut request_headers = headers.to_vec();
         if let Some((offset, validator)) = resume {
@@ -348,6 +361,7 @@ fn content_range_start(value: &str) -> Option<u64> {
 fn download_resumable(
     dest: &Path,
     backoff: Duration,
+    progress: &(dyn Fn() + Sync),
     mut fetch: impl FnMut(Option<(u64, &str)>) -> Result<DownloadResponse>,
 ) -> Result<()> {
     let parent = dest
@@ -369,7 +383,7 @@ fn download_resumable(
         .create_new(true)
         .open(&tmp)
         .with_context(|| format!("failed to create {}", tmp.display()))?;
-    let result = fill_with_attempts(&mut file, backoff, &mut fetch)
+    let result = fill_with_attempts(&mut file, backoff, progress, &mut fetch)
         .and_then(|()| {
             file.sync_all()
                 .with_context(|| format!("failed to fsync download {}", tmp.display()))
@@ -396,9 +410,26 @@ fn download_resumable(
     Ok(())
 }
 
+/// A body reader that calls `progress` after every read that brought bytes.
+struct Reporting<'a, R> {
+    inner: R,
+    progress: &'a (dyn Fn() + Sync),
+}
+
+impl<R: Read> Read for Reporting<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let count = self.inner.read(buf)?;
+        if count > 0 {
+            (self.progress)();
+        }
+        Ok(count)
+    }
+}
+
 fn fill_with_attempts(
     file: &mut std::fs::File,
     backoff: Duration,
+    progress: &(dyn Fn() + Sync),
     fetch: &mut impl FnMut(Option<(u64, &str)>) -> Result<DownloadResponse>,
 ) -> Result<()> {
     let mut validator: Option<String> = None;
@@ -440,7 +471,10 @@ fn fill_with_attempts(
         let already = if continues { offset } else { 0 };
         // take(remaining + 1) so an exactly-MAX body is not silently truncated:
         // one byte past the cap proves the body exceeds it.
-        let mut reader = response.body.take(MAX_MEDIA_BYTES - already + 1);
+        let mut reader = Reporting {
+            inner: response.body.take(MAX_MEDIA_BYTES - already + 1),
+            progress,
+        };
         match std::io::copy(&mut reader, file) {
             Ok(written) if already + written > MAX_MEDIA_BYTES => {
                 bail!("media body exceeds {MAX_MEDIA_BYTES} bytes");
@@ -588,7 +622,7 @@ mod tests {
     fn a_retry_continues_from_the_bytes_already_on_disk() {
         let dest = scratch();
         let mut asked = Vec::new();
-        download_resumable(&dest, Duration::ZERO, |resume| {
+        download_resumable(&dest, Duration::ZERO, &|| (), |resume| {
             asked.push(resume.map(|(offset, tag)| (offset, tag.to_string())));
             Ok(match resume {
                 None => response(200, None, Some("\"v1\""), cut(b"hello ")),
@@ -604,7 +638,7 @@ mod tests {
     fn a_server_that_ignores_range_starts_the_file_over() {
         let dest = scratch();
         let mut attempt = 0;
-        download_resumable(&dest, Duration::ZERO, |_| {
+        download_resumable(&dest, Duration::ZERO, &|| (), |_| {
             attempt += 1;
             Ok(if attempt == 1 {
                 response(200, None, Some("\"v1\""), cut(b"hel"))
@@ -620,7 +654,7 @@ mod tests {
     fn a_file_without_a_validator_is_never_resumed() {
         let dest = scratch();
         let mut asked = Vec::new();
-        download_resumable(&dest, Duration::ZERO, |resume| {
+        download_resumable(&dest, Duration::ZERO, &|| (), |resume| {
             asked.push(resume.is_some());
             Ok(if asked.len() == 1 {
                 response(200, None, None, cut(b"hel"))
@@ -637,7 +671,7 @@ mod tests {
     fn a_misplaced_part_is_discarded() {
         let dest = scratch();
         let mut attempt = 0;
-        download_resumable(&dest, Duration::ZERO, |_| {
+        download_resumable(&dest, Duration::ZERO, &|| (), |_| {
             attempt += 1;
             Ok(match attempt {
                 1 => response(200, None, Some("\"v1\""), cut(b"hello ")),
@@ -652,13 +686,36 @@ mod tests {
     #[test]
     fn three_failed_attempts_leave_no_file_behind() {
         let dest = scratch();
-        let result = download_resumable(&dest, Duration::ZERO, |_| {
+        let result = download_resumable(&dest, Duration::ZERO, &|| (), |_| {
             Ok(response(200, None, None, cut(b"partial")))
         });
         assert!(result.is_err());
         assert!(!dest.exists());
         let leftovers = std::fs::read_dir(dest.parent().unwrap()).unwrap().count();
         assert_eq!(leftovers, 0);
+    }
+
+    /// Н9: every read that brings bytes is reported, also on a retry, so the
+    /// clipper's helper can tell the clipper a long download still works.
+    #[test]
+    fn every_part_that_arrives_is_reported() {
+        let dest = scratch();
+        let reads = std::sync::atomic::AtomicUsize::new(0);
+        let report = || {
+            reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        };
+        let mut attempt = 0;
+        download_resumable(&dest, Duration::ZERO, &report, |_| {
+            attempt += 1;
+            Ok(if attempt == 1 {
+                response(200, None, None, cut(b"hel"))
+            } else {
+                response(200, None, None, Box::new(std::io::Cursor::new(b"hello world".to_vec()).chain(&b"!"[..])))
+            })
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello world!");
+        assert!(reads.load(std::sync::atomic::Ordering::Relaxed) >= 3, "parts went unreported");
     }
 
     /// Manual: the 25.9 MB 2160p clip that a 15 s whole-request deadline used

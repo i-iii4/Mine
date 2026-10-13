@@ -16,6 +16,10 @@ use mine_core::save::{next_save_action, PublicationEvidence, SaveAction, SaveEvi
 
 const RECORD_VERSION: u32 = 1;
 
+/// How many times one publication moves a card whose name another writer
+/// took to the next free name before it gives up as unknown (Е4.14).
+const MAX_CARD_RENAMES: u32 = 3;
+
 /// Fingerprint of content, never an application-owned card identity.
 pub fn sha256_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -230,6 +234,22 @@ impl StagedSavePlan {
 }
 
 fn plan_has_global_name_conflict(plan: &StagedSavePlan, vault: &VaultLayout) -> Result<bool> {
+    Ok(!conflicting_targets(plan, vault)?.is_empty())
+}
+
+/// Whether `error` is a create-new publication refused because the name is
+/// taken (`EEXIST`): proof that nothing was written there.
+fn name_taken(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists)
+    })
+}
+
+/// The targets of `plan` whose names another file of the space now takes,
+/// by the core's rule of unique names.
+fn conflicting_targets(plan: &StagedSavePlan, vault: &VaultLayout) -> Result<Vec<String>> {
     let targets: Vec<&str> = std::iter::once(plan.markdown.source.relative_path.as_str())
         .chain(
             plan.media
@@ -241,6 +261,7 @@ fn plan_has_global_name_conflict(plan: &StagedSavePlan, vault: &VaultLayout) -> 
         .into_iter()
         .filter(|path| !targets.contains(&path.as_str()))
         .collect::<Vec<_>>();
+    let mut conflicting = Vec::new();
     for target in targets {
         let path = Path::new(target);
         let stem = path
@@ -252,10 +273,10 @@ fn plan_has_global_name_conflict(plan: &StagedSavePlan, vault: &VaultLayout) -> 
             .and_then(|extension| extension.to_str())
             .context("planned file extension is missing")?;
         if mine_core::save::select_unique_file_stem(stem, extension, &occupied)? != stem {
-            return Ok(true);
+            conflicting.push(target.to_string());
         }
     }
-    Ok(false)
+    Ok(conflicting)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -288,6 +309,42 @@ impl SaveOperationStore {
     /// Serialize native operations for a binding across independent processes.
     /// The file remains at one stable path; unlinking a lock would split owners.
     pub fn lock(&self, binding: &str) -> Result<LockedSaveOperations> {
+        let (directory, lock) = self.open_journal(binding)?;
+        FileExt::lock_exclusive(&lock).context("lock capture journal")?;
+        Ok(LockedSaveOperations {
+            directory,
+            binding: binding.to_string(),
+            _lock: lock,
+        })
+    }
+
+    /// [`Self::lock`] when nothing holds the journal now; `None` while a save
+    /// of this binding holds it. A lookup answers at once instead of waiting
+    /// for the save, which holds the journal while it downloads
+    /// (SPEC_DEEP_AUDIT.md, Н9).
+    pub fn try_lock(&self, binding: &str) -> Result<Option<LockedSaveOperations>> {
+        let (directory, lock) = self.open_journal(binding)?;
+        match FileExt::try_lock_exclusive(&lock) {
+            Ok(()) => Ok(Some(LockedSaveOperations {
+                directory,
+                binding: binding.to_string(),
+                _lock: lock,
+            })),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+            Err(error) => Err(error).context("lock capture journal"),
+        }
+    }
+
+    /// The record of operation `id` as it is now, read without the journal
+    /// lock: records are replaced whole, so a read sees one record or the
+    /// other. Only for answering from a finished record; a decision that
+    /// changes a record takes the lock.
+    pub fn peek(&self, binding: &str, id: &str) -> Result<Option<SaveOperationRecord>> {
+        validate_id(binding)?;
+        LockedSaveOperations::read_record(&self.root.join(binding), binding, id)
+    }
+
+    fn open_journal(&self, binding: &str) -> Result<(PathBuf, File)> {
         validate_id(binding)?;
         let directory = self.root.join(binding);
         let mut created = Vec::new();
@@ -327,12 +384,7 @@ impl SaveOperationStore {
             .read(true)
             .write(true)
             .open(&lock_path)?;
-        FileExt::lock_exclusive(&lock).context("lock capture journal")?;
-        Ok(LockedSaveOperations {
-            directory,
-            binding: binding.to_string(),
-            _lock: lock,
-        })
+        Ok((directory, lock))
     }
 
     /// Move receipts kept under a path binding to the space identity
@@ -415,7 +467,12 @@ impl LockedSaveOperations {
     }
 
     pub fn load(&self, id: &str) -> Result<Option<SaveOperationRecord>> {
-        let path = self.path(id)?;
+        Self::read_record(&self.directory, &self.binding, id)
+    }
+
+    fn read_record(directory: &Path, binding: &str, id: &str) -> Result<Option<SaveOperationRecord>> {
+        validate_id(id)?;
+        let path = directory.join(format!("{id}.json"));
         let metadata = match std::fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -427,7 +484,7 @@ impl LockedSaveOperations {
         let record: SaveOperationRecord = serde_json::from_slice(&std::fs::read(&path)?)?;
         if record.version != RECORD_VERSION
             || record.operation_id != id
-            || record.binding_id != self.binding
+            || record.binding_id != binding
         {
             anyhow::bail!("operation record identity/version mismatch");
         }
@@ -564,6 +621,7 @@ impl LockedSaveOperations {
         vault: &VaultLayout,
         mut publish: impl FnMut(&Path, &Path) -> Result<()>,
     ) -> Result<serde_json::Value> {
+        let mut renames = 0;
         loop {
             let OperationPhase::PlannedV2 { step, plan } = &record.phase else {
                 return self
@@ -578,6 +636,12 @@ impl LockedSaveOperations {
             {
                 if *step == SavePhase::Prepared {
                     return self.reject_prepared_conflict(record);
+                }
+                if *step == SavePhase::MediaPublished
+                    && conflicting_targets(plan, vault)? == [plan.markdown.source.relative_path.clone()]
+                {
+                    self.rename_markdown_target(record, vault, &mut renames)?;
+                    continue;
                 }
                 anyhow::bail!("publication outcome is unknown; planned filename became ambiguous");
             }
@@ -652,6 +716,15 @@ impl LockedSaveOperations {
                                     .commit_with_durability_warning(record, response, &error);
                             }
                         }
+                        // Another writer took the name the moment the card
+                        // was linked: the create-new link proves nothing of
+                        // the card was written. It goes under the next free
+                        // name; before 13.10.2026 the Save stayed unknown for
+                        // good (SPEC_DEEP_AUDIT.md, Е4.14).
+                        if name_taken(&error) {
+                            self.rename_markdown_target(record, vault, &mut renames)?;
+                            continue;
+                        }
                         return Err(error);
                     }
                     let OperationPhase::PlannedV2 { step, plan } = &mut record.phase else {
@@ -670,6 +743,13 @@ impl LockedSaveOperations {
                     if *step == SavePhase::Prepared {
                         return self.reject_prepared_conflict(record);
                     }
+                    // The media are published and the card was never
+                    // attempted: a file at the card's name is another
+                    // writer's, and the card takes the next free name (Е4.14).
+                    if *step == SavePhase::MediaPublished {
+                        self.rename_markdown_target(record, vault, &mut renames)?;
+                        continue;
+                    }
                     anyhow::bail!("source name conflict; no target may be replaced")
                 }
                 SaveAction::UnknownOutcome => {
@@ -677,6 +757,69 @@ impl LockedSaveOperations {
                 }
             }
         }
+    }
+
+    /// Move the card of a planned save whose card was never written to the
+    /// next free name of its folder, by the core's rule of unique names, and
+    /// record it before anything else is written (SPEC_DEEP_AUDIT.md,
+    /// Е4.14). The staged card does not name itself, so its bytes stay; the
+    /// answer names the card where it goes. The media already published keep
+    /// their names, and the card still embeds them.
+    fn rename_markdown_target(
+        &self,
+        record: &mut SaveOperationRecord,
+        vault: &VaultLayout,
+        renames: &mut u32,
+    ) -> Result<()> {
+        *renames += 1;
+        if *renames > MAX_CARD_RENAMES {
+            anyhow::bail!(
+                "publication outcome is unknown; the card's name was taken {MAX_CARD_RENAMES} times in a row"
+            );
+        }
+        let reserved = record.reserved_name.clone();
+        let OperationPhase::PlannedV2 { step, plan } = &mut record.phase else {
+            anyhow::bail!("only a planned save renames its card");
+        };
+        let current = PathBuf::from(&plan.markdown.source.relative_path);
+        // The name the save chose: `Name (3)` follows `Name (2)`, not
+        // `Name (2) (2)`.
+        let stem = match reserved.as_deref() {
+            Some(name) => name,
+            None => current
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .context("planned card name is not Unicode")?,
+        };
+        let media: Vec<&str> = plan
+            .media
+            .iter()
+            .map(|artifact| artifact.source.relative_path.as_str())
+            .collect();
+        let occupied: Vec<String> = files::scan_vault_file_paths(vault)?
+            .into_iter()
+            .filter(|path| !media.contains(&path.as_str()))
+            .collect();
+        let free = mine_core::save::select_unique_file_stem(stem, "md", &occupied)?;
+        let renamed = current.with_file_name(format!("{free}.md"));
+        let renamed = renamed
+            .to_str()
+            .context("planned card name is not Unicode")?
+            .to_string();
+        let slug = renamed.strip_suffix(".md").unwrap_or(&renamed).to_string();
+        log::warn!(
+            "card {} was taken by another writer before it was published; saved as {renamed}",
+            plan.markdown.source.relative_path
+        );
+        plan.markdown.source.relative_path = renamed;
+        plan.markdown.publication_state = TargetPublication::Pending;
+        plan.response["slug"] = serde_json::json!(slug);
+        *step = if plan.media.is_empty() {
+            SavePhase::Prepared
+        } else {
+            SavePhase::MediaPublished
+        };
+        self.store(record)
     }
 
     /// Recover only exact committed bytes. Missing/changed artifacts are unknown,

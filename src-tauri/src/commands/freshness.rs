@@ -67,22 +67,24 @@ pub struct FreshnessOutcome {
     pub recovered_vault: Option<VaultLayout>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct VaultFreshnessChangedPayload {
-    vault_path: String,
-    generation: u64,
-    state: &'static str,
-    joined_callers: usize,
-    inventory_markdown: usize,
-    content_reads: usize,
-    database_writes: usize,
-    error_count: usize,
+/// `vault-freshness-changed`: a pass of the space against its files ended.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct VaultFreshnessChanged {
+    pub vault_path: String,
+    pub generation: u64,
+    /// `fresh`, `degraded` (some notes failed) or `failed` (the pass failed).
+    pub state: &'static str,
+    pub joined_callers: usize,
+    pub inventory_markdown: usize,
+    pub content_reads: usize,
+    pub database_writes: usize,
+    pub error_count: usize,
     /// The notes the pass could not read or project, with why: the index is
     /// ready without them (SPEC_DEEP_AUDIT.md, Н6), and the interface names
     /// them (Е6.17).
-    error_files: Vec<crate::storage::reconcile::ReconcileFileError>,
-    elapsed_ms: u64,
-    fast_path_hits: usize,
+    pub error_files: Vec<crate::storage::reconcile::ReconcileFileError>,
+    pub elapsed_ms: u64,
+    pub fast_path_hits: usize,
 }
 
 
@@ -415,7 +417,7 @@ fn publish_freshness_outcome(
                     app,
                     &outcome.vault_path.clone(),
                     "vault-freshness-changed",
-                    VaultFreshnessChangedPayload {
+                    VaultFreshnessChanged {
                         vault_path: outcome.vault_path.clone(),
                         generation: outcome.generation,
                         state,
@@ -470,7 +472,7 @@ fn publish_freshness_outcome(
                     app,
                     &outcome.vault_path.clone(),
                     "vault-freshness-changed",
-                    VaultFreshnessChangedPayload {
+                    VaultFreshnessChanged {
                         vault_path: outcome.vault_path.clone(),
                         generation: outcome.generation,
                         state: "failed",

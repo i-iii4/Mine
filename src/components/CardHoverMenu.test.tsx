@@ -3,7 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CardConnectMenu, CardHoverMenu, CardMoreMenu, CardPointMenu } from "./CardHoverMenu";
+import { CardTagMenu } from "./CardContextMenu";
+import { ActionFailureNoticeStack } from "./ActionFailureNotices";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { getBlock, startWindowDrag } from "@/lib/commands";
+import { clearActionFailures } from "@/lib/actionFailures";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { LightBlock } from "@/types";
 
 vi.mock("@/lib/commands", () => ({
@@ -12,8 +17,8 @@ vi.mock("@/lib/commands", () => ({
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
-  openUrl: vi.fn(),
-  revealItemInDir: vi.fn(),
+  openUrl: vi.fn(async () => undefined),
+  revealItemInDir: vi.fn(async () => undefined),
 }));
 
 const writeText = vi.hoisted(() => vi.fn(async () => {}));
@@ -65,7 +70,91 @@ function dragPastChromeThreshold(element: HTMLElement) {
 describe("CardHoverMenu", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearActionFailures();
     vi.mocked(getBlock).mockResolvedValue({ tags: [] } as Awaited<ReturnType<typeof getBlock>>);
+  });
+
+  /// SPEC_DEEP_AUDIT.md, Е6.12: the menu shows the card's collections the
+  /// feed knows from its first frame; the read of the file only refreshes
+  /// them, and a read that fails leaves them; before, the menu showed no
+  /// membership until the read answered, and a failed read was unhandled.
+  it.each([["answers late", () => new Promise<never>(() => {})], ["fails", () => Promise.reject(new Error("index is locked"))]])(
+    "shows the card's collections the feed knows while the read %s",
+    async (_case, read) => {
+      vi.mocked(getBlock).mockImplementation(read as typeof getBlock);
+      render(
+        <CardMoreMenu
+          block={{ ...makeBlock(), collections: ["alpha"] }}
+          vaultPath="/vault"
+          tags={[{ tag: "alpha", count: 1 }]}
+          currentTag="alpha"
+          onToggleTag={vi.fn()}
+          onCreateAndAssign={vi.fn()}
+          onRequestRename={vi.fn()}
+          onRequestDelete={vi.fn()}
+          openRequestSequence={1}
+        />,
+      );
+
+      expect(await screen.findByText("Disconnect from “alpha”")).toBeInTheDocument();
+      await waitFor(() => expect(getBlock).toHaveBeenCalledWith("alpha-block"));
+      expect(screen.getByText("Disconnect from “alpha”")).toBeInTheDocument();
+    },
+  );
+
+  /// Е6.12: the right-click menu, the same.
+  it("shows the card's collections the feed knows in the right-click menu while the read answers late", async () => {
+    vi.mocked(getBlock).mockImplementation(() => new Promise<never>(() => {}));
+    render(
+      <ContextMenu>
+        <ContextMenuTrigger>card</ContextMenuTrigger>
+        <CardTagMenu
+          block={{ ...makeBlock(), collections: ["alpha"] }}
+          vaultPath="/vault"
+          tags={[{ tag: "alpha", count: 1 }]}
+          currentTag="alpha"
+          onToggleTag={vi.fn()}
+          onCreateAndAssign={vi.fn()}
+          onRequestRename={vi.fn()}
+          onRequestDelete={vi.fn()}
+        />
+      </ContextMenu>,
+    );
+    fireEvent.contextMenu(screen.getByText("card"));
+
+    expect(await screen.findByText("Disconnect from “alpha”")).toBeInTheDocument();
+  });
+
+  /// Е6.16: Source, Reveal in Finder and Copy Path that fail say so in the
+  /// tab's notice; before, nothing happened and nothing was said.
+  it.each([
+    ["Source", "Could not open the link"],
+    ["Reveal in Finder", "Could not reveal in Finder"],
+    ["Copy Path", "Could not copy the path"],
+  ])("says when %s failed", async (item, title) => {
+    vi.mocked(openUrl).mockRejectedValueOnce(new Error("no browser"));
+    vi.mocked(revealItemInDir).mockRejectedValueOnce(new Error("no browser"));
+    writeText.mockRejectedValueOnce(new Error("no browser"));
+    render(
+      <>
+        <CardMoreMenu
+          block={makeBlock()}
+          vaultPath="/vault"
+          tags={[]}
+          onToggleTag={vi.fn()}
+          onCreateAndAssign={vi.fn()}
+          onRequestRename={vi.fn()}
+          onRequestDelete={vi.fn()}
+          openRequestSequence={1}
+        />
+        <ActionFailureNoticeStack />
+      </>,
+    );
+
+    fireEvent.click(await screen.findByText(item));
+
+    expect(await screen.findByText(title)).toBeInTheDocument();
+    expect(screen.getByText("no browser")).toBeInTheDocument();
   });
 
   it("opens the overflow menu from a keyboard action request", async () => {

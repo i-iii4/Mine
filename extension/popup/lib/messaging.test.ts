@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  CONTENT_SCRIPT_CONTEXT, extractMetadata, openingStamps, requestXSyndication, requestYoutubeChannel, sendToNative,
-  waitForYoutubeChannel, YOUTUBE_CHANNEL_TIMEOUT_MS,
+  CONTENT_SCRIPT_CONTEXT, extractMetadata, openingStamps, remoteMediaNotice, requestXSyndication, requestYoutubeChannel,
+  sendToNative, waitForYoutubeChannel, YOUTUBE_CHANNEL_TIMEOUT_MS,
 } from "./messaging";
 
 // SPEC_DEEP_AUDIT.md, Е4.17: the first openings waited 9 to 15 s for the
@@ -43,6 +43,23 @@ describe("metadata of a page without its content script", () => {
   });
 });
 
+// SPEC_DEEP_AUDIT.md, Н10: the media a Save left as links to their sites,
+// counted for the clipper.
+describe("media left as links", () => {
+  const remote = (count: number) => ({
+    ok: true,
+    remote_media: Array.from({ length: count }, (_, index) => ({
+      url: `https://cdn.example/${index}.jpg`, kind: "image", reason: "download_failed",
+    })),
+  });
+  it("says how many, or nothing when every one was saved", () => {
+    expect(remoteMediaNotice(remote(1))).toBe("1 picture or video was not saved: it stays a link to its site.");
+    expect(remoteMediaNotice(remote(3))).toBe("3 pictures or videos were not saved: they stay links to their sites.");
+    expect(remoteMediaNotice(remote(0))).toBeNull();
+    expect(remoteMediaNotice({ ok: true })).toBeNull();
+  });
+});
+
 describe("popup runtime transport", () => {
   it("does not time out before the background helper deadline", async () => {
     vi.useFakeTimers();
@@ -57,6 +74,23 @@ describe("popup runtime transport", () => {
       await response;
       expect(settled).toHaveBeenCalledWith({ ok: true });
       expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+  // SPEC_DEEP_AUDIT.md, Н9: the background waits for a Save as long as the
+  // helper says it works; the clipper waits for the background and has no
+  // deadline of its own that would cut a long Save short.
+  it("waits for a Save as long as the background does", async () => {
+    vi.useFakeTimers();
+    try {
+      let answer: (response: unknown) => void = () => {};
+      (globalThis as Record<string, unknown>).chrome = { runtime: { sendMessage: (_message: unknown, callback: typeof answer) => { answer = callback; } } };
+      const settled = vi.fn();
+      const response = sendToNative({ action: "save_block" }).then(settled);
+      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      expect(settled).not.toHaveBeenCalled();
+      answer({ ok: true, outcome: "committed" });
+      await response;
+      expect(settled).toHaveBeenCalledWith({ ok: true, outcome: "committed" });
     } finally { vi.useRealTimers(); }
   });
   it("maps a restarted background worker separately from native-host availability", async () => {

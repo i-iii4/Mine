@@ -16,6 +16,8 @@ import {
   type DensityStep,
 } from "@/lib/density";
 import {
+  FEED_SHOW_STORAGE_KEY,
+  FEED_SORT_STORAGE_KEY,
   setFeedShow,
   setFeedSort,
   useFeedDisplay,
@@ -55,6 +57,18 @@ function applySpacing(value: string) {
   applyDensity(step);
   // Other windows (Settings) re-read the rhythm.
   broadcastSettingsChange(DENSITY_STORAGE_KEY);
+}
+
+// Sort and Show are the whole app's (SPEC_TABS.md, В78): the other tabs and
+// windows take them, as they take Spacing (SPEC_DEEP_AUDIT.md, Е6.7).
+function applySort(sort: FeedOrder) {
+  setFeedSort(sort);
+  broadcastSettingsChange(FEED_SORT_STORAGE_KEY);
+}
+
+function applyShow(show: FeedShow) {
+  setFeedShow(show);
+  broadcastSettingsChange(FEED_SHOW_STORAGE_KEY);
 }
 
 function DisplayGroup<T extends string>({
@@ -103,9 +117,9 @@ export function FeedDisplayMenu() {
 
   return (
     <DisplayMenu panel="feed">
-      <DisplayGroup label="Sort" value={sort} choices={SORT_CHOICES} onChange={setFeedSort} />
+      <DisplayGroup label="Sort" value={sort} choices={SORT_CHOICES} onChange={applySort} />
       <DropdownMenuSeparator />
-      <DisplayGroup label="Show" value={show} choices={SHOW_CHOICES} onChange={setFeedShow} />
+      <DisplayGroup label="Show" value={show} choices={SHOW_CHOICES} onChange={applyShow} />
       <DropdownMenuSeparator />
       <DisplayGroup
         label="Spacing"

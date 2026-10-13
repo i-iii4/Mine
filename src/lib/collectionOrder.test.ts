@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyPendingTagOrder } from "./collectionOrder";
+import { applyPendingTagOrder, reorderedPositions } from "./collectionOrder";
 import type { TagCount } from "@/types";
 
 function tags(...names: string[]): TagCount[] {
@@ -32,5 +32,30 @@ describe("applyPendingTagOrder", () => {
     const source = tags("a", "b");
     applyPendingTagOrder(source, ["b", "a"]);
     expect(names(source)).toEqual(["a", "b"]);
+  });
+});
+
+/// SPEC_DEEP_AUDIT.md, Е6.2: a new collection takes the place before the first
+/// (a position below the others, below zero after 0); a drag keeps the
+/// smallest position as the start, so it rewrites only the pages it moved.
+describe("reorderedPositions", () => {
+  it("starts the order at the smallest position and moves only what moved", () => {
+    const positions = new Map([["new", -2], ["newer", -3], ["a", 0], ["b", 1], ["c", 2]]);
+    // `c` dragged above `a`.
+    expect(reorderedPositions(["newer", "new", "c", "a", "b"], positions)).toEqual([
+      { tag: "newer", position: -3 },
+      { tag: "new", position: -2 },
+      { tag: "c", position: -1 },
+      { tag: "a", position: 0 },
+      { tag: "b", position: 1 },
+    ]);
+  });
+
+  it("numbers from zero a space whose positions start there", () => {
+    const positions = new Map([["a", 0], ["b", 1]]);
+    expect(reorderedPositions(["b", "a"], positions)).toEqual([
+      { tag: "b", position: 0 },
+      { tag: "a", position: 1 },
+    ]);
   });
 });

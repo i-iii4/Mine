@@ -11,6 +11,7 @@ use crate::domain::block::{
     derive_block_type, ensure_body_starts_with_h1, serialize_block, suggest_slug,
     Block, BlockType, DateTime, Frontmatter,
 };
+use crate::domain::channel::new_collection_position;
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use crate::domain::media_type::{extension_for_content_type, stored_media_extension};
 pub use crate::domain::vault::VaultWriteLayout as CoreLayout;
@@ -492,6 +493,11 @@ pub enum CoreCommand {
     Collection {
         slug: String,
         saved_at: String,
+        /// The positions of the collection pages the folder holds, a page
+        /// without `position` at `0`: the new page takes the first place
+        /// ([`new_collection_position`]).
+        #[serde(default)]
+        positions: Vec<i64>,
     },
     Inspect {
         slug: String,
@@ -593,7 +599,7 @@ pub fn execute(command: CoreCommand) -> Result<serde_json::Value, SaveError> {
                 .map_err(|e| failure(SaveErrorCode::InvalidPath, e))?;
             Ok(json!(layout))
         }
-        CoreCommand::Collection { slug, saved_at } => {
+        CoreCommand::Collection { slug, saved_at, positions } => {
             validate_slug(&slug).map_err(|e| failure(SaveErrorCode::InvalidPath, e))?;
             let mut block = build_capture(&CaptureRequest {
                 slug,
@@ -602,6 +608,7 @@ pub fn execute(command: CoreCommand) -> Result<serde_json::Value, SaveError> {
                 ..Default::default()
             })?;
             block.frontmatter.block_type = BlockType::Channel;
+            block.frontmatter.position = Some(new_collection_position(positions));
             Ok(json!({ "markdown": serialize_block(&block) }))
         }
         CoreCommand::Inspect { slug, markdown } => {
@@ -673,6 +680,31 @@ mod tests {
         assert_eq!(reply["ok"], false);
         assert_eq!(reply["error"]["code"], "collection_not_found");
         assert_eq!(reply["error"]["collection"], "Pageless");
+    }
+
+    /// A collection page the browser folder writes stands first, as one the
+    /// app writes (SPEC_DEEP_AUDIT.md, Е6.2); a folder without collections
+    /// starts at 0, and a request from an older extension without positions
+    /// still writes a page.
+    #[test]
+    fn a_browser_folder_collection_page_takes_the_first_place() {
+        let page = |request: &str| -> String {
+            let reply: serde_json::Value = serde_json::from_str(&execute_json(request)).unwrap();
+            assert_eq!(reply["ok"], true, "{reply}");
+            reply["value"]["markdown"].as_str().unwrap().to_string()
+        };
+        let first = page(r#"{"op":"collection","slug":"Collections/New","saved_at":"2026-10-13T00:00:00Z","positions":[0,1,2]}"#);
+        assert!(first.contains("\nposition: -1\n"), "{first}");
+        let alone = page(r#"{"op":"collection","slug":"Collections/New","saved_at":"2026-10-13T00:00:00Z"}"#);
+        assert!(alone.contains("\nposition: 0\n"), "{alone}");
+
+        let parsed = crate::domain::block::parse_markdown_document(
+            "Collections/New",
+            &first,
+            DateTime::new("2026-10-13T00:00:00Z").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(parsed.block.frontmatter.position, Some(-1));
     }
 
     #[test]

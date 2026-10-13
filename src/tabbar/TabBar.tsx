@@ -80,6 +80,8 @@ import {
 } from "@/lib/buttonStyle";
 import { createTabMenu, type TabMenu } from "./tabMenu";
 import { listenHere } from "./useTabBarState";
+import { errorMessage } from "@/lib/errorMessage";
+import { tabBarFailureTitle, tellVisibleTabOfFailure, type TabBarAction } from "@/lib/tabBarFailure";
 
 export const NEW_TAB_LABEL = "New Tab";
 export const CLOSE_TAB_BUTTON_LABEL = "Close Tab";
@@ -92,10 +94,30 @@ export const SEARCH_LABEL = "Find elements";
 const PRIMARY_BUTTON = 0;
 const MIDDLE_BUTTON = 1;
 
-/** Run a command for its effect; a failure is logged with what was tried. */
-function run(command: Promise<unknown>, what: string): void {
+/// The visible tab of this bar's window: the page that says what the bar
+/// could not do. One bar per page, kept by the bar as it draws.
+let visibleTabOfBar: TabId | null = null;
+
+/// Tell the visible tab of the window that `action` failed (SPEC_DEEP_AUDIT.md,
+/// Н11, Е6.10). Only when even that cannot be told, the console has it.
+function tellFailure(action: TabBarAction, error: unknown): void {
+  const visible = visibleTabOfBar;
+  const failure = { title: tabBarFailureTitle(action), message: errorMessage(error) };
+  if (visible === null) {
+    console.error(`${failure.title}: ${failure.message}`);
+    return;
+  }
+  void tellVisibleTabOfFailure(visible, failure).catch((sendError: unknown) => {
+    console.error(`${failure.title}: ${failure.message}`, sendError);
+  });
+}
+
+/// Run a command for its effect. A failure undoes what the bar showed at once
+/// (`undo`) and is told by the visible tab.
+function run(command: Promise<unknown>, action: TabBarAction, undo?: () => void): void {
   command.catch((error: unknown) => {
-    console.error(`Tab bar could not ${what}:`, error);
+    undo?.();
+    tellFailure(action, error);
   });
 }
 
@@ -205,6 +227,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   const latestWindow = useRef({ windowId: bar.window_id, tabs: sourceTabs, activeTab });
   useLayoutEffect(() => {
     latestWindow.current = { windowId: bar.window_id, tabs: sourceTabs, activeTab };
+    visibleTabOfBar = activeTab;
   });
   const tabIdsKey = sourceTabs.map((tab) => tab.id).join(" ");
   useEffect(() => {
@@ -278,7 +301,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
       const direction = adjacentTabDirection(event);
       if (direction === null) return;
       event.preventDefault();
-      run(activateAdjacentTab(direction === "forward"), "show the adjacent tab");
+      run(activateAdjacentTab(direction === "forward"), "switch tabs");
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -298,7 +321,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
       .catch((error: unknown) => {
         // A menu that failed to build is built again on the next right click.
         if (menu.current === pending) menu.current = null;
-        console.error("Tab bar could not show the tab menu:", error);
+        tellFailure("show the tab menu", error);
       });
   }, []);
 
@@ -306,9 +329,9 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   const settingsMenu = useRef<Promise<SettingsMenu> | null>(null);
   const openSettingsMenu = useCallback((button: HTMLElement) => {
     settingsMenu.current ??= createSettingsMenu({
-      openSection: (section) => run(openSettingsWindow(section), "open the settings"),
+      openSection: (section) => run(openSettingsWindow(section), "open Settings"),
       // The backend lays the windows out again and tells every page.
-      chooseChromeRows: (rows) => run(setChromeRows(rows), "change the chrome height"),
+      chooseChromeRows: (rows) => run(setChromeRows(rows), "change the height of the top rows"),
       // Dev button styles: this window only; its visible tab says what
       // is on.
       chooseButtonStyle: (style) => {
@@ -322,7 +345,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
       .then((built) => built.open({ x: left, y: bottom }, latest.current.chromeRows))
       .catch((error: unknown) => {
         if (settingsMenu.current === pending) settingsMenu.current = null;
-        console.error("Tab bar could not show the settings menu:", error);
+        tellFailure("show the settings menu", error);
       });
   }, []);
 
@@ -345,7 +368,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   const tearOff = useCallback((pressed: TabPress) => {
     endPress();
     setReorder(null);
-    run(beginTabDrag(pressed.tabId, pressed.grab.x, pressed.grab.y), "tear the tab off");
+    run(beginTabDrag(pressed.tabId, pressed.grab.x, pressed.grab.y), "move the tab to a new window");
   }, [endPress]);
 
   const handlePointerMove = useCallback((event: PointerEvent) => {
@@ -393,12 +416,16 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
     const target = reorderTarget({ fromIndex: pressed.fromIndex, offset, width: pressed.width, count: pressed.count });
     if (target === pressed.fromIndex) return;
     const current = latest.current;
-    // The new order shows at once; the backend's next state confirms it.
-    setLocalOrder({
+    // The new order shows at once; the backend's next state confirms it. A
+    // move the backend refused puts the tabs back (Е6.10).
+    const shown = {
       source: current.sourceTabs,
       ids: moveItem(current.tabs.map((tab) => tab.id), pressed.fromIndex, target),
+    };
+    setLocalOrder(shown);
+    run(moveTab(pressed.tabId, target), "move the tab", () => {
+      setLocalOrder((order) => (order === shown ? null : order));
     });
-    run(moveTab(pressed.tabId, target), "move the tab");
   }, [endPress]);
 
   const cancelPress = useCallback(() => {
@@ -495,7 +522,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   useEffect(() => {
     if (incomingSlot === reportedSlot.current) return;
     reportedSlot.current = incomingSlot;
-    run(reportDropSlot(incomingSlot), "report the drop slot");
+    run(reportDropSlot(incomingSlot), "move the tab");
   }, [incomingSlot]);
 
   // ── Rendering ────────────────────────────────────────────────────────────
@@ -552,7 +579,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
         <SidebarToggleButton
           collapsed={sidebar.collapsed}
           onToggle={() =>
-            run(setWindowSidebar({ ...sidebar, collapsed: !sidebar.collapsed }), "toggle the sidebar")}
+            run(setWindowSidebar({ ...sidebar, collapsed: !sidebar.collapsed }), "show or hide the sidebar")}
         />
         {/* Back and forward through the visible tab's places (В81). */}
         <Button
@@ -765,7 +792,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
           data-tab-bar-search=""
           // The window's visible tab opens the cards' search, over an open
           // card too, as the Find menu item and Cmd+F do.
-          onClick={() => run(openTabSearch(), "open the search")}
+          onClick={() => run(openTabSearch(), "open Find elements")}
         >
           <Search />
         </Button>

@@ -9,6 +9,36 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub const MANAGED_RUNTIME_DIRECTORY: &str = "managed-v1";
+
+/// The extension copies Mine keeps for browsers in the app data folder
+/// `app_data`, those present: the copy adopted from before the managed
+/// packages (`clipper/extension`), which an existing Load unpacked keeps
+/// loading, and the managed one (`clipper/managed-v1/extension`).
+/// Installation writes both, the upkeep checks both, and the helper reports
+/// the build both name (SPEC_DEEP_AUDIT.md, Е4.11).
+pub fn extension_copies(app_data: &Path) -> Vec<PathBuf> {
+    let clipper = app_data.join("clipper");
+    let adopted = clipper.join("extension");
+    let managed = clipper.join(MANAGED_RUNTIME_DIRECTORY).join("extension");
+    let mut copies = Vec::new();
+    if is_mine_extension(&adopted) {
+        copies.push(adopted);
+    }
+    if std::fs::symlink_metadata(&managed).is_ok() {
+        copies.push(managed);
+    }
+    copies
+}
+
+/// Whether the folder holds a Mine extension: its manifest names Mine. A
+/// folder of another extension at the adopted path is not Mine's to report
+/// or repair.
+pub fn is_mine_extension(folder: &Path) -> bool {
+    std::fs::read(folder.join("manifest.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .is_some_and(|manifest| manifest["name"] == "Mine")
+}
 pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, PartialEq, Eq)]

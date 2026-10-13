@@ -220,7 +220,8 @@ pub struct Frontmatter {
     pub height: Option<u32>,
     pub author: Option<String>,
     // Channel-specific fields
-    pub position: Option<u32>,
+    /// Manual order of a collection page; signed (`Channel::position`).
+    pub position: Option<i64>,
     pub color: Option<String>,
     pub icon: Option<String>,
 }
@@ -294,7 +295,7 @@ pub fn parse_frontmatter(yaml: &str) -> Result<Frontmatter, BlockError> {
     let height = get_opt_u64(&value, "height").map(|n| n as u32);
 
     // Channel-specific fields
-    let position = get_opt_u64(&value, "position").map(|n| n as u32);
+    let position = get_opt_i64(&value, "position");
     let color = get_opt_string(&value, "color");
     let icon = get_opt_string(&value, "icon");
 
@@ -921,6 +922,7 @@ pub fn render_frontmatter_fields(frontmatter: &Frontmatter) -> [Option<String>; 
             .map(|value| format!("{key}: {}", yaml_quote(value)))
     };
     let number = |key: &str, value: Option<u32>| value.map(|value| format!("{key}: {value}"));
+    let signed = |key: &str, value: Option<i64>| value.map(|value| format!("{key}: {value}"));
     let file = frontmatter
         .file
         .as_ref()
@@ -954,7 +956,7 @@ pub fn render_frontmatter_fields(frontmatter: &Frontmatter) -> [Option<String>; 
         number("width", frontmatter.width),
         number("height", frontmatter.height),
         quoted("author", &frontmatter.author),
-        number("position", frontmatter.position),
+        signed("position", frontmatter.position),
         quoted("color", &frontmatter.color),
         quoted("icon", &frontmatter.icon),
     ]
@@ -1437,6 +1439,10 @@ fn get_opt_u64(parent: &Value, key: &str) -> Option<u64> {
     parent.get(key).and_then(|v| v.as_u64())
 }
 
+fn get_opt_i64(parent: &Value, key: &str) -> Option<i64> {
+    parent.get(key).and_then(Value::as_i64)
+}
+
 fn parse_collections(parent: &Value) -> Result<Vec<String>, BlockError> {
     let Some(tags_val) = parent.get(MINE_COLLECTIONS_FIELD) else {
         return Ok(vec![]);
@@ -1575,7 +1581,7 @@ fn parse_frontmatter_compat(
             width: get_opt_u64(&value, "width").map(|n| n as u32),
             height: get_opt_u64(&value, "height").map(|n| n as u32),
             author: get_opt_string(&value, "author"),
-            position: get_opt_u64(&value, "position").map(|n| n as u32),
+            position: get_opt_i64(&value, "position"),
             color: get_opt_string(&value, "color"),
             icon: get_opt_string(&value, "icon"),
         },
@@ -2239,6 +2245,24 @@ mod tests {
 
         let channel = parse_frontmatter("type: channel\nsaved_at: 2026-02-26T14:30:00Z").unwrap();
         assert_eq!(channel.block_type, BlockType::Channel);
+    }
+
+    /// Pages written before positions became signed read as they did; a new
+    /// collection's place before 0 reads back and is written as it reads
+    /// (SPEC_DEEP_AUDIT.md, Е6.2).
+    #[test]
+    fn a_collection_position_reads_from_zero_up_and_below_zero() {
+        for (written, read) in [("0", Some(0)), ("12", Some(12)), ("-3", Some(-3)), ("first", None)] {
+            let fm = parse_frontmatter(&format!(
+                "type: channel\nposition: {written}\nsaved_at: 2026-02-26T14:30:00Z"
+            ))
+            .unwrap();
+            assert_eq!(fm.position, read, "position: {written}");
+        }
+        let mut fm = parse_frontmatter("type: channel\nsaved_at: 2026-02-26T14:30:00Z").unwrap();
+        fm.position = Some(-3);
+        let rendered = render_frontmatter_fields(&fm);
+        assert!(rendered.iter().flatten().any(|line| line == "position: -3"));
     }
 
     #[test]

@@ -198,6 +198,7 @@ pub fn run() {
             commands::tags::list_tags,
             commands::tags::add_tag,
             commands::tags::remove_tag,
+            commands::tags::set_blocks_membership,
             commands::tags::rename_tag,
             commands::search::search,
             commands::search::search_grid_blocks,

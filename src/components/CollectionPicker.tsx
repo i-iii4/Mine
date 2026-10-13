@@ -8,6 +8,11 @@ import {
 } from "react";
 import { Plus } from "lucide-react";
 import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
+import {
+  useCollectionNameCheck,
+  useCollectionNameRefusal,
+  type CollectionNameCheck,
+} from "@/hooks/useCollectionNameRefusal";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
 import type { TagCount } from "@/types";
 
@@ -23,8 +28,10 @@ interface CollectionPickerProps {
   selectedTags: string[];
   tags: PickerTag[];
   currentTag?: string;
-  onToggleTag: (slug: string, tag: string, hasTag: boolean) => void | Promise<void>;
-  onCreateAndAssign: (tag: string, blockSlug: string) => void | Promise<void>;
+  onToggleTag: (slug: string, tag: string, hasTag: boolean) => MembershipAnswer;
+  onCreateAndAssign: (tag: string, blockSlug: string) => void | Promise<unknown>;
+  /** The check of a new collection's name as it is typed (Е6.2). */
+  onCheckName?: CollectionNameCheck;
   /** Prevent parent menu typeahead from capturing keystrokes */
   stopKeyPropagation?: boolean;
   onRequestClose?: () => void;
@@ -37,12 +44,30 @@ interface BatchCollectionPickerProps {
   selectedSlugs: string[];
   tags: PickerTag[];
   tagLookup: ReadonlyMap<string, readonly string[]>;
-  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => void | Promise<void>;
-  onCreateAndAssign: (tag: string) => void | Promise<void>;
+  onBatchSetTag: (slugs: string[], tag: string, connected: boolean) => MembershipAnswer;
+  onCreateAndAssign: (tag: string) => void | Promise<unknown>;
+  /** The check of a new collection's name as it is typed (Е6.2). */
+  onCheckName?: CollectionNameCheck;
   onRequestClose?: () => void;
 }
 
 type BatchMembershipState = "all" | "not-all";
+
+/** What a membership change answers: a promise of `false` says the change
+ *  was not made and the caller has said why; the picker then takes back the
+ *  state it showed at once (SPEC_DEEP_AUDIT.md, Е6.1, Е6.3). */
+export type MembershipAnswer = void | Promise<boolean | void>;
+
+/** Why the typed name of a new collection is refused, under the field it is
+ *  typed in, as an error under what it is about (DESIGN_SYSTEM.md, «Окна»,
+ *  «Ошибка»). */
+function PickerNameRefusal({ reason }: { reason: string }) {
+  return (
+    <p role="alert" className="px-plate py-1.5 text-sm text-destructive" data-collection-picker-name-refusal="">
+      {reason}
+    </p>
+  );
+}
 
 export const COLLECTION_PICKER_CONTENT_CLASS =
   "flex flex-col overflow-hidden p-0";
@@ -132,6 +157,7 @@ export function CollectionPicker({
   tags,
   onToggleTag,
   onCreateAndAssign,
+  onCheckName,
   stopKeyPropagation = false,
   onRequestClose,
   autoFocusSearch = true,
@@ -185,7 +211,10 @@ export function CollectionPicker({
     : tags;
 
   const trimmed = search.trim();
-  const canCreate = trimmed.length > 0 && filtered.length === 0;
+  const offersCreate = trimmed.length > 0 && filtered.length === 0;
+  const nameCheck = useCollectionNameCheck(onCheckName);
+  const nameRefusal = useCollectionNameRefusal(offersCreate ? trimmed : "", nameCheck);
+  const canCreate = offersCreate && nameRefusal === null;
   const createActionIndex = filtered.length;
   const actionCount = filtered.length + (canCreate ? 1 : 0);
   const boundedActiveIndex =
@@ -226,7 +255,17 @@ export function CollectionPicker({
       states.set(tag, nextConnected);
       return { blockSlug, states };
     });
-    void onToggleTag(blockSlug, tag, hasTag);
+    void Promise.resolve(onToggleTag(blockSlug, tag, hasTag)).then((applied) => {
+      if (applied !== false) return;
+      // Not made: the row shows the card as it is (Е6.3), unless a later
+      // press asked for something else meanwhile.
+      setPendingMembership((current) => {
+        if (current.blockSlug !== blockSlug || current.states.get(tag) !== nextConnected) return current;
+        const states = new Map(current.states);
+        states.delete(tag);
+        return { blockSlug, states };
+      });
+    });
   };
 
   const createAndAssign = () => {
@@ -370,6 +409,7 @@ export function CollectionPicker({
         controlSize={layout === "edge" ? "clipper" : "default"}
         inputClassName={layout === "edge" ? "px-3" : undefined}
       />
+      {offersCreate && nameRefusal !== null && <PickerNameRefusal reason={nameRefusal} />}
 
       {/* Tag list */}
       <QuantizedMenuScrollArea
@@ -479,7 +519,7 @@ export function CollectionPicker({
           </button>
         )}
 
-        {filtered.length === 0 && !canCreate && (
+        {filtered.length === 0 && !offersCreate && (
           <p className="flex h-[var(--menu-row-height)] items-center justify-center px-plate text-sm text-muted-foreground">
             No collections
           </p>
@@ -495,6 +535,7 @@ export function BatchCollectionPicker({
   tagLookup,
   onBatchSetTag,
   onCreateAndAssign,
+  onCheckName,
   onRequestClose,
 }: BatchCollectionPickerProps) {
   const [search, setSearch] = useState("");
@@ -511,7 +552,10 @@ export function BatchCollectionPicker({
     ? tags.filter((tc) => collectionRefLabel(tc.tag).toLowerCase().includes(lc))
     : tags;
   const trimmed = search.trim();
-  const canCreate = trimmed.length > 0 && filtered.length === 0;
+  const offersCreate = trimmed.length > 0 && filtered.length === 0;
+  const nameCheck = useCollectionNameCheck(onCheckName);
+  const nameRefusal = useCollectionNameRefusal(offersCreate ? trimmed : "", nameCheck);
+  const canCreate = offersCreate && nameRefusal === null;
   const createActionIndex = filtered.length;
   const actionCount = filtered.length + (canCreate ? 1 : 0);
   const boundedActiveIndex =
@@ -549,7 +593,16 @@ export function BatchCollectionPicker({
       next.set(tag, nextConnected);
       return next;
     });
-    void onBatchSetTag(selectedSlugs, tag, nextConnected);
+    void Promise.resolve(onBatchSetTag(selectedSlugs, tag, nextConnected)).then((applied) => {
+      if (applied !== false) return;
+      // Not made: the row shows the selection as it is (Е6.1).
+      setPendingStates((current) => {
+        if (current.get(tag) !== nextConnected) return current;
+        const next = new Map(current);
+        next.delete(tag);
+        return next;
+      });
+    });
   };
 
   const createAndAssign = () => {
@@ -670,6 +723,7 @@ export function BatchCollectionPicker({
         onChange={(event) => setSearch(event.target.value)}
         placeholder="Search collections..."
       />
+      {offersCreate && nameRefusal !== null && <PickerNameRefusal reason={nameRefusal} />}
 
       <QuantizedMenuScrollArea
         rowCount={listRowCount}
@@ -777,7 +831,7 @@ export function BatchCollectionPicker({
           </button>
         )}
 
-        {filtered.length === 0 && !canCreate && (
+        {filtered.length === 0 && !offersCreate && (
           <p className="flex h-[var(--menu-row-height)] items-center justify-center px-plate text-sm text-muted-foreground">
             No collections
           </p>

@@ -259,13 +259,6 @@ export const DEFAULT_COMMANDS: readonly CommandDefinition[] = [
     context: "element",
     binding: { key: "l", meta: true },
   },
-  {
-    id: "toggle-connections",
-    name: "Connections",
-    context: "element",
-    binding: { key: "Tab" },
-    fixed: "structural",
-  },
 
   // ── Selection ─────────────────────────────────────────────────────────
   {

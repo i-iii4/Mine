@@ -35,6 +35,8 @@ import {
   spaceStats,
 } from "@/lib/commands";
 import { formatBytes } from "@/lib/formatBytes";
+import { errorMessage } from "@/lib/errorMessage";
+import { RemoveSpaceDialog } from "@/components/RemoveSpaceDialog";
 import { cn } from "@/lib/utils";
 import type { SpaceEntry, SpaceMovedPayload, SpaceStats } from "@/types";
 import { basename } from "./useOpenSpaces";
@@ -172,6 +174,9 @@ export function SpacesSection() {
   const [openIds, setOpenIds] = useState<ReadonlySet<string>>(() => new Set());
   const [statsByPath, setStatsByPath] = useState<Record<string, SpaceStatsState>>({});
   const [error, setError] = useState<string | null>(null);
+  // The space whose removal is asked about: the same question as in the
+  // space switcher (SPEC_DEEP_AUDIT.md, Е6.9).
+  const [pendingRemove, setPendingRemove] = useState<string | null>(null);
   // Paths already scanned: refreshing the list does not walk them again.
   const statsRequested = useRef(new Set<string>());
 
@@ -218,7 +223,7 @@ export function SpacesSection() {
       applySpaces(spaces);
       setOpenIds(new Set(shown));
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     }
   }, [applySpaces]);
 
@@ -238,7 +243,7 @@ export function SpacesSection() {
           if (!cancelled) applySpaces(spaces);
         })
         .catch((e: unknown) => {
-          if (!cancelled) setError(String(e));
+          if (!cancelled) setError(errorMessage(e));
         });
     });
     // The space moved to a new folder (В73): its row follows the new path.
@@ -257,7 +262,7 @@ export function SpacesSection() {
   // window (В69). The highlight follows spaces-open-changed.
   const handleOpen = useCallback((path: string) => {
     setError(null);
-    void showSpace(path, false).catch((e: unknown) => setError(String(e)));
+    void showSpace(path, false).catch((e: unknown) => setError(errorMessage(e)));
   }, []);
 
   // Forgetting is always allowed (В70): the backend sends the tabs of the
@@ -269,7 +274,7 @@ export function SpacesSection() {
         statsRequested.current.delete(path);
         setKnownVaults(paths);
       })
-      .catch((e: unknown) => setError(String(e)));
+      .catch((e: unknown) => setError(errorMessage(e)));
   }, []);
 
   const handleDragEnd = useCallback(
@@ -281,8 +286,8 @@ export function SpacesSection() {
       setKnownVaults(next); // optimistic — config write follows
       void reorderKnownVaults(next)
         .then(setKnownVaults)
-        .catch((e) => {
-          setError(String(e));
+        .catch((e: unknown) => {
+          setError(errorMessage(e));
           void reload();
         });
     },
@@ -298,7 +303,7 @@ export function SpacesSection() {
       setKnownVaults(vaults);
       loadStats([selected]);
     } catch (e) {
-      setError(String(e));
+      setError(errorMessage(e));
     }
   };
 
@@ -323,7 +328,7 @@ export function SpacesSection() {
                   stats={statsByPath[path]}
                   available={!unavailable.has(path)}
                   onOpen={handleOpen}
-                  onRemove={handleRemove}
+                  onRemove={setPendingRemove}
                 />
               );
             })}
@@ -337,6 +342,15 @@ export function SpacesSection() {
       </DndContext>
 
       {error && <p className="text-base text-destructive">{error}</p>}
+
+      <RemoveSpaceDialog
+        path={pendingRemove}
+        onCancel={() => setPendingRemove(null)}
+        onConfirm={(path) => {
+          setPendingRemove(null);
+          handleRemove(path);
+        }}
+      />
 
       <div>
         <Button variant="default" onClick={() => void handleAddSpace()}>

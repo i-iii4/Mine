@@ -79,7 +79,7 @@ pub fn space_identity(folder: &Path) -> SpaceIdentity {
 }
 
 fn read_id_file(path: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = String::from_utf8(crate::storage::cloud_files::read_contents(path).ok()?).ok()?;
     let id = text.trim();
     (!id.is_empty()).then(|| id.to_string())
 }
@@ -144,7 +144,9 @@ pub fn read_identity_file(path: &Path, read: CloudRead) -> Result<Option<String>
     if read == CloudRead::NoWait && crate::storage::cloud_files::is_content_offloaded(path) {
         return Err(IdentityUnreadable::InCloud { path: path.to_path_buf() });
     }
-    match std::fs::read_to_string(path) {
+    match crate::storage::cloud_files::read_contents(path)
+        .and_then(|bytes| String::from_utf8(bytes).map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error)))
+    {
         Ok(text) => {
             let id = text.trim();
             Ok((!id.is_empty()).then(|| id.to_string()))
@@ -232,6 +234,14 @@ pub fn record_owner_path(derived_root: &Path, root: &Path) {
             );
         }
     }
+}
+
+/// Whether the derived store `derived_root` last served the folder `root`
+/// (П22): what this Mac knows of the space a folder holds while the folder's
+/// identity file is in iCloud (SPEC_CLOUD_STORAGE.md, Х12).
+#[must_use]
+pub fn store_served(derived_root: &Path, root: &Path) -> bool {
+    owner_path(derived_root).is_some_and(|(owner, _)| same_path(&owner, &root.to_string_lossy()))
 }
 
 /// The identity when it can be known without waiting.

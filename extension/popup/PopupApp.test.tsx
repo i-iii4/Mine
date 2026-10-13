@@ -89,6 +89,23 @@ describe("clipper preview", () => {
       withNotice.folderAccessNotice = null;
     }
   });
+  // SPEC_DEEP_AUDIT.md, Н10: a Save that left media as links to their sites
+  // says how many, and the clipper stays open to show it.
+  it("says how many media stayed links and stays open", async () => {
+    const close = vi.spyOn(window, "close").mockImplementation(() => undefined);
+    const notice = "2 pictures or videos were not saved: they stay links to their sites.";
+    state.save.mockResolvedValue({ ok: true, remoteMedia: notice });
+    try {
+      const { container } = render(<PopupApp />);
+      fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+      await vi.waitFor(() => expect(container.querySelector("[data-clipper-remote-media]")).toHaveTextContent(notice));
+      // Past the 1.2 s after which a Save with nothing to say closes.
+      await new Promise((resolve) => setTimeout(resolve, 1_400));
+      expect(close).not.toHaveBeenCalled();
+    } finally {
+      close.mockRestore();
+    }
+  });
   it("shows an empty list only after a successful load", () => {
     render(<PopupApp />);
     expect(screen.getByText("No collections")).toBeInTheDocument();

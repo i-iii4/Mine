@@ -82,22 +82,41 @@ fn is_ubiquitous(_path: &Path) -> bool {
     false
 }
 
+/// Read the contents of a file of the space that is not a note: a service
+/// file of `.mine`, the space identity. Such a read of a file whose contents
+/// are in iCloud waits for the download; the callers that must never wait ask
+/// [`is_content_offloaded`] first. In a build without release optimizations
+/// the read is counted for a file a test marked as evicted (`test_seam`).
+pub fn read_contents(path: &Path) -> std::io::Result<Vec<u8>> {
+    #[cfg(debug_assertions)]
+    test_seam::note_read(path);
+    std::fs::read(path)
+}
+
 /// What a test may not do itself: make a dataless file. Only the kernel sets
 /// `SF_DATALESS`, so a test names the files that stand for evicted ones, and
-/// every read of such a note is counted (`files::read_block_file`): a note
-/// that was not to be brought down shows in the count (SPEC_DEEP_AUDIT.md,
-/// Н5). Built only without release optimizations: a release build carries
-/// none of it, and nothing in Mine marks a file.
+/// every read of such a file is counted (`files::read_block_file` for notes,
+/// [`read_contents`] for the service files): a file that was not to be
+/// brought down shows in the count (SPEC_DEEP_AUDIT.md, Н5). A counted read
+/// brings the file down, as it does on a Mac: the file is local afterwards.
+/// A test may also hold the reads of one file ([`test_seam::hold_reads_of`]),
+/// as a download that takes long holds them. Built only without release
+/// optimizations: a release build carries none of it, and nothing in Mine
+/// marks a file.
 #[cfg(debug_assertions)]
 pub mod test_seam {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Mutex, PoisonError};
+    use std::sync::{Condvar, Mutex, PoisonError};
+    use std::time::{Duration, Instant};
 
     static ANY_MARKED: AtomicBool = AtomicBool::new(false);
     static MARKED: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
     static READS: Mutex<BTreeMap<PathBuf, usize>> = Mutex::new(BTreeMap::new());
+    /// Files whose reads wait, each with whether a read has come to wait.
+    static HELD: Mutex<BTreeMap<PathBuf, bool>> = Mutex::new(BTreeMap::new());
+    static HELD_CHANGED: Condvar = Condvar::new();
 
     /// The file at `path` stands for one whose contents are in iCloud.
     pub fn mark_offloaded(path: &Path) {
@@ -124,8 +143,9 @@ pub mod test_seam {
                 .contains(path)
     }
 
-    /// A read of the note at `path` happened: counted when the note stands
-    /// for an evicted one, since such a read brings it down.
+    /// A read of the file at `path` happened: counted when the file stands
+    /// for an evicted one, since such a read brings it down. A held read
+    /// waits here until the test lets it go, as a slow download waits.
     pub(crate) fn note_read(path: &Path) {
         if is_marked(path) {
             *READS
@@ -133,6 +153,56 @@ pub mod test_seam {
                 .unwrap_or_else(PoisonError::into_inner)
                 .entry(path.to_path_buf())
                 .or_default() += 1;
+            let mut held = HELD.lock().unwrap_or_else(PoisonError::into_inner);
+            while let Some(reached) = held.get_mut(path) {
+                *reached = true;
+                HELD_CHANGED.notify_all();
+                held = HELD_CHANGED
+                    .wait(held)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
+            drop(held);
+            mark_downloaded(path);
+        }
+    }
+
+    /// Reads of the evicted file at `path` wait until the hold is dropped.
+    #[must_use]
+    pub fn hold_reads_of(path: &Path) -> ReadHold {
+        HELD.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(path.to_path_buf(), false);
+        ReadHold(path.to_path_buf())
+    }
+
+    /// A hold on the reads of one file; dropping it lets them go.
+    pub struct ReadHold(PathBuf);
+
+    impl ReadHold {
+        /// Whether a read of the file came to wait within `timeout`.
+        pub fn reached_within(&self, timeout: Duration) -> bool {
+            let deadline = Instant::now() + timeout;
+            let mut held = HELD.lock().unwrap_or_else(PoisonError::into_inner);
+            loop {
+                if held.get(&self.0).copied().unwrap_or(false) {
+                    return true;
+                }
+                let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+                    return false;
+                };
+                held = HELD_CHANGED
+                    .wait_timeout(held, left)
+                    .map_or_else(|poisoned| poisoned.into_inner().0, |(held, _)| held);
+            }
+        }
+    }
+
+    impl Drop for ReadHold {
+        fn drop(&mut self) {
+            HELD.lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&self.0);
+            HELD_CHANGED.notify_all();
         }
     }
 
