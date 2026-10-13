@@ -278,6 +278,13 @@
       await store.put("operations", record.id, record);
       return advance(record, binding, store, options, true);
     }
+    // Only these two steps record the save as committed. A step this adapter
+    // does not know, from a core of another build, writes nothing and is
+    // refused: it never passes for a save whose files were written
+    // (SPEC_CLIPPER.md, К4).
+    if (action !== "persist_receipt" && action !== "return_committed") {
+      throw error("core_step_unknown", "This version of the Mine extension cannot finish the save. Reload the extension, then save again.");
+    }
     const receipt = { id: record.id, binding: record.binding, fingerprint: record.fingerprint,
       phase: "committed", slug: record.slug, block_type: record.block_type, kind: record.kind,
       ...(typeof record.tag === "string" ? { tag: record.tag } : {}) };

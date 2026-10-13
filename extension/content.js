@@ -8,6 +8,63 @@
 (() => {
   "use strict";
 
+  // ── One content script per page (SPEC_CLIPPER.md, К4) ───────────────────
+  //
+  // A reload or an update of the extension leaves this script running in the
+  // pages it was put in, cut off from the extension: its buttons, observers
+  // and listeners stay, and nothing it sends arrives. The worker of the new
+  // build puts a new content script into every open page, in a world of its
+  // own, or in this one when the page got both at once. The new script tells
+  // the page first; this one then takes its buttons and observers away and
+  // stops answering. Cut off with no successor, it gives the page up at the
+  // first press of its buttons.
+  const CONTENT_SCRIPT_STARTED = "mine-content-script-started";
+  const contentScript = {};
+  const extensionAtStart = extensionNow();
+  const stopsOnRetire = [];
+  let retired = false;
+
+  /// The extension this script's runtime names: none once the extension
+  /// that put it here reloaded or went.
+  function extensionNow() {
+    try {
+      return chrome.runtime?.id;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /// `stop` takes something of this script off the page when it retires.
+  function onRetire(stop) {
+    stopsOnRetire.push(stop);
+  }
+
+  function retire() {
+    if (retired) return;
+    retired = true;
+    document.removeEventListener(CONTENT_SCRIPT_STARTED, retireIfReplaced);
+    for (const stop of stopsOnRetire.splice(0).reverse()) {
+      try {
+        stop();
+      } catch (error) {
+        console.warn("[Mine] a part of the previous content script stayed:", error);
+      }
+    }
+  }
+
+  /// Give the page up when this script no longer belongs to the running
+  /// extension: its runtime was cut off, or a later content script took the
+  /// page over in this script's world. A page dispatching the event cannot
+  /// make a current script retire. Returns whether this script is retired.
+  function retireIfReplaced() {
+    if (!retired && (extensionNow() !== extensionAtStart || window.__mineContentScript !== contentScript)) retire();
+    return retired;
+  }
+
+  window.__mineContentScript = contentScript;
+  document.dispatchEvent(new window.Event(CONTENT_SCRIPT_STARTED));
+  document.addEventListener(CONTENT_SCRIPT_STARTED, retireIfReplaced);
+
   const captureInstanceId = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
   let navigationEpoch = 0;
   let observedDocumentUrl = window.location.href;
@@ -15,10 +72,15 @@
     navigationEpoch += 1;
     observedDocumentUrl = window.location.href;
   }
-  for (const event of ["popstate", "hashchange", "yt-navigate-start"]) {
+  const NAVIGATION_EVENTS = ["popstate", "hashchange", "yt-navigate-start"];
+  for (const event of NAVIGATION_EVENTS) {
     window.addEventListener(event, invalidateCaptureDocument);
   }
   window.navigation?.addEventListener("navigate", invalidateCaptureDocument);
+  onRetire(() => {
+    for (const event of NAVIGATION_EVENTS) window.removeEventListener(event, invalidateCaptureDocument);
+    window.navigation?.removeEventListener("navigate", invalidateCaptureDocument);
+  });
 
   function captureDocumentSnapshot() {
     if (observedDocumentUrl !== window.location.href) invalidateCaptureDocument();
@@ -1003,17 +1065,31 @@
 
   /// Keeps a page's Mine buttons with their switch in the clipper's "…" menu:
   /// on and off at once, without a reload. `start` puts the buttons on the
-  /// page and returns the function that stops them and takes them away.
+  /// page and returns the function that stops them and takes them away. They
+  /// go for good when this content script retires (К4).
   function followFeedButtonSetting(key, start) {
     const settings = window.MineFeedButtonSettings;
     let stop = null;
+    let ended = false;
     const apply = (enabled) => {
+      if (ended) return;
       if (enabled && !stop) stop = start();
       else if (!enabled && stop) {
         stop();
         stop = null;
       }
     };
+    let unwatch = null;
+    onRetire(() => {
+      ended = true;
+      try {
+        unwatch?.();
+      } catch {
+        // The storage of a cut-off script may refuse even this.
+      }
+      stop?.();
+      stop = null;
+    });
     let storage = null;
     try {
       storage = chrome.storage?.local && chrome.storage.onChanged ? chrome.storage : null;
@@ -1025,7 +1101,7 @@
       apply(true);
       return;
     }
-    settings.watch(storage, (value) => apply(value[key]));
+    unwatch = settings.watch(storage, (value) => apply(value[key]));
     void settings.read(storage.local).then((value) => apply(value[key]));
   }
 
@@ -1183,10 +1259,16 @@
       }
     }
 
+    // The buttons this script put. A button of the current version that
+    // another content script put, one an extension reload cut off in this
+    // page (К4), is replaced: that script's scan keeps any button of its
+    // version, so it leaves this script's button alone.
+    const ownButtons = new WeakSet();
+
     function scanArticles() {
       for (const article of document.querySelectorAll("article")) {
         const existing = article.querySelector(`[${BUTTON_ATTR}]`);
-        if (existing?.getAttribute("data-la-clip-version") === BUTTON_VERSION) continue;
+        if (existing && ownButtons.has(existing) && existing.getAttribute("data-la-clip-version") === BUTTON_VERSION) continue;
         existing?.remove();
 
         const shortcode = findShortcode(article);
@@ -1200,9 +1282,11 @@
         btn.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
+          if (retireIfReplaced()) return;
           clipPost(shortcode, btn);
         });
 
+        ownButtons.add(btn);
         article.appendChild(btn);
       }
     }
@@ -1212,7 +1296,7 @@
       scanArticles();
       return () => {
         clearInterval(timer);
-        for (const button of document.querySelectorAll(`[${BUTTON_ATTR}]`)) button.remove();
+        for (const button of document.querySelectorAll(`[${BUTTON_ATTR}]`)) if (ownButtons.has(button)) button.remove();
       };
     });
   }
@@ -1297,7 +1381,7 @@
   /// The Mine button of an X post was pressed: the clipper opens in this page
   /// with this post, the way the Instagram button opens it (rule 3).
   async function clipXFeedPost(article, control) {
-    if (xFeedOpenings.has(control)) return;
+    if (retireIfReplaced() || xFeedOpenings.has(control)) return;
     const identity = xFeedPostIdentity(article);
     if (!identity) return;
     xFeedOpenings.add(control);
@@ -1312,7 +1396,11 @@
         pageUrl: window.location.href,
         preloaded: { metadata, article: post },
       });
-      if (!response?.ok) console.warn("[Mine] The clipper did not open for this X post:", response?.error ?? "no answer");
+      // `deferred`: the clipper opens after the extension's reload into the
+      // build on disk (К4).
+      if (!response?.ok && response?.mode !== "deferred") {
+        console.warn("[Mine] The clipper did not open for this X post:", response?.error ?? "no answer");
+      }
     } finally {
       xFeedOpenings.delete(control);
       control.removeAttribute("aria-busy");
@@ -1358,9 +1446,11 @@
 
   if (window.top === window) {
     void restoreOpenClip();
-    window.addEventListener("pageshow", (event) => {
+    const onPageShow = (event) => {
       if (event.persisted) void restoreOpenClip();
-    });
+    };
+    window.addEventListener("pageshow", onPageShow);
+    onRetire(() => window.removeEventListener("pageshow", onPageShow));
   }
 
   // ── Article extraction (Defuddle) ─────────────────────────────────────
@@ -1926,14 +2016,28 @@
   // read from disk at every opening, this script only when the extension
   // loads, so an overlay of a later build keeps the same order of arguments
   // for a script of an earlier one.
-  window.__mineCrop = {
+  const pageCrop = {
     start: (_page, cropId) => startCropOverlay(cropId),
     cancel: cancelCropOverlay,
   };
+  window.__mineCrop = pageCrop;
+  onRetire(() => {
+    activeCrop?.cancel();
+    activeCrop = null;
+    destroyCropOverlay();
+    cropToastHost?.remove();
+    cropToastHost = null;
+    if (window.__mineCrop === pageCrop) delete window.__mineCrop;
+  });
 
   // ── Message handler ─────────────────────────────────────────────────────
 
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  // A retired script does not answer (К4); its listener goes with it.
+  chrome.runtime.onMessage.addListener(answerMessage);
+  onRetire(() => chrome.runtime.onMessage.removeListener(answerMessage));
+
+  function answerMessage(msg, _sender, sendResponse) {
+    if (retireIfReplaced()) return false;
     if (msg.action === "prepareViewportCapture") {
       prepareViewportCapture(sendResponse);
       return true;
@@ -1986,7 +2090,7 @@
     }
 
     return false;
-  });
+  }
 
   // Detect Twitter/X lightbox overlay and extract the image URL.
   // Twitter renders the lightbox as a modal with role="dialog" (or a
@@ -2142,7 +2246,7 @@
   // The isolated world `window` is shared between all scripts injected
   // into the same frame by this extension, so this assignment is visible
   // from overlay.js as `window.__mineClipper`.
-  window.__mineClipper = {
+  const helpers = {
     extractMetadata: () => {
       const meta = extractMetadata();
       meta.detectedType = detectType(meta);
@@ -2155,4 +2259,8 @@
     getImageInfo: getImageInfoBySrc,
     detectTwitterLightboxImage,
   };
+  window.__mineClipper = helpers;
+  onRetire(() => {
+    if (window.__mineClipper === helpers) delete window.__mineClipper;
+  });
 })();

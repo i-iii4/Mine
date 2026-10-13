@@ -301,6 +301,20 @@ describe("browser executor backed by actual WASM", () => {
     expect([...folder.files.keys()].some((path) => path.includes("Reference"))).toBe(false);
     expect(await vault.createStandaloneChannel("Reference", "test-vault", options())).toMatchObject({ ok: true });
   });
+  // A core of another build may name a step this adapter does not know: the
+  // save is refused, not recorded as committed without its file (К4).
+  it("refuses a step of the core it does not know instead of committing without the file", async () => {
+    vi.stubGlobal("MineCore", { call: async (command: { op?: string }) => command.op === "advance" ? "publish_sidecar" : call(command) });
+    expect(await vault.saveStandaloneBlock(request(), options())).toMatchObject({
+      ok: false, outcome: "not_committed", code: "core_step_unknown",
+    });
+    expect(folder.directories.get("Cards")?.files.has("Article.md") ?? false).toBe(false);
+    expect(await vault.lookupOperation("save-1", "test-vault", options())).toMatchObject({ ok: false, code: "core_step_unknown" });
+    // The core of the running build finishes the same save.
+    vi.stubGlobal("MineCore", { call });
+    expect(await vault.saveStandaloneBlock(request({ operation_mode: "resume" }), options())).toMatchObject({ ok: true, outcome: "committed" });
+    expect(await folder.text("Cards/Article.md")).toContain("Content");
+  });
   it("exposes the real browser guarantee profile", async () => {
     expect(await vault.getStandaloneStatus(options())).toMatchObject({ configured: true, bindingId: "test-vault",
       capabilities: { atomic_no_clobber: false, durable_flush: false } });

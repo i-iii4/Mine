@@ -67,3 +67,63 @@ describe("packaged classic-worker save core", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 });
+
+// SPEC_CLIPPER.md, К4: the glue comes with the worker's code, the binary from
+// disk, which an update replaces. Keeping the binary across worker restarts
+// needs IndexedDB and is checked in Chromium (test:clipper-worker).
+describe("the save core binary is of the glue's build", () => {
+  const extensionBuild = read("./extensionBuild.js").toString();
+
+  /// A worker of build `running` whose files on disk name, read after read,
+  /// the builds in `disk`.
+  function builtWorker(running: string, disk: string[]) {
+    const reads: string[] = [];
+    const session: Record<string, unknown> = {};
+    const fetch = vi.fn(async (path: string) => {
+      reads.push(path);
+      if (path.endsWith("dist/runtime-identity.json")) {
+        const buildId = disk.length > 1 ? disk.shift() : disk[0];
+        return { ok: true, json: async () => ({ buildId, commit: "c" }) };
+      }
+      return { ok: true, arrayBuffer: async () => wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteOffset + wasmBytes.byteLength) };
+    });
+    const context = createContext({ TextDecoder, TextEncoder, URL, fetch,
+      MineBuildIdentity: { buildId: running, commit: "c" },
+      chrome: {
+        runtime: { getURL: (path: string) => `chrome-extension://test/${path}` },
+        storage: {
+          local: { get: async () => ({}) },
+          session: { set: async (values: Record<string, unknown>) => { Object.assign(session, values); } },
+        },
+      },
+    });
+    runInContext(glue, context, { filename: "mine_core.js" });
+    runInContext(extensionBuild, context, { filename: "extensionBuild.js" });
+    runInContext(adapter, context, { filename: "mineCore.js" });
+    const call = () => runInContext(`MineCore.call({op:"layout", layout:{cards:"",media:"",collections:""}})`, context) as Promise<unknown>;
+    return { call, reads, session };
+  }
+
+  it("reads the binary while the files on disk are of the running build, and checks them again after", async () => {
+    const core = builtWorker("b1", ["b1"]);
+    await expect(core.call()).resolves.toEqual({ cards: "", media: "", collections: "" });
+    expect(core.reads).toEqual([
+      "chrome-extension://test/dist/runtime-identity.json",
+      "chrome-extension://test/generated/save-core/mine_core_bg.wasm",
+      "chrome-extension://test/dist/runtime-identity.json",
+    ]);
+  });
+
+  it("refuses the binary of another build and makes the reload into it pending", async () => {
+    const core = builtWorker("b1", ["b2"]);
+    await expect(core.call()).rejects.toMatchObject({ code: "extension_updated" });
+    expect(core.reads.some((path) => path.endsWith(".wasm"))).toBe(false);
+    expect(core.session.mineReloadPending).toBe("b2");
+  });
+
+  it("refuses a binary read while an update replaced the files", async () => {
+    const core = builtWorker("b1", ["b1", "b2"]);
+    await expect(core.call()).rejects.toMatchObject({ code: "extension_updated" });
+    expect(core.session.mineReloadPending).toBe("b2");
+  });
+});

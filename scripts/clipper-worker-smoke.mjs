@@ -581,6 +581,59 @@ process.stdin.on('data', (chunk) => {
 });
 `;
 
+// A feed of X with two posts, in the markup of a list feed as measured on
+// 11.10.2026 (extension/lib/xFeed.fixtures.ts), served in place of x.com: the
+// page's content script puts the Mine button in each post's header
+// (SPEC_CLIPPER.md, «Кнопка Mine в ленте X»). Syndication answers the post a
+// button reads, since no feed of the page delivered it (rule 6).
+const X_POSTS = [{ id: '2001', text: 'Smoke post 2001' }, { id: '2002', text: 'Smoke post 2002' }];
+const X_HEADER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true" class="r-4qtqp9"><g><path d="M3 12c0-1.1.9-2 2-2"></path></g></svg>';
+
+function xCard({ id, text }) {
+  const status = `/smokeposter/status/${id}`;
+  const name = '<div data-testid="User-Name"><div><a href="/smokeposter" role="link"><span>Smoke Poster</span></a></div>'
+    + `<div><a href="/smokeposter" role="link"><span>@smokeposter</span></a><a href="${status}" role="link"><time datetime="2026-10-13T10:00:00.000Z">1h</time></a></div></div>`;
+  const grok = '<div class="css-175oi2r r-grok-box"><button aria-label="Grok actions" role="button" class="css-175oi2r r-grok" type="button">'
+    + `<div dir="ltr" class="css-146c3p1">${X_HEADER_ICON}</div></button></div>`;
+  const caret = '<div class="css-175oi2r r-1awozwy r-6koalj r-18u37iz"><div><div class="css-175oi2r r-18u37iz r-1h0z5md">'
+    + '<button aria-label="More" role="button" class="css-175oi2r r-1777fci" data-testid="caret" type="button">'
+    + `<div dir="ltr" class="css-146c3p1"><div class="css-175oi2r r-xoduu5"><div class="css-175oi2r r-1niwhzg"></div>${X_HEADER_ICON}</div></div></button></div></div></div>`;
+  const header = '<div class="css-175oi2r r-zl2h9q"><div class="css-175oi2r r-k4xj1c r-18u37iz r-1wtj0ep">'
+    + `<div class="css-175oi2r r-1d09ksm"><div class="css-175oi2r r-1wbh5a2">${name}</div></div>`
+    + `<div class="css-175oi2r r-1kkk96v"><div class="css-175oi2r r-1awozwy r-18u37iz">${grok}${caret}</div></div></div></div>`;
+  return `<div data-testid="cellInnerDiv"><div><article role="article" tabindex="0" data-testid="tweet"><div>${header}</div>`
+    + `<div data-testid="tweetText"><span>${text}</span></div></article></div></div>`;
+}
+
+const X_FEED_PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Home / X</title></head>
+<body><main>${X_POSTS.map(xCard).join('')}</main></body></html>`;
+
+/// Serve the X feed and the syndication answers inside `browser`: no request
+/// leaves the machine.
+async function serveXFeed(browser) {
+  await browser.route('https://x.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: X_FEED_PAGE }));
+  await browser.route('https://cdn.syndication.twimg.com/**', (route) => {
+    const post = X_POSTS.find(({ id }) => new URL(route.request().url()).searchParams.get('id') === id);
+    if (!post) return route.fulfill({ status: 404, body: '' });
+    return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify({ __typename: 'Tweet', id_str: post.id, text: post.text,
+        user: { screen_name: 'smokeposter', name: 'Smoke Poster' }, mediaDetails: [] }) });
+  });
+}
+
+const CORE_COMMAND = { op: 'layout', layout: { cards: '', media: '', collections: '' } };
+
+/// One command through the worker's save core, its refusal as data.
+function coreReply(worker) {
+  return worker.evaluate(async (command) => {
+    try {
+      return { ok: true, value: await globalThis.MineCore.call(command) };
+    } catch (error) {
+      return { ok: false, code: error.code ?? null, message: String(error.message ?? error) };
+    }
+  }, CORE_COMMAND);
+}
+
 async function pollUntil(read, label) {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
@@ -595,7 +648,11 @@ async function pollUntil(read, label) {
 // running the worker it loaded, across worker restarts too (SPEC_CLIPPER.md,
 // К4, 12.10.2026). The worker compares the build written into its own code
 // with the build the helper reports and reloads itself into the new one once
-// no clipper is open. Runs on a copy in its own profile: the checked
+// no clipper is open. Nothing it reads from disk meanwhile is of the new
+// build: its save core keeps its own binary, and a clipper opened then is
+// opened by the worker of the new build after the reload. The pages open
+// before get the content script of the new build, whose buttons replace the
+// old ones (13.10.2026). Runs on a copy in its own profile: the checked
 // extension, an installed Mine.app among them, is never changed.
 async function checkUpdateReloadsWorker() {
   const sandbox = mkdtempSync(join(tmpdir(), 'mine-clipper-update-'));
@@ -623,8 +680,8 @@ async function checkUpdateReloadsWorker() {
     });
     let worker = browser.serviceWorkers()[0] ?? await browser.waitForEvent('serviceworker', { timeout: 15_000 });
     // A person's browser loads the copy through Load unpacked, which needs
-    // developer mode; without it the browser drops an unpacked extension that
-    // reloads itself instead of loading it again.
+    // developer mode; without it the browser does not load an unpacked
+    // extension that reloads itself again, it disables it (К4).
     const settings = await browser.newPage();
     await settings.goto('chrome://extensions');
     assert.equal(await settings.evaluate(async () => {
@@ -635,26 +692,51 @@ async function checkUpdateReloadsWorker() {
     const oldBuild = report.runtimeIdentity.buildId;
     // The shipped worker carries the build its identity file names.
     assert.equal(await worker.evaluate(() => globalThis.MineBuildIdentity?.buildId), oldBuild);
+    const restartWithTransport = async () => {
+      const transport = await browser.newPage();
+      await transport.route('**/dist/assets/*', (route) => route.abort());
+      await transport.goto(`chrome-extension://${extensionId}/dist/index.html`);
+      try {
+        return await restartWorker(transport, browser);
+      } finally {
+        await transport.close();
+      }
+    };
+
+    // An X feed open before the update, with the Mine button of the build
+    // that loaded it on each post.
+    await serveXFeed(browser);
+    const feed = await browser.newPage();
+    await feed.goto('https://x.com/home');
+    const xButtons = feed.locator('[data-mine-x-post]');
+    await pollUntil(async () => (await xButtons.count()) === X_POSTS.length || undefined, 'the feed did not get its Mine buttons');
+    await feed.evaluate(() => {
+      for (const box of document.querySelectorAll('[data-mine-x-post]')) box.setAttribute('data-smoke-before-update', '');
+    });
+    // The save core of the running build is read once while the disk holds it.
+    assert.deepEqual(await coreReply(worker), { ok: true, value: CORE_COMMAND.layout });
 
     // Another build replaces the copy the way an install does: a new
-    // directory renamed into the same path.
+    // directory renamed into the same path. Its overlay marks the world it
+    // runs in; its save core binary is not one, so any read of it fails.
     const next = { buildId: createHash('sha256').update(`${oldBuild}:next`).digest('hex'), commit: 'next-commit' };
     const staged = join(sandbox, 'next');
+    const previous = join(sandbox, 'previous');
+    const binary = 'generated/save-core/mine_core_bg.wasm';
     cpSync(installed, staged, { recursive: true });
     writeFileSync(join(staged, 'dist/runtime-identity.json'), `${JSON.stringify(next)}\n`);
     writeFileSync(join(staged, 'dist/build-identity.js'), `globalThis.MineBuildIdentity = Object.freeze(${JSON.stringify(next)});\n`);
     writeFileSync(join(staged, 'background.js'),
       `${readFileSync(join(staged, 'background.js'), 'utf8')}\nglobalThis.MineNextBackground = true;\n`);
-    renameSync(installed, join(sandbox, 'previous'));
+    writeFileSync(join(staged, 'dist/overlay.js'),
+      `${readFileSync(join(staged, 'dist/overlay.js'), 'utf8')}\n;globalThis.__mineSmokeOverlayBuild = ${JSON.stringify(next.buildId)};\n`);
+    writeFileSync(join(staged, binary), 'not the save core of any build');
+    renameSync(installed, previous);
     renameSync(staged, installed);
 
     // A restarted worker still runs the code the browser loaded, while a file
     // read already answers the new copy: the cause of the 12.10.2026 failure.
-    const transport = await browser.newPage();
-    await transport.route('**/dist/assets/*', (route) => route.abort());
-    await transport.goto(`chrome-extension://${extensionId}/dist/index.html`);
-    worker = await restartWorker(transport, browser);
-    await transport.close();
+    worker = await restartWithTransport();
     const restarted = await worker.evaluate(async () => ({
       running: globalThis.MineBuildIdentity?.buildId,
       nextBackground: globalThis.MineNextBackground === true,
@@ -662,16 +744,42 @@ async function checkUpdateReloadsWorker() {
     }));
     assert.deepEqual(restarted, { running: oldBuild, nextBackground: false, onDisk: next.buildId });
 
-    // The helper reports the installed build: the update becomes pending.
+    // The glue of the running build gets the binary of its build, kept when
+    // it was read, never the one on disk now (13.10.2026).
+    assert.deepEqual(await coreReply(worker), { ok: true, value: CORE_COMMAND.layout },
+      'the running save core read the binary of another build');
+    // Without the kept binary the core refuses the one on disk, and the
+    // reload into its build becomes pending.
+    await worker.evaluate(() => new Promise((resolve, reject) => {
+      const request = indexedDB.deleteDatabase('mine-save-core');
+      request.onsuccess = resolve;
+      request.onblocked = resolve;
+      request.onerror = () => reject(request.error);
+    }));
+    worker = await restartWithTransport();
+    const refused = await coreReply(worker);
+    assert.equal(refused.code, 'extension_updated', JSON.stringify(refused));
+    assert.equal((await worker.evaluate(() => chrome.storage.session.get('mineReloadPending'))).mineReloadPending, next.buildId);
+    // The next build gets a working binary for what follows.
+    cpSync(join(previous, binary), join(installed, binary));
+
+    // The helper reports the installed build: the update is pending.
     const status = await worker.evaluate(() => sendNativeMessage({ action: 'get_status' }));
     assert.equal(status.extension_build_id, next.buildId, JSON.stringify(status));
     const pending = await pollUntil(async () => (await worker.evaluate(() => chrome.storage.session.get('mineReloadPending'))).mineReloadPending,
       'the old worker did not see the installed build');
     assert.equal(pending, next.buildId);
 
-    // No clipper is open: the worker reloads into the new build.
+    // The clipper opened now would read the overlay of the next build: the
+    // worker reloads into it first, and the worker of that build opens it.
     const reloaded = browser.waitForEvent('serviceworker', { timeout: 15_000, predicate: (candidate) => candidate.url() === workerUrl });
-    await worker.evaluate(() => { void reloadIfUpdated(); });
+    // A failure below closes the browser under this wait; it reports nothing.
+    reloaded.catch(() => undefined);
+    const opening = await worker.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ url: 'https://x.com/*' });
+      return openClipperUi(tab);
+    });
+    assert.equal(opening, 'deferred', 'the running worker opened the overlay of another build');
     worker = await reloaded;
     const after = await worker.evaluate(async () => ({
       running: globalThis.MineBuildIdentity?.buildId,
@@ -679,6 +787,42 @@ async function checkUpdateReloadsWorker() {
       reloadedFor: (await chrome.storage.local.get('mineReloadedFor')).mineReloadedFor,
     }));
     assert.deepEqual(after, { running: next.buildId, nextBackground: true, reloadedFor: next.buildId });
+    const panel = feed.locator('[data-mine-clipper-panel]');
+    await panel.waitFor({ state: 'visible', timeout: 15_000 });
+    const pageWorld = () => worker.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ url: 'https://x.com/*' });
+      const [answer] = await chrome.scripting.executeScript({ target: { tabId: tab.id },
+        func: () => ({ overlayBuild: globalThis.__mineSmokeOverlayBuild ?? null, contentScript: typeof globalThis.__mineClipper }) });
+      const metadata = await chrome.tabs.sendMessage(tab.id, { action: 'extractMetadata' }).catch((error) => ({ error: String(error) }));
+      return { ...answer.result, metadataUrl: metadata?.url ?? metadata?.error ?? null };
+    });
+    // The overlay of the running build runs beside the content script of the
+    // running build, which answers the worker.
+    assert.deepEqual(await pageWorld(), { overlayBuild: next.buildId, contentScript: 'object', metadataUrl: 'https://x.com/home' });
+    await panel.getByRole('button', { name: 'Close', exact: true }).first().click({ timeout: 5_000 });
+    await panel.waitFor({ state: 'detached', timeout: 5_000 });
+
+    // The page's old buttons went with the old content script; the new one
+    // put one on each post, and its button opens the clipper with the post.
+    assert.equal(await feed.locator('[data-smoke-before-update]').count(), 0, 'the old content script left its buttons');
+    assert.deepEqual(await feed.evaluate(() => [...document.querySelectorAll('article[data-testid="tweet"]')]
+      .map((article) => article.querySelectorAll('[data-mine-x-post]').length)), X_POSTS.map(() => 1));
+    await feed.evaluate(() => document.querySelector('[data-mine-x-post] button').click());
+    await panel.waitFor({ state: 'visible', timeout: 15_000 });
+    // No space is chosen in this profile, so the panel shows no preview; the
+    // clip the overlay hands to the worker shows what it opened with (Р7).
+    const postUrl = `https://x.com/smokeposter/status/${X_POSTS[0].id}`;
+    const clip = await worker.evaluate(async (url) => {
+      for (let attempt = 0; attempt < 150; attempt += 1) {
+        const session = await chrome.storage.session.get(null);
+        const kept = Object.entries(session).find(([key, value]) => key.startsWith('mineOpenClip:') && value?.metadata?.url === url)?.[1];
+        if (kept) return kept;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return null;
+    }, postUrl);
+    assert.ok(clip, `the Mine button did not open the clipper with ${postUrl}`);
+    assert.ok(JSON.stringify(clip).includes(X_POSTS[0].text), `the clip of the Mine button lacks the post: ${JSON.stringify(clip).slice(0, 2000)}`);
 
     // The new worker runs the installed build: the next status changes nothing.
     const again = await worker.evaluate(() => sendNativeMessage({ action: 'get_status' }));
@@ -915,6 +1059,9 @@ try {
     overlayDraggedBySpaceName: true, spaceMenuOpensOnClickNotDrag: true, openClipClearedAfterSave: true,
     collectionsListedAsPagesOnly: true, saveIntoCollectionWithoutPageWritesNothing: true,
     restartedWorkerKeepsLoadedBuild: true, updateOnDiskReloadsWorker: true,
+    keptSaveCoreOfRunningBuild: true, saveCoreOfAnotherBuildRefused: true, openingReloadsIntoBuildOnDisk: true,
+    overlayOfRunningBuild: true, openPagesGetNewContentScript: true, oldContentScriptButtonsRemoved: true,
+    xButtonOfNewContentScriptOpensClipper: true,
     filesystem: 'OPFS-not-OS-folder' });
 } catch (error) {
   report.error = error.stack ?? String(error);

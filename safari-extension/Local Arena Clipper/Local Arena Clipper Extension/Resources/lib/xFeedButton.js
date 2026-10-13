@@ -425,10 +425,57 @@
     return box;
   }
 
+  // ── Buttons of another content script (SPEC_CLIPPER.md, К4) ──────────────
+  //
+  // A reload of the extension cuts the content script of an open page off
+  // without taking its buttons away; a script of a build before 13.10.2026
+  // also keeps putting them on, and removes any other button in their place.
+  // This script never removes or moves such a button: it would come back at
+  // once, button against button. It answers its presses instead, and puts its
+  // own button where none is.
+
+  /// Whether this script made `box`.
+  function isOwn(box) {
+    return templateLooks.has(box);
+  }
+
+  function removeOwn(boxes) {
+    for (const box of boxes) if (isOwn(box)) box.remove();
+  }
+
+  // The controls of other scripts' buttons this script answers, with the
+  // listener it put on each.
+  const adoptedPresses = new Map();
+
+  function adopt(box, post, activate) {
+    for (const [control] of adoptedPresses) if (!control.isConnected) adoptedPresses.delete(control);
+    const control = box.localName === "button" ? box : box.querySelector("button");
+    if (!control || adoptedPresses.has(control)) return;
+    const press = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const article = post(control);
+      if (article) activate(article, control);
+    };
+    control.addEventListener("click", press);
+    adoptedPresses.set(control, press);
+  }
+
+  function releaseAdopted() {
+    for (const [control, press] of adoptedPresses) control.removeEventListener("click", press);
+    adoptedPresses.clear();
+  }
+
   /// One Mine button in `container`, just before `before`, copied from
   /// `source` down to `control`. Returns it, or `null` when it cannot be made.
   function place(container, before, source, control, kind, post, activate) {
     const existing = [...container.children].filter((child) => child.matches(`[${OWNED}]`));
+    const foreign = existing.find((box) => !isOwn(box));
+    if (foreign) {
+      removeOwn(existing);
+      adopt(foreign, post, activate);
+      return foreign;
+    }
     for (const extra of existing.slice(1)) extra.remove();
     let box = existing[0] ?? null;
     // A hovered control shows X's hover, not its look at rest.
@@ -447,8 +494,11 @@
     return box;
   }
 
+  /// Take this script's buttons off `scope` and stop answering the presses
+  /// of other scripts' buttons there.
   function removeButtons(scope) {
-    for (const box of scope.querySelectorAll(`[${OWNED}]`)) box.remove();
+    removeOwn(scope.querySelectorAll(`[${OWNED}]`));
+    releaseAdopted();
   }
 
   function postOfControl(control) {
@@ -470,7 +520,7 @@
     // The header nearest to the opened post is its own; a column header
     // further up never claims it.
     if (!main || !postIdentity(main) || stackHeaderOf(main) !== header) {
-      for (const box of [...header.children]) if (box.matches(`[${OWNED}]`)) box.remove();
+      removeOwn([...header.children].filter((box) => box.matches(`[${OWNED}]`)));
       return null;
     }
     return place(header, actions, actions, control, KIND_STACK, postOfStackControl, activate);
@@ -481,20 +531,20 @@
   /// post gets none here.
   function ensureButton(article, activate) {
     if (isStackMainPost(article)) {
-      for (const box of article.querySelectorAll(`[${OWNED}]`)) if (ownedBy(article, box)) box.remove();
+      removeOwn([...article.querySelectorAll(`[${OWNED}]`)].filter((box) => ownedBy(article, box)));
       const header = stackHeaderOf(article);
       return header ? ensureStackButton(header, activate) : null;
     }
     const slot = headerSlot(article);
     if (!slot || !postIdentity(article)) {
-      for (const box of article.querySelectorAll(`[${OWNED}]`)) if (ownedBy(article, box)) box.remove();
+      removeOwn([...article.querySelectorAll(`[${OWNED}]`)].filter((box) => ownedBy(article, box)));
       return null;
     }
     const container = slot.before.parentElement;
     // A button left elsewhere in the post, such as in the action row by an
     // earlier version, goes.
     for (const box of article.querySelectorAll(`[${OWNED}]`)) {
-      if (box.parentElement !== container && ownedBy(article, box)) box.remove();
+      if (box.parentElement !== container && ownedBy(article, box) && isOwn(box)) box.remove();
     }
     return place(container, slot.before, slot.source, slot.control, KIND_POST, postOfControl, activate);
   }

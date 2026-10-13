@@ -9,6 +9,8 @@ const checkId = "dd830aea-79ae-4b2e-9e09-66c37c70f96c";
 const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "background.js"), "utf8");
 // Execute the actual native transport; unrelated tab/capture listeners need no mocks.
 const transport = source.slice(source.indexOf("// ── Native messaging"), source.indexOf("async function broadcastChannelsChanged"));
+// The worker imports it before its own code (К4).
+const extensionBuild = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/extensionBuild.js"), "utf8");
 
 function nativeTransport() {
   let respond: (message: NativeResponse) => void = () => undefined;
@@ -28,6 +30,7 @@ function nativeTransport() {
     crypto: { randomUUID: () => checkId },
     setTimeout, clearTimeout,
   });
+  runInContext(extensionBuild, context);
   runInContext(transport, context);
   const send = (action: string): Promise<NativeResponse> =>
     runInContext(`sendNativeMessage({action:${JSON.stringify(action)}})`, context);
@@ -117,6 +120,7 @@ describe("helper replaced during a session (SPEC_CLIPPER.md, К4)", () => {
       crypto: { randomUUID: () => checkId },
       setTimeout, clearTimeout,
     });
+    runInContext(extensionBuild, context);
     runInContext(transport, context);
     const send = (action: string): Promise<NativeResponse> =>
       runInContext(`sendNativeMessage({action:${JSON.stringify(action)}})`, context);
@@ -202,6 +206,7 @@ describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
       crypto: { randomUUID: () => checkId },
       setTimeout, clearTimeout,
     });
+    runInContext(extensionBuild, context);
     runInContext(transport, context);
     const send = (action: string): Promise<NativeResponse> =>
       runInContext(`sendNativeMessage({action:${JSON.stringify(action)}})`, context);

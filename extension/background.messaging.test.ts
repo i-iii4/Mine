@@ -20,9 +20,15 @@ function eventSink(register?: (listener: unknown) => void) {
 
 type Fetch = (url: string, init?: { credentials?: string; signal?: AbortSignal }) => Promise<unknown>;
 
-function background(apiMode: BrowserApiMode, options: { standaloneVault?: Record<string, unknown>; fetch?: Fetch } = {}) {
+const manifest = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "manifest.json"), "utf8"));
+
+function background(apiMode: BrowserApiMode, options: {
+  standaloneVault?: Record<string, unknown>; fetch?: Fetch;
+  /** The build the worker's code carries, and the build the files on disk name. */
+  runningBuild?: string; diskBuild?: string;
+} = {}) {
   let receiveRuntimeMessage: MessageListener = () => undefined;
-  const installListeners: Array<() => void> = [];
+  const installListeners: Array<(details: { reason: string }) => void> = [];
   let receiveNativeMessage: (message: Message) => void = () => undefined;
   let disconnectNative: () => void = () => undefined;
 
@@ -55,8 +61,9 @@ function background(apiMode: BrowserApiMode, options: { standaloneVault?: Record
       connectNative: vi.fn(() => nativePort),
       getContexts: vi.fn(async () => [] as unknown[]),
       getURL: (path: string) => `chrome-extension://test/${path}`,
+      getManifest: () => manifest,
       reload: vi.fn(),
-      onInstalled: eventSink((listener) => { installListeners.push(listener as () => void); }),
+      onInstalled: eventSink((listener) => { installListeners.push(listener as (details: { reason: string }) => void); }),
       onMessage: eventSink((listener) => { receiveRuntimeMessage = listener as MessageListener; }),
       sendMessage: vi.fn(() => Promise.resolve()),
     },
@@ -88,8 +95,10 @@ function background(apiMode: BrowserApiMode, options: { standaloneVault?: Record
   };
 
   // A file read answers the copy on disk; an update may have replaced it.
+  // Unless a test says otherwise, it holds the build the worker runs.
   const importScripts = vi.fn();
-  const fetch = vi.fn(options.fetch ?? (async () => ({ ok: true, json: async () => ({ buildId: "disk-build", commit: "disk-commit" }) })));
+  const runningBuild = options.runningBuild ?? "worker-build";
+  const fetch = vi.fn(options.fetch ?? (async () => ({ ok: true, json: async () => ({ buildId: options.diskBuild ?? runningBuild, commit: "disk-commit" }) })));
   const context = createContext({
     AbortController,
     MineStandaloneVault: options.standaloneVault,
@@ -100,11 +109,12 @@ function background(apiMode: BrowserApiMode, options: { standaloneVault?: Record
     crypto: { randomUUID: () => "bcb8f719-aa35-44f5-9a47-17b4d52f530f" },
     importScripts,
     // What dist/build-identity.js, the worker's first import, defines.
-    MineBuildIdentity: { buildId: "worker-build", commit: "worker-commit" },
+    MineBuildIdentity: { buildId: runningBuild, commit: "worker-commit" },
     setTimeout,
     clearTimeout,
     fetch,
   });
+  runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/extensionBuild.js"), "utf8"), context);
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/saveProtocol.js"), "utf8"), context);
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/youtubeSource.js"), "utf8"), context);
   runInContext(source, context);
@@ -120,7 +130,7 @@ function background(apiMode: BrowserApiMode, options: { standaloneVault?: Record
     chrome,
     run: (code: string): Promise<unknown> => Promise.resolve(runInContext(code, context)),
     /** The extension is installed or updated. */
-    install: () => installListeners.forEach((listener) => listener()),
+    install: (reason = "install") => installListeners.forEach((listener) => listener({ reason })),
     createTab,
     createWindow,
     dispatch,
@@ -315,7 +325,7 @@ describe("widget and background compatibility", () => {
   });
 
   it("names the build of the running worker, not of the copy on disk (К4)", async () => {
-    const worker = background("promise");
+    const worker = background("promise", { diskBuild: "disk-build" });
     expect(worker.importScripts.mock.calls[0]?.[0]).toBe("dist/build-identity.js");
     const request = worker.dispatch({ target: "background", action: "clipperHandshake", save_protocols: [1] });
     await expect(request.response).resolves.toMatchObject({ build_id: "worker-build", commit: "worker-commit" });
@@ -865,5 +875,200 @@ describe("an extension update checks again right before the reload (SPEC_AUDIT_F
     host.worker.dispatch({ target: "background", action: "mineClipperClosed" }, { tab: other });
     await vi.advanceTimersByTimeAsync(0);
     expect(host.worker.chrome.runtime.reload).toHaveBeenCalledOnce();
+  });
+});
+
+// SPEC_CLIPPER.md, К4: what the worker reads from disk is of its own build,
+// and the pages open before its build get its content scripts.
+describe("files of the running build and the pages open before it (К4)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  type Tab = { id: number; url: string; title?: string; discarded?: boolean };
+  type Groups = Array<{ js: string[]; world?: string }>;
+  const groups = manifest.content_scripts as Groups;
+  const contentScripts = groups.find((group) => group.js.includes("content.js"))!.js;
+  const instagramOverlay = groups.find((group) => group.js.includes("dist/overlay.js"))!.js;
+  const pageWorld = groups.find((group) => group.world === "MAIN")!.js;
+
+  /// A match pattern of the manifest as a test of an address.
+  function matches(pattern: string, url: string) {
+    return new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`).test(url);
+  }
+
+  /// The actual worker of `runningBuild` over files of `diskBuild`. Local
+  /// storage outlives the reload; session storage is the worker's own. An
+  /// overlay answers in a tab once dist/overlay.js was put there.
+  function worker(runningBuild: string, diskBuild: string, local: Map<string, unknown>, tabs: Tab[]) {
+    const host = background("promise", { runningBuild, diskBuild });
+    const session = new Map<string, unknown>();
+    const storage = host.chrome.storage as unknown as Record<"local" | "session", Record<string, ReturnType<typeof vi.fn>>>;
+    for (const [area, store] of [["local", local], ["session", session]] as const) {
+      storage[area].get.mockImplementation(async (key: unknown) => key === null
+        ? Object.fromEntries([...store].map(([name, value]) => [name, structuredClone(value)]))
+        : { [key as string]: structuredClone(store.get(key as string)) });
+      storage[area].set.mockImplementation(async (values: Record<string, unknown>) => {
+        for (const [name, value] of Object.entries(values)) store.set(name, structuredClone(value));
+      });
+      storage[area].remove.mockImplementation(async (keys: unknown) => {
+        for (const name of [keys].flat() as string[]) store.delete(name);
+      });
+    }
+    const chrome = host.chrome as unknown as {
+      runtime: { lastError: { message: string } | undefined };
+      scripting: { executeScript: ReturnType<typeof vi.fn> };
+      tabs: Record<string, ReturnType<typeof vi.fn>>;
+    };
+    chrome.tabs.query.mockImplementation(async (query: { url?: string[] }) =>
+      tabs.filter((tab) => !query.url || query.url.some((pattern) => matches(pattern, tab.url))));
+    chrome.tabs.get.mockImplementation(async (id: number) => {
+      const tab = tabs.find((candidate) => candidate.id === id);
+      if (!tab) throw new Error(`No tab with id: ${id}`);
+      return { ...tab };
+    });
+    const injected = new Map<number, string[]>();
+    chrome.scripting.executeScript.mockImplementation(async (options: { target: { tabId: number }; files?: string[] }) => {
+      injected.set(options.target.tabId, [...(injected.get(options.target.tabId) ?? []), ...(options.files ?? [])]);
+      return [];
+    });
+    const shown: Array<{ tabId: number; message: Message }> = [];
+    chrome.tabs.sendMessage.mockImplementation((tabId: number, message: Message, reply?: unknown) => {
+      if (message.action === "mineClipperIsOpen") return Promise.resolve({ open: false });
+      if (typeof reply !== "function") return undefined;
+      if (message.action !== "showClipperOverlay") return reply(undefined);
+      if (!injected.get(tabId)?.includes("dist/overlay.js")) {
+        chrome.runtime.lastError = { message: "Could not establish connection. Receiving end does not exist." };
+        reply(undefined);
+        chrome.runtime.lastError = undefined;
+        return undefined;
+      }
+      shown.push({ tabId, message });
+      return reply({ ok: true });
+    });
+    return { host, session, injected, shown };
+  }
+
+  it("puts the content scripts of the manifest into every open tab they match after an install or update", async () => {
+    const tabs = [{ id: 1, url: "https://a.example/story" }, { id: 2, url: "https://x.com/home" },
+      { id: 3, url: "https://www.instagram.com/" }, { id: 4, url: "https://c.example/", discarded: true },
+      { id: 5, url: "chrome://newtab/" }];
+    const { host, injected } = worker("build", "build", new Map(), tabs);
+    host.install("update");
+    await vi.waitFor(() => expect(injected.get(3)).toEqual([...contentScripts, ...instagramOverlay]));
+    expect(injected.get(1)).toEqual(contentScripts);
+    expect(injected.get(2)).toEqual(contentScripts);
+    expect([...injected.keys()].sort()).toEqual([1, 2, 3]);
+    expect(host.chrome.scripting.executeScript).toHaveBeenCalledWith({ target: { tabId: 2, allFrames: false }, files: contentScripts });
+    // The scripts of the page's own world stay as the page loaded them.
+    expect([...injected.values()].flat()).not.toContain(pageWorld.find((file) => !contentScripts.includes(file)));
+    expect(host.chrome.scripting.executeScript.mock.calls.every(([options]) => (options as { world?: string }).world === undefined)).toBe(true);
+  });
+
+  it("puts nothing after a browser update, nor from files of another build", async () => {
+    const tabs = [{ id: 1, url: "https://a.example/story" }];
+    const browserUpdate = worker("build", "build", new Map(), tabs);
+    browserUpdate.host.install("chrome_update");
+    const updated = worker("old", "new", new Map(), tabs);
+    updated.host.install("update");
+    await vi.waitFor(() => expect(updated.session.get("mineReloadPending")).toBe("new"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(browserUpdate.injected.size).toBe(0);
+    expect(updated.injected.size).toBe(0);
+  });
+
+  it("opens the clipper after the reload into the build on disk, by the worker of that build", async () => {
+    vi.useFakeTimers();
+    const local = new Map<string, unknown>();
+    const tab = { id: 5, url: "https://x.com/home", title: "Home" };
+    const before = worker("old", "new", local, [tab]);
+    const preloaded = { metadata: { url: "https://x.com/GasprArt/status/1" }, article: { content: "Post" } };
+    await expect(before.host.dispatch({ target: "background", action: "showOverlayInThisTab", pageUrl: tab.url, preloaded },
+      { url: tab.url, frameId: 0, tab }).response).resolves.toEqual({ ok: false, mode: "deferred" });
+    // Nothing of the files on disk reached this worker's clipper.
+    expect(before.injected.size).toBe(0);
+    expect(before.host.createWindow).not.toHaveBeenCalled();
+    expect(before.session.get("mineReloadPending")).toBe("new");
+    expect(local.get("mineOpeningsAfterReload")).toMatchObject({
+      5: { pageUrl: tab.url, options: { preloaded, allowWindowFallback: false } },
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(before.host.chrome.runtime.reload).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+
+    const after = worker("new", "new", local, [tab]);
+    after.host.install("update");
+    await vi.waitFor(() => expect(after.shown).toHaveLength(1));
+    // The content scripts of the new build come first, then its overlay.
+    expect(after.injected.get(5)).toEqual([...contentScripts, "dist/overlay.js"]);
+    expect(after.shown[0]).toMatchObject({ tabId: 5, message: { action: "showClipperOverlay", freshMaterial: true } });
+    expect(local.has("mineOpeningsAfterReload")).toBe(false);
+    await expect(after.host.dispatch({ target: "background", action: "getClipperLaunch" }, { url: tab.url, tab }).response)
+      .resolves.toMatchObject({ sourceTabId: 5, preloaded });
+  });
+
+  it("keeps the clip of an overlay whose page changed across the reload, out of session storage meanwhile", async () => {
+    vi.useFakeTimers();
+    const local = new Map<string, unknown>();
+    const tab = { id: 5, url: "https://b.example/next" };
+    const before = worker("old", "new", local, [tab]);
+    const clip = {
+      version: 1, pageUrl: "https://a.example/story", metadata: { url: "https://a.example/story", title: "Kept", selection: "", detectedType: "link" },
+      articleData: null, articleExtractionState: "idle", launchedArticle: null, linkTarget: null, title: "Kept", selectedTags: [],
+      currentType: "link", destination: { executor: "native", vaultPath: "/v", bindingId: "b", label: "/v" }, edited: true,
+    };
+    const sender = { url: tab.url, frameId: 0, tab };
+    await expect(before.host.dispatch({ target: "background", action: "openClipWrite", clip }, sender).response).resolves.toEqual({ ok: true });
+    await expect(before.host.dispatch({ target: "background", action: "restoreOpenClip" }, sender).response)
+      .resolves.toEqual({ ok: false, mode: "deferred" });
+    expect(before.injected.size).toBe(0);
+    expect(before.session.has("mineOpenClip:5")).toBe(false);
+    expect(before.session.get("mineOpenClipTabs")).toEqual([]);
+    expect(local.get("mineOpeningsAfterReload")).toMatchObject({ 5: { restore: { title: "Kept" } } });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(before.host.chrome.runtime.reload).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+
+    // The tab moved on meanwhile: the clip opens on the page it shows (Р7).
+    tab.url = "https://c.example/later";
+    const after = worker("new", "new", local, [tab]);
+    after.host.install("update");
+    await vi.waitFor(() => expect(after.shown).toHaveLength(1));
+    expect(after.shown[0].message).toMatchObject({ action: "showClipperOverlay", freshMaterial: false, restore: { title: "Kept" } });
+    expect(after.session.get("mineOpenClipTabs")).toEqual([5]);
+  });
+
+  it("drops a launch older than the launch bound or asked on another page", async () => {
+    const tabs = [{ id: 5, url: "https://a.example/now" }, { id: 6, url: "https://b.example/" }];
+    const local = new Map<string, unknown>([["mineOpeningsAfterReload", {
+      5: { pageUrl: "https://a.example/then", createdAt: Date.now(), options: { allowWindowFallback: true } },
+      6: { pageUrl: "https://b.example/", createdAt: Date.now() - 11 * 60 * 1000, options: { allowWindowFallback: true } },
+    }]]);
+    const after = worker("new", "new", local, tabs);
+    after.host.install("update");
+    await vi.waitFor(() => expect(local.has("mineOpeningsAfterReload")).toBe(false));
+    await vi.waitFor(() => expect(after.injected.get(6)).toEqual(contentScripts));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(after.shown).toEqual([]);
+    expect([...after.injected.values()].flat()).not.toContain("dist/overlay.js");
+  });
+
+  it("reads neither Defuddle nor the setup page of another build; the open clipper keeps them for after its close", async () => {
+    const { host, session } = worker("old", "new", new Map(), []);
+    const tab = { id: 5, url: "https://a.example/" };
+    await expect(host.dispatch({ target: "background", action: "ensureDefuddle" }, { url: tab.url, frameId: 0, tab }).response)
+      .resolves.toMatchObject({ ok: false, code: "extension_updated" });
+    await expect(host.dispatch({ target: "background", action: "openStandaloneSetup" }).response)
+      .resolves.toMatchObject({ ok: false, code: "extension_updated" });
+    expect(host.chrome.scripting.executeScript).not.toHaveBeenCalled();
+    expect(host.createWindow).not.toHaveBeenCalled();
+    expect(session.get("mineReloadPending")).toBe("new");
+    expect(host.chrome.runtime.reload).not.toHaveBeenCalled();
+  });
+
+  it("opens nothing from files that name no build, and makes no reload pending", async () => {
+    const host = background("promise", { fetch: async () => ({ ok: false, json: async () => ({}) }) });
+    await expect(host.run(`openClipperUi(${JSON.stringify({ id: 5, url: "https://a.example/" })})`))
+      .rejects.toThrow("do not match the running extension");
+    expect(host.chrome.scripting.executeScript).not.toHaveBeenCalled();
+    expect(host.chrome.storage.session.set).not.toHaveBeenCalledWith(expect.objectContaining({ mineReloadPending: expect.anything() }));
   });
 });

@@ -21,8 +21,9 @@
 // folder when the native host is not there. Classic script, attaches to
 // globalThis — the same convention every lib/ file follows. youtubeSource
 // answers the channel of a YouTube clip. dist/build-identity.js is the build
-// this worker's code belongs to, written by the extension build (К4).
-importScripts("dist/build-identity.js", "generated/save-core/mine_core.js", "lib/mineCore.js", "lib/saveProtocol.js", "lib/standaloneVault.js", "lib/youtubeSource.js");
+// this worker's code belongs to, written by the extension build, and
+// lib/extensionBuild.js compares it with the build of the files on disk (К4).
+importScripts("dist/build-identity.js", "lib/extensionBuild.js", "generated/save-core/mine_core.js", "lib/mineCore.js", "lib/saveProtocol.js", "lib/standaloneVault.js", "lib/youtubeSource.js");
 
 const HOST_NAME = "com.mine.clipper.v1";
 // Must match extension/popup/popup-layout.css body { width: 360px }
@@ -187,13 +188,21 @@ async function sessionRecord(key) {
 let clipperSessionChanges = Promise.resolve();
 
 /// `change` receives the stored value and returns `{ next, result }`. `next`
-/// is written back unless it is `undefined`, which leaves storage untouched;
-/// `result` is what the returned promise resolves to.
+/// is written back unless it is `undefined`, which leaves storage untouched,
+/// or `null`, which removes the key; `result` is what the returned promise
+/// resolves to.
 function changeSessionValue(key, change) {
+  return changeStoredValue(chrome.storage.session, key, change);
+}
+
+/// The same for a value of `area`; every change of either storage area runs
+/// in the one queue.
+function changeStoredValue(area, key, change) {
   const run = clipperSessionChanges.then(async () => {
-    const stored = await chrome.storage.session.get(key);
+    const stored = await area.get(key);
     const { next, result } = change(stored[key]);
-    if (next !== undefined) await chrome.storage.session.set({ [key]: next });
+    if (next === null) await area.remove(key);
+    else if (next !== undefined) await area.set({ [key]: next });
     return result;
   });
   clipperSessionChanges = run.catch(() => undefined);
@@ -399,6 +408,17 @@ function restoreOpenClipInTab(tab) {
   return trackClipperOpening(() => oneOpeningPerTab(tab.id, async () => {
     const clip = await readOpenClip(tab.id);
     if (!clip) return "none";
+    // The overlay and its stylesheet are read from disk (К4). The reload
+    // clears session storage: the clip waits for it with the openings after
+    // the reload, and leaves session storage so that the reload can happen.
+    const files = await filesOfRunningBuild();
+    if (files === "reload") {
+      await openAfterReload(tab, { restore: clip });
+      await clearOpenClip(tab.id);
+      return "deferred";
+    }
+    if (files === "refused") throw new Error(FILES_OF_ANOTHER_BUILD);
+    await pageRefreshed(tab.id);
     const restore = { restore: clip };
     if (await showExistingClipperOverlay(tab.id, false, restore)) return "overlay";
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["dist/overlay.js"] });
@@ -433,6 +453,13 @@ function openClipperUi(tab, options = {}) {
 }
 
 async function openClipperUiNow(tab, options) {
+  // The overlay, its stylesheet and the clipper window are read from disk.
+  // Files an update replaced are opened by the worker of their build, after
+  // the reload into it (К4).
+  const files = await filesOfRunningBuild();
+  if (files === "reload") return openAfterReload(tab, { options: launchOptions(options) });
+  if (files === "refused") throw new Error(FILES_OF_ANOTHER_BUILD);
+  await pageRefreshed(tab?.id);
   const { tabId, tabUrl } = await resolveClipperTarget(tab, options.fallbackUrl ?? null);
   const allowWindowFallback = options.allowWindowFallback !== false;
   // Every opening writes its own launch: a buffer left by an opening that
@@ -630,6 +657,165 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
+// ── Files of the running build (SPEC_CLIPPER.md, К4) ─────────────────────
+//
+// The overlay, its stylesheet, the clipper window, Defuddle and the save core
+// are read from the copy on disk, which an update replaces while this worker
+// keeps running the build it loaded. None of them reaches this worker's
+// clipper unless it is of this build: an opening that finds another build on
+// disk waits for the reload into it and is made by the worker of that build.
+
+const FILES_OF_ANOTHER_BUILD = "The Mine extension files on disk do not match the running extension. Restart the browser to finish updating Mine.";
+const EXTENSION_UPDATED = "Mine was updated. Close the clipper and open it again.";
+
+/// `same`, `reload` (pending now) or `refused`: lib/extensionBuild.js.
+function filesOfRunningBuild() {
+  return globalThis.MineExtensionBuild.filesOfRunningBuild();
+}
+
+// Openings that wait for the reload into the build on disk, by tab. The
+// reload clears session storage, so they wait in local storage, and the
+// worker of the new build takes them as it starts. A launch is made on the
+// page it was asked on; the clip of an overlay whose page changed opens on
+// whatever its tab shows (Р7). Older than CLIPPER_LAUNCH_TTL_MS, neither is.
+const OPENINGS_AFTER_RELOAD_KEY = "mineOpeningsAfterReload";
+
+/// What of an opening's options travels across the reload.
+function launchOptions(options) {
+  return {
+    fallbackUrl: options.fallbackUrl ?? null,
+    contextMenu: options.contextMenu ?? null,
+    preloaded: options.preloaded ?? null,
+    allowWindowFallback: options.allowWindowFallback !== false,
+  };
+}
+
+/// Keep `opening` of `tab` for the worker after the reload: `{ options }` for
+/// a launch, `{ restore }` for a kept clip.
+async function openAfterReload(tab, opening) {
+  if (typeof tab?.id !== "number") return "deferred";
+  await changeStoredValue(chrome.storage.local, OPENINGS_AFTER_RELOAD_KEY, (openings = {}) => ({
+    next: { ...openings, [tab.id]: { ...opening, pageUrl: tab.url ?? null, createdAt: Date.now() } },
+  }));
+  return "deferred";
+}
+
+/// The openings an earlier worker left for this one, taken once.
+function takeOpeningsAfterReload() {
+  return changeStoredValue(chrome.storage.local, OPENINGS_AFTER_RELOAD_KEY,
+    (openings) => ({ next: openings === undefined ? undefined : null, result: openings ?? {} }));
+}
+
+async function runOpeningsAfterReload() {
+  const openings = await takeOpeningsAfterReload();
+  for (const [tabId, opening] of Object.entries(openings)) {
+    if (typeof opening?.createdAt !== "number" || Date.now() - opening.createdAt > CLIPPER_LAUNCH_TTL_MS) continue;
+    let tab;
+    try {
+      tab = await chrome.tabs.get(Number(tabId));
+    } catch {
+      continue;
+    }
+    if (!tab) continue;
+    const failed = (error) => console.warn("[Mine] the clipper did not open after the update:", String(error?.message ?? error));
+    if (isOpenClip(opening.restore)) {
+      await writeOpenClip(tab.id, opening.restore);
+      void restoreOpenClipInTab(tab).catch(failed);
+    } else if (opening.options && (opening.pageUrl === null || tab.url === opening.pageUrl)) {
+      void openClipperUi(tab, opening.options).catch(failed);
+    }
+  }
+}
+
+// ── Pages open before this build (SPEC_CLIPPER.md, К4 and rule 9 of «Кнопка
+// Mine в ленте X») ─────────────────────────────────────────────────────────
+//
+// A reload or an update leaves the content scripts in open pages cut off from
+// the extension: the browser does not put the new ones there. This worker
+// puts the content scripts of the manifest into every open tab their matches
+// name, top frame as declared, as soon as it is installed or updated. Each
+// page gets them in a world of its own; the content script there before gives
+// the page up (content.js). Scripts of the page's own world (lib/xThread.js
+// and lib/xThreadPage.js) are not put again: they do not depend on the
+// extension, and the feeds they already read stay theirs.
+
+// Tabs being given the content scripts of this build, by tab, and the search
+// for those tabs.
+const pageRefreshes = new Map();
+let pagesFound = Promise.resolve();
+
+/// Wait while `tabId` is being given the content scripts of this build: an
+/// overlay opened before them finds no content script in its world.
+async function pageRefreshed(tabId) {
+  await pagesFound;
+  if (typeof tabId === "number") await pageRefreshes.get(tabId);
+}
+
+/// The content-script groups of the manifest this worker can put again, by
+/// the open tab they belong to, each tab's in the manifest's order. A group
+/// that excludes pages is left out: tabs are found by `matches` alone.
+async function contentScriptPlan() {
+  const groups = (chrome.runtime.getManifest?.()?.content_scripts ?? []).filter((group) =>
+    (group.world ?? "ISOLATED") === "ISOLATED" && Array.isArray(group.js) && group.js.length > 0
+    && Array.isArray(group.matches) && group.matches.length > 0
+    && !group.exclude_matches && !group.include_globs && !group.exclude_globs);
+  const plan = new Map();
+  for (const group of groups) {
+    let tabs = [];
+    try {
+      tabs = await chrome.tabs.query({ url: group.matches });
+    } catch (error) {
+      console.warn("[Mine] open pages not found for the content scripts:", String(error?.message ?? error));
+    }
+    for (const tab of tabs) {
+      if (typeof tab.id !== "number" || tab.discarded) continue;
+      if (!plan.has(tab.id)) plan.set(tab.id, []);
+      plan.get(tab.id).push(group);
+    }
+  }
+  return plan;
+}
+
+async function injectContentScripts(tabId, groups) {
+  for (const group of groups) {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId, allFrames: group.all_frames === true }, files: group.js });
+    } catch {
+      // A page the browser keeps extensions out of (the extension store, a
+      // file without file access, an error page), or a tab gone meanwhile.
+      return;
+    }
+  }
+}
+
+/// Give every open page the content scripts of this build. Files of another
+/// build on disk wait for the reload into it, whose worker does this.
+function refreshOpenPages() {
+  const found = (async () => {
+    if ((await filesOfRunningBuild()) !== "same") return [];
+    const plan = await contentScriptPlan();
+    return [...plan].map(([tabId, groups]) => {
+      const refresh = injectContentScripts(tabId, groups);
+      pageRefreshes.set(tabId, refresh);
+      void refresh.then(() => {
+        if (pageRefreshes.get(tabId) === refresh) pageRefreshes.delete(tabId);
+      });
+      return refresh;
+    });
+  })();
+  pagesFound = found.then(() => undefined, () => undefined);
+  return found.then((refreshes) => Promise.all(refreshes));
+}
+
+// An opening left by the worker before the reload waits for its own tab only.
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details?.reason !== "install" && details?.reason !== "update") return;
+  void refreshOpenPages()
+    .catch((error) => console.warn("[Mine] open pages kept their content scripts:", String(error?.message ?? error)));
+  void pagesFound.then(() => runOpeningsAfterReload())
+    .catch((error) => console.warn("[Mine] openings after the update dropped:", String(error?.message ?? error)));
+});
+
 // ── Context menus ─────────────────────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -773,22 +959,15 @@ function getNativePort() {
 // The browser keeps a worker's code, imported files included, until the
 // extension reloads, even across worker restarts. A file read now (fetch)
 // answers the copy on disk, which an update has already replaced, so it would
-// name the new build and the update would never apply (12.10.2026).
+// name the new build and the update would never apply (12.10.2026). The same
+// comparison, with the build the files on disk name, keeps every file read
+// from disk to the running build (lib/extensionBuild.js, 13.10.2026).
 function runningBuild() {
-  const identity = globalThis.MineBuildIdentity;
-  return typeof identity?.buildId === "string" && identity.buildId.length > 0 && typeof identity.commit === "string"
-    ? identity
-    : null;
+  return globalThis.MineExtensionBuild.running();
 }
 
 async function noteInstalledExtension(status) {
-  const installed = status?.extension_build_id;
-  if (typeof installed !== "string" || installed.length === 0) return;
-  const own = runningBuild();
-  if (own === null || own.buildId === installed) return;
-  const { mineReloadedFor } = await chrome.storage.local.get("mineReloadedFor");
-  if (mineReloadedFor === installed) return;
-  await chrome.storage.session.set({ mineReloadPending: installed });
+  await globalThis.MineExtensionBuild.noteInstalled(status?.extension_build_id);
 }
 
 async function reloadIfUpdated() {
@@ -810,6 +989,10 @@ async function reloadIfUpdated() {
     await chrome.storage.session.set({ mineReloadPending });
     return;
   }
+  // Chromium loads an unpacked extension again only while developer mode is
+  // on, and an extension cannot read that switch. With it off the extension
+  // stays installed but disabled, its storage kept, until developer mode is
+  // turned on (checked in Chromium 148 on 13.10.2026, К4).
   chrome.runtime.reload();
 }
 
@@ -1020,6 +1203,13 @@ async function ensureDefuddleInjected(sender) {
   const target = { tabId };
   if (Number.isInteger(sender.frameId)) {
     target.frameIds = [sender.frameId];
+  }
+
+  // Defuddle is read from disk (К4). The clipper that asks is open, so the
+  // reload into the build on disk waits for it to close; the page is read
+  // without Defuddle meanwhile.
+  if ((await filesOfRunningBuild()) !== "same") {
+    return { ok: false, code: "extension_updated", error: EXTENSION_UPDATED };
   }
 
   // Defuddle bundles Temml, which warns at module-load time on quirks-mode
@@ -1283,7 +1473,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "openStandaloneSetup") {
     const url = new URL(chrome.runtime.getURL("dist/index.html?mode=setup"));
     if (typeof msg.binding_id === "string") url.searchParams.set("binding_id", msg.binding_id);
-    openFolderSetup(url.href).then(sendResponse, error => sendResponse(extensionBackgroundFailure(error)));
+    // The setup page is read from disk (К4); the clipper that asks is open,
+    // and the reload into the build on disk waits for it to close.
+    filesOfRunningBuild()
+      .then((files) => files === "same" ? openFolderSetup(url.href) : { ok: false, code: "extension_updated", error: EXTENSION_UPDATED })
+      .then(sendResponse, error => sendResponse(extensionBackgroundFailure(error)));
     return true;
   }
 

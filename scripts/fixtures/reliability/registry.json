@@ -1016,7 +1016,10 @@
         "src/lib/cardAspect.ts",
         "src/lib/cardAspect.test.ts",
         "src/lib/masonryLayout.ts",
-        "src/lib/masonryLayout.test.ts"
+        "src/lib/masonryLayout.test.ts",
+        "extension/lib/contentScriptHandover.test.ts",
+        "extension/lib/extensionBuild.js",
+        "safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources/lib/extensionBuild.js"
       ],
       "requirement": "SPEC_GRID_LAYOUT_READINESS.md## Колонка карточки",
       "tests": ["src/lib/cardAspect.test.ts", "src/lib/masonryLayout.test.ts", "src/lib/cardHeight.test.ts", "src/components/Grid.test.tsx"],

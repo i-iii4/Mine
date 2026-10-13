@@ -312,7 +312,7 @@ local-arena/
 │   │   ├── hooks/              # useClipperState.ts
 │   │   └── lib/                # messaging.ts (типизированный native messaging), openClip.ts (открытый клип вкладки между загрузками страниц), overlayBounds.ts (место и размер оверлея)
 │   ├── dist/                   # Собранный попап (output Vite)
-│   ├── lib/                    # Вендорные библиотеки (Defuddle UMD)
+│   ├── lib/                    # Вендорные библиотеки (Defuddle UMD), ядро сохранения (mineCore.js), extensionBuild.js (сборка работающего фона против сборки на диске) и др.
 │   ├── icons/                  # Иконки расширения
 │   └── manifest.json           # Manifest V3
 ├── core-ffi/                   # Rust FFI-слой для iOS (UniFFI)
