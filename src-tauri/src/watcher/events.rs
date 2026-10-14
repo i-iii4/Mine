@@ -364,7 +364,24 @@ mod tests {
         })
         .unwrap();
         watcher.watch(&space, notify::RecursiveMode::Recursive).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        // FSEvents reports nothing until its stream runs. A probe file seen
+        // in the stream says the watch is live, without guessing how long
+        // that takes.
+        let probe = space.join("probe.txt");
+        let live_by = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut live = false;
+        let mut attempt = 0_u32;
+        while !live {
+            assert!(std::time::Instant::now() < live_by, "the watch never went live");
+            attempt += 1;
+            std::fs::write(&probe, attempt.to_string()).unwrap();
+            while let Ok(event) = rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                if event.paths.iter().any(|path| path == &probe) {
+                    live = true;
+                    break;
+                }
+            }
+        }
         std::fs::rename(&note, outside.join("Note.md")).unwrap();
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);

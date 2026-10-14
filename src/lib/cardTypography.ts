@@ -25,11 +25,10 @@ export const CONTENT_CARD_FONT_SIZE_PX = 12;
 /** Line box of a card's single-line text: titles, authors, domains. */
 export const CONTENT_CARD_SINGLE_LINE_HEIGHT_PX = 16;
 
-/** The kinds of line a post card's text stack holds, top to bottom: the
- *  last one, `pills`, is the row of its collections (С9). */
-export type CardTextLine = "title" | "preview" | "author" | "pills";
+/** The kinds of line a post card's text stack holds, top to bottom. */
+export type CardTextLine = "title" | "preview" | "author";
 
-const LINE_HEIGHT_PX: Record<Exclude<CardTextLine, "pills">, number> = {
+const LINE_HEIGHT_PX: Record<CardTextLine, number> = {
   title: CONTENT_CARD_SINGLE_LINE_HEIGHT_PX,
   preview: CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX,
   author: CONTENT_CARD_SINGLE_LINE_HEIGHT_PX,
@@ -41,8 +40,6 @@ const LINE_HEIGHT_PX: Record<Exclude<CardTextLine, "pills">, number> = {
  * letter, so it is the box gap plus the half-leading on both sides.
  */
 export function halfLeading(line: CardTextLine): number {
-  // A pill row is drawn boxes, not type: its edge is what the eye measures.
-  if (line === "pills") return 0;
   return (LINE_HEIGHT_PX[line] - CONTENT_CARD_FONT_SIZE_PX) / 2;
 }
 

@@ -10,7 +10,7 @@ use crate::commands::blocks::{
     CreateBlockParams, CreateMediaAssetCardParams, DeleteBlockMedia, DeleteBlockOutcome,
     DeleteBlocksOutcome, DeleteBlocksPlan,
     DeleteBlockPlan, DeleteMediaAssetKind, DeleteMediaAssetPlan, DeleteTextSelectionParams,
-    ExtractInlineMediaParams, ExtractTextSelectionParams, InlineMediaExtractError,
+    ExtractTextSelectionParams,
     MediaAssetActionError, MediaAssetMutationResult, MediaAssetReferenceBlock,
     MediaAssetReferenceKind, MergeBlocksError, MergeBlocksResult, RemoveMediaAssetFromCardParams,
     RenameBlockError, RenameBlockResult, RenameMediaAssetParams, TextSelectionExtractError,
@@ -60,7 +60,6 @@ use crate::storage::index::{
 };
 use crate::storage::projection::{GridSnapshot, GridRowsSnapshot, ProjectionRevision};
 use crate::storage::search_projection::{SearchPageToken, SearchRevision, SearchSnapshot};
-use crate::storage::vault_stats::VaultStats;
 use crate::watcher::handler::ScanResult;
 
 pub fn export_types(check_only: bool) -> Result<()> {
@@ -142,7 +141,6 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<ChannelPreviewsSnapshot>()
         .register::<RenameBlockResult>()
         .register::<CreateBlockParams>()
-        .register::<ExtractInlineMediaParams>()
         .register::<CreateMediaAssetCardParams>()
         .register::<RenameMediaAssetParams>()
         .register::<MediaAssetReferenceKind>()
@@ -160,11 +158,9 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<MediaAssetReferenceBlock>()
         .register::<DeleteMediaAssetPlan>()
         .register::<RenameBlockError>()
-        .register::<InlineMediaExtractError>()
         .register::<MediaAssetActionError>()
         .register::<TextSelectionExtractError>()
         .register::<MergeBlocksError>()
-        .register::<VaultStats>()
         .register::<ScanResult>()
         .register::<VaultOpenResult>()
         .register::<VaultWriteLayoutDto>()

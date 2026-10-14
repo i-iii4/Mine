@@ -9,10 +9,12 @@
   const APP_SHELL_ASSET_RE =
     /(^|\/)(?:template[-_])?app[-_]icon(?:[-_.]|$)|(^|\/)(?:favicon|apple-touch-icon)(?:[-_.]|$)/i;
 
+  /** @param {unknown} value */
   function compact(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
   }
 
+  /** @param {Element} element */
   function elementIdentity(element) {
     return [
       element.getAttribute("src"),
@@ -24,6 +26,10 @@
     ].map(compact).filter(Boolean).join(" ");
   }
 
+  /**
+   * @param {Element} element
+   * @param {string} name
+   */
   function numericAttribute(element, name) {
     const raw = element.getAttribute(name);
     if (!raw) return null;
@@ -31,19 +37,25 @@
     return Number.isFinite(value) ? value : null;
   }
 
+  /**
+   * @param {string} style
+   * @param {string} property
+   */
   function numericStyleValue(style, property) {
-    const match = style.match(new RegExp(`${property}\\s*:\\s*([0-9.]+)px`, "i"));
-    if (!match) return null;
-    const value = Number.parseFloat(match[1]);
+    const digits = style.match(new RegExp(`${property}\\s*:\\s*([0-9.]+)px`, "i"))?.[1];
+    if (!digits) return null;
+    const value = Number.parseFloat(digits);
     return Number.isFinite(value) ? value : null;
   }
 
+  /** @param {Element} img */
   function hasTinyDeclaredSize(img) {
     const width = numericAttribute(img, "width") ?? numericStyleValue(img.getAttribute("style") || "", "width");
     const height = numericAttribute(img, "height") ?? numericStyleValue(img.getAttribute("style") || "", "height");
     return width !== null && height !== null && width <= 8 && height <= 8;
   }
 
+  /** @param {Element} element */
   function hasContentAncestor(element) {
     let current = element.parentElement;
     while (current && current.tagName !== "BODY" && current.tagName !== "HTML") {
@@ -56,6 +68,7 @@
     return false;
   }
 
+  /** @param {Element} img */
   function hasImageSemantics(img) {
     if (compact(img.getAttribute("alt"))) return true;
     if (compact(img.getAttribute("title"))) return true;
@@ -69,6 +82,7 @@
     return false;
   }
 
+  /** @param {HTMLElement} img */
   function isExplicitlyHidden(img) {
     if (img.hidden || img.getAttribute("aria-hidden") === "true") return true;
     const role = img.getAttribute("role");
@@ -77,6 +91,7 @@
     return /display\s*:\s*none/i.test(style) || /visibility\s*:\s*hidden/i.test(style);
   }
 
+  /** @param {HTMLImageElement | null | undefined} img */
   function shouldRemoveExtractionImage(img) {
     if (!img || img.tagName !== "IMG") return false;
     if (hasContentAncestor(img)) return false;
@@ -90,6 +105,7 @@
     return APP_SHELL_ASSET_RE.test(identity);
   }
 
+  /** @param {Element} img */
   function removeImage(img) {
     const parent = img.parentElement;
     img.remove();
@@ -98,6 +114,7 @@
     }
   }
 
+  /** @param {Document} doc */
   function sanitizeExtractionDocument(doc) {
     if (!doc?.querySelectorAll) return doc;
     for (const img of Array.from(doc.querySelectorAll("img"))) {

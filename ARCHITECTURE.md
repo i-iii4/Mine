@@ -630,7 +630,7 @@ iOS UI contract:
   fresh snapshot после committed reconciliation без блокировки первого usable
   paint.
 - Переключение vault не делает `window.location.reload()`. `App.tsx` remount'ит `AppWithVault` по `key={vaultPath}`, сбрасывает локальное состояние и игнорирует stale async-ответы через `vaultPathRef + requestId`.
-- `App.tsx` держит per-route snapshot cache (`tag -> GridSnapshot`). Повторный переход в уже посещённый канал сначала применяет локальный snapshot синхронно, а taxonomy (`list_tags` / `list_channels`) не перезапрашивается на чистом route switch. Это убирает лишний IPC round-trip и второй `list_grid_blocks` на старте после `setTags/setChannels`.
+- `App.tsx` держит per-route snapshot cache (`tag -> GridSnapshot`). Повторный переход в уже посещённый канал сначала применяет локальный snapshot синхронно, а taxonomy (`list_taxonomy_snapshot`) не перезапрашивается на чистом route switch. Это убирает лишний IPC round-trip и второй `list_grid_blocks` на старте после `setTags/setChannels`.
 - Каждый `GridSnapshot` несёт typed persisted SQLite `ProjectionRevision`. Триггеры на
   `blocks`, `channels`, `block_tags` и `source_index_state` повышают generation
   внутри той же транзакции, где меняется index, preview readiness или route

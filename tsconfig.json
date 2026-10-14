@@ -1,42 +1,33 @@
 {
+  // Everything at once, so `bunx tsc --noEmit` checks the app's pages, the
+  // clipper with its JavaScript (JSDoc, checkJs) and every test. One program
+  // holds the globals of all their runtimes together: Node and Vitest for the
+  // tests, chrome.* for the clipper. That code uses no global or library its
+  // own runtime lacks is checked by tsconfig.app.json and
+  // tsconfig.extension.json, one runtime each; `bun run typecheck` checks all
+  // three. They are not references: a reference to a program with the same
+  // files makes tsc look for that program's output (TS6305).
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2021",
-    "useDefineForClassFields": true,
+    // Vitest runs on Node 22; the referenced programs keep the pages to ES2021.
     "lib": [
-      "ES2021",
+      "ES2022",
       "DOM",
       "DOM.Iterable"
     ],
-    "module": "ESNext",
-    "skipLibCheck": true,
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "isolatedModules": true,
-    "moduleDetection": "force",
-    "noEmit": true,
-    "jsx": "react-jsx",
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUncheckedIndexedAccess": true,
-    "forceConsistentCasingInFileNames": true,
-    "baseUrl": ".",
-    "paths": {
-      "@/*": [
-        "src/*"
-      ]
-    }
+    "types": ["node", "vitest/globals", "chrome", "vite/client"],
+    "allowJs": true,
+    "checkJs": true
   },
-  "include": [
-    "src",
-    "extension/popup"
-  ],
+  "include": ["src", "extension"],
   "exclude": [
-    "src/**/*.test.ts",
-    "src/**/*.test.tsx",
-    "src/test",
-    "extension/**/*.test.ts",
-    "extension/**/*.test.tsx"
+    // Build output: the popup bundle and the save core glue wasm-bindgen
+    // generates.
+    "extension/dist",
+    "extension/generated",
+    // Vendored Defuddle release: one minified UMD bundle of a third-party
+    // library, not source of this project. lib/defuddle.d.ts declares the
+    // part the clipper calls.
+    "extension/lib/defuddle.js"
   ]
 }

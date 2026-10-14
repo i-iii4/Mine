@@ -27,6 +27,7 @@ import { Grid } from "./Grid";
 import { computeCardHeight } from "@/lib/cardHeight";
 import { reloadFeedDisplay, setFeedShow } from "@/lib/feedDisplay";
 import { getMasonryColumnWidth } from "@/lib/masonryLayout";
+import { lightBlock } from "@/test/blocks";
 
 // Grid's column geometry for the firing observer's 400px feed; these match the
 // constants in Grid.tsx and the default spacing.
@@ -35,7 +36,7 @@ const COLUMN_MIN_WIDTH = 220;
 const DEFAULT_GAP = 32;
 
 function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock {
-  return {
+  return lightBlock({
     id,
     slug: `block-${id}`,
     card_kind: "article",
@@ -56,7 +57,7 @@ function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock 
     collections: [],
     feed_playback: null,
     ...overrides,
-  };
+  });
 }
 
 const EMPTY_WIDTHS: WordWidths = {
@@ -64,6 +65,8 @@ const EMPTY_WIDTHS: WordWidths = {
   preview: [],
   titleSpace: 0,
   previewSpace: 0,
+  titleNoSpaceBefore: [],
+  previewNoSpaceBefore: [],
 };
 
 class NoopResizeObserver {
@@ -78,10 +81,8 @@ class NoopResizeObserver {
 function installFiringResizeObserver(width = 400, height = 800): { restore: () => void } {
   const previous = globalThis.ResizeObserver;
   class FiringResizeObserver {
-    private el: Element | null = null;
     constructor(private cb: ResizeObserverCallback) {}
     observe(el: Element): void {
-      this.el = el;
       const contentRect = {
         width,
         height,

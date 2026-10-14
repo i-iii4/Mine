@@ -142,9 +142,18 @@ async function main() {
     "2",
     "--fixture-count",
     "180",
+    // A product space is cold in iCloud, not only on a local disk: one
+    // picture of the fixture has its contents there, and indexing must
+    // leave it there (SPEC_DEEP_AUDIT.md, Е7.8).
+    "--icloud-media",
     "--browser-output",
     coldPayload,
   ]);
+  const coldFirst = JSON.parse(fs.readFileSync(coldPayload, "utf8")).first.blocks;
+  const inIcloud = coldFirst.filter((block) => block.media_file?.endsWith("cold-icloud-image.png"));
+  if (inIcloud.length === 0 || inIcloud.some((block) => block.width != null || block.height != null)) {
+    throw new Error(`The cold space has no card whose picture waits in iCloud: ${JSON.stringify(inIcloud)}`);
+  }
 
   const port = await reserveFreePort();
   const origin = `http://${HOST}:${port}`;

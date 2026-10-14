@@ -1,8 +1,9 @@
-//! Native window chrome commands.
+//! Native window chrome.
 //!
 //! Each tab window owns its sidebar (SPEC_TABS.md, В56). The native View
 //! menu mirrors the sidebar of the last window so its command title always
-//! describes the action that will happen.
+//! describes the action that will happen; the backend names it whenever a
+//! window's sidebar changes.
 
 use tauri::AppHandle;
 
@@ -22,13 +23,12 @@ fn sidebar_menu_title(collapsed: bool) -> &'static str {
 /// Name the View menu's sidebar item after the next action on a sidebar
 /// that is `collapsed` or not.
 pub fn reflect_sidebar(app: &AppHandle, collapsed: bool) {
-    if let Err(error) = set_sidebar_menu_collapsed(app.clone(), collapsed) {
+    if let Err(error) = set_sidebar_menu_title(app, collapsed) {
         log::warn!("{error}");
     }
 }
 
-#[tauri::command]
-pub fn set_sidebar_menu_collapsed(app: AppHandle, collapsed: bool) -> Result<(), CommandError> {
+fn set_sidebar_menu_title(app: &AppHandle, collapsed: bool) -> Result<(), CommandError> {
     let menu = app
         .menu()
         .ok_or_else(|| CommandError::Internal("native application menu is unavailable".into()))?;

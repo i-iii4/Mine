@@ -1,10 +1,15 @@
 import { Linter } from "eslint";
 import { describe, expect, it } from "vitest";
-import config from "../../eslint.config.js";
+import projectConfig from "../../eslint.config.js";
 
 // The rule that keeps tab pages and tab bars on their own events and off
 // stale window handles (SPEC_TABS.md, В22), checked against the project's
 // own ESLint configuration.
+
+// ESLint loads this very array; only the declared types disagree:
+// typescript-eslint's config type has no index signature for language
+// options, which ESLint's own type requires.
+const config = projectConfig as Linter.Config[];
 
 const PROJECT_ROOT = "/project";
 const linter = new Linter({ cwd: PROJECT_ROOT });

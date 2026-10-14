@@ -1,13 +1,29 @@
 (function (root) {
   "use strict";
 
+  /** @typedef {import("./twitterThreadSelection.types").TweetIdentity} TweetIdentity */
+  /** @typedef {import("./twitterThreadSelection.types").TwitterThreadSelectionInput} TwitterThreadSelectionInput */
+  /**
+   * @typedef {object} ThreadCandidate
+   * @property {Element} article
+   * @property {Element} cell
+   * @property {string | null} tweetId
+   * @property {string | null} authorHandle
+   */
+
   const TWEET_ARTICLE_SELECTOR = 'article[data-testid="tweet"]';
   const CELL_SELECTOR = '[data-testid="cellInnerDiv"]';
 
+  /** @param {string | null | undefined} handle */
   function normalizeHandle(handle) {
     return String(handle || "").replace(/^@/, "").trim().toLowerCase();
   }
 
+  /**
+   * @param {string | null | undefined} href
+   * @param {string | undefined} baseURI
+   * @returns {TweetIdentity | null}
+   */
   function statusIdentityFromHref(href, baseURI) {
     if (!href) return null;
     try {
@@ -16,7 +32,8 @@
       if (!match) return null;
       return {
         handle: normalizeHandle(match[1]),
-        tweetId: match[2],
+        // Both groups of the pattern are required, so a match has them.
+        tweetId: /** @type {string} */ (match[2]),
         href: url.href,
       };
     } catch {
@@ -24,6 +41,10 @@
     }
   }
 
+  /**
+   * @param {string | null} href
+   * @param {string | undefined} baseURI
+   */
   function profileHandleFromHref(href, baseURI) {
     if (!href) return null;
     try {
@@ -40,6 +61,7 @@
     }
   }
 
+  /** @param {Element} article */
   function getTweetAuthorHandle(article) {
     const baseURI = article.ownerDocument?.baseURI;
     for (const link of article.querySelectorAll('div[data-testid="User-Name"] a[href]')) {
@@ -49,6 +71,10 @@
     return null;
   }
 
+  /**
+   * @param {Element} article
+   * @returns {TweetIdentity | null}
+   */
   function getTweetIdentity(article) {
     const baseURI = article.ownerDocument?.baseURI;
     const authorHandle = getTweetAuthorHandle(article);
@@ -74,10 +100,12 @@
     return firstIdentity;
   }
 
+  /** @param {Element} article */
   function getTimelineCell(article) {
     return article.closest(CELL_SELECTOR) || article;
   }
 
+  /** @param {Element} anchorCell */
   function getSiblingTimelineCells(anchorCell) {
     const doc = anchorCell.ownerDocument;
     const parent = anchorCell.parentElement;
@@ -93,12 +121,20 @@
     return Array.from(doc.querySelectorAll(TWEET_ARTICLE_SELECTOR));
   }
 
+  /**
+   * @param {Element} cell
+   * @returns {Element | null}
+   */
   function getPrimaryTweetArticle(cell) {
     if (cell.matches?.(TWEET_ARTICLE_SELECTOR)) return cell;
     const articles = Array.from(cell.querySelectorAll(TWEET_ARTICLE_SELECTOR));
     return articles[0] || null;
   }
 
+  /**
+   * @param {Element} article
+   * @returns {ThreadCandidate}
+   */
   function makeCandidate(article) {
     const identity = getTweetIdentity(article);
     const authorHandle = getTweetAuthorHandle(article) || identity?.handle || null;
@@ -110,15 +146,28 @@
     };
   }
 
+  /**
+   * @param {Element | undefined} cell
+   * @returns {ThreadCandidate | null}
+   */
   function candidateFromCell(cell) {
+    if (!cell) return null;
     const article = getPrimaryTweetArticle(cell);
     return article ? makeCandidate(article) : null;
   }
 
+  /**
+   * @param {ThreadCandidate | null} candidate
+   * @param {string | null} targetHandle
+   */
   function isSameAuthor(candidate, targetHandle) {
     return normalizeHandle(candidate?.authorHandle) === normalizeHandle(targetHandle);
   }
 
+  /**
+   * @param {TwitterThreadSelectionInput} input
+   * @returns {Element[]}
+   */
   function selectTwitterThreadArticles({ document: doc, targetTweetId, authorHandle }) {
     const targetAuthor = normalizeHandle(authorHandle);
     const articles = Array.from(doc.querySelectorAll(TWEET_ARTICLE_SELECTOR));
@@ -160,7 +209,7 @@
     return cells
       .filter((cell) => selected.has(cell))
       .map(getPrimaryTweetArticle)
-      .filter(Boolean);
+      .filter(/** @returns {article is Element} */ (article) => article !== null);
   }
 
   root.MineTwitterThreadSelection = {

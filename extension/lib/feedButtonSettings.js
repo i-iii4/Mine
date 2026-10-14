@@ -9,14 +9,25 @@
   const STORAGE_KEY = "mineFeedButtons";
   const DEFAULTS = Object.freeze({ x: true, instagram: true });
 
+  /** @typedef {import("./feedButtonSettings.types").FeedButtonSettings} FeedButtonSettings */
+
   /// The switches as stored; each one is on until it was turned off.
+  /**
+   * @param {unknown} value
+   * @returns {FeedButtonSettings}
+   */
   function normalize(value) {
+    /** @type {{ x?: unknown, instagram?: unknown }} */
     const stored = typeof value === "object" && value !== null ? value : {};
     return { x: stored.x !== false, instagram: stored.instagram !== false };
   }
 
   /// The switches now, from `chrome.storage.local`. Storage that cannot be
   /// read leaves both on, as they were before the switches existed.
+  /**
+   * @param {Pick<chrome.storage.StorageArea, "get">} local
+   * @returns {Promise<FeedButtonSettings>}
+   */
   async function read(local) {
     try {
       return normalize((await local.get(STORAGE_KEY))?.[STORAGE_KEY]);
@@ -27,7 +38,15 @@
 
   /// Calls `onChange` with the switches whenever any tab changes them.
   /// Returns the function that stops it.
+  /**
+   * @param {Pick<typeof chrome.storage, "onChanged">} storage
+   * @param {(settings: FeedButtonSettings) => void} onChange
+   */
   function watch(storage, onChange) {
+    /**
+     * @param {{ [key: string]: chrome.storage.StorageChange }} changes
+     * @param {string} area
+     */
     const listener = (changes, area) => {
       if (area === "local" && changes?.[STORAGE_KEY]) onChange(normalize(changes[STORAGE_KEY].newValue));
     };

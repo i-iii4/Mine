@@ -1,13 +1,14 @@
+// The image frame of the expanded card in headless Chromium: the original
+// replaces the preview without moving or resizing the frame, both layers fill
+// it, and a smaller window keeps the proportion (SPEC_CARD_MEDIA_GEOMETRY.md).
+// Real layout, which the jsdom tests of Detail cannot measure. Starts and
+// stops its own Vite.
 import assert from 'node:assert/strict';
-import {fileURLToPath} from 'node:url';
-import {createServer} from 'vite';
 import {chromium} from 'playwright';
+import {COLD_START_MS,startAuditVite} from './audit-vite.mjs';
 
 const entry='/detail-image-geometry-entry.js';
-const server=await createServer({
-  root:fileURLToPath(new URL('..',import.meta.url)),
-  server:{host:'127.0.0.1',port:0,hmr:false,open:false},
-  plugins:[{
+const vite=await startAuditVite([{
     name:'detail-image-geometry-audit',
     resolveId(id){if(id===entry)return `\0${entry}`;},
     load(id){if(id!==`\0${entry}`)return;return `
@@ -24,29 +25,27 @@ const server=await createServer({
       const noop=()=>{};
       createRoot(document.getElementById('root')).render(React.createElement(TooltipProvider,null,React.createElement(DndContext,null,React.createElement(Detail,{block,vaultPath:'/vault',thumbsRootPath:'/thumbs',tags:[],onClose:noop,onToggleTag:noop,onCreateAndAssign:noop,onRequestRename:noop,onRequestDelete:noop}))));`;
     },
-    configureServer(vite){vite.middlewares.use(async(req,res,next)=>{
+    configureServer(server){server.middlewares.use(async(req,res,next)=>{
       if(!req.url.startsWith('/__detail-image-audit'))return next();
       res.setHeader('Content-Type','text/html');
-      res.end(await vite.transformIndexHtml(req.url,`<html><body><div id="root" style="height:100vh"></div><script type="module" src="${entry}"></script></body></html>`));
+      res.end(await server.transformIndexHtml(req.url,`<html><body><div id="root" style="height:100vh"></div><script type="module" src="${entry}"></script></body></html>`));
     });},
-  }],
-});
+}]);
 let browser;
 try{
-  await server.listen();browser=await chromium.launch();
+  browser=await chromium.launch({headless:true});
   for(const [width,height] of [[1600,1200],[1200,1600],[240,160]])for(const legacy of [false,true]){
     const page=await browser.newPage({viewport:{width:1200,height:800}});
-    const errors=[];page.on('pageerror',error=>errors.push(error.message));
-    let release;const gate=new Promise(resolve=>release=resolve);
+    const errors=[];page.on('pageerror',error=>errors.push(error.message));    let release;const gate=new Promise(resolve=>release=resolve);
     await page.route('**/image/*',async route=>{
       const original=route.request().url().endsWith('original');
       if(original)await gate;
       const divisor=original?1:5;
       await route.fulfill({contentType:'image/svg+xml',body:`<svg xmlns="http://www.w3.org/2000/svg" width="${width/divisor}" height="${height/divisor}"><rect width="100%" height="100%" fill="orange"/></svg>`});
     });
-    await page.goto(new URL(`/__detail-image-audit?w=${width}&h=${height}${legacy?'&legacy=1':''}`,server.resolvedUrls.local[0]).href,{waitUntil:'domcontentloaded'});
+    await page.goto(new URL(`/__detail-image-audit?w=${width}&h=${height}${legacy?'&legacy=1':''}`,vite.origin).href,{waitUntil:'domcontentloaded'});
     const frame=page.locator('[data-detail-image]');
-    await page.waitForFunction(()=>document.querySelector('[data-detail-preview-backing]')?.naturalWidth>0);
+    await page.waitForFunction(()=>document.querySelector('[data-detail-preview-backing]')?.naturalWidth>0,null,{timeout:COLD_START_MS});
     await page.evaluate(()=>document.fonts.ready);
     await page.waitForTimeout(100);
     const before=await frame.boundingBox();
@@ -65,4 +64,4 @@ try{
     console.log(`PASS ${width}x${height} ${legacy?'legacy':'metadata'}: stable swap, contain, resize`);
     await page.close();
   }
-}finally{await browser?.close();await server.close();}
+}finally{await browser?.close();await vite.close();}

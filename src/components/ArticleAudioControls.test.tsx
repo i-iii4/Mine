@@ -50,8 +50,8 @@ class MockAudioContext {
 }
 
 const articleAudioGateway = {
-  getState: vi.fn<(...args: [string]) => Promise<typeof ABSENT_STATE | typeof READY_STATE>>(),
-  generate: vi.fn<(...args: [string]) => Promise<typeof ABSENT_STATE | typeof READY_STATE>>(),
+  getState: vi.fn<(...args: [string]) => Promise<ArticleAudioState>>(),
+  generate: vi.fn<(...args: [string]) => Promise<ArticleAudioState>>(),
   remove: vi.fn<(...args: [string]) => Promise<void>>(),
   setPosition: vi.fn<(...args: [string, number, number | null, boolean]) => Promise<void>>(),
   resolvePlaybackSource: vi.fn((state: ArticleAudioState) =>

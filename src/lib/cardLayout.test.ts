@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LightBlock } from "@/types";
 import { deriveCardContent, deriveCardLayoutDescriptor } from "./cardLayout";
-import { CARD_COLLECTION_PILLS_ENABLED } from "./cardCollections";
+import { lightBlock } from "@/test/blocks";
 
 function cardKindForBlockType(blockType: LightBlock["block_type"]): LightBlock["card_kind"] {
   return blockType === "article"
@@ -17,7 +17,7 @@ function makeBlock(
   overrides: Partial<LightBlock> & { block_type: LightBlock["block_type"] },
 ): LightBlock {
   const cardKind = overrides.card_kind ?? cardKindForBlockType(overrides.block_type);
-  return {
+  return lightBlock({
     id: 1,
     slug: "test",
     card_kind: cardKind,
@@ -35,7 +35,7 @@ function makeBlock(
     media_dimensions: null,
     preview_manifest: null,
     ...overrides,
-  };
+  });
 }
 
 
@@ -744,10 +744,9 @@ describe("the media's outline over a text part (SPEC_FEED_DISPLAY.md, Д20)", ()
     }
   });
 
-  it("counts the row of collections as text under the media exactly while the pills show (С9)", () => {
+  it("never counts a card's collections as text under its media", () => {
     const mediaOnly = article({ title: null, preview_text: null, author: null, body: "![](photo.jpg)" });
-    expect(lineUnder({ ...mediaOnly, collections: ["Reading"] }, "cards")).toBe(CARD_COLLECTION_PILLS_ENABLED);
-    // A block read without its collections (Detail) has none to show.
+    expect(lineUnder({ ...mediaOnly, collections: ["Reading"] }, "cards")).toBe(false);
     expect(lineUnder(mediaOnly, "cards")).toBe(false);
   });
 });

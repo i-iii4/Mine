@@ -46,9 +46,7 @@ import {
 import { cn } from "@/lib/utils";
 import { CardCollectionsRow, CardHoverMenu } from "./CardHoverMenu";
 import { EDGE_FADE_WIDTH, createTopFadeMaskStyle } from "@/lib/edgeFade";
-import { buttonVariants } from "@/components/ui/button";
-import { collectionRefLabel } from "@/lib/collections";
-import { CARD_COLLECTION_PILLS_HEIGHT_PX, CardCollectionsContext, shownCollections, useCollectionOrder } from "@/lib/cardCollections";
+import { useCollectionOrder } from "@/lib/cardCollections";
 import { FeedVideoSurface } from "./FeedVideoSurface";
 import { FeedVideoPoster } from "./FeedVideoPoster";
 import { PlayBadge } from "./PlayBadge";
@@ -420,7 +418,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
       // hover is enabled, or a pointer-opened menu holding the row (С8).
       data-card-lift-hover={lifts && hoverEnabled && hoverArmed ? "" : undefined}
       data-card-lift-pinned={lifts && actionsPinned ? "" : undefined}
-      style={lifts ? cardLiftStyle(block, descriptor) : undefined}
+      style={lifts ? cardLiftStyle(descriptor) : undefined}
       className={cn(
         "h-full",
         // `group` scopes the hover buttons' `group-hover`: an unarmed card is
@@ -450,16 +448,15 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
         />
       )}
       <CardContent block={block} vaultPath={vaultPath} thumbsRootPath={thumbsRootPath} thumbVersion={thumbVersion} priority={priority} allowPlayback={allowPlayback} />
-      {lifts && <CardLiftCaption block={block} descriptor={descriptor} />}
+      {lifts && <CardLiftCaption descriptor={descriptor} />}
     </CardFrame>
   );
 });
 
-/// Whether the card shows a text part: its text, or the pills under it (С9),
-/// in the presentation that keeps them in the card.
-function hasTextPart(block: LightBlock, descriptor: CardLayoutDescriptor): boolean {
-  return descriptor.textShown === "always"
-    && (hasCardText(descriptor.text) || shownCollections(block).length > 0);
+/// Whether the card shows a text part: its text, in the presentation that
+/// keeps it in the card.
+function hasTextPart(descriptor: CardLayoutDescriptor): boolean {
+  return descriptor.textShown === "always" && hasCardText(descriptor.text);
 }
 
 /// Whether the lift brings up a caption: the presentation keeps the card's
@@ -471,16 +468,16 @@ function hasLiftCaption(descriptor: CardLayoutDescriptor): boolean {
 /// How far a lifting card rises, as the `--card-lift` its frame carries
 /// (С8.1): by the room under its last letters, the same rule for every card,
 /// or by its caption, which sets the property itself (`MediaLiftCaption`).
-function cardLiftStyle(block: LightBlock, descriptor: CardLayoutDescriptor): CSSProperties | undefined {
+function cardLiftStyle(descriptor: CardLayoutDescriptor): CSSProperties | undefined {
   return hasLiftCaption(descriptor)
     ? undefined
-    : collectionsRowLiftStyle(hasTextPart(block, descriptor));
+    : collectionsRowLiftStyle(hasTextPart(descriptor));
 }
 
 /// A card whose text the presentation keeps for the lift says it there
 /// (С8.7); every other card brings up its row alone (Е12).
-function CardLiftCaption({ block, descriptor }: { block: LightBlock; descriptor: CardLayoutDescriptor }) {
-  return hasLiftCaption(descriptor) ? <MediaLiftCaption block={block} text={descriptor.text} /> : null;
+function CardLiftCaption({ descriptor }: { descriptor: CardLayoutDescriptor }) {
+  return hasLiftCaption(descriptor) ? <MediaLiftCaption text={descriptor.text} /> : null;
 }
 
 /// The row of collections sits 8px above the bottom edge and is 24px
@@ -516,13 +513,12 @@ const LIFT_CAPTION_TEXT_CLAMP_CLASS: Record<number, string> = {
   2: "line-clamp-2",
 };
 
-/// What a lift caption shows: its title, how many lines of its text, its
-/// author and its pills.
+/// What a lift caption shows: its title, how many lines of its text and its
+/// author.
 interface LiftCaptionLines {
   title: boolean;
   textLines: number;
   author: boolean;
-  pills: boolean;
 }
 
 /// The caption's line boxes, top to bottom, as its text stack paints them.
@@ -531,7 +527,6 @@ function liftCaptionStack(lines: LiftCaptionLines): Array<{ line: CardTextLine; 
   if (lines.title) stack.push({ line: "title", height: CONTENT_CARD_SINGLE_LINE_HEIGHT_PX });
   if (lines.textLines > 0) stack.push({ line: "preview", height: lines.textLines * CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX });
   if (lines.author) stack.push({ line: "author", height: CONTENT_CARD_SINGLE_LINE_HEIGHT_PX });
-  if (lines.pills) stack.push({ line: "pills", height: CARD_COLLECTION_PILLS_HEIGHT_PX });
   return stack;
 }
 
@@ -545,14 +540,14 @@ function liftCaptionHeight(lines: LiftCaptionLines): number {
 }
 
 /// The lines of a lift caption that fit under its cap, whole lines from the
-/// top: the title, the text a line at a time up to two, the author, the
-/// pills, until the next one would pass the cap (С8.7). No line is ever cut
-/// through: text cut short ends in an ellipsis. The first line stays even
-/// when it alone passes the cap, which only a column narrower than the
-/// feed's own can make. A card not laid out yet has no cap and shows all.
-function fitLiftCaption(text: CardLayoutText, pills: boolean, capPx: number | null): LiftCaptionLines {
+/// top: the title, the text a line at a time up to two, the author, until
+/// the next one would pass the cap (С8.7). No line is ever cut through: text
+/// cut short ends in an ellipsis. The first line stays even when it alone
+/// passes the cap, which only a column narrower than the feed's own can
+/// make. A card not laid out yet has no cap and shows all.
+function fitLiftCaption(text: CardLayoutText, capPx: number | null): LiftCaptionLines {
   const growth: LiftCaptionLines[] = [];
-  let lines: LiftCaptionLines = { title: false, textLines: 0, author: false, pills: false };
+  let lines: LiftCaptionLines = { title: false, textLines: 0, author: false };
   const grow = (next: LiftCaptionLines) => {
     lines = next;
     growth.push(next);
@@ -562,7 +557,6 @@ function fitLiftCaption(text: CardLayoutText, pills: boolean, capPx: number | nu
     for (let count = 1; count <= LIFT_CAPTION_TEXT_MAX_LINES; count += 1) grow({ ...lines, textLines: count });
   }
   if (text.author) grow({ ...lines, author: true });
-  if (pills) grow({ ...lines, pills: true });
   if (capPx === null) return lines;
   let fitted = growth[0] ?? lines;
   for (const candidate of growth) {
@@ -583,11 +577,9 @@ function fitLiftCaption(text: CardLayoutText, pills: boolean, capPx: number | nu
 /// cut under the media. Under the caption it keeps room for the row of
 /// collections.
 function MediaLiftCaption({
-  block,
   text,
   inFlow = false,
 }: {
-  block: LightBlock;
   text: CardLayoutText;
   /** A preview's caption (С10): it stands under the media in the card's
    *  flow, the card taller by it, instead of rising over the media. */
@@ -620,8 +612,7 @@ function MediaLiftCaption({
     };
   }, [inFlow]);
 
-  const collections = shownCollections(block);
-  const fitted = fitLiftCaption(text, collections.length > 0, capPx);
+  const fitted = fitLiftCaption(text, capPx);
   const lines = liftCaptionStack(fitted).map(({ line }) => line);
   const first = lines[0];
   const last = lines[lines.length - 1];
@@ -658,9 +649,6 @@ function MediaLiftCaption({
             >
               {text.author}
             </p>
-          )}
-          {fitted.pills && (
-            <CardCollectionPills collections={collections} style={{ marginTop: gapBefore("pills") }} />
           )}
         </div>
       )}
@@ -743,8 +731,8 @@ function StaticCard({
               ? content
               : <div data-card-preview-media-box="" style={{ height: reservedHeight }}>{content}</div>}
             {hasLiftCaption(descriptor)
-              ? <MediaLiftCaption block={block} text={descriptor.text} inFlow />
-              : <div aria-hidden="true" data-card-preview-row-room="" style={collectionsRowRoomStyle(block, descriptor)} />}
+              ? <MediaLiftCaption text={descriptor.text} inFlow />
+              : <div aria-hidden="true" data-card-preview-row-room="" style={collectionsRowRoomStyle(descriptor)} />}
             <PreviewCollectionsRow collections={block.collections} />
           </>
         ) : content}
@@ -756,8 +744,8 @@ function StaticCard({
 /// The room an unfolded preview keeps under its content for the row of
 /// collections: exactly the lift the feed card rises by to bring the row up
 /// (С8.1), so the gap from the last line to the row's letters is the feed's.
-function collectionsRowRoomStyle(block: LightBlock, descriptor: CardLayoutDescriptor): CSSProperties {
-  return { height: `var(--card-lift)`, ...collectionsRowLiftStyle(hasTextPart(block, descriptor)) };
+function collectionsRowRoomStyle(descriptor: CardLayoutDescriptor): CSSProperties {
+  return { height: `var(--card-lift)`, ...collectionsRowLiftStyle(hasTextPart(descriptor)) };
 }
 
 /// The row of collections an unfolded preview shows where the feed card's
@@ -1088,7 +1076,6 @@ const CardBody = memo(function CardBody({
   const title = text?.title ?? "";
   const shownText = text ? searchExcerptText(textSearchMatch, text.text) : "";
   const author = text?.author ?? "";
-  const collections = text ? shownCollections(block) : [];
 
   // The lines this card paints, in order: an absent part takes no line and no
   // gap with it, exactly as the reserved height counts it (cardHeight.ts).
@@ -1096,7 +1083,6 @@ const CardBody = memo(function CardBody({
   if (title) lines.push("title");
   if (shownText) lines.push("preview");
   if (author) lines.push("author");
-  if (collections.length > 0) lines.push("pills");
   const gapBefore = textGapsFor(lines);
 
   const mediaSlot = media ? (
@@ -1137,7 +1123,6 @@ const CardBody = memo(function CardBody({
               {author}
             </p>
           )}
-          <CardCollectionPills collections={collections} style={{ marginTop: gapBefore("pills") }} />
         </>
       ) : null}
     />
@@ -1470,50 +1455,6 @@ function GalleryTiles({
               <div className="absolute inset-0 bg-card" />
             )}
           </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/// A card's collections as one row of pills under its text, in the sidebar's
-/// order (SPEC_CARD_STATES.md, С9). The open collection's pill is marked;
-/// pressing a pill opens its collection, as the sidebar row does, and never
-/// the card. One row only, so the reserved height is fixed: pills past the
-/// card's width fade out at its edge.
-function CardCollectionPills({ collections, style }: { collections: readonly string[]; style?: CSSProperties }) {
-  const navigation = useContext(CardCollectionsContext);
-  if (collections.length === 0) return null;
-  return (
-    <div
-      data-card-collections=""
-      className="flex h-6 gap-1 overflow-hidden [mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)]"
-      style={style}
-    >
-      {collections.map((tag) => {
-        const current = navigation?.currentTag === tag;
-        return (
-          <button
-            key={tag}
-            type="button"
-            data-card-collection-pill={tag}
-            data-card-collection-current={current ? "" : undefined}
-            className={cn(
-              buttonVariants({ variant: "reference", size: "xs" }),
-              // A pill that opens its collection: the reference body with the
-              // line colour round it, since it can be pressed.
-              "h-6 shrink-0 font-mono font-normal",
-              current ? "text-foreground outline-[var(--border-accent)]" : "text-muted-foreground outline-border",
-            )}
-            onPointerDown={(event) => event.stopPropagation()}
-            onKeyDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              navigation?.open(tag);
-            }}
-          >
-            {collectionRefLabel(tag)}
-          </button>
         );
       })}
     </div>

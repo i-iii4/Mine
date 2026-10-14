@@ -165,9 +165,19 @@ struct HostInner {
     spaces: BTreeMap<String, HostedSpace>,
 }
 
+/// When a released space closes (SPEC_TABS.md, В7).
+enum Grace {
+    /// After this long without a lease, on a timer thread.
+    After(Duration),
+    /// When a test says the grace period is over (`SpaceHost::elapse_grace`):
+    /// a test never guesses how soon a timer thread runs.
+    #[cfg(test)]
+    Manual(Mutex<Vec<(String, u64)>>),
+}
+
 struct HostShared {
     inner: Mutex<HostInner>,
-    grace: Duration,
+    grace: Grace,
 }
 
 /// Every open space in the process, by `vault_id` (SPEC_TABS.md, В7).
@@ -184,11 +194,35 @@ impl Default for SpaceHost {
 impl SpaceHost {
     /// A host whose released spaces close after `grace`.
     pub fn with_grace(grace: Duration) -> Self {
+        Self::with(Grace::After(grace))
+    }
+
+    /// A host whose released spaces close only when the test calls
+    /// `elapse_grace`.
+    #[cfg(test)]
+    pub(crate) fn with_manual_grace() -> Self {
+        Self::with(Grace::Manual(Mutex::new(Vec::new())))
+    }
+
+    fn with(grace: Grace) -> Self {
         Self {
             shared: Arc::new(HostShared {
                 inner: Mutex::new(HostInner::default()),
                 grace,
             }),
+        }
+    }
+
+    /// End the grace period of every space released so far, as its timer
+    /// would.
+    #[cfg(test)]
+    pub(crate) fn elapse_grace(&self) {
+        let Grace::Manual(pending) = &self.shared.grace else {
+            panic!("elapse_grace needs a host made by with_manual_grace");
+        };
+        let due = std::mem::take(&mut *lock(pending));
+        for (vault_id, generation) in due {
+            self.shared.close_if_unleased(&vault_id, generation);
         }
     }
 
@@ -272,9 +306,16 @@ impl HostShared {
             hosted.release_generation += 1;
             hosted.release_generation
         };
+        let grace = match &self.grace {
+            Grace::After(grace) => *grace,
+            #[cfg(test)]
+            Grace::Manual(pending) => {
+                lock(pending).push((vault_id.to_string(), generation));
+                return;
+            }
+        };
         let shared = Arc::clone(self);
         let vault_id = vault_id.to_string();
-        let grace = self.grace;
         let spawned = std::thread::Builder::new()
             .name("space-release".into())
             .spawn(move || {
@@ -585,17 +626,43 @@ mod tests {
     #[test]
     fn the_last_release_closes_the_space_after_the_grace_period() {
         let dir = tempfile::tempdir().unwrap();
-        let host = SpaceHost::with_grace(Duration::from_millis(30));
+        let host = SpaceHost::with_manual_grace();
         let lease = host.lease("space-x");
         lease.space().publish(session(dir.path()), None);
         let space = Arc::clone(lease.space());
         drop(lease);
 
         assert!(host.get("space-x").is_some(), "closed before the grace period");
-        std::thread::sleep(Duration::from_millis(120));
+        host.elapse_grace();
         assert!(host.get("space-x").is_none());
         assert!(space.is_closed());
         assert!(space.root().is_none(), "the session outlived the space");
+    }
+
+    /// Wait until `done` holds. The deadline only ends a test that would
+    /// otherwise hang; it is not a guess at how long the work takes.
+    fn eventually(done: impl Fn() -> bool) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while !done() {
+            if std::time::Instant::now() > deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        true
+    }
+
+    #[test]
+    fn the_grace_timer_closes_a_released_space_on_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = SpaceHost::with_grace(Duration::from_millis(20));
+        let lease = host.lease("space-x");
+        lease.space().publish(session(dir.path()), None);
+        let space = Arc::clone(lease.space());
+        drop(lease);
+
+        assert!(eventually(|| host.get("space-x").is_none()), "the timer never closed the space");
+        assert!(space.is_closed());
     }
 
     #[test]
@@ -621,14 +688,14 @@ mod tests {
     #[test]
     fn a_lease_within_the_grace_period_keeps_the_same_owner() {
         let dir = tempfile::tempdir().unwrap();
-        let host = SpaceHost::with_grace(Duration::from_millis(40));
+        let host = SpaceHost::with_manual_grace();
         let first = host.lease("space-x");
         first.space().publish(session(dir.path()), None);
         let owner = Arc::clone(first.space());
         drop(first);
 
         let again = host.lease("space-x");
-        std::thread::sleep(Duration::from_millis(120));
+        host.elapse_grace();
         assert!(Arc::ptr_eq(again.space(), &owner));
         assert!(!owner.is_closed());
         assert_eq!(owner.root().as_deref(), Some(dir.path()));
@@ -636,7 +703,7 @@ mod tests {
 
     #[test]
     fn the_startup_sync_runs_once_per_opening_of_a_space() {
-        let host = SpaceHost::with_grace(Duration::from_millis(20));
+        let host = SpaceHost::with_manual_grace();
         let first = host.lease("space-x");
         assert!(!first.space().opening_synced());
         first.space().mark_opening_synced();
@@ -648,24 +715,24 @@ mod tests {
         // Closed after its grace period and opened again: a new opening syncs.
         drop(first);
         drop(second);
-        std::thread::sleep(Duration::from_millis(100));
+        host.elapse_grace();
         assert!(host.get("space-x").is_none());
         assert!(!host.lease("space-x").space().opening_synced());
     }
 
     #[test]
     fn running_work_keeps_the_space_after_its_tabs_close() {
-        let host = SpaceHost::with_grace(Duration::from_millis(20));
+        let host = SpaceHost::with_manual_grace();
         let tabs = TabRegistry::default();
         let request = tabs.begin_selection("tab-a", stamp(1)).unwrap();
         tabs.bind("tab-a", request, host.lease("space-x")).unwrap();
         let job = host.lease("space-x");
 
         tabs.remove("tab-a");
-        std::thread::sleep(Duration::from_millis(80));
+        host.elapse_grace();
         assert!(host.get("space-x").is_some());
         drop(job);
-        std::thread::sleep(Duration::from_millis(80));
+        host.elapse_grace();
         assert!(host.get("space-x").is_none());
     }
 
@@ -689,7 +756,7 @@ mod tests {
 
     #[test]
     fn rebinding_a_tab_releases_its_previous_space() {
-        let host = SpaceHost::with_grace(Duration::from_millis(20));
+        let host = SpaceHost::with_manual_grace();
         let tabs = TabRegistry::default();
         let first = tabs.begin_selection("tab-a", stamp(1)).unwrap();
         tabs.bind("tab-a", first, host.lease("space-x")).unwrap();
@@ -698,7 +765,7 @@ mod tests {
 
         assert_eq!(host.leases_of("space-x"), 0);
         assert_eq!(host.leases_of("space-y"), 1);
-        std::thread::sleep(Duration::from_millis(80));
+        host.elapse_grace();
         assert!(host.get("space-x").is_none());
     }
 

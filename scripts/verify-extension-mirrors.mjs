@@ -1,17 +1,28 @@
 import { createHash } from 'node:crypto';
+import { readdirSync } from 'node:fs';
 import { lstat, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repository = fileURLToPath(new URL('../', import.meta.url));
-const resourceRoot = 'safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources';
-// Only these changed generated files receive contract coverage. No directory exemption.
-export const SAFARI_MIRRORS = [
-  'background.js',
-  'lib/storedValue.js',
-  'lib/saveProtocol.js',
-  'lib/standaloneVault.js',
-].map(path => ({ source: `extension/${path}`, mirror: `${resourceRoot}/${path}` }));
+export const SAFARI_RESOURCES = 'safari-extension/Local Arena Clipper/Local Arena Clipper Extension/Resources';
+
+/**
+ * The files scripts/build-extension.mjs copies one by one from extension/
+ * into the Safari resources, by its own rule: the manifest, the background,
+ * the content script and every library script that is not a test. Every one
+ * of them is compared byte for byte; none is left out by a hand-kept list.
+ * The folders the build copies whole (dist, generated/save-core) are build
+ * output that Git does not keep.
+ */
+export function safariMirrors(root = repository) {
+  const libraries = readdirSync(resolve(root, 'extension/lib'))
+    .filter(name => name.endsWith('.js') && !name.includes('.test.')).sort().map(name => `lib/${name}`);
+  return ['background.js', 'content.js', 'manifest.json', ...libraries]
+    .map(path => ({ source: `extension/${path}`, mirror: `${SAFARI_RESOURCES}/${path}` }));
+}
+
+export const SAFARI_MIRRORS = safariMirrors();
 
 export async function verifyExtensionMirrors(root = repository) {
   const evidence = [];

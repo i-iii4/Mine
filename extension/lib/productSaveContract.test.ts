@@ -3,17 +3,12 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
 import { expect, it } from "vitest";
-import type { ArticleData } from "../popup/lib/messaging";
 import "./productExtraction.js";
 
 // Use the same compiled core as standaloneVault.test.ts. The capture command
 // constructs final Markdown in memory and performs no filesystem/network I/O.
 const wasm = createRequire(import.meta.url)("../../output/playwright/save-core-node/mine_core.js");
-const extractor = (globalThis as unknown as {
-  MineProductExtraction: {
-    extractProductArticle: (doc: Document, url: string, convert: (html: string, url: string) => string) => ArticleData | null;
-  };
-}).MineProductExtraction;
+const extractor = globalThis.MineProductExtraction;
 
 it("preserves nine ordered product embeds, title and source in final save-core Markdown", () => {
   const url = "https://shop.example/products/meridian";
@@ -50,7 +45,8 @@ it("preserves nine ordered product embeds, title and source in final save-core M
     expect(markdown).not.toContain("source:");
     expect(markdown).toContain("A book about geometry.");
     expect(markdown).toContain("192 pages");
-    expect(markdown.indexOf(imageUrls[8])).toBeLessThan(markdown.indexOf("A book about geometry."));
+    // The last of the nine images made above stands before the description.
+    expect(markdown.indexOf(imageUrls[8]!)).toBeLessThan(markdown.indexOf("A book about geometry."));
   } finally {
     dom.window.close();
   }

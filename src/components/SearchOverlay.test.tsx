@@ -8,6 +8,7 @@ import {
   SEARCH_OVERLAY_RECENT_LIMIT,
   SEARCH_OVERLAY_RESULT_LIMIT,
 } from "./SearchOverlay";
+import { lightBlock } from "@/test/blocks";
 
 const listGridBlocksMock = vi.fn<(
   tag?: string,
@@ -73,7 +74,7 @@ vi.mock("@/components/CollectionPicker", () => ({
 }));
 
 function makeBlock(id: number, slug: string, overrides: Partial<LightBlock> = {}): LightBlock {
-  return {
+  return lightBlock({
     id,
     slug,
     card_kind: "article",
@@ -95,11 +96,11 @@ function makeBlock(id: number, slug: string, overrides: Partial<LightBlock> = {}
     collections: [],
     feed_playback: null,
     ...overrides,
-  };
+  });
 }
 
 function bodyMatch(excerpt: string, ranges: SearchMatch["ranges"]): SearchMatch {
-  return { field: "body", kind: "exact", excerpt, ranges, score: 100 };
+  return { field: "body", kind: "exact", excerpt, ranges, score: 100, explanation: null };
 }
 
 function snapshot(
@@ -430,7 +431,7 @@ describe("SearchOverlay", () => {
       listGridBlocksMock.mockResolvedValue(snapshot([
         makeBlock(1, `Cards/${post}`, {
           preview_text: "Something else entirely",
-          search_match: { field: "title", kind: "prefix", excerpt: post, ranges: [{ start, end: start + 4 }], score: 9 },
+          search_match: { field: "title", kind: "prefix", excerpt: post, ranges: [{ start, end: start + 4 }], score: 9, explanation: null },
         }),
       ]));
       renderOverlay({ query: "glor" });
@@ -463,7 +464,7 @@ describe("SearchOverlay", () => {
     try {
       listGridBlocksMock.mockResolvedValue(snapshot([
         makeBlock(1, "Cards/Large Language Models explained briefly", {
-          search_match: { field: "body", kind: "exact", excerpt, ranges: [{ start, end: start + 5 }], score: 9 },
+          search_match: { field: "body", kind: "exact", excerpt, ranges: [{ start, end: start + 5 }], score: 9, explanation: null },
         }),
       ]));
       renderOverlay({ query: "known" });
@@ -494,6 +495,7 @@ describe("SearchOverlay", () => {
             excerpt: "Шуховская башня",
             ranges: [{ start: 10, end: 15 }],
             score: 8,
+            explanation: null,
           },
         }),
       ]),
@@ -742,10 +744,10 @@ describe("SearchOverlay", () => {
         search_match: bodyMatch("around the match here", [{ start: 11, end: 16 }]),
       }),
       makeBlock(2, "semantic", {
-        search_match: { field: "semantic", kind: "semantic", excerpt: "meaning excerpt", ranges: [], score: 50 },
+        search_match: { field: "semantic", kind: "semantic", excerpt: "meaning excerpt", ranges: [], score: 50, explanation: null },
       }),
       makeBlock(3, "author", {
-        search_match: { field: "author", kind: "exact", excerpt: "@hidden-author", ranges: [], score: 80 },
+        search_match: { field: "author", kind: "exact", excerpt: "@hidden-author", ranges: [], score: 80, explanation: null },
       }),
     ]));
     renderOverlay({ query: "match" });

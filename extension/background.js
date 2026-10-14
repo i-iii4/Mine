@@ -47,15 +47,79 @@ try {
   console.warn("[Mine] setAccessLevel unsupported:", e);
 }
 
+/** @typedef {chrome.tabs.Tab & { id: number }} TabWithId */
+/**
+ * A content-script group of the manifest. The chrome typings leave out `world`,
+ * which Manifest V3 has: the page's own world (`MAIN`) or the extension's.
+ * @typedef {NonNullable<chrome.runtime.Manifest["content_scripts"]>[number] & { world?: string }} ContentScriptGroup
+ */
+/** @typedef {ContentScriptGroup & { js: string[], matches: string[] }} PlannedGroup */
+/** @typedef {chrome.runtime.MessageSender & { tab: TabWithId }} TabSender */
+/**
+ * What an opening of the clipper carries (`launchOptions`). The context-menu
+ * target and the post a page already read pass through as they came.
+ * @typedef {{ fallbackUrl?: string | null, contextMenu?: unknown, preloaded?: unknown, allowWindowFallback?: boolean }} OpenOptions
+ */
+/**
+ * The clip of an open overlay as this worker keeps it: it reads only what
+ * routes the clip and keeps the rest as the editor wrote it
+ * (popup/lib/openClip.ts).
+ * @typedef {{ version: number, pageUrl: string, screenshot?: unknown } & Record<string, unknown>} KeptClip
+ */
+/**
+ * An answer of the helper, or this worker's own failure in its shape; the
+ * worker reads only the fields it checks.
+ * @typedef {Record<string, unknown>} HostReply
+ */
+
+// ── Values from outside this worker ──────────────────────────────────────
+//
+// Messages, the helper's answers, storage and network answers arrive as their
+// writer made them. The worker reads them through these checks.
+
+/// Whether the fields of `value` can be read: an object, not an array.
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/// The fields of a stored record, or none when the value is not one.
+/** @param {unknown} value @returns {Record<string, unknown>} */
+function asRecord(value) {
+  return isRecord(value) ? value : {};
+}
+
+/// The items of a stored list, or none when the value is not one.
+/** @param {unknown} value @returns {unknown[]} */
+function asList(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+/// What a failure says: its `message`, else the value itself. A failure may be
+/// an error of another realm or `chrome.runtime.lastError`, a plain object.
+/** @param {unknown} error @returns {string} */
+function failureText(error) {
+  return String((isRecord(error) ? error.message : undefined) ?? error);
+}
+
+/// Whether the browser gave `tab` its id, the one every call addresses it by.
+/** @param {chrome.tabs.Tab | undefined} tab @returns {tab is TabWithId} */
+function hasTabId(tab) {
+  return typeof tab?.id === "number";
+}
+
+/** @param {string | null | undefined} url */
 function isContentScriptCompatible(url) {
   if (!url) return false;
   return url.startsWith("http://") || url.startsWith("https://") || url.startsWith("file://");
 }
 
+/** @param {chrome.contextMenus.OnClickData} info @param {chrome.tabs.Tab | undefined} tab */
 function bestContextMenuPageUrl(info, tab) {
   return tab?.url || info?.pageUrl || info?.frameUrl || info?.srcUrl || info?.linkUrl || null;
 }
 
+/** @param {chrome.tabs.Tab | undefined} tab @param {string | null} [fallbackUrl] */
 async function resolveClipperTarget(tab, fallbackUrl = null) {
   const tabId = tab?.id;
   let tabUrl = tab?.url || fallbackUrl || null;
@@ -76,6 +140,7 @@ const CAPTURE_PAGE_MOVED = "The page changed while the screenshot was taken. Ret
 
 /// Whether two addresses name the same document. The address compares whole,
 /// fragment included, the same rule content extraction follows.
+/** @param {unknown} tabUrl @param {unknown} documentUrl */
 function showsCaptureDocument(tabUrl, documentUrl) {
   if (typeof tabUrl !== "string" || typeof documentUrl !== "string") return false;
   try {
@@ -92,12 +157,14 @@ function showsCaptureDocument(tabUrl, documentUrl) {
 /// (SPEC_CLIPPER.md, «Доработки после живого просмотра», Р9, 12.10.2026); a
 /// frame taken while the tab changed address is dropped. An address a clipper
 /// of an earlier build still sends with the request is not read.
+/** @param {number} tabId @returns {Promise<string>} */
 async function captureTabViewport(tabId) {
   const tab = await chrome.tabs.get(tabId);
   if (!tab.active) {
     throw new Error("The page is not in front of its window. Bring it forward and retake the screenshot.");
   }
-  await new Promise((resolve) => prepareTabForViewportCapture(tabId, resolve));
+  await new Promise((resolve) => prepareTabForViewportCapture(tabId, () => resolve(undefined)));
+  /** @type {string} */
   const dataUrl = await new Promise((resolve, reject) => {
     chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 95 }, (url) => {
       // The page shows its Mine buttons again whatever came of the frame
@@ -123,9 +190,10 @@ async function captureTabViewport(tabId) {
 /// (Р9). `cropId` names the crop of the editor that asked, and the crop
 /// reports under it: only that editor takes the result (SPEC_AUDIT_FIXES.md,
 /// Г3.3).
+/** @param {number} tabId @param {string | null} cropId @returns {Promise<unknown>} */
 function startCropInTab(tabId, cropId) {
   return new Promise((resolve) => {
-    chrome.tabs.sendMessage(tabId, { action: "startCropOverlay", cropId }, (resp) => {
+    chrome.tabs.sendMessage(tabId, { action: "startCropOverlay", cropId }, (/** @type {unknown} */ resp) => {
       if (chrome.runtime.lastError) {
         resolve({ ok: false, error: "Could not reach the page. Reload the tab after updating the extension." });
         return;
@@ -137,6 +205,7 @@ function startCropInTab(tabId, cropId) {
 
 /// The frame is taken: the page brings back what it hid for it. Best-effort,
 /// like the preparation; the page also brings it back on its own.
+/** @param {number} tabId */
 function finishTabViewportCapture(tabId) {
   if (typeof tabId !== "number") return;
   try {
@@ -148,6 +217,7 @@ function finishTabViewportCapture(tabId) {
   }
 }
 
+/** @param {number} tabId @param {() => void} callback */
 function prepareTabForViewportCapture(tabId, callback) {
   if (typeof tabId !== "number") {
     callback();
@@ -166,14 +236,15 @@ function prepareTabForViewportCapture(tabId, callback) {
 /// target, a post already read), so it replaces a clip kept open with edits
 /// (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч11). `extra` carries the clip of an
 /// overlay reopened after its page changed (Ч12).
+/** @param {number} tabId @param {boolean} freshMaterial @param {Record<string, unknown>} [extra] @returns {Promise<boolean>} */
 function showExistingClipperOverlay(tabId, freshMaterial, extra = {}) {
   return new Promise((resolve) => {
-    chrome.tabs.sendMessage(tabId, { action: "showClipperOverlay", freshMaterial, ...extra }, (resp) => {
+    chrome.tabs.sendMessage(tabId, { action: "showClipperOverlay", freshMaterial, ...extra }, (/** @type {unknown} */ resp) => {
       if (chrome.runtime.lastError) {
         resolve(false);
         return;
       }
-      resolve(Boolean(resp?.ok));
+      resolve(isRecord(resp) && Boolean(resp.ok));
     });
   });
 }
@@ -191,9 +262,10 @@ const CLIPPER_WINDOW_SOURCES_KEY = "mineClipperWindowSources";
 // Buffered page data older than this is a leftover, not the current opening.
 const CLIPPER_LAUNCH_TTL_MS = 10 * 60 * 1000;
 
+/** @param {string} key */
 async function sessionRecord(key) {
   const stored = await chrome.storage.session.get(key);
-  return stored[key] ?? {};
+  return asRecord(stored[key]);
 }
 
 // Every change to a clipper session value runs alone: it reads the value,
@@ -201,18 +273,32 @@ async function sessionRecord(key) {
 // by several events at once (a tab closing, Alt+A on another tab, a window
 // closing) otherwise lets each write over the others' changes, and an opening
 // loses its context-menu target or Instagram post (SPEC_AUDIT_FIXES.md, Б4.8).
+/** @type {Promise<unknown>} */
 let clipperSessionChanges = Promise.resolve();
 
 /// `change` receives the stored value and returns `{ next, result }`. `next`
 /// is written back unless it is `undefined`, which leaves storage untouched,
 /// or `null`, which removes the key; `result` is what the returned promise
 /// resolves to.
+/**
+ * @template R
+ * @param {string} key
+ * @param {(stored: unknown) => { next?: unknown, result?: R }} change
+ * @returns {Promise<R | undefined>}
+ */
 function changeSessionValue(key, change) {
   return changeStoredValue(chrome.storage.session, key, change);
 }
 
 /// The same for a value of `area`; every change of either storage area runs
 /// in the one queue.
+/**
+ * @template R
+ * @param {chrome.storage.StorageArea} area
+ * @param {string} key
+ * @param {(stored: unknown) => { next?: unknown, result?: R }} change
+ * @returns {Promise<R | undefined>}
+ */
 function changeStoredValue(area, key, change) {
   const run = clipperSessionChanges.then(async () => {
     const stored = await area.get(key);
@@ -225,11 +311,15 @@ function changeStoredValue(area, key, change) {
   return run;
 }
 
+/**
+ * @param {chrome.tabs.Tab | undefined} tab
+ * @param {{ fallbackUrl?: string | null, contextMenu?: unknown, preloaded?: unknown }} source
+ */
 function recordClipperLaunch(tab, source) {
-  if (typeof tab?.id !== "number") return Promise.resolve();
-  return changeSessionValue(CLIPPER_LAUNCHES_KEY, (launches = {}) => ({
+  if (!hasTabId(tab)) return Promise.resolve();
+  return changeSessionValue(CLIPPER_LAUNCHES_KEY, (launches) => ({
     next: {
-      ...launches,
+      ...asRecord(launches),
       [tab.id]: {
         sourceTabId: tab.id,
         sourceUrl: tab.url || source.fallbackUrl || null,
@@ -242,8 +332,10 @@ function recordClipperLaunch(tab, source) {
   }));
 }
 
+/** @param {number} tabId */
 function forgetClipperLaunch(tabId) {
-  return changeSessionValue(CLIPPER_LAUNCHES_KEY, (launches = {}) => {
+  return changeSessionValue(CLIPPER_LAUNCHES_KEY, (stored) => {
+    const launches = asRecord(stored);
     if (!(tabId in launches)) return {};
     const next = { ...launches };
     delete next[tabId];
@@ -251,11 +343,13 @@ function forgetClipperLaunch(tabId) {
   });
 }
 
+/** @param {number} windowId @param {number} tabId */
 function rememberClipperWindowSource(windowId, tabId) {
-  return changeSessionValue(CLIPPER_WINDOW_SOURCES_KEY, (sources = {}) => ({ next: { ...sources, [windowId]: tabId } }));
+  return changeSessionValue(CLIPPER_WINDOW_SOURCES_KEY, (sources) => ({ next: { ...asRecord(sources), [windowId]: tabId } }));
 }
 
 /// Bring forward the clipper window opened for `tabId`, if one is still open.
+/** @param {number} tabId */
 async function focusClipperWindowOf(tabId) {
   const sources = await sessionRecord(CLIPPER_WINDOW_SOURCES_KEY);
   for (const [windowId, sourceTabId] of Object.entries(sources)) {
@@ -271,8 +365,10 @@ async function focusClipperWindowOf(tabId) {
   return false;
 }
 
+/** @param {number} windowId */
 function forgetClipperWindowSource(windowId) {
-  return changeSessionValue(CLIPPER_WINDOW_SOURCES_KEY, (sources = {}) => {
+  return changeSessionValue(CLIPPER_WINDOW_SOURCES_KEY, (stored) => {
+    const sources = asRecord(stored);
     if (!(windowId in sources)) return {};
     const next = { ...sources };
     delete next[windowId];
@@ -280,6 +376,7 @@ function forgetClipperWindowSource(windowId) {
   });
 }
 
+/** @param {chrome.runtime.MessageSender} sender */
 function isExtensionPage(sender) {
   return typeof sender?.url === "string" && sender.url.startsWith(chrome.runtime.getURL(""));
 }
@@ -288,6 +385,7 @@ function isExtensionPage(sender) {
 const X_PAGE_ORIGINS = new Set(["https://x.com", "https://twitter.com", "https://pro.x.com"]);
 
 /// Whether the message comes from the top frame of a tab showing X.
+/** @param {chrome.runtime.MessageSender} sender @returns {sender is TabSender} */
 function isXPageSender(sender) {
   if (typeof sender?.tab?.id !== "number" || sender.frameId !== 0) return false;
   try {
@@ -301,9 +399,11 @@ function isXPageSender(sender) {
 /// own tab; the window asks from an extension page and is mapped to the tab
 /// it opened for. The window may ask before its source is written, so it
 /// waits a moment for it.
+/** @param {chrome.runtime.MessageSender} sender @returns {Promise<number | null>} */
 async function clipperSourceTab(sender) {
   if (!isExtensionPage(sender)) return sender.tab?.id ?? null;
-  const windowId = sender.tab?.windowId;
+  // A window without an id reads the key "undefined", as indexing always did.
+  const windowId = String(sender.tab?.windowId);
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const sourceTabId = (await sessionRecord(CLIPPER_WINDOW_SOURCES_KEY))[windowId];
     if (typeof sourceTabId === "number") return sourceTabId;
@@ -314,16 +414,19 @@ async function clipperSourceTab(sender) {
 
 /// The launch of the asking clipper. Buffered page data is handed out once;
 /// the source stays for a remount of the same clipper.
+/** @param {chrome.runtime.MessageSender} sender @returns {Promise<Record<string, unknown> | null>} */
 async function takeClipperLaunch(sender) {
   const sourceTabId = await clipperSourceTab(sender);
   if (typeof sourceTabId !== "number") return null;
-  const launch = await changeSessionValue(CLIPPER_LAUNCHES_KEY, (launches = {}) => {
+  const launch = await changeSessionValue(CLIPPER_LAUNCHES_KEY, (stored) => {
+    const launches = asRecord(stored);
     const taken = launches[sourceTabId];
-    if (!taken) return { result: null };
+    if (!isRecord(taken)) return { result: null };
     return { next: { ...launches, [sourceTabId]: { ...taken, contextMenu: null, preloaded: null } }, result: taken };
   });
   if (!launch) return null;
-  if (Date.now() - launch.createdAt > CLIPPER_LAUNCH_TTL_MS) {
+  // A launch without its time never expires, as `NaN > bound` never held.
+  if (typeof launch.createdAt === "number" && Date.now() - launch.createdAt > CLIPPER_LAUNCH_TTL_MS) {
     return { ...launch, contextMenu: null, preloaded: null };
   }
   return launch;
@@ -349,11 +452,13 @@ const OPEN_CLIP_PREFIX = "mineOpenClip:";
 // The clip format this version writes and opens (extension/popup/lib/openClip.ts).
 const OPEN_CLIP_VERSION = 1;
 
+/** @param {number} tabId */
 function openClipKey(tabId) {
   return `${OPEN_CLIP_PREFIX}${tabId}`;
 }
 
 // Changes of one tab's clip run one at a time, in the order they came.
+/** @type {Map<number, Promise<unknown>>} */
 const openClipChanges = new Map();
 
 // What a write of the clip kept: all of it, all but its frame, or nothing.
@@ -361,11 +466,19 @@ const OPEN_CLIP_KEPT = "kept";
 const OPEN_CLIP_KEPT_WITHOUT_SCREENSHOT = "kept_without_screenshot";
 const OPEN_CLIP_NOT_KEPT = "not_kept";
 
+/** @param {number} tabId @param {string} key */
 async function forgetOpenClipTab(tabId, key) {
   await chrome.storage.session.remove(key);
-  await changeSessionValue(OPEN_CLIP_TABS_KEY, (tabs = []) => ({ next: tabs.filter((id) => id !== tabId) }));
+  await changeSessionValue(OPEN_CLIP_TABS_KEY, (tabs) => ({ next: asList(tabs).filter((id) => id !== tabId) }));
 }
 
+/// `change` receives the stored clip, which may be of another format, and
+/// returns the clip to keep, `null` to forget it or `undefined` to leave it.
+/**
+ * @param {number} tabId
+ * @param {(stored: unknown) => KeptClip | null | undefined} change
+ * @returns {Promise<string | undefined>}
+ */
 function changeOpenClip(tabId, change) {
   const previous = openClipChanges.get(tabId) ?? Promise.resolve();
   const run = previous.then(async () => {
@@ -387,14 +500,14 @@ function changeOpenClip(tabId, change) {
     try {
       await chrome.storage.session.set({ [key]: next });
     } catch (error) {
-      console.warn("[Mine] open clip does not fit session storage:", String(error?.message ?? error));
+      console.warn("[Mine] open clip does not fit session storage:", failureText(error));
       kept = OPEN_CLIP_NOT_KEPT;
       if (next.screenshot) {
         try {
           await chrome.storage.session.set({ [key]: { ...next, screenshot: null } });
           kept = OPEN_CLIP_KEPT_WITHOUT_SCREENSHOT;
         } catch (withoutFrame) {
-          console.warn("[Mine] open clip does not fit session storage without its screenshot:", String(withoutFrame?.message ?? withoutFrame));
+          console.warn("[Mine] open clip does not fit session storage without its screenshot:", failureText(withoutFrame));
         }
       }
     }
@@ -402,7 +515,10 @@ function changeOpenClip(tabId, change) {
       await forgetOpenClipTab(tabId, key);
       return kept;
     }
-    await changeSessionValue(OPEN_CLIP_TABS_KEY, (tabs = []) => (tabs.includes(tabId) ? {} : { next: [...tabs, tabId] }));
+    await changeSessionValue(OPEN_CLIP_TABS_KEY, (stored) => {
+      const tabs = asList(stored);
+      return tabs.includes(tabId) ? {} : { next: [...tabs, tabId] };
+    });
     return kept;
   });
   const settled = run.catch(() => undefined);
@@ -415,30 +531,36 @@ function changeOpenClip(tabId, change) {
 
 /// Keep the clip an overlay handed over. Without a `screenshot` field the
 /// stored frame stays: the editor sends it only when it changed.
+/** @param {number} tabId @param {KeptClip} clip */
 function writeOpenClip(tabId, clip) {
   return changeOpenClip(tabId, (stored) => ({
     ...clip,
-    screenshot: Object.prototype.hasOwnProperty.call(clip, "screenshot") ? clip.screenshot : stored?.screenshot ?? null,
+    screenshot: Object.prototype.hasOwnProperty.call(clip, "screenshot")
+      ? clip.screenshot
+      : (isRecord(stored) ? stored.screenshot : undefined) ?? null,
   }));
 }
 
+/** @param {number} tabId */
 function clearOpenClip(tabId) {
   return changeOpenClip(tabId, (stored) => (stored === null ? undefined : null));
 }
 
+/** @param {number} tabId @returns {Promise<unknown>} */
 async function readOpenClip(tabId) {
   await (openClipChanges.get(tabId) ?? Promise.resolve());
   const key = openClipKey(tabId);
   return (await chrome.storage.session.get(key))[key] ?? null;
 }
 
+/** @param {unknown} value @returns {value is KeptClip} */
 function isOpenClip(value) {
-  return typeof value === "object" && value !== null && value.version === OPEN_CLIP_VERSION
-    && typeof value.pageUrl === "string";
+  return isRecord(value) && value.version === OPEN_CLIP_VERSION && typeof value.pageUrl === "string";
 }
 
 /// Whether the message comes from the top frame of a page in a tab: the frame
 /// an overlay lives in.
+/** @param {chrome.runtime.MessageSender} sender @returns {sender is TabSender} */
 function isPageTopFrame(sender) {
   return typeof sender?.tab?.id === "number" && sender.frameId === 0 && !isExtensionPage(sender);
 }
@@ -446,6 +568,7 @@ function isPageTopFrame(sender) {
 /// A new document in `tab` while its overlay was open: the overlay opens
 /// again there with the kept clip, by the delivery the icon uses. Openings of
 /// one tab still run one at a time (Г3.1).
+/** @param {TabWithId} tab */
 function restoreOpenClipInTab(tab) {
   return trackClipperOpening(() => oneOpeningPerTab(tab.id, async () => {
     const clip = await readOpenClip(tab.id);
@@ -474,8 +597,10 @@ function restoreOpenClipInTab(tab) {
 // inject the script again: two editors, one of them impossible to close. The
 // second opening waits for the first and then finds its overlay
 // (SPEC_AUDIT_FIXES.md, Г3.1). Other tabs open independently.
+/** @type {Map<number, Promise<unknown>>} */
 const clipperOpeningsByTab = new Map();
 
+/** @template T @param {number | undefined} tabId @param {() => Promise<T>} open @returns {Promise<T>} */
 function oneOpeningPerTab(tabId, open) {
   if (typeof tabId !== "number") return open();
   const previous = clipperOpeningsByTab.get(tabId) ?? Promise.resolve();
@@ -490,10 +615,12 @@ function oneOpeningPerTab(tabId, open) {
 
 // A pending extension update does not reload while a clipper is opening,
 // including one that waits for an earlier opening of its tab (В4.6).
+/** @param {chrome.tabs.Tab | undefined} tab @param {OpenOptions} [options] */
 function openClipperUi(tab, options = {}) {
   return trackClipperOpening(() => oneOpeningPerTab(tab?.id, () => openClipperUiNow(tab, options)));
 }
 
+/** @param {chrome.tabs.Tab | undefined} tab @param {OpenOptions} options @returns {Promise<"overlay" | "window" | "deferred">} */
 async function openClipperUiNow(tab, options) {
   // The overlay, its stylesheet and the clipper window are read from disk.
   // Files an update replaced are opened by the worker of their build, after
@@ -563,7 +690,7 @@ async function openClipperUiNow(tab, options) {
     // A position remembered on a display that is gone, or a screen smaller
     // than the window: the browser refuses it. Open where the browser
     // chooses rather than not at all.
-    console.warn("[Mine] clipper window position refused, opening at default:", String(error?.message ?? error));
+    console.warn("[Mine] clipper window position refused, opening at default:", failureText(error));
     win = await chrome.windows.create({
       url: popupUrl,
       type: "popup",
@@ -573,7 +700,7 @@ async function openClipperUiNow(tab, options) {
   }
   if (win?.id) {
     rememberPopupWindow(win.id);
-    if (typeof tab?.id === "number") await rememberClipperWindowSource(win.id, tab.id);
+    if (hasTabId(tab)) await rememberClipperWindowSource(win.id, tab.id);
   }
   return "window";
 }
@@ -613,21 +740,26 @@ chrome.action.onClicked.addListener((tab) => {
 
 const POPUP_WINDOW_IDS_KEY = "popupWindowIds";
 
+/** @returns {Promise<{ width: number, height: number, left?: number, top?: number }>} */
 async function resolvePopupBounds() {
-  const stored = await chrome.storage.local.get("popupBounds");
-  if (stored.popupBounds && typeof stored.popupBounds.left === "number") {
+  const saved = (await chrome.storage.local.get("popupBounds")).popupBounds;
+  if (isRecord(saved) && typeof saved.left === "number") {
     // Always force width to match the body CSS — user may only customize
     // position and height. Height stays user-defined so they can resize.
     return {
       width: POPUP_DEFAULT_WIDTH,
-      height: stored.popupBounds.height ?? POPUP_DEFAULT_HEIGHT,
-      left: stored.popupBounds.left,
-      top: stored.popupBounds.top,
+      height: typeof saved.height === "number" ? saved.height : POPUP_DEFAULT_HEIGHT,
+      left: saved.left,
+      top: typeof saved.top === "number" ? saved.top : undefined,
     };
   }
   // Default: top-right of the currently focused browser window
   try {
     const current = await chrome.windows.getCurrent();
+    // A window that reports no position leaves the place to the browser.
+    if (current.left === undefined || current.top === undefined || current.width === undefined) {
+      return { width: POPUP_DEFAULT_WIDTH, height: POPUP_DEFAULT_HEIGHT };
+    }
     return {
       width: POPUP_DEFAULT_WIDTH,
       height: POPUP_DEFAULT_HEIGHT,
@@ -641,17 +773,20 @@ async function resolvePopupBounds() {
 
 // The list is changed through the same queue as the clipper launches: a window
 // opening while another closes keeps both changes (Б4.8).
+/** @param {number} windowId */
 function rememberPopupWindow(windowId) {
-  return changeSessionValue(POPUP_WINDOW_IDS_KEY, (ids = []) => ({ next: [...new Set([...ids, windowId])] }));
+  return changeSessionValue(POPUP_WINDOW_IDS_KEY, (ids) => ({ next: [...new Set([...asList(ids), windowId])] }));
 }
 
+/** @param {number | undefined} windowId */
 async function isOurPopup(windowId) {
   const stored = await chrome.storage.session.get(POPUP_WINDOW_IDS_KEY);
-  return (stored[POPUP_WINDOW_IDS_KEY] ?? []).includes(windowId);
+  return asList(stored[POPUP_WINDOW_IDS_KEY]).includes(windowId);
 }
 
+/** @param {number} windowId */
 function forgetPopupWindow(windowId) {
-  return changeSessionValue(POPUP_WINDOW_IDS_KEY, (ids = []) => ({ next: ids.filter((id) => id !== windowId) }));
+  return changeSessionValue(POPUP_WINDOW_IDS_KEY, (ids) => ({ next: asList(ids).filter((id) => id !== windowId) }));
 }
 
 chrome.windows.onBoundsChanged.addListener(async (win) => {
@@ -695,7 +830,7 @@ async function removeOldDrafts() {
 
 chrome.runtime.onInstalled.addListener(() => {
   void removeOldDrafts().catch((error) => {
-    console.warn("[Mine] old clipper drafts kept until the next update:", String(error?.message ?? error));
+    console.warn("[Mine] old clipper drafts kept until the next update:", failureText(error));
   });
 });
 
@@ -726,9 +861,10 @@ function filesOfRunningBuild() {
 const OPENINGS_AFTER_RELOAD_KEY = "mineOpeningsAfterReload";
 
 /// What of an opening's options travels across the reload.
+/** @param {Record<string, unknown>} options @returns {OpenOptions} */
 function launchOptions(options) {
   return {
-    fallbackUrl: options.fallbackUrl ?? null,
+    fallbackUrl: typeof options.fallbackUrl === "string" ? options.fallbackUrl : null,
     contextMenu: options.contextMenu ?? null,
     preloaded: options.preloaded ?? null,
     allowWindowFallback: options.allowWindowFallback !== false,
@@ -737,10 +873,11 @@ function launchOptions(options) {
 
 /// Keep `opening` of `tab` for the worker after the reload: `{ options }` for
 /// a launch, `{ restore }` for a kept clip.
+/** @param {chrome.tabs.Tab | undefined} tab @param {Record<string, unknown>} opening @returns {Promise<"deferred">} */
 async function openAfterReload(tab, opening) {
-  if (typeof tab?.id !== "number") return "deferred";
-  await changeStoredValue(chrome.storage.local, OPENINGS_AFTER_RELOAD_KEY, (openings = {}) => ({
-    next: { ...openings, [tab.id]: { ...opening, pageUrl: tab.url ?? null, createdAt: Date.now() } },
+  if (!hasTabId(tab)) return "deferred";
+  await changeStoredValue(chrome.storage.local, OPENINGS_AFTER_RELOAD_KEY, (openings) => ({
+    next: { ...asRecord(openings), [tab.id]: { ...opening, pageUrl: tab.url ?? null, createdAt: Date.now() } },
   }));
   return "deferred";
 }
@@ -748,26 +885,27 @@ async function openAfterReload(tab, opening) {
 /// The openings an earlier worker left for this one, taken once.
 function takeOpeningsAfterReload() {
   return changeStoredValue(chrome.storage.local, OPENINGS_AFTER_RELOAD_KEY,
-    (openings) => ({ next: openings === undefined ? undefined : null, result: openings ?? {} }));
+    (openings) => ({ next: openings === undefined ? undefined : null, result: openings }));
 }
 
 async function runOpeningsAfterReload() {
-  const openings = await takeOpeningsAfterReload();
+  const openings = asRecord(await takeOpeningsAfterReload());
   for (const [tabId, opening] of Object.entries(openings)) {
-    if (typeof opening?.createdAt !== "number" || Date.now() - opening.createdAt > CLIPPER_LAUNCH_TTL_MS) continue;
+    if (!isRecord(opening) || typeof opening.createdAt !== "number" || Date.now() - opening.createdAt > CLIPPER_LAUNCH_TTL_MS) continue;
     let tab;
     try {
       tab = await chrome.tabs.get(Number(tabId));
     } catch {
       continue;
     }
-    if (!tab) continue;
-    const failed = (error) => console.warn("[Mine] the clipper did not open after the update:", String(error?.message ?? error));
+    if (!hasTabId(tab)) continue;
+    /** @param {unknown} error */
+    const failed = (error) => console.warn("[Mine] the clipper did not open after the update:", failureText(error));
     if (isOpenClip(opening.restore)) {
       await writeOpenClip(tab.id, opening.restore);
       void restoreOpenClipInTab(tab).catch(failed);
     } else if (opening.options && (opening.pageUrl === null || tab.url === opening.pageUrl)) {
-      void openClipperUi(tab, opening.options).catch(failed);
+      void openClipperUi(tab, launchOptions(asRecord(opening.options))).catch(failed);
     }
   }
 }
@@ -787,11 +925,13 @@ async function runOpeningsAfterReload() {
 
 // Tabs being given the content scripts of this build, by tab, and the search
 // for those tabs.
+/** @type {Map<number, Promise<void>>} */
 const pageRefreshes = new Map();
 let pagesFound = Promise.resolve();
 
 /// Wait while `tabId` is being given the content scripts of this build: an
 /// overlay opened before them finds no content script in its world.
+/** @param {number | undefined} tabId */
 async function pageRefreshed(tabId) {
   await pagesFound;
   if (typeof tabId === "number") await pageRefreshes.get(tabId);
@@ -800,23 +940,29 @@ async function pageRefreshed(tabId) {
 /// The content-script groups of the manifest this worker can put again, by
 /// the open tab they belong to, each tab's in the manifest's order. A group
 /// that excludes pages is left out: tabs are found by `matches` alone.
+/** @returns {Promise<Map<number, PlannedGroup[]>>} */
 async function contentScriptPlan() {
-  const groups = (chrome.runtime.getManifest?.()?.content_scripts ?? []).filter((group) =>
+  /** @type {ContentScriptGroup[]} */
+  const declared = chrome.runtime.getManifest?.()?.content_scripts ?? [];
+  const groups = declared.filter(/** @returns {group is PlannedGroup} */ (group) =>
     ["ISOLATED", "MAIN"].includes(group.world ?? "ISOLATED") && Array.isArray(group.js) && group.js.length > 0
     && Array.isArray(group.matches) && group.matches.length > 0
     && !group.exclude_matches && !group.include_globs && !group.exclude_globs);
+  /** @type {Map<number, PlannedGroup[]>} */
   const plan = new Map();
   for (const group of groups) {
+    /** @type {chrome.tabs.Tab[]} */
     let tabs = [];
     try {
       tabs = await chrome.tabs.query({ url: group.matches });
     } catch (error) {
-      console.warn("[Mine] open pages not found for the content scripts:", String(error?.message ?? error));
+      console.warn("[Mine] open pages not found for the content scripts:", failureText(error));
     }
     for (const tab of tabs) {
       if (typeof tab.id !== "number" || tab.discarded) continue;
-      if (!plan.has(tab.id)) plan.set(tab.id, []);
-      plan.get(tab.id).push(group);
+      const groupsOfTab = plan.get(tab.id) ?? [];
+      groupsOfTab.push(group);
+      plan.set(tab.id, groupsOfTab);
     }
   }
   return plan;
@@ -825,12 +971,14 @@ async function contentScriptPlan() {
 /// Whether every frame of `target` already runs the post cache of X in its
 /// page world: lib/xThreadPage.js, the last of the manifest's page-world
 /// scripts, which also refuses to run twice in one page.
+/** @param {chrome.scripting.InjectionTarget} target */
 async function pageWorldHasPostCache(target) {
   const frames = await chrome.scripting.executeScript({ target, world: "MAIN",
     func: () => globalThis.MineXThreadPage !== undefined });
   return frames.length > 0 && frames.every((frame) => frame?.result === true);
 }
 
+/** @param {number} tabId @param {PlannedGroup[]} groups */
 async function injectContentScripts(tabId, groups) {
   for (const group of groups) {
     const target = { tabId, allFrames: group.all_frames === true };
@@ -873,9 +1021,9 @@ function refreshOpenPages() {
 chrome.runtime.onInstalled.addListener((details) => {
   if (details?.reason !== "install" && details?.reason !== "update") return;
   void refreshOpenPages()
-    .catch((error) => console.warn("[Mine] open pages kept their content scripts:", String(error?.message ?? error)));
+    .catch((error) => console.warn("[Mine] open pages kept their content scripts:", failureText(error)));
   void pagesFound.then(() => runOpeningsAfterReload())
-    .catch((error) => console.warn("[Mine] openings after the update dropped:", String(error?.message ?? error)));
+    .catch((error) => console.warn("[Mine] openings after the update dropped:", failureText(error)));
 });
 
 // ── Context menus ─────────────────────────────────────────────────────────
@@ -907,9 +1055,11 @@ chrome.runtime.onInstalled.addListener(() => {
 
 });
 
+/** @param {chrome.contextMenus.OnClickData} info @param {chrome.tabs.Tab | undefined} tab */
 async function handleContextMenuClick(info, tab) {
   // The clicked target travels with this opening only (Ф6); useClipperState
   // reads it through getClipperLaunch and applies it to the metadata.
+  /** @type {import("./popup/lib/messaging").ContextMenuData} */
   const context = {
     menuItemId: info.menuItemId,
     srcUrl: info.srcUrl || null,
@@ -932,14 +1082,24 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 // Send a message to the native host and return the response.
 // Uses connectNative for persistent connection within a session.
 // Responses must match the echoed messageId; no FIFO acknowledgement of saves.
+/** @type {chrome.runtime.Port | null} */
 let nativePort = null;
 // What the helper on `nativePort` declared in its status (`features`).
+/** @type {Set<unknown> | null} */
 let nativePortFeatures = null;
+/**
+ * A request waiting for the helper's answer: `restart` starts a Save's
+ * deadline again on a sign of work.
+ * @typedef {{ resolve: (reply: HostReply) => void, timeout: ReturnType<typeof setTimeout>, action: unknown, restart: (() => void) | null }} PendingCall
+ */
+/** @type {Map<number, PendingCall>} */
 const pendingCallbacks = new Map();
 let messageId = 0;
+/** @type {Map<string, { dataUrl: string, contentType: string, createdAt: number }>} */
 const screenshotUploads = new Map();
 let screenshotUploadId = 0;
 
+/** @param {unknown} dataUrl @returns {{ ok: true, screenshotId: string } | { ok: false, error: string }} */
 function cacheScreenshotUpload(dataUrl) {
   if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) {
     return { ok: false, error: "Missing screenshot data" };
@@ -969,26 +1129,34 @@ function getNativePort() {
 
   try {
     nativePort = chrome.runtime.connectNative(HOST_NAME);
-  } catch (e) {
+  } catch {
+    // No helper is registered for this browser: the request answers
+    // `native_unavailable`.
     return null;
   }
 
   const port = nativePort;
   nativePortFeatures = null;
-  port.onMessage.addListener((msg) => {
-    if (msg?.code === "host_replaced") {
+  port.onMessage.addListener((/** @type {unknown} */ msg) => {
+    // The helper answers objects; anything else matches no request.
+    if (!isRecord(msg)) {
+      console.warn("[Mine] Ignored uncorrelated native response");
+      return;
+    }
+    if (msg.code === "host_replaced") {
       retireReplacedHost(port, msg);
       return;
     }
     const id = msg._messageId;
+    const pending = typeof id === "number" ? pendingCallbacks.get(id) : undefined;
     // A sign that the helper still works on a Save: its deadline starts
     // again. Never an answer (SPEC_DEEP_AUDIT.md, Н9).
-    if (msg?.progress === true) {
-      pendingCallbacks.get(id)?.restart?.();
+    if (msg.progress === true) {
+      pending?.restart?.();
       return;
     }
-    if (id !== undefined && pendingCallbacks.has(id)) {
-      const { resolve, timeout, action } = pendingCallbacks.get(id);
+    if (typeof id === "number" && pending) {
+      const { resolve, timeout, action } = pending;
       pendingCallbacks.delete(id);
       clearTimeout(timeout);
       resolve(msg);
@@ -1039,8 +1207,9 @@ function runningBuild() {
   return globalThis.MineExtensionBuild.running();
 }
 
+/** @param {HostReply} status */
 async function noteInstalledExtension(status) {
-  await globalThis.MineExtensionBuild.noteInstalled(status?.extension_build_id);
+  await globalThis.MineExtensionBuild.noteInstalled(status.extension_build_id);
 }
 
 async function reloadIfUpdated() {
@@ -1081,6 +1250,7 @@ let clipperActivity = 0;
 
 /// Whether a pending update has to wait: a write or an opening under way, a
 /// save waiting for the helper, or any of them begun since `activity`.
+/** @param {number} activity */
 function reloadWaits(activity) {
   if (browserWritesInFlight > 0 || clipperOpeningsInFlight > 0 || clipperActivity !== activity) return true;
   for (const [, pending] of pendingCallbacks) {
@@ -1089,6 +1259,7 @@ function reloadWaits(activity) {
   return false;
 }
 
+/** @template T @param {() => T | PromiseLike<T>} work @returns {Promise<T>} */
 function trackBrowserWrite(work) {
   browserWritesInFlight += 1;
   clipperActivity += 1;
@@ -1102,6 +1273,7 @@ function trackBrowserWrite(work) {
 
 /// An opening of the clipper holds a pending update until it has finished;
 /// the clipper it opened then holds it until it closes.
+/** @template T @param {() => T | PromiseLike<T>} work @returns {Promise<T>} */
 function trackClipperOpening(work) {
   clipperOpeningsInFlight += 1;
   clipperActivity += 1;
@@ -1117,12 +1289,13 @@ function trackClipperOpening(work) {
 // for the save, not for the next time a clipper happens to close. A burst of
 // writes schedules one check after the last of them.
 const RELOAD_CHECK_DELAY_MS = 1000;
+/** @type {ReturnType<typeof setTimeout> | null} */
 let reloadCheckTimer = null;
 function scheduleReloadCheck() {
   if (reloadCheckTimer !== null) clearTimeout(reloadCheckTimer);
   reloadCheckTimer = setTimeout(() => {
     reloadCheckTimer = null;
-    void reloadIfUpdated().catch((error) => console.warn("[Mine] extension reload failed:", String(error?.message ?? error)));
+    void reloadIfUpdated().catch((error) => console.warn("[Mine] extension reload failed:", failureText(error)));
   }, RELOAD_CHECK_DELAY_MS);
 }
 
@@ -1148,7 +1321,7 @@ async function anyEditorOpen() {
   const answers = await Promise.all(tabs.map((tab) => (typeof tab.id !== "number"
     ? false
     : chrome.tabs.sendMessage(tab.id, { action: "mineClipperIsOpen" }, { frameId: 0 })
-      .then((answer) => answer?.open === true, () => false))));
+      .then((/** @type {unknown} */ answer) => isRecord(answer) && answer.open === true, () => false))));
   return answers.some(Boolean);
 }
 
@@ -1158,6 +1331,7 @@ async function anyEditorOpen() {
 // new helper: one the old helper never read, and a Save it had already begun,
 // which the operation journal answers with the same receipt rather than a
 // second card.
+/** @param {chrome.runtime.Port} port @param {HostReply} reply */
 function retireReplacedHost(port, reply) {
   if (nativePort === port) nativePort = null;
   try {
@@ -1184,6 +1358,7 @@ function retireReplacedHost(port, reply) {
 const SAVE_IDLE_TIMEOUT_MS = 60_000;
 const LEGACY_SAVE_TIMEOUT_MS = 180_000;
 
+/** @param {unknown} action */
 function timeoutForAction(action) {
   if (action === "save_block") {
     return nativePortFeatures?.has("save_progress_v1") ? SAVE_IDLE_TIMEOUT_MS : LEGACY_SAVE_TIMEOUT_MS;
@@ -1193,6 +1368,7 @@ function timeoutForAction(action) {
   return 30_000;
 }
 
+/** @param {HostReply} status @param {chrome.runtime.Port} port */
 function confirmNativeConnection(status, port) {
   if (status.ok !== true || status.connected !== true ||
       !Array.isArray(status.features) || !status.features.includes("connection_check_v1")) return;
@@ -1206,11 +1382,19 @@ function confirmNativeConnection(status, port) {
   });
 }
 
+/// Send `message`, the request as the clipper made it, to the helper.
+/**
+ * @param {unknown} message
+ * @param {chrome.runtime.Port | null} [expectedPort]
+ * @param {boolean} [afterReplacement]
+ * @returns {Promise<HostReply>}
+ */
 function sendNativeMessage(message, expectedPort = null, afterReplacement = false) {
   return new Promise((settle) => {
     // The replaced helper did nothing with the request: it goes once to the
     // new helper. A check bound to the old connection has nothing to confirm.
-    const resolve = (reply) => settle(reply?.code === "host_replaced" && !expectedPort && !afterReplacement
+    /** @param {HostReply} reply */
+    const resolve = (reply) => settle(reply.code === "host_replaced" && !expectedPort && !afterReplacement
       ? sendNativeMessage(message, null, true)
       : reply);
     const port = expectedPort
@@ -1227,7 +1411,9 @@ function sendNativeMessage(message, expectedPort = null, afterReplacement = fals
     }
 
     const id = ++messageId;
-    const action = message?.action;
+    // A request that is no object carries no fields, as spreading it did.
+    const request = isRecord(message) ? message : {};
+    const action = request.action;
     const isSave = action === "save_block";
 
     const expire = () => {
@@ -1236,6 +1422,7 @@ function sendNativeMessage(message, expectedPort = null, afterReplacement = fals
         resolve({ ok: false, error: "Mine helper did not respond in time", code: "native_timeout", outcome: "unknown" });
       }
     };
+    /** @type {PendingCall} */
     const entry = { resolve, timeout: setTimeout(expire, timeoutForAction(action)), action, restart: null };
     // Each sign of work starts the Save's deadline again (Н9).
     if (isSave) {
@@ -1250,19 +1437,21 @@ function sendNativeMessage(message, expectedPort = null, afterReplacement = fals
       // A Save asks for signs of work; a helper that does not know them
       // ignores the field, and an older one never sends what this one
       // would take for an answer.
-      port.postMessage(isSave ? { ...message, _progress: true, _messageId: id } : { ...message, _messageId: id });
+      port.postMessage(isSave ? { ...request, _progress: true, _messageId: id } : { ...request, _messageId: id });
     } catch (error) {
       clearTimeout(entry.timeout);
       pendingCallbacks.delete(id);
-      resolve({ ok: false, error: String(error?.message ?? error), code: "native_disconnected", outcome: "unknown" });
+      resolve({ ok: false, error: failureText(error), code: "native_disconnected", outcome: "unknown" });
     }
   });
 }
 
+/** @param {unknown} tag */
 async function broadcastChannelsChanged(tag) {
   return broadcastClipperMessage({ action: "mineChannelsChanged", tag: tag ?? null });
 }
 
+/** @param {Record<string, unknown>} message */
 async function broadcastClipperMessage(message) {
 
   // Detached popup windows are extension pages, so runtime messaging reaches
@@ -1290,16 +1479,16 @@ async function broadcastClipperMessage(message) {
   }
 }
 
+/** @param {chrome.runtime.MessageSender} sender */
 async function ensureDefuddleInjected(sender) {
   const tabId = sender.tab?.id;
   if (!tabId) {
     return { ok: false, error: "No sender tab" };
   }
 
-  const target = { tabId };
-  if (Number.isInteger(sender.frameId)) {
-    target.frameIds = [sender.frameId];
-  }
+  const target = typeof sender.frameId === "number" && Number.isInteger(sender.frameId)
+    ? { tabId, frameIds: [sender.frameId] }
+    : { tabId };
 
   // Defuddle is read from disk (К4). The clipper that asks is open, so the
   // reload into the build on disk waits for it to close; the page is read
@@ -1345,8 +1534,12 @@ async function ensureDefuddleInjected(sender) {
   return { ok: true };
 }
 
-async function uploadFileToNativeHost({ port, token, filename, screenshotId, vaultPath }) {
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+/// Upload a cached screenshot to the helper's local upload server; `payload`
+/// is the request as the clipper sent it.
+/** @param {unknown} payload @returns {Promise<unknown>} */
+async function uploadFileToNativeHost(payload) {
+  const { port, token, filename, screenshotId, vaultPath } = asRecord(payload);
+  if (typeof port !== "number" || !Number.isInteger(port) || port <= 0 || port > 65535) {
     return { ok: false, error: "Invalid upload port" };
   }
   if (typeof token !== "string" || token.length === 0) {
@@ -1390,8 +1583,9 @@ async function uploadFileToNativeHost({ port, token, filename, screenshotId, vau
       clearTimeout(timeout);
     }
     if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
+    /** @type {unknown} */
     const result = await resp.json();
-    if (result?.ok) screenshotUploads.delete(screenshotId);
+    if (isRecord(result) && result.ok) screenshotUploads.delete(screenshotId);
     return result;
   } catch (e) {
     return { ok: false, error: String(e) };
@@ -1409,7 +1603,9 @@ async function uploadFileToNativeHost({ port, token, filename, screenshotId, vau
 // Cookies are read only for x.com, only when a tweet turned out to have video
 // the other paths could not resolve, and are handed straight to the native host
 // for a single yt-dlp call. They are never stored.
-async function resolveAuthenticatedTweetVideo({ tweetUrl, tweetId }) {
+/** @param {unknown} payload @returns {Promise<HostReply>} */
+async function resolveAuthenticatedTweetVideo(payload) {
+  const { tweetUrl, tweetId } = asRecord(payload);
   if (!tweetUrl && !tweetId) return { ok: false, error: "tweet reference missing" };
 
   const jar = [];
@@ -1444,6 +1640,7 @@ async function resolveAuthenticatedTweetVideo({ tweetUrl, tweetId }) {
 // answers `{ ok: false }`.
 const X_SYNDICATION_TIMEOUT_MS = 10_000;
 
+/** @param {unknown} tweetId */
 async function readXSyndication(tweetId) {
   if (typeof tweetId !== "string" || !/^\d{1,25}$/.test(tweetId)) return { ok: false };
   const controller = new AbortController();
@@ -1452,10 +1649,11 @@ async function readXSyndication(tweetId) {
     const response = await fetch(`https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&token=0`,
       { credentials: "omit", signal: controller.signal });
     if (!response.ok) return { ok: false, status: response.status };
+    /** @type {unknown} */
     const data = await response.json();
     return data !== null && typeof data === "object" && !Array.isArray(data) ? { ok: true, data } : { ok: false };
   } catch (error) {
-    console.warn("[Mine] X post unavailable from syndication:", String(error?.message ?? error));
+    console.warn("[Mine] X post unavailable from syndication:", failureText(error));
     return { ok: false };
   } finally {
     clearTimeout(timeout);
@@ -1470,6 +1668,7 @@ async function readXSyndication(tweetId) {
 // before an in-page navigation. Asked here, where <all_urls> reaches YouTube
 // from any page host, and without cookies. Any failure answers no channel:
 // the clip is saved without an author.
+/** @param {unknown} sourceUrl */
 async function resolveYoutubeChannel(sourceUrl) {
   const youtube = globalThis.MineYoutubeSource;
   const endpoint = youtube.youtubeOEmbedUrl(sourceUrl);
@@ -1481,7 +1680,7 @@ async function resolveYoutubeChannel(sourceUrl) {
     if (!response.ok) return { channel: null };
     return { channel: youtube.youtubeChannelFromOEmbed(await response.json()) };
   } catch (error) {
-    console.warn("[Mine] YouTube channel unavailable:", String(error?.message ?? error));
+    console.warn("[Mine] YouTube channel unavailable:", failureText(error));
     return { channel: null };
   } finally {
     clearTimeout(timeout);
@@ -1490,10 +1689,11 @@ async function resolveYoutubeChannel(sourceUrl) {
 
 // ── Message handler (from popup) ──────────────────────────────────────────
 
+/** @param {unknown} error */
 function extensionBackgroundFailure(error) {
   return {
     ok: false,
-    error: String(error?.message ?? error),
+    error: failureText(error),
     code: "extension_background_error",
     outcome: "unknown",
   };
@@ -1502,8 +1702,13 @@ function extensionBackgroundFailure(error) {
 // Chromium APIs return Promises, while Dia versions of the same APIs may only
 // invoke callbacks. Supplying both completion paths is safe as long as the
 // response channel is settled exactly once.
+/**
+ * @param {(response: unknown) => void} sendResponse
+ * @param {(callback: () => void) => PromiseLike<unknown> | void} invoke
+ */
 function respondToBrowserCreate(sendResponse, invoke) {
   let answered = false;
+  /** @param {unknown} response */
   const answer = (response) => {
     if (answered) return;
     answered = true;
@@ -1529,7 +1734,13 @@ function respondToBrowserCreate(sendResponse, invoke) {
 
 // The in-flight map coalesces clicks. Existing browser windows remain the
 // source of truth after a service worker restart.
+/** @type {Map<string, Promise<{ ok: boolean }>>} */
 const folderSetupRequests = new Map();
+/**
+ * @template T
+ * @param {(callback: (value: T) => void) => PromiseLike<T> | void} invoke
+ * @returns {Promise<T>}
+ */
 function browserCall(invoke) {
   return new Promise((resolve, reject) => {
     try {
@@ -1537,17 +1748,20 @@ function browserCall(invoke) {
         const error = chrome.runtime.lastError;
         if (error) reject(new Error(error.message)); else resolve(value);
       });
-      if (pending?.then) pending.then(resolve, reject);
+      if (pending && typeof pending.then === "function") pending.then(resolve, reject);
     } catch (error) { reject(error); }
   });
 }
+/** @param {string} url */
 function openFolderSetup(url) {
-  if (folderSetupRequests.has(url)) return folderSetupRequests.get(url);
+  const requested = folderSetupRequests.get(url);
+  if (requested) return requested;
   const operation = (async () => {
+    /** @type {chrome.windows.Window[]} */
     const windows = await browserCall(callback => chrome.windows.getAll({ populate: true }, callback));
-    const existing = windows.find(window => window.tabs?.some(tab => tab.url === url));
-    if (existing) {
-      await browserCall(callback => chrome.windows.update(existing.id, { focused: true }, callback));
+    const existing = windows.find(window => window.tabs?.some(tab => tab.url === url))?.id;
+    if (existing !== undefined) {
+      await browserCall(callback => chrome.windows.update(existing, { focused: true }, callback));
     } else {
       await browserCall(callback => chrome.windows.create({ url, type: "popup", width: 420, height: 280, focused: true }, callback));
     }
@@ -1558,13 +1772,15 @@ function openFolderSetup(url) {
   return operation;
 }
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.target !== "background") return false;
+chrome.runtime.onMessage.addListener((/** @type {unknown} */ message, sender, sendResponse) => {
+  // A message is an object its sender wrote; anything else is not for here.
+  if (!isRecord(message) || message.target !== "background") return false;
+  const msg = message;
 
   if (msg.action === "collectXThread") {
     const source = sender.url || sender.tab?.url || "";
     const match = source.match(/^https:\/\/(?:x\.com|pro\.x\.com|twitter\.com)\/[^/]+\/status\/(\d+)(?:[/?#]|$)/);
-    if (!match || match[1] !== msg.tweetId || sender.tab?.id === undefined || sender.frameId !== 0) {
+    if (!match || typeof msg.tweetId !== "string" || match[1] !== msg.tweetId || sender.tab?.id === undefined || sender.frameId !== 0) {
       sendResponse({ posts: [], issues: ["Open the original X post to collect its thread."] });
       return false;
     }
@@ -1639,13 +1855,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       await chrome.storage.local.set({ mineSaveDestination: { executor: "browser", bindingId: status.bindingId } });
       await broadcastClipperMessage({ action: "mineStandaloneFolderChanged" });
       sendResponse({ ok: true });
-    }).catch((error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    }).catch((error) => sendResponse({ ok: false, error: failureText(error) }));
     return true;
   }
 
   // The clipper overlay closed: the moment an update can apply (К4).
   if (msg.action === "mineClipperClosed") {
-    void reloadIfUpdated().catch((error) => console.warn("[Mine] extension reload failed:", String(error?.message ?? error)));
+    void reloadIfUpdated().catch((error) => console.warn("[Mine] extension reload failed:", failureText(error)));
     return false;
   }
 
@@ -1669,11 +1885,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === "nativeMessage") {
+    const request = isRecord(msg.payload) ? msg.payload : undefined;
     try {
       sendNativeMessage(msg.payload).then((response) => {
-        if (response?.ok && msg.payload?.action === "create_channel") {
-          void broadcastChannelsChanged(response.tag ?? msg.payload?.tag ?? null);
-        } else if (response?.ok && msg.payload?.action === "save_block" && msg.payload?.tags) {
+        if (response.ok && request?.action === "create_channel") {
+          void broadcastChannelsChanged(response.tag ?? request.tag ?? null);
+        } else if (response.ok && request?.action === "save_block" && request.tags) {
           void broadcastChannelsChanged(null);
         }
         sendResponse(response);
@@ -1689,39 +1906,57 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // request takes; background only executes.
   if (msg.action === "standaloneStatus") {
     globalThis.MineStandaloneVault.getStandaloneStatus().then(sendResponse,
-      (error) => sendResponse({ configured: false, error: String(error?.message ?? error) }));
+      (error) => sendResponse({ configured: false, error: failureText(error) }));
     return true;
   }
 
   if (msg.action === "standaloneLookup") {
-    globalThis.MineStandaloneVault.lookupOperation(msg.operation_id, msg.binding_id).then(sendResponse,
-      (error) => sendResponse({ ok: false, outcome: "unknown", error: String(error?.message ?? error) }));
+    const operationId = msg.operation_id;
+    const bindingId = msg.binding_id;
+    // The clipper names both; a request without them asks about nothing.
+    if (typeof operationId !== "string" || typeof bindingId !== "string") {
+      sendResponse({ ok: false, outcome: "unknown", error: "The lookup names no operation or folder" });
+      return false;
+    }
+    globalThis.MineStandaloneVault.lookupOperation(operationId, bindingId).then(sendResponse,
+      (error) => sendResponse({ ok: false, outcome: "unknown", error: failureText(error) }));
     return true;
   }
 
   if (msg.action === "standaloneSave") {
-    trackBrowserWrite(() => globalThis.MineStandaloneVault.saveStandaloneBlock(msg.payload ?? {})).then((response) => {
-      if (response?.ok && msg.payload?.tags) {
+    // The save core validates every field; a payload that is no object
+    // carries none, as `?? {}` and spreading it did.
+    const payload = isRecord(msg.payload) ? msg.payload : {};
+    trackBrowserWrite(() => globalThis.MineStandaloneVault.saveStandaloneBlock(payload)).then((response) => {
+      if (response?.ok && payload.tags) {
         void broadcastChannelsChanged(null);
       }
       sendResponse(response);
-    }, (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    }, (error) => sendResponse({ ok: false, error: failureText(error) }));
     return true;
   }
 
   if (msg.action === "standaloneListChannels") {
     globalThis.MineStandaloneVault.listStandaloneChannels().then(
       sendResponse,
-      (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }),
+      (error) => sendResponse({ ok: false, error: failureText(error) }),
     );
     return true;
   }
 
   if (msg.action === "standaloneCreateChannel") {
-    trackBrowserWrite(() => globalThis.MineStandaloneVault.createStandaloneChannel(msg.tag, msg.binding_id ?? null)).then((response) => {
+    const tag = msg.tag;
+    const bindingId = msg.binding_id ?? null;
+    // The clipper names the collection, and the folder by its binding or not
+    // at all.
+    if (typeof tag !== "string" || (bindingId !== null && typeof bindingId !== "string")) {
+      sendResponse({ ok: false, outcome: "not_committed", error: "The request names no collection" });
+      return false;
+    }
+    trackBrowserWrite(() => globalThis.MineStandaloneVault.createStandaloneChannel(tag, bindingId)).then((response) => {
       if (response?.ok) void broadcastChannelsChanged(response.tag ?? null);
       sendResponse(response);
-    }, (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    }, (error) => sendResponse({ ok: false, error: failureText(error) }));
     return true;
   }
 
@@ -1760,7 +1995,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // open a detached popup window.
   if (msg.action === "showOverlayInThisTab") {
     const tab = sender.tab;
-    if (!tab) {
+    if (!hasTabId(tab)) {
       sendResponse({ ok: false, error: "No sender tab" });
       return true;
     }
@@ -1789,14 +2024,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч12). Only the top frame of a page tab
   // has an overlay.
   if (msg.action === "openClipWrite") {
-    if (!isPageTopFrame(sender) || !isOpenClip(msg.clip)) {
+    const clip = msg.clip;
+    if (!isPageTopFrame(sender) || !isOpenClip(clip)) {
       sendResponse({ ok: false });
       return false;
     }
-    writeOpenClip(sender.tab.id, msg.clip).then((kept) => sendResponse(kept === OPEN_CLIP_NOT_KEPT
+    writeOpenClip(sender.tab.id, clip).then((kept) => sendResponse(kept === OPEN_CLIP_NOT_KEPT
       ? { ok: false, code: "open_clip_too_large", error: "This clip is too large to keep while the page changes." }
       : kept === OPEN_CLIP_KEPT_WITHOUT_SCREENSHOT ? { ok: true, screenshotKept: false } : { ok: true }),
-    (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    (error) => sendResponse({ ok: false, error: failureText(error) }));
     return true;
   }
 
@@ -1809,7 +2045,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true });
       // The close that cleared it is when a pending update can apply (К4).
       scheduleReloadCheck();
-    }, (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    }, (error) => sendResponse({ ok: false, error: failureText(error) }));
     return true;
   }
 
@@ -1820,7 +2056,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return false;
     }
     restoreOpenClipInTab(sender.tab).then((mode) => sendResponse({ ok: mode === "overlay", mode }),
-      (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+      (error) => sendResponse({ ok: false, error: failureText(error) }));
     return true;
   }
 
@@ -1831,7 +2067,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // rule captureForCrop follows (SPEC_AUDIT_FIXES.md, Б4.7).
   if (msg.action === "startCropMode") {
     const tabId = isExtensionPage(sender)
-      ? (Number.isInteger(msg.tabId) && msg.tabId >= 0 ? msg.tabId : null)
+      ? (typeof msg.tabId === "number" && Number.isInteger(msg.tabId) && msg.tabId >= 0 ? msg.tabId : null)
       : sender.tab?.id ?? null;
     if (tabId == null) {
       sendResponse({ ok: false, error: "No target tab" });
@@ -1839,7 +2075,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     const cropId = typeof msg.cropId === "string" ? msg.cropId : null;
     startCropInTab(tabId, cropId).then(sendResponse,
-      (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+      (error) => sendResponse({ ok: false, error: failureText(error) }));
     return true; // async
   }
 
@@ -1856,7 +2092,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     captureTabViewport(tabId).then((dataUrl) => {
       const cached = cacheScreenshotUpload(dataUrl);
       sendResponse(cached.ok ? { ok: true, dataUrl, screenshotId: cached.screenshotId } : cached);
-    }, (error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    }, (error) => sendResponse({ ok: false, error: failureText(error) }));
     return true;
   }
 
@@ -1869,6 +2105,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "cropDone") {
     // A crop refused (the page changed under it) reaches the reopened window
     // as its reason, shown in the editor.
+    /** @type {{ status: "done" | "cancelled", dataUrl?: unknown, screenshotId?: string, error?: string }} */
     let result = { status: "cancelled", ...(typeof msg.error === "string" ? { error: msg.error } : {}) };
     if (msg.status === "done") {
       const cached = cacheScreenshotUpload(msg.dataUrl);

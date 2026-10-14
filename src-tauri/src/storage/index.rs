@@ -192,8 +192,8 @@ pub struct LightBlock {
     /// sidebar order: by the collection's `position`, then by name. A
     /// membership whose collection has no page sorts after every listed one.
     ///
-    /// It travels with the row because the feed lays cards out from block
-    /// data alone: the pills are part of a card's height.
+    /// It travels with the row so a card's row of collections and its
+    /// previews show them without another read.
     pub collections: Vec<String>,
     pub search_match: Option<SearchMatch>,
 }

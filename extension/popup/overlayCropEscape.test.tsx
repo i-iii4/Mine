@@ -39,11 +39,6 @@ import { closeClipperOverlay, showClipperOverlay } from "./overlay-entry";
 const contentScript = readFileSync("extension/content.js", "utf8");
 const youtubeScript = readFileSync("extension/lib/youtubeSource.js", "utf8");
 
-interface PageWindow {
-  __mineOverlay: { hide: () => void };
-  __mineCrop: { start: (documentUrl: string | null) => void };
-}
-
 describe("Escape during a crop from the overlay clipper (В4.3)", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", () => Promise.resolve({ text: () => Promise.resolve("") }));
@@ -71,11 +66,14 @@ describe("Escape during a crop from the overlay clipper (В4.3)", () => {
     const panel = host.shadowRoot!.querySelector("[data-mine-clipper-panel]");
     expect(panel).not.toBeNull();
 
-    // What Crop Area does in the overlay (useClipperState.startCropMode).
-    const page = window as unknown as PageWindow;
+    // What Crop Area does in the overlay (useClipperState.startCropMode): the
+    // crop's id comes second, after the `null` an older content script read
+    // as the page of the clip.
+    const { __mineOverlay: overlay, __mineCrop: crop } = window;
+    if (!overlay || !crop) throw new Error("the overlay and the content script share no crop");
     act(() => {
-      page.__mineOverlay.hide();
-      page.__mineCrop.start(window.location.href);
+      overlay.hide();
+      crop.start(null, "crop-1");
     });
     expect(host.style.display).toBe("none");
     const cropLayer = document.body.lastElementChild;

@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
 import type { LightBlock } from "@/types";
 import { lightBlockContentEqual, reconcileBlocks } from "./blockIdentity";
+import { lightBlock } from "@/test/blocks";
 
 function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock {
-  return {
+  return lightBlock({
     id,
     slug: `block-${id}`,
     card_kind: "article",
@@ -23,9 +24,8 @@ function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock 
     preview_manifest: null,
     collections: [],
     feed_playback: null,
-    collections: [],
     ...overrides,
-  };
+  });
 }
 
 describe("reconcileBlocks", () => {

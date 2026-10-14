@@ -77,28 +77,6 @@ pub struct BlockCollection {
 
 // ─── Commands ───────────────────────────────────────────────────────────────
 
-/// List all channels with block counts.
-#[tauri::command]
-pub async fn list_channels(
-    webview: tauri::Webview,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<Vec<ChannelDto>, CommandError> {
-    append_startup_trace(&app, "list_channels", "start");
-    let vault = tab_layout(&state, &webview)?;
-    ensure_vault_fresh(&app, vault.clone()).await?;
-    let app_for_query = app.clone();
-    let dtos =
-        tauri::async_runtime::spawn_blocking(move || -> Result<Vec<ChannelDto>, CommandError> {
-            read_owned_projection(&app_for_query, &vault, load_channels)
-        })
-        .await
-        .map_err(|e| CommandError::Internal(format!("list_channels task join failed: {e}")))??;
-
-    append_startup_trace(&app, "list_channels", &format!("done count={}", dtos.len()));
-    Ok(dtos)
-}
-
 #[tauri::command]
 pub async fn list_taxonomy_snapshot(
     webview: tauri::Webview,
@@ -151,9 +129,7 @@ fn create_channel_unannounced(
     webview: tauri::Webview,
     state: State<'_, AppState>,
     tag: String,
-    title: Option<String>,
 ) -> Result<ChannelDto, CommandError> {
-    let _ = title;
     let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
     let vault_state = space
         .vault_state
@@ -167,9 +143,9 @@ fn create_channel_unannounced(
 /// [`create_channel_unannounced`], then the other tabs of the space hear of the
 /// change (SPEC_TABS.md, В15).
 #[tauri::command(async)]
-pub fn create_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: String, title: Option<String>) -> Result<ChannelDto, CommandError> {
+pub fn create_channel(webview: tauri::Webview, state: State<'_, AppState>, tag: String) -> Result<ChannelDto, CommandError> {
     let announcing = super::effects::ChangeNews::before(&webview);
-    let outcome = create_channel_unannounced(webview, state, tag, title);
+    let outcome = create_channel_unannounced(webview, state, tag);
     if outcome.is_ok() {
         announcing.send(Vec::new());
     }

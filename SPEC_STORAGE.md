@@ -694,6 +694,16 @@ fn run_cold_space_audit(
   derived SQLite store through Rust, serializes the production IPC DTO and
   renders that payload in Grid. This single path covers source files -> parser
   -> SQLite -> Rust serialization -> frontend DTO -> Grid.
+- Холодное пространство браузерного гейта холодно и в iCloud, а не только на
+  локальном диске (SPEC_DEEP_AUDIT.md, Е7.8, 13.10.2026). У образца своя
+  картинка `cold-icloud-image.png` для каждой двенадцатой карточки;
+  `run_cold_space_audit_with_icloud` (флаг `--icloud-media` у
+  `cold-space-audit`) перед каждым циклом объявляет её содержимое лежащим в
+  iCloud через `cloud_files::test_seam`, потому что выгруженный файл делает
+  только ядро системы. Проход индекса, который её скачал, валит цикл; первая
+  проекция показывает такие карточки без размеров, гейт проверяет это по
+  снимку до запуска браузера. Сборка с оптимизациями выпуска шва не несёт и
+  такой прогон отклоняет.
 
 ## storage/source_mutation — atomicity contract
 
@@ -1044,80 +1054,27 @@ Hybrid behavior:
 
 ## storage/vault_stats
 
-Источник данных для main secondary statistics bar. Это read-model snapshot для
-UI chrome, а не analytics subsystem: он должен быть быстрым, детерминированным
-и обновляться после каждого изменения vault/index state.
-
-### Типы
-
-```rust
-struct VaultStats {
-    markdown_file_count: u64,
-    media_file_count: u64,
-    source_bytes: u64,
-    current_collection_card_count: u64,
-    current_collection: Option<String>, // None means Everything
-    updated_at_ms: u64,
-}
-```
+Число карточек места ленты: Everything или коллекция. До 13.10.2026 модуль
+был источником статистики пространства для второго ряда хрома (`VaultStats`,
+`get_vault_stats`, счёт файлов и объёма пространства); счётчик показывал
+только ряд метаданных внизу окна (Alt 2), и срез 46.10 удалил его вместе с
+командой. Осталась функция счёта карточек, ею пользуются тесты индекса
+(сверка членства) и модуля.
 
 ### Функции
 
 ```rust
-get_vault_stats(conn: &Connection, vault: &VaultLayout, current_collection: Option<&str>) -> Result<VaultStats>
 count_current_collection_cards(conn: &Connection, current_collection: Option<&str>) -> Result<u64>
-scan_source_vault_file_stats(vault: &VaultLayout) -> Result<SourceVaultFileStats>
 ```
 
-### Поведение source vault stats
-
-- `markdown_file_count` считает физические `.md` файлы в source vault
-  рекурсивно, включая collection pages и ordinary Obsidian notes.
-- `media_file_count` считает физические source assets, которые не являются
-  `.md` файлами: images, video, audio, PDF/other local files. Derived artifacts
-  приложения не входят.
-- `total_file_count` считает тот же пользовательский content layer, что
-  `markdown_file_count + media_file_count`; hidden/service/build директории не
-  входят, чтобы main UI не смешивал source content и служебные файлы.
-- `source_bytes` — сумма byte size всех файлов, вошедших в
-  `markdown_file_count` и `media_file_count`. Это размер source vault, не
-  `Application Support`, не thumbnails, не semantic model cache и не
-  audio/cache.
-- Hidden/service directories исключаются тем же правилом, что `scan_md_files`:
-  `.mine/`, `.obsidian/`, `.trash/`, `.git/`, `node_modules/`, `target/`,
-  `__pycache__/`; legacy `.arena/` также исключается и используется только как
-  migration source.
-- Symlink traversal за пределы vault запрещён. Symlink-файлы внутри vault можно
-  считать как сам symlink metadata entry, но нельзя следовать наружу и
-  прибавлять внешний каталог.
-
-### Поведение collection card count
+### Поведение
 
 - `current_collection = None` (`Everything`) считает все indexed rows, где
   `card_kind != channel`.
 - `Some(collection_ref)` считает indexed non-channel rows, связанные с этим
   `CollectionRef` через `block_tags`, если у него есть страница в `channels`;
   без страницы маршрута коллекции нет.
-- Surface/Grid search query не влияет на `current_collection_card_count`.
-- Count строится из SQLite read-model, а не из текущего frontend массива
-  карточек, чтобы virtualized/paginated Grid не становился источником истины.
-
-### Realtime contract
-
-- `get_vault_stats` возвращает complete snapshot; frontend не применяет
-  increments и не считает статистику из текущего Grid массива.
-- После in-app commands, меняющих source files, media files, membership,
-  channels или index rows, существующие grid/taxonomy/vault invalidation events
-  являются сигналом заново вызвать `get_vault_stats` для текущего route scope.
-- Допустима frontend-коалесценция нескольких invalidation событий в один
-  snapshot через animation frame. Видимой задержки ради debounce быть не
-  должно: UI chrome должен обновиться в тот же пользовательский цикл, в котором
-  обновляется Grid/Sidebar.
-- Если backend позже публикует отдельный `vault:stats-updated`, event payload
-  должен быть complete `VaultStats` snapshot, не delta.
-- Initial load вызывает `get_vault_stats` один раз после vault open/index
-  readiness. До первого snapshot frontend показывает пустую fixed-height
-  statistics row, а не placeholder text.
+- Count строится из SQLite read-model, а не из frontend массива карточек.
 
 ---
 

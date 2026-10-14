@@ -7,12 +7,14 @@ import {
 } from "./masonryLayout";
 import type { LightBlock } from "@/types";
 import { buildLayoutGenerationKey } from "./layoutGeneration";
+import { lightBlock } from "@/test/blocks";
 
 function mkBlock(id: number): LightBlock {
-  return {
+  return lightBlock({
     id,
     slug: `slug-${id}`,
     block_type: "image",
+    card_kind: "media",
     title: null,
     url: null,
     media_file: null,
@@ -26,8 +28,7 @@ function mkBlock(id: number): LightBlock {
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
-    tags: [],
-  };
+  });
 }
 
 const sampleLayout = computeMasonryLayout([100, 200, 300], 1000, 240, 32);

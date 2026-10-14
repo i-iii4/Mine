@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CONTENT_SCRIPT_CONTEXT, extractMetadata, openingStamps, remoteMediaNotice, requestXSyndication, requestYoutubeChannel,
-  sendToNative, waitForYoutubeChannel, YOUTUBE_CHANNEL_TIMEOUT_MS,
+  sendToNative, waitForYoutubeChannel, YOUTUBE_CHANNEL_TIMEOUT_MS, type NativeResponse,
 } from "./messaging";
 
 // SPEC_DEEP_AUDIT.md, Е4.17: the first openings waited 9 to 15 s for the
@@ -46,7 +46,7 @@ describe("metadata of a page without its content script", () => {
 // SPEC_DEEP_AUDIT.md, Н10: the media a Save left as links to their sites,
 // counted for the clipper.
 describe("media left as links", () => {
-  const remote = (count: number) => ({
+  const remote = (count: number): NativeResponse => ({
     ok: true,
     remote_media: Array.from({ length: count }, (_, index) => ({
       url: `https://cdn.example/${index}.jpg`, kind: "image", reason: "download_failed",

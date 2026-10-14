@@ -84,7 +84,7 @@ function decodeBrowserImage(url: string): Promise<void> {
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timeoutId: ReturnType<typeof window.setTimeout> | null = null;
+  let timeoutId: number | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = window.setTimeout(
       () => reject(new Error("Image preload timed out")),

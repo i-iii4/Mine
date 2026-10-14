@@ -45,11 +45,14 @@ jobs:
       # Tests never package it, so the directory only has to exist.
       - name: Provide the clipper payload directory
         run: mkdir -p build/clipper-extension
-      # Every changed behavior file names a requirement and a check. After a
-      # push the automatic base is HEAD itself, so the pushed range is passed
+      # Registry check: compares the reliability registry with the sources
+      # and runs no test (SPEC_SYSTEM_RELIABILITY.md, INV-01). Every changed
+      # behavior file names a requirement and a test that imports, reads or
+      # launches it; the tests themselves run in the steps below. After a push
+      # the automatic base is HEAD itself, so the pushed range is passed
       # explicitly (SPEC_AUDIT_FIXES.md, Б6.3). A new branch has no previous
       # revision and is compared with main.
-      - name: Changed behavior has a requirement and a check
+      - name: Registry check (runs no tests)
         env:
           PUSH_BEFORE: ${{ github.event.before }}
           PULL_BASE: ${{ github.event.pull_request.base.sha }}
@@ -58,10 +61,15 @@ jobs:
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
             base=origin/main
           fi
-          node scripts/reliability-gate.mjs --base "$base"
-          node --test scripts/reliability-gate.test.mjs
+          node scripts/reliability-registry-check.mjs --base "$base"
+          node --test scripts/reliability-registry-check.test.mjs scripts/test-reach.test.mjs
       - name: Lint
         run: bun run lint
+      # The app pages, the clipper (its scripts with JSDoc included) and the
+      # tests in one program, then the pages and the clipper each against the
+      # globals of where they run.
+      - name: Types
+        run: bun run typecheck
       - name: Bindings match the Rust contract
         run: bun run bindings:check
       - name: Frontend and clipper tests

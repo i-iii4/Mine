@@ -2,6 +2,10 @@
 (function (root) {
   "use strict";
   const required = Object.freeze(["save_operation_v1", "operation_lookup_v1"]);
+  /**
+   * @param {import("./saveProtocol.types").SaveProtocolRequest} request
+   * @returns {import("./saveProtocol.types").SaveProtocolRejection | null}
+   */
   function validate(request) {
     const capabilities = request.required_capabilities;
     if ((request.save_protocol !== undefined && request.save_protocol !== 1)

@@ -1,5 +1,5 @@
 import "../../extension/lib/youtubeSource.js";
-import type { YoutubeSource } from "../../extension/lib/youtubeSource";
+import type { YoutubeSource } from "../../extension/lib/youtubeSource.types";
 
 export type { YoutubeSource };
 

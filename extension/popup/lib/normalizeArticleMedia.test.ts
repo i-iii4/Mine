@@ -55,7 +55,7 @@ describe("extracted HTML video normalization", () => {
     ] };
     const result = normalizeArticleMedia(input, base);
     expect(result.embeddedVideos).toEqual([{ src: "https://example.com/movie.mp4", poster: "https://example.com/cover.jpg", title: "Player" }]);
-    expect(input.embeddedVideos[0].poster).toBeNull();
+    expect(input.embeddedVideos[0]?.poster).toBeNull();
   });
 
   it("decodes HTML entities and escapes Markdown URL delimiters", () => {
@@ -115,7 +115,7 @@ describe("extracted HTML video normalization", () => {
   it.each(["> ", "- "])("keeps embeds inside their Markdown container %s", (prefix) => {
     const result = normalize(`${prefix}<video src="/movie.mp4"></video>`);
     expect(fromMarkdown(result.content).children).toHaveLength(1);
-    expect(fromMarkdown(result.content).children[0].type).toBe(prefix === "> " ? "blockquote" : "list");
+    expect(fromMarkdown(result.content).children[0]?.type).toBe(prefix === "> " ? "blockquote" : "list");
   });
 
   it("normalization does not add page-wide preview media to body", () => {

@@ -33,7 +33,6 @@ const THEME_OPTIONS = [
   { value: "dark", label: "Dark" },
 ] as const;
 
-// Layout axis, orthogonal to the color theme: any theme + either design.
 // The pill is keyed by strings; the radius stays numeric everywhere else.
 const CARD_RADIUS_CONTROL_OPTIONS = CARD_RADIUS_OPTIONS.map((value) => ({
   value: String(value),

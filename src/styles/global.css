@@ -187,7 +187,6 @@ select,
   height: 1px;
   background-color: var(--sidebar-border);
   pointer-events: none;
-  transition: background-color 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 [data-sidebar-scroll]:not([data-sidebar-link-editor-mode="true"]) [data-sidebar-row-active="true"] [data-sidebar-row-text] {
@@ -202,12 +201,6 @@ select,
 
 [data-sidebar-scroll][data-sidebar-link-editor-mode="true"] [data-sidebar-row-linked="true"] [data-sidebar-row-text] {
   color: var(--foreground);
-}
-
-[data-sidebar-scroll][data-sidebar-row-hover-seam="true"] [data-sidebar-row-surface]:hover::after,
-[data-sidebar-scroll][data-sidebar-row-hover-seam="true"] [data-sidebar-row-surface][data-sidebar-row-focused="true"]::after,
-[data-sidebar-scroll][data-sidebar-row-hover-seam="true"] [data-sidebar-row-surface][data-sidebar-row-seam-accent="true"]::after {
-  background-color: var(--border-accent);
 }
 
 /* One card state system (SPEC_CARD_STATES.md). Keyboard focus colours the
@@ -487,10 +480,6 @@ select,
 }
 
 [data-sidebar-scroll][data-sidebar-row-switching="true"] [data-sidebar-row-text] {
-  transition-duration: 0ms;
-}
-
-[data-sidebar-scroll][data-sidebar-row-switching="true"] [data-sidebar-row-surface]::after {
   transition-duration: 0ms;
 }
 
@@ -1238,25 +1227,18 @@ body {
   --glass-border: oklch(0 0 0 / 8%);
 }
 
-/* ── Design variants: layout metrics ──────────────────────────────────────────
-   Two alternative designs ("Alt 1" and "Alt 2" in Appearance, root attribute
-   data-design="alt" / "alt2") change layout metrics only — colors follow the
-   system scheme. Defaults reproduce the primary design; the shared alt block
-   overrides them for both variants, and the alt2 block below it holds whatever
-   makes Alt 2 differ. JS-computed layout (masonry grid) reads the same
-   attribute via src/lib/designMode.ts. */
+/* ── Layout metrics ───────────────────────────────────────────────────────────
+   JS-computed layout (the sidebar's minimum width, src/lib/appLayout.ts) uses
+   the same numbers. */
 :root {
-  /* Edge rhythm — one value behind every inset from a window edge or the
-     chrome. Settings publish --edge-rhythm on the root; the fallback keeps the
-     stylesheet standalone. */
-  /* Sidebar table insets follow the rhythm with the same 16px floor as the
-     expanded card: the shell never gets tighter than 16px. */
-  --sidebar-nav-pad-x: max(var(--edge-rhythm, 32px), 16px);   /* sidebar table inset from panel edges */
-  --sidebar-nav-pad-top: max(var(--edge-rhythm, 32px), 16px); /* sidebar table inset from the top chrome */
-  --sidebar-row-pad-x: 0px;    /* inner row padding: text left / count right */
+  /* The sidebar's table sits flush to the divider and the panel's edges; the
+     rows carry the inner padding. */
+  --sidebar-nav-pad-x: 0px;    /* sidebar table inset from panel edges */
+  --sidebar-nav-pad-top: 0px;  /* sidebar table inset from the top chrome */
+  --sidebar-row-pad-x: 16px;   /* inner row padding: text left / count right */
   /* Where a sidebar row's name starts, measured from the panel's left edge
-     (the window edge): the table inset plus the row's own padding, 16px in
-     alt. The bottom bar's left end stands on it, so its first button's plate
+     (the window edge): the table inset plus the row's own padding, 16px.
+     The bottom bar's left end stands on it, so its first button's plate
      sits under the names (user's decision of 07.10.2026); derived, not a
      literal, so the two cannot drift. */
   --sidebar-label-inset: calc(var(--sidebar-nav-pad-x) + var(--sidebar-row-pad-x));
@@ -1266,8 +1248,8 @@ body {
      visibly narrower even when the boxes agreed, because the row's padding and
      the gaps around the previews belong to the neighbouring zones.
      = max(row-pad + keystone, action zone), appLayout.ts sidebarZoneWidth:
-     default max(0 + 88, 8 + 84 + 8) = 100; alt max(16 + 88, 8 + 84 + 8) = 104. */
-  --sidebar-zone: 100px;
+     max(16 + 88, 8 + 84 + 8) = 104. */
+  --sidebar-zone: 104px;
   /* Everything that is not the name+previews flex region: the meta zone, the
      two guideline pixels and the row's left inset. Pure CSS so the columns
      follow the drag synchronously. */
@@ -1291,10 +1273,10 @@ body {
   /* The frozen "three equal columns" layout width. At/below it the columns stop
      reflowing: the nav holds this width and the narrowing panel (overflow-hidden)
      slides its right edge over it like a curtain. = reserved + 2×88. MUST equal
-     sidebarMinWidth("default"): JS clamps the drag and lifts stored widths to
-     it, CSS freezes the nav — one side moving alone leaves the nav wider than
-     the panel and the curtain clips the meta column. */
-  --sidebar-min-width: 366px;
+     sidebarMinWidth() in appLayout.ts: JS clamps the drag and lifts stored
+     widths to it, CSS freezes the nav — one side moving alone leaves the nav
+     wider than the panel and the curtain clips the meta column. */
+  --sidebar-min-width: 314px;
   /* Top chrome switchers (space, collection): the trigger's padding puts its
      pill on the chrome inset, as every chrome button's plate stands. */
   --top-collection-pad-x: var(--chrome-edge-pad);
@@ -1313,26 +1295,6 @@ body {
      offset of the content. Follows the feed rhythm but never drops below
      16px — at the tight 2px feed step the reading surface keeps its air. */
   --card-content-pad: max(var(--edge-rhythm, 32px), 16px);
-}
-:root[data-design="alt"],
-:root[data-design="alt2"] {
-  --sidebar-nav-pad-x: 0px;
-  --sidebar-nav-pad-top: 0px;
-  --sidebar-row-pad-x: 16px;
-  /* alt: zone = max(16 + 88, 8 + 84 + 8) = 104 */
-  --sidebar-zone: 104px;
-  /* = reserved + 2 x col-floor. MUST equal sidebarMinWidth("alt") in
-     appLayout.ts: JS clamps the drag and lifts stored widths to this value
-     while CSS freezes the nav — one side moving alone leaves the nav wider
-     than the panel, and the curtain permanently clips the meta column. */
-  --sidebar-min-width: 314px;
-}
-
-/* Alt 2 — a copy of Alt 1 to experiment in. Everything above applies to it;
-   this block is where the two start to diverge, and it is empty on purpose
-   until they do. */
-:root[data-design="alt2"] {
-  /* no overrides yet */
 }
 
 /* ── Relative elevation (colour architecture, the elevation role) ────────────
@@ -1526,7 +1488,7 @@ body {
 }
 
 /* Interface text at 13px, the size macOS sets its window titles, menus and
-   sidebars in (DESIGN_SYSTEM.md, «Текст интерфейса 13 px»): both chrome rows
+   sidebars in (DESIGN_SYSTEM.md, «Текст интерфейса 13 px»): the top chrome row
    (12px utilities there), every menu with its submenus and what it holds,
    and the sidebar's collection list (14px utilities there). The size only:
    each place keeps the line box its utility gives, so no row changes height.
@@ -1536,7 +1498,6 @@ body {
 }
 
 header.chrome-row .text-sm,
-[data-main-secondary-top-bar] .text-sm,
 [data-slot="dropdown-menu-content"] .text-base,
 [data-slot="dropdown-menu-sub-content"] .text-base,
 [data-slot="context-menu-content"] .text-base,

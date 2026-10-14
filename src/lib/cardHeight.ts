@@ -25,7 +25,6 @@ import {
   edgeTextTop,
   type CardTextLine,
 } from "./cardTypography";
-import { CARD_COLLECTION_PILLS_HEIGHT_PX, shownCollections } from "./cardCollections";
 import { provisionalMediaAspect } from "./cardAspect";
 import type { FeedShow } from "./feedDisplay";
 
@@ -96,7 +95,6 @@ function textWidth(iw: number): number {
  * clamped geometry, so visible cards never overlap while font metrics load.
  */
 function textPartLines(
-  block: LightBlock,
   descriptor: CardLayoutDescriptor,
   iw: number,
   wordWidths: WordWidths | null,
@@ -126,7 +124,6 @@ function textPartLines(
   if (titleLines > 0) lines.push({ line: "title", height: titleLines * TITLE_LINE_HEIGHT });
   if (textLines > 0) lines.push({ line: "preview", height: textLines * TEXT_LINE_HEIGHT });
   if (author) lines.push({ line: "author", height: AUTHOR_LINE_HEIGHT });
-  if (shownCollections(block).length > 0) lines.push({ line: "pills", height: CARD_COLLECTION_PILLS_HEIGHT_PX });
   return lines;
 }
 
@@ -185,7 +182,7 @@ export function computeCardHeight(
   const descriptor = deriveCardLayoutDescriptor(block, show);
   const iw = innerWidth(columnWidth);
   const media = descriptor.media ? mediaHeight(iw, descriptor.media) : 0;
-  const lines = textPartLines(block, descriptor, iw, wordWidths);
+  const lines = textPartLines(descriptor, iw, wordWidths);
   const first = lines[0];
   const last = lines[lines.length - 1];
   const text = first && last

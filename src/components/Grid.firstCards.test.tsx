@@ -35,9 +35,10 @@ vi.mock("@/lib/startup", async (importOriginal) => {
 
 import { Grid } from "./Grid";
 import { whenCardsRendered } from "@/lib/startup";
+import { lightBlock } from "@/test/blocks";
 
 function makeBlock(id: number): LightBlock {
-  return {
+  return lightBlock({
     id,
     slug: `block-${id}`,
     card_kind: "article",
@@ -57,7 +58,7 @@ function makeBlock(id: number): LightBlock {
     preview_manifest: null,
     collections: [],
     feed_playback: null,
-  };
+  });
 }
 
 const EMPTY_WIDTHS: WordWidths = {
@@ -65,6 +66,8 @@ const EMPTY_WIDTHS: WordWidths = {
   preview: [],
   titleSpace: 0,
   previewSpace: 0,
+  titleNoSpaceBefore: [],
+  previewNoSpaceBefore: [],
 };
 
 class FiringResizeObserver {

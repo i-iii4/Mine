@@ -6,7 +6,6 @@ import {
 } from "@/lib/channelSearch";
 
 export const SIDEBAR_ALL_ROW_KEY = "all";
-export const SIDEBAR_CREATE_CHANNEL_ROW_KEY = "create-channel";
 
 export function sidebarRowDomId(rowKey: string): string {
   return `sidebar-row-${encodeURIComponent(rowKey)}`;
@@ -36,15 +35,12 @@ export function shouldShowSidebarEverythingRow(searchQuery: string): boolean {
     : true;
 }
 
-export function buildSidebarRowOrder(
+function buildSidebarRowOrder(
   visibleTags: readonly TagCount[],
   includeEverythingRow: boolean,
-  includeCreateRow = false,
 ): string[] {
-  // The create row stands at the top of the collections, under Everything.
   return [
     ...(includeEverythingRow ? [SIDEBAR_ALL_ROW_KEY] : []),
-    ...(includeCreateRow ? [SIDEBAR_CREATE_CHANNEL_ROW_KEY] : []),
     ...visibleTags.map((tc) => `tag:${tc.tag}`),
   ];
 }

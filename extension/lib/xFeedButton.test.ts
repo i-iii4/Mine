@@ -16,23 +16,21 @@ import { switchStorage } from "./feedButtonSwitch.fixtures";
 // SPEC_CLIPPER.md, «Кнопка Mine в ленте X» and «Доработки после живого
 // просмотра» (10.10.2026), Р1 to Р4; the post header as measured on 11.10.2026.
 
-type Activate = (article: Element, control: Element) => void;
-interface FeedButtonApi {
-  OWNED_ATTRIBUTE: string;
-  isXHost(hostname: string): boolean;
-  postIdentity(article: Element): { tweetId: string; handle: string } | null;
-  ensureButton(article: Element, activate: Activate): Element | null;
-  scan(doc: Document, activate: Activate): void;
-  watch(doc: Document, activate: Activate): () => void;
-  removeAll(doc: Document): void;
-}
-const feedButton = (globalThis as unknown as { MineXFeedButton: FeedButtonApi }).MineXFeedButton;
+const feedButton = globalThis.MineXFeedButton;
 const OWNED = `[${feedButton.OWNED_ATTRIBUTE}]`;
 const HOVER_COLOUR = "rgb(29, 155, 240)";
 
-function feed(markup: string) {
+/** The cards as a feed in the page, and their posts: one per card, in order. */
+function feed<const Cards extends readonly string[]>(...cards: Cards): { -readonly [K in keyof Cards]: Element } {
+  showPage(cards.join(""));
+  const articles = [...document.querySelectorAll('article[data-testid="tweet"]')];
+  expect(articles).toHaveLength(cards.length);
+  // One post per card, as checked just above: the list is the tuple of the cards.
+  return articles as { -readonly [K in keyof Cards]: Element };
+}
+/** The markup as the page: a feed, or an X Pro column with its stack. */
+function showPage(markup: string) {
   document.body.innerHTML = `<main>${markup}</main>`;
-  return [...document.querySelectorAll('article[data-testid="tweet"]')];
 }
 const caret = (article: Element) => article.querySelector('[data-testid="caret"]') as HTMLElement;
 /** The box of "…": the row that holds the button. */
@@ -92,10 +90,10 @@ describe("the Mine button in a post's header (Р1)", () => {
   });
 
   it("finds Grok by its build whatever the interface language, and without a label", () => {
-    const articles = feed([
+    const articles = feed(
       card(GASPR, "1001", { grok: "Действия Grok" }),
       card(GASPR, "1002", { grok: null }),
-    ].join(""));
+    );
     feedButton.scan(document, vi.fn());
     for (const article of articles) expect(box(article).nextElementSibling).toBe(grokBox(article));
   });
@@ -123,7 +121,7 @@ describe("the Mine button in a post's header (Р1)", () => {
   });
 
   it("stands in a row, not in a column, when the right block holds the box of \"…\" or \"…\" itself", () => {
-    const [inBox, bare] = feed([card(GASPR, "1001", { grok: false }), card(GASPR, "1002", { grok: false })].join(""));
+    const [inBox, bare] = feed(card(GASPR, "1001", { grok: false }), card(GASPR, "1002", { grok: false }));
     rightBlock(inBox).replaceChildren(caretBox(inBox));
     rightBlock(bare).replaceChildren(caret(bare));
     feedButton.scan(document, vi.fn());
@@ -137,10 +135,10 @@ describe("the Mine button in a post's header (Р1)", () => {
   });
 
   it("keeps the same place beside Follow on the main post of a post page", () => {
-    const [withGrok, withoutGrok] = feed([
+    const [withGrok, withoutGrok] = feed(
       card(ARTIGNATEV, QUOTE_POST_ID, { follow: true }),
       card(ARTIGNATEV, "1003", { follow: true, grok: false }),
-    ].join(""));
+    );
     feedButton.scan(document, vi.fn());
     const order = (article: Element) => [...rightRow(article).children].map((child) => child.matches(OWNED) ? "mine"
       : child === caretSlot(article) ? "caret" : child.textContent?.includes("Follow") ? "follow" : "grok");
@@ -149,23 +147,23 @@ describe("the Mine button in a post's header (Р1)", () => {
   });
 
   it("stands before \"…\" in a column of X Pro, and on a repost and a post with a quote", () => {
-    const articles = feed([
+    const articles = feed(
       card(GASPR, "2103621844733714548", { base: "https://x.com" }),
       card(MICASSO, REPOSTED_ID, { social: "Lister" }),
       card(ARTIGNATEV, QUOTE_POST_ID, { quote: { user: ALEXIS, id: QUOTED_ID, text: "Quote text" } }),
-    ].join(""));
+    );
     feedButton.scan(document, vi.fn());
-    expect(box(articles[0]!).nextElementSibling).toBe(caretSlot(articles[0]!));
+    expect(box(articles[0]).nextElementSibling).toBe(caretSlot(articles[0]));
     for (const article of articles) expect(article.querySelectorAll(OWNED)).toHaveLength(1);
     // The quote has no header of its own and gets no button.
-    expect(articles[2]!.querySelector('[role="link"]:not(a) [data-mine-x-post]')).toBeNull();
+    expect(articles[2].querySelector('[role="link"]:not(a) [data-mine-x-post]')).toBeNull();
   });
 
   it("copies the look of \"…\" from its row's box down, with Grok and without, and draws the Mine mark in its icon", () => {
-    const [article, withoutGrok] = feed([card(GASPR, VIDEO_POST_ID), card(GASPR, "1001", { grok: false })].join(""));
+    const [article, withoutGrok] = feed(card(GASPR, VIDEO_POST_ID), card(GASPR, "1001", { grok: false }));
     feedButton.scan(document, vi.fn());
     expect(chain(box(article))).toEqual(chain(caretSlot(article)));
-    expect(chain(box(withoutGrok!))).toEqual(chain(caretSlot(withoutGrok!)));
+    expect(chain(box(withoutGrok))).toEqual(chain(caretSlot(withoutGrok)));
     expect(mine(article).className).toBe(caret(article).className);
     expect(tint(mine(article)).getAttribute("style")).toBe(`color: ${REST_COLOUR};`);
     expect(halo(mine(article)).className).toBe(halo(caret(article)).className);
@@ -196,7 +194,7 @@ describe("the Mine button in a post's header (Р1)", () => {
   });
 
   it("stays one per post without Grok through repeated passes, and takes a button left above \"…\" into the row", async () => {
-    const articles = feed([card(GASPR, "1001", { grok: false }), card(GASPR, "1002", { base: "https://x.com" })].join(""));
+    const articles = feed(card(GASPR, "1001", { grok: false }), card(GASPR, "1002", { base: "https://x.com" }));
     stop = feedButton.watch(document, vi.fn());
     const first = articles.map(box);
     feedButton.scan(document, vi.fn());
@@ -208,36 +206,36 @@ describe("the Mine button in a post's header (Р1)", () => {
     });
     // An earlier version put the button in the column above "…".
     const [stale] = articles;
-    caretBox(stale!).before(box(stale!));
+    caretBox(stale).before(box(stale));
     feedButton.scan(document, vi.fn());
-    expect(stale!.querySelectorAll(OWNED)).toHaveLength(1);
-    expect(box(stale!).parentElement).toBe(rightRow(stale!));
-    expect(box(stale!).nextElementSibling).toBe(caretSlot(stale!));
+    expect(stale.querySelectorAll(OWNED)).toHaveLength(1);
+    expect(box(stale).parentElement).toBe(rightRow(stale));
+    expect(box(stale).nextElementSibling).toBe(caretSlot(stale));
   });
 
   it("after the first pass looks only at the posts X added or whose header it redrew", async () => {
-    const articles = feed(["1001", "1002", "1003"].map((id) => card(GASPR, id)).join(""));
+    const articles = feed(card(GASPR, "1001"), card(GASPR, "1002"), card(GASPR, "1003"));
     stop = feedButton.watch(document, vi.fn());
     const [changed, other] = articles;
-    const otherBox = box(other!);
+    const otherBox = box(other);
     // The other post's "…" takes another look without a change to its header:
     // a pass over that post would make its copy again.
-    tint(caret(other!)).style.color = "rgb(139, 152, 165)";
+    tint(caret(other)).style.color = "rgb(139, 152, 165)";
     const pageQuery = vi.spyOn(document, "querySelectorAll");
 
     // X redraws the other post's action row: not the header, not looked at.
-    const row = other!.querySelector('[role="group"]')!;
+    const row = other.querySelector('[role="group"]')!;
     row.replaceWith(row.cloneNode(true));
-    box(changed!).remove();
-    await vi.waitFor(() => expect(changed!.querySelectorAll(OWNED)).toHaveLength(1));
+    box(changed).remove();
+    await vi.waitFor(() => expect(changed.querySelectorAll(OWNED)).toHaveLength(1));
     // A post X adds gets its button.
     document.querySelector("main")!.insertAdjacentHTML("beforeend", card(GASPR, "1004"));
     const added = document.querySelector("main")!.lastElementChild!.querySelector("article")!;
     await vi.waitFor(() => expect(added.querySelectorAll(OWNED)).toHaveLength(1));
 
     expect(pageQuery).not.toHaveBeenCalled();
-    expect(box(other!)).toBe(otherBox);
-    expect(tint(mine(other!)).style.color).toBe(REST_COLOUR);
+    expect(box(other)).toBe(otherBox);
+    expect(tint(mine(other)).style.color).toBe(REST_COLOUR);
   });
 
   it("is made anew when X draws \"…\" in another look", () => {
@@ -300,7 +298,7 @@ describe("the Mine button in a post's header (Р1)", () => {
   });
 
   it("goes away from the whole page when the buttons are turned off", () => {
-    const articles = feed([card(GASPR, "1001"), card(GASPR, "1002")].join(""));
+    const articles = feed(card(GASPR, "1001"), card(GASPR, "1002"));
     feedButton.scan(document, vi.fn());
     feedButton.removeAll(document);
     for (const article of articles) expect(article.querySelectorAll(OWNED)).toHaveLength(0);
@@ -319,7 +317,7 @@ describe("the post X Pro opened over a column (Р2, Р3)", () => {
     .find((article) => article.querySelector(`a[href*="/status/${id}"]`))!;
 
   it("puts the button of the opened post in the stack header, before its actions, copied from its button", () => {
-    feed(opened());
+    showPage(opened());
     feedButton.scan(document, vi.fn());
     const copy = stackMine()!;
     const copyBox = copy.closest(OWNED)!;
@@ -335,7 +333,7 @@ describe("the post X Pro opened over a column (Р2, Р3)", () => {
   });
 
   it("gives the opened post no button of its own, and every reply and column post one in its header", () => {
-    feed(opened());
+    showPage(opened());
     feedButton.scan(document, vi.fn());
     expect(post(MAIN_ID).querySelectorAll(OWNED)).toHaveLength(0);
     for (const id of [REPLY_ID, "2108800000000000010"]) {
@@ -345,7 +343,7 @@ describe("the post X Pro opened over a column (Р2, Р3)", () => {
   });
 
   it("saves the opened post from the stack header, whichever post is there when it is pressed", () => {
-    feed(opened());
+    showPage(opened());
     const activate = vi.fn();
     feedButton.scan(document, activate);
     stackMine()!.click();
@@ -353,13 +351,13 @@ describe("the post X Pro opened over a column (Р2, Р3)", () => {
   });
 
   it("takes the opened post's ID from its own link, not from its quote or an analytics link of another post", () => {
-    feed(column([], { main: card(ARTIGNATEV, MAIN_ID, { base: "https://x.com", opened: true, analyticsId: "999",
+    showPage(column([], { main: card(ARTIGNATEV, MAIN_ID, { base: "https://x.com", opened: true, analyticsId: "999",
       quote: { user: ALEXIS, id: QUOTED_ID, text: "Quote text" } }) }));
     expect(feedButton.postIdentity(post(MAIN_ID))).toEqual({ tweetId: MAIN_ID, handle: "artignatev", href: `https://x.com/artignatev/status/${MAIN_ID}/photo/1` });
   });
 
   it("adds the stack button once X Pro has put the opened post in the stack", async () => {
-    feed(column([card(GASPR, "2108800000000000010", { base: "https://x.com" })], { main: "" }));
+    showPage(column([card(GASPR, "2108800000000000010", { base: "https://x.com" })], { main: "" }));
     stop = feedButton.watch(document, vi.fn());
     expect(stackMine()).toBeNull();
     document.querySelector(".r-stack-timeline")!.insertAdjacentHTML("beforeend", card(ARTIGNATEV, MAIN_ID, { base: "https://x.com", opened: true }));
@@ -373,7 +371,7 @@ describe("the post X Pro opened over a column (Р2, Р3)", () => {
   });
 
   it("learns the hover of the stack header's button apart from the hover of \"…\"", async () => {
-    feed(opened());
+    showPage(opened());
     const create = newColumnButton();
     create.addEventListener("pointerover", () => { tint(create).style.color = "rgb(231, 233, 234)"; });
     const reply = post(REPLY_ID);
@@ -406,8 +404,7 @@ const shareWithWindow = ["MineXThread", "MineTwitterThreadSelection", "MineTwitt
   .map((name) => `if (globalThis.${name}) window.${name} = globalThis.${name};`).join("\n");
 
 type Message = Record<string, unknown> & { action?: string; preloaded?: { metadata: Record<string, unknown>; article: Record<string, unknown> } };
-const knownPosts = new Map((globalThis as unknown as { MineXThread: { feed(data: unknown): Array<{ id: string }> } })
-  .MineXThread.feed(listResponse()).map((post) => [post.id, post]));
+const knownPosts = new Map(globalThis.MineXThread.feed(listResponse()).map((post) => [post.id, post]));
 
 // The syndication service answers only the origin of X's embed widget
 // (`access-control-allow-origin`, checked on x.com 13.10.2026): the browser
@@ -439,20 +436,21 @@ function xPage(url: string, markup: string, options: { cached?: boolean; syndica
     },
     fetch, console, setTimeout, clearTimeout,
   });
-  const articles = [...dom.window.document.querySelectorAll('article[data-testid="tweet"]')];
+  const post = dom.window.document.querySelector('article[data-testid="tweet"]');
+  if (!post) throw new Error("the page shows no post");
   /// Press the Mine button of a post, or the button given.
   async function press(target: Element) {
     (target.matches("button") ? target as HTMLButtonElement : target.querySelector(`${OWNED} button`) as HTMLButtonElement).click();
     await vi.waitFor(() => expect(messages.some((message) => message.action === "showOverlayInThisTab")).toBe(true));
     return messages.find((message) => message.action === "showOverlayInThisTab")!;
   }
-  return { dom, articles, messages, fetch, press };
+  return { dom, post, messages, fetch, press };
 }
 
 describe("pressing the Mine button of an X post", () => {
   it("opens the clipper in the page with the post the list's feed delivered", async () => {
     const page = xPage("https://x.com/i/lists/123", card(GASPR, VIDEO_POST_ID));
-    const opened = await page.press(page.articles[0]);
+    const opened = await page.press(page.post);
     expect(page.messages[0]).toMatchObject({ target: "background", action: "readXPost", tweetId: VIDEO_POST_ID });
     expect(opened).toMatchObject({ target: "background", pageUrl: "https://x.com/i/lists/123" });
     expect(opened.preloaded?.metadata).toMatchObject({
@@ -470,7 +468,7 @@ describe("pressing the Mine button of an X post", () => {
 
   it("saves the reposted post of a repost card", async () => {
     const page = xPage("https://x.com/home", card(MICASSO, REPOSTED_ID, { social: "Lister" }));
-    const opened = await page.press(page.articles[0]);
+    const opened = await page.press(page.post);
     expect(opened.preloaded?.metadata.url).toBe(`https://x.com/michaelmicasso/status/${REPOSTED_ID}`);
     expect(opened.preloaded?.article.content).toBe("post 2099105293938708797");
   });
@@ -478,7 +476,7 @@ describe("pressing the Mine button of an X post", () => {
   it("saves a post with its quote and the quote's author line, not as a thread", async () => {
     const page = xPage("https://x.com/artignatev",
       card(ARTIGNATEV, QUOTE_POST_ID, { quote: { user: ALEXIS, id: QUOTED_ID, text: "Quote text" } }));
-    const opened = await page.press(page.articles[0]);
+    const opened = await page.press(page.post);
     expect(opened.preloaded?.article.content).toBe([
       "Main text",
       "![](https://pbs.twimg.com/media/one.jpg)",
@@ -491,8 +489,8 @@ describe("pressing the Mine button of an X post", () => {
 
   it("reads the post of an X Pro column from its absolute timestamp link", async () => {
     const page = xPage("https://pro.x.com/i/decks/1", card(GASPR, VIDEO_POST_ID, { base: "https://x.com" }));
-    expect(page.articles[0].querySelectorAll(OWNED)).toHaveLength(1);
-    const opened = await page.press(page.articles[0]);
+    expect(page.post.querySelectorAll(OWNED)).toHaveLength(1);
+    const opened = await page.press(page.post);
     expect(page.messages[0]).toMatchObject({ action: "readXPost", tweetId: VIDEO_POST_ID });
     expect(opened.preloaded?.metadata.url).toBe(`https://x.com/GasprArt/status/${VIDEO_POST_ID}`);
   });
@@ -510,7 +508,7 @@ describe("pressing the Mine button of an X post", () => {
     const id = "2108700000000000001";
     const page = xPage("https://pro.x.com/i/decks/1", card(GASPR, id, { base: "https://x.com", text: "Fallback text" }),
       { cached: false, syndication: syndication(id, GASPR, "Fallback text https://t.co/p") });
-    const opened = await page.press(page.articles[0]);
+    const opened = await page.press(page.post);
     expect(page.messages).toContainEqual({ target: "background", action: "readXSyndication", tweetId: id });
     // The page's own request would fail on CORS: none is made.
     expect(page.fetch).not.toHaveBeenCalled();
@@ -526,18 +524,18 @@ describe("pressing the Mine button of an X post", () => {
     const developers = { id: "2244994945", handle: "XDevelopers", name: "Developers" };
     const reply = xPage("https://x.com/home", card(developers, "1724511614206898410", { text: "" }),
       { cached: false, syndication: live.syndication["1724511614206898410"] });
-    expect((await reply.press(reply.articles[0])).preloaded?.article.content).toBe(
+    expect((await reply.press(reply.post)).preloaded?.article.content).toBe(
       "To clarify, this is a legacy integration. We've reached out to explore new integrations including live-streaming. Stay tuned!");
     const musk = { id: "44196397", handle: "elonmusk", name: "Elon Musk" };
     const amp = xPage("https://x.com/home", card(musk, "1778833124643983615", { text: "" }),
       { cached: false, syndication: live.syndication["1778833124643983615"] });
-    expect(String((await amp.press(amp.articles[0])).preloaded?.article.content)).toMatch(/^To an exciting & inspiring future!\n\n!\[\]\(/);
+    expect(String((await amp.press(amp.post)).preloaded?.article.content)).toMatch(/^To an exciting & inspiring future!\n\n!\[\]\(/);
   });
 
   it("opens the clipper with the reason when neither the feeds nor syndication give the post", async () => {
     const id = "2108700000000000002";
     const page = xPage("https://x.com/home", card(GASPR, id, { text: "Seen in the feed" }), { cached: false });
-    const opened = await page.press(page.articles[0]);
+    const opened = await page.press(page.post);
     expect(opened.preloaded?.article).toMatchObject({
       content: "", twitterPosts: [],
       unavailableReason: "Mine couldn't read this post here. Open the post and save it from its page.",
@@ -567,6 +565,6 @@ describe("pressing the Mine button of an X post", () => {
 
   it("puts no button on a page outside X", () => {
     const page = xPage("https://example.com/feed", card(GASPR, VIDEO_POST_ID));
-    expect(page.articles[0].querySelectorAll(OWNED)).toHaveLength(0);
+    expect(page.post.querySelectorAll(OWNED)).toHaveLength(0);
   });
 });

@@ -1,5 +1,5 @@
 import "../../lib/xThread.js";
-import type { XPostContent, XPostMedia } from "../../lib/xThread";
+import type { XPostContent, XPostMedia } from "../../lib/xThread.types";
 import type { ArticleData, EmbeddedVideoPreview } from "./messaging";
 import { videoNotice, videoToolFailureReason, type VideoToolFailureReason } from "./videoTool";
 

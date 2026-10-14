@@ -330,8 +330,6 @@ export type DeleteTextSelectionParams = { source_slug: string; selected_text: st
  */
 export type DropHover = { tab_id: TabId; x: number | null }
 
-export type ExtractInlineMediaParams = { source_slug: string; media_ref: string; target_tag: string }
-
 export type ExtractTextSelectionParams = { source_slug: string; target_tag: string; selected_text: string; first_block_start: number; first_block_end: number; source_body_hash: string }
 
 /**
@@ -459,13 +457,6 @@ export type ImportProgress = { channel_slug: string; current: number; total: num
  */
 export type IndexedBlock = { id: number; slug: string; block_type: BlockType; card_kind: CardKind; title: string | null; content_heading: string | null; display_title: string | null; fallback_label: string; description: string | null; url: string | null; media_file: string | null; thumbnail: string | null; saved_at: string; source: string | null; width: number | null; height: number | null; author: string | null; body: string; preview_text: string | null; first_image: string | null; media_urls: string | null; media_dimensions: string | null; preview_manifest: string | null; feed_playback: string | null; thumb_format: ThumbFormat | null; thumb_mtime: number; related_notes: string[]; body_hash: string | null; origin: string | null; index_warning: string | null; tags: string[] }
 
-export type InlineMediaExtractError = { kind: "no_vault" } | { kind: "source_not_found"; source_slug: string } | { kind: "source_not_article"; source_slug: string; block_type: string } | { kind: "invalid_media_ref"; reason: string } | { kind: "media_not_referenced"; media_ref: string; source_slug: string } | { kind: "media_not_found"; media_ref: string } | { kind: "unsupported_media_type"; media_ref: string } |
-/**
- * The target collection has no page; nothing was written
- * (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
- */
-{ kind: "collection_not_found"; collection: string } | { kind: "internal"; message: string }
-
 /**
  * A lightweight block for list/grid views. Body is truncated (max 500 chars),
  * description is omitted, source is omitted.
@@ -494,8 +485,8 @@ preview_unreadable?: boolean;
  * sidebar order: by the collection's `position`, then by name. A
  * membership whose collection has no page sorts after every listed one.
  *
- * It travels with the row because the feed lays cards out from block
- * data alone: the pills are part of a card's height.
+ * It travels with the row so a card's row of collections and its
+ * previews show them without another read.
  */
 collections: string[]; search_match: SearchMatch | null }
 
@@ -1042,8 +1033,6 @@ export type VaultOpenResult = { indexed: number; errors: number; sync_in_progres
  * builds it: the opening notice is then the only sign (Х28).
  */
 derived_store_ready: boolean; thumbs_root: string }
-
-export type VaultStats = { totalFileCount: number; markdownFileCount: number; mediaFileCount: number; sourceBytes: number; currentCollectionCardCount: number; currentCollection: string | null; updatedAtMs: number }
 
 /**
  * Folders new files are written into, relative to the vault root.

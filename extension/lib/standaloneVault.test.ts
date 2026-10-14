@@ -16,6 +16,9 @@ const call = async (command: unknown) => {
 type Reply = { ok: boolean; outcome?: string; code?: string; slug?: string; tag?: string; resumable?: boolean; channels?: { tag: string }[] };
 type Options = { directory: FakeDirectory; store: MemoryStore; binding_id?: string;
   fetch?: unknown; afterEffect?: (effect: string) => void; afterPrepared?: () => void };
+// The adapter as these tests drive it: its folder and journal are the fakes
+// below, which hold only the File System Access and IndexedDB calls the adapter
+// makes, so its declared options (real handles) do not describe them.
 const vault = (globalThis as unknown as { MineStandaloneVault: {
   saveStandaloneBlock: (request: Record<string, unknown>, options: Options) => Promise<Reply>;
   lookupOperation: (id: string, binding: string, options: Options) => Promise<Reply>;
@@ -23,6 +26,7 @@ const vault = (globalThis as unknown as { MineStandaloneVault: {
   listStandaloneChannels: (options: Options) => Promise<Reply>;
   resolveLayout: (directory: FakeDirectory) => Promise<unknown>;
   getStandaloneStatus: (options: Options) => Promise<unknown>;
+  existingStems: (directory: FakeDirectory) => Promise<string[]>;
 } }).MineStandaloneVault;
 
 class MemoryStore {
@@ -45,7 +49,7 @@ class FakeFile {
     return Object.assign(file, { text: async () => { this.reads += 1; return read(); } });
   }
   async createWritable() {
-    let pending = new NodeBlob();
+    let pending = new NodeBlob([]);
     return {
       write: async (content: string | NodeBlob) => { pending = new NodeBlob([content]); },
       close: async () => { this.blob = pending; this.modified = ++clock; },
@@ -85,9 +89,13 @@ class FakeDirectory {
   }
   async text(path: string): Promise<string> {
     const parts = path.split("/");
-    let dir: FakeDirectory = this;
-    for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part);
+    const dir = await this.directoryAt(parts.slice(0, -1));
     return (await (await dir.getFileHandle(parts.at(-1)!)).getFile()).text();
+  }
+  /** The folder `parts` names under this one. */
+  async directoryAt(parts: string[]): Promise<FakeDirectory> {
+    const [first, ...rest] = parts;
+    return first === undefined ? this : (await this.getDirectoryHandle(first)).directoryAt(rest);
   }
 }
 let folder: FakeDirectory;

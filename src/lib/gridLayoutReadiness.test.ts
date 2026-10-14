@@ -8,9 +8,10 @@ import {
   createGridLayoutReadinessDiagnostics,
   generationHasExactDeterministicHeights,
 } from "./gridLayoutReadiness";
+import { lightBlock } from "@/test/blocks";
 
 function block(id: number): LightBlock {
-  return {
+  return lightBlock({
     id,
     slug: `block-${id}`,
     block_type: "article",
@@ -29,8 +30,7 @@ function block(id: number): LightBlock {
     preview_manifest: null,
     collections: [],
     feed_playback: null,
-    tags: [],
-  };
+  });
 }
 
 function position(index: number, top: number): MasonryPosition {

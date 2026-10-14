@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { LightBlock, SearchMatch } from "@/types";
 import { deriveSearchResultRow, windowNameAroundMark, windowTextAroundMark } from "./searchResultRow";
+import { lightBlock } from "@/test/blocks";
 
 function makeBlock(overrides: Partial<LightBlock> = {}): LightBlock {
-  return {
+  return lightBlock({
     id: 1,
     slug: "test-block",
     card_kind: "article",
@@ -25,7 +26,7 @@ function makeBlock(overrides: Partial<LightBlock> = {}): LightBlock {
     collections: [],
     feed_playback: null,
     ...overrides,
-  };
+  });
 }
 
 function makeMatch(overrides: Partial<SearchMatch> = {}): SearchMatch {
@@ -35,6 +36,7 @@ function makeMatch(overrides: Partial<SearchMatch> = {}): SearchMatch {
     excerpt: "…around the first match…",
     ranges: [{ start: 12, end: 17 }],
     score: 100,
+    explanation: null,
     ...overrides,
   };
 }

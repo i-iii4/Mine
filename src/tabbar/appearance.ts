@@ -4,7 +4,6 @@
 // cards, so only the settings that reach the chrome matter here.
 
 import { useEffect } from "react";
-import { applyDesign, DESIGN_STORAGE_KEY, getStoredDesignMode } from "@/lib/designMode";
 import {
   applyInterfaceFont,
   getStoredInterfaceFont,
@@ -19,10 +18,9 @@ import { applyTheme, getStoredTheme, THEME_STORAGE_KEY } from "@/lib/themeMode";
 import { applyBarButtonStyle } from "@/lib/buttonStyle";
 import { listenHere } from "./useTabBarState";
 
-/** Apply the stored theme, layout variant and interface font to this page. */
+/** Apply the stored theme and interface font to this page. */
 export function applyStoredAppearance(): void {
   applyTheme(getStoredTheme());
-  applyDesign(getStoredDesignMode());
   applyInterfaceFont(getStoredInterfaceFont());
   applyBarButtonStyle();
 }
@@ -35,7 +33,6 @@ export function useAppearanceSync(): void {
       listenHere<SettingsChangedPayload>(SETTINGS_CHANGED_EVENT, (payload) => {
         adoptSettingsChange(payload);
         if (payload.key === THEME_STORAGE_KEY) applyTheme(getStoredTheme());
-        else if (payload.key === DESIGN_STORAGE_KEY) applyDesign(getStoredDesignMode());
         else if (payload.key === INTERFACE_FONT_STORAGE_KEY) applyInterfaceFont(getStoredInterfaceFont());
       }),
     [],

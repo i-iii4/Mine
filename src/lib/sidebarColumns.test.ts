@@ -18,40 +18,29 @@ import {
 /// jsdom lays out no CSS, so the contract is pinned on the numbers themselves.
 describe("sidebar zone contract", () => {
   const css = readFileSync("src/styles/global.css", "utf8");
-  const designs = ["default", "alt", "alt2"] as const;
+  /** The row's inset before the name and after the count. */
+  const rowPad = 16;
 
-  it("fits the longest action state with equal 8px fields in every design", () => {
-    for (const design of designs) {
-      const width = sidebarZoneWidth(design) - 2 * SIDEBAR_ROW_ACTION_GAP_PX;
-      expect(width).toBeGreaterThanOrEqual(SIDEBAR_ROW_ACTION_BUTTON_PX);
-      expect((sidebarZoneWidth(design) - width) / 2).toBe(8);
-    }
+  it("fits the longest action state with equal 8px fields", () => {
+    const width = sidebarZoneWidth() - 2 * SIDEBAR_ROW_ACTION_GAP_PX;
+    expect(width).toBeGreaterThanOrEqual(SIDEBAR_ROW_ACTION_BUTTON_PX);
+    expect((sidebarZoneWidth() - width) / 2).toBe(8);
   });
 
   it("makes the three zones equal at the frozen minimum", () => {
-    for (const design of designs) {
-      const zone = sidebarZoneWidth(design);
-      const navPad = design === "default" ? 32 : 0;
-      // Three zones plus the two guidelines between them, inside the nav's
-      // own insets.
-      expect(sidebarMinWidth(design), design).toBe(zone * 3 + 2 + navPad * 2);
-    }
+    // Three zones plus the two guidelines between them; the table sits flush
+    // to the panel's edges.
+    expect(sidebarMinWidth()).toBe(sidebarZoneWidth() * 3 + 2);
   });
 
   it("never lets a zone fall below what it holds", () => {
-    for (const design of designs) {
-      const rowPad = design === "default" ? 0 : 16;
-      // The previews' keystone — 2.5 icons — and the action button's field.
-      expect(sidebarZoneWidth(design)).toBeGreaterThanOrEqual(rowPad + SIDEBAR_COLUMN_MIN_PX);
-      expect(sidebarNameFloor(design)).toBeGreaterThanOrEqual(SIDEBAR_COLUMN_MIN_PX);
-    }
+    // The previews' keystone — 2.5 icons — and the action button's field.
+    expect(sidebarZoneWidth()).toBeGreaterThanOrEqual(rowPad + SIDEBAR_COLUMN_MIN_PX);
+    expect(sidebarNameFloor()).toBeGreaterThanOrEqual(SIDEBAR_COLUMN_MIN_PX);
   });
 
   it("reserves the meta zone, the guidelines and the row inset", () => {
-    for (const design of designs) {
-      const rowPad = design === "default" ? 0 : 16;
-      expect(sidebarReserved(design)).toBe(sidebarZoneWidth(design) + 2 + rowPad);
-    }
+    expect(sidebarReserved()).toBe(sidebarZoneWidth() + 2 + rowPad);
   });
 
   it("keeps CSS and JS on the same numbers", () => {
@@ -60,10 +49,9 @@ describe("sidebar zone contract", () => {
     // moving alone leaves the nav wider than the panel, and the curtain
     // permanently clips the meta column — which is how the count digits got
     // cut off once.
-    for (const design of designs) {
-      expect(css).toContain(`--sidebar-min-width: ${sidebarMinWidth(design)}px;`);
-      expect(css).toContain(`--sidebar-zone: ${sidebarZoneWidth(design)}px;`);
-    }
+    expect(css).toContain(`--sidebar-min-width: ${sidebarMinWidth()}px;`);
+    expect(css).toContain(`--sidebar-zone: ${sidebarZoneWidth()}px;`);
+    expect(css).toContain(`--sidebar-row-pad-x: ${rowPad}px;`);
     expect(css).toContain(
       "--sidebar-reserved: calc(var(--sidebar-zone) + 2px + var(--sidebar-row-pad-x));",
     );

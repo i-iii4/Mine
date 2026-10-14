@@ -28,8 +28,9 @@ Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTU
 превью и его размеры; новая source-ссылка создаёт новый экземпляр изображения.
 Это правило Detail, не изменение источника геометрии карточек в ленте.
 
-Проверка: `node scripts/detail-image-geometry-audit.mjs` — задержанная загрузка
-оригинала, горизонтальные/вертикальные/малые изображения, legacy, resize.
+Проверка: `bun run test:detail-image-geometry` (`scripts/detail-image-geometry-audit.mjs`,
+Chromium без окна, свой Vite): задержанная загрузка оригинала, горизонтальные,
+вертикальные и малые изображения, legacy, resize.
 
 ### Карточки ленты
 

@@ -382,12 +382,12 @@ Rules:
 | Active payload | Drop target | Behavior |
 |---|---|---|
 | `block` | `collection:<ref>` | Existing connect-to-collection path |
-| `inline_media` | `collection:<ref>` | Existing `extract_inline_media` path |
+| `media_asset` | `collection:<ref>` | `create_media_asset_card` (SPEC_MEDIA_ASSET_ACTIONS.md) |
 | `text_selection` | `collection:<ref>` | New `extract_text_selection` command |
 | `text_selection` | anything else | No-op |
 
 After success, the frontend relies on the same event-driven refresh path used
-by inline-media extraction. It must not run a full vault reload from the drop
+by media card creation. It must not run a full vault reload from the drop
 handler.
 
 ## Rename And Link Rewrite Contract

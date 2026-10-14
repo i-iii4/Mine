@@ -6,7 +6,6 @@ describe("themeMode", () => {
   beforeEach(() => {
     localStorage.clear();
     document.documentElement.removeAttribute("data-theme");
-    document.documentElement.removeAttribute("data-design");
     document.documentElement.style.colorScheme = "";
     vi.mocked(setTauriTheme).mockClear();
   });
@@ -26,7 +25,7 @@ describe("themeMode", () => {
     expect(getStoredTheme()).toBe("system");
   });
 
-  it("treats the retired alt theme value as system (design migrates separately)", () => {
+  it("treats the retired alt theme value as system", () => {
     localStorage.setItem("theme", "alt");
     expect(getStoredTheme()).toBe("system");
   });

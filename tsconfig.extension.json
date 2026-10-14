@@ -1,27 +1,25 @@
 {
+  // The clipper in the browser: the popup and overlay pages, and the service
+  // worker and content scripts, which are plain JavaScript typed with JSDoc
+  // against the declarations in extension/**/*.d.ts.
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2021",
-    "useDefineForClassFields": true,
-    "lib": ["ES2021", "DOM", "DOM.Iterable"],
-    "module": "ESNext",
-    "skipLibCheck": true,
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "isolatedModules": true,
-    "moduleDetection": "force",
-    "noEmit": true,
-    "jsx": "react-jsx",
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUncheckedIndexedAccess": true,
-    "forceConsistentCasingInFileNames": true,
-    "baseUrl": "..",
-    "paths": {
-      "@/*": ["src/*"]
-    }
+    "types": ["chrome", "vite/client"],
+    "allowJs": true,
+    "checkJs": true
   },
-  "include": [".", "../src/components/ui", "../src/lib/utils.ts", "../src/styles"],
-  "exclude": ["dist"]
+  "include": ["extension"],
+  "exclude": [
+    // Build output: the popup bundle and the save core glue wasm-bindgen
+    // generates.
+    "extension/dist",
+    "extension/generated",
+    // Vendored Defuddle release: one minified UMD bundle of a third-party
+    // library, not source of this project. lib/defuddle.d.ts declares the
+    // part content.js calls.
+    "extension/lib/defuddle.js",
+    "extension/**/*.test.ts",
+    "extension/**/*.test.tsx",
+    "extension/**/*.fixtures.ts"
+  ]
 }

@@ -37,9 +37,10 @@ vi.mock("./Card", async () => {
 });
 
 import { Grid } from "./Grid";
+import { lightBlock } from "@/test/blocks";
 
 function makeImageBlock(id: number): LightBlock {
-  return {
+  return lightBlock({
     id,
     slug: `block-${id}`,
     block_type: "image",
@@ -75,8 +76,7 @@ function makeImageBlock(id: number): LightBlock {
     }),
     collections: [],
     feed_playback: null,
-    tags: ["test"],
-  } as LightBlock;
+  });
 }
 
 // ─── Environment mocks (mirrors Grid.test.tsx) ──────────────────────────────

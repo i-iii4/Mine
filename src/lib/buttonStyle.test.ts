@@ -87,7 +87,8 @@ describe("button style per window", () => {
 
 describe("buttons.css", () => {
   const css = readFileSync("src/styles/buttons.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((match) => ({ selector: match[1].trim(), body: match[2] }));
+  // Both groups of the rule pattern are required, so every match has them.
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((match) => ({ selector: match[1]!.trim(), body: match[2]! }));
   const isDark = (selector: string) => selector.includes('[data-theme="dark"]') || selector.includes('not([data-theme="light"])');
   // K7 and K4 (SPEC_COLOR_RULES.md, section 2).
   const QUIET = 0.03;
@@ -95,7 +96,7 @@ describe("buttons.css", () => {
 
   it("anchors every rule on the root, and only the styles on data-buttons", () => {
     const selectors = [...css.matchAll(/([^{}]+)\{/g)]
-      .map((match) => match[1].trim())
+      .map((match) => match[1]!.trim())
       .filter((selector) => selector && !selector.startsWith("@media"));
     expect(selectors.length).toBeGreaterThan(10);
     // Commas inside :is() and :not() do not start a new selector.
@@ -210,7 +211,7 @@ describe("buttons.css", () => {
     // layer, wherever the face takes that layer.
     expect(hover?.body.trim()).toBe("--macos-outline-from: color-mix(in srgb, var(--macos-face), var(--foreground) var(--active-alpha));");
     const faceHover = rules.find(({ selector, body }) => selector.includes(":hover") && body.includes("var(--button-face-layer);") && !selector.includes("data-buttons"));
-    const entries = (selector: string) => /:is\(([\s\S]*)\)\s*$/.exec(selector)?.[1].split(/,\s*\n/).map((entry) => entry.trim()) ?? [];
+    const entries = (selector: string) => /:is\(([\s\S]*)\)\s*$/.exec(selector)?.[1]?.split(/,\s*\n/).map((entry) => entry.trim()) ?? [];
     expect(entries(faceHover?.selector ?? "").length).toBe(5);
     for (const entry of entries(faceHover?.selector ?? "")) expect(entries(hover?.selector ?? "")).toContain(entry);
     expect(entries(hover?.selector ?? "")).toEqual(expect.arrayContaining([".button-depth.state-active", ".bg-component-fill-inner.state-active"]));
@@ -220,7 +221,7 @@ describe("buttons.css", () => {
     // Retro and Linear keep the 1px press of global.css.
     const press = rules.filter(({ selector }) => selector.includes(":active"));
     expect(press).toHaveLength(1);
-    const [rule] = press;
+    const rule = press[0]!;
     expect(rule.selector).toContain(":not([data-buttons])");
     for (const carrier of [".button-depth:active:not(:disabled)", "button:active:not(:disabled) > .button-depth", "[data-action-button]:active > .button-depth"]) {
       expect(rule.selector).toContain(carrier);

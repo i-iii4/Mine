@@ -13,7 +13,6 @@ describe("AppearanceSection", () => {
   beforeEach(() => {
     localStorage.clear();
     document.documentElement.removeAttribute("data-theme");
-    document.documentElement.removeAttribute("data-design");
     document.documentElement.removeAttribute("style");
     vi.mocked(emit).mockClear();
     vi.mocked(setTauriTheme).mockClear();

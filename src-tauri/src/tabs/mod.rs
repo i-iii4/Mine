@@ -357,47 +357,92 @@ fn shell(app: &AppHandle) -> tauri::State<'_, TabShell> {
     app.state::<TabShell>()
 }
 
+/// What deciding the windows to bring back reads from the app (Е2.8). Tests
+/// stand in for the registry and `windows.json`.
+trait RestoreStart {
+    /// Bring spaces lost from the registry back from their derived stores.
+    fn repair_registry(&self);
+    /// The identities the registry knows, or `None` when it cannot be read.
+    fn known_spaces(&self) -> Option<BTreeSet<String>>;
+    /// The saved windows.
+    fn load(&self) -> Loaded;
+    /// One window with one tab, for a launch with nothing to restore.
+    fn fresh_windows(&self) -> SavedWindows;
+}
+
+/// The running app as what a restore starts from.
+struct AppRestoreStart<'a> {
+    app: &'a AppHandle,
+    shell: &'a TabShell,
+    screens: &'a [ScreenArea],
+}
+
+impl RestoreStart for AppRestoreStart<'_> {
+    fn repair_registry(&self) {
+        crate::commands::vault::repair_space_registry(self.app);
+    }
+
+    fn known_spaces(&self) -> Option<BTreeSet<String>> {
+        known_spaces(self.app)
+    }
+
+    fn load(&self) -> Loaded {
+        if crate::commands::native_shell_smoke::enabled() {
+            return Loaded::Missing;
+        }
+        match self.app.path().app_data_dir() {
+            Ok(dir) => load(&dir).unwrap_or_else(|error| {
+                // Neither readable nor set aside: start fresh and write
+                // nothing over it in this run (Е2.11).
+                log::warn!("saved windows left as they are: {error}");
+                self.shell.store.hold();
+                Loaded::Missing
+            }),
+            Err(_) => Loaded::Missing,
+        }
+    }
+
+    fn fresh_windows(&self) -> SavedWindows {
+        fresh_windows(self.app, self.screens)
+    }
+}
+
+/// The windows to bring back, and whether they are a fresh start. Spaces
+/// lost from the registry come back from their derived stores before the
+/// saved tabs are checked against it: until 13.10.2026 the windows came
+/// first, and settings that had lost the list lost every tab with them, for
+/// good (SPEC_DEEP_AUDIT.md, Е2.8).
+fn windows_to_restore(start: &impl RestoreStart, screens: &[ScreenArea]) -> (SavedWindows, bool) {
+    start.repair_registry();
+    let registry = start.known_spaces();
+    let (saved, fresh_start) = match start.load() {
+        Loaded::Windows(saved) => (saved, false),
+        Loaded::Missing => (start.fresh_windows(), true),
+        Loaded::SetAside(issue) => {
+            log::warn!("saved windows set aside: {issue:?}");
+            (start.fresh_windows(), true)
+        }
+    };
+    let space = |vault_id: &str| crate::domain::windows::registry_status(registry.as_ref(), vault_id);
+    let mut saved = normalize(saved, &space, screens, &mut new_id);
+    if saved.windows.is_empty() {
+        saved = start.fresh_windows();
+    }
+    (saved, fresh_start)
+}
+
 /// Restore the windows at launch (В35): read `windows.json`, make it safe,
 /// and create the last window with its visible tab. The other windows wait
 /// for the first route of this one ([`restore_rest`]).
 pub fn restore(app: &AppHandle) -> anyhow::Result<()> {
     let shell = shell(app);
     let screens = screens(app);
-    // Spaces lost from the list come back from their derived stores before
-    // the tabs are checked against it: until 13.10.2026 the windows came
-    // first, and settings that had lost the list lost every tab with them,
-    // for good (SPEC_DEEP_AUDIT.md, Е2.8).
-    crate::commands::vault::repair_space_registry(app);
-    let registry = known_spaces(app);
-    let loaded = match crate::commands::native_shell_smoke::enabled() {
-        true => Loaded::Missing,
-        false => match app.path().app_data_dir() {
-            Ok(dir) => load(&dir).unwrap_or_else(|error| {
-                // Neither readable nor set aside: start fresh and write
-                // nothing over it in this run (Е2.11).
-                log::warn!("saved windows left as they are: {error}");
-                shell.store.hold();
-                Loaded::Missing
-            }),
-            Err(_) => Loaded::Missing,
-        },
-    };
-    let saved = match loaded {
-        Loaded::Windows(saved) => saved,
-        Loaded::Missing => {
-            shell.fresh_start.store(true, Ordering::SeqCst);
-            fresh_windows(app, &screens)
-        }
-        Loaded::SetAside(issue) => {
-            log::warn!("saved windows set aside: {issue:?}");
-            shell.fresh_start.store(true, Ordering::SeqCst);
-            fresh_windows(app, &screens)
-        }
-    };
-    let space = |vault_id: &str| crate::domain::windows::registry_status(registry.as_ref(), vault_id);
-    let mut saved = normalize(saved, &space, &screens, &mut new_id);
-    if saved.windows.is_empty() {
-        saved = fresh_windows(app, &screens);
+    let (saved, fresh_start) = windows_to_restore(
+        &AppRestoreStart { app, shell: &shell, screens: &screens },
+        &screens,
+    );
+    if fresh_start {
+        shell.fresh_start.store(true, Ordering::SeqCst);
     }
     let first = saved.windows.first().cloned();
     *lock(&shell.model) = saved;
@@ -441,54 +486,114 @@ pub fn restore_rest(app: &AppHandle) {
         return;
     };
     lock(&shell.live).restore_focus = Some((last.clone(), Instant::now()));
-    for step in snapshot.restore_steps() {
-        match step {
-            // The last window is made at launch already (В35).
-            RestoreStep::Create { window, .. } if window == last => {}
-            RestoreStep::Create { window, focus } => {
-                let Some(saved) = snapshot.window(&window) else {
-                    continue;
-                };
-                if let Err(error) = create_window(app, saved, focus) {
-                    hand_tabs_to(app, saved, &last, error);
-                }
-            }
-            RestoreStep::Focus(window) => {
-                if let Some(native) = app.get_window(&window.label()) {
-                    if let Err(error) = native.set_focus() {
-                        log::warn!("the last window could not take the focus back: {error}");
-                    }
-                }
-            }
-        }
-    }
+    // The last window is made at launch already (В35).
+    restore_other_windows(&AppRestore(app), &snapshot, &last);
 }
 
 /// How long after the saved windows came back a focus taken by another of
 /// them is not a choice of the person (Е2.7).
 const RESTORE_FOCUS_GRACE: Duration = Duration::from_secs(1);
 
+/// Whether `window` taking the focus at `now` is the person's choice. While
+/// the saved windows come back (`restore_focus`, the last window and since
+/// when), only the last window's focus counts: another restored window
+/// taking it is AppKit's doing (Е2.7). The last window's focus or the end of
+/// the grace ends the wait.
+fn focus_is_chosen(restore_focus: &mut Option<(WindowId, Instant)>, window: &WindowId, now: Instant) -> bool {
+    let (chosen, wait_over) = match restore_focus.as_ref() {
+        None => (true, false),
+        Some((last, _)) if last == window => (true, true),
+        Some((_, since)) if now.saturating_duration_since(*since) < RESTORE_FOCUS_GRACE => (false, false),
+        Some(_) => (true, true),
+    };
+    if wait_over {
+        *restore_focus = None;
+    }
+    chosen
+}
+
+/// What restoring the other saved windows does to the app (Е2.7, Е2.9).
+/// Tests stand in for the windows.
+trait RestoreHost {
+    /// Make the window `saved`, taking the focus or not.
+    fn create(&self, saved: &SavedWindow, focus: bool) -> Result<(), TabError>;
+    /// The window `failed` could not be made: its tabs join `into`.
+    fn hand_tabs(&self, failed: &SavedWindow, into: &WindowId, error: TabError);
+    /// Give the window `window` the focus.
+    fn focus(&self, window: &WindowId);
+}
+
+/// The running app as the host of a restore.
+struct AppRestore<'a>(&'a AppHandle);
+
+impl RestoreHost for AppRestore<'_> {
+    fn create(&self, saved: &SavedWindow, focus: bool) -> Result<(), TabError> {
+        create_window(self.0, saved, focus).map(|_| ())
+    }
+
+    fn hand_tabs(&self, failed: &SavedWindow, into: &WindowId, error: TabError) {
+        hand_tabs_to(self.0, failed, into, error);
+    }
+
+    fn focus(&self, window: &WindowId) {
+        if let Some(native) = self.0.get_window(&window.label()) {
+            if let Err(error) = native.set_focus() {
+                log::warn!("the last window could not take the focus back: {error}");
+            }
+        }
+    }
+}
+
+/// Make the saved windows other than `last`, which launch made already, in
+/// the order [`SavedWindows::restore_steps`] gives, and give `last` the
+/// focus back (Е2.7). A window that cannot be made hands its tabs to `last`
+/// (Е2.9).
+fn restore_other_windows(host: &impl RestoreHost, snapshot: &SavedWindows, last: &WindowId) {
+    for step in snapshot.restore_steps() {
+        match step {
+            RestoreStep::Create { window, .. } if &window == last => {}
+            RestoreStep::Create { window, focus } => {
+                let Some(saved) = snapshot.window(&window) else {
+                    continue;
+                };
+                if let Err(error) = host.create(saved, focus) {
+                    host.hand_tabs(saved, last, error);
+                }
+            }
+            RestoreStep::Focus(window) => host.focus(&window),
+        }
+    }
+}
+
+/// Move the tabs of `failed` to the end of `into`, which keeps showing
+/// `shown`. Returns the first tab moved, the one to carry the error (Е2.9).
+fn hand_tabs_in(
+    model: &mut SavedWindows,
+    failed: &SavedWindow,
+    into: &WindowId,
+    shown: Option<&TabId>,
+) -> Option<TabId> {
+    let moved: Vec<TabId> = failed.tabs.iter().map(|tab| tab.id.clone()).collect();
+    for tab in &moved {
+        let at = model.window(into).map_or(0, |window| window.tabs.len());
+        model.attach(tab, into, at);
+    }
+    // `attach` shows each tab it moves; the window keeps what it showed.
+    if let Some(shown) = shown {
+        model.activate(shown);
+    }
+    moved.into_iter().next()
+}
+
 /// The window `failed` could not be made: its tabs join `into`, the first of
 /// them marked with why, so nothing saved is lost and the person sees it
 /// (Е2.9).
 fn hand_tabs_to(app: &AppHandle, failed: &SavedWindow, into: &WindowId, error: TabError) {
     let shell = shell(app);
-    let moved: Vec<TabId> = failed.tabs.iter().map(|tab| tab.id.clone()).collect();
     let shown = lock(&shell.live).shown.get(into).cloned();
-    shell.change(|model| {
-        for tab in &moved {
-            let at = model.window(into).map_or(0, |window| window.tabs.len());
-            model.attach(tab, into, at);
-        }
-        // `attach` shows each tab it moves; the window keeps what it showed.
-        if let Some(shown) = &shown {
-            model.activate(shown);
-        }
-    });
-    if let Some(first) = moved.first() {
-        record_tab_error(app, first, &error);
-    } else {
-        log::warn!("{error}");
+    match shell.change(|model| hand_tabs_in(model, failed, into, shown.as_ref())) {
+        Some(first) => record_tab_error(app, &first, &error),
+        None => log::warn!("{error}"),
     }
 }
 
@@ -817,17 +922,8 @@ fn on_window_focused(app: &AppHandle, window_id: &WindowId) {
     if shell.quitting() {
         return;
     }
-    // While the saved windows come back, only the last window's focus
-    // counts: another restored window taking it is AppKit's doing, not the
-    // person's (Е2.7).
-    {
-        let mut live = lock(&shell.live);
-        match &live.restore_focus {
-            Some((last, _)) if last == window_id => live.restore_focus = None,
-            Some((_, since)) if since.elapsed() < RESTORE_FOCUS_GRACE => return,
-            Some(_) => live.restore_focus = None,
-            None => {}
-        }
+    if !focus_is_chosen(&mut lock(&shell.live).restore_focus, window_id, Instant::now()) {
+        return;
     }
     shell.change(|model| model.focus_window(window_id));
     crate::commands::startup::nudge_clipper_upkeep();
@@ -1777,4 +1873,228 @@ pub fn other_window_focused(app: &AppHandle) -> Option<Window> {
     app.windows()
         .into_values()
         .find(|window| window.is_focused().unwrap_or(false) && WindowId::from_label(window.label()).is_none())
+}
+
+/// The restore of the saved windows as the app runs it (SPEC_DEEP_AUDIT.md,
+/// Е7.11): the code of this module with stand-ins only for making a window,
+/// giving it the focus and reading the registry and `windows.json`. The
+/// rules it follows are tested in `domain::windows`.
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+
+    fn tab(id: &str, space: &str) -> SavedTab {
+        SavedTab {
+            id: TabId(id.into()),
+            space: TabSpace::Space { vault_id: space.into() },
+            view: TabView::default(),
+            sidebar: None,
+        }
+    }
+
+    fn window(id: &str, tabs: Vec<SavedTab>) -> SavedWindow {
+        let active_tab = tabs[0].id.clone();
+        SavedWindow {
+            id: WindowId(id.into()),
+            frame: WindowFrame { x: 100.0, y: 100.0, width: 1200.0, height: 831.0 },
+            fullscreen: false,
+            tabs,
+            active_tab,
+            sidebar: SidebarLayout::default(),
+            chrome_rows: ChromeRows::STANDARD,
+        }
+    }
+
+    fn saved(windows: Vec<SavedWindow>) -> SavedWindows {
+        SavedWindows {
+            version: crate::domain::windows::SAVED_WINDOWS_VERSION,
+            windows,
+            window_surface: None,
+        }
+    }
+
+    /// Windows that can be made, but those named in `failing`.
+    #[derive(Default)]
+    struct Windows {
+        failing: Vec<&'static str>,
+        calls: RefCell<Vec<String>>,
+    }
+
+    impl RestoreHost for Windows {
+        fn create(&self, saved: &SavedWindow, focus: bool) -> Result<(), TabError> {
+            self.calls.borrow_mut().push(format!("create {} focus={focus}", saved.id.0));
+            if self.failing.contains(&saved.id.0.as_str()) {
+                return Err(TabError::WindowCreate { reason: "refused".into() });
+            }
+            Ok(())
+        }
+
+        fn hand_tabs(&self, failed: &SavedWindow, into: &WindowId, error: TabError) {
+            self.calls.borrow_mut().push(format!("hand {} to {}: {error}", failed.id.0, into.0));
+        }
+
+        fn focus(&self, window: &WindowId) {
+            self.calls.borrow_mut().push(format!("focus {}", window.0));
+        }
+    }
+
+    /// Е2.7: the windows behind the last one come without the focus, from
+    /// the farthest, and the last one takes the focus back; launch made it
+    /// already.
+    #[test]
+    fn the_other_windows_come_back_behind_the_last_one() {
+        let snapshot = saved(vec![
+            window("last", vec![tab("a", "x")]),
+            window("middle", vec![tab("b", "x")]),
+            window("first", vec![tab("c", "x")]),
+        ]);
+        let windows = Windows::default();
+
+        restore_other_windows(&windows, &snapshot, &WindowId("last".into()));
+
+        assert_eq!(
+            windows.calls.into_inner(),
+            vec!["create first focus=false", "create middle focus=false", "focus last"]
+        );
+    }
+
+    /// Е2.9: a window that cannot be made hands its tabs to the last window
+    /// with the reason; the others are made all the same.
+    #[test]
+    fn a_window_that_cannot_be_made_hands_its_tabs_to_the_last_one() {
+        let snapshot = saved(vec![
+            window("last", vec![tab("a", "x")]),
+            window("broken", vec![tab("b", "x")]),
+            window("first", vec![tab("c", "x")]),
+        ]);
+        let windows = Windows { failing: vec!["broken"], ..Windows::default() };
+
+        restore_other_windows(&windows, &snapshot, &WindowId("last".into()));
+
+        assert_eq!(
+            windows.calls.into_inner(),
+            vec![
+                "create first focus=false",
+                "create broken focus=false",
+                "hand broken to last: the window for this tab could not be made: refused",
+                "focus last",
+            ]
+        );
+    }
+
+    /// Е2.9: the handed tabs go to the end of the last window in their
+    /// order, the window keeps showing its tab, and the first handed tab is
+    /// the one to carry the reason.
+    #[test]
+    fn handed_tabs_join_the_end_and_the_window_keeps_its_tab() {
+        let broken = window("broken", vec![tab("b1", "x"), tab("b2", "y")]);
+        let mut model = saved(vec![window("last", vec![tab("a", "x")]), broken.clone()]);
+        let shown = TabId("a".into());
+
+        let marked = hand_tabs_in(&mut model, &broken, &WindowId("last".into()), Some(&shown));
+
+        assert_eq!(marked, Some(TabId("b1".into())));
+        let last = model.window(&WindowId("last".into())).unwrap();
+        let order: Vec<&str> = last.tabs.iter().map(|tab| tab.id.0.as_str()).collect();
+        assert_eq!(order, vec!["a", "b1", "b2"]);
+        assert_eq!(last.active_tab, shown);
+        assert!(model.window(&WindowId("broken".into())).is_none());
+    }
+
+    /// Е2.7: while the saved windows come back, another window taking the
+    /// focus is no choice of the person; the last window's focus, or the end
+    /// of the grace, ends the wait.
+    #[test]
+    fn only_the_last_windows_focus_counts_while_the_windows_come_back() {
+        let started = Instant::now();
+        let last = WindowId("last".into());
+        let other = WindowId("other".into());
+        let mut waiting = Some((last.clone(), started));
+
+        assert!(!focus_is_chosen(&mut waiting, &other, started));
+        assert!(waiting.is_some());
+        assert!(focus_is_chosen(&mut waiting, &last, started));
+        assert!(waiting.is_none());
+        assert!(focus_is_chosen(&mut waiting, &other, started));
+
+        let mut waiting = Some((last, started));
+        assert!(focus_is_chosen(&mut waiting, &other, started + RESTORE_FOCUS_GRACE));
+        assert!(waiting.is_none());
+    }
+
+    /// What a restore reads, in the order it reads it.
+    struct Start {
+        registry: RefCell<BTreeSet<String>>,
+        repaired: BTreeSet<String>,
+        readable: bool,
+        saved: SavedWindows,
+        reads: RefCell<Vec<&'static str>>,
+    }
+
+    impl RestoreStart for Start {
+        fn repair_registry(&self) {
+            self.reads.borrow_mut().push("repair");
+            self.registry.borrow_mut().extend(self.repaired.iter().cloned());
+        }
+
+        fn known_spaces(&self) -> Option<BTreeSet<String>> {
+            self.reads.borrow_mut().push("registry");
+            self.readable.then(|| self.registry.borrow().clone())
+        }
+
+        fn load(&self) -> Loaded {
+            self.reads.borrow_mut().push("windows");
+            Loaded::Windows(self.saved.clone())
+        }
+
+        fn fresh_windows(&self) -> SavedWindows {
+            saved(vec![window("fresh", vec![tab("f", "x")])])
+        }
+    }
+
+    fn tabs_of(windows: &SavedWindows) -> Vec<String> {
+        windows
+            .windows
+            .iter()
+            .flat_map(|window| window.tabs.iter().map(|tab| tab.id.0.clone()))
+            .collect()
+    }
+
+    /// Е2.8: a space lost from the registry and found again in its derived
+    /// store keeps its tabs: the registry is repaired before the tabs are
+    /// checked against it. A space the registry does not know loses them.
+    #[test]
+    fn the_registry_is_repaired_before_the_tabs_are_checked() {
+        let start = Start {
+            registry: RefCell::new(["x".to_string()].into()),
+            repaired: ["lost".to_string()].into(),
+            readable: true,
+            saved: saved(vec![window("w", vec![tab("a", "x"), tab("b", "lost"), tab("c", "gone")])]),
+            reads: RefCell::default(),
+        };
+
+        let (windows, fresh) = windows_to_restore(&start, &[]);
+
+        assert_eq!(start.reads.into_inner(), vec!["repair", "registry", "windows"]);
+        assert_eq!(tabs_of(&windows), vec!["a", "b"]);
+        assert!(!fresh);
+    }
+
+    /// Е2.8: a registry that cannot be read forgets no tab.
+    #[test]
+    fn an_unreadable_registry_keeps_every_tab() {
+        let start = Start {
+            registry: RefCell::default(),
+            repaired: BTreeSet::new(),
+            readable: false,
+            saved: saved(vec![window("w", vec![tab("a", "x"), tab("b", "gone")])]),
+            reads: RefCell::default(),
+        };
+
+        let (windows, _) = windows_to_restore(&start, &[]);
+
+        assert_eq!(tabs_of(&windows), vec!["a", "b"]);
+    }
 }

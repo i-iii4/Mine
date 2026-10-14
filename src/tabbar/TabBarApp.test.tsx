@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { listen } from "@tauri-apps/api/event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DropHover, SidebarLayout, TabBarState } from "@/types";
+import type { DropHover, SidebarLayout, TabBarState, TabBarTab } from "@/types";
 import { TabBarApp } from "./TabBarApp";
 
 const webview = vi.hoisted(() => {
@@ -45,10 +45,14 @@ function emitToPage(event: string, payload: unknown) {
   });
 }
 
+function tab(id: string, space_name: string, place: string | null, live: boolean): TabBarTab {
+  return { id, space_name, place, card: null, live, history: { back: false, forward: false }, error: null };
+}
+
 function barState(overrides: Partial<TabBarState> = {}): TabBarState {
   return {
     window_id: "w1",
-    tabs: [{ id: "a", space_name: "Mine", place: null, live: true }],
+    tabs: [tab("a", "Mine", null, true)],
     active_tab: "a",
     sidebar: { width_px: 240, collapsed: false },
     fullscreen: false,
@@ -106,8 +110,8 @@ describe("tab bar page", () => {
 
     emitToPage("tabbar-state", barState({
       tabs: [
-        { id: "a", space_name: "Mine", place: null, live: true },
-        { id: "b", space_name: "Archive", place: "Posters", live: false },
+        tab("a", "Mine", null, true),
+        tab("b", "Archive", "Posters", false),
       ],
       active_tab: "b",
     }));
@@ -120,7 +124,7 @@ describe("tab bar page", () => {
     const answer = deferredBootstrap();
     render(<TabBarApp />);
 
-    emitToPage("tabbar-state", barState({ tabs: [{ id: "n", space_name: "Newer", place: null, live: true }], active_tab: "n" }));
+    emitToPage("tabbar-state", barState({ tabs: [tab("n", "Newer", null, true)], active_tab: "n" }));
     await answer(barState());
 
     expect(screen.getByRole("tab", { name: /Newer/ })).toBeInTheDocument();

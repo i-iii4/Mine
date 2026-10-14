@@ -16,9 +16,9 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(async () => undefin
 describe("SpaceUnavailable (SPEC_VAULT_LIFECYCLE.md, П12, П25)", () => {
   beforeEach(() => {
     commandMocks.listSpaces.mockResolvedValue([
-      { path: "/spaces/Mine", name: "Mine", available: false, current: true },
-      { path: "/spaces/NSFV", name: "NSFV", available: true, current: false },
-      { path: "/spaces/Old", name: "Old", available: false, current: false },
+      { vault_id: "vault-Mine", path: "/spaces/Mine", name: "Mine", available: false, current: true },
+      { vault_id: "vault-NSFV", path: "/spaces/NSFV", name: "NSFV", available: true, current: false },
+      { vault_id: "vault-Old", path: "/spaces/Old", name: "Old", available: false, current: false },
     ]);
     commandMocks.selectVault.mockResolvedValue(undefined);
   });

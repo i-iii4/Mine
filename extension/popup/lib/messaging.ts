@@ -288,13 +288,14 @@ export async function revealVault(path: string, bindingId: string | null = null)
   return sendToNative({ action: "reveal_vault", path, binding_id: bindingId });
 }
 
+/** The clicked target as background.js hands it over: absent parts are `null`. */
 export interface ContextMenuData {
-  menuItemId: string;
-  srcUrl?: string;
-  selectionText?: string;
-  linkUrl?: string;
-  pageUrl?: string;
-  frameUrl?: string;
+  menuItemId: chrome.contextMenus.OnClickData["menuItemId"];
+  srcUrl?: string | null;
+  selectionText?: string | null;
+  linkUrl?: string | null;
+  pageUrl?: string | null;
+  frameUrl?: string | null;
 }
 
 export interface PageMetadata {
@@ -322,7 +323,7 @@ export interface PageMetadata {
 export interface ArticleData {
   captureGeneration?: string;
   /** Structured X posts retain media ownership through authenticated recovery. */
-  twitterPosts?: import("../../lib/xThread").XPostContent[];
+  twitterPosts?: import("../../lib/xThread.types").XPostContent[];
   documentUrl?: string;
   /** Source captured with the extracted content, never inferred at save time. */
   sourceUrl?: string;

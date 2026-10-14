@@ -9,11 +9,16 @@
   // (SPEC_CARD_ASSOCIATIONS.md, «Клиппер: канал YouTube»).
   const YOUTUBE_CHANNEL_TIMEOUT_MS = 3000;
 
+  /**
+   * @param {unknown} value
+   * @returns {import("./youtubeSource.types").YoutubeSource | null}
+   */
   function parse(value) {
     if (typeof value !== "string") return null;
     let url;
     try { url = new URL(value); } catch { return null; }
     if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
+    /** @type {string | null | undefined} */
     let videoId = null;
     if (url.hostname === "youtu.be" || url.hostname === "www.youtu.be") {
       videoId = url.pathname.match(/^\/([A-Za-z0-9_-]{11})\/?$/)?.[1] ?? null;
@@ -38,6 +43,7 @@
   // The oEmbed request for the video of an address. It names the video by
   // its id, so the answer belongs to exactly that video, whatever the page's
   // markup still shows after an in-page navigation.
+  /** @param {unknown} value */
   function youtubeOEmbedUrl(value) {
     const source = parse(value);
     if (!source) return null;
@@ -45,6 +51,7 @@
   }
 
   // `@handle` of a channel page address `https://<youtube host>/@handle`.
+  /** @param {unknown} value */
   function channelHandle(value) {
     if (typeof value !== "string") return null;
     let url;
@@ -61,11 +68,12 @@
 
   // The channel of an oEmbed answer, written the way X and Instagram authors
   // are: `@handle` from `author_url`, else the channel name.
+  /** @param {unknown} payload */
   function youtubeChannelFromOEmbed(payload) {
     if (!payload || typeof payload !== "object") return null;
-    const handle = channelHandle(payload.author_url);
+    const handle = channelHandle("author_url" in payload ? payload.author_url : undefined);
     if (handle) return handle;
-    const name = typeof payload.author_name === "string" ? payload.author_name.trim() : "";
+    const name = "author_name" in payload && typeof payload.author_name === "string" ? payload.author_name.trim() : "";
     return name || null;
   }
 

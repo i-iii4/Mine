@@ -5,14 +5,20 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ACCEPTANCE, PRINCIPLES, artifactDigest, automaticBaseNotice, changeBase, changedPaths, registryPath, validateRegistry, verifyChangeCoverage, verifyModuleBoundaries, verifyRelease } from './reliability-gate.mjs';
+import { ACCEPTANCE, PRINCIPLES, artifactDigest, automaticBaseNotice, changeBase, changedPaths, markdownHeadings, registryPath, repository, validateRegistry, verifyChangeCoverage, verifyModuleBoundaries, verifyRegistryFormat, verifyRelease } from './reliability-registry-check.mjs';
 import { fixturePath, sha256 } from './reliability-source-guard.mjs';
+import { createReach } from './test-reach.mjs';
+import { SAFARI_MIRRORS } from './verify-extension-mirrors.mjs';
 
 async function registry() { return JSON.parse(await readFile(registryPath, 'utf8')); }
+// One reading of the sources for every check below.
+const reach = createReach(repository);
+const check = value => validateRegistry(value, repository, reach);
+const INV_01 = 'SPEC_SYSTEM_RELIABILITY.md#### INV-01. Реестр проверок';
 
 test('all eleven principles, 24 scenarios and four levels have executable owners', async () => {
   const value = await registry();
-  await validateRegistry(value);
+  await check(value);
   assert.equal(value.principles.length, PRINCIPLES.length);
   assert.equal(value.acceptance.length, ACCEPTANCE.length);
   assert.ok(value.acceptance.every(entry => entry.result === 'pending'));
@@ -30,39 +36,119 @@ test('missing, duplicated, unknown or skipped scenarios cannot satisfy release a
     value => { value.acceptance[0].result = 'passed'; },
   ]) {
     const value = await registry(); mutation(value);
-    await assert.rejects(validateRegistry(value));
+    await assert.rejects(check(value));
   }
   for (const result of ['pending', 'failed', 'skipped', 'flaky']) {
     const value = await registry(); value.acceptance[0].result = result;
-    await assert.rejects(verifyRelease(value), /Release blocked/);
+    await assert.rejects(verifyRelease(value, undefined, { reach }), /Release blocked/);
   }
 });
 
 test('ordinary registry checks pass while the actual release CLI exits nonzero', () => {
-  const execution = spawnSync(process.execPath, [fileURLToPath(new URL('./reliability-gate.mjs', import.meta.url)), '--release'], { encoding: 'utf8' });
+  const execution = spawnSync(process.execPath, [fileURLToPath(new URL('./reliability-registry-check.mjs', import.meta.url)), '--release'], { encoding: 'utf8' });
   assert.equal(execution.status, 1);
   assert.match(execution.stderr, /Release blocked/);
   assert.match(execution.stderr, /A01/);
   assert.match(execution.stderr, /A24/);
 });
 
-test('new behavior without a requirement and executable check is rejected', async () => {
+// The reference used to be found anywhere in the file: the start of a
+// heading, a heading of another level or a word passed (Е7.7).
+test('a requirement names one whole heading line of its document', async () => {
+  for (const requirement of ['PRINCIPLES.md#### 1.', 'PRINCIPLES.md## 1. Контракт первичен', 'PRINCIPLES.md#Контракт первичен',
+    'PRINCIPLES.md#### 1. Контракт']) {
+    const value = await registry();
+    value.principles[0].requirement = requirement;
+    await assert.rejects(check(value), /Requirement heading missing/, requirement);
+    const coverage = await registry();
+    coverage.changeCoverage[0].requirement = requirement;
+    await assert.rejects(check(coverage), /Requirement heading missing/, requirement);
+  }
   const value = await registry();
-  verifyChangeCoverage(value, ['scripts/reliability-gate.mjs', 'SPEC_SYSTEM_RELIABILITY.md']);
-  assert.throws(() => verifyChangeCoverage(value, ['src-tauri/src/new_behavior.rs']), /no requirement and check/);
+  value.principles[0].requirement = 'PRINCIPLES.md#### 1. Контракт первичен';
+  await check(value);
+  assert.deepEqual([...markdownHeadings('# Title\n```md\n## In code\n```\n## Section  \nText ## not\n')], ['# Title', '## Section']);
+});
+
+// The registry used to accept any path next to any existing test and any
+// command, so a failing check was fixed by adding the path (Е7.7).
+test('every change coverage claim holds: the command runs the test and the test executes the path', async () => {
+  const frontend = value => value.changeCoverage.find(entry => entry.command === 'test:frontend');
+  for (const [mutation, message] of [
+    [value => { frontend(value).paths.push('scripts/fetch-ytdlp.mjs'); }, /no test of the entry imports, reads or launches scripts\/fetch-ytdlp\.mjs/],
+    [value => { frontend(value).command = 'test:scripts'; }, /test:scripts does not run/],
+    [value => { frontend(value).paths.push('src/'); }, /a directory would cover files no test touches: src\//],
+    [value => { frontend(value).paths.push('src/no-such-module.ts'); }, /path does not exist: src\/no-such-module\.ts/],
+    [value => { frontend(value).tests.push('src/no-such-module.test.ts'); }, /test does not exist: src\/no-such-module\.test\.ts/],
+    [value => { frontend(value).command = 'no-such-script'; }, /no package\.json script no-such-script/],
+    [value => { frontend(value).requirement = 'SPEC_SYSTEM_RELIABILITY.md#INV-01'; }, /Requirement heading missing/],
+    [value => { frontend(value).paths = []; }, /no paths/],
+    [value => { frontend(value).tests = []; }, /no tests/],
+  ]) {
+    const value = await registry();
+    mutation(value);
+    await assert.rejects(check(value), message);
+  }
+  const value = await registry();
+  value.changeCoverage.push({ paths: ['scripts/test-reach.mjs'], requirement: INV_01, tests: ['scripts/test-reach.test.mjs'], command: 'test:reliability' });
+  await check(value);
+});
+
+// The fixture used to pass by listing its case labels (Е7.8).
+test('the reliability fixture is bound to a test that checks every required case in a branch of its own', async () => {
+  const fixture = 'scripts/fixtures/reliability/source-v1.json';
+  const unbind = (value, keep) => {
+    for (const entry of value.changeCoverage) if (!keep(entry)) entry.paths = entry.paths.filter(path => path !== fixture);
+    value.changeCoverage = value.changeCoverage.filter(entry => entry.paths.length > 0);
+    return value;
+  };
+  // Read by a test that has no branch per case: the hash guard of the source.
+  const readOnly = unbind(await registry(), entry => entry.tests.includes('scripts/reliability-source-guard.mjs'));
+  await assert.rejects(check(readOnly), /Fixture cases no test bound to scripts\/fixtures\/reliability\/source-v1\.json checks in a branch of their own .*plain-markdown/);
+  await assert.rejects(check(unbind(await registry(), () => false)), /bound to no test that reads it/);
+});
+
+test('a changed file passes only when the change coverage names it', async () => {
+  const value = await registry();
+  const exists = () => true;
+  assert.deepEqual(verifyChangeCoverage(value, ['scripts/reliability-registry-check.mjs', 'SPEC_SYSTEM_RELIABILITY.md'], { exists }).checked,
+    ['scripts/reliability-registry-check.mjs']);
+  assert.throws(() => verifyChangeCoverage(value, ['src-tauri/src/new_behavior.rs'], { exists }), /no requirement and no test that imports, reads or launches them \(1\):\nsrc-tauri\/src\/new_behavior\.rs/);
 });
 
 test('styles, pages and shell scripts are behavior too (А10.4)', async () => {
   const value = await registry();
   for (const path of ['src/styles/new.css', 'new-window.html', 'scripts/new-step.sh']) {
-    assert.throws(() => verifyChangeCoverage(value, [path]), /no requirement and check/, path);
+    assert.throws(() => verifyChangeCoverage(value, [path], { exists: () => true }), /no requirement and no test/, path);
   }
+});
+
+test('deleted files, declarations and Safari mirrors of bound sources are counted apart, nothing else', async () => {
+  const value = await registry();
+  const [{ source, mirror }] = SAFARI_MIRRORS;
+  assert.ok(value.changeCoverage.some(entry => entry.paths.includes(source)), `${source} must be bound for its mirror`);
+  const result = verifyChangeCoverage(value, ['src/gone.ts', 'src/types/new.ts', mirror], {
+    exists: path => path !== 'src/gone.ts', declarationsOnly: path => path === 'src/types/new.ts',
+  });
+  assert.deepEqual(result, { checked: [], deleted: ['src/gone.ts'], declarations: ['src/types/new.ts'], mirrors: [mirror] });
+  // A mirror is only as bound as its source.
+  for (const entry of value.changeCoverage) entry.paths = entry.paths.filter(path => path !== source);
+  assert.throws(() => verifyChangeCoverage(value, [mirror], { exists: () => true }), /no requirement and no test/);
+  assert.throws(() => verifyChangeCoverage(value, ['src/new.ts'], { exists: () => true, declarationsOnly: () => false }), /no requirement and no test/);
+});
+
+test('the registry file keeps one format', async () => {
+  const text = await readFile(registryPath, 'utf8');
+  verifyRegistryFormat(text);
+  const value = JSON.parse(text);
+  assert.throws(() => verifyRegistryFormat(`${JSON.stringify(value, null, 4)}\n`), /not in its format/);
+  assert.throws(() => verifyRegistryFormat(JSON.stringify(value, null, 2)), /not in its format/);
 });
 
 test('committed work since the base revision is inspected, not only uncommitted edits (А10.4)', async () => {
   const repo = await mkdtemp(join(tmpdir(), 'mine-change-base-'));
   const git = (...args) => {
-    const result = spawnSync('git', ['-c', 'user.name=Gate test', '-c', 'user.email=gate@test.invalid', ...args], { cwd: repo, encoding: 'utf8' });
+    const result = spawnSync('git', ['-c', 'user.name=Registry check test', '-c', 'user.email=registry-check@test.invalid', ...args], { cwd: repo, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
     return result.stdout.trim();
   };
@@ -91,10 +177,10 @@ test('committed work since the base revision is inspected, not only uncommitted 
   }
 });
 
-test('after a push the automatic base is HEAD and the gate says it compared nothing (Б6.3)', async () => {
-  const repo = await mkdtemp(join(tmpdir(), 'mine-gate-pushed-'));
+test('after a push the automatic base is HEAD and the registry check says it compared nothing (Б6.3)', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'mine-registry-check-pushed-'));
   const git = (...args) => {
-    const result = spawnSync('git', ['-c', 'user.name=Gate test', '-c', 'user.email=gate@test.invalid', ...args], { cwd: repo, encoding: 'utf8' });
+    const result = spawnSync('git', ['-c', 'user.name=Registry check test', '-c', 'user.email=registry-check@test.invalid', ...args], { cwd: repo, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
     return result.stdout.trim();
   };
@@ -146,14 +232,14 @@ async function completeEvidence(temporary) {
   const commit = 'a'.repeat(40);
   const fixtureSha256 = sha256(await readFile(fixturePath));
   const artifactFile = join(temporary, 'candidate.bin');
-  await writeFile(artifactFile, 'synthetic artifact for gate unit tests only');
+  await writeFile(artifactFile, 'synthetic artifact for registry check unit tests only');
   const installedBundle = join(temporary, 'Candidate.app');
   await mkdir(installedBundle);
   await writeFile(join(installedBundle, 'executable'), 'synthetic executable');
   const artifacts = ['application', 'host', 'extension', 'cli'].map(component => ({
     id: component, component, role: 'candidate', version: '1', buildId: 'test-build', commit,
     channel: 'test-only', path: artifactFile,
-    installedBundle, sha256: sha256('synthetic artifact for gate unit tests only'),
+    installedBundle, sha256: sha256('synthetic artifact for registry check unit tests only'),
   }));
   artifacts[0].installedBundleSha256 = await artifactDigest(installedBundle);
   const signature = join(temporary, 'candidate.sig');

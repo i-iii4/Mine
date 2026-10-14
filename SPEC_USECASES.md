@@ -224,7 +224,6 @@ stripe-og.png
    только в `Cmd+F` / `Shift+Cmd+F` surface modes.
    - Сменить вид (сетка/masonry/список)
    - Открыть vault в Finder
-   - Пересобрать индекс
 
 ---
 

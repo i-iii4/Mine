@@ -9,6 +9,7 @@
 (function () {
   /// Comparison form: markdown links flattened to their text, whitespace
   /// collapsed. The two sources never agree character for character.
+  /** @param {string | null | undefined} text */
   function tweetTextPlain(text) {
     return String(text ?? "")
       .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
@@ -19,6 +20,10 @@
   /// The DOM reading wins whenever it is complete — it keeps the formatting.
   /// The API reading wins only when the DOM one is a truncated prefix of it,
   /// which is exactly the "Show more" case.
+  /**
+   * @param {string | null | undefined} domText
+   * @param {string | null | undefined} apiText
+   */
   function preferCompleteTweetText(domText, apiText) {
     const dom = String(domText ?? "").trim();
     const api = String(apiText ?? "").trim();

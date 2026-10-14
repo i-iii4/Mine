@@ -5,9 +5,10 @@ import {
   CARD_HEIGHT_DRIFT_SOFT_BUDGET_PX,
   createCardHeightDriftReport,
 } from "./cardHeightDrift";
+import { lightBlock } from "@/test/blocks";
 
 function block(id: number, overrides: Partial<LightBlock> = {}): LightBlock {
-  return {
+  return lightBlock({
     id,
     slug: `block-${id}`,
     card_kind: "article",
@@ -29,7 +30,7 @@ function block(id: number, overrides: Partial<LightBlock> = {}): LightBlock {
     collections: [],
     feed_playback: null,
     ...overrides,
-  };
+  });
 }
 
 describe("createCardHeightDriftReport", () => {

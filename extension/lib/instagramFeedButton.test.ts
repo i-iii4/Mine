@@ -33,7 +33,7 @@ function instagram(storage: ReturnType<typeof switchStorage>, options: {
 describe("a press on the Instagram button that fails", () => {
   it("opens the clipper for the post with the reason when Instagram does not give the post", async () => {
     // A request the network or the browser refuses fails this way.
-    const sendMessage = vi.fn(async () => ({ ok: true, mode: "overlay" }));
+    const sendMessage = vi.fn(async (_message: unknown) => ({ ok: true, mode: "overlay" }));
     const storage = switchStorage();
     const page = instagram(storage, { fetch: vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))), sendMessage });
     await vi.waitFor(() => expect(page.querySelectorAll(BUTTON)).toHaveLength(2));

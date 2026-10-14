@@ -973,6 +973,148 @@ mod tests {
         assert_eq!(reopened.index_db_path(), vault.index_db_path());
     }
 
+    /// INV-02, SPEC_DEEP_AUDIT.md Е7.8: every case the versioned reliability
+    /// fixture names is checked by what the index does with it, not counted
+    /// as a label. A case without a check here fails this test, so a label
+    /// cannot stand in for a behavior.
+    #[test]
+    fn reliability_fixture_cases_have_their_behavior() {
+        use crate::storage::cloud_files::test_seam;
+        use crate::storage::index;
+
+        let fixture: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../scripts/fixtures/reliability/source-v1.json"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(fixture["synthetic"], true);
+        let directory = tempfile::tempdir().unwrap();
+        let vault = fixture_vault(directory.path());
+        let root = std::fs::canonicalize(vault.root()).unwrap();
+        let vault = VaultLayout::with_derived_root(root.clone(), directory.path().join("derived"));
+        for (name, content) in fixture["files"].as_object().unwrap() {
+            let path = root.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, content.as_str().unwrap()).unwrap();
+        }
+        let before: Vec<(PathBuf, Vec<u8>)> = fixture["files"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|name| (root.join(name), std::fs::read(root.join(name)).unwrap()))
+            .collect();
+        // `unavailable-cloud-file`: one note's contents are in iCloud
+        // (`SF_DATALESS`, which a test stands in for).
+        let cloud_note = root.join("B/Same.md");
+        test_seam::mark_offloaded(&cloud_note);
+
+        let vault = resolve_vault_index(vault).unwrap();
+        let conn = open_or_create(&vault.index_db_path()).unwrap();
+        let report = crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        assert!(report.is_fresh(), "{:?}", report.errors);
+        let card = |slug: &str| {
+            index::get_block(&conn, slug)
+                .unwrap()
+                .unwrap_or_else(|| panic!("{slug} is not in the index"))
+        };
+        let resolved = |slug: &str| -> Vec<Option<String>> {
+            let block = card(slug);
+            let mut resolver = crate::storage::media_refs::MediaResolver::new(&vault);
+            crate::domain::block::iter_file_references(&block.body)
+                .iter()
+                .map(|reference| {
+                    resolver
+                        .resolve_file_reference(slug, reference)
+                        .map(|path| path.strip_prefix(&root).unwrap().to_string_lossy().into_owned())
+                })
+                .collect()
+        };
+        let unicode = "Nested/Unicode ñ 日本";
+
+        for case in fixture["cases"].as_array().unwrap() {
+            let case = case.as_str().unwrap();
+            match case {
+                "plain-markdown" => {
+                    let plain = card("Plain note");
+                    assert!(plain.body.contains("No Mine metadata."), "{plain:?}");
+                    assert_eq!(plain.display_title.as_deref(), Some("Ordinary Markdown"));
+                }
+                "unknown-properties" => {
+                    // The card opens; its properties stay in the file (checked
+                    // below), not in the text.
+                    let block = card(unicode);
+                    assert!(!block.body.contains("unknown_property"), "{block:?}");
+                }
+                "malformed-frontmatter" => {
+                    let broken = card("Broken metadata");
+                    assert!(broken.body.contains("Original malformed metadata must survive."), "{broken:?}");
+                }
+                "unicode" => assert_eq!(card(unicode).display_title.as_deref(), Some("Unicode ñ 日本")),
+                "spaces" => assert_eq!(card("Plain note").slug, "Plain note"),
+                "nested-folders" => assert_eq!(card(unicode).slug, unicode),
+                "duplicate-basenames" => {
+                    assert!(card("A/Same").body.contains("First duplicate basename"));
+                    assert!(card("B/Same").body.contains("Second duplicate basename"));
+                }
+                "relative-links" => {
+                    assert!(resolved(unicode).contains(&Some("Plain note.md".to_string())), "{:?}", resolved(unicode));
+                }
+                "obsidian-links" => {
+                    assert!(resolved("Plain note").contains(&Some(format!("{unicode}.md"))));
+                    assert!(resolved("Cards/Card").contains(&Some("Plain note.md".to_string())));
+                }
+                "collections" => {
+                    // The page is a collection with its own order and colour,
+                    // not a card. The card names it with its folder,
+                    // `[[Collections/Collection]]`, a form Mine does not take
+                    // for membership (a collection's name has no folder):
+                    // membership is not part of this case.
+                    let collection: (String, i64, Option<String>) = conn
+                        .query_row("SELECT tag, position, color FROM channels", [], |row| {
+                            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                        })
+                        .unwrap();
+                    assert_eq!(collection, ("Collection".to_string(), 1, Some("green".to_string())));
+                    assert!(index::get_block(&conn, "Collections/Collection").unwrap().is_none_or(|page| {
+                        page.card_kind == crate::domain::block::CardKind::Channel
+                    }));
+                }
+                "multiple-media" => {
+                    // Both pictures stay with the one card. Their wikilinks
+                    // start with `../`, which Mine's wikilink rules do not
+                    // resolve, so no picture of theirs is read here.
+                    let pictures = crate::domain::block::iter_file_references(&card(unicode).body)
+                        .into_iter()
+                        .filter(|reference| reference.target.ends_with(".svg"))
+                        .count();
+                    assert_eq!(pictures, 2);
+                }
+                "missing-attachment" => {
+                    // The card stands; its missing picture resolves to nothing.
+                    let missing = crate::domain::block::iter_file_references(&card(unicode).body)
+                        .into_iter()
+                        .find(|reference| reference.target == "missing.png")
+                        .expect("the missing picture's link stays in the text");
+                    let mut resolver = crate::storage::media_refs::MediaResolver::new(&vault);
+                    assert_eq!(resolver.resolve_file_reference(unicode, &missing), None);
+                }
+                "unavailable-cloud-file" => {
+                    // The index pass brings the note down once and shows it;
+                    // no other card waits for it.
+                    assert_eq!(test_seam::reads_of(&cloud_note), 1);
+                    assert!(card("B/Same").body.contains("Second duplicate basename"));
+                }
+                other => panic!("the fixture case {other} has no behavior check"),
+            }
+        }
+        for (path, bytes) in before {
+            assert_eq!(std::fs::read(&path).unwrap(), bytes, "{} changed", path.display());
+        }
+    }
+
     #[test]
     fn open_memory_applies_schema_and_connection_contract() {
         let conn = open_memory().unwrap();

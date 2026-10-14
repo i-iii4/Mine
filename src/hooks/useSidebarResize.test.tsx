@@ -2,7 +2,6 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SidebarLayout } from "@/types";
 import { SIDEBAR_MAX_WIDTH_PX, sidebarMinWidth } from "@/lib/appLayout";
-import { getDesignMode } from "@/lib/designMode";
 import { useSidebarResize } from "./useSidebarResize";
 
 const commands = vi.hoisted(() => ({
@@ -14,7 +13,7 @@ vi.mock("@/lib/commands", () => ({
 }));
 
 describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", () => {
-  const min = () => sidebarMinWidth(getDesignMode());
+  const min = () => sidebarMinWidth();
 
   beforeEach(() => {
     commands.setWindowSidebar.mockClear();

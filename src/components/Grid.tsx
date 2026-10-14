@@ -2652,7 +2652,7 @@ export function Grid({
   );
 }
 
-// ─── JS virtualized path (fallback for browsers without grid-lanes) ────────
+// ─── Virtualized JS path (the only layout path, SPEC_GRID.md) ───────────────
 
 /// The chord that opens the focused card's menu, as the registry holds it now:
 /// a rebind in Settings relabels the badge at once (SPEC_AUDIT_FIXES.md, Ф11).

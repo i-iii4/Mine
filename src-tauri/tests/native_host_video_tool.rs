@@ -101,28 +101,32 @@ fn wait_for(path: &Path, within: Duration) {
 
 #[test]
 fn the_helper_answers_other_requests_while_the_tool_runs() {
-    let mut helper = Helper::start("/bin/sleep 2\necho 2026.08.19");
+    // The tool runs until the test releases it and counts its runs.
+    let mut helper = Helper::start(
+        "while [ ! -f \"$TMPDIR/release\" ]; do /bin/sleep 0.05; done\necho ran >> \"$TMPDIR/runs\"\necho 2026.08.19",
+    );
     helper.send(serde_json::json!({ "action": "video_tool_status", "_messageId": 1 }));
     helper.send(serde_json::json!({ "action": "list_known_vaults", "_messageId": 2 }));
 
-    let started = Instant::now();
+    // The tool cannot finish before the release: an answer now did not wait
+    // for it.
     let first = helper.next(Duration::from_secs(10));
-    assert_eq!(first["_messageId"], 2, "the loop answered the second request first: {first}");
-    assert!(started.elapsed() < Duration::from_millis(1500), "the second request waited for the tool");
+    assert_eq!(first["_messageId"], 2, "the second request waited for the tool: {first}");
 
+    std::fs::write(helper.path("release"), "").unwrap();
     let second = helper.next(Duration::from_secs(10));
     assert_eq!(second["_messageId"], 1, "{second}");
     assert_eq!(second["ok"], true);
     assert_eq!(second["video_tool"]["state"], "ready");
     assert_eq!(second["video_tool"]["version"], "2026.08.19");
 
-    // Remembered for the life of the helper: the second check answers at once.
+    // Remembered for the life of the helper: the second check does not run
+    // the tool again.
     helper.send(serde_json::json!({ "action": "video_tool_status", "_messageId": 3 }));
-    let started = Instant::now();
     let third = helper.next(Duration::from_secs(10));
     assert_eq!(third["_messageId"], 3);
     assert_eq!(third["video_tool"]["state"], "ready");
-    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(std::fs::read_to_string(helper.path("runs")).unwrap(), "ran\n");
 }
 
 #[test]
@@ -155,7 +159,12 @@ fn a_tool_still_running_ends_with_the_helper() {
         assert!(started.elapsed() < Duration::from_secs(10), "the helper did not end");
         std::thread::sleep(Duration::from_millis(20));
     }
-    std::thread::sleep(Duration::from_millis(100));
+    // The tool is gone once the system has ended it; the deadline only ends
+    // a test that would hang.
+    let ended_by = Instant::now() + Duration::from_secs(30);
     // SAFETY: signal 0 only asks whether the process exists.
-    assert_ne!(unsafe { libc::kill(pid, 0) }, 0, "the tool outlived the helper");
+    while unsafe { libc::kill(pid, 0) } == 0 {
+        assert!(Instant::now() < ended_by, "the tool outlived the helper");
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }

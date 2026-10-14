@@ -132,8 +132,8 @@ describe("VaultSwitcher", () => {
   it("lists a space whose folder is gone as unavailable instead of dropping it", async () => {
     commandMocks.listKnownVaults.mockResolvedValue(["/spaces/Mine!"]);
     commandMocks.listSpaces.mockResolvedValue([
-      { path: "/spaces/Mine!", name: "Mine!", available: true, current: true },
-      { path: "/spaces/NSFV", name: "NSFV", available: false, current: false },
+      { vault_id: "vault-Mine!", path: "/spaces/Mine!", name: "Mine!", available: true, current: true },
+      { vault_id: "vault-NSFV", path: "/spaces/NSFV", name: "NSFV", available: false, current: false },
     ]);
     render(<VaultSwitcher currentPath="/spaces/Mine!" onVaultSelected={vi.fn()} surface="topChrome" />);
     fireEvent.click(screen.getByRole("button", { name: /Switch space: Mine!/ }));

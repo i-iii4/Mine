@@ -18,6 +18,7 @@ import {
 } from "@/lib/cardTypography";
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
+import { lightBlock } from "@/test/blocks";
 
 vi.mock("@/lib/commands", () => ({
   getBlock: vi.fn(async () => ({ tags: [] })),
@@ -71,31 +72,15 @@ it("retries a transient preview failure with a new URL and stops after two retri
 function block(overrides: Partial<LightBlock> = {}): LightBlock {
   const blockType = overrides.block_type ?? "link";
   const cardKind = overrides.card_kind ?? cardKindForBlockType(blockType);
-  const value: LightBlock = {
+  const value: LightBlock = lightBlock({
     id: 1,
     slug: "test-block",
     card_kind: cardKind,
     block_type: blockType,
     title: "Test Block",
-    description: "A test block",
     url: "https://example.com",
-    media_file: null,
-    thumbnail: null,
-    saved_at: "2026-01-01T00:00:00Z",
-    source: null,
-    width: null,
-    height: null,
-    author: null,
-    body: "",
-    first_image: null,
-    media_urls: null,
-    media_dimensions: null,
-    preview_manifest: null,
-    collections: [],
-    feed_playback: null,
-    tags: ["test"],
     ...overrides,
-  };
+  });
   if (overrides.preview_manifest !== undefined) {
     return value;
   }
@@ -282,6 +267,7 @@ describe("Card", () => {
             excerpt: "around the match here",
             ranges: [{ start: 11, end: 16 }],
             score: 100,
+            explanation: null,
           },
         })}
         vaultPath={VAULT}
@@ -302,6 +288,7 @@ describe("Card", () => {
       excerpt,
       ranges: [{ start: 0, end: 5 }],
       score: 8,
+      explanation: null,
     });
     const { rerender } = render(
       <ReadOnlyCardPreview
@@ -363,6 +350,7 @@ describe("Card", () => {
             excerpt: "Plato and Aristotle in one paragraph",
             ranges: [{ start: 10, end: 19 }],
             score: 1,
+            explanation: null,
           },
         })}
         vaultPath={VAULT}
@@ -393,6 +381,7 @@ describe("Card", () => {
             excerpt: "Introducing Claude Managed Agents",
             ranges: [{ start: 12, end: 18 }],
             score: 1,
+            explanation: null,
           },
         })}
         vaultPath={VAULT}
@@ -421,6 +410,7 @@ describe("Card", () => {
             excerpt: "someone called Zizako Mindo inked over blank postcards",
             ranges: [{ start: 22, end: 24 }],
             score: 1,
+            explanation: null,
           },
         })}
         vaultPath={VAULT}
@@ -481,6 +471,7 @@ describe("Card", () => {
             excerpt: "@poetengineer__",
             ranges: [],
             score: 1,
+            explanation: null,
           },
         })}
         vaultPath={VAULT}
@@ -509,6 +500,7 @@ describe("Card", () => {
             excerpt: "https://example.com/memory-lab",
             ranges: [],
             score: 1,
+            explanation: null,
           },
         })}
         vaultPath={VAULT}
@@ -797,7 +789,7 @@ describe("Card", () => {
   });
 
   it("puts nothing in place of a link that has neither picture, title nor description (Е8)", () => {
-    const b = block({ block_type: "link", title: null, description: null });
+    const b = block({ block_type: "link", title: null });
     const { container } = render(<Card block={b} vaultPath={VAULT} onClick={vi.fn()} />);
     expect(screen.queryByText("test-block")).not.toBeInTheDocument();
     expect(screen.queryByText("example.com")).not.toBeInTheDocument();
@@ -1633,7 +1625,7 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
   /// A single-picture post from X or Instagram whose preview artifact is a
   /// 100×1000 strip: ten times taller than wide, far past the card's 1:2.
   const tallPost = (url: string, author: string | null = null) => block({
-    block_type: "article", card_kind: "article", title: null, description: null, url,
+    block_type: "article", card_kind: "article", title: null, url,
     body: "![](tall.jpg)", media_urls: "[\"tall.jpg\"]", author,
     preview_manifest: JSON.stringify({
       kind: "image", primary_preview_path: "tall.jpg", width: 100, height: 1000,
@@ -1685,7 +1677,7 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
     ["Instagram", "https://instagram.com/p/1"],
   ])("shapes a single %s picture by the tile it paints, not by the poster in its preview (Д1.2)", (_network, url) => {
     const post = block({
-      block_type: "article", card_kind: "article", title: null, description: null, url,
+      block_type: "article", card_kind: "article", title: null, url,
       thumbnail: "Media/post-poster.jpg",
       body: "![](Media/post-1.jpg)", media_urls: "[\"Media/post-1.jpg\"]",
       preview_manifest: JSON.stringify({
@@ -1715,7 +1707,7 @@ describe("Card geometry, author and name (SPEC_AUDIT_FIXES.md, Г4.5 to Г4.7)",
   /// built from `thumbnail` at 1600×900, and whose one tile, from the body, is
   /// 800×1200.
   const oneMediaCard = (url: string, media: "picture" | "video") => block({
-    block_type: "article", card_kind: "article", title: null, description: null, url,
+    block_type: "article", card_kind: "article", title: null, url,
     thumbnail: "Media/page-picture.jpg",
     body: media === "picture" ? "![](Media/body-1.jpg)" : "![](Media/body-1.mp4)",
     media_urls: media === "picture" ? "[\"Media/body-1.jpg\"]" : "[\"Media/body-1.mp4\"]",
@@ -2080,12 +2072,12 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
   });
 
   const article = (manifest: string) => block({
-    block_type: "article", card_kind: "article", title: "A piece", description: null, url: null,
+    block_type: "article", card_kind: "article", title: "A piece", url: null,
     body: "Short words\n\n![](photo.jpg)", media_urls: "[\"photo.jpg\"]",
     preview_text: "Short words", author: "Ann", preview_manifest: manifest,
   });
   const xPost = (manifest: string) => block({
-    block_type: "article", card_kind: "article", title: null, description: null,
+    block_type: "article", card_kind: "article", title: null,
     url: "https://x.com/someone/status/1", body: "Hello there\n\n![](photo.jpg)",
     media_urls: "[\"photo.jpg\"]", preview_text: "Hello there", author: "@someone",
     preview_manifest: manifest,
@@ -2220,7 +2212,7 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
     ["a post with a picture and an author only", () => block({
       block_type: "article",
       title: null,
-      description: null,
+     
       body: "![](photo.jpg)",
       preview_text: null,
       author: "@someone",
@@ -2230,7 +2222,7 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
     ["a text post without a title", () => block({
       block_type: "article",
       title: null,
-      description: null,
+     
       body: "Just a few words",
       preview_text: "Just a few words",
       url: null,
@@ -2322,11 +2314,11 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
   it("sets a text post 8px from the sides and 14px from both edges, letter to letter (Д25)", () => {
     const textOnly: LightBlock[] = [
       block({
-        block_type: "article", card_kind: "article", title: "A piece", description: null, url: null,
+        block_type: "article", card_kind: "article", title: "A piece", url: null,
         body: "Short words", preview_text: "Short words", author: "Ann",
       }),
       block({
-        block_type: "article", card_kind: "article", title: null, description: null,
+        block_type: "article", card_kind: "article", title: null,
         url: "https://x.com/someone/status/2", body: "Hello there", preview_text: "Hello there",
         author: "@someone",
       }),
@@ -2513,7 +2505,7 @@ describe("Card lift on hover (SPEC_CARD_STATES.md, С8)", () => {
     // Media with no text under it ends at the edge: the whole reach, and so
     // does a card without content.
     expect(liftOf(block({
-      block_type: "article", title: null, description: null, body: "![](photo.jpg)",
+      block_type: "article", title: null, body: "![](photo.jpg)",
       media_urls: "[\"photo.jpg\"]",
     }))).toBe(reach);
     expect(liftOf(block({ block_type: "image", media_file: "photo.jpg" }))).toBe(reach);

@@ -66,18 +66,21 @@ const wasm: { execute_json: (command: string) => string } = createRequire(import
   "../../../output/playwright/save-core-node/mine_core.js",
 );
 
+/// The part of the chrome API the hook reaches, put on the global `chrome`.
+/// Returned typed as these mocks are, since `chrome`'s own declarations type
+/// each call by its callback overload, which none of them implements.
 function mockChrome() {
   const localData: Record<string, unknown> = {};
-  Object.assign((globalThis as Record<string, unknown>).chrome as object, {
+  const browser = {
     action: { setBadgeText: vi.fn() },
     storage: {
       local: {
-        get: vi.fn(async () => ({ ...localData })),
+        get: vi.fn(async (_keys?: string | string[] | null): Promise<Record<string, unknown>> => ({ ...localData })),
         set: vi.fn(async (values: Record<string, unknown>) => { Object.assign(localData, values); }),
         remove: vi.fn(async (keys: string | string[]) => { for (const key of [keys].flat()) delete localData[key]; }),
       },
       session: {
-        get: vi.fn(async () => ({})),
+        get: vi.fn(async (_keys?: string | string[] | null): Promise<Record<string, unknown>> => ({})),
         remove: vi.fn(),
       },
     },
@@ -85,28 +88,33 @@ function mockChrome() {
       // There is no page to capture here: background answers a screenshot
       // request with a refusal, which leaves the editor and its frame as they
       // are. Tests about screenshots answer requests themselves.
-      sendMessage: vi.fn((message: { action?: string }, callback?: (response: unknown) => void) => {
+      // Answers by callback, or by promise when a test resolves it.
+      sendMessage: vi.fn((message: { action?: string }, callback?: (response: unknown) => void): unknown => {
         if (message?.action === "captureForCrop") {
           setTimeout(() => callback?.({ ok: false, error: "No page to capture in this test" }), 0);
         }
+        return undefined;
       }),
       onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
       lastError: undefined,
     },
     tabs: {
       captureVisibleTab: vi.fn(),
-      query: vi.fn(async () => [{ id: 7, url: "https://example.com", title: "Page" }]),
+      query: vi.fn(async (_query?: chrome.tabs.QueryInfo): Promise<Partial<chrome.tabs.Tab>[]> => [{ id: 7, url: "https://example.com", title: "Page" }]),
       sendMessage: vi.fn((_id: number, _msg: unknown, cb?: (r: unknown) => void) => cb?.(null)),
       get: vi.fn(async () => ({ url: "https://example.com" })),
     },
-  });
+  };
+  Object.assign((globalThis as Record<string, unknown>).chrome as object, browser);
+  return browser;
 }
+let browser: ReturnType<typeof mockChrome>;
 
 beforeEach(() => {
   clipperLaunch.value = null;
   threadArticle.value = null;
   vi.clearAllMocks();
-  mockChrome();
+  browser = mockChrome();
   standalone.getStandaloneStatus.mockResolvedValue({ configured: false });
   standalone.standaloneListChannels.mockResolvedValue({ ok: true, channels: [] });
   standalone.standaloneLookup.mockResolvedValue({ ok: false, outcome: "unknown", error: "Operation outcome unknown" });
@@ -219,7 +227,7 @@ describe("standalone mode decision", () => {
     const { result } = renderHook(() => useClipperState());
     await settled(result);
     act(() => result.current.setCurrentType("link"));
-    vi.mocked(chrome.storage.local.set).mockRejectedValueOnce(new Error("Save journal storage unavailable"));
+    browser.storage.local.set.mockRejectedValueOnce(new Error("Save journal storage unavailable"));
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: false, error: "Save journal storage unavailable" }); });
     expect(standalone.standaloneSave).not.toHaveBeenCalled();
   });
@@ -249,9 +257,9 @@ describe("standalone mode decision", () => {
     const { result } = renderHook(() => useClipperState());
     await settled(result);
     act(() => result.current.setCurrentType("link"));
-    const store = vi.mocked(chrome.storage.local.set).getMockImplementation();
+    const store = browser.storage.local.set.getMockImplementation();
     if (!store) throw new Error("Storage fixture is missing");
-    vi.mocked(chrome.storage.local.set).mockImplementation(async values => {
+    browser.storage.local.set.mockImplementation(async values => {
       if (Object.values(values).some(value => value && typeof value === "object" && "terminalResult" in value)) {
         throw new Error("Receipt storage unavailable");
       }
@@ -268,10 +276,10 @@ describe("standalone mode decision", () => {
     const { result } = renderHook(() => useClipperState());
     await settled(result);
     act(() => { result.current.setCurrentType("link"); result.current.setTitle("Prepared visible title"); });
-    const read = vi.mocked(chrome.storage.local.get).getMockImplementation();
+    const read = browser.storage.local.get.getMockImplementation();
     if (!read) throw new Error("Storage fixture is missing");
     let operationReads = 0;
-    vi.mocked(chrome.storage.local.get).mockImplementation(async key => {
+    browser.storage.local.get.mockImplementation(async key => {
       if (typeof key === "string" && key.startsWith("minePendingSaveOperation:") && ++operationReads === 2) {
         throw new Error("Journal readback interrupted");
       }
@@ -282,13 +290,13 @@ describe("standalone mode decision", () => {
     expect(result.current.savePinned).toBe(true);
     expect(standalone.standaloneSave).not.toHaveBeenCalled();
     const stored = await chrome.storage.local.get(null);
-    const record = Object.values(stored).find(value => value && typeof value === "object" && "id" in value);
+    const record = Object.values(stored).find((value): value is { id: unknown } => typeof value === "object" && value !== null && "id" in value);
     expect(record).toMatchObject({ attempted: true, payload: { title: "Prepared visible title" } });
     act(() => result.current.setTitle("A different title"));
     expect(result.current.title).toBe("Prepared visible title");
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
     expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
-    expect(standalone.standaloneSave.mock.calls[0]?.[0]).toMatchObject({ operation_id: record.id, title: "Prepared visible title" });
+    expect(standalone.standaloneSave.mock.calls[0]?.[0]).toMatchObject({ operation_id: record?.id, title: "Prepared visible title" });
   });
   it("reports a folder picker failure while retaining the native editor and capture", async () => {
     sendToNative.mockImplementation(async (request: { action: string }) => request.action === "get_status"
@@ -348,13 +356,13 @@ describe("standalone mode decision", () => {
   it("keeps the second X photo as an image with the post source", async () => {
     browserDestination();
     const url = "https://x.com/artist/status/123/photo/2";
-    vi.mocked(chrome.tabs.query).mockResolvedValue([{ id: 7, url } as chrome.tabs.Tab]);
+    browser.tabs.query.mockResolvedValue([{ id: 7, url }]);
     const photo = vi.spyOn(photoLightbox, "fetchTweetPhotoByIndex").mockResolvedValue({ src: "https://pbs.twimg.com/media/second.jpg", alt: "Second", width: 800, height: 600 });
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(result.current.currentType).toBe("image"));
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
     expect(photo).toHaveBeenCalledWith("123", 1);
-    expect(standalone.standaloneSave.mock.calls[0][0]).toMatchObject({
+    expect(standalone.standaloneSave.mock.calls[0]?.[0]).toMatchObject({
       block_type: "image", url: "https://x.com/artist/status/123", image_url: "https://pbs.twimg.com/media/second.jpg", body: "",
     });
   });
@@ -387,7 +395,7 @@ describe("standalone mode decision", () => {
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
     expect(read).not.toHaveBeenCalled();
     // The selection mark tells both executors to save the text as shown (Ф5).
-    expect(standalone.standaloneSave.mock.calls[0][0]).toMatchObject({ body: "Shown selection", url: "https://example.com/article", selection: true });
+    expect(standalone.standaloneSave.mock.calls[0]?.[0]).toMatchObject({ body: "Shown selection", url: "https://example.com/article", selection: true });
   });
 
   it("discards extraction that completes after switching to Link", async () => {
@@ -401,7 +409,7 @@ describe("standalone mode decision", () => {
     await act(async () => finish({ title: "Late", content: "Late body", byline: null, excerpt: "", sourceUrl: "https://bsky.app/profile/other/post/456" }));
     expect(result.current.articleData?.content).not.toBe("Late body");
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
-    expect(standalone.standaloneSave.mock.calls[0][0].url).toBe("https://bsky.app/profile/author/post/123");
+    expect(standalone.standaloneSave.mock.calls[0]?.[0].url).toBe("https://bsky.app/profile/author/post/123");
   });
 
   it.each(["browser", "native"])("saves extracted source and content together through %s", async (executor) => {
@@ -468,7 +476,7 @@ describe("standalone mode decision", () => {
     expect(result.current.articleData?.embeddedVideos).toHaveLength(1);
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
     const payload = executor === "browser"
-      ? standalone.standaloneSave.mock.calls[0][0]
+      ? standalone.standaloneSave.mock.calls[0]?.[0]
       : sendToNative.mock.calls.find(([request]) => request.action === "save_block")?.[0];
     expect(payload).toMatchObject({ body: previewBody });
     expect(save).toHaveBeenCalledTimes(1);
@@ -483,7 +491,7 @@ describe("standalone mode decision", () => {
     await waitFor(() => expect(result.current.articleData?.threadWarning).toBe("Thread loading timed out."));
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
     expect(standalone.standaloneSave).toHaveBeenCalledTimes(1);
-    expect(standalone.standaloneSave.mock.calls[0][0]).toMatchObject({ body: "part one" });
+    expect(standalone.standaloneSave.mock.calls[0]?.[0]).toMatchObject({ body: "part one" });
   });
 
   it("saves both restricted X animations from the same recovered preview", async () => {
@@ -497,7 +505,7 @@ describe("standalone mode decision", () => {
     };
     sendToNative.mockImplementation(async request => request.action === "resolve_twitter_media"
       ? { ok: true, media: [] } : { ok: false, error: "No helper" });
-    vi.mocked(chrome.runtime.sendMessage).mockResolvedValue({ ok: true, media: [video, gif].map(src => ({
+    browser.runtime.sendMessage.mockResolvedValue({ ok: true, media: [video, gif].map(src => ({
       kind: "video", src, poster: "https://pbs.twimg.com/media/frame.jpg",
     })) });
     const { result } = renderHook(() => useClipperState());
@@ -505,7 +513,7 @@ describe("standalone mode decision", () => {
     const preview = result.current.articleData;
     expect(preview?.embeddedVideos?.map(m => m.src)).toEqual([video, gif]);
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
-    expect(standalone.standaloneSave.mock.calls[0][0].body).toBe(preview?.content);
+    expect(standalone.standaloneSave.mock.calls[0]?.[0].body).toBe(preview?.content);
     expect(preview?.content).toBe(`Post\n\n![](${video})\n\n![](${gif})`);
   });
   // SPEC_CLIPPER.md, «Пост с цитатой как в оригинале», rule 5.
@@ -527,7 +535,7 @@ describe("standalone mode decision", () => {
     expect(preview?.content).toBe(`Main text\n\n![](${photo})\n\n`
       + `> **Alexis Ohanian** [@alexisohanian](https://x.com/alexisohanian/status/2)\n> \n> Quote text\n> \n> ![](${video})`);
     await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
-    expect(standalone.standaloneSave.mock.calls[0][0].body).toBe(preview?.content);
+    expect(standalone.standaloneSave.mock.calls[0]?.[0].body).toBe(preview?.content);
   });
   // SPEC_CLIPPER.md, «Кнопка Mine в ленте X», rules 5 and 7.
   describe("a post brought by the Mine button of an X feed", () => {
@@ -565,7 +573,7 @@ describe("standalone mode decision", () => {
       await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
       expect(readPage).not.toHaveBeenCalled();
       expect(readMetadata).not.toHaveBeenCalled();
-      expect(standalone.standaloneSave.mock.calls[0][0]).toMatchObject({ body: preview?.content, url: postUrl, author: "@artignatev" });
+      expect(standalone.standaloneSave.mock.calls[0]?.[0]).toMatchObject({ body: preview?.content, url: postUrl, author: "@artignatev" });
     });
 
     it("shows why the post could not be read and saves nothing empty", async () => {
@@ -616,7 +624,7 @@ describe("standalone mode decision", () => {
     await waitFor(() => expect(result.current.saveMode).toBe(executor === "native" ? "app" : "standalone"));
     await settled(result);
     act(() => result.current.setCurrentType("link"));
-    let outcome: { ok: boolean; error?: string } | undefined;
+    let outcome: Awaited<ReturnType<typeof result.current.save>> | undefined;
     await act(async () => { outcome = await result.current.save(); });
     expect(outcome).toMatchObject({ ok: true });
     expect(outgoingTimestamp).toBe("2026-08-31T15:20:30");
@@ -1307,7 +1315,7 @@ describe("screenshots in the editor (SPEC_AUDIT_FIXES.md, Б4.5, Б4.6)", () => 
 
   it("opens a new clip on another page, not the clip a crop left for its page", async () => {
     answerLater();
-    vi.mocked(chrome.storage.session.get).mockResolvedValue(cropLeftover({ pageUrl: "https://old.example/page", createdAt: Date.now() }));
+    browser.storage.session.get.mockResolvedValue(cropLeftover({ pageUrl: "https://old.example/page", createdAt: Date.now() }));
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(result.current.state).toBe("main"));
     expect(result.current.metadata?.url).toBe("https://example.com");
@@ -1318,7 +1326,7 @@ describe("screenshots in the editor (SPEC_AUDIT_FIXES.md, Б4.5, Б4.6)", () => 
 
   it("opens a new clip in the window of another tab and leaves the crop's clip to its own tab", async () => {
     answerLater();
-    vi.mocked(chrome.storage.session.get).mockResolvedValue(cropLeftover({ tabId: 9, pageUrl: "https://old.example/page", createdAt: Date.now() }));
+    browser.storage.session.get.mockResolvedValue(cropLeftover({ tabId: 9, pageUrl: "https://old.example/page", createdAt: Date.now() }));
     const { result } = renderHook(() => useClipperState());
     await waitFor(() => expect(result.current.state).toBe("main"));
     expect(result.current.metadata?.url).toBe("https://example.com");
@@ -1327,7 +1335,7 @@ describe("screenshots in the editor (SPEC_AUDIT_FIXES.md, Б4.5, Б4.6)", () => 
 
   it("brings the clip back with its crop in the window of the same page", async () => {
     answerLater();
-    vi.mocked(chrome.storage.session.get).mockResolvedValue(cropLeftover({
+    browser.storage.session.get.mockResolvedValue(cropLeftover({
       pageUrl: "https://example.com", createdAt: Date.now(),
       metadata: { url: "https://example.com", title: "Clip before the crop", selection: "", detectedType: "link" },
       title: "Clip before the crop",
@@ -1552,7 +1560,7 @@ describe("a clip lives only in the open clipper (SPEC_CLIPPER_DRAFTS_REMOVAL.md,
     act(() => { result.current.setCurrentType("link"); result.current.setTitle("Edited, never saved"); result.current.toggleTag("Art"); });
     unmount();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const written = vi.mocked(chrome.storage.local.set).mock.calls.flatMap(([values]) => Object.keys(values as Record<string, unknown>));
+    const written = browser.storage.local.set.mock.calls.flatMap(([values]) => Object.keys(values));
     expect(written.filter((key) => key.startsWith("mineDurable") || key.startsWith("minePendingSaveOperation:"))).toEqual([]);
     expect(JSON.stringify(await chrome.storage.local.get(null))).not.toContain("Edited, never saved");
     expect(standalone.standaloneSave).not.toHaveBeenCalled();

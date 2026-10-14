@@ -1,47 +1,22 @@
-// Tag commands: list tags, add/remove tag from block.
+// Tag commands: add/remove a block's collections.
 //
 // Contract: SPEC_INTEGRATION.md#commands/tags
 
 use rusqlite::Connection;
 use std::path::PathBuf;
-use tauri::{AppHandle, State};
+use tauri::State;
 
 use crate::commands::channels::require_collection_page;
-use crate::commands::state::{tab_layout, ensure_vault_fresh, AppState, CommandError};
+use crate::commands::state::{AppState, CommandError};
 use crate::domain::block::{parse_markdown_document, Block, DateTime};
 use crate::domain::collection::{
     normalize_collection_ref, patch_collections_frontmatter, validate_collection_ref,
 };
 use crate::domain::vault::{validate_slug, VaultLayout};
-use crate::storage::index::{IndexedBlock, TagCount};
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
 use crate::storage::{files, index, media_refs};
-use crate::util::append_startup_trace;
 
 // ─── Commands ───────────────────────────────────────────────────────────────
-
-/// List all tags with their block counts.
-#[tauri::command]
-pub async fn list_tags(
-    webview: tauri::Webview,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<Vec<TagCount>, CommandError> {
-    append_startup_trace(&app, "list_tags", "start");
-    let vault = tab_layout(&state, &webview)?;
-    ensure_vault_fresh(&app, vault.clone()).await?;
-    let app_for_query = app.clone();
-    let tags =
-        tauri::async_runtime::spawn_blocking(move || -> Result<Vec<TagCount>, CommandError> {
-            super::state::read_owned_projection(&app_for_query, &vault, |conn| {
-                Ok(index::get_all_tags(conn)?)
-            })
-        })
-        .await
-        .map_err(|e| CommandError::Internal(format!("list_tags task join failed: {e}")))??;
-    append_startup_trace(&app, "list_tags", &format!("done count={}", tags.len()));
-    Ok(tags)
-}
 
 /// Add a tag to a block: read .md, update frontmatter, write back, re-index.
 fn add_tag_unannounced(webview: tauri::Webview, state: State<'_, AppState>, slug: String, tag: String) -> Result<(), CommandError> {
@@ -343,95 +318,6 @@ fn commit_block_rewrite(
     Ok(())
 }
 
-/// Apply a frontmatter collection rewrite through one staged source batch and
-/// one SQLite transaction.
-fn rewrite_collection_membership(
-    conn: &Connection,
-    vault: &VaultLayout,
-    affected: &[IndexedBlock],
-    mut transform: impl FnMut(&mut Vec<String>),
-) -> Result<(), CommandError> {
-    let mut writes = Vec::with_capacity(affected.len());
-    let mut projections = Vec::with_capacity(affected.len());
-    for indexed_block in affected {
-        let path = vault.block_path(&indexed_block.slug);
-        let (_, content) = files::read_block_file(vault, &path)?;
-        let parsed = parse_markdown_document(&indexed_block.slug, &content, file_saved_at(&path))
-            .map_err(|e| CommandError::Internal(e.to_string()))?;
-        let mut collections = parsed.block.frontmatter.tags;
-        transform(&mut collections);
-        let (write, projection) =
-            MembershipRewrite::prepare(vault, &indexed_block.slug, path, content, &collections)?
-                .into_source_write();
-        writes.push(write);
-        projections.push(projection);
-    }
-
-    StagedSourceMutation::stage(writes)?.commit_with_index(
-        conn,
-        "rewrite_collection_membership",
-        |index_conn| {
-            for projection in &projections {
-                projection.upsert(index_conn, vault)?;
-            }
-            Ok(())
-        },
-    )?;
-    Ok(())
-}
-
-/// Rename a tag in ALL blocks: find blocks with old_tag, replace with new_tag
-/// in frontmatter, write back, re-index.
-fn rename_tag_unannounced(
-    webview: tauri::Webview,
-    state: State<'_, AppState>,
-    old_tag: String,
-    new_tag: String,
-) -> Result<(), CommandError> {
-    let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
-    let vault_state = space
-        .vault_state
-        .lock()
-        .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-    let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-
-    let normalized_old = normalize_collection_ref(&old_tag);
-    let normalized_new = normalize_collection_ref(&new_tag);
-
-    if normalized_new.is_empty() {
-        return Err(CommandError::Internal("new collection ref is empty".into()));
-    }
-    validate_collection_ref(&normalized_old).map_err(CommandError::Internal)?;
-    validate_collection_ref(&normalized_new).map_err(CommandError::Internal)?;
-    if normalized_old == normalized_new {
-        return Ok(());
-    }
-    // Every card gains a link to the new name: like any new link, it needs
-    // that collection's page (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
-    require_collection_page(&vs.conn, &vs.vault, &normalized_new)?;
-
-    let affected_blocks = index::list_blocks_by_tag(&vs.conn, &normalized_old)?;
-    rewrite_collection_membership(&vs.conn, &vs.vault, &affected_blocks, |tags| {
-        tags.retain(|t| t != &normalized_old);
-        if !tags.contains(&normalized_new) {
-            tags.push(normalized_new.clone());
-        }
-    })
-}
-
-/// [`rename_tag_unannounced`], then the other tabs of the space hear of the
-/// change (SPEC_TABS.md, В15).
-#[tauri::command(async, rename_all = "snake_case")]
-pub fn rename_tag(webview: tauri::Webview, state: State<'_, AppState>, old_tag: String, new_tag: String) -> Result<(), CommandError> {
-    let announcing = super::effects::ChangeNews::before(&webview);
-    let renamed = super::effects::SpaceRename::collection(&old_tag, &new_tag);
-    let outcome = rename_tag_unannounced(webview, state, old_tag, new_tag);
-    if outcome.is_ok() {
-        announcing.send(vec![renamed]);
-    }
-    outcome
-}
-
 fn file_saved_at(path: &std::path::Path) -> DateTime {
     let time = std::fs::metadata(path)
         .ok()
@@ -629,40 +515,6 @@ mod tests {
     /// Г1.5: a collection rename across cards refuses as a whole when one
     /// card cannot take it; no card is written.
     #[test]
-    fn bulk_rename_with_one_unwritable_card_writes_none() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = VaultLayout::new(dir.path().to_path_buf());
-        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
-        let sources = [
-            ("A", "---\nsaved_at: 2026-07-10T00:00:00Z\nMine Collections:\n  - \"[[Old]]\"\n---\nA"),
-            ("B", "---\n  saved_at: 2026-07-10T00:00:00Z\n  Mine Collections: [\"[[Old]]\"]\n---\nB"),
-        ];
-        for (slug, source) in sources {
-            let path = vault.block_path(slug);
-            std::fs::write(&path, source).unwrap();
-            let parsed = parse_markdown_document(slug, source, file_saved_at(&path)).unwrap();
-            index::upsert_block(&conn, &parsed.block, Some(vault.root())).unwrap();
-        }
-        collection_page(&vault, &conn, "Old");
-        let affected = index::list_blocks_by_tag(&conn, "Old").unwrap();
-        assert_eq!(affected.len(), 2);
-
-        let refused = rewrite_collection_membership(&conn, &vault, &affected, |tags| {
-            tags.retain(|tag| tag != "Old");
-            tags.push("New".to_string());
-        });
-
-        assert!(
-            matches!(refused, Err(CommandError::FrontmatterNotWritable { .. })),
-            "{refused:?}"
-        );
-        for (slug, source) in sources {
-            assert_eq!(std::fs::read_to_string(vault.block_path(slug)).unwrap(), source);
-            assert_eq!(index::get_block(&conn, slug).unwrap().unwrap().tags, vec!["Old"]);
-        }
-    }
-
-    #[test]
     fn membership_write_refuses_a_card_edited_after_it_was_read() {
         let source = "---\nsaved_at: 2026-07-10T00:00:00Z\n---\nBody";
         let (_dir, vault, conn) = space_with_card(source);
@@ -719,53 +571,6 @@ mod tests {
             index::get_block(&conn, "Note").unwrap().unwrap().tags,
             vec!["Old"]
         );
-    }
-
-    #[test]
-    fn bulk_collection_rewrite_rolls_back_every_file_and_index_row() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = VaultLayout::new(dir.path().to_path_buf());
-        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
-        let source = |slug: &str| {
-            format!(
-                "---\ntype: article\nsaved_at: 2026-07-10T00:00:00Z\nMine Collections:\n  - \"[[Old]]\"\n---\n{slug} body"
-            )
-        };
-        for slug in ["A", "B"] {
-            let content = source(slug);
-            let path = vault.block_path(slug);
-            std::fs::write(&path, &content).unwrap();
-            let parsed = parse_markdown_document(slug, &content, file_saved_at(&path)).unwrap();
-            index::upsert_block(&conn, &parsed.block, Some(vault.root())).unwrap();
-        }
-        collection_page(&vault, &conn, "Old");
-        conn.execute_batch(
-            "CREATE TRIGGER reject_second_bulk_update
-             BEFORE UPDATE ON blocks
-             WHEN new.slug = 'B'
-             BEGIN
-                 SELECT RAISE(ABORT, 'injected bulk index failure');
-             END;",
-        )
-        .unwrap();
-        let affected = index::list_blocks_by_tag(&conn, "Old").unwrap();
-
-        let result = rewrite_collection_membership(&conn, &vault, &affected, |tags| {
-            tags.clear();
-            tags.push("New".to_string());
-        });
-
-        assert!(result.is_err());
-        for slug in ["A", "B"] {
-            assert_eq!(
-                std::fs::read_to_string(vault.block_path(slug)).unwrap(),
-                source(slug)
-            );
-            assert_eq!(
-                index::get_block(&conn, slug).unwrap().unwrap().tags,
-                vec!["Old"]
-            );
-        }
     }
 
     /// A space with cards `slug -> source`, indexed.

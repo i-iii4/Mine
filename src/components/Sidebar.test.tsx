@@ -19,11 +19,11 @@ import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
   HOVER_PREVIEW_WARM_WINDOW_MS,
 } from "@/lib/hoverPreviewTiming";
-import { SIDEBAR_ROW_HOVER_SEAM_ENABLED } from "@/lib/featureFlags";
 import { SIDEBAR_PREVIEW_SLOTS } from "@/lib/appLayout";
 import { isCardLitByCollection, resetCollectionHover, setCollectionMemberships, setHoveredCard, setSelectedCards } from "@/lib/collectionHover";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { NAME_REFUSAL_NOTICE_MS, NAME_REFUSED_SHAKE_MS } from "@/hooks/useNameEdit";
+import { indexedBlock } from "@/test/blocks";
 
 /** What the command layer throws for a refused name (`invoke`, commands.ts). */
 function refusedName(message: string): Error {
@@ -45,7 +45,7 @@ async function settleSave() {
 /** Fake timers that also drive the hover-intent clock (performance.now). */
 const INTENT_TIMERS = {
   toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "Date", "requestAnimationFrame", "cancelAnimationFrame"],
-} as const;
+} satisfies Parameters<typeof vi.useFakeTimers>[0];
 
 /** A pointer step to `x` over `element`, `ms` after the previous one. */
 function pointerTo(element: Element, x: number, ms = 20) {
@@ -94,7 +94,7 @@ const defaultProps = {
   onCreateChannel: vi.fn(),
 };
 
-function sidebarTree(props = defaultProps, initialEntries = ["/"]) {
+function sidebarTree(props: ComponentProps<typeof Sidebar> = defaultProps, initialEntries = ["/"]) {
   return (
     <MemoryRouter initialEntries={initialEntries}>
       <TooltipProvider>
@@ -106,12 +106,12 @@ function sidebarTree(props = defaultProps, initialEntries = ["/"]) {
   );
 }
 
-function renderSidebar(props = defaultProps, initialEntries = ["/"]) {
+function renderSidebar(props: ComponentProps<typeof Sidebar> = defaultProps, initialEntries = ["/"]) {
   return render(sidebarTree(props, initialEntries));
 }
 
 function previewBlock(slug: string, overrides: Partial<IndexedBlock> = {}): IndexedBlock {
-  return {
+  return indexedBlock({
     id: 101,
     slug,
     card_kind: "media",
@@ -135,7 +135,6 @@ function previewBlock(slug: string, overrides: Partial<IndexedBlock> = {}): Inde
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
-    collections: [],
     feed_playback: null,
     thumb_format: "jpeg",
     thumb_mtime: 0,
@@ -145,7 +144,7 @@ function previewBlock(slug: string, overrides: Partial<IndexedBlock> = {}): Inde
     index_warning: null,
     tags: [],
     ...overrides,
-  };
+  });
 }
 
 describe("Sidebar", () => {
@@ -244,7 +243,7 @@ describe("Sidebar", () => {
     const onCreateChannel = vi.fn();
     // Creation starts from the row above the list or ⇧⌘N; the list only
     // takes the name.
-    const { container } = renderSidebar({
+    renderSidebar({
       ...defaultProps,
       width: 600,
       isCreatingChannel: true,
@@ -259,7 +258,6 @@ describe("Sidebar", () => {
       "true",
     );
     expect(createRow).toHaveAttribute("data-sidebar-row-surface", "");
-    expect(createRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
     expect(createRow).toHaveClass("z-10", "bg-sidebar");
     expect(createRow?.querySelector("[data-sidebar-editable-row-full-width]")).toBeInTheDocument();
     expect(createRow?.querySelector("[data-sidebar-preview-rail]")).not.toBeInTheDocument();
@@ -278,11 +276,6 @@ describe("Sidebar", () => {
     expect(within(createAction).getByText("↵")).toHaveAttribute(
       "data-sidebar-inline-submit-shortcut",
       "",
-    );
-    // Under Everything: the row above it shares the seam.
-    expect(container.querySelector('[data-sidebar-row-key="all"]')).toHaveAttribute(
-      "data-sidebar-row-seam-accent",
-      "true",
     );
     expect(input).toHaveAttribute("data-sidebar-inline-channel-editor", "");
     expect(input).toHaveClass("border-0");
@@ -398,11 +391,6 @@ describe("Sidebar", () => {
     const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLElement;
     expect(row).toHaveAttribute("data-sidebar-row-surface", "");
     expect(row).toHaveAttribute("data-sidebar-row-editing", "true");
-    expect(row).toHaveAttribute("data-sidebar-row-seam-accent", "true");
-    expect(container.querySelector('[data-sidebar-row-key="all"]')).toHaveAttribute(
-      "data-sidebar-row-seam-accent",
-      "true",
-    );
     expect(row.querySelector("[data-sidebar-editable-row-full-width]")).toBeInTheDocument();
     expect(row.querySelector("[data-sidebar-preview-rail]")).not.toBeInTheDocument();
     expect(row.querySelector("[data-sidebar-row-text]")).not.toBeInTheDocument();
@@ -593,7 +581,7 @@ describe("Sidebar", () => {
     });
   });
 
-  it("uses the row hover seam when card content is dragged over the New Collection row", () => {
+  it("focuses the New Collection row when card content is dragged over it", () => {
     dndContextState.over = { id: "create-channel" };
     const { container } = renderSidebar({
       ...defaultProps,
@@ -604,11 +592,6 @@ describe("Sidebar", () => {
     const createRow = container.querySelector("[data-sidebar-new-channel-row]") as HTMLElement;
     expect(createRow).toHaveAttribute("data-sidebar-row-key", "create-channel");
     expect(createRow).toHaveAttribute("data-sidebar-row-focused", "true");
-    // The row stands under Everything, which shares its seam.
-    expect(container.querySelector('[data-sidebar-row-key="all"]')).toHaveAttribute(
-      "data-sidebar-row-seam-accent",
-      "true",
-    );
   });
 
   it("renders tag counts", () => {
@@ -659,18 +642,10 @@ describe("Sidebar", () => {
     expect(screen.getByText("5")).toHaveClass("text-muted-foreground");
 
     const nav = container.querySelector("[data-sidebar-scroll]")!;
-    const allRow = everythingRow;
     const alphaRow = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
     const betaRow = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
-    expect(nav).toHaveAttribute(
-      "data-sidebar-row-hover-seam",
-      SIDEBAR_ROW_HOVER_SEAM_ENABLED ? "true" : "false",
-    );
     expect(alphaRow).toHaveAttribute("data-sidebar-row-surface", "");
     expect(alphaRow).toHaveAttribute("data-sidebar-row-active", "true");
-    expect(allRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
-    expect(alphaRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
-    expect(betaRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
     expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
     expect(alphaRow).not.toHaveAttribute("data-sidebar-row-focused");
 
@@ -678,27 +653,18 @@ describe("Sidebar", () => {
     pointerTo(alphaRow, 10);
     rest();
     expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
-    expect(allRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
-    expect(alphaRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
-    expect(betaRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
     expect(alphaRow).toHaveAttribute("data-sidebar-row-focused", "true");
     expect(betaRow).not.toHaveAttribute("data-sidebar-row-focused");
 
     pointerTo(betaRow, 11);
     expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
     expect(nav).toHaveAttribute("data-sidebar-row-switching", "true");
-    expect(allRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
-    expect(alphaRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
-    expect(betaRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
     expect(alphaRow).not.toHaveAttribute("data-sidebar-row-focused");
     expect(betaRow).toHaveAttribute("data-sidebar-row-focused", "true");
 
     fireEvent.pointerLeave(nav);
     expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
     expect(nav).not.toHaveAttribute("data-sidebar-row-switching");
-    expect(allRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
-    expect(alphaRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
-    expect(betaRow).not.toHaveAttribute("data-sidebar-row-seam-accent");
   });
 
   it("holds keyboard channel focus mode until one second after the last switch", () => {
@@ -776,8 +742,7 @@ describe("Sidebar", () => {
 
     expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
     expect(alphaRow).toHaveAttribute("data-sidebar-row-focused", "true");
-    expect(createRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
-    expect(alphaRow).toHaveAttribute("data-sidebar-row-seam-accent", "true");
+    expect(createRow).not.toHaveAttribute("data-sidebar-row-focused");
     expect(betaRow).not.toHaveAttribute("data-sidebar-row-focused");
     expect(alphaRow).not.toHaveClass("ring-2");
     expect(alphaRow).not.toHaveClass("ring-ring");
@@ -792,11 +757,7 @@ describe("Sidebar", () => {
   });
 
   it("does not treat native selected-text drops as Mine card creation", () => {
-    const onTextSelectionDrop = vi.fn();
-    renderSidebar({
-      ...defaultProps,
-      onTextSelectionDrop,
-    });
+    renderSidebar();
     const alphaLink = screen.getByRole("link", { name: /alpha/ });
     const alphaRow = alphaLink.parentElement!;
 
@@ -804,7 +765,7 @@ describe("Sidebar", () => {
     expect(alphaRow).not.toHaveClass("ring-2");
 
     fireEvent.drop(alphaRow);
-    expect(onTextSelectionDrop).not.toHaveBeenCalled();
+    expect(alphaRow).not.toHaveClass("ring-2");
   });
 
   it("keeps the main sidebar inset on the scroll container with nothing above it", () => {
@@ -854,9 +815,6 @@ describe("Sidebar", () => {
     expect(container.querySelector('[data-sidebar-row-key="tag:alpha"]')).toHaveAttribute(
       "data-sidebar-row-linked",
       "true",
-    );
-    expect(container.querySelector('[data-sidebar-row-key="tag:alpha"]')).not.toHaveAttribute(
-      "data-sidebar-row-seam-accent",
     );
     expect(container.querySelector('[data-sidebar-row-key="tag:beta"]')).not.toHaveAttribute(
       "data-sidebar-row-linked",

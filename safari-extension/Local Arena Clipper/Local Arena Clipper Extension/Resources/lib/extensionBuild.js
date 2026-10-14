@@ -26,8 +26,10 @@
     try {
       const response = await root.fetch(root.chrome.runtime.getURL(IDENTITY_ON_DISK), { cache: "no-store" });
       if (!response.ok) return null;
+      /** @type {unknown} */
       const identity = await response.json();
-      return typeof identity?.buildId === "string" && identity.buildId.length > 0 ? identity.buildId : null;
+      if (typeof identity !== "object" || identity === null || !("buildId" in identity)) return null;
+      return typeof identity.buildId === "string" && identity.buildId.length > 0 ? identity.buildId : null;
     } catch {
       return null;
     }
@@ -37,6 +39,7 @@
   /// no build of its own, or reloaded for it once already: a browser that
   /// loads another folder than the one updated does not reload in a loop.
   /// Returns whether the reload is pending.
+  /** @param {unknown} installed the build the helper reports as installed */
   async function noteInstalled(installed) {
     if (typeof installed !== "string" || installed.length === 0) return false;
     const own = running();

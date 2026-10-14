@@ -1,5 +1,3 @@
-import type { DesignMode } from "@/lib/designMode";
-
 export const APP_MAIN_MIN_WIDTH_PX = 304;
 export const SIDEBAR_MAX_WIDTH_PX = 600;
 export const APP_MIN_WIDTH_PX = SIDEBAR_MAX_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX;
@@ -44,20 +42,13 @@ export const SIDEBAR_PREVIEW_DIVIDER_GAP_PX = 4;
 /// real thumbnails will sit.
 export const SIDEBAR_PREVIEW_SLOTS = 20;
 
-/// The row's edge inset, per design variant: the space before the name and
-/// after the count.
-const SIDEBAR_ROW_PAD_PX: Record<DesignMode, number> = {
-  default: 0,
-  alt: 16,
-  alt2: 16,
-};
+/// The row's edge inset: the space before the name and after the count
+/// (global.css, `--sidebar-row-pad-x`).
+const SIDEBAR_ROW_PAD_PX = 16;
 
-/// The nav's own inset from the panel edges, per design variant.
-const SIDEBAR_NAV_PAD_PX: Record<DesignMode, number> = {
-  default: 32,
-  alt: 0,
-  alt2: 0,
-};
+/// The nav's own inset from the panel edges: the table sits flush to them
+/// (global.css, `--sidebar-nav-pad-x`).
+const SIDEBAR_NAV_PAD_PX = 0;
 
 /// The zone the meta column occupies, measured from the guideline to the panel
 /// edge: the button's field, the button, and the field between button and
@@ -76,28 +67,28 @@ function sidebarActionZone(): number {
 /// It is the larger of what the name needs (its padding plus the keystone
 /// column) and what the action button occupies, so no zone has to shrink below
 /// what it holds.
-export function sidebarZoneWidth(design: DesignMode): number {
+export function sidebarZoneWidth(): number {
   return Math.max(
-    SIDEBAR_ROW_PAD_PX[design] + SIDEBAR_COLUMN_MIN_PX,
+    SIDEBAR_ROW_PAD_PX + SIDEBAR_COLUMN_MIN_PX,
     sidebarActionZone(),
   );
 }
 
 /// Where the name column bottoms out: its zone without the row's own padding.
-export function sidebarNameFloor(design: DesignMode): number {
-  return sidebarZoneWidth(design) - SIDEBAR_ROW_PAD_PX[design];
+export function sidebarNameFloor(): number {
+  return sidebarZoneWidth() - SIDEBAR_ROW_PAD_PX;
 }
 
 /// Everything in the row that is not the name+previews flex region: the meta
 /// zone, the two guideline pixels, and the row's left inset.
-export function sidebarReserved(design: DesignMode): number {
-  return sidebarZoneWidth(design) + 2 + SIDEBAR_ROW_PAD_PX[design];
+export function sidebarReserved(): number {
+  return sidebarZoneWidth() + 2 + SIDEBAR_ROW_PAD_PX;
 }
 
 /** Minimum panel width: the point where the three visual zones are equal. */
-export function sidebarMinWidth(design: DesignMode): number {
+export function sidebarMinWidth(): number {
   // Three zones, the two guidelines between them, and the nav's own insets.
-  return sidebarZoneWidth(design) * 3 + 2 + SIDEBAR_NAV_PAD_PX[design] * 2;
+  return sidebarZoneWidth() * 3 + 2 + SIDEBAR_NAV_PAD_PX * 2;
 }
 
 // The first-run width is the window's: the backend starts every window's

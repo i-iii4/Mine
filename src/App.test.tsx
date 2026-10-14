@@ -16,11 +16,12 @@ import { act, render, screen, waitFor, fireEvent, within } from "@testing-librar
 import { MemoryRouter } from "react-router";
 import { isTauri } from "@tauri-apps/api/core";
 
-import type { ChannelDto, CollectionDeleted, DeleteBlockMedia, DeleteBlockOutcome, DeleteBlockPlan, DeleteBlocksOutcome, DeleteBlocksPlan, GridSnapshot, IndexedBlock, LightBlock, SidebarLayout, TabBootstrap, TabLocation, TabView, TaxonomySnapshot, VaultOpenResult, VaultStats } from "@/types";
+import type { ChannelDto, CollectionDeleted, DeleteBlockMedia, DeleteBlockOutcome, DeleteBlockPlan, DeleteBlocksOutcome, DeleteBlocksPlan, GridSnapshot, IndexedBlock, LightBlock, SidebarLayout, TabBootstrap, TabLocation, TabView, TaxonomySnapshot, VaultOpenResult } from "@/types";
 import { App, AppWithVault } from "./App";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { SEARCH_OVERLAY_RECENT_LIMIT, SEARCH_OVERLAY_RESULT_LIMIT } from "@/components/SearchOverlay";
 import { INDEXING_NOTICE_DELAY_MS } from "@/components/IndexingProgress";
+import { indexedBlock as completeIndexedBlock, lightBlock } from "@/test/blocks";
 
 // The search overlay shares the list_grid_blocks command: recent mode passes
 // SEARCH_OVERLAY_RECENT_LIMIT without a query, query mode passes a query string
@@ -33,7 +34,7 @@ import { INDEXING_NOTICE_DELAY_MS } from "@/components/IndexingProgress";
 // (SEARCH_OVERLAY_RESULT_LIMIT equals GRID_PAGE_SIZE): a query-mode call must
 // also carry the overlay's result limit, and a recent-mode call its recent
 // limit, otherwise it falls through to the strict grid assertions.
-function isSearchOverlayQuery(limit: number, query?: string): boolean {
+function isSearchOverlayQuery(limit: number | undefined, query?: string): boolean {
   // The feed passes its order in the same position the search mock uses for
   // its text; an order is not a search.
   const searchText = query === "newest" || query === "oldest" ? undefined : query;
@@ -68,7 +69,6 @@ const commandMocks = vi.hoisted(() => ({
   createBlock: vi.fn(async () => ({}) as IndexedBlock),
   readClipboardPayload: vi.fn(async () => ({ kind: "empty" }) as const),
   listTaxonomySnapshot: vi.fn<() => Promise<TaxonomySnapshot>>(),
-  getVaultStats: vi.fn<(currentCollection?: string | null) => Promise<VaultStats>>(),
   createChannel: vi.fn<(tag: string) => Promise<ChannelDto>>(),
   reorderChannels: vi.fn(async (_items: { tag: string; position: number }[]) => undefined),
   renameBlockFile: vi.fn(),
@@ -83,7 +83,6 @@ const commandMocks = vi.hoisted(() => ({
   removeTag: vi.fn(async (_slug: string, _tag: string) => undefined),
   setBlocksMembership: vi.fn(async (_slugs: string[], _tag: string, _connected: boolean) => undefined),
   checkCollectionName: vi.fn(async (_oldTag: string | null, _name: string): Promise<string | null> => null),
-  extractInlineMedia: vi.fn(),
   extractTextSelection: vi.fn(),
   deleteTextSelection: vi.fn(),
   openSettingsWindow: vi.fn<() => Promise<void>>(async () => {}),
@@ -151,7 +150,6 @@ vi.mock("@/lib/commands", () => ({
     };
   },
   listTaxonomySnapshot: commandMocks.listTaxonomySnapshot,
-  getVaultStats: commandMocks.getVaultStats,
   createChannel: commandMocks.createChannel,
   reorderChannels: commandMocks.reorderChannels,
   deleteChannel: commandMocks.deleteChannel,
@@ -170,7 +168,6 @@ vi.mock("@/lib/commands", () => ({
   deleteBlocks: commandMocks.deleteBlocks,
   mergeBlocks: commandMocks.mergeBlocks,
   getBlock: commandMocks.getBlock,
-  extractInlineMedia: commandMocks.extractInlineMedia,
   extractTextSelection: commandMocks.extractTextSelection,
   deleteTextSelection: commandMocks.deleteTextSelection,
   openSettingsWindow: commandMocks.openSettingsWindow,
@@ -613,7 +610,7 @@ vi.mock("@/components/Sidebar", async () => {
 });
 
 function block(id: number, slug: string): LightBlock {
-  return {
+  return lightBlock({
     id,
     slug,
     card_kind: "article",
@@ -633,11 +630,11 @@ function block(id: number, slug: string): LightBlock {
     preview_manifest: null,
     collections: [],
     feed_playback: null,
-  };
+  });
 }
 
 function indexedBlock(id: number, slug: string, title = slug): IndexedBlock {
-  return {
+  return completeIndexedBlock({
     ...block(id, slug),
     title,
     description: null,
@@ -647,12 +644,13 @@ function indexedBlock(id: number, slug: string, title = slug): IndexedBlock {
     related_notes: [],
     body_hash: null,
     tags: [],
-  };
+  });
 }
 
 function vaultOpenResult(overrides: Partial<VaultOpenResult> = {}): VaultOpenResult {
   return {
     indexed: 2,
+    errors: 0,
     sync_in_progress: false,
     derived_store_ready: true,
     thumbs_root: "/derived/thumbs",
@@ -759,7 +757,6 @@ describe("AppWithVault", () => {
       channels: [
         {
           tag: "alpha",
-          title: "Alpha",
           description: null,
           color: null,
           icon: null,
@@ -769,7 +766,6 @@ describe("AppWithVault", () => {
         },
         {
           tag: "beta",
-          title: "Beta",
           description: null,
           color: null,
           icon: null,
@@ -779,16 +775,8 @@ describe("AppWithVault", () => {
         },
       ],
       total_blocks: 2,
+      memberships: [],
     });
-    commandMocks.getVaultStats.mockImplementation(async (currentCollection = null) => ({
-      totalFileCount: 1464,
-      markdownFileCount: 260,
-      mediaFileCount: 1204,
-      sourceBytes: 4_800_000_000,
-      currentCollectionCardCount: currentCollection ? 1 : 2,
-      currentCollection,
-      updatedAtMs: 1,
-    }));
   });
 
   it("keeps only the latest vault mounted during rapid A to B switching", async () => {
@@ -810,6 +798,7 @@ describe("AppWithVault", () => {
       tags: [],
       channels: [],
       total_blocks: 1,
+      memberships: [],
     });
 
     render(<App />);
@@ -876,6 +865,7 @@ describe("AppWithVault", () => {
       tags: [],
       channels: [],
       total_blocks: 1,
+      memberships: [],
     });
 
     render(<App />);
@@ -2684,6 +2674,7 @@ describe("AppWithVault", () => {
         excerpt: "…text around the match…",
         ranges: [{ start: 17, end: 22 }],
         score: 100,
+        explanation: null,
       },
     };
     const gridBlocks = [block(1, "alpha-block"), block(2, "beta-block")];
@@ -3203,7 +3194,7 @@ describe("AppWithVault", () => {
       commandMocks.listTaxonomySnapshot.mockResolvedValue({
         ...taxonomy,
         tags: [{ tag: "gamma", count: 0 }, ...taxonomy.tags],
-        channels: [{ ...taxonomy.channels[0]!, tag: "gamma", title: "gamma", position: -1, block_count: 0 }, ...taxonomy.channels],
+        channels: [{ ...taxonomy.channels[0]!, tag: "gamma", position: -1, block_count: 0 }, ...taxonomy.channels],
       });
       await renderFeed();
 
@@ -3269,6 +3260,7 @@ describe("AppWithVault", () => {
           block_count: 1,
         })),
         total_blocks: 2,
+        memberships: [],
       });
     }
 
@@ -3432,20 +3424,6 @@ describe("AppWithVault", () => {
     });
   });
 
-  it("ignores a retired compact Detail preference", async () => {
-    localStorage.setItem("mine.compactDetailTopMenu", "true");
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-      </MemoryRouter>,
-    );
-    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
-    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
-    await waitFor(() => expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block"));
-    expect(document.querySelector("[data-compact-detail-top-menu]")).not.toBeInTheDocument();
-    expect(document.querySelector("[data-main-secondary-top-bar-content-segment]")).toBeInTheDocument();
-  });
-
   it("copies the open card markdown path with Command-L", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
@@ -3550,7 +3528,6 @@ describe("AppWithVault", () => {
       channels: [
         {
           tag: "alpha",
-          title: "Alpha",
           description: null,
           color: null,
           icon: null,
@@ -3560,7 +3537,6 @@ describe("AppWithVault", () => {
         },
         {
           tag: "beta",
-          title: "Beta",
           description: null,
           color: null,
           icon: null,
@@ -3570,6 +3546,7 @@ describe("AppWithVault", () => {
         },
       ],
       total_blocks: 2,
+      memberships: [],
     });
 
     render(
@@ -4139,7 +4116,7 @@ describe("AppWithVault", () => {
 
     // The collections answer later: the feed's error is not theirs to clear.
     await act(async () => {
-      taxonomy.resolve({ generation: 2, tags: [], channels: [], total_blocks: 600 });
+      taxonomy.resolve({ generation: 2, tags: [], channels: [], total_blocks: 600, memberships: [] });
       await taxonomy.promise;
     });
     expect(screen.getByText("Feed read failed")).toBeInTheDocument();
@@ -4720,8 +4697,20 @@ describe("AppWithVault", () => {
       chrome_rows: { tab_bar: 30, page: 30 },
       ...overrides,
     });
+    // Only for what must not happen: a whole interval passes with nothing
+    // reported. What must happen is waited for as a condition.
     const waitReportInterval = () => act(async () => {
       await new Promise((resolve) => setTimeout(resolve, TAB_VIEW_REPORT_DEBOUNCE_MS + 60));
+    });
+    // The tab reads its place two frames after the effects of a render
+    // (В81). Frame callbacks run in the order they were asked for, so once two
+    // frames asked for now have run, a read asked for by effects that already
+    // ran has run too. A move made inside `act` runs all its renders and
+    // effects before `act` returns.
+    const afterPlaceRead = () => act(async () => {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      });
     });
     const renderTab = (props: Partial<Parameters<typeof AppWithVault>[0]> = {}, entry = "/") => render(
       <MemoryRouter initialEntries={[entry]}>
@@ -4829,8 +4818,9 @@ describe("AppWithVault", () => {
       fireEvent.keyDown(window, { key: "Tab" });
       expect(commandMocks.reportTabView).not.toHaveBeenCalled();
 
-      await waitReportInterval();
-      expect(commandMocks.reportTabView).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(commandMocks.reportTabView).toHaveBeenCalledTimes(1), {
+        timeout: TAB_VIEW_REPORT_DEBOUNCE_MS * 4,
+      });
       expect(commandMocks.reportTabView).toHaveBeenLastCalledWith(tabView({
         mode: "graph",
         collection_filter: "be",
@@ -4889,6 +4879,7 @@ describe("AppWithVault", () => {
         tags: [{ tag: "beta", count: 1 }],
         channels: [],
         total_blocks: 2,
+        memberships: [],
       });
       send("vault-changed", { path: "/vault", renames: [] });
       // The collections are read again at once when the index pass lands.
@@ -4904,13 +4895,14 @@ describe("AppWithVault", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
       await waitFor(() => expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(true, false));
-      send("tab-go-everything");
-      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
-      // The place is read two frames after it settles; its directions are
-      // the same as before, so nothing new is reported.
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        send("tab-go-everything");
       });
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      expect(screen.queryByTestId("detail-title")).toBeNull();
+      // Everything is in the history now; its directions are the same as
+      // before, so nothing new is reported.
+      await afterPlaceRead();
       expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(true, false);
 
       // Back to the card over its collection, not to the collection alone.
@@ -4928,6 +4920,54 @@ describe("AppWithVault", () => {
       await waitFor(() => expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(true, true));
     });
 
+    it("settles a step once its route lands, not over the old route with the step's card (В81)", async () => {
+      commandMocks.getBlock.mockImplementation(async (slug: string) => indexedBlock(1, slug, slug));
+      renderTab({}, "/channel/alpha");
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+      await waitFor(() => expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(false, false));
+      fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+      await waitFor(() => expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(true, false));
+      await act(async () => {
+        send("tab-go-everything");
+      });
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      await afterPlaceRead();
+
+      // Frames come before the step's route is drawn: the card the step opens
+      // commits at once, and the route it asked for lands in a transition
+      // that a busy page draws frames later. Here every frame comes as soon
+      // as it is asked for.
+      let nextFrame = 0;
+      const cancelledFrames = new Set<number>();
+      const requestFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+        nextFrame += 1;
+        const id = nextFrame;
+        queueMicrotask(() => {
+          if (!cancelledFrames.has(id)) callback(performance.now());
+        });
+        return id;
+      });
+      const cancelFrame = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+        cancelledFrames.add(id);
+      });
+      try {
+        send("tab-history-go", { forward: false });
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+        await waitFor(() => expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block"));
+      } finally {
+        requestFrame.mockRestore();
+        cancelFrame.mockRestore();
+      }
+      await afterPlaceRead();
+      expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(true, true);
+
+      // One step back is the collection alone, not Everything with the card.
+      send("tab-history-go", { forward: false });
+      await waitFor(() => expect(screen.queryByTestId("detail-title")).toBeNull());
+      expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1");
+      await waitFor(() => expect(commandMocks.reportTabHistory).toHaveBeenLastCalledWith(false, true));
+    });
+
     it("steps back from an author's feed to the card it opened from (SPEC_CARD_ASSOCIATIONS.md)", async () => {
       commandMocks.getBlock.mockImplementation(async (slug: string) => indexedBlock(1, slug, slug));
       renderTab({}, "/channel/alpha");
@@ -4943,24 +4983,20 @@ describe("AppWithVault", () => {
         { timeout: 5000 },
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Open author feed" }));
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Open author feed" }));
+      });
       await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("author @kotecinho:"));
+      expect(screen.queryByTestId("detail-title")).toBeNull();
       // The tab remembers the author's feed as its place.
       await waitFor(() => {
         expect(commandMocks.reportTabView).toHaveBeenLastCalledWith(expect.objectContaining({
           location: { kind: "author", author: "@kotecinho" },
           open_card: null,
         }));
-      }, { timeout: 2000 });
-      // The tab records a place two frames after it settles (В81): once the
-      // card has closed, three frames from now the author's feed is in the
-      // history, whatever a busy run did to the report's timer.
-      await waitFor(() => expect(screen.queryByTestId("detail-title")).toBeNull());
-      await act(async () => {
-        await new Promise<void>((resolve) => {
-          requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-        });
-      });
+      }, { timeout: TAB_VIEW_REPORT_DEBOUNCE_MS * 8 });
+      // The author's feed is in the history.
+      await afterPlaceRead();
 
       send("tab-history-go", { forward: false });
       await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));

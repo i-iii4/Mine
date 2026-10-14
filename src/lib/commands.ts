@@ -23,19 +23,16 @@ import type {
   GraphSnapshot,
   GraphOptions,
   GraphScope,
-  LightBlock,
   DeleteBlockOutcome,
   DeleteBlockPlan,
   DeleteBlocksOutcome,
   DeleteBlocksPlan,
   RenameBlockError,
   RenameBlockResult,
-  TagCount,
   ChannelDto,
   CollectionDeleted,
   ChannelPreviewsSnapshot,
   TaxonomySnapshot,
-  VaultStats,
   VaultOpenResult,
   VaultWriteLayoutDto,
   UnavailableVault,
@@ -46,8 +43,6 @@ import type {
   ArticleAudioState,
   CreateMediaAssetCardParams,
   DeleteMediaAssetPlan,
-  ExtractInlineMediaParams,
-  InlineMediaExtractError,
   MediaAssetActionError,
   MediaAssetMutationResult,
   RenameMediaAssetParams,
@@ -200,11 +195,6 @@ export const recordStartupMilestone = (event: StartupMilestone) =>
 export const startStartupMaintenance = () =>
   invoke<boolean>("start_startup_maintenance");
 
-export const getVaultStats = (current_collection?: string | null) =>
-  invoke<VaultStats>("get_vault_stats", {
-    current_collection: current_collection ?? null,
-  });
-
 export const getArticleAudioState = (slug: string) =>
   invoke<ArticleAudioState>("get_article_audio_state", { slug });
 
@@ -220,19 +210,18 @@ export const setArticleAudioPosition = (
   duration_ms: number | null,
   completed: boolean,
 ) =>
+  // The command keeps Tauri's camelCase keys (no `rename_all`): with
+  // `position_ms` the call failed and the position was never kept (Е7.2).
   invoke<void>("set_article_audio_position", {
     slug,
-    position_ms,
-    duration_ms,
+    positionMs: position_ms,
+    durationMs: duration_ms,
     completed,
   });
 
 // Blocks
 export const getGridRows = (path: string, slugs: string[]) =>
   invoke<import("@/types").GridRowsSnapshot>("get_grid_rows", { path, slugs });
-
-export const listBlocks = () =>
-  invoke<LightBlock[]>("list_blocks");
 
 export const listGridBlocks = (
   location: TabLocation,
@@ -291,27 +280,6 @@ export const saveShortcutOverrides = (overrides: Record<string, ShortcutBinding>
 
 export const setShortcutCaptureActive = (active: boolean) =>
   invoke<null>("set_shortcut_capture_active", { active });
-
-function normalizeInlineMediaExtractError(error: unknown): InlineMediaExtractError {
-  if (error && typeof error === "object" && "kind" in error) {
-    return error as InlineMediaExtractError;
-  }
-  if (typeof error === "string") {
-    return { kind: "internal", message: error };
-  }
-  if (error instanceof Error) {
-    return { kind: "internal", message: error.message };
-  }
-  return { kind: "internal", message: String(error) };
-}
-
-export const extractInlineMedia = async (params: ExtractInlineMediaParams) => {
-  try {
-    return await tauriInvoke<IndexedBlock>("extract_inline_media", { params });
-  } catch (error) {
-    throw normalizeInlineMediaExtractError(error);
-  }
-};
 
 function normalizeMediaAssetActionError(error: unknown): MediaAssetActionError {
   if (error && typeof error === "object" && "kind" in error) {
@@ -504,9 +472,6 @@ export const mergeBlocks = async (ordered_slugs: string[]) => {
 };
 
 // Tags
-export const listTags = () =>
-  invoke<TagCount[]>("list_tags");
-
 export const addTag = (slug: string, tag: string) =>
   invoke<void>("add_tag", { slug, tag });
 
@@ -518,9 +483,6 @@ export const removeTag = (slug: string, tag: string) =>
  *  (SPEC_DEEP_AUDIT.md, Е6.1). */
 export const setBlocksMembership = (slugs: string[], tag: string, connected: boolean) =>
   invoke<void>("set_blocks_membership", { slugs, tag, connected });
-
-export const renameTag = (old_tag: string, new_tag: string) =>
-  invoke<void>("rename_tag", { old_tag, new_tag });
 
 export const renameChannel = (old_tag: string, new_tag: string) =>
   invoke<import("@/types").ChannelDto>("rename_channel", { old_tag, new_tag });
@@ -546,9 +508,6 @@ export const collectionPagePath = (tag: string) =>
   invoke<string | null>("collection_page_path", { tag });
 
 // Channels
-export const listChannels = () =>
-  invoke<ChannelDto[]>("list_channels");
-
 export const listTaxonomySnapshot = () =>
   invoke<TaxonomySnapshot>("list_taxonomy_snapshot");
 
@@ -716,9 +675,6 @@ export const getVaultWriteLayout = (vaultId?: string) =>
 export const setVaultWriteLayout = (layout: VaultWriteLayoutDto, vaultId?: string) =>
   invoke<VaultWriteLayoutDto>("set_vault_write_layout", { layout, vaultId: vaultId ?? null });
 
-/** Create the standard folders in this space and write into them from now on. */
-export const organizeVaultLayout = (vaultId?: string) =>
-  invoke<VaultWriteLayoutDto>("organize_vault_layout", { vaultId: vaultId ?? null });
 
 // iCloud sync conflicts (SPEC_ICLOUD_CONFLICTS.md)
 
@@ -770,9 +726,6 @@ export const resolveVaultConflict = async (
 // Settings window
 export const openSettingsWindow = (section?: string) =>
   invoke<void>("open_settings_window", { section: section ?? null });
-
-export const setSidebarMenuCollapsed = (collapsed: boolean) =>
-  invoke<void>("set_sidebar_menu_collapsed", { collapsed });
 
 export const addKnownVault = (path: string) =>
   invoke<string[]>("add_known_vault", { path });

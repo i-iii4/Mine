@@ -7,7 +7,6 @@ import { getDisplayTitle, getMediaOwnTitle } from "@/lib/displayTitle";
 import type { FeedShow } from "@/lib/feedDisplay";
 import { clampCardAspect } from "@/lib/cardAspect";
 import { parseYoutubeSource } from "@/lib/youtubeSource";
-import { shownCollections } from "@/lib/cardCollections";
 
 // One card (SPEC_CARD_UNIFIED.md). What a card shows is decided by its content
 // alone: its media and its text (Е3). The kind of record the content comes
@@ -89,9 +88,6 @@ export interface CardLayoutDescriptor {
 
 export type CardLayoutBlock = Omit<LightBlock, "search_match" | "collections"> & {
   search_match?: LightBlock["search_match"];
-  /// A feed card's collections, the pills under its text (SPEC_CARD_STATES.md,
-  /// С9); a block read elsewhere (Detail) may not carry them.
-  collections?: LightBlock["collections"];
 };
 
 export function getRuntimeCardKind(block: CardLayoutBlock): LightBlock["card_kind"] {
@@ -544,10 +540,7 @@ export function deriveCardLayoutDescriptor(
 ): CardLayoutDescriptor {
   const { media, text } = deriveCardContent(block);
   const textShown = show === "media" && media !== null ? "on-lift" : "always";
-  // The pills under the text (С9) stand in the text part too, though they are
-  // the card's links and not its content (Е4).
-  const textPartShown = textShown === "always"
-    && (hasCardText(text) || shownCollections({ collections: block.collections ?? [] }).length > 0);
+  const textPartShown = textShown === "always" && hasCardText(text);
   return {
     mode: media !== null || hasCardText(text) ? "content" : "empty",
     media,

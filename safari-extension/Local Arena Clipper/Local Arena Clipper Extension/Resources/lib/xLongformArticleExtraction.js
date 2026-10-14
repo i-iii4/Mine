@@ -1,6 +1,18 @@
 (function (root) {
   "use strict";
 
+  /** @typedef {import("./xLongformArticleExtraction.types").XLongformInput} XLongformInput */
+  /** @typedef {import("./xLongformArticleExtraction.types").XLongformResult} XLongformResult */
+  /**
+   * @typedef {object} ExtractionOptions
+   * @property {boolean} [excludeTweetText]
+   * @property {Element | null} [rootTweetArticle]
+   */
+  /**
+   * A piece of the article and the node that places it in document order.
+   * @typedef {{ markdown: string, node: Element }} MarkdownPiece
+   */
+
   const TWEET_ARTICLE_SELECTOR = 'article[data-testid="tweet"]';
   const TWEET_TEXT_SELECTOR = '[data-testid="tweetText"]';
   const LONGFORM_READ_SELECTOR = '[data-testid="twitterArticleReadView"]';
@@ -35,6 +47,7 @@
   const MIN_BODY_CHARS = 360;
   const MIN_PARAGRAPH_COUNT = 2;
 
+  /** @param {string | null | undefined} value */
   function normalizeText(value) {
     return String(value || "")
       .replace(/\u00a0/g, " ")
@@ -43,10 +56,12 @@
       .trim();
   }
 
+  /** @param {string | null | undefined} value */
   function compactText(value) {
     return normalizeText(value).replace(/\s+/g, " ").trim();
   }
 
+  /** @param {string} value */
   function plainTextFromMarkdown(value) {
     return compactText(String(value || "")
       .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
@@ -54,30 +69,49 @@
       .replace(/^#{1,6}\s+/gm, ""));
   }
 
+  /**
+   * @param {string | null | undefined} url
+   * @returns {{ authorHandle: string, tweetId: string } | null}
+   */
   function parseStatusIdentity(url) {
     if (!url) return null;
     try {
       const parsed = new URL(url, "https://x.com/");
       const match = parsed.pathname.match(/^\/([^/?#]+)\/status\/(\d+)/i);
       if (!match) return null;
+      // Both groups of the pattern are required, so a match has them.
+      const [, authorHandle, tweetId] = /** @type {[string, string, string]} */ (match);
       return {
-        authorHandle: match[1].replace(/^@/, ""),
-        tweetId: match[2],
+        authorHandle: authorHandle.replace(/^@/, ""),
+        tweetId,
       };
     } catch {
       return null;
     }
   }
 
+  /**
+   * @param {Node} node
+   * @returns {node is Element}
+   */
+  function isElement(node) {
+    return node.nodeType === Node.ELEMENT_NODE;
+  }
+
+  /** @param {Element} element */
   function isVisibleElement(element) {
     if (!element || element.nodeType !== 1) return false;
-    if (element.hidden || element.getAttribute("aria-hidden") === "true") return false;
+    if (("hidden" in element && element.hidden) || element.getAttribute("aria-hidden") === "true") return false;
     const view = element.ownerDocument?.defaultView;
     if (!view?.getComputedStyle) return true;
     const style = view.getComputedStyle(element);
     return style.display !== "none" && style.visibility !== "hidden";
   }
 
+  /**
+   * @param {Element} element
+   * @param {ExtractionOptions} [options]
+   */
   function isExcludedElement(element, { excludeTweetText = true } = {}) {
     if (!element || element.nodeType !== 1) return true;
     if (!isVisibleElement(element)) return true;
@@ -85,22 +119,35 @@
     return Boolean(element.closest(EXCLUDED_SELECTOR));
   }
 
+  /**
+   * @param {Element} surface
+   * @returns {Element | null}
+   */
   function rootTweetArticleFor(surface) {
     return surface.matches?.(TWEET_ARTICLE_SELECTOR)
       ? surface
       : surface.closest?.(TWEET_ARTICLE_SELECTOR) || null;
   }
 
+  /**
+   * @param {Element} element
+   * @param {Element | null | undefined} rootTweetArticle
+   */
   function isInsideDifferentTweet(element, rootTweetArticle) {
     const closestTweet = element.closest?.(TWEET_ARTICLE_SELECTOR);
     return Boolean(rootTweetArticle && closestTweet && closestTweet !== rootTweetArticle);
   }
 
+  /**
+   * @param {Node} node
+   * @param {ExtractionOptions} [options]
+   * @returns {string}
+   */
   function markdownFromNode(node, options = {}) {
     if (node.nodeType === Node.TEXT_NODE) {
       return compactText(node.nodeValue);
     }
-    if (node.nodeType !== Node.ELEMENT_NODE) return "";
+    if (!isElement(node)) return "";
 
     const element = node;
     if (isExcludedElement(element, options) || isInsideDifferentTweet(element, options.rootTweetArticle)) {
@@ -120,16 +167,21 @@
       let absoluteHref = href;
       try {
         absoluteHref = new URL(href, element.ownerDocument.baseURI).href;
-      } catch {}
+      } catch { /* An address the page cannot resolve stays as the page wrote it. */ }
       return `[${text}](${absoluteHref})`;
     }
 
     return text;
   }
 
+  /**
+   * @param {Element} element
+   * @param {ExtractionOptions} [options]
+   */
   function textFromElement(element, options = {}) {
     const doc = element.ownerDocument;
     const walker = doc.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    /** @type {string[]} */
     const pieces = [];
 
     while (walker.nextNode()) {
@@ -148,6 +200,7 @@
     return compactText(pieces.join(" "));
   }
 
+  /** @param {string} text */
   function isChromeText(text) {
     const value = compactText(text);
     if (!value) return true;
@@ -174,6 +227,11 @@
     ].includes(lower);
   }
 
+  /**
+   * @param {Element} surface
+   * @param {ExtractionOptions} [options]
+   * @returns {MarkdownPiece[]}
+   */
   function collectParagraphTexts(surface, options = {}) {
     const rootTweetArticle = rootTweetArticleFor(surface);
     const textOptions = { ...options, rootTweetArticle };
@@ -193,6 +251,7 @@
     ].join(",");
     const blocks = Array.from(surface.querySelectorAll(selector));
     const blockSet = new Set(blocks);
+    /** @type {MarkdownPiece[]} */
     const paragraphs = [];
 
     for (const block of blocks) {
@@ -218,7 +277,8 @@
       if (paragraphs.some((existing) => existing.markdown.includes(text) && text.length < 120)) continue;
       if (paragraphs.some((existing) => text.includes(existing.markdown) && existing.markdown.length < 120)) {
         for (let index = paragraphs.length - 1; index >= 0; index -= 1) {
-          if (text.includes(paragraphs[index].markdown) && paragraphs[index].markdown.length < 120) {
+          const paragraph = paragraphs[index];
+          if (paragraph && text.includes(paragraph.markdown) && paragraph.markdown.length < 120) {
             paragraphs.splice(index, 1);
           }
         }
@@ -234,6 +294,11 @@
     return paragraphs;
   }
 
+  /**
+   * @param {Element} surface
+   * @param {ExtractionOptions} [options]
+   * @returns {MarkdownPiece[]}
+   */
   function collectDraftEditorBlocks(surface, options = {}) {
     const richRoot = surface.querySelector?.(LONGFORM_RICH_SELECTOR);
     if (!richRoot) return [];
@@ -241,6 +306,7 @@
     const rootTweetArticle = rootTweetArticleFor(surface);
     const textOptions = { ...options, rootTweetArticle, excludeTweetText: false };
     const blocks = Array.from(richRoot.querySelectorAll('[data-block="true"]'));
+    /** @type {MarkdownPiece[]} */
     const paragraphs = [];
 
     for (const block of blocks) {
@@ -264,6 +330,7 @@
     return paragraphs;
   }
 
+  /** @param {Element} surface */
   function hasLongformSignal(surface) {
     if (!surface) return false;
     const rootTweetArticle = rootTweetArticleFor(surface);
@@ -287,6 +354,11 @@
     return false;
   }
 
+  /**
+   * @param {Document} doc
+   * @param {{ authorHandle: string, tweetId: string }} identity
+   * @returns {Element | null}
+   */
   function targetArticleFromDocument(doc, identity) {
     const threadSelection = root.MineTwitterThreadSelection;
     const selected = threadSelection?.selectTwitterThreadArticles?.({
@@ -309,14 +381,24 @@
 
   // Document-order test: true when node `a` precedes node `b`, or when `b` is
   // nested inside `a` (an ancestor is considered to come first).
+  /**
+   * @param {Node} a
+   * @param {Node} b
+   */
   function isNodeBeforeInDocument(a, b) {
     if (!a || !b || a === b) return false;
     const rel = a.compareDocumentPosition(b);
     return Boolean(rel & (Node.DOCUMENT_POSITION_FOLLOWING | Node.DOCUMENT_POSITION_CONTAINED_BY));
   }
 
+  /**
+   * @param {Element} surface
+   * @returns {MarkdownPiece[]}
+   */
   function collectArticleImages(surface) {
+    /** @type {MarkdownPiece[]} */
     const images = [];
+    /** @type {Set<string>} */
     const seen = new Set();
     for (const img of surface.querySelectorAll("img")) {
       const articleMediaLink = img.closest('a[href*="/article/"][href*="/media/"]');
@@ -324,7 +406,8 @@
       const src = img.currentSrc || img.src || img.getAttribute("src") || "";
       if (!src) continue;
       if (src.includes("profile_images") || src.includes("/emoji/")) continue;
-      let normalizedSrc = src;
+      /** @type {string} */
+      let normalizedSrc;
       try {
         normalizedSrc = normalizeXArticleImageUrl(new URL(src, surface.ownerDocument.baseURI).href);
       } catch {
@@ -343,6 +426,7 @@
     return images;
   }
 
+  /** @param {string} src */
   function normalizeXArticleImageUrl(src) {
     try {
       const url = new URL(src, "https://x.com/");
@@ -352,7 +436,7 @@
         }
         return url.href;
       }
-    } catch {}
+    } catch { /* An address that does not parse is kept as it is. */ }
     return src;
   }
 
@@ -361,21 +445,29 @@
   // instead of being bucketed before/after the whole body. Both inputs are
   // already in document order, so this is a linear two-pointer merge — stable,
   // no sort. Each item carries `{ markdown, node }`.
+  /**
+   * @param {readonly MarkdownPiece[]} paragraphs
+   * @param {readonly MarkdownPiece[]} images
+   */
   function buildMarkdown(paragraphs, images) {
+    /** @type {string[]} */
     const merged = [];
     let pi = 0;
     let ii = 0;
-    while (pi < paragraphs.length && ii < images.length) {
-      if (isNodeBeforeInDocument(images[ii].node, paragraphs[pi].node)) {
-        merged.push(images[ii].markdown);
+    for (;;) {
+      const paragraph = paragraphs[pi];
+      const image = images[ii];
+      if (!paragraph || !image) break;
+      if (isNodeBeforeInDocument(image.node, paragraph.node)) {
+        merged.push(image.markdown);
         ii += 1;
       } else {
-        merged.push(paragraphs[pi].markdown);
+        merged.push(paragraph.markdown);
         pi += 1;
       }
     }
-    while (pi < paragraphs.length) merged.push(paragraphs[pi++].markdown);
-    while (ii < images.length) merged.push(images[ii++].markdown);
+    for (const paragraph of paragraphs.slice(pi)) merged.push(paragraph.markdown);
+    for (const image of images.slice(ii)) merged.push(image.markdown);
     return merged
       .map((part) => part.trim())
       .filter(Boolean)
@@ -383,6 +475,11 @@
       .trim();
   }
 
+  /**
+   * @param {readonly MarkdownPiece[]} paragraphs
+   * @param {string} fallbackTitle
+   * @param {Element} surface
+   */
   function titleFromParagraphs(paragraphs, fallbackTitle, surface) {
     const titleElement = surface?.querySelector?.(LONGFORM_TITLE_SELECTOR);
     const explicitTitle = titleElement ? compactText(titleElement.textContent || "") : "";
@@ -394,6 +491,10 @@
     return candidate || fallbackTitle || "";
   }
 
+  /**
+   * @param {XLongformInput} input
+   * @returns {XLongformResult | null}
+   */
   function extractXLongformArticle({
     document: doc,
     locationHref,

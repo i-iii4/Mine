@@ -10,6 +10,12 @@ canonical product contract for current media interactions is
 and body-embedded media must behave identically, actions target the local media
 file, and sidebar drag uses the generalized `media_asset` payload.
 
+Статус 13.10.2026: команды `extract_inline_media`, её типов
+(`ExtractInlineMediaParams`, `InlineMediaExtractError`), обёртки
+`extractInlineMedia` и полезной нагрузки `inline_media` в коде нет (срез 46.10,
+SPEC_DEEP_AUDIT.md, Е8.2): интерфейс её не вызывал, медиа на коллекцию идёт
+через `create_media_asset_card`. Документ ниже описывает историю этого среза.
+
 ## Цель
 
 Пользователь может открыть статью в `Detail`, взять конкретное inline-изображение из тела статьи и перетащить его на коллекцию в sidebar. Mine создаёт новый самостоятельный блок в этой коллекции, содержащий только выбранное изображение и метаданные происхождения. Исходная статья не меняется.

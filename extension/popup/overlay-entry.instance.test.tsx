@@ -44,6 +44,19 @@ function show(listeners: RuntimeListener[]): void {
   for (const listener of listeners) listener({ action: "showClipperOverlay" }, {}, () => undefined);
 }
 
+// The listeners of every extension instance a test made. Each instance keeps
+// its own overlay in the document with an observer; only its own close stops
+// it, and an observer left running put its overlay back after the next
+// removal, past the end of the file, where `document` is gone (CI log of
+// 12.10.2026, `document is not defined` in `watchBody`).
+const instances: RuntimeListener[][] = [first.listeners];
+
+function closeEveryOverlay(): void {
+  for (const listeners of instances) {
+    for (const listener of listeners) listener({ action: "closeClipperOverlay" }, {}, () => undefined);
+  }
+}
+
 describe("the overlay script runs once per page (SPEC_AUDIT_FIXES.md, Г3.1)", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", () => Promise.resolve({ text: () => Promise.resolve("") }));
@@ -51,7 +64,8 @@ describe("the overlay script runs once per page (SPEC_AUDIT_FIXES.md, Г3.1)", (
 
   afterEach(() => {
     act(() => closeClipperOverlay());
-    for (const host of editors()) host.remove();
+    act(() => closeEveryOverlay());
+    expect(editors()).toHaveLength(0);
     vi.unstubAllGlobals();
   });
 
@@ -73,6 +87,7 @@ describe("the overlay script runs once per page (SPEC_AUDIT_FIXES.md, Г3.1)", (
   it("takes over from a script whose extension was reloaded since", async () => {
     const api = overlayApi();
     const reloaded = extensionRuntime();
+    instances.push(reloaded.listeners);
     // The old script stays in the page, cut off from its extension.
     first.runtime.id = undefined;
     vi.stubGlobal("chrome", { runtime: reloaded.runtime, storage: { local: { get: async () => ({}) } } });

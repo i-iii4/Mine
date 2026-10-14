@@ -2045,16 +2045,20 @@ mod embedding_gate_tests {
                 order.lock().unwrap().push("passages");
             })
         };
-        std::thread::sleep(Duration::from_millis(30));
         let query = {
             let (gate, order) = (Arc::clone(&gate), Arc::clone(&order));
             std::thread::spawn(move || {
                 let _turn = gate.acquire(EmbeddingUse::Query).unwrap();
                 order.lock().unwrap().push("query");
-                std::thread::sleep(Duration::from_millis(20));
             })
         };
-        std::thread::sleep(Duration::from_millis(30));
+        // The query waits for its turn before the model is free: the order
+        // below is decided by the gate, not by which thread runs first.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while gate.state.lock().unwrap().queries_waiting == 0 {
+            assert!(std::time::Instant::now() < deadline, "the query never asked for a turn");
+            std::thread::yield_now();
+        }
         drop(warming);
         query.join().unwrap();
         passages.join().unwrap();

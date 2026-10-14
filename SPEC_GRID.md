@@ -65,9 +65,14 @@ calculation.
 
 ---
 
-## Dual-path стратегия
+## Путь раскладки
 
-### Path A — Native CSS Grid Lanes (primary, future-proof)
+Статус 13.10.2026: в коде один путь, виртуализированная раскладка на JS
+(Path B). Нативного пути `display: grid-lanes` (Path A) нет: ни проверки
+поддержки, ни ветки в `Grid.tsx`. Его описание ниже сохранено как решение
+005 на будущее и не описывает действующий код.
+
+### Path A — Native CSS Grid Lanes (не реализован)
 
 Feature detect:
 
@@ -95,9 +100,9 @@ const supportsGridLanes = typeof CSS !== "undefined"
 
 На текущей macOS 26.1 этот путь неактивен. Feature detect автоматически переключится когда пользователь обновит OS до 26.4+.
 
-### Path B — Virtualized JS masonry (universal fallback)
+### Path B — Virtualized JS masonry (единственный путь)
 
-Используется когда `supportsGridLanes === false`. Pure-JS virtualized masonry с тремя ключевыми свойствами:
+Используется всегда. Pure-JS virtualized masonry с тремя ключевыми свойствами:
 
 1. **Детерминистические высоты** — никакого DOM measurement. Высота каждой карточки — чистая функция от `(block, columnWidth, wordWidthsCache)`.
 2. **Scroll не триггерит React render на каждый pixel** — scroll state живёт в ref, видимые items пересчитываются в RAF loop, React ре-рендерится только при изменении набора видимых карточек. Native jump/fast scroll имеет bounded anti-blank sync commit.
@@ -121,7 +126,7 @@ src/
 ├── hooks/
 │   └── useGridScroll.ts            # RAF-coalesced scroll state + anti-blank sync commit
 ├── components/
-│   ├── Grid.tsx                    # Переписан: dual-path, без measurement
+│   ├── Grid.tsx                    # Переписан: виртуализированная JS-раскладка, без measurement
 │   └── Card.tsx                    # Минорные правки: will-change, фикс line-heights
 └── types/
     └── fontMetrics.ts              # WordWidths, FontHash, WorkerMessage protocol
@@ -448,19 +453,12 @@ export function useGridScroll(
 ### `src/components/Grid.tsx` — обновления
 
 ```tsx
-const supportsGridLanes = useMemo(
-  () => typeof CSS !== "undefined" && CSS.supports("display", "grid-lanes"),
-  [],
-);
-
 export function Grid({ blocks, parentWidth, ... }: GridProps) {
   const wordWidths = useWordWidths(blocks);  // через fontMetrics.ts
   const layout = useMemoizedLayout(blocks, parentWidth, wordWidths, layoutCacheRef.current);
   const visibilityIndex = useMemo(() => createVisibilityIndex(layout), [layout]);
 
-  if (supportsGridLanes) {
-    return <GridLanesLayout layout={layout} blocks={blocks} />;
-  }
+  // One path: the virtualized JS masonry (no grid-lanes branch, see 005).
   return <VirtualizedJSLayout layout={layout} visibilityIndex={visibilityIndex} blocks={blocks} />;
 }
 ```
@@ -700,7 +698,7 @@ Phase 11 закрыта через доказуемые вертикальные
 
 7. **Worker не доступен** (exotic browser) — synchronous main-thread fallback через `requestIdleCallback` chunks. Ухудшенный initial load UX, но функционально работает.
 
-8. **Блок удалён, но есть в кэше** — при invalidation channel cache, stale entries в IndexedDB остаются. Периодический cleanup (раз в запуск) проходит по IndexedDB и удаляет entries, которых больше нет в `listBlocks()`.
+8. **Блок удалён, но есть в кэше** — при invalidation channel cache, stale entries в IndexedDB остаются. Уборки этих записей по списку карточек в коде нет (сверено 13.10.2026).
 
 9. **Resize во время initial load** — layout пересчитывается с текущим частичным `wordWidthsMap`. Блоки без ещё-не-вычисленных widths используют conservative reservation. Когда Worker возвращает результаты, layout пересчитывается ещё раз.
 
@@ -782,6 +780,8 @@ Rationale: channel switching — user-facing performance requirement, но
 | **Feature detect + dual path** (chosen) | Автоматическая активация native когда браузер отгрузит поддержку. Пока — JS fallback. Zero maintenance при переходе |
 
 Rationale: `display: grid-lanes` уже существует в Safari 26.4+. Chrome/Firefox скоро. К тому времени когда большинство пользователей обновятся, JS path станет dead code который можно удалить. Polyfill не даст этот upgrade path.
+
+Статус 13.10.2026: решение не реализовано. В `Grid.tsx` нет проверки `CSS.supports("display", "grid-lanes")` и нативной ветки, работает только JS-путь.
 
 ### 006: Conservative reservation + shadow-validation for unresolved heights
 
@@ -869,7 +869,7 @@ uses DOM measurement only when a developer explicitly requests drift validation.
 Следующее **не входит** в этот SPEC, будет отдельными задачами:
 
 - Извлечение image dimensions на Rust backend при индексации — отдельный PR, независим
-- Оптимизация `listBlocks()` query для 10000+ блоков — возможно отдельная работа на SQLite индексы
+- Оптимизация запроса ленты (`list_grid_blocks`) для 10000+ блоков — возможно отдельная работа на SQLite индексы
 - Drag-and-drop карточек на теги — текущая `useDraggable` интеграция сохраняется as-is
 - Context menu, Detail view, CardHoverMenu — не трогаем
 - Sidebar resize (уже починен в отдельном PR — CSS variable path)

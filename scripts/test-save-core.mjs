@@ -19,7 +19,13 @@ for (const [index, test] of fixtures.entries()) {
   const browser = JSON.parse(wasm.execute_json(JSON.stringify(test.command)));
   assert.deepEqual(browser, replies[index], `${test.name}: native/WASM drift`);
   if (test.expected !== undefined) assert.deepEqual(browser, test.expected, test.name);
-  if (test.name.includes('rejected') || test.name.startsWith('invalid')) assert.equal(browser.ok, false, test.name);
+  // An expected refusal is the refusal with its code (SPEC_DEEP_AUDIT.md, Е7.9).
+  const refusal = test.refusal ?? (test.expected?.ok === false ? test.expected.error.code : null);
+  assert.ok(refusal || !(test.name.includes('rejected') || test.name.startsWith('invalid')), `${test.name}: a refusal without its code`);
+  if (refusal) {
+    assert.equal(browser.ok, false, `${test.name}: ${JSON.stringify(browser)}`);
+    assert.equal(browser.error?.code, refusal, `${test.name}: ${JSON.stringify(browser)}`);
+  }
   if (test.markdownIncludes) {
     assert.equal(browser.ok, true, test.name);
     assert.ok(browser.value.markdown.includes(test.markdownIncludes), test.name);

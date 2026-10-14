@@ -636,3 +636,122 @@ fn a_conflict_the_helper_cannot_answer_for_is_listed() {
     assert_eq!(paths.len(), vault_conflicts::list_conflict_paths(&fixture.conn).unwrap().len());
     assert!(paths.contains(&"Busy.md"), "{paths:?}");
 }
+
+// ─── The real helper (Е7.3) ─────────────────────────────────────────────────
+//
+// The tests above run a stand-in script. These run the Swift helper the build
+// compiles, on temporary files outside iCloud: what it can show without a
+// second device is its protocol, its answer for notes without conflicts, its
+// refusal of a version it does not have and a helper that cannot start.
+
+/// The helper the build compiled for the app's bundle.
+#[cfg(target_os = "macos")]
+fn real_helper() -> ConflictsHelper {
+    let executable = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries").join(HELPER_NAME);
+    assert!(executable.is_file(), "the build left no helper at {}", executable.display());
+    ConflictsHelper::new(executable)
+}
+
+/// A space of plain local notes, among them a name the system may store
+/// decomposed, and its index.
+#[cfg(target_os = "macos")]
+fn local_space() -> (tempfile::TempDir, VaultLayout, Connection, Vec<PathBuf>) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let vault = VaultLayout::with_derived_root(root.join("space"), root.join("derived"));
+    let notes: Vec<PathBuf> = ["Cards/Note.md", "Cards/Café ü.md", "Plain note.md"]
+        .iter()
+        .map(|relative| {
+            let path = vault.root().join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, NOTE).unwrap();
+            path
+        })
+        .collect();
+    let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+    (dir, vault, conn, notes)
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn the_real_helper_finds_no_conflict_in_local_notes() {
+    let (_dir, vault, conn, notes) = local_space();
+    let mut asked = notes.clone();
+    // A note gone since it was listed has no conflict either.
+    asked.push(vault.root().join("Gone.md"));
+
+    let report = real_helper().scan(&asked).unwrap();
+
+    assert_eq!(report, ScanReport::default());
+    let outcome = run_check(&conn, &vault, &real_helper(), &CheckScope::Full, "2026-10-13T00:00:00Z")
+        .unwrap();
+    assert!(!outcome.changed);
+    assert_eq!(outcome.count, 0);
+}
+
+/// A conflict Mine recorded whose versions are gone, as after a resolution
+/// on another device, leaves the table when the real helper finds none.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_real_helper_clears_a_conflict_that_has_no_versions_any_more() {
+    let (_dir, vault, conn, _notes) = local_space();
+    let set: BTreeSet<String> = ["Cards/Note.md".to_string()].into();
+    vault_conflicts::apply_check(
+        &conn,
+        CheckResult { checked: &set, found: &set, inventory: None },
+        "2026-10-12T00:00:00Z",
+    )
+    .unwrap();
+
+    let list = list_conflicts(&conn, &vault, &real_helper()).unwrap();
+
+    assert!(list.conflicts.is_empty(), "{list:?}");
+    assert_eq!(list.removed, vec!["Cards/Note.md".to_string()]);
+    assert!(vault_conflicts::list_conflict_paths(&conn).unwrap().is_empty());
+}
+
+/// A token that is no conflict version of the file is refused by `read` with
+/// the kind Mine turns into «the versions changed», and is reported missing
+/// by `settle`, which removes nothing.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_real_helper_refuses_a_version_it_does_not_have() {
+    let (dir, _vault, _conn, notes) = local_space();
+    let note = &notes[0];
+    let token = "bm90IGEgdmVyc2lvbg==";
+    let destination = dir.path().join("copy.md");
+
+    let read = real_helper().read(note, token, &destination);
+
+    match read {
+        Err(HelperError::Answered { kind, .. }) => assert_eq!(kind, VERSION_MISSING),
+        other => panic!("expected the helper's own refusal, got {other:?}"),
+    }
+    assert!(!destination.exists(), "a refused read wrote a file");
+    let settled = real_helper().settle(note, &[token.to_string()]).unwrap();
+    assert_eq!(settled, SettleReport { settled: Vec::new(), missing: vec![token.to_string()] });
+    assert_eq!(std::fs::read_to_string(note).unwrap(), NOTE);
+}
+
+/// A helper that cannot start is the tool's failure, told as such, not an
+/// answer about the notes.
+#[test]
+fn a_helper_that_cannot_start_is_a_tool_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let note = dir.path().join("Note.md");
+    std::fs::write(&note, NOTE).unwrap();
+    let not_executable = dir.path().join(HELPER_NAME);
+    std::fs::write(&not_executable, "#!/bin/sh\necho '{\"done\":true}'\n").unwrap();
+    std::fs::set_permissions(&not_executable, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    for helper in [
+        ConflictsHelper::new(dir.path().join("missing").join(HELPER_NAME)),
+        ConflictsHelper::new(not_executable.clone()),
+    ] {
+        let scanned = helper.scan(std::slice::from_ref(&note));
+        assert!(
+            matches!(scanned, Err(HelperError::Tool(ToolFailure::Missing(_)))),
+            "{scanned:?}"
+        );
+    }
+}

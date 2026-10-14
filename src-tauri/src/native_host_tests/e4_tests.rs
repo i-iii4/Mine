@@ -550,14 +550,22 @@ fn a_save_that_keeps_working_says_so_and_a_stuck_one_does_not() {
     };
 
     let (busy, report) = count();
+    let started = std::time::Instant::now();
     reporting_progress(&BUSY, Duration::from_millis(100), report, || {
         for _ in 0..20 {
             BUSY.fetch_add(1, Ordering::Relaxed);
             std::thread::sleep(Duration::from_millis(30));
         }
     });
+    // A busy machine stretches the work, never the spacing of the reports:
+    // the bound follows the time the work took.
+    let elapsed = started.elapsed();
     let reported = busy.load(Ordering::SeqCst);
-    assert!((3..=7).contains(&reported), "{reported} reports in 600 ms at most every 100 ms");
+    let most = usize::try_from(elapsed.as_millis() / 100).unwrap();
+    assert!(
+        (1..=most).contains(&reported),
+        "{reported} reports in {elapsed:?} at most every 100 ms"
+    );
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(busy.load(Ordering::SeqCst), reported, "a report came after the answer");
 
@@ -660,4 +668,112 @@ fn log_records_reach_the_journal_with_their_time() {
         assert_eq!(&stamp[19..20], ".", "{line}");
         assert!(stamp[20..23].bytes().all(|byte| byte.is_ascii_digit()), "{line}");
     }
+}
+
+// Е7.10 (SPEC_DEEP_AUDIT.md): the saves two smoke scripts made against live
+// servers, X's CDN and objkt, with the stand-in web in their place.
+
+/// The head of an MP4 (an `ftyp` box), then `tag`: bytes that name an MP4.
+fn mp4(tag: &str) -> Vec<u8> {
+    let mut bytes = b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2avc1mp41".to_vec();
+    bytes.extend_from_slice(tag.as_bytes());
+    bytes
+}
+
+/// The files `note` embeds, in the order of its body: the target of every
+/// `![[...]]` without its caption.
+fn embedded_files(note: &str) -> Vec<String> {
+    note.split("![[")
+        .skip(1)
+        .filter_map(|rest| rest.split_once("]]"))
+        .map(|(inside, _)| inside.split('|').next().unwrap_or(inside).to_string())
+        .collect()
+}
+
+/// The bytes of the file a wikilink of the space names: by its path from the
+/// root, or by a name only one file of the space has.
+fn bytes_of_embed(vault: &VaultLayout, target: &str) -> Vec<u8> {
+    let at_path = vault.root().join(target);
+    if at_path.is_file() {
+        return std::fs::read(at_path).unwrap();
+    }
+    let mut named: Vec<_> = files_under(vault.root())
+        .into_iter()
+        .filter(|(path, _)| path.file_name().is_some_and(|name| name == target))
+        .collect();
+    assert_eq!(named.len(), 1, "{target} names {} files", named.len());
+    named.pop().unwrap().1
+}
+
+/// The MP4 files under `root` with their bytes.
+fn mp4_files_under(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    files_under(root)
+        .into_iter()
+        .filter(|(path, _)| path.extension().is_some_and(|extension| extension == "mp4"))
+        .collect()
+}
+
+/// An X post with a video and a GIF, both MP4 on X's CDN, is saved as two
+/// local files in the order of the body, each embedded where its address
+/// stood, with the server's bytes. The body is the one the clipper sends for
+/// this post (useClipperState.standalone.test.tsx, «saves both restricted X
+/// animations from the same recovered preview»). Before, only
+/// `scripts/x-media-save-smoke.ts` checked it, against the live CDN.
+#[test]
+fn an_x_posts_video_and_gif_are_saved_as_two_local_files() {
+    let (_tmp, vault) = space();
+    let video = "https://video.twimg.com/amplify_video/2103618771441360896/vid/avc1/1280x720/SRz40Vsis3bFBscQ.mp4?tag=14";
+    let gif = "https://video.twimg.com/tweet_video/HTGOUI-a8AA8ROt.mp4";
+    fake_web::serve(video, fake_web::Answer::Bytes { content_type: "video/mp4", body: mp4("amplify video") });
+    fake_web::serve(gif, fake_web::Answer::Bytes { content_type: "video/mp4", body: mp4("tweet gif") });
+    let mut request = article_request("e7-10-x-media", &format!("Post\n\n![]({video})\n\n![]({gif})"));
+    request["url"] = serde_json::json!("https://x.com/GasprArt/status/2103621844733714547");
+
+    let response = saved(&vault, request);
+
+    assert_eq!(response["outcome"], "committed", "{response}");
+    assert_eq!(response["remote_media"], serde_json::json!([]), "{response}");
+    let note = note_of(&vault, &response);
+    assert!(!note.contains("video.twimg.com"), "{note}");
+    let embeds = embedded_files(&note);
+    assert_eq!(embeds.len(), 2, "{note}");
+    assert!(embeds.iter().all(|target| target.ends_with(".mp4")), "{note}");
+    assert_eq!(bytes_of_embed(&vault, &embeds[0]), mp4("amplify video"), "{note}");
+    assert_eq!(bytes_of_embed(&vault, &embeds[1]), mp4("tweet gif"), "{note}");
+    assert_eq!(mp4_files_under(vault.root()).len(), 2);
+}
+
+/// The objkt video, whose address names no file type, is saved by the type
+/// its server declares: one MP4 in the media folder, embedded in the card in
+/// place of the remote address, with the server's bytes. The body is what
+/// `normalizeArticleMedia` makes of the page's `<video>`
+/// (normalizeArticleMedia.test.ts, «normalizes the saved objkt failure
+/// without discarding its text»). Before, only
+/// `scripts/html-video-save-smoke.ts` checked it, with the live objkt server
+/// and the installed helper.
+#[test]
+fn an_objkt_video_without_a_file_type_is_saved_as_a_local_mp4() {
+    let (_tmp, vault) = space();
+    let media = "https://assets.objkt.media/file/assets-003/QmUSCaLiK55FJJPEjKb9YQh3mxaiKMwsuZdnjYSqVHKLhF/artifact";
+    fake_web::serve(media, fake_web::Answer::Bytes { content_type: "video/mp4", body: mp4("objkt") });
+    let text = "[bach](https://objkt.com/tokens?tags=bach \"bach\") [music](https://objkt.com/tokens?tags=music \"music\")";
+    let mut request = article_request("e7-10-objkt", &format!("![]({media})\n\n{text}"));
+    request["url"] = serde_json::json!("https://objkt.com/tokens/KT1EWAzmYmMzuvyGLmiodSE7i29jBnwjnJ6h/4");
+
+    let response = saved(&vault, request);
+
+    assert_eq!(response["outcome"], "committed", "{response}");
+    assert_eq!(response["remote_media"], serde_json::json!([]), "{response}");
+    let card = vault.block_path(response["slug"].as_str().unwrap());
+    assert!(card.starts_with(vault.root().join("Cards")), "{}", card.display());
+    let note = note_of(&vault, &response);
+    assert!(!note.contains(media), "{note}");
+    assert!(note.contains(text), "{note}");
+    let embeds = embedded_files(&note);
+    assert_eq!(embeds.len(), 1, "{note}");
+    assert!(embeds[0].ends_with(".mp4"), "{note}");
+    assert_eq!(bytes_of_embed(&vault, &embeds[0]), mp4("objkt"), "{note}");
+    let videos = mp4_files_under(&vault.root().join("Media"));
+    assert_eq!(videos.len(), 1, "{videos:?}");
+    assert_eq!(videos[0].1, mp4("objkt"));
 }

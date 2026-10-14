@@ -1,5 +1,7 @@
 use anyhow::{bail, Context, Result};
-use mine_lib::storage::cold_space_audit::{run_cold_space_audit, write_sanitized_fixture};
+use mine_lib::storage::cold_space_audit::{
+    run_cold_space_audit_with_icloud, write_sanitized_fixture, COLD_ICLOUD_IMAGE,
+};
 use std::path::PathBuf;
 
 fn main() -> Result<()> {
@@ -7,16 +9,23 @@ fn main() -> Result<()> {
     let source = args
         .next()
         .map(PathBuf::from)
-        .context("usage: cold-space-audit <source-root> <empty-derived-base> [cycles] [--full] [--fixture-count N] [--browser-output PATH]")?;
+        .context("usage: cold-space-audit <source-root> <empty-derived-base> [cycles] [--full] [--fixture-count N] [--icloud-media] [--browser-output PATH]")?;
     let derived = args
         .next()
         .map(PathBuf::from)
-        .context("usage: cold-space-audit <source-root> <empty-derived-base> [cycles] [--full] [--fixture-count N] [--browser-output PATH]")?;
+        .context("usage: cold-space-audit <source-root> <empty-derived-base> [cycles] [--full] [--fixture-count N] [--icloud-media] [--browser-output PATH]")?;
     let mut cycles = 2usize;
     let mut full = false;
     let mut fixture_count = None;
     let mut browser_output = None;
+    // The sanitized fixture's own picture stands for one iCloud holds
+    // (SPEC_DEEP_AUDIT.md, Е7.8).
+    let mut icloud_media = false;
     while let Some(arg) = args.next() {
+        if arg == "--icloud-media" {
+            icloud_media = true;
+            continue;
+        }
         if arg == "--full" {
             full = true;
             continue;
@@ -52,7 +61,8 @@ fn main() -> Result<()> {
         write_sanitized_fixture(&source, count)?;
     }
 
-    let report = run_cold_space_audit(&source, &derived, cycles)?;
+    let in_icloud: &[&str] = if icloud_media { &[COLD_ICLOUD_IMAGE] } else { &[] };
+    let report = run_cold_space_audit_with_icloud(&source, &derived, cycles, in_icloud)?;
     if let Some(path) = browser_output {
         let payload = serde_json::to_vec_pretty(&report.browser_payload())?;
         std::fs::write(&path, payload)

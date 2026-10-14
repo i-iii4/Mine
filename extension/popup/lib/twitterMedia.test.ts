@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { hydrateTwitterPosts, twitterMediaKey } from "./twitterMedia";
+import { hydrateTwitterPosts, twitterMediaKey, type TwitterMediaResponse } from "./twitterMedia";
 import type { ArticleData } from "./messaging";
-import type { XPostContent } from "../../lib/xThread";
+import type { XPostContent } from "../../lib/xThread.types";
 
 const video = "https://video.twimg.com/amplify_video/2103618771441360896/vid/avc1/1280x720/SRz40Vsis3bFBscQ.mp4?tag=14";
 const gif = "https://video.twimg.com/tweet_video/HTGOUI-a8AA8ROt.mp4";
@@ -11,14 +11,16 @@ const post = (id: string, urls: string[]): XPostContent => ({ id, text: `Post ${
 const article = (posts: XPostContent[]): ArticleData => ({
   title: "Post", content: globalThis.MineXThread.compose(posts), byline: null, excerpt: "", twitterPosts: posts,
 });
+/** The post's two videos, as the helper reads them with the browser's cookies. */
+const recovered: TwitterMediaResponse = { ok: true, media: [
+  { kind: "video", src: video, poster: "https://pbs.twimg.com/amplify_video_thumb/first.jpg" },
+  { kind: "video", src: gif, poster },
+] };
 function resolver() {
   return {
-    publicMedia: vi.fn(async (_id: string) => ({ ok: true, media: [] })),
-    authenticatedMedia: vi.fn(async (_id: string) => ({ ok: true, media: [
-      { kind: "video", src: video, poster: "https://pbs.twimg.com/amplify_video_thumb/first.jpg" },
-      { kind: "video", src: gif, poster },
-    ] })),
-    frame: vi.fn(async () => null),
+    publicMedia: vi.fn(async (_id: string): Promise<TwitterMediaResponse> => ({ ok: true, media: [] })),
+    authenticatedMedia: vi.fn(async (_id: string): Promise<TwitterMediaResponse | undefined> => recovered),
+    frame: vi.fn(async (_src: string): Promise<string | null> => null),
   };
 }
 
@@ -75,7 +77,7 @@ describe("X media recovery", () => {
 
   it("uses public media without requesting cookies when public video is available", async () => {
     const r = resolver();
-    r.publicMedia.mockResolvedValue(await r.authenticatedMedia("10"));
+    r.publicMedia.mockResolvedValue(recovered);
     r.authenticatedMedia.mockClear();
     const result = await hydrateTwitterPosts(article([post("10", [gif])]), r);
     expect(r.authenticatedMedia).not.toHaveBeenCalled();
@@ -125,7 +127,7 @@ describe("X media recovery", () => {
   // SPEC_CLIPPER.md, 3d, В4: the tool's failure keeps the thread and says why.
   it("keeps the thread without the video and says why the video tool failed", async () => {
     const r = resolver();
-    r.authenticatedMedia.mockResolvedValue({ ok: false, code: "video_tool_failed", reason: "blocked" } as never);
+    r.authenticatedMedia.mockResolvedValue({ ok: false, code: "video_tool_failed", reason: "blocked" });
     const input = article([post("10", [gif]), post("11", [])]);
     const result = await hydrateTwitterPosts(input, r);
     expect(result.content).toBe(input.content);
@@ -135,7 +137,7 @@ describe("X media recovery", () => {
   it("says nothing when the video came or no tool was needed", async () => {
     const r = resolver();
     expect((await hydrateTwitterPosts(article([post("10", [gif])]), r)).videoNotice).toBeUndefined();
-    r.authenticatedMedia.mockResolvedValue({ ok: false } as never);
+    r.authenticatedMedia.mockResolvedValue({ ok: false });
     expect((await hydrateTwitterPosts(article([post("10", [gif])]), r)).videoNotice).toBeUndefined();
   });
 });

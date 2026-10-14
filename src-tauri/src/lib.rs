@@ -86,6 +86,15 @@ const MENU_ID_FIND_CHANNELS: &str = "surface-search-find-channels";
 /// App menu item opening the standalone settings window (`Cmd+,`).
 #[cfg(feature = "desktop")]
 const MENU_ID_SETTINGS: &str = "open-settings-window";
+/// How large `Mine.log` grows before it is set aside under its date. The
+/// plugin's default, 40 KB with the file deleted, held a few minutes of a
+/// busy session: the line about the clipper helper's installation was gone
+/// before anyone read it (13.10.2026).
+#[cfg(feature = "desktop")]
+const APP_LOG_MAX_BYTES: u128 = 5 * 1024 * 1024;
+/// How many set-aside log files stay beside the current one.
+#[cfg(feature = "desktop")]
+const APP_LOG_KEPT_FILES: usize = 4;
 #[cfg(feature = "desktop")]
 static SHORTCUT_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -146,7 +155,6 @@ pub fn run() {
             commands::vault::start_vault_sync,
             commands::startup::record_startup_milestone,
             commands::startup::start_startup_maintenance,
-            commands::vault::rebuild_index,
             commands::vault::sweep_vault_thumbnails,
             commands::updates::get_update_status,
             commands::updates::check_for_updates,
@@ -164,9 +172,6 @@ pub fn run() {
             commands::vault::forget_unavailable_vault,
             commands::vault::get_vault_write_layout,
             commands::vault::set_vault_write_layout,
-            commands::vault::organize_vault_layout,
-            commands::vault_stats::get_vault_stats,
-            commands::blocks::list_blocks,
             commands::blocks::list_grid_blocks,
             commands::blocks::get_grid_rows,
             commands::graph::list_graph_snapshot,
@@ -174,7 +179,6 @@ pub fn run() {
             commands::card_associations::list_card_associations,
             commands::blocks::resolve_note_link,
             commands::blocks::create_block,
-            commands::blocks::extract_inline_media,
             commands::blocks::create_media_asset_card,
             commands::blocks::rename_media_asset,
             commands::blocks::prepare_delete_media_asset,
@@ -195,14 +199,10 @@ pub fn run() {
             commands::blocks::delete_block,
             commands::blocks::delete_blocks,
             commands::blocks::merge_blocks,
-            commands::tags::list_tags,
             commands::tags::add_tag,
             commands::tags::remove_tag,
             commands::tags::set_blocks_membership,
-            commands::tags::rename_tag,
-            commands::search::search,
             commands::search::search_grid_blocks,
-            commands::channels::list_channels,
             commands::channels::list_taxonomy_snapshot,
             commands::channels::create_channel,
             commands::channels::reorder_channels,
@@ -227,7 +227,6 @@ pub fn run() {
             commands::settings::list_orphan_media,
             commands::settings::promote_orphan_media,
             commands::settings::delete_orphan_media,
-            commands::window_chrome::set_sidebar_menu_collapsed,
             commands::native_shell_smoke::report_native_shell_smoke,
             commands::youtube_player::youtube_player_url,
             commands::source_video_download::start_source_video_download,
@@ -289,9 +288,15 @@ pub fn run() {
             // to see still leaves a trace (SPEC_DEEP_AUDIT.md, Н11). Until
             // 13.10.2026 only the debug build had a logger, and every
             // `log::warn!` of an installed Mine went nowhere.
+            // A full file is set aside under its date and the newest ones
+            // stay: the journal keeps the past (APP_LOG_MAX_BYTES).
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
                     .level(log::LevelFilter::Info)
+                    .max_file_size(APP_LOG_MAX_BYTES)
+                    .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(
+                        APP_LOG_KEPT_FILES,
+                    ))
                     .build(),
             )?;
 
@@ -594,4 +599,31 @@ pub fn set_shortcut_capture_menu(app: &tauri::AppHandle, active: bool) -> tauri:
         refresh_app_menu(app);
     }
     Ok(())
+}
+
+#[cfg(all(test, feature = "desktop"))]
+mod app_log_tests {
+    use super::{APP_LOG_KEPT_FILES, APP_LOG_MAX_BYTES};
+
+    // A file holds far more than the plugin's default 40 KB, and at least
+    // one full file stays.
+    const _: () = assert!(APP_LOG_MAX_BYTES >= 1024 * 1024);
+    const _: () = assert!(APP_LOG_KEPT_FILES >= 1);
+
+    /// The app's log keeps its past: a full file is set aside, not deleted
+    /// (13.10.2026, the line about the helper's installation lost within
+    /// minutes). The plugin's rotation is private to it, so the setup is
+    /// read as written.
+    #[test]
+    fn the_app_log_sets_full_files_aside() {
+        let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs")).unwrap();
+        let start = source.find("tauri_plugin_log::Builder::default()").expect("the app's logger");
+        let end = start + source[start..].find(".build()").expect("a built logger");
+        let builder = &source[start..end];
+        assert!(builder.contains(".max_file_size(APP_LOG_MAX_BYTES)"), "{builder}");
+        assert!(
+            builder.contains("RotationStrategy::KeepSome(") && builder.contains("APP_LOG_KEPT_FILES"),
+            "{builder}"
+        );
+    }
 }

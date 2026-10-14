@@ -47,9 +47,7 @@ import { errorMessage } from "@/lib/errorMessage";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { NAME_REFUSED_SHAKE_MS, useNameEdit, type NameEdit } from "@/hooks/useNameEdit";
 import { collectionRefLabel } from "@/lib/collections";
-import { SIDEBAR_ROW_HOVER_SEAM_ENABLED } from "@/lib/featureFlags";
 import {
-  buildSidebarRowOrder,
   filterSidebarTags,
   shouldShowSidebarEverythingRow,
   sidebarRowDomId,
@@ -257,20 +255,6 @@ interface SidebarProps {
   scrollEdgeFade?: boolean;
 }
 
-function createSidebarSeamAccentSet(
-  orderedRowKeys: string[],
-  focusedRowKey: string | null,
-): Set<string> {
-  if (!focusedRowKey) return new Set();
-  const focusedIndex = orderedRowKeys.indexOf(focusedRowKey);
-  if (focusedIndex === -1) return new Set();
-  const accentKeys = new Set<string>([focusedRowKey]);
-  if (focusedIndex > 0) {
-    accentKeys.add(orderedRowKeys[focusedIndex - 1]!);
-  }
-  return accentKeys;
-}
-
 /// Thin shell around the sidebar whose only job is the dnd-context
 /// subscription. The context updates on every `over` change — dozens of times a
 /// second while a drag crosses the list — and re-rendering the whole sidebar at
@@ -451,9 +435,6 @@ const SidebarCore = memo(function SidebarCore({
     end: () => onSetCreatingChannel(false),
   });
 
-  // The compact icon-rail state is gone: the panel is either the full table or
-  // fully collapsed (removed). Rows always render the three-column layout.
-  const compact = false;
   const isLinkingBlock = !!linkedBlockSlug && !!onToggleLinkedTag;
   const isLinkEditorActive = isLinkingBlock && !detailChromeClosing;
   // While cards are selected in the feed, the rows describe and edit the whole
@@ -501,7 +482,6 @@ const SidebarCore = memo(function SidebarCore({
   // or taking a dragged card to found one. The command itself lives in the
   // row above the list and on ⇧⌘N.
   const showCreateRow = isCreatingChannel || isDropDragging;
-  const orderedRowKeys = buildSidebarRowOrder(visibleTags, showEverythingRow, showCreateRow);
   const activePreviewRowKey = hoveredPreview?.rowKey ?? null;
   const overId = dropOverId;
   const dropOverRowKey = overId?.startsWith("tag:")
@@ -513,10 +493,6 @@ const SidebarCore = memo(function SidebarCore({
     ? sidebarRowFocusKey
     : activePreviewRowKey);
   const hasSidebarRowFocusMode = editingRowKey !== null || dropOverRowKey !== null || sidebarRowFocusMode || activePreviewRowKey !== null;
-  const seamAccentKeys = createSidebarSeamAccentSet(
-    orderedRowKeys,
-    effectiveSidebarRowFocusKey,
-  );
 
   const setPreviewTriggerRef = useCallback((key: string, node: HTMLElement | null) => {
     if (node) {
@@ -854,17 +830,14 @@ const SidebarCore = memo(function SidebarCore({
           // it the nav keeps this width and the panel's overflow-hidden clips it.
           "relative min-w-[var(--sidebar-min-width)] flex-1 overflow-y-auto",
           "pb-8",
-          // Table insets are design-variant metrics: the alt design pulls the
-          // table flush to the divider and edges, rows get inner padding.
-          compact
-            ? "px-2 pt-8"
-            : "px-[var(--sidebar-nav-pad-x)] pt-[var(--sidebar-nav-pad-top)]",
+          // The table sits flush to the divider and edges; rows carry the
+          // inner padding.
+          "px-[var(--sidebar-nav-pad-x)] pt-[var(--sidebar-nav-pad-top)]",
         )}
         data-sidebar-scroll
         data-sidebar-tag-dragging={isTagDragging ? "true" : undefined}
         data-sidebar-top-fade={topFade.scrolled ? "true" : undefined}
         data-sidebar-link-editor-mode={isLinkEditorActive ? "true" : undefined}
-        data-sidebar-row-hover-seam={SIDEBAR_ROW_HOVER_SEAM_ENABLED ? "true" : "false"}
         data-sidebar-row-focus-mode={hasSidebarRowFocusMode ? "true" : undefined}
         data-sidebar-row-switching={sidebarRowSwitching ? "true" : undefined}
         onPointerMove={handleSidebarPointerMove}
@@ -881,22 +854,20 @@ const SidebarCore = memo(function SidebarCore({
         <HoverIntentDragWatch intent={rowIntent} />
 
         <div className="relative" data-sidebar-rows>
-          {!compact && (
-            <div className="pointer-events-none absolute inset-0" data-sidebar-guidelines>
-              <span
-                aria-hidden="true"
-                data-sidebar-guideline="left"
-                className="absolute inset-y-0 w-px bg-sidebar-border"
-                style={{ left: "calc(var(--sidebar-row-pad-x) + var(--sidebar-name-col))" }}
-              />
-              <span
-                aria-hidden="true"
-                data-sidebar-guideline="right"
-                className="absolute inset-y-0 w-px bg-sidebar-border"
-                style={{ right: "var(--sidebar-zone)" }}
-              />
-            </div>
-          )}
+          <div className="pointer-events-none absolute inset-0" data-sidebar-guidelines>
+            <span
+              aria-hidden="true"
+              data-sidebar-guideline="left"
+              className="absolute inset-y-0 w-px bg-sidebar-border"
+              style={{ left: "calc(var(--sidebar-row-pad-x) + var(--sidebar-name-col))" }}
+            />
+            <span
+              aria-hidden="true"
+              data-sidebar-guideline="right"
+              className="absolute inset-y-0 w-px bg-sidebar-border"
+              style={{ right: "var(--sidebar-zone)" }}
+            />
+          </div>
 
           {showEverythingRow && (
             <NavItem
@@ -912,13 +883,11 @@ const SidebarCore = memo(function SidebarCore({
               onPreviewContextMenu={openPreviewCardMenu}
               onPreviewTriggerRef={setPreviewTriggerRef}
               activePreviewKey={hoveredPreview?.key ?? null}
-              compact={compact}
               end
               onClick={onNavClick}
               onSameClick={isLinkEditorActive ? onNavClick : onScrollToTop}
               rowKey="all"
               isSidebarRowFocused={effectiveSidebarRowFocusKey === "all"}
-              isSidebarRowSeamAccent={seamAccentKeys.has("all")}
               staticConnected={isLinkEditorActive || isSelectionEditorActive}
             />
           )}
@@ -929,12 +898,10 @@ const SidebarCore = memo(function SidebarCore({
           {showCreateRow && (
             <div data-sidebar-row-part=""><div>
             <NewChannelRow
-              compact={compact}
               isEditing={isCreatingChannel}
               // A filter typed before the plus becomes the new name's start.
               defaultName={searchQuery.trim()}
               isSidebarRowFocused={effectiveSidebarRowFocusKey === "create-channel"}
-              isSidebarRowSeamAccent={seamAccentKeys.has("create-channel")}
               onStartCreate={() => onSetCreatingChannel(true)}
               edit={createEdit}
             />
@@ -970,7 +937,6 @@ const SidebarCore = memo(function SidebarCore({
                   onPreviewContextMenu={openPreviewCardMenu}
                   onPreviewTriggerRef={setPreviewTriggerRef}
                   activePreviewKey={hoveredPreview?.key ?? null}
-                  compact={compact}
                   isDropDragging={isDropDragging}
                   isEditing={!isLinkEditorActive && editingTag === tc.tag}
                   linkEditor={isLinkEditorActive ? {
@@ -987,7 +953,6 @@ const SidebarCore = memo(function SidebarCore({
                   rowKey={`tag:${tc.tag}`}
                   isIntentRow={intentRowKey === `tag:${tc.tag}`}
                   isSidebarRowFocused={effectiveSidebarRowFocusKey === `tag:${tc.tag}`}
-                  isSidebarRowSeamAccent={seamAccentKeys.has(`tag:${tc.tag}`)}
                 />
               );
             })}
@@ -1102,13 +1067,10 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T) {
 type SidebarRowFrameProps = {
   /** A slow pointer is on this row (SPEC_CARD_STATES.md, С7.10). */
   isIntentRow?: boolean;
-  compact?: boolean;
   rowKey: string;
   isCurrentRoute: boolean;
   isLinked?: boolean;
   isSidebarRowFocused: boolean;
-  isSidebarRowSeamAccent: boolean;
-  surface?: boolean;
   isEditing?: boolean;
   /** The row is one cell across the whole row, as an edited name is: it lies
    *  over the list's column lines (`data-sidebar-guidelines`). */
@@ -1122,13 +1084,10 @@ type SidebarRowFrameProps = {
 
 const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(function SidebarRowFrame({
   isIntentRow = false,
-  compact,
   rowKey,
   isCurrentRoute,
   isLinked = false,
   isSidebarRowFocused,
-  isSidebarRowSeamAccent,
-  surface,
   isEditing = false,
   spansRow = isEditing,
   className,
@@ -1142,7 +1101,6 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
     assignRef(forwardedRef, node);
     nodeRef?.(node);
   }, [forwardedRef, nodeRef]);
-  const hasSurface = surface ?? !compact;
 
   return (
     <div
@@ -1153,12 +1111,11 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
       // A slow pointer is on this row (С7.10): its button shows.
       data-sidebar-row-intent={isIntentRow ? "true" : undefined}
       data-sidebar-row=""
-      data-sidebar-row-surface={hasSurface ? "" : undefined}
+      data-sidebar-row-surface=""
       data-sidebar-row-key={rowKey}
       data-sidebar-row-active={isCurrentRoute ? "true" : undefined}
       data-sidebar-row-linked={isLinked ? "true" : undefined}
       data-sidebar-row-focused={isSidebarRowFocused ? "true" : undefined}
-      data-sidebar-row-seam-accent={!compact && isSidebarRowSeamAccent ? "true" : undefined}
       data-sidebar-row-editing={isEditing ? "true" : undefined}
       data-sidebar-text-drop-tag={textDropTag}
       className={cn(
@@ -1175,26 +1132,22 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
 });
 
 function SidebarRowTitleCell({
-  compact,
   children,
   className,
 }: {
-  compact?: boolean;
   children: ReactNode;
   className?: string;
 }) {
   return (
     <span
       data-sidebar-row-text=""
-      data-sidebar-title-fade-width={compact ? undefined : String(SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH)}
-      data-sidebar-title-protected-width={compact ? undefined : String(SIDEBAR_PREVIEW_DIVIDER_GAP)}
+      data-sidebar-title-fade-width={String(SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH)}
+      data-sidebar-title-protected-width={String(SIDEBAR_PREVIEW_DIVIDER_GAP)}
       className={cn(
-        compact
-          ? "flex-1 truncate"
-          : "w-[var(--sidebar-name-col)] shrink-0 translate-x-px overflow-hidden whitespace-nowrap",
+        "w-[var(--sidebar-name-col)] shrink-0 translate-x-px overflow-hidden whitespace-nowrap",
         className,
       )}
-      style={compact ? undefined : SIDEBAR_ROW_TEXT_MASK_STYLE}
+      style={SIDEBAR_ROW_TEXT_MASK_STYLE}
     >
       {children}
     </span>
@@ -1260,7 +1213,6 @@ function SidebarRowBody({
   onPreviewContextMenu,
   onPreviewTriggerRef,
   activePreviewKey,
-  compact,
   isCurrentRoute,
   isDragging = false,
   isDropDragging = false,
@@ -1288,7 +1240,6 @@ function SidebarRowBody({
   onPreviewContextMenu?: (target: SidebarPreviewTarget, point: CardMenuPoint) => void;
   onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
   activePreviewKey: string | null;
-  compact?: boolean;
   isCurrentRoute: boolean;
   isDragging?: boolean;
   isDropDragging?: boolean;
@@ -1308,7 +1259,7 @@ function SidebarRowBody({
   // expanded card (С5), and in the feed for the collections of the card under
   // the pointer (С4). The link editor's own buttons keep that place otherwise.
   const connectedToHoveredCard = useRowConnectedToHoveredCard(rowKey);
-  const showConnectedPill = !compact && (staticConnected || (!isLinkEditor && connectedToHoveredCard));
+  const showConnectedPill = staticConnected || (!isLinkEditor && connectedToHoveredCard);
   const openElsewhere = useContext(SidebarOpenElsewhereContext);
   const handleNavLinkClick = (e: ReactMouseEvent<HTMLAnchorElement>) => {
     if (isDragging || isDropDragging) {
@@ -1342,118 +1293,71 @@ function SidebarRowBody({
         draggable="false"
         onClick={handleNavLinkClick}
         onDoubleClick={handleNavLinkDoubleClick}
-        className={() =>
-          compact
-            ? cn(
-                "flex w-full items-center gap-2 overflow-hidden text-base",
-                "rounded-1 p-2",
-                "text-muted-foreground",
-              )
-            : cn(
-                SIDEBAR_ROW_BOX_CLASS,
-                "font-sans text-base text-muted-foreground",
-                // Inner row padding is a design-variant metric (alt: 16px so
-                // text and count do not touch the divider and screen edge).
-                "pl-[var(--sidebar-row-pad-x)]",
-              )
-        }
+        className={cn(
+          SIDEBAR_ROW_BOX_CLASS,
+          "font-sans text-base text-muted-foreground",
+          // 16px of inner padding: text and count do not touch the divider
+          // and the screen edge.
+          "pl-[var(--sidebar-row-pad-x)]",
+        )}
       >
-        <SidebarRowTitleCell compact={compact}>
+        <SidebarRowTitleCell>
           {label}
         </SidebarRowTitleCell>
-        {!compact && (
-          <SidebarPreviewRail>
-            <SidebarPreviewStrip
-              cards={cards}
-              count={count}
-              previewsPending={previewsPending}
-              previewKeyPrefix={previewKeyPrefix}
-              rowKey={rowKey}
-              sourceTag={sourceTag}
-              onPreviewEnter={onPreviewEnter}
-              onPreviewLeave={onPreviewLeave}
-              onPreviewClick={onPreviewClick}
-              onPreviewContextMenu={onPreviewContextMenu}
-              onPreviewTriggerRef={onPreviewTriggerRef}
-              activePreviewKey={activePreviewKey}
-              allowHoverPreview
-            />
-          </SidebarPreviewRail>
-        )}
-        {compact && isLinkEditor && (
-          <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
-            <span
-              className={cn(
-                "absolute inset-y-0 right-0 flex items-center justify-end text-sm transition-opacity duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
-                "font-mono",
-                "text-muted-foreground",
-                !compact && "-translate-x-px",
-                linkButtonPinned
-                  ? "opacity-0"
-                  : ROW_INTENT_HIDES,
-              )}
-              data-sidebar-row-text=""
-            >
-              {count || ""}
-            </span>
-          </div>
-        )}
-        {compact && !isLinkEditor && (
-          <div className="relative flex h-8 w-8 shrink-0 items-center justify-end text-right">
-            <span
-              className={cn(
-                "absolute inset-y-0 right-0 flex items-center justify-end text-sm",
-                "font-mono",
-                "text-muted-foreground",
-                !compact && "-translate-x-px",
-              )}
-              data-sidebar-row-text=""
-            >
-              {count || ""}
-            </span>
-          </div>
-        )}
-        {!compact && (
-          <span
-            className={cn(
-              "absolute inset-y-0 right-[var(--sidebar-row-pad-x)] flex w-8 items-center justify-end text-right text-sm font-mono text-muted-foreground",
-              "-translate-x-px",
-              isLinkEditor
-                ? cn(
-                    ROW_INTENT_FADE,
-                    linkButtonPinned
-                      ? "opacity-0"
-                      : ROW_INTENT_HIDES,
-                  )
-                : cn(ROW_INTENT_FADE, showConnectedPill ? cn("opacity-0", ANSWER_ON) : cn("opacity-100", ANSWER_OFF)),
-            )}
-            data-sidebar-row-text=""
-          >
-            {count || ""}
-          </span>
-        )}
-      </NavLink>
-      {!compact && (
-        // Always mounted: pill and count cross-fade in place instead of
-        // popping in and out (С7.6).
+        <SidebarPreviewRail>
+          <SidebarPreviewStrip
+            cards={cards}
+            count={count}
+            previewsPending={previewsPending}
+            previewKeyPrefix={previewKeyPrefix}
+            rowKey={rowKey}
+            sourceTag={sourceTag}
+            onPreviewEnter={onPreviewEnter}
+            onPreviewLeave={onPreviewLeave}
+            onPreviewClick={onPreviewClick}
+            onPreviewContextMenu={onPreviewContextMenu}
+            onPreviewTriggerRef={onPreviewTriggerRef}
+            activePreviewKey={activePreviewKey}
+            allowHoverPreview
+          />
+        </SidebarPreviewRail>
         <span
           className={cn(
-            SIDEBAR_ROW_CONNECTED_PILL_CLASS,
-            ROW_INTENT_FADE,
-            "absolute top-1/2 z-10 -translate-y-1/2",
-            showConnectedPill ? cn("opacity-100", ANSWER_ON) : cn("opacity-0", ANSWER_OFF),
+            "absolute inset-y-0 right-[var(--sidebar-row-pad-x)] flex w-8 items-center justify-end text-right text-sm font-mono text-muted-foreground",
+            "-translate-x-px",
+            isLinkEditor
+              ? cn(
+                  ROW_INTENT_FADE,
+                  linkButtonPinned
+                    ? "opacity-0"
+                    : ROW_INTENT_HIDES,
+                )
+              : cn(ROW_INTENT_FADE, showConnectedPill ? cn("opacity-0", ANSWER_ON) : cn("opacity-100", ANSWER_OFF)),
           )}
-          style={{
-            right: SIDEBAR_ROW_ACTION_BUTTON_INSET,
-            width: SIDEBAR_ROW_ACTION_BUTTON_WIDTH,
-          }}
-          aria-hidden={showConnectedPill ? undefined : true}
-          data-sidebar-row-connected-pill=""
-          data-state={showConnectedPill ? "on" : "off"}
+          data-sidebar-row-text=""
         >
-          Connected
+          {count || ""}
         </span>
-      )}
+      </NavLink>
+      {/* Always mounted: pill and count cross-fade in place instead of
+          popping in and out (С7.6). */}
+      <span
+        className={cn(
+          SIDEBAR_ROW_CONNECTED_PILL_CLASS,
+          ROW_INTENT_FADE,
+          "absolute top-1/2 z-10 -translate-y-1/2",
+          showConnectedPill ? cn("opacity-100", ANSWER_ON) : cn("opacity-0", ANSWER_OFF),
+        )}
+        style={{
+          right: SIDEBAR_ROW_ACTION_BUTTON_INSET,
+          width: SIDEBAR_ROW_ACTION_BUTTON_WIDTH,
+        }}
+        aria-hidden={showConnectedPill ? undefined : true}
+        data-sidebar-row-connected-pill=""
+        data-state={showConnectedPill ? "on" : "off"}
+      >
+        Connected
+      </span>
       {linkEditor && (
         <button
           type="button"
@@ -1542,14 +1446,12 @@ function SidebarEditableRowBody({
   defaultValue,
   placeholder,
   ariaLabel,
-  compact,
   submitAction,
   edit,
 }: {
   defaultValue: string;
   placeholder: string;
   ariaLabel: string;
-  compact?: boolean;
   submitAction?: {
     label: string;
     shortcut: string;
@@ -1560,19 +1462,11 @@ function SidebarEditableRowBody({
   return (
     <SidebarNameNotice notice={edit.notice}>
       <div
-        className={
-          compact
-            ? cn(
-                "flex w-full items-center overflow-hidden text-base",
-                "rounded-1 p-2",
-                "text-muted-foreground",
-              )
-            : cn(SIDEBAR_ROW_BOX_CLASS, "pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground")
-        }
+        className={cn(SIDEBAR_ROW_BOX_CLASS, "pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground")}
         data-sidebar-editable-row-body
         data-sidebar-editable-row-full-width
       >
-        {submitAction && !compact && (
+        {submitAction && (
           // The list's right zone runs through this row too: the guideline the
           // other rows show, the submit button inside the zone.
           <span
@@ -1607,13 +1501,11 @@ const NavItem = memo(function NavItem({
   onPreviewContextMenu,
   onPreviewTriggerRef,
   activePreviewKey,
-  compact,
   end,
   onClick,
   onSameClick,
   rowKey,
   isSidebarRowFocused,
-  isSidebarRowSeamAccent,
   staticConnected = false,
 }: {
   to: string;
@@ -1630,13 +1522,11 @@ const NavItem = memo(function NavItem({
   onPreviewContextMenu?: (target: SidebarPreviewTarget, point: CardMenuPoint) => void;
   onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
   activePreviewKey: string | null;
-  compact?: boolean;
   end?: boolean;
   onClick?: () => void;
   onSameClick?: () => void;
   rowKey: string;
   isSidebarRowFocused: boolean;
-  isSidebarRowSeamAccent: boolean;
   /** Everything while a card is expanded: connected, and nothing can change that. */
   staticConnected?: boolean;
 }) {
@@ -1645,11 +1535,9 @@ const NavItem = memo(function NavItem({
 
   return (
     <SidebarRowFrame
-      compact={compact}
       rowKey={rowKey}
       isCurrentRoute={isCurrentRoute}
       isSidebarRowFocused={isSidebarRowFocused}
-      isSidebarRowSeamAccent={isSidebarRowSeamAccent}
     >
       <SidebarRowBody
         to={to}
@@ -1666,7 +1554,6 @@ const NavItem = memo(function NavItem({
         onPreviewContextMenu={onPreviewContextMenu}
         onPreviewTriggerRef={onPreviewTriggerRef}
         activePreviewKey={activePreviewKey}
-        compact={compact}
         isCurrentRoute={isCurrentRoute}
         onClick={onClick}
         onSameClick={onSameClick}
@@ -1690,7 +1577,6 @@ const TagNavItem = memo(function TagNavItem({
   onPreviewContextMenu,
   onPreviewTriggerRef,
   activePreviewKey,
-  compact,
   isDropDragging,
   isEditing,
   linkEditor,
@@ -1704,7 +1590,6 @@ const TagNavItem = memo(function TagNavItem({
   rowKey,
   isIntentRow = false,
   isSidebarRowFocused,
-  isSidebarRowSeamAccent,
 }: {
   to: string;
   label: string;
@@ -1721,7 +1606,6 @@ const TagNavItem = memo(function TagNavItem({
   onPreviewContextMenu?: (target: SidebarPreviewTarget, point: CardMenuPoint) => void;
   onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
   activePreviewKey: string | null;
-  compact?: boolean;
   isDropDragging: boolean;
   isEditing: boolean;
   linkEditor?: SidebarRowLinkEditor;
@@ -1737,7 +1621,6 @@ const TagNavItem = memo(function TagNavItem({
   rowKey: string;
   isIntentRow?: boolean;
   isSidebarRowFocused: boolean;
-  isSidebarRowSeamAccent: boolean;
 }) {
   const location = useLocation();
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -1794,13 +1677,11 @@ const TagNavItem = memo(function TagNavItem({
   if (isEditing) {
     return (
       <SidebarRowFrame
-        compact={compact}
         rowKey={rowKey}
         isIntentRow={isIntentRow}
         isCurrentRoute={isCurrentRoute}
         isLinked={linkEditor?.checked}
         isSidebarRowFocused={isSidebarRowFocused}
-        isSidebarRowSeamAccent={isSidebarRowSeamAccent}
         isEditing
         className={cn(
           isDragging && "pointer-events-none opacity-0",
@@ -1813,7 +1694,6 @@ const TagNavItem = memo(function TagNavItem({
           defaultValue={label}
           placeholder={label}
           ariaLabel={`Переименовать ${label}`}
-          compact={compact}
           // Saving names its key like creating does (05.10.2026).
           submitAction={{ label: "Save", shortcut: bindingLabel({ key: "Enter" }), shortcutKey: "Enter" }}
           edit={renameEdit}
@@ -1827,13 +1707,11 @@ const TagNavItem = memo(function TagNavItem({
       <ContextMenu onOpenChange={findPage}>
         <ContextMenuTrigger asChild>
           <SidebarRowFrame
-            compact={compact}
             rowKey={rowKey}
             isIntentRow={isIntentRow}
             isCurrentRoute={isCurrentRoute}
             isLinked={linkEditor?.checked}
             isSidebarRowFocused={isSidebarRowFocused}
-            isSidebarRowSeamAccent={isSidebarRowSeamAccent}
             className={cn(
               isDragging && "pointer-events-none opacity-0",
             )}
@@ -1858,7 +1736,6 @@ const TagNavItem = memo(function TagNavItem({
               onPreviewContextMenu={onPreviewContextMenu}
               onPreviewTriggerRef={onPreviewTriggerRef}
               activePreviewKey={activePreviewKey}
-              compact={compact}
               isCurrentRoute={isCurrentRoute}
               isDragging={isDragging}
               isDropDragging={isDropDragging}
@@ -1950,19 +1827,15 @@ export function DeleteCollectionDialog({
 }
 
 function NewChannelRow({
-  compact,
   isEditing,
   defaultName,
   isSidebarRowFocused,
-  isSidebarRowSeamAccent,
   onStartCreate,
   edit,
 }: {
-  compact?: boolean;
   isEditing: boolean;
   defaultName: string;
   isSidebarRowFocused: boolean;
-  isSidebarRowSeamAccent: boolean;
   onStartCreate: () => void;
   /** The naming of the new collection; it outlives the row, whose reason
    *  stays a moment after a refused name closed it. */
@@ -1975,14 +1848,9 @@ function NewChannelRow({
 
   return (
     <SidebarRowFrame
-      compact={compact}
       rowKey="create-channel"
       isCurrentRoute={false}
       isSidebarRowFocused={isSidebarRowFocused}
-      isSidebarRowSeamAccent={isSidebarRowSeamAccent}
-      // A row of the table like the others: its seam lights when a dragged
-      // card is over it (07.10.2026).
-      surface={!compact}
       isEditing={isEditing}
       // The name being typed and the drop target alike are one cell across
       // the row: no column line crosses them (08.10.2026).
@@ -1995,7 +1863,6 @@ function NewChannelRow({
           defaultValue={defaultName}
           placeholder=""
           ariaLabel="Имя нового канала"
-          compact={compact}
           // The key's label comes from the one key table the bottom bar uses.
           submitAction={{ label: "Create", shortcut: bindingLabel({ key: "Enter" }), shortcutKey: "Enter" }}
           edit={edit}
@@ -2006,10 +1873,7 @@ function NewChannelRow({
           className="block w-full text-left"
           onClick={onStartCreate}
         >
-          <SidebarCreateChannelRowBody
-            compact={compact}
-            isEditing={false}
-          />
+          <SidebarCreateChannelRowBody isEditing={false} />
         </button>
       )}
     </SidebarRowFrame>
@@ -2022,33 +1886,10 @@ function NewChannelRow({
 /// the column lines (`spansRow`), so the label never crosses one; the plus
 /// stands where a count stands.
 function SidebarCreateChannelRowBody({
-  compact,
   isEditing,
 }: {
-  compact?: boolean;
   isEditing: boolean;
 }) {
-  if (compact) {
-    return (
-      <div
-        className={cn(
-          "flex w-full items-center gap-2 overflow-hidden rounded-1 p-2 font-sans text-base text-muted-foreground",
-          // A slow pointer lights it like any row (С7.10); the keyboard at once.
-          !isEditing && "group-focus-within:text-foreground",
-        )}
-        data-sidebar-create-channel-row-body
-      >
-        <span data-sidebar-row-text="" className="min-w-0 flex-1 truncate text-left">
-          {CREATE_COLLECTION_ROW_LABEL}
-        </span>
-        <Plus
-          aria-hidden="true"
-          data-sidebar-create-channel-plus=""
-          className={cn("size-4 shrink-0 text-muted-foreground", isEditing && "opacity-0")}
-        />
-      </div>
-    );
-  }
   return (
     <div
       className={cn(

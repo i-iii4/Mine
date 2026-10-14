@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import "../../lib/feedButtonSettings.js";
-import type { FeedButtonSettings } from "../../lib/feedButtonSettings";
+import type { FeedButtonSettings } from "../../lib/feedButtonSettings.types";
 import { sendToNative } from "../lib/messaging";
 import { openDownloadPage } from "../lib/standalone";
 

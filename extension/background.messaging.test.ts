@@ -3,24 +3,28 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  eventSink, fakeStorageArea, keepIn, present, replyTo,
+  type CaptureVisibleTab, type ExecuteScript, type FakeSender, type GetContexts, type LastError, type Message,
+  type TabsGet, type TabsQuery, type TabsSendMessage, type WindowsGetAll,
+} from "./background.fixtures";
 
 type BrowserApiMode = "callback" | "promise";
-type Message = Record<string, unknown>;
 type MessageListener = (
   message: Message,
-  sender: { url?: string; frameId?: number; tab?: { id: number; windowId?: number; url?: string } },
+  sender: FakeSender,
   sendResponse: (response: Message) => void,
 ) => boolean | undefined;
 
 const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "background.js"), "utf8");
 
-function eventSink(register?: (listener: unknown) => void) {
-  return { addListener: vi.fn((listener: unknown) => register?.(listener)) };
-}
-
 type Fetch = (url: string, init?: { credentials?: string; signal?: AbortSignal }) => Promise<unknown>;
+type ContentScriptGroup = { js: string[]; world?: string };
 
-const manifest = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "manifest.json"), "utf8"));
+// The extension's own manifest.json: the worker reads its content_scripts.
+const manifest: { content_scripts: ContentScriptGroup[] } = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), "manifest.json"), "utf8"),
+);
 
 function background(apiMode: BrowserApiMode, options: {
   standaloneVault?: Record<string, unknown>; fetch?: Fetch;
@@ -33,14 +37,14 @@ function background(apiMode: BrowserApiMode, options: {
   let disconnectNative: () => void = () => undefined;
 
   const createResult = { id: 17 };
-  const createWindow = vi.fn((options: Message, callback?: (result: Message) => void) => {
+  const createWindow = vi.fn((_options: Message, callback?: (result: Message) => void) => {
     if (apiMode === "callback") {
       callback?.(createResult);
       return undefined;
     }
     return Promise.resolve(createResult);
   });
-  const createTab = vi.fn((options: Message, callback?: (result: Message) => void) => {
+  const createTab = vi.fn((_options: Message, callback?: (result: Message) => void) => {
     if (apiMode === "callback") {
       callback?.(createResult);
       return undefined;
@@ -48,45 +52,42 @@ function background(apiMode: BrowserApiMode, options: {
     return Promise.resolve(createResult);
   });
   const nativePort = {
-    onMessage: eventSink((listener) => { receiveNativeMessage = listener as (message: Message) => void; }),
-    onDisconnect: eventSink((listener) => { disconnectNative = listener as () => void; }),
-    postMessage: vi.fn(),
+    onMessage: eventSink<(message: Message) => void>((listener) => { receiveNativeMessage = listener; }),
+    onDisconnect: eventSink<() => void>((listener) => { disconnectNative = listener; }),
+    postMessage: vi.fn<(message: Message) => void>(),
   };
   const chrome = {
     action: { onClicked: eventSink() },
     commands: { onCommand: eventSink() },
     contextMenus: { onClicked: eventSink(), removeAll: vi.fn(), create: vi.fn() },
     runtime: {
-      lastError: undefined as { message: string } | undefined,
+      // Widened from `undefined`: a test sets it while a callback runs.
+      lastError: undefined as LastError | undefined,
       connectNative: vi.fn(() => nativePort),
-      getContexts: vi.fn(async () => [] as unknown[]),
+      getContexts: vi.fn<GetContexts>(async () => []),
       getURL: (path: string) => `chrome-extension://test/${path}`,
       getManifest: () => manifest,
       reload: vi.fn(),
-      onInstalled: eventSink((listener) => { installListeners.push(listener as (details: { reason: string }) => void); }),
-      onMessage: eventSink((listener) => { receiveRuntimeMessage = listener as MessageListener; }),
+      onInstalled: eventSink<(details: { reason: string }) => void>((listener) => { installListeners.push(listener); }),
+      onMessage: eventSink<MessageListener>((listener) => { receiveRuntimeMessage = listener; }),
       sendMessage: vi.fn(() => Promise.resolve()),
     },
-    scripting: { executeScript: vi.fn() },
+    scripting: { executeScript: vi.fn<ExecuteScript>() },
     storage: {
-      local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) },
-      session: {
-        get: vi.fn(async () => ({})),
-        set: vi.fn(async () => undefined),
-        remove: vi.fn(async () => undefined),
-        setAccessLevel: vi.fn(() => Promise.resolve()),
-      },
+      local: fakeStorageArea(),
+      session: { ...fakeStorageArea(), setAccessLevel: vi.fn(() => Promise.resolve()) },
     },
     tabs: {
       create: createTab,
-      get: vi.fn(async () => null),
-      query: vi.fn(async () => [] as Array<{ id: number }>),
-      sendMessage: vi.fn(),
-      onRemoved: eventSink(),
+      get: vi.fn<TabsGet>(async () => null),
+      query: vi.fn<TabsQuery>(async () => []),
+      sendMessage: vi.fn<TabsSendMessage>(),
+      captureVisibleTab: vi.fn<CaptureVisibleTab>(),
+      onRemoved: eventSink<(tabId: number) => void>(),
     },
     windows: {
       create: createWindow,
-      getAll: vi.fn(async () => [] as Array<{ id: number; tabs: Array<{ url: string }> }>),
+      getAll: vi.fn<WindowsGetAll>(async () => []),
       getCurrent: vi.fn(async () => ({ id: 1 })),
       onBoundsChanged: eventSink(),
       onRemoved: eventSink(),
@@ -119,7 +120,7 @@ function background(apiMode: BrowserApiMode, options: {
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/youtubeSource.js"), "utf8"), context);
   runInContext(source, context);
 
-  function dispatch(message: Message, sender: Parameters<MessageListener>[1] = {}) {
+  function dispatch(message: Message, sender: FakeSender = {}) {
     let resolveResponse: (response: Message) => void = () => undefined;
     const response = new Promise<Message>((resolve) => { resolveResponse = resolve; });
     const keepAlive = receiveRuntimeMessage(message, sender, resolveResponse);
@@ -227,7 +228,7 @@ describe.each<BrowserApiMode>(["callback", "promise"])("background messaging wit
     const request = worker.dispatch({ target: "background", action: "nativeMessage", payload: { action: "get_status" } });
 
     expect(request.keepAlive).toBe(true);
-    const sent = worker.nativePort.postMessage.mock.calls[0]?.[0] as Message;
+    const [sent] = present(worker.nativePort.postMessage.mock.calls[0], "the request to the helper");
     worker.receiveNativeMessage({ ...sent, ok: false, code: "native_forbidden", error: "Access to the specified native messaging host is forbidden." });
     await expect(request.response).resolves.toMatchObject({
       ok: false,
@@ -354,7 +355,7 @@ describe("the post of an X feed is read only for X itself", () => {
     worker.chrome.scripting.executeScript.mockResolvedValue([{ result: post }]);
     return worker;
   }
-  const read = (worker: ReturnType<typeof background>, sender: Parameters<MessageListener>[1], tweetId: unknown = post.id) =>
+  const read = (worker: ReturnType<typeof background>, sender: FakeSender, tweetId: unknown = post.id) =>
     worker.dispatch({ target: "background", action: "readXPost", tweetId }, sender);
 
   it.each([
@@ -367,7 +368,7 @@ describe("the post of an X feed is read only for X itself", () => {
     const request = read(worker, { url, frameId: 0, tab: { id: 4 } });
     expect(request.keepAlive).toBe(true);
     await expect(request.response).resolves.toEqual({ post });
-    const [injection] = worker.chrome.scripting.executeScript.mock.calls[0] as [Record<string, unknown>];
+    const [injection] = present(worker.chrome.scripting.executeScript.mock.calls[0], "the injection");
     expect(injection).toMatchObject({ target: { tabId: 4, frameIds: [0] }, world: "MAIN", args: [post.id] });
   });
 
@@ -378,7 +379,8 @@ describe("the post of an X feed is read only for X itself", () => {
     [{ url: "https://x.com/home", frameId: 3, tab: { id: 4 } }, post.id],
     [{ url: "https://x.com/home", frameId: 0 }, post.id],
     [{ url: "https://x.com/home", frameId: 0, tab: { id: 4 } }, "1; alert(1)"],
-    [{ url: "https://x.com/home", frameId: 0, tab: { id: 4 } }, 2108558741528355242],
+    // The ID as a number: past 2^53 it is no longer the post's ID.
+    [{ url: "https://x.com/home", frameId: 0, tab: { id: 4 } }, Number(post.id)],
   ])("answers no post to %j asking for %j, without touching the page", async (sender, tweetId) => {
     const worker = xWorker();
     const request = read(worker, sender, tweetId);
@@ -464,17 +466,12 @@ describe("the syndication answer of an X post", () => {
 describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)", () => {
   function launchWorker() {
     const worker = background("promise");
-    const session: Record<string, unknown> = {};
     // Like the browser's storage: every read is a copy, so a change is seen
     // only once it is written back.
-    worker.chrome.storage.session.get.mockImplementation(async (key: unknown) => ({ [key as string]: structuredClone(session[key as string]) }));
-    worker.chrome.storage.session.set.mockImplementation(async (values: unknown) => { Object.assign(session, structuredClone(values)); });
-    worker.chrome.storage.session.remove.mockImplementation(async (keys: unknown) => {
-      for (const key of [keys].flat() as string[]) delete session[key];
-    });
+    keepIn(worker.chrome.storage.session, new Map());
     return worker;
   }
-  const ask = (worker: ReturnType<typeof background>, sender: { url?: string; tab?: { id: number; windowId?: number } }) =>
+  const ask = (worker: ReturnType<typeof background>, sender: FakeSender) =>
     worker.dispatch({ target: "background", action: "getClipperLaunch" }, sender).response;
 
   it("hands the context-menu target only to the clipper of its tab, and once", async () => {
@@ -498,7 +495,7 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
 
   it("does not keep an Instagram post for a clipper that never opened", async () => {
     const worker = launchWorker();
-    worker.chrome.tabs.sendMessage.mockImplementation((_id: unknown, _message: unknown, callback?: (r: unknown) => void) => { callback?.(undefined); });
+    worker.chrome.tabs.sendMessage.mockImplementation((_id, _message, reply) => { replyTo(reply, undefined); });
     const tab = { id: 5, url: "https://www.instagram.com/p/abc/" };
     const opened = await worker.dispatch({ target: "background", action: "showOverlayInThisTab", pageUrl: tab.url,
       preloaded: { metadata: { url: tab.url }, article: { content: "Post" } } }, { url: tab.url, tab }).response;
@@ -508,9 +505,9 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
 
   it("captures the source tab only while it is in front of its window", async () => {
     const worker = launchWorker();
-    const chrome = worker.chrome as unknown as { tabs: Record<string, ReturnType<typeof vi.fn>> };
-    chrome.tabs.sendMessage.mockImplementation((_id: unknown, _message: unknown, callback?: (r: unknown) => void) => { callback?.({ ok: true }); });
-    chrome.tabs.captureVisibleTab = vi.fn((_windowId: unknown, _options: unknown, callback: (url: string) => void) => callback("data:image/jpeg;base64,AA"));
+    const chrome = worker.chrome;
+    chrome.tabs.sendMessage.mockImplementation((_id, _message, reply) => { replyTo(reply, { ok: true }); });
+    chrome.tabs.captureVisibleTab.mockImplementation((_windowId, _options, callback) => callback("data:image/jpeg;base64,AA"));
     const fromWindow = { url: "chrome-extension://test/dist/index.html", tab: { id: 900, windowId: 77 } };
     const page = "https://a.example/";
     const capture = () => worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5 }, fromWindow).response;
@@ -534,10 +531,10 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
     const fromWindow = { url: "chrome-extension://test/dist/index.html", tab: { id: 900, windowId: 77 } };
     function captureWorker() {
       const worker = launchWorker();
-      const chrome = worker.chrome as unknown as { tabs: Record<string, ReturnType<typeof vi.fn>> };
-      chrome.tabs.sendMessage.mockImplementation((_id: unknown, _message: unknown, callback?: (r: unknown) => void) => { callback?.({ ok: true }); });
-      chrome.tabs.captureVisibleTab = vi.fn((_windowId: unknown, _options: unknown, callback: (url: string) => void) => callback("data:image/jpeg;base64,AA"));
-      return { worker, tabs: chrome.tabs };
+      const tabs = worker.chrome.tabs;
+      tabs.sendMessage.mockImplementation((_id, _message, reply) => { replyTo(reply, { ok: true }); });
+      tabs.captureVisibleTab.mockImplementation((_windowId, _options, callback) => callback("data:image/jpeg;base64,AA"));
+      return { worker, tabs };
     }
 
     it("captures page B for the window whose source tab moved from A to B", async () => {
@@ -564,7 +561,7 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: pageA });
       tabs.query.mockResolvedValue([{ id: 5, url: pageA }]);
       await worker.dispatch({ target: "background", action: "captureForCrop", tabId: 5 }, fromWindow).response;
-      const asked = tabs.sendMessage.mock.calls.map(([id, message]) => [id, (message as { action: string }).action]);
+      const asked = tabs.sendMessage.mock.calls.map(([id, message]) => [id, message.action]);
       expect(asked).toEqual([[5, "prepareViewportCapture"], [5, "finishViewportCapture"]]);
     });
 
@@ -594,10 +591,10 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
     const fromWindow = { url: "chrome-extension://test/dist/index.html", tab: { id: 900, windowId: 77 } };
     function cropWorker(tabUrl: string) {
       const worker = launchWorker();
-      const chrome = worker.chrome as unknown as { tabs: Record<string, ReturnType<typeof vi.fn>> };
-      chrome.tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: tabUrl });
-      chrome.tabs.sendMessage.mockImplementation((_id: unknown, _message: unknown, callback?: (r: unknown) => void) => { callback?.({ ok: true }); });
-      return { worker, tabs: chrome.tabs };
+      const tabs = worker.chrome.tabs;
+      tabs.get.mockResolvedValue({ id: 5, windowId: 3, active: true, url: tabUrl });
+      tabs.sendMessage.mockImplementation((_id, _message, reply) => { replyTo(reply, { ok: true }); });
+      return { worker, tabs };
     }
 
     it("asks the page the window opened for, not the window's own tab", async () => {
@@ -643,8 +640,7 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
     });
     const write = (worker: ReturnType<typeof background>, value: unknown, sender = fromPage(pageA)) =>
       worker.dispatch({ target: "background", action: "openClipWrite", clip: value }, sender).response;
-    const stored = (worker: ReturnType<typeof background>, tabId = 5) =>
-      worker.run(`readOpenClip(${tabId})`) as Promise<Record<string, unknown> | null>;
+    const stored = (worker: ReturnType<typeof background>, tabId = 5) => worker.run(`readOpenClip(${tabId})`);
 
     it("keeps the clip under its tab, and the frame it was sent with until a new one comes", async () => {
       const worker = launchWorker();
@@ -671,7 +667,7 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       await expect(worker.dispatch({ target: "background", action: "openClipClear" }, fromPage(pageB)).response).resolves.toEqual({ ok: true });
       await expect(stored(worker)).resolves.toBeNull();
       await write(worker, clip("Open again"));
-      const removed = worker.chrome.tabs.onRemoved.addListener.mock.calls.map(([listener]) => listener as (tabId: number) => void);
+      const removed = worker.chrome.tabs.onRemoved.addListener.mock.calls.map(([listener]) => listener);
       removed.forEach((listener) => listener(5));
       await vi.waitFor(async () => expect(await stored(worker)).toBeNull());
       await expect(worker.run("anyOpenClip()")).resolves.toBe(false);
@@ -681,9 +677,9 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       const worker = launchWorker();
       await write(worker, clip("Kept", { screenshot: shot }));
       const shown: unknown[] = [];
-      worker.chrome.tabs.sendMessage.mockImplementation((_id: unknown, message: unknown, callback?: (r: unknown) => void) => {
+      worker.chrome.tabs.sendMessage.mockImplementation((_id, message, reply) => {
         shown.push(message);
-        callback?.(shown.length === 1 ? undefined : { ok: true });
+        replyTo(reply, shown.length === 1 ? undefined : { ok: true });
       });
       const reply = await worker.dispatch({ target: "background", action: "restoreOpenClip" }, fromPage(pageB)).response;
       expect(reply).toEqual({ ok: true, mode: "overlay" });
@@ -708,13 +704,13 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       const session: Record<string, unknown> = {};
       const bytes = (values: Record<string, unknown>) => Object.entries(values)
         .reduce((total, [key, value]) => total + key.length + JSON.stringify(value).length, 0);
-      worker.chrome.storage.session.get.mockImplementation(async (key: unknown) => ({ [key as string]: structuredClone(session[key as string]) }));
-      worker.chrome.storage.session.set.mockImplementation(async (values: Record<string, unknown>) => {
+      worker.chrome.storage.session.get.mockImplementation(async (key) => ({ [String(key)]: structuredClone(session[String(key)]) }));
+      worker.chrome.storage.session.set.mockImplementation(async (values) => {
         if (bytes({ ...session, ...values }) > 10_485_760) throw new Error("Session storage quota bytes exceeded. Values were not stored.");
         Object.assign(session, structuredClone(values));
       });
-      worker.chrome.storage.session.remove.mockImplementation(async (keys: unknown) => {
-        for (const key of [keys].flat() as string[]) delete session[key];
+      worker.chrome.storage.session.remove.mockImplementation(async (keys) => {
+        for (const key of [keys].flat()) delete session[key];
       });
       return worker;
     }
@@ -785,11 +781,10 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
     it("tells the overlay whether the launch brings new material", async () => {
       const worker = launchWorker();
       const shown: Message[] = [];
-      const tabs = worker.chrome.tabs.sendMessage as unknown as ReturnType<typeof vi.fn>;
-      tabs.mockImplementation((_tabId: number, message: Message, reply?: (response: unknown) => void) => {
+      worker.chrome.tabs.sendMessage.mockImplementation((_tabId, message, reply) => {
         if (message.action !== "showClipperOverlay") return;
         shown.push(message);
-        reply?.({ ok: true });
+        replyTo(reply, { ok: true });
       });
       const page = JSON.stringify({ id: 5, url: "https://a.example/", title: "A" });
       await expect(worker.run(`openClipperUi(${page})`)).resolves.toBe("overlay");
@@ -832,27 +827,23 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
     /// injection finishes when the test says so.
     function tabWithoutOverlay() {
       const worker = launchWorker();
-      const chrome = worker.chrome as unknown as {
-        runtime: { lastError: { message: string } | undefined };
-        scripting: { executeScript: ReturnType<typeof vi.fn> };
-        tabs: Record<string, ReturnType<typeof vi.fn>>;
-      };
+      const chrome = worker.chrome;
       let injected = false;
       const injections: Array<() => void> = [];
-      chrome.scripting.executeScript.mockImplementation(() => new Promise<void>((resolve) => {
-        injections.push(() => { injected = true; resolve(); });
+      chrome.scripting.executeScript.mockImplementation(() => new Promise((resolve) => {
+        injections.push(() => { injected = true; resolve([]); });
       }));
       const shows: number[] = [];
-      chrome.tabs.sendMessage.mockImplementation((tabId: number, message: Message, reply?: (response: unknown) => void) => {
+      chrome.tabs.sendMessage.mockImplementation((tabId, message, reply) => {
         if (message.action !== "showClipperOverlay") return;
         if (!injected) {
           chrome.runtime.lastError = { message: "Could not establish connection. Receiving end does not exist." };
-          reply?.(undefined);
+          replyTo(reply, undefined);
           chrome.runtime.lastError = undefined;
           return;
         }
         shows.push(tabId);
-        reply?.({ ok: true });
+        replyTo(reply, { ok: true });
       });
       return { worker, executeScript: chrome.scripting.executeScript, injections, shows };
     }
@@ -880,7 +871,7 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       void tab.worker.run(`openClipperUi(${JSON.stringify({ id: 5, url: "https://a.example/" })})`);
       void tab.worker.run(`openClipperUi(${JSON.stringify({ id: 6, url: "https://b.example/" })})`);
       await vi.waitFor(() => expect(tab.executeScript).toHaveBeenCalledTimes(2));
-      expect(tab.executeScript.mock.calls.map(([options]) => (options as { target: { tabId: number } }).target.tabId)).toEqual([5, 6]);
+      expect(tab.executeScript.mock.calls.map(([options]) => options.target.tabId)).toEqual([5, 6]);
     });
   });
 });
@@ -900,22 +891,10 @@ describe("an extension update checks again right before the reload (SPEC_AUDIT_F
       saveStandaloneBlock: () => new Promise((resolve) => { finishWrite = () => resolve({ ok: true }); }),
     };
     const worker = background("promise", { standaloneVault });
-    const local = new Map<string, unknown>();
     const session = new Map<string, unknown>([["mineReloadPending", "new-build"]]);
-    const read = (store: Map<string, unknown>, key: unknown) => key === null
-      ? Object.fromEntries([...store].map(([name, value]) => [name, structuredClone(value)]))
-      : { [key as string]: structuredClone(store.get(key as string)) };
-    const storage = worker.chrome.storage as unknown as Record<"local" | "session", Record<string, ReturnType<typeof vi.fn>>>;
-    storage.local.get.mockImplementation(async (key: unknown) => read(local, key));
-    storage.local.set.mockImplementation(async (values: Record<string, unknown>) => {
-      for (const [name, value] of Object.entries(values)) local.set(name, structuredClone(value));
-    });
-    storage.session.get.mockImplementation(async (key: unknown) => read(session, key));
-    storage.session.set.mockImplementation(async (values: Record<string, unknown>) => {
-      for (const [name, value] of Object.entries(values)) session.set(name, structuredClone(value));
-    });
-    storage.session.remove.mockImplementation(async (name: string) => { session.delete(name); });
-    const send = (message: Message, sender: { tab?: { id: number; url?: string } } = { tab }) =>
+    keepIn(worker.chrome.storage.local, new Map());
+    keepIn(worker.chrome.storage.session, session);
+    const send = (message: Message, sender: FakeSender = { tab }) =>
       worker.dispatch({ target: "background", sourceUrl, ...message }, sender).response;
     return { worker, session, send, finishWrite: () => finishWrite() };
   }
@@ -951,29 +930,29 @@ describe("an extension update checks again right before the reload (SPEC_AUDIT_F
     const host = updatingWorker();
     const other = { id: 9, url: "https://c.example/post" };
     let overlayOpen = false;
-    let answerTab: ((answer: { open: boolean }) => void) | null = null;
+    // The tab's answers held back, the first one only.
+    const heldAnswers: Array<(answer: { open: boolean }) => void> = [];
     host.worker.chrome.tabs.query.mockResolvedValue([other]);
-    const tabs = host.worker.chrome.tabs.sendMessage as unknown as ReturnType<typeof vi.fn>;
-    tabs.mockImplementation((_id: number, message: Message, reply?: unknown) => {
+    host.worker.chrome.tabs.sendMessage.mockImplementation((_id, message, reply) => {
       if (message.action === "showClipperOverlay" && typeof reply === "function") {
         overlayOpen = true;
-        reply({ ok: true });
+        replyTo(reply, { ok: true });
         return undefined;
       }
       if (message.action !== "mineClipperIsOpen") return undefined;
       // The first answer is the one the tab gave before the clipper opened.
-      if (answerTab === null) return new Promise((resolve) => { answerTab = resolve; });
+      if (heldAnswers.length === 0) return new Promise((resolve) => { heldAnswers.push(resolve); });
       return Promise.resolve({ open: overlayOpen });
     });
     const answerPages = await checkHeldAtPages(host);
     answerPages([]);
     await vi.advanceTimersByTimeAsync(0);
-    expect(answerTab).not.toBeNull();
+    expect(heldAnswers).toHaveLength(1);
 
     // The clip button of the page in tab 9 opens the clipper meanwhile.
     await expect(host.send({ action: "showOverlayInThisTab", pageUrl: other.url }, { tab: other }))
       .resolves.toMatchObject({ ok: true, mode: "overlay" });
-    answerTab!({ open: false });
+    present(heldAnswers[0], "the tab's first answer")({ open: false });
     await vi.advanceTimersByTimeAsync(5_000);
     expect(host.worker.chrome.runtime.reload).not.toHaveBeenCalled();
 
@@ -990,11 +969,10 @@ describe("files of the running build and the pages open before it (К4)", () => 
   afterEach(() => vi.useRealTimers());
 
   type Tab = { id: number; url: string; title?: string; discarded?: boolean };
-  type Groups = Array<{ js: string[]; world?: string }>;
-  const groups = manifest.content_scripts as Groups;
-  const contentScripts = groups.find((group) => group.js.includes("content.js"))!.js;
-  const instagramOverlay = groups.find((group) => group.js.includes("dist/overlay.js"))!.js;
-  const pageWorld = groups.find((group) => group.world === "MAIN")!.js;
+  const groups = manifest.content_scripts;
+  const contentScripts = present(groups.find((group) => group.js.includes("content.js")), "the content scripts").js;
+  const instagramOverlay = present(groups.find((group) => group.js.includes("dist/overlay.js")), "the Instagram overlay").js;
+  const pageWorld = present(groups.find((group) => group.world === "MAIN"), "the page world's scripts").js;
 
   /// A match pattern of the manifest as a test of an address.
   function matches(pattern: string, url: string) {
@@ -1009,49 +987,35 @@ describe("files of the running build and the pages open before it (К4)", () => 
     pageCaches = new Set<number>()) {
     const host = background("promise", { runningBuild, diskBuild });
     const session = new Map<string, unknown>();
-    const storage = host.chrome.storage as unknown as Record<"local" | "session", Record<string, ReturnType<typeof vi.fn>>>;
-    for (const [area, store] of [["local", local], ["session", session]] as const) {
-      storage[area].get.mockImplementation(async (key: unknown) => key === null
-        ? Object.fromEntries([...store].map(([name, value]) => [name, structuredClone(value)]))
-        : { [key as string]: structuredClone(store.get(key as string)) });
-      storage[area].set.mockImplementation(async (values: Record<string, unknown>) => {
-        for (const [name, value] of Object.entries(values)) store.set(name, structuredClone(value));
-      });
-      storage[area].remove.mockImplementation(async (keys: unknown) => {
-        for (const name of [keys].flat() as string[]) store.delete(name);
-      });
-    }
-    const chrome = host.chrome as unknown as {
-      runtime: { lastError: { message: string } | undefined };
-      scripting: { executeScript: ReturnType<typeof vi.fn> };
-      tabs: Record<string, ReturnType<typeof vi.fn>>;
-    };
-    chrome.tabs.query.mockImplementation(async (query: { url?: string[] }) =>
+    keepIn(host.chrome.storage.local, local);
+    keepIn(host.chrome.storage.session, session);
+    const chrome = host.chrome;
+    chrome.tabs.query.mockImplementation(async (query) =>
       tabs.filter((tab) => !query.url || query.url.some((pattern) => matches(pattern, tab.url))));
-    chrome.tabs.get.mockImplementation(async (id: number) => {
+    chrome.tabs.get.mockImplementation(async (id) => {
       const tab = tabs.find((candidate) => candidate.id === id);
       if (!tab) throw new Error(`No tab with id: ${id}`);
       return { ...tab };
     });
     const injected = new Map<number, string[]>();
-    chrome.scripting.executeScript.mockImplementation(async (options: { target: { tabId: number }; files?: string[]; func?: () => unknown }) => {
+    chrome.scripting.executeScript.mockImplementation(async (options) => {
       if (options.func) return [{ frameId: 0, result: pageCaches.has(options.target.tabId) }];
       injected.set(options.target.tabId, [...(injected.get(options.target.tabId) ?? []), ...(options.files ?? [])]);
       return [];
     });
     const shown: Array<{ tabId: number; message: Message }> = [];
-    chrome.tabs.sendMessage.mockImplementation((tabId: number, message: Message, reply?: unknown) => {
+    chrome.tabs.sendMessage.mockImplementation((tabId, message, reply) => {
       if (message.action === "mineClipperIsOpen") return Promise.resolve({ open: false });
       if (typeof reply !== "function") return undefined;
-      if (message.action !== "showClipperOverlay") return reply(undefined);
+      if (message.action !== "showClipperOverlay") return replyTo(reply, undefined);
       if (!injected.get(tabId)?.includes("dist/overlay.js")) {
         chrome.runtime.lastError = { message: "Could not establish connection. Receiving end does not exist." };
-        reply(undefined);
+        replyTo(reply, undefined);
         chrome.runtime.lastError = undefined;
         return undefined;
       }
       shown.push({ tabId, message });
-      return reply({ ok: true });
+      return replyTo(reply, { ok: true });
     });
     return { host, session, injected, shown };
   }
@@ -1074,7 +1038,7 @@ describe("files of the running build and the pages open before it (К4)", () => 
     // Only the tabs of X are asked about the page world's cache; a page that
     // has it keeps the scripts it loaded.
     const asked = host.chrome.scripting.executeScript.mock.calls
-      .map(([options]) => options as { target: { tabId: number }; world?: string; func?: unknown })
+      .map(([options]) => options)
       .filter((options) => options.func !== undefined)
       .map((options) => [options.target.tabId, options.world]);
     expect(asked.sort()).toEqual([[2, "MAIN"], [6, "MAIN"]]);
@@ -1150,7 +1114,7 @@ describe("files of the running build and the pages open before it (К4)", () => 
     const after = worker("new", "new", local, [tab]);
     after.host.install("update");
     await vi.waitFor(() => expect(after.shown).toHaveLength(1));
-    expect(after.shown[0].message).toMatchObject({ action: "showClipperOverlay", freshMaterial: false, restore: { title: "Kept" } });
+    expect(after.shown[0]?.message).toMatchObject({ action: "showClipperOverlay", freshMaterial: false, restore: { title: "Kept" } });
     expect(after.session.get("mineOpenClipTabs")).toEqual([5]);
   });
 

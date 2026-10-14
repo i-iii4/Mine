@@ -1,12 +1,14 @@
 // Isolated packaged-extension integration test. No personal profile or live X requests.
+// Runs the payload `bun run build:extension` writes; `bun run test:x-thread` builds it first.
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const extension = join(root, 'build/clipper-extension');
+assert.ok(existsSync(join(extension, 'manifest.json')), `No extension payload at ${extension}: run bun run build:extension`);
 const profile = mkdtempSync(join(tmpdir(), 'mine-x-thread-'));
 const tweet = (id, parent = null, author = '7') => ({ __typename: 'Tweet', rest_id: id,
   core: { user_results: { result: { rest_id: author, core: { screen_name: 'author' } } } },

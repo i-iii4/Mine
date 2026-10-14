@@ -98,11 +98,10 @@ Appearance → `Card corners`: `Square` (по умолчанию) или `4` п�
 
 - **Третьего ряда нет.** Его половина над лентой (`Grid / Graph`, `Display`,
   при открытой карточке её название, меню и закрытие) стоит во втором ряду
-  после переключателя коллекции (`MainSecondaryTopBar part="content"`), лента
+  после переключателя коллекции (`MainSecondaryTopBar`), лента
   начинается сразу под вторым рядом. Над таблицей третьего ряда тоже нет:
   числа коллекций нет, индикаторы загрузки и индексации и `+` новой коллекции
   стоят справа в ряду поля `Find collections` (`data-sidebar-top-search-actions`).
-  В раскладке с рядом метаданных внизу окна всё это остаётся в нём.
 - **Вид справа, без счётчика.** Числа элементов и подписи `View:` нет.
   `Grid / Graph` стоит у правого края рядом с `Display`, пилюлей на
   постоянной подложке («Пилюля»).
@@ -151,8 +150,11 @@ Appearance → `Card corners`: `Square` (по умолчанию) или `4` п�
 
 ## Варианты оформления
 
-Действующий вариант только Alt 1. При запуске старые значения `Default` и
-`Alt 2` приводятся к Alt 1. Шрифт интерфейса и шрифт статьи только системные
+Действующий вариант только Alt 1, его метрики стоят на `:root` в
+`global.css` без атрибута варианта. С 13.10.2026 переключателя вариантов в
+коде нет: `src/lib/designMode.ts`, атрибут `data-design` и правила Alt 2
+удалены (срез 46.10), сохранённое значение `mine.design` ничего не меняет.
+Шрифт интерфейса и шрифт статьи только системные
 (решение пользователя 06.10.2026). Доступные отступы: 32, 24 и 16 пикселей. Сохранённое
 значение 2 пикселя читается как 16. Нижняя панель использует только стандартные
 кнопки. Переключатели этих вариантов удалены из настроек.
@@ -457,8 +459,8 @@ Grid gap (32px) задан JS-константой `GAP` в `Grid.tsx`, пото
 13 pt, системный текст 13 pt; 1 pt в macOS равен 1 px вёрстки. Этим размером
 Mine набирает:
 
-- оба ряда верхней панели: название пространства, текущую коллекцию, поле
-  фильтра коллекций, число коллекций, `651 elements`, `View:` и переключатели;
+- верхнюю панель: название пространства, текущую коллекцию, поле фильтра
+  коллекций, имя открытой карточки и переключатели;
 - все выпадающие меню и меню правого клика вместе с подменю и тем, что в них
   лежит: выбор коллекций, список пространств;
 - названия коллекций в боковом меню и поле их переименования.
@@ -1163,13 +1165,10 @@ row text to `text-foreground`; all other row labels/counts stay
 `text-muted-foreground`. The selected route also remains `text-foreground` if
 another row is currently focused. Thumbnail strips do not participate in this
 state and stay visually unchanged. The row separator is a single owned seam per
-row. The experimental flag `SIDEBAR_ROW_HOVER_SEAM_ENABLED` controls whether
-hover/focus also changes the hovered row seam and the previous row seam to
-`border-accent`. Current test setting is `false`: hover/focus only brightens
-text, while the seam stays `sidebar-border`. The previous seam highlight remains
-available behind the flag and, when enabled, never changes line thickness.
-Enter/exit uses `180ms cubic-bezier(0.22, 1, 0.36, 1)`; switching directly
-between rows inside focus mode disables transition for that switch frame.
+row. Hover and focus only brighten the text; the seam stays `sidebar-border`
+(the experimental seam highlight and its flag were removed 13.10.2026).
+Switching directly between rows inside focus mode disables the text
+transition for that switch frame.
 
 ### Токены интерактивных состояний
 
@@ -2525,7 +2524,7 @@ Content: `rounded-1 border bg-card p-surface text-card-foreground` в разме
   порядке бокового меню, открытая сейчас коллекция тоже показывается.
   Переполнение растворяется у плюса (`createRightFadeMaskStyle`). Пустой ряд:
   `No collections` цветом `text-tertiary-foreground`.
-- Плашки коллекций в теле карточки выключены (`CARD_COLLECTION_PILLS_ENABLED`).
+- Плашек коллекций в теле карточки нет (флаг `CARD_COLLECTION_PILLS_ENABLED` и код плашек удалены 13.10.2026).
 
 **Появление:** `opacity-0 group-hover:opacity-100`, только когда текущий
 interaction owner pointer. Нижний ряд не ложится поверх текста: карточка
@@ -3821,6 +3820,13 @@ Row focus-mode:
 без checkbox. Список строк каналов использует ту же геометрию, что обычный
 sidebar.
 
+Статус 13.10.2026: описание отдельного второго ряда ниже (сегменты над
+боковым меню и над лентой, число коллекций и кнопка `+` над меню, число
+элементов и `View:` над лентой, ряд метаданных внизу окна) устарело с
+03.10.2026. Действующее правило в разделе «Верхние ряды»: половина над лентой
+стоит в верхнем ряду после переключателя коллекции, чисел нет. Код второго
+ряда удалён 13.10.2026 (срез 46.10).
+
 Top inset списка в раскрытой карточке не меняет геометрию обычного sidebar.
 Основной shell использует второй top-bar level (`h-8 border-b border-border`)
 с отдельными sidebar/content сегментами; сам sidebar scroll-content всегда
@@ -3849,9 +3855,7 @@ bar сразу переходит в main surface, Detail controls уходят 
 `opacity + translateY(-8px)`, а main layer возвращается через
 `opacity + translateY(6px)`. Snapshot открытой карточки остаётся только для
 анимации текста/кнопок; он не удерживает `bg-accent` после начала закрытия.
-Обычный non-compact close использует короткий shell-exit budget около `190ms`;
-compact Detail top chrome сохраняет отдельный `260ms` budget, потому что там
-анимируются элементы permanent top chrome.
+Закрытие использует короткий shell-exit budget около `190ms`.
 
 В main browsing state второй top-bar level — тихая информационная строка, а не
 общий toolbar. Над боковым меню она показывает число коллекций и кнопку `+`,

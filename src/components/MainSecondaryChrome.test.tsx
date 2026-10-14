@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { getGraphPreferences, reloadGraphPreferences } from "@/lib/graphPreferences";
 import { MainSecondaryTopBar } from "./MainSecondaryChrome";
-import type { LightBlock, MainViewMode, RenameBlockError } from "@/types";
+import type { IndexedBlock, LightBlock, MainViewMode, RenameBlockError } from "@/types";
 
 vi.mock("@tauri-apps/api/event", () => ({
   emit: vi.fn(() => Promise.resolve()),
@@ -38,25 +38,20 @@ const BLOCK: LightBlock = {
 };
 
 function bar(
-  placement: "top" | "bottom",
   detailBlock: LightBlock | null,
-  viewMode: "grid" | "graph" = "grid",
-  onRenameFile: (block: LightBlock, newStem: string) => Promise<void> = vi.fn(),
-  onCheckFileName: (block: LightBlock, newStem: string) => Promise<RenameBlockError | null> =
+  viewMode: MainViewMode = "grid",
+  onRenameFile: (block: LightBlock | IndexedBlock, newStem: string) => Promise<void> = vi.fn(),
+  onCheckFileName: (block: LightBlock | IndexedBlock, newStem: string) => Promise<RenameBlockError | null> =
     vi.fn(() => Promise.resolve(null)),
 ) {
   return (
     <MainSecondaryTopBar
-      sidebarCollapsed={false}
-      sidebarResizing={false}
-      stats={null}
       detailBlock={detailBlock}
       detailEntered
       viewMode={viewMode}
       onViewModeChange={vi.fn()}
       vaultPath="/vault"
       tags={[]}
-      currentTag={null}
       onToggleTag={vi.fn()}
       onCreateAndAssign={vi.fn()}
       onRequestRename={vi.fn()}
@@ -65,7 +60,6 @@ function bar(
       onRequestDelete={vi.fn()}
       onDetailClose={vi.fn()}
       detailMenuOpenRequestSequence={0}
-      placement={placement}
     />
   );
 }
@@ -74,109 +68,44 @@ function renderBar(...args: Parameters<typeof bar>) {
   return render(bar(...args));
 }
 
-describe("MainSecondaryTopBar placement", () => {
-  it("closes with a border below and the window background at the top", () => {
-    renderBar("top", null);
-
-    const bar = document.querySelector("[data-main-secondary-top-bar]");
-    expect(bar).toHaveClass("chrome-row", "bg-chrome");
-    expect(bar).toHaveAttribute("data-chrome-separator", "bottom");
-    expect(bar).not.toHaveClass("border-t");
-    expect(bar).not.toHaveClass("border-b");
-    expect(bar).toHaveAttribute("data-main-secondary-placement", "top");
-  });
-
-  it("takes the button bar's surface and a border above at the foot", () => {
-    renderBar("bottom", null);
-
-    const bar = document.querySelector("[data-main-secondary-top-bar]");
-    // The seam always faces the content: below the row when it sits on top,
-    // above it when it sits at the foot.
-    expect(bar).toHaveClass("chrome-row", "bg-accent");
-    expect(bar).toHaveAttribute("data-chrome-separator", "top");
-    expect(bar).not.toHaveClass("border-t");
-    expect(bar).not.toHaveClass("border-b");
-  });
-
-  it("names the open note instead of repeating its title at the foot", () => {
-    renderBar("bottom", BLOCK);
-
-    const meta = document.querySelector("[data-main-secondary-note-meta]");
-    expect(meta).toBeInTheDocument();
-    // The type taxonomy is gone (decision 044): no "article"/"image" atom.
-    expect(meta).not.toHaveTextContent("article");
-    expect(meta).toHaveTextContent("2000×1333");
-    expect(meta).toHaveTextContent("3 media");
-    expect(meta).toHaveTextContent("@kotecinho");
-    // Title, card menu and close control belong to the top toolbar here, and
-    // must not be drawn twice.
-    expect(document.querySelector("[data-secondary-detail-top-menu]")).toBeNull();
-  });
-
-  it("keeps the title, menu and close control at the top", () => {
-    renderBar("top", BLOCK);
+describe("MainSecondaryTopBar", () => {
+  it("shows the open card's name, menu and close control in the path", () => {
+    renderBar(BLOCK);
 
     expect(document.querySelector("[data-secondary-detail-top-menu]")).toBeInTheDocument();
     // The path names the card by its file (05.10.2026).
     expect(screen.getByTitle("nogal-house")).toHaveTextContent("nogal-house");
-    expect(document.querySelector("[data-main-secondary-note-meta]")).toBeNull();
   });
 
   // In the path the open card's name stands past the line the sidebar segment
   // draws between space and collection (11.10.2026).
-  for (const sidebarCollapsed of [false, true]) {
-    it(`draws the path's line before an open card's name only, sidebar ${sidebarCollapsed ? "collapsed" : "open"}`, () => {
-      const pathPart = (detailBlock: LightBlock | null) => (
-        <MainSecondaryTopBar
-          part="content"
-          placement="top"
-          sidebarCollapsed={sidebarCollapsed}
-          sidebarResizing={false}
-          stats={null}
-          detailBlock={detailBlock}
-          detailEntered
-          viewMode="grid"
-          onViewModeChange={vi.fn()}
-          vaultPath="/vault"
-          tags={[]}
-          currentTag={null}
-          onToggleTag={vi.fn()}
-          onCreateAndAssign={vi.fn()}
-          onRequestRename={vi.fn()}
-          onRenameFile={vi.fn()}
-          onCheckFileName={vi.fn(() => Promise.resolve(null))}
-          onRequestDelete={vi.fn()}
-          onDetailClose={vi.fn()}
-          detailMenuOpenRequestSequence={0}
-        />
-      );
-      const { rerender } = render(pathPart(null));
-      const segment = document.querySelector("[data-main-secondary-top-bar-content-segment]") as HTMLElement;
-      expect(segment).not.toHaveAttribute("data-path-card-line");
-      expect(segment).not.toHaveClass("border-l");
-      expect(segment).not.toHaveClass("ml-[var(--top-collection-pad-x)]");
+  it("draws the path's line before an open card's name only", () => {
+    const { rerender } = renderBar(null);
+    const segment = document.querySelector("[data-main-secondary-top-bar-content-segment]") as HTMLElement;
+    expect(segment).not.toHaveAttribute("data-path-card-line");
+    expect(segment).not.toHaveClass("border-l");
+    expect(segment).not.toHaveClass("ml-[var(--top-collection-pad-x)]");
 
-      rerender(pathPart(BLOCK));
-      expect(segment).toHaveAttribute("data-path-card-line", "");
-      expect(segment).toHaveClass("ml-[var(--top-collection-pad-x)]", "border-l", "border-sidebar-border");
-      const layer = document.querySelector("[data-secondary-detail-top-menu]") as HTMLElement;
-      expect(segment.contains(layer)).toBe(true);
-      expect(layer).toHaveClass("pl-[var(--top-collection-pad-x)]");
-      expect(layer).not.toHaveClass("pl-0");
-      expect(screen.getByTitle("nogal-house")).toHaveClass("px-2");
-      // One line: the moving layer draws none of its own.
-      expect(document.querySelectorAll(".border-sidebar-border")).toHaveLength(1);
+    rerender(bar(BLOCK));
+    expect(segment).toHaveAttribute("data-path-card-line", "");
+    expect(segment).toHaveClass("ml-[var(--top-collection-pad-x)]", "border-l", "border-sidebar-border");
+    const layer = document.querySelector("[data-secondary-detail-top-menu]") as HTMLElement;
+    expect(segment.contains(layer)).toBe(true);
+    expect(layer).toHaveClass("pl-[var(--top-collection-pad-x)]");
+    expect(layer).not.toHaveClass("pl-0");
+    expect(screen.getByTitle("nogal-house")).toHaveClass("px-2");
+    // One line: the moving layer draws none of its own.
+    expect(document.querySelectorAll(".border-sidebar-border")).toHaveLength(1);
 
-      rerender(pathPart(null));
-      expect(segment).not.toHaveAttribute("data-path-card-line");
-      expect(segment).not.toHaveClass("border-l");
-    });
-  }
+    rerender(bar(null));
+    expect(segment).not.toHaveAttribute("data-path-card-line");
+    expect(segment).not.toHaveClass("border-l");
+  });
 
   it("renames the card's file in place: leaving the field saves, Escape keeps the name", async () => {
-    const onRenameFile = vi.fn<(block: LightBlock, newStem: string) => Promise<void>>()
+    const onRenameFile = vi.fn<(block: LightBlock | IndexedBlock, newStem: string) => Promise<void>>()
       .mockResolvedValue(undefined);
-    renderBar("top", { ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
+    renderBar({ ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
 
     const name = screen.getByTitle("Nogal House");
     expect(name).toHaveTextContent("Nogal House");
@@ -203,12 +132,12 @@ describe("MainSecondaryTopBar placement", () => {
   });
 
   it("says under the name why a typed name would be refused", async () => {
-    const onCheckFileName = vi.fn((_block: LightBlock, stem: string) => Promise.resolve<RenameBlockError | null>(
+    const onCheckFileName = vi.fn((_block: LightBlock | IndexedBlock, stem: string) => Promise.resolve<RenameBlockError | null>(
       stem.includes("#")
         ? { kind: "invalid_filename", reason: "A name cannot contain \\ : # ^ | [ or ]." }
         : null,
     ));
-    renderBar("top", { ...BLOCK, slug: "Cards/Nogal House" }, "grid", vi.fn(), onCheckFileName);
+    renderBar({ ...BLOCK, slug: "Cards/Nogal House" }, "grid", vi.fn(), onCheckFileName);
     fireEvent.doubleClick(screen.getByTitle("Nogal House"));
     const field = screen.getByRole("textbox", { name: "Rename file" });
 
@@ -226,9 +155,9 @@ describe("MainSecondaryTopBar placement", () => {
   });
 
   it("keeps the field, the cursor and the typed name when Enter is refused", async () => {
-    const onRenameFile = vi.fn<(block: LightBlock, newStem: string) => Promise<void>>()
+    const onRenameFile = vi.fn<(block: LightBlock | IndexedBlock, newStem: string) => Promise<void>>()
       .mockRejectedValue({ kind: "name_taken", requested: "Cards/Taken" });
-    renderBar("top", { ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
+    renderBar({ ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
     fireEvent.doubleClick(screen.getByTitle("Nogal House"));
     const field = screen.getByRole("textbox", { name: "Rename file" });
     fireEvent.change(field, { target: { value: "Taken" } });
@@ -247,9 +176,9 @@ describe("MainSecondaryTopBar placement", () => {
   });
 
   it("returns the old name when a refused name is left, its reason staying a moment", async () => {
-    const onRenameFile = vi.fn<(block: LightBlock, newStem: string) => Promise<void>>()
+    const onRenameFile = vi.fn<(block: LightBlock | IndexedBlock, newStem: string) => Promise<void>>()
       .mockRejectedValue({ kind: "name_taken", requested: "Cards/Taken" });
-    renderBar("top", { ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
+    renderBar({ ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
     fireEvent.doubleClick(screen.getByTitle("Nogal House"));
     const field = screen.getByRole("textbox", { name: "Rename file" });
     fireEvent.change(field, { target: { value: "Taken" } });
@@ -265,24 +194,20 @@ describe("MainSecondaryTopBar placement", () => {
   });
 
   it("ends the edit when another card takes the path, saving nothing", () => {
-    const onRenameFile = vi.fn<(block: LightBlock, newStem: string) => Promise<void>>();
-    const { rerender } = renderBar("top", { ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
+    const onRenameFile = vi.fn<(block: LightBlock | IndexedBlock, newStem: string) => Promise<void>>();
+    const { rerender } = renderBar({ ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
     fireEvent.doubleClick(screen.getByTitle("Nogal House"));
     fireEvent.change(screen.getByRole("textbox", { name: "Rename file" }), { target: { value: "Casa" } });
 
-    rerender(bar("top", { ...BLOCK, slug: "Cards/Casa Blanca" }, "grid", onRenameFile));
+    rerender(bar({ ...BLOCK, slug: "Cards/Casa Blanca" }, "grid", onRenameFile));
     expect(screen.queryByRole("textbox", { name: "Rename file" })).toBeNull();
     expect(screen.getByTitle("Casa Blanca")).toHaveTextContent("Casa Blanca");
     expect(onRenameFile).not.toHaveBeenCalled();
   });
 
-  it("brings no collections switch with an open card, in either placement", () => {
+  it("brings no collections switch with an open card", () => {
     // The All / Connected switch left every mode (03.10.2026).
-    const { unmount } = renderBar("bottom", BLOCK);
-    expect(screen.queryByText("Collections:")).not.toBeInTheDocument();
-    unmount();
-
-    renderBar("top", BLOCK);
+    renderBar(BLOCK);
     expect(screen.queryByText("Collections:")).not.toBeInTheDocument();
   });
 });
@@ -294,44 +219,10 @@ describe("Display options (SPEC_FEED_DISPLAY.md, Д1, Д4; SPEC_GRAPH_VIEW.md, �
   });
 
   function pathPart(viewMode: MainViewMode) {
-    return (
-      <MainSecondaryTopBar
-        part="content"
-        placement="top"
-        sidebarCollapsed={false}
-        sidebarResizing={false}
-        stats={null}
-        detailBlock={null}
-        detailEntered
-        viewMode={viewMode}
-        onViewModeChange={vi.fn()}
-        vaultPath="/vault"
-        tags={[]}
-        currentTag={null}
-        onToggleTag={vi.fn()}
-        onCreateAndAssign={vi.fn()}
-        onRequestRename={vi.fn()}
-        onRenameFile={vi.fn()}
-        onCheckFileName={vi.fn(() => Promise.resolve(null))}
-        onRequestDelete={vi.fn()}
-        onDetailClose={vi.fn()}
-        detailMenuOpenRequestSequence={0}
-      />
-    );
+    return bar(null, viewMode);
   }
 
   for (const viewMode of ["grid", "graph"] as const) {
-    it(`sit on the Mine button's axis in ${viewMode}: chrome actions own the right edge inset`, () => {
-      const { container } = renderBar("top", null, viewMode);
-      expect(screen.getByRole("button", { name: "Display options" })).toBeInTheDocument();
-      const actions = container.querySelector("[data-display-actions]");
-      expect(actions).toHaveAttribute("data-chrome-actions");
-      expect(actions).toHaveClass("ml-auto", "mr-[var(--chrome-edge-pad)]");
-      const row = container.querySelector("[data-main-secondary-stats-right]");
-      expect(row).toHaveClass("pl-[var(--main-secondary-pad-x)]");
-      expect(row).not.toHaveClass("pr-[var(--main-secondary-pad-x)]");
-    });
-
     it(`stand right of Grid | Graph in the path's row in ${viewMode}`, () => {
       render(pathPart(viewMode));
       const actions = document.querySelector("[data-main-view-mode-switcher]") as HTMLElement;

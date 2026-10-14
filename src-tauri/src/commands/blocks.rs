@@ -14,8 +14,7 @@ use tauri::{AppHandle, Manager, State};
 use thiserror::Error;
 
 use crate::commands::state::{
-    adopt_recovered_projection, tab_layout, ensure_vault_fresh, read_owned_projection,
-    AppState, CommandError,
+    tab_layout, ensure_vault_fresh, read_owned_projection, AppState, CommandError,
 };
 use crate::domain::block::{
     compute_body_hash, derive_card_kind, derive_title_fields, iter_file_references,
@@ -55,13 +54,6 @@ pub struct CreateBlockParams {
     /// Markdown body for cards born from pasted text. Absent everywhere else.
     #[serde(default)]
     pub body: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, specta::Type)]
-pub struct ExtractInlineMediaParams {
-    pub source_slug: String,
-    pub media_ref: String,
-    pub target_tag: String,
 }
 
 #[derive(Debug, Clone, Deserialize, specta::Type)]
@@ -257,45 +249,6 @@ pub enum RenameBlockError {
 
 #[derive(Debug, Error, Serialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum InlineMediaExtractError {
-    #[error("no vault selected")]
-    NoVault,
-
-    #[error("source block '{source_slug}' not found")]
-    SourceNotFound { source_slug: String },
-
-    #[error("source block '{source_slug}' is not an article")]
-    SourceNotArticle {
-        source_slug: String,
-        block_type: String,
-    },
-
-    #[error("invalid media reference: {reason}")]
-    InvalidMediaRef { reason: String },
-
-    #[error("media '{media_ref}' is not referenced by source block '{source_slug}'")]
-    MediaNotReferenced {
-        media_ref: String,
-        source_slug: String,
-    },
-
-    #[error("media '{media_ref}' not found")]
-    MediaNotFound { media_ref: String },
-
-    #[error("unsupported media type for '{media_ref}'")]
-    UnsupportedMediaType { media_ref: String },
-
-    /// The target collection has no page; nothing was written
-    /// (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
-    #[error("collection \"{collection}\" has no page; nothing was written")]
-    CollectionNotFound { collection: String },
-
-    #[error("{message}")]
-    Internal { message: String },
-}
-
-#[derive(Debug, Error, Serialize, specta::Type)]
-#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MediaAssetActionError {
     #[error("no vault selected")]
     NoVault,
@@ -470,28 +423,6 @@ pub(crate) struct MergeBlocksMutation {
 const IN_APP_RENAME_WATCHER_SUPPRESSION_MS: u64 = 1500;
 
 // ─── Commands ───────────────────────────────────────────────────────────────
-
-/// List all blocks (lightweight — without body/description), ordered by saved_at descending.
-#[tauri::command]
-pub async fn list_blocks(webview: tauri::Webview, app: AppHandle) -> Result<Vec<index::LightBlock>, CommandError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let (original, result) = {
-            let state = app.state::<AppState>();
-            let space = state.space_for(webview.label()).ok_or(CommandError::NoVault)?;
-            let vault_state = space
-                .vault_state
-                .lock()
-                .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-            let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-            (vs.vault.clone(), index::list_blocks_light(&vs.conn))
-        };
-        let (recovered, value) =
-            db::recover_projection_read(&original, result, index::list_blocks_light)?;
-        adopt_recovered_projection(&app, &original, recovered, value)
-    })
-    .await
-    .map_err(|error| CommandError::Internal(format!("list_blocks task join failed: {error}")))?
-}
 
 /// List only the blocks required by the place the feed shows (Everything, a
 /// collection or an author), plus the total non-channel block count for the
@@ -743,77 +674,6 @@ pub(crate) fn select_capture_name(
         url,
         &existing,
     )?)
-}
-
-/// Extract a local inline image from an article body into a new image block.
-async fn extract_inline_media_unannounced(
-    webview: tauri::Webview,
-    app: AppHandle,
-    state: State<'_, AppState>,
-    params: ExtractInlineMediaParams,
-) -> Result<IndexedBlock, InlineMediaExtractError> {
-    let ExtractInlineMediaParams {
-        source_slug,
-        media_ref,
-        target_tag,
-    } = params;
-    let vault = {
-        let space = state.space_for(webview.label()).ok_or(InlineMediaExtractError::NoVault)?;
-        let vault_state =
-            space
-                .vault_state
-                .lock()
-                .map_err(|_| InlineMediaExtractError::Internal {
-                    message: "vault state mutex poisoned".into(),
-                })?;
-        let vs = vault_state
-            .as_ref()
-            .ok_or(InlineMediaExtractError::NoVault)?;
-        files::layout_for_new_files(&vs.vault).map_err(internal_extract_error)?
-    };
-
-    let event_vault = vault.clone();
-    let indexed = tauri::async_runtime::spawn_blocking(move || {
-        let conn = db::open_or_create(&vault.index_db_path()).map_err(internal_extract_error)?;
-        extract_inline_media_inner(&conn, &vault, source_slug, media_ref, target_tag)
-    })
-    .await
-    .map_err(|e| InlineMediaExtractError::Internal {
-        message: format!("inline media extraction worker failed: {e}"),
-    })??;
-
-    let slug = indexed.slug.clone();
-    let tags = indexed.tags.clone();
-
-    crate::commands::space_events::announce_to_vault(&app, &event_vault, 
-        "block:added",
-        BlockAddedPayload {
-            slug: slug.clone(),
-            tags,
-            is_text: false,
-        },
-    );
-    crate::commands::space_events::announce_to_vault(&app, &event_vault, 
-        "thumb:updated",
-        ThumbUpdatedPayload {
-            slug,
-            is_text: false,
-        },
-    );
-
-    Ok(indexed)
-}
-
-/// [`extract_inline_media_unannounced`], then the other tabs of the space hear of the
-/// change (SPEC_TABS.md, В15).
-#[tauri::command(rename_all = "snake_case")]
-pub async fn extract_inline_media(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: ExtractInlineMediaParams) -> Result<IndexedBlock, InlineMediaExtractError> {
-    let announcing = super::effects::ChangeNews::before(&webview);
-    let outcome = extract_inline_media_unannounced(webview, app, state, params).await;
-    if outcome.is_ok() {
-        announcing.send(Vec::new());
-    }
-    outcome
 }
 
 /// Create a new standalone media card for a local media file, then connect that
@@ -1465,132 +1325,6 @@ fn require_target_collection_page<E>(
         Err(CommandError::CollectionNotFound { collection }) => Err(not_found(collection)),
         Err(error) => Err(internal(error.to_string())),
     }
-}
-
-fn extract_inline_media_inner(
-    conn: &rusqlite::Connection,
-    vault: &VaultLayout,
-    source_slug: String,
-    media_ref: String,
-    target_tag: String,
-) -> Result<IndexedBlock, InlineMediaExtractError> {
-    validate_slug(&source_slug).map_err(|e| InlineMediaExtractError::InvalidMediaRef {
-        reason: format!("invalid source slug: {e}"),
-    })?;
-    validate_inline_media_ref(&media_ref)?;
-
-    let target_tag = normalize_collection_ref(&target_tag);
-    if target_tag.is_empty() {
-        return Err(InlineMediaExtractError::InvalidMediaRef {
-            reason: "target collection is empty".to_string(),
-        });
-    }
-    validate_collection_ref(&target_tag)
-        .map_err(|reason| InlineMediaExtractError::InvalidMediaRef { reason })?;
-    require_target_collection_page(
-        conn,
-        vault,
-        &target_tag,
-        |collection| InlineMediaExtractError::CollectionNotFound { collection },
-        |message| InlineMediaExtractError::Internal { message },
-    )?;
-
-    let source_path = vault.block_path(&source_slug);
-    if !source_path.exists() {
-        return Err(InlineMediaExtractError::SourceNotFound { source_slug });
-    }
-
-    let (read_slug, content) =
-        files::read_block_file(vault, &source_path).map_err(internal_extract_error)?;
-    let parsed = parse_markdown_document(&read_slug, &content, file_saved_at(&source_path))
-        .map_err(|e| InlineMediaExtractError::Internal {
-            message: format!("failed to parse source block: {e}"),
-        })?;
-    let source_block = parsed.block;
-    let source_card_kind = derive_card_kind(&source_block);
-    if source_card_kind != CardKind::Article {
-        return Err(InlineMediaExtractError::SourceNotArticle {
-            source_slug: source_block.slug,
-            block_type: source_card_kind.as_str().to_string(),
-        });
-    }
-
-    let referenced_media = iter_inline_media_references(&source_block.body)
-        .into_iter()
-        .find(|reference| reference.source == media_ref);
-    let Some(referenced_media) = referenced_media else {
-        return Err(InlineMediaExtractError::MediaNotReferenced {
-            media_ref,
-            source_slug: source_block.slug,
-        });
-    };
-
-    let source_media_path = crate::storage::media_refs::resolve_inline_media(
-        vault,
-        &source_block.slug,
-        &referenced_media,
-    )
-    .ok_or_else(|| InlineMediaExtractError::InvalidMediaRef {
-        reason: "media reference must stay inside the vault".to_string(),
-    })?;
-    if !source_media_path.is_file() {
-        return Err(InlineMediaExtractError::MediaNotFound { media_ref });
-    }
-
-    let source_ext = source_media_path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("")
-        .to_string();
-    let ext_lower = source_ext.to_lowercase();
-    if !thumbnails::is_image_ext(&ext_lower) {
-        return Err(InlineMediaExtractError::UnsupportedMediaType { media_ref });
-    }
-
-    let raw_slug = suggest_slug(Some(&extraction_slug_seed(&media_ref)), None);
-    let slug = resolve_unique_extraction_slug(conn, vault, &raw_slug, &source_ext)
-        .map_err(internal_extract_error)?;
-    let media_file = vault
-        .root_relative_reference(&source_media_path)
-        .unwrap_or_else(|| media_ref.clone());
-    let media_link =
-        files::shortest_vault_link(vault, &media_file, false).map_err(internal_extract_error)?;
-    let source_link = files::shortest_vault_link(vault, &format!("{}.md", source_block.slug), true)
-        .map_err(internal_extract_error)?;
-    let now = crate::commands::state::now_saved_at();
-    let saved_at = DateTime::new(&now).map_err(|e| InlineMediaExtractError::Internal {
-        message: e.to_string(),
-    })?;
-
-    let block = Block {
-        slug: slug.clone(),
-        frontmatter: Frontmatter {
-            block_type: BlockType::Image,
-            title: None,
-            description: None,
-            url: source_block.frontmatter.url.clone(),
-            file: Some(media_link.clone()),
-            thumbnail: None,
-            tags: vec![target_tag.clone()],
-            related_notes: vec![source_link],
-            source_media: Some(media_link),
-            saved_at,
-            source: Some(
-                crate::domain::card_association::INLINE_MEDIA_EXTRACTION_SOURCE.to_string(),
-            ),
-            width: None,
-            height: None,
-            author: None,
-            position: None,
-            color: None,
-            icon: None,
-        },
-        body: String::new(),
-    };
-
-    let indexed =
-        files::persist_new_reference_block(conn, vault, &block).map_err(internal_extract_error)?;
-    Ok(indexed)
 }
 
 fn create_media_asset_card_inner(
@@ -5303,38 +5037,6 @@ fn normalize_requested_stem(raw: &str) -> Result<String, RenameBlockError> {
     Ok(normalized)
 }
 
-fn validate_inline_media_ref(media_ref: &str) -> Result<(), InlineMediaExtractError> {
-    let trimmed = media_ref.trim();
-    if trimmed.is_empty() {
-        return Err(InlineMediaExtractError::InvalidMediaRef {
-            reason: "media reference is empty".to_string(),
-        });
-    }
-    if trimmed != media_ref {
-        return Err(InlineMediaExtractError::InvalidMediaRef {
-            reason: "media reference has leading or trailing whitespace".to_string(),
-        });
-    }
-    if media_ref.starts_with("http://") || media_ref.starts_with("https://") {
-        return Err(InlineMediaExtractError::InvalidMediaRef {
-            reason: "remote media is not supported".to_string(),
-        });
-    }
-    if media_ref.contains('\\') || media_ref.contains('\0') {
-        return Err(InlineMediaExtractError::InvalidMediaRef {
-            reason: "media reference contains an invalid path separator".to_string(),
-        });
-    }
-    for segment in media_ref.split('/') {
-        if segment.is_empty() || segment == "." || segment == ".." {
-            return Err(InlineMediaExtractError::InvalidMediaRef {
-                reason: "media reference cannot contain path traversal".to_string(),
-            });
-        }
-    }
-    Ok(())
-}
-
 /// The first selected block a request names: `None` for `0..0`, which names
 /// none, and an error for a range that is not a block of `body`.
 fn supplied_source_block(
@@ -5807,12 +5509,6 @@ fn file_saved_at(path: &std::path::Path) -> DateTime {
 // The `internal_*_error` helpers render `{:#}`: an `anyhow::Error` or a
 // `SourceMutationError` then carries every cause down to the reason the
 // system gave, not just Mine's own step (08.10.2026).
-fn internal_extract_error(error: impl std::fmt::Display) -> InlineMediaExtractError {
-    InlineMediaExtractError::Internal {
-        message: format!("{error:#}"),
-    }
-}
-
 fn internal_media_asset_error(error: impl std::fmt::Display) -> MediaAssetActionError {
     MediaAssetActionError::Internal {
         message: format!("{error:#}"),
@@ -6912,89 +6608,6 @@ mod tests {
             channel_error,
             MergeBlocksError::BlockNotMergeable { .. }
         ));
-    }
-
-    #[test]
-    fn extract_inline_media_inner_references_existing_image_and_indexes_related_note() {
-        let (_root, _derived, vault, conn) = make_vault();
-        collection_page(&conn, &vault, "Mood Board");
-        let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
-        persist_block(&conn, &vault, &source);
-        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
-
-        let indexed = extract_inline_media_inner(
-            &conn,
-            &vault,
-            "Source Article".to_string(),
-            "photo.png".to_string(),
-            "Mood Board".to_string(),
-        )
-        .unwrap();
-
-        assert_eq!(indexed.slug, "photo");
-        assert_eq!(indexed.block_type, BlockType::Image);
-        assert!(indexed.title.is_none());
-        assert_eq!(indexed.url.as_deref(), Some("https://example.com/article"));
-        assert_eq!(indexed.media_file.as_deref(), Some("photo.png"));
-        assert_eq!(indexed.tags, vec!["Mood Board".to_string()]);
-        assert_eq!(indexed.related_notes, vec!["Source Article".to_string()]);
-        assert_eq!(indexed.source.as_deref(), Some("inline-media-extraction"));
-        assert_eq!(
-            std::fs::read(vault.root().join("photo.png")).unwrap(),
-            b"image-bytes"
-        );
-        assert!(!vault.root().join("Pulled Frame.png").exists());
-
-        let (_, extracted_content) =
-            files::read_block_file(&vault, &vault.block_path("photo")).unwrap();
-        let extracted = crate::domain::block::parse_block("photo", &extracted_content).unwrap();
-        assert_eq!(
-            extracted.frontmatter.related_notes,
-            vec!["Source Article".to_string()]
-        );
-        assert!(extracted.frontmatter.title.is_none());
-        assert_eq!(
-            extracted.frontmatter.source_media.as_deref(),
-            Some("photo.png")
-        );
-        assert!(extracted.body.is_empty());
-
-        let (_, source_content) =
-            files::read_block_file(&vault, &vault.block_path("Source Article")).unwrap();
-        assert!(source_content.contains("![[photo.png]]"));
-    }
-
-    #[test]
-    fn extract_inline_media_inner_avoids_owned_filename_collision_for_shared_media() {
-        let (_root, _derived, vault, conn) = make_vault();
-        collection_page(&conn, &vault, "Mood Board");
-        let source = article("Source Article", "Intro\n\n![[photo.png]]\n\nOutro");
-        persist_block(&conn, &vault, &source);
-        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
-
-        let indexed = extract_inline_media_inner(
-            &conn,
-            &vault,
-            "Source Article".to_string(),
-            "photo.png".to_string(),
-            "Mood Board".to_string(),
-        )
-        .unwrap();
-
-        assert_eq!(indexed.slug, "photo");
-        assert_eq!(indexed.media_file.as_deref(), Some("photo.png"));
-
-        let plan = build_delete_block_plan(&conn, &vault, &indexed.slug).unwrap();
-        assert!(plan.unused_media.is_empty());
-        assert_eq!(plan.shared_media.len(), 1);
-        assert_eq!(plan.shared_media[0].path, "photo.png");
-        assert_eq!(plan.shared_media[0].referenced_by, vec!["Source Article"]);
-        assert!(delete_block_inner(None, &conn, &vault, &indexed.slug, Some(true), None).unwrap().removed);
-        assert!(!vault.block_path(&indexed.slug).exists());
-        assert_eq!(
-            std::fs::read(vault.root().join("photo.png")).unwrap(),
-            b"image-bytes"
-        );
     }
 
     #[test]
@@ -8384,29 +7997,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_inline_media_inner_rejects_unreferenced_media() {
-        let (_root, _derived, vault, conn) = make_vault();
-        collection_page(&conn, &vault, "Mood Board");
-        let source = article("Source Article", "No embeds here.");
-        persist_block(&conn, &vault, &source);
-        std::fs::write(vault.root().join("photo.png"), b"image-bytes").unwrap();
-
-        let err = extract_inline_media_inner(
-            &conn,
-            &vault,
-            "Source Article".to_string(),
-            "photo.png".to_string(),
-            "Mood Board".to_string(),
-        )
-        .unwrap_err();
-
-        assert!(matches!(
-            err,
-            InlineMediaExtractError::MediaNotReferenced { .. }
-        ));
-    }
-
-    #[test]
     fn extract_text_selection_inner_creates_snapshot_and_anchors_source() {
         let (_root, _derived, vault, conn) = make_vault();
         collection_page(&conn, &vault, "Quotes");
@@ -8498,18 +8088,6 @@ mod tests {
         assert!(
             matches!(&created, Err(CommandError::CollectionNotFound { collection }) if collection == "Pageless"),
             "{created:?}"
-        );
-
-        let inline = extract_inline_media_inner(
-            &conn,
-            &vault,
-            "Source Article".to_string(),
-            "photo.png".to_string(),
-            pageless(),
-        );
-        assert!(
-            matches!(&inline, Err(InlineMediaExtractError::CollectionNotFound { collection }) if collection == "Pageless"),
-            "{inline:?}"
         );
 
         let asset = create_media_asset_card_inner(

@@ -475,9 +475,14 @@ mod tests {
             .trim()
             .parse()
             .unwrap();
-        std::thread::sleep(Duration::from_millis(100));
+        // The killed child is gone once the system has ended it; the deadline
+        // only ends a test that would hang.
+        let deadline = Instant::now() + Duration::from_secs(30);
         // SAFETY: signal 0 only asks whether the process exists.
-        assert_ne!(unsafe { libc::kill(sleeper, 0) }, 0, "the tool's child survived");
+        while unsafe { libc::kill(sleeper, 0) } == 0 {
+            assert!(Instant::now() < deadline, "the tool's child survived");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     #[test]

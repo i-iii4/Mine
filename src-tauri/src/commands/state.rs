@@ -453,12 +453,14 @@ mod tests {
     fn suppressed_paths_expire_after_deadline() {
         let state = AppState::new();
         let path = std::path::PathBuf::from("/tmp/doc.md");
+        let expired = std::path::PathBuf::from("/tmp/expired.md");
         state
-            .suppress_paths([path.clone()], std::time::Duration::from_millis(5))
+            .suppress_paths([path.clone()], std::time::Duration::from_secs(3600))
             .unwrap();
+        // A deadline that is already now has passed by the next look.
+        state.suppress_paths([expired.clone()], std::time::Duration::ZERO).unwrap();
         assert!(state.is_path_suppressed(&path));
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        assert!(!state.is_path_suppressed(&path));
+        assert!(!state.is_path_suppressed(&expired));
     }
 
     #[test]

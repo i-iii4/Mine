@@ -1,5 +1,3 @@
-export const SIDEBAR_ROW_HOVER_SEAM_ENABLED = false;
-
 /// Article audio (spoken article text) is switched off.
 ///
 /// The implementation stays in the tree on both sides. On the backend the IPC

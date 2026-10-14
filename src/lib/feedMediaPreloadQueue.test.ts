@@ -7,7 +7,7 @@ import {
 function candidate(
   url: string,
   distancePx: number,
-  role: FeedMediaPreloadCandidate["role"] = "thumbnail",
+  role: FeedMediaPreloadCandidate["role"] = "primary-preview",
   visualIndex = 0,
 ): FeedMediaPreloadCandidate {
   return { url, distancePx, role, visualIndex };
@@ -40,10 +40,10 @@ describe("FeedMediaPreloadQueue", () => {
     const stats = queue.update({
       generation: "g1",
       candidates: [
-        candidate("far-thumbnail", 300, "thumbnail", 3),
+        candidate("far-poster", 300, "poster-preview", 3),
         candidate("near-tile", 50, "tile-preview", 2),
         candidate("near-primary", 50, "primary-preview", 1),
-        candidate("mid-thumbnail", 100, "thumbnail", 4),
+        candidate("mid-poster", 100, "poster-preview", 4),
       ],
     });
 
@@ -59,7 +59,7 @@ describe("FeedMediaPreloadQueue", () => {
       queued: 1,
       decoded: 1,
     });
-    expect(started).toEqual(["near-primary", "near-tile", "mid-thumbnail"]);
+    expect(started).toEqual(["near-primary", "near-tile", "mid-poster"]);
   });
 
   it("drops farthest queued candidates at the queue cap", () => {

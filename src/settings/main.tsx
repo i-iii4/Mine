@@ -2,7 +2,6 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { applyTheme, getStoredTheme } from "@/lib/themeMode";
-import { applyDesign, getStoredDesignMode } from "@/lib/designMode";
 import { applyCardRadius, getStoredCardRadius } from "@/lib/cardRadius";
 import { applyDensity, getStoredDensity } from "@/lib/density";
 import {
@@ -15,10 +14,9 @@ import { SettingsApp } from "./SettingsApp";
 import "@/styles/global.css";
 import { hydrateCommandOverrides, watchCommandOverrides } from "@/lib/shortcutOverrides";
 
-// The settings window applies the stored theme and design itself — it cannot
-// rely on the main window having done so for this webview.
+// The settings window applies the stored theme itself — it cannot rely on the
+// main window having done so for this webview.
 applyTheme(getStoredTheme());
-applyDesign(getStoredDesignMode());
 applyCardRadius(getStoredCardRadius());
 applyDensity(getStoredDensity());
 applyInterfaceFont(getStoredInterfaceFont());

@@ -2,13 +2,16 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { present, sourceSection } from "./background.fixtures";
 
 type NativeResponse = Record<string, unknown>;
 const checkId = "dd830aea-79ae-4b2e-9e09-66c37c70f96c";
 const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "background.js"), "utf8");
-// Execute the actual native transport; unrelated tab/capture listeners need no mocks.
-const transport = source.slice(source.indexOf("// ── Native messaging"), source.indexOf("async function broadcastChannelsChanged"));
+// Execute the actual native transport and the checks it reads the helper's
+// answers through; unrelated tab/capture listeners need no mocks.
+const values = sourceSection(source, "// ── Values from outside this worker", "function isContentScriptCompatible");
+const transport = sourceSection(source, "// ── Native messaging", "async function broadcastChannelsChanged");
 // The worker imports it before its own code (К4).
 const extensionBuild = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/extensionBuild.js"), "utf8");
 
@@ -31,6 +34,7 @@ function nativeTransport() {
     setTimeout, clearTimeout,
   });
   runInContext(extensionBuild, context);
+  runInContext(values, context);
   runInContext(transport, context);
   const send = (action: string): Promise<NativeResponse> =>
     runInContext(`sendNativeMessage({action:${JSON.stringify(action)}})`, context);
@@ -47,7 +51,7 @@ describe("native connection-check acknowledgement", () => {
     const status = { _messageId: 1, ok: true, connected: true, vaultConfigured: false, features: ["connection_check_v1"] };
     host.respond(status);
     await expect(result).resolves.toEqual(status);
-    expect(host.port.postMessage.mock.calls[1][0]).toEqual({ action: "confirm_connection_check", check_id: checkId, _messageId: 2 });
+    expect(host.port.postMessage.mock.calls[1]?.[0]).toEqual({ action: "confirm_connection_check", check_id: checkId, _messageId: 2 });
     host.respond({ _messageId: 2, ok: false, code: "connection_check_failed" });
     await Promise.resolve();
     expect(host.warn).toHaveBeenCalledOnce();
@@ -104,7 +108,7 @@ describe("a Save waits as long as the helper works (SPEC_DEEP_AUDIT.md, Н9)", (
     const save = host.send("save_block");
     let settled = false;
     void save.then(() => { settled = true; });
-    const sent = host.port.postMessage.mock.calls.at(-1)![0];
+    const sent = present(host.port.postMessage.mock.calls.at(-1), "the Save request")[0];
     return { host, save, sent, settled: async () => { await Promise.resolve(); await Promise.resolve(); return settled; } };
   }
 
@@ -144,14 +148,14 @@ describe("helper replaced during a session (SPEC_CLIPPER.md, К4)", () => {
   function replaceableTransport() {
     const ports: Array<{
       respond: (message: NativeResponse) => void;
-      postMessage: ReturnType<typeof vi.fn>;
-      disconnect: ReturnType<typeof vi.fn>;
+      postMessage: Mock<(message: NativeResponse) => void>;
+      disconnect: Mock<() => void>;
     }> = [];
     const connectNative = vi.fn(() => {
       const entry = {
-        respond: (_message: NativeResponse) => undefined as void,
-        postMessage: vi.fn(),
-        disconnect: vi.fn(),
+        respond: (_message: NativeResponse): void => undefined,
+        postMessage: vi.fn<(message: NativeResponse) => void>(),
+        disconnect: vi.fn<() => void>(),
       };
       ports.push(entry);
       return {
@@ -169,6 +173,7 @@ describe("helper replaced during a session (SPEC_CLIPPER.md, К4)", () => {
       setTimeout, clearTimeout,
     });
     runInContext(extensionBuild, context);
+    runInContext(values, context);
     runInContext(transport, context);
     const send = (action: string): Promise<NativeResponse> =>
       runInContext(`sendNativeMessage({action:${JSON.stringify(action)}})`, context);
@@ -179,16 +184,16 @@ describe("helper replaced during a session (SPEC_CLIPPER.md, К4)", () => {
     const host = replaceableTransport();
     const save = host.send("save_block");
     const status = host.send("get_status");
-    const old = host.ports[0];
+    const old = present(host.ports[0], "the first helper");
     old.respond({ _messageId: 1, ok: false, code: "host_replaced", outcome: "not_committed" });
     await vi.waitFor(() => expect(host.connectNative).toHaveBeenCalledTimes(2));
     expect(old.disconnect).toHaveBeenCalledOnce();
-    const fresh = host.ports[1];
+    const fresh = present(host.ports[1], "the new helper");
     await vi.waitFor(() => expect(fresh.postMessage).toHaveBeenCalledTimes(2));
-    const sent = fresh.postMessage.mock.calls.map(([message]) => message as NativeResponse);
+    const sent = fresh.postMessage.mock.calls.map(([message]) => message);
     expect(sent.map((message) => message.action)).toEqual(["save_block", "get_status"]);
-    fresh.respond({ _messageId: sent[0]._messageId, ok: true, outcome: "committed" });
-    fresh.respond({ _messageId: sent[1]._messageId, ok: true, connected: true, features: [] });
+    fresh.respond({ _messageId: sent[0]?._messageId, ok: true, outcome: "committed" });
+    fresh.respond({ _messageId: sent[1]?._messageId, ok: true, connected: true, features: [] });
     await expect(save).resolves.toMatchObject({ outcome: "committed" });
     await expect(status).resolves.toMatchObject({ connected: true });
   });
@@ -196,9 +201,9 @@ describe("helper replaced during a session (SPEC_CLIPPER.md, К4)", () => {
   it("does not loop when the new helper is replaced too", async () => {
     const host = replaceableTransport();
     const status = host.send("get_status");
-    host.ports[0].respond({ _messageId: 1, ok: false, code: "host_replaced", outcome: "not_committed" });
+    present(host.ports[0], "the first helper").respond({ _messageId: 1, ok: false, code: "host_replaced", outcome: "not_committed" });
     await vi.waitFor(() => expect(host.ports[1]?.postMessage).toHaveBeenCalledOnce());
-    host.ports[1].respond({ _messageId: 2, ok: false, code: "host_replaced", outcome: "not_committed" });
+    present(host.ports[1], "the new helper").respond({ _messageId: 2, ok: false, code: "host_replaced", outcome: "not_committed" });
     await expect(status).resolves.toMatchObject({ code: "host_replaced", outcome: "not_committed" });
     expect(host.connectNative).toHaveBeenCalledTimes(2);
   });
@@ -255,12 +260,14 @@ describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
       setTimeout, clearTimeout,
     });
     runInContext(extensionBuild, context);
+    runInContext(values, context);
     runInContext(transport, context);
     const send = (action: string): Promise<NativeResponse> =>
       runInContext(`sendNativeMessage({action:${JSON.stringify(action)}})`, context);
     const closed = (): Promise<void> => runInContext("reloadIfUpdated()", context);
-    const browserWrite = (work: () => Promise<unknown>): Promise<unknown> =>
-      (runInContext("trackBrowserWrite", context) as (w: () => Promise<unknown>) => Promise<unknown>)(work);
+    // The worker's own trackBrowserWrite; the script's value comes back untyped.
+    const trackBrowserWrite: (work: () => Promise<unknown>) => Promise<unknown> = runInContext("trackBrowserWrite", context);
+    const browserWrite = (work: () => Promise<unknown>): Promise<unknown> => trackBrowserWrite(work);
     return { send, closed, browserWrite, respond: (message: NativeResponse) => respond(message), reload, local, session, fetch };
   }
 

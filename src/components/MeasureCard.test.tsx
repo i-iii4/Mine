@@ -2,12 +2,14 @@ import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import type { LightBlock } from "@/types";
 import { MeasureCard } from "./MeasureCard";
+import { lightBlock } from "@/test/blocks";
 
 function block(overrides: Partial<LightBlock> = {}): LightBlock {
-  return {
+  return lightBlock({
     id: 1,
     slug: "test-block",
     block_type: "image",
+    card_kind: "media",
     title: "Test Block",
     url: null,
     media_file: "media.mp4",
@@ -22,7 +24,7 @@ function block(overrides: Partial<LightBlock> = {}): LightBlock {
     media_dimensions: null,
     preview_manifest: null,
     ...overrides,
-  };
+  });
 }
 
 describe("MeasureCard", () => {

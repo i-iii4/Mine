@@ -5,9 +5,10 @@ import {
   buildLayoutGenerationKey,
 } from "./layoutGeneration";
 import { getMasonryColumnCount, getMasonryColumnWidth } from "./masonryLayout";
+import { lightBlock } from "@/test/blocks";
 
 function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock {
-  return {
+  return lightBlock({
     id,
     slug: `block-${id}`,
     block_type: "article",
@@ -24,9 +25,8 @@ function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock 
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
-    tags: ["test"],
     ...overrides,
-  };
+  });
 }
 
 function generationKey(blocks: LightBlock[], parentWidth = 1200): string {

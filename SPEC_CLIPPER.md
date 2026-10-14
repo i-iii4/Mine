@@ -1712,10 +1712,12 @@ syndication API отвечает анонимному вызову заглуш�
 и [useClipperState.standalone.test.tsx](/Users/i_iii/Проекты/Личные проекты/local-arena/extension/popup/hooks/useClipperState.standalone.test.tsx)
 покрывают неполный набор, отказ транспорта, цитаты, фото, варианты качества
 и совпадение предпросмотра с запросом сохранения.
-[x-media-save-smoke.ts](/Users/i_iii/Проекты/Личные проекты/local-arena/scripts/x-media-save-smoke.ts)
-проверяет реальное скачивание и запись двух MP4 контрольного поста
-`2103621844733714547` во временное пространство. Ответ авторизованного
-источника в этом тесте подставной; доступ в личной сессии им не проверяется.
+Запись помощником проверяет тест `an_x_posts_video_and_gif_are_saved_as_two_local_files`
+в [e4_tests.rs](</Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/native_host_tests/e4_tests.rs>):
+тело контрольного поста `2103621844733714547` с двумя MP4 сохраняется во
+временное пространство двумя локальными файлами в порядке тела, байты совпадают
+с ответом сервера. Сервер X в тесте подменён (`fake_web`): живой CDN и доступ в
+личной сессии им не проверяются.
 
 25.09.2026 пользователь повторно сохранил [исходную публикацию](https://x.com/GasprArt/status/2103621844733714547)
 в пространство Mine. Проверены два локальных MP4 и порядок их ссылок в
@@ -2131,7 +2133,11 @@ Save не имеет права записывать пустую статью �
 URL, escaped URL delimiters, code examples, empty/unsupported video, captions,
 idempotence, preview/save agreement, selection and social extraction. Приёмка:
 реальный MP4 objkt в disposable vault, локальный wikilink, ненулевой media-файл и
-проверка воспроизведения без запросов к исходному серверу.
+проверка воспроизведения без запросов к исходному серверу. Постоянная проверка
+записи: тест помощника `an_objkt_video_without_a_file_type_is_saved_as_a_local_mp4`
+в [e4_tests.rs](</Users/i_iii/Проекты/Личные проекты/local-arena/src-tauri/src/native_host_tests/e4_tests.rs>)
+с подменённым сервером objkt (`fake_web`): тип файла из ответа сервера, один MP4
+в папке медиа, локальный wikilink вместо удалённого адреса, байты ответа.
 
 ### Content video preview
 

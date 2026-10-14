@@ -584,6 +584,71 @@ process.stdin.on('data', (chunk) => {
 });
 `;
 
+// A helper that answers get_status as the real one does about this build and
+// refuses list_channels the way the real one does when it cannot read the
+// collections (native_host.rs, handle_list_channels).
+const TRANSPORT_HELPER = `import { readFileSync } from 'node:fs';
+const identityPath = process.argv[2];
+let input = Buffer.alloc(0);
+process.stdin.on('data', (chunk) => {
+  input = Buffer.concat([input, chunk]);
+  while (input.length >= 4 && input.length >= 4 + input.readUInt32LE(0)) {
+    const length = input.readUInt32LE(0);
+    const request = JSON.parse(input.subarray(4, 4 + length).toString('utf8'));
+    input = input.subarray(4 + length);
+    const answer = request.action === 'list_channels'
+      ? { ok: false, code: 'collections_unavailable', error: 'Mine could not read the collections of this space.' }
+      : { ok: true, connected: true, features: [], extension_build_id: JSON.parse(readFileSync(identityPath, 'utf8')).buildId };
+    const reply = Buffer.from(JSON.stringify({ _messageId: request._messageId, ...answer }));
+    const header = Buffer.alloc(4);
+    header.writeUInt32LE(reply.length);
+    process.stdout.write(Buffer.concat([header, reply]));
+  }
+});
+`;
+
+// The background passes the replies of a registered helper on as they are: a
+// success the check expects is a success, or the check fails with the code
+// and reason of the refusal; a refusal keeps the helper's code (Е7.9). Runs in
+// its own profile with a disposable helper, never one a person registered.
+async function checkNativeHelperReplies() {
+  const sandbox = mkdtempSync(join(tmpdir(), 'mine-clipper-native-replies-'));
+  const profile = join(sandbox, 'profile');
+  const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+  let browser;
+  try {
+    const hostName = readFileSync(join(extension, 'background.js'), 'utf8').match(/const HOST_NAME = "([^"]+)";/)?.[1];
+    assert.ok(hostName, 'packaged native host name is unavailable');
+    const helper = join(sandbox, 'helper.mjs');
+    writeFileSync(helper, TRANSPORT_HELPER);
+    const launcher = join(sandbox, 'helper');
+    writeFileSync(launcher, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(helper)} ${quote(join(extension, 'dist/runtime-identity.json'))} "$@"\n`, { mode: 0o700 });
+    mkdirSync(join(profile, 'NativeMessagingHosts'), { recursive: true });
+    writeFileSync(join(profile, `NativeMessagingHosts/${hostName}.json`), JSON.stringify({
+      name: hostName, description: 'Disposable Mine transport acceptance', path: launcher,
+      type: 'stdio', allowed_origins: [`chrome-extension://${extensionId}/`],
+    }));
+    browser = await chromium.launchPersistentContext(profile, {
+      channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
+    });
+    browser.serviceWorkers()[0] ?? await browser.waitForEvent('serviceworker', { timeout: 15_000 });
+    const page = await browser.newPage();
+    await page.route('**/dist/assets/*', (route) => route.abort());
+    await page.goto(`chrome-extension://${extensionId}/dist/index.html`);
+    const status = await checkedBackgroundMessage(page, { action: 'nativeMessage', payload: { action: 'get_status' } });
+    assert.equal(status.extension_build_id, report.runtimeIdentity.buildId, JSON.stringify(status));
+    const refused = await sendBackgroundMessage(page, { action: 'nativeMessage', payload: { action: 'list_channels' } });
+    assert.equal(refused.transportError, null);
+    assert.equal(refused.response?.ok, false, `the helper's refusal arrived as ${JSON.stringify(refused.response)}`);
+    assert.equal(refused.response.code, 'collections_unavailable', JSON.stringify(refused.response));
+  } finally {
+    await browser?.close();
+    // Allocated above for this check only, never a user profile or helper.
+    rmSync(sandbox, { recursive: true, force: true });
+  }
+}
+
 // Pages on disk and a record past 10 MB (SPEC_DEEP_AUDIT.md, Е3.8, Е3.12,
 // Е3.19). The overlay on an HTML page on disk has its stylesheet: the page
 // may read it. An SVG page cannot hold the overlay, and the clipper opens as
@@ -1143,8 +1208,13 @@ try {
   for (const [index, fixture] of fixtures.entries()) {
     const result = results[index];
     if (fixture.expected !== undefined) assert.deepEqual(result, fixture.expected, fixture.name);
-    if (fixture.name.includes('rejected') || fixture.name.startsWith('invalid')) assert.equal(result.ok, false, fixture.name);
-    else assert.equal(result.ok, true, `${fixture.name}: ${JSON.stringify(result)}`);
+    // An expected refusal is the refusal with its code; anything else must succeed.
+    const refusal = fixture.refusal ?? (fixture.expected?.ok === false ? fixture.expected.error.code : null);
+    assert.ok(refusal || !(fixture.name.includes('rejected') || fixture.name.startsWith('invalid')), `${fixture.name}: a refusal without its code`);
+    if (refusal) {
+      assert.equal(result.ok, false, `${fixture.name}: ${JSON.stringify(result)}`);
+      assert.equal(result.error?.code, refusal, `${fixture.name}: ${JSON.stringify(result)}`);
+    } else assert.equal(result.ok, true, `${fixture.name}: ${JSON.stringify(result)}`);
     if (fixture.markdownIncludes) assert.ok(result.value.markdown.includes(fixture.markdownIncludes), fixture.name);
     for (const text of fixture.markdownExcludes ?? []) assert.ok(!result.value.markdown.includes(text), fixture.name);
   }
@@ -1232,16 +1302,17 @@ try {
   assert.equal(setupUrl.searchParams.get('binding_id'), 'worker-smoke-binding');
   await setupPage.close();
 
+  // This profile registers no helper, so the background answers for it: the
+  // one refusal expected here, by its code and reason. Any other answer fails
+  // (SPEC_DEEP_AUDIT.md, Е7.9); checkNativeHelperReplies checks the replies
+  // of a registered helper.
   const nativeTransport = await sendBackgroundMessage(transportPage, {
     action: 'nativeMessage', payload: { action: 'get_status' },
   });
   assert.equal(nativeTransport.transportError, null);
-  assert.equal(typeof nativeTransport.response, 'object');
-  assert.equal(typeof nativeTransport.response?.ok, 'boolean');
-  if (!nativeTransport.response.ok) {
-    assert.equal(typeof nativeTransport.response.code, 'string');
-    assert.doesNotMatch(nativeTransport.response.error ?? '', /message port closed/i);
-  }
+  assert.equal(nativeTransport.response?.ok, false, `a helper answered in a profile without one: ${JSON.stringify(nativeTransport.response)}`);
+  assert.equal(nativeTransport.response.code, 'native_disconnected', JSON.stringify(nativeTransport.response));
+  assert.match(nativeTransport.response.error, /native messaging host not found/i, JSON.stringify(nativeTransport.response));
 
   // Exercise the shipped React Save button, not a hand-written save request.
   // Seed the existing preloaded-extraction entry point; request construction,
@@ -1338,6 +1409,7 @@ try {
   await context.close();
   context = undefined;
   await checkXPageWorldAfterReload();
+  await checkNativeHelperReplies();
   await checkBrowserRestartRunsBuildOnDisk();
   await checkUpdateReloadsWorker();
   Object.assign(report, { ok: true, scope: 'chromium-extension-worker-wasm',
@@ -1345,7 +1417,7 @@ try {
     persistedHandleBlobReceipt: true, browserRestarts: 3, popupSaveToFile: true,
     popupSelectedCollectionToFile: true, noClipStorageBeforeSave: true, journalClearedAfterSave: true,
     savedFileStableAfterBrowserReopen: true,
-    standaloneSetupTransport: true, nativeStatusTransport: true, serviceWorkerRestarts: 2,
+    standaloneSetupTransport: true, nativeRefusalWithoutHelper: true, nativeHelperRepliesPassedOn: true, serviceWorkerRestarts: 2,
     overlayLeavesPageWorking: true, overlayClipAcrossNewDocument: true, screenshotOfShownPageForOriginalCard: true,
     screenshotOfShownPageForSaveLinkClip: true, screenshotStaysChosenAfterContent: true,
     overlayMovedResizedKeptAndFitted: true, overlayResizedByTopLeftCorner: true,

@@ -32,7 +32,7 @@ describe("clipper preview", () => {
   it("locks edits but keeps Save available for a prepared journal confirmation", () => {
     state.savePinned = true;
     const { container } = render(<PopupApp />);
-    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
     const fieldsets = container.querySelectorAll("fieldset");
     expect(fieldsets.length).toBeGreaterThan(0);
     fieldsets.forEach(fieldset => expect(fieldset).toBeDisabled());
@@ -50,7 +50,7 @@ describe("clipper preview", () => {
     expect(screen.queryByText("No collections")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(state.retryChannels).toHaveBeenCalledOnce();
-    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
   // К7 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): a Save refused for a collection
   // without a page says why under the collection list, not above Save.
@@ -62,7 +62,7 @@ describe("clipper preview", () => {
     try {
       const { container } = render(<PopupApp />);
       expect(container.querySelector("[data-clipper-collection-error]")).toHaveTextContent(reason);
-      fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
       await vi.waitFor(() => expect(state.save).toHaveBeenCalledOnce());
       await Promise.resolve();
       expect(container.querySelector("[data-clipper-save-error]")).toBeNull();
@@ -79,7 +79,7 @@ describe("clipper preview", () => {
     withNotice.folderAccessNotice = null;
     try {
       const { container, rerender } = render(<PopupApp />);
-      fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
       await vi.waitFor(() => expect(container.querySelector("[data-clipper-save-error]")).toHaveTextContent(refusal));
       withNotice.folderAccessNotice = "Folder access restored.";
       rerender(<PopupApp />);
@@ -97,7 +97,7 @@ describe("clipper preview", () => {
     state.save.mockResolvedValue({ ok: true, remoteMedia: notice });
     try {
       const { container } = render(<PopupApp />);
-      fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
       await vi.waitFor(() => expect(container.querySelector("[data-clipper-remote-media]")).toHaveTextContent(notice));
       // Past the 1.2 s after which a Save with nothing to say closes.
       await new Promise((resolve) => setTimeout(resolve, 1_400));
@@ -158,7 +158,7 @@ describe("clipper preview", () => {
     expect(container.querySelector(`img[src="${objktVideo.mediaUrl}"]`)).toBeNull();
     expect(screen.getByRole("link", { name: "bach" })).toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 
   // SPEC_CLIPPER.md, 3d, В4: the post goes on without its video and says why.
@@ -169,7 +169,7 @@ describe("clipper preview", () => {
       const { container } = render(<PopupApp />);
       expect(container.querySelector("[data-clipper-video-notice]")).toHaveTextContent(notice);
       expect(screen.getByText("sketching the landscape")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
     } finally {
       Object.assign(state.articleData, { videoNotice: undefined });
     }
@@ -181,12 +181,12 @@ describe("clipper preview", () => {
     expect(screen.queryByText(state.articleData.threadWarning)).not.toBeInTheDocument();
     expect(screen.queryByText("Save only the loaded part")).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
   it("still shows a real save failure", async () => {
     state.save.mockResolvedValue({ ok: false, error: "Could not write the file." });
     render(<PopupApp />);
-    fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Could not write the file.")).toBeInTheDocument();
   });
 });
@@ -210,7 +210,7 @@ describe("Save waits for the frame being taken (SPEC_AUDIT_FIXES.md, В4.5)", ()
   it("disables the button and ignores Cmd+Enter while a screenshot is being taken", () => {
     state.canSave = false;
     render(<PopupApp />);
-    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     fireEvent.keyDown(window, { key: "Enter", metaKey: true });
     expect(state.save).not.toHaveBeenCalled();
   });

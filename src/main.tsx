@@ -3,7 +3,6 @@ import ReactDOM from "react-dom/client";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { hydrateCommandOverrides, watchCommandOverrides } from "@/lib/shortcutOverrides";
 import { applyTheme, getStoredTheme } from "@/lib/themeMode";
-import { applyDesign, getStoredDesignMode } from "@/lib/designMode";
 import { applyCardRadius, getStoredCardRadius } from "@/lib/cardRadius";
 import { applyDensity, getStoredDensity } from "@/lib/density";
 import { followWindowButtonStyle } from "@/lib/buttonStyle";
@@ -23,10 +22,9 @@ import "./styles/global.css";
 // control characters into fields (SPEC_TABS.md, В80): one guard for the page.
 installControlCharGuard();
 
-// Apply the stored theme and design variant before first paint (the settings
-// window owns the controls; this window re-applies on "settings-changed").
+// Apply the stored theme before first paint (the settings window owns the
+// controls; this window re-applies on "settings-changed").
 applyTheme(getStoredTheme());
-applyDesign(getStoredDesignMode());
 applyCardRadius(getStoredCardRadius());
 applyDensity(getStoredDensity());
 applyInterfaceFont(getStoredInterfaceFont());

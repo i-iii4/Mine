@@ -168,6 +168,10 @@ struct SourceFileFingerprint {
     modified_ns: u128,
 }
 
+/// The picture of the sanitized fixture whose contents stand for ones iCloud
+/// holds when the audit runs with them in iCloud (`--icloud-media`).
+pub const COLD_ICLOUD_IMAGE: &str = "cold-icloud-image.png";
+
 /// Run two or more fully cold source-to-projection cycles.
 ///
 /// The caller owns `derived_base`. It must already exist and be empty. Audit
@@ -177,10 +181,33 @@ pub fn run_cold_space_audit(
     derived_base: &Path,
     cycles: usize,
 ) -> Result<ColdSpaceAuditReport> {
+    run_cold_space_audit_with_icloud(source_root, derived_base, cycles, &[])
+}
+
+/// [`run_cold_space_audit`] over a space some of whose files, `in_icloud`
+/// (relative to the source root), have their contents in iCloud at the
+/// start of every cycle, as on a Mac that keeps a space in iCloud
+/// (SPEC_DEEP_AUDIT.md, Е7.8). Indexing must not bring them down: a cycle
+/// whose index pass read one fails. Only the kernel makes a file dataless,
+/// so they stand for such files through `cloud_files::test_seam`, which a
+/// build with release optimizations does not carry: there the audit refuses
+/// them.
+pub fn run_cold_space_audit_with_icloud(
+    source_root: &Path,
+    derived_base: &Path,
+    cycles: usize,
+    in_icloud: &[&str],
+) -> Result<ColdSpaceAuditReport> {
     if cycles < 2 {
         bail!("cold-space acceptance requires at least two independent cycles");
     }
     let (source_root, derived_base) = validate_roots(source_root, derived_base)?;
+    let in_icloud: Vec<PathBuf> = in_icloud.iter().map(|name| source_root.join(name)).collect();
+    for path in &in_icloud {
+        if !path.is_file() {
+            bail!("a file to keep in iCloud is not in the space: {}", path.display());
+        }
+    }
     let source_before = source_fingerprint(&source_root)?;
     let mut cycle_reports = Vec::with_capacity(cycles);
 
@@ -193,10 +220,14 @@ pub fn run_cold_space_audit(
             );
         }
         let vault = VaultLayout::with_derived_root(source_root.clone(), cycle_root.clone());
+        put_in_icloud(&in_icloud)?;
         let conn = db::open_or_create(&vault.index_db_path())?;
         let reconcile_report = reconcile::reconcile_vault(&conn, &vault)
             .map_err(anyhow::Error::new)
             .context("cold-space source reconciliation failed")?;
+        if let Some(read) = in_icloud.iter().find(|path| !still_in_icloud(path)) {
+            bail!("cycle {cycle}: indexing brought down a file in iCloud: {}", read.display());
+        }
         let first = capture_snapshot(&conn, &vault, &reconcile_report)?;
         let preview_started = Instant::now();
         let preview_report = derived_preview::reconcile_all_previews(&conn, &vault)
@@ -249,6 +280,30 @@ pub fn run_cold_space_audit(
     })
 }
 
+/// Mark `paths` as files whose contents iCloud holds.
+#[cfg(debug_assertions)]
+fn put_in_icloud(paths: &[PathBuf]) -> Result<()> {
+    for path in paths {
+        crate::storage::cloud_files::test_seam::mark_offloaded(path);
+    }
+    Ok(())
+}
+
+#[cfg(not(debug_assertions))]
+fn put_in_icloud(paths: &[PathBuf]) -> Result<()> {
+    if paths.is_empty() {
+        Ok(())
+    } else {
+        bail!("files in iCloud need a build without release optimizations (cloud_files::test_seam)")
+    }
+}
+
+/// Whether the file at `path` still has its contents in iCloud: no read
+/// brought it down.
+fn still_in_icloud(path: &Path) -> bool {
+    crate::storage::cloud_files::is_content_offloaded(path)
+}
+
 /// Create a deterministic private-data-free source vault for the browser gate.
 /// The destination must already exist and be empty; production audit code then
 /// treats it exactly like any other source vault.
@@ -276,6 +331,11 @@ pub fn write_sanitized_fixture(source_root: &Path, block_count: usize) -> Result
     image::RgbImage::from_pixel(48, 32, image::Rgb([40, 80, 120]))
         .save(source_root.join("cold-shared-image.png"))
         .context("write sanitized cold-space image")?;
+    // Its own picture for every other image card: the one an audit with
+    // `--icloud-media` keeps in iCloud.
+    image::RgbImage::from_pixel(32, 48, image::Rgb([120, 80, 40]))
+        .save(source_root.join(COLD_ICLOUD_IMAGE))
+        .context("write sanitized cold-space iCloud image")?;
     fs::write(
         source_root.join("cold-browser-preview.webp"),
         b"browser-owned-decode",
@@ -302,7 +362,8 @@ pub fn write_sanitized_fixture(source_root: &Path, block_count: usize) -> Result
             2 => (
                 format!("cold-image-{suffix}.md"),
                 format!(
-                    "---\ntype: image\nfile: cold-shared-image.png\ntitle: Cold image {}\nsaved_at: 2026-07-11T00:00:00Z\n---\n",
+                    "---\ntype: image\nfile: {}\ntitle: Cold image {}\nsaved_at: 2026-07-11T00:00:00Z\n---\n",
+                    if index % 12 == 2 { COLD_ICLOUD_IMAGE } else { "cold-shared-image.png" },
                     index + 1
                 ),
             ),
@@ -815,6 +876,40 @@ mod tests {
             browser_preview.preview_error_kind.as_deref(),
             Some("browser_decode_required")
         );
+    }
+
+    /// Е7.8: the browser gate's cold space keeps a picture in iCloud. Every
+    /// cycle starts with it there, indexing leaves it there, and the cards
+    /// showing it are in the first projection without its size.
+    #[test]
+    fn a_cold_space_with_a_picture_in_icloud_indexes_without_bringing_it_down() {
+        let source = tempfile::tempdir().unwrap();
+        let derived = tempfile::tempdir().unwrap();
+        write_sanitized_fixture(source.path(), 24).unwrap();
+
+        let report =
+            run_cold_space_audit_with_icloud(source.path(), derived.path(), 2, &[COLD_ICLOUD_IMAGE])
+                .unwrap();
+
+        let in_icloud: Vec<_> = report.cycles[0]
+            .first
+            .grid_snapshot
+            .blocks
+            .iter()
+            .filter(|block| block.media_file.as_deref().is_some_and(|file| file.ends_with(COLD_ICLOUD_IMAGE)))
+            .collect();
+        assert_eq!(in_icloud.len(), 2, "every twelfth card shows the picture in iCloud");
+        assert!(in_icloud.iter().all(|block| block.width.is_none() && block.height.is_none()));
+        assert!(report.summary().stable_after_cache_reset);
+        assert!(report.summary().source_unchanged);
+    }
+
+    #[test]
+    fn a_file_to_keep_in_icloud_must_be_in_the_space() {
+        let (source, derived) = sanitized_fixture();
+        let error = run_cold_space_audit_with_icloud(source.path(), derived.path(), 2, &["absent.png"])
+            .unwrap_err();
+        assert!(error.to_string().contains("not in the space"), "{error}");
     }
 
     #[test]

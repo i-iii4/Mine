@@ -16,6 +16,7 @@ import { GraphDisplayMenu } from "./GraphDisplayMenu";
 import { reloadGraphPreferences, useGraphPreferences } from "@/lib/graphPreferences";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { HOVER_PREVIEW_COLD_OPEN_DELAY_MS, HOVER_PREVIEW_WARM_WINDOW_MS } from "@/lib/hoverPreviewTiming";
+import { indexedBlock, lightBlock } from "@/test/blocks";
 
 type MockGraphNode = GraphNode & {
   x?: number;
@@ -94,7 +95,10 @@ const graphDataSpy = vi.hoisted(() => ({ current: null as { nodes: Array<Record<
 
 // The painter itself, so a test can ask what a pill is actually drawn with
 // rather than trusting a flag that claims it was highlighted.
-const paintSpy = vi.hoisted(() => ({ current: null as MockGraphProps["nodeCanvasObject"] }));
+const paintSpy = vi.hoisted(() => {
+  const spy: { current: MockGraphProps["nodeCanvasObject"] } = { current: undefined };
+  return spy;
+});
 
 const centerAimSpy = vi.hoisted(() => ({ current: { x: 0, y: 0 } }));
 
@@ -335,7 +339,7 @@ function paintNodeAlpha(
   if (!paint) return 1;
   let paintedAlpha = 1;
   const alphaStack: number[] = [];
-  const context = {
+  const fake = {
     globalAlpha: 1,
     filter: "none",
     fillStyle: "",
@@ -369,13 +373,16 @@ function paintNodeAlpha(
     translate() {},
     scale() {},
     fillText() {},
-  } as unknown as CanvasRenderingContext2D;
+  };
+  // The painter calls only the members the fake implements; a canvas would
+  // also need the hundred others it never touches.
+  const context = fake as unknown as CanvasRenderingContext2D;
   paint(node, context, 1);
   return paintedAlpha;
 }
 
 function makeBlock(overrides: Partial<LightBlock> = {}): LightBlock {
-  return {
+  return lightBlock({
     id: 1,
     slug: "alpha-card",
     card_kind: "article",
@@ -396,11 +403,11 @@ function makeBlock(overrides: Partial<LightBlock> = {}): LightBlock {
     collections: [],
     feed_playback: null,
     ...overrides,
-  };
+  });
 }
 
 function makeIndexedBlock(block: LightBlock): IndexedBlock {
-  return {
+  return indexedBlock({
     ...block,
     description: null,
     source: null,
@@ -409,7 +416,7 @@ function makeIndexedBlock(block: LightBlock): IndexedBlock {
     related_notes: [],
     body_hash: null,
     tags: [],
-  };
+  });
 }
 
 function makeSnapshot(node: GraphNode): GraphSnapshot {

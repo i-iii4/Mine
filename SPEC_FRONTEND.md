@@ -106,24 +106,11 @@ interface TagCount {
 `addTag` к имени без страницы отказывает с `CommandError` вида
 `collection_not_found` (К7); `removeTag` страницу не проверяет (К8).
 
-### VaultStats
+### Статистика пространства
 
-```typescript
-interface VaultStats {
-  totalFileCount: number;
-  markdownFileCount: number;
-  mediaFileCount: number;
-  sourceBytes: number;
-  currentCollectionCardCount: number;
-  currentCollection: string | null; // null means Everything
-  updatedAtMs: number;
-}
-```
-
-С 02.10.2026 интерфейс показывает из `VaultStats` только
-`currentCollectionCardCount`. Поля `totalFileCount`, `markdownFileCount`,
-`mediaFileCount` и `sourceBytes` бэкенд по-прежнему считает и отдаёт, но ни одна
-поверхность их не рисует: левая ячейка второго ряда показывает число коллекций.
+Типа `VaultStats` и команды `get_vault_stats` нет с 13.10.2026 (срез 46.10):
+счётчик элементов показывал только ряд метаданных внизу окна (Alt 2), в
+действующем ряду чисел нет (DESIGN_SYSTEM.md, «Верхние ряды»).
 
 ### ChannelDto
 
@@ -181,7 +168,6 @@ interface MergeBlocksResult {
 ```typescript
 selectVault(path: string): Promise<ScanResult>
 getVaultPath(): Promise<string | null>
-listBlocks(): Promise<IndexedBlock[]>
 getBlock(slug: string): Promise<IndexedBlock | null>
 createBlock(params: CreateBlockParams): Promise<IndexedBlock>
 extractTextSelection(params: ExtractTextSelectionParams): Promise<IndexedBlock>
@@ -191,15 +177,13 @@ prepareDeleteBlocks(slugs: string[]): Promise<DeleteBlocksPlan>
 deleteBlocks(slugs: string[], deleteUnusedMedia: boolean): Promise<DeleteBlocksOutcome>
 mergeBlocks(orderedSlugs: string[]): Promise<MergeBlocksResult>
 renameBlockFile(oldSlug: string, newStem: string): Promise<RenameBlockResult>
-listTags(): Promise<TagCount[]>
 addTag(slug: string, tag: string): Promise<void>
 removeTag(slug: string, tag: string): Promise<void>
 setBlocksMembership(slugs: string[], tag: string, connected: boolean): Promise<void> // all or none
 checkCollectionName(oldTag: string | null, name: string): Promise<string | null>
-listChannels(): Promise<ChannelDto[]>
+listTaxonomySnapshot(): Promise<TaxonomySnapshot> // collections and their counts
 createChannel(tag: string): Promise<ChannelDto>
 deleteChannel(tag: string): Promise<boolean>
-getVaultStats(currentCollection?: string | null): Promise<VaultStats>
 listVaultConflictPaths(): Promise<string[]>
 listVaultConflicts(): Promise<VaultConflict[]>           // throws VaultConflictError
 resolveVaultConflict(path: string, choice: ConflictChoice, expectedTokens: string[]): Promise<void> // throws VaultConflictError
@@ -511,7 +495,7 @@ must not expose a channel display-mode selector.
 
 Обычный режим:
 1. Пункт `Everything` — навигация на `/`
-2. Список каналов (из `listChannels()`) — навигация на `/channel/:tag`
+2. Список каналов (из `listTaxonomySnapshot()`) — навигация на `/channel/:tag`
 3. Каждый канал: название + счётчик блоков + до 20 превью-карточек
    (thumbnails)
 
@@ -797,21 +781,13 @@ mr-2"`), и при открытии карточки не сдвигается.
 Sidebar и Detail body не должны рендерить свои дополнительные top overlays в
 этот момент; иначе получается третий слой chrome под вторым bar.
 
-В main browsing state этот второй bar рендерит `MainSecondaryTopBar`, а не
-общий toolbar. Левый segment (`data-main-secondary-top-bar-sidebar-segment`)
-это шапка списка коллекций: слева число коллекций и за ним индикаторы iCloud и
-индексации. Число приходит из `App` пропом `collectionCount`: без фильтра это
-`orderedTags.length`, тот же список, что рисует боковое меню, а пока в
-`Find or create...` набран текст, это
-`filterSidebarTags(orderedTags, query).length`. У правого края ячейки
-иконочная кнопка `+` в `ChromeActions windowEdge={false} className="ml-auto
-mr-2"`, `8px` от правого края колонки, которая вызывает `onCreateCollection`
-(в `App` это `beginCreateCollection`, то же, что ⇧⌘N). Контракт создания
-коллекции описан в DESIGN_SYSTEM.md, «Создание коллекции». Правый segment
-(`data-main-secondary-top-bar-content-segment`) получает
-`currentCollectionCardCount`: в `Everything` это все non-channel карточки, в
-канале это карточки, прикреплённые к этому каналу. Active Grid search не меняет
-этот счётчик.
+В main browsing state половину над лентой рисует `MainSecondaryTopBar`: с
+03.10.2026 у неё нет своего ряда, она стоит в верхнем ряду после
+переключателя коллекции (DESIGN_SYSTEM.md, «Верхние ряды»). Чисел коллекций и
+элементов нет; `+` новой коллекции стоит справа в ряду поля `Find collections`
+(`data-sidebar-top-search-actions`). Сегмента над боковым меню, счётчиков,
+ряда метаданных внизу окна (Alt 2) и пропов `part`, `placement`, `stats`,
+`collectionCount` в коде нет с 13.10.2026 (срез 46.10).
 
 **Создание коллекции в `App`.** Один путь для всех мест (SPEC_DEEP_AUDIT.md,
 Е6.2, 13.10.2026; контракт в DESIGN_SYSTEM.md, «Создание коллекции»):
@@ -834,42 +810,13 @@ mr-2"`, `8px` от правого края колонки, которая выз
 всех страниц, переключатель коллекций переходил в новую коллекцию, а меню
 `Connect` карточки и выделения, медиа и текст ставили её последней.
 
-Тот же правый segment держит единственный main view-mode switcher:
-`View:` + пилюля `Grid / Graph` (`Tabs` chrome, размер `row`; DESIGN_SYSTEM.md,
-«Пилюля»). Переключатель стоит сразу после route count по левой оси content
-segment через `gap-5`. С 03.10.2026 режим принадлежит вкладке: он входит в её
-`TabView.mode` и сообщается бэкенду (SPEC_TABS.md, В78); ключ
-`mine.mainViewMode` больше не пишется. Старые
+Половина над лентой держит единственный main view-mode switcher: пилюля
+`Grid / Graph` (`Tabs` chrome, размер `row`; DESIGN_SYSTEM.md, «Пилюля») у
+правого края рядом с `Display`, без подписи `View:`. С 03.10.2026 режим
+принадлежит вкладке: он входит в её `TabView.mode` и сообщается бэкенду
+(SPEC_TABS.md, В78); ключ `mine.mainViewMode` больше не пишется. Старые
 `ActionButton`-переключатели `Graph/Grid` в bottom action bar или top fallback
 не рендерятся.
-
-Форматирование принадлежит одному helper `formatPluralCount(count, singular,
-plural)` в `MainSecondaryChrome.tsx`, а не JSX inline logic:
-
-- левый segment: `1 collection`, иначе `N collections`;
-- правый segment: `1 element`, иначе `N elements`; в коллекции с уточнением
-  `in collection`.
-
-Числа форматируются через `Intl.NumberFormat("ru-RU")`. Строка element count
-внутри правого segment: `260 elements` в `Everything` или `260 elements in
-collection` в коллекции; `View: Grid / Graph` стоит сразу после неё по той же
-левой оси.
-
-Realtime behavior: правый count приходит через
-`getVaultStats(currentCollection)`, число коллекций обновляется вместе со
-списком коллекций. It loads once after vault open, refreshes on
-route changes that alter `currentCollection`, and reuses existing
-grid/taxonomy/vault invalidation paths as stats invalidation signals. The
-frontend may coalesce multiple invalidations into one animation frame, but must
-not poll, debounce for visible delay, or show transient service text. If a
-future backend path emits `vault:stats-updated`, the payload must be a complete
-`VaultStats` snapshot, not a delta. Until the first snapshot is available, the
-bar keeps its fixed geometry and renders empty text slots.
-
-Responsive behavior: ряд не переносится и не меняет высоту. Число коллекций
-обрезается многоточием как единый блок, кнопка `+` не сжимается. Правый count
-остаётся видимым, пока есть содержательная ширина. Когда Sidebar свёрнут, левая
-ячейка не рендерится; её segment остаётся пустой областью перетаскивания окна.
 
 **Thumbnail upgrade.** Для блоков с inline media которое Rust не умеет декодировать (WebP VP8X, HEIC, AVIF, HEVC), Rust Phase 1 пишет text placeholder на диск. Main app через `useThumbnailUpgrade` hook подписан на `thumb:upgrade-requested` event и отправляет работу в Web Worker (`src/workers/thumbWorker.ts`). Worker декодирует через `createImageBitmap` (native browser decoder, поддерживает все форматы которые WebView рендерит) → `OffscreenCanvas.convertToBlob('image/jpeg', 0.85)` → IPC `save_thumb` → Rust пишет поверх placeholder. После `thumb:updated` event sidebar cache-bust'ит `<img>` URL. Полная архитектура: [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md).
 
@@ -1799,10 +1746,10 @@ Image media expansion:
   странице этой вкладки и полосе, если вкладка видимая. Заголовок пункта
   View (`Hide Sidebar` или `Show Sidebar`) бэкенд ставит сам по меню видимой
   вкладки (`window_chrome::reflect_sidebar`), при переключении вкладки тоже;
-  вызов `set_sidebar_menu_collapsed` из страницы снят.
+  команды `set_sidebar_menu_collapsed` нет (удалена 13.10.2026, срез 46.10).
 - Одно сочетание toggles оба состояния; отдельного shortcut для expand нет.
   Внутри вкладки `useSidebarResize(windowSidebar)` держит меню вкладки:
-  применяет пришедшую, приводя ширину к минимуму варианта оформления,
+  применяет пришедшую, приводя ширину к минимуму панели,
   показывает изменение человека сразу и отправляет его `set_window_sidebar`.
   Страница вне вкладки держит раскладку в памяти, начиная с минимума.
 

@@ -130,7 +130,7 @@ export function ImagePreviewOverlay({
   const activeDragRef = useRef<ImagePreviewDrag | null>(null);
   const suppressNextClickRef = useRef(false);
   const controlsHoverRef = useRef(false);
-  const controlsHideTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const controlsHideTimerRef = useRef<number | null>(null);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [zoomLabel, setZoomLabel] = useState("100%");
   const [copyError, setCopyError] = useState<string | null>(null);

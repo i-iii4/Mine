@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { IndexedBlock, LightBlock } from "@/types";
+import type { LightBlock } from "@/types";
+import { indexedBlock, lightBlock } from "@/test/blocks";
 import {
   isDropOnSourceCollection,
   lightBlockFromIndexed,
@@ -11,30 +12,16 @@ import {
 } from "./blockDrag";
 
 function block(slug: string): LightBlock {
-  return {
+  return lightBlock({
     id: slug.length,
     slug,
     card_kind: "media",
     block_type: "image",
     title: slug,
-    description: null,
-    url: null,
     media_file: `${slug}.jpg`,
-    thumbnail: null,
-    saved_at: "2026-01-01T00:00:00Z",
-    source: null,
     width: 100,
     height: 100,
-    author: null,
-    body: "",
-    first_image: null,
-    media_urls: null,
-    media_dimensions: null,
-    preview_manifest: null,
-    collections: [],
-    feed_playback: null,
-    tags: [],
-  };
+  });
 }
 
 describe("block drag helpers", () => {
@@ -84,20 +71,17 @@ describe("block drag helpers", () => {
   });
 
   it("gives a card read in full the feed's shape", () => {
-    const full = {
-      ...block("alpha"),
-      content_heading: null,
-      display_title: null,
-      fallback_label: "alpha",
-      preview_text: null,
-      thumb_format: null,
-      thumb_mtime: 0,
-      related_notes: [],
-      body_hash: null,
-      origin: null,
-      index_warning: null,
+    const full = indexedBlock({
+      id: 5,
+      slug: "alpha",
+      card_kind: "media",
+      block_type: "image",
+      title: "alpha",
+      media_file: "alpha.jpg",
+      width: 100,
+      height: 100,
       tags: ["alpha-tag", "beta-tag"],
-    } as IndexedBlock;
+    });
     const light = lightBlockFromIndexed(full);
     expect(light.collections).toEqual(["alpha-tag", "beta-tag"]);
     expect(light.search_match).toBeNull();

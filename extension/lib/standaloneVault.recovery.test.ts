@@ -72,9 +72,13 @@ class DirectoryHandle {
   }
   async text(path: string): Promise<string> {
     const pieces = path.split("/");
-    let directory: DirectoryHandle = this;
-    for (const piece of pieces.slice(0, -1)) directory = await directory.getDirectoryHandle(piece);
+    const directory = await this.directoryAt(pieces.slice(0, -1));
     return (await (await directory.getFileHandle(pieces.at(-1)!)).getFile()).text();
+  }
+  /** The folder `pieces` names under this one. */
+  async directoryAt(pieces: string[]): Promise<DirectoryHandle> {
+    const [first, ...rest] = pieces;
+    return first === undefined ? this : (await this.getDirectoryHandle(first)).directoryAt(rest);
   }
 }
 
@@ -87,6 +91,9 @@ type Options = {
   afterPrepared?: () => void;
   afterEffect?: (effect: string) => void;
 };
+// The adapter as these tests drive it: its folder and journal are the fakes
+// above, which hold only the File System Access and IndexedDB calls the adapter
+// makes, so its declared options (real handles) do not describe them.
 const adapter = (globalThis as unknown as { MineStandaloneVault: {
   saveStandaloneBlock(request: Record<string, unknown>, options: Options): Promise<Reply>;
   lookupOperation(id: string, binding: string, options: Options): Promise<Reply>;

@@ -101,6 +101,7 @@ function barState(tabs: TabBarTab[], overrides: Partial<TabBarState> = {}): TabB
     active_tab: tabs[0]?.id ?? "",
     sidebar: { width_px: 240, collapsed: false },
     fullscreen: false,
+    chrome_rows: { tab_bar: 30, page: 30 },
     ...overrides,
   };
 }

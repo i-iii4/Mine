@@ -318,10 +318,6 @@ function SpacePage({ path, blocks, totalBlocks, previews, indexing, previewsPend
                   joinsNext
                 />
                 <MainSecondaryTopBar
-                  part="content"
-                  sidebarCollapsed={false}
-                  sidebarResizing={false}
-                  stats={null}
                   viewMode="grid"
                   onViewModeChange={noop}
                   vaultPath={path}

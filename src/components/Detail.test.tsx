@@ -26,11 +26,12 @@ import {
   HOVER_PREVIEW_WARM_WINDOW_MS,
 } from "@/lib/hoverPreviewTiming";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
+import { indexedBlock, lightBlock } from "@/test/blocks";
 
 /** Fake timers that also drive the hover-intent clock (performance.now). */
 const INTENT_TIMERS = {
   toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "Date", "requestAnimationFrame", "cancelAnimationFrame"],
-} as const;
+} satisfies Parameters<typeof vi.useFakeTimers>[0];
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(async () => undefined),
@@ -95,7 +96,7 @@ function cardKindForBlockType(blockType: IndexedBlock["block_type"]): IndexedBlo
 function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
   const blockType = overrides.block_type ?? "article";
   const cardKind = overrides.card_kind ?? cardKindForBlockType(blockType);
-  return {
+  return indexedBlock({
     id: 1,
     slug: "test-block",
     card_kind: cardKind,
@@ -116,7 +117,6 @@ function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
     media_urls: null,
     media_dimensions: null,
     preview_manifest: null,
-    collections: [],
     feed_playback: null,
     thumb_format: null,
     thumb_mtime: 0,
@@ -124,7 +124,7 @@ function block(overrides: Partial<IndexedBlock> = {}): IndexedBlock {
     body_hash: null,
     tags: [],
     ...overrides,
-  };
+  });
 }
 
 const getBlockMock = vi.mocked(getBlock);
@@ -429,6 +429,7 @@ describe("Detail", () => {
     prepareDeleteMediaAssetMock.mockResolvedValue({
       media_ref: "photo.jpg",
       media_kind: "image",
+      canvases: [],
       referenced_by: [],
     });
   });
@@ -440,7 +441,7 @@ describe("Detail", () => {
 
   it.each([false, true])("uses the resolved deletion path and never reports empty references after an error (%s)", async (failure) => {
     if (failure) prepareDeleteMediaAssetMock.mockRejectedValueOnce({ kind: "media_not_found", media_ref: "photo.jpg" });
-    else prepareDeleteMediaAssetMock.mockResolvedValueOnce({ media_ref: "Media/photo.jpg", media_kind: "image", referenced_by: [] });
+    else prepareDeleteMediaAssetMock.mockResolvedValueOnce({ media_ref: "Media/photo.jpg", media_kind: "image", referenced_by: [], canvases: [] });
     const onDelete = vi.fn().mockResolvedValue(undefined);
     const { container } = render(<Detail
       block={block({ card_kind: "media", block_type: "image", media_file: "photo.jpg", url: null })}
@@ -476,7 +477,7 @@ describe("Detail", () => {
       block={block({ ...overrides, url: null })}
       vaultPath="/tmp/fixture" thumbsRootPath="/tmp/thumbs" tags={[]}
       onClose={vi.fn()} onNavigate={vi.fn()} onToggleTag={vi.fn()} onCreateAndAssign={vi.fn()}
-      onTagsChanged={vi.fn()} onRequestRename={vi.fn()} onRequestDelete={vi.fn()} />);
+      onTagsChanged={vi.fn()} onRequestRename={vi.fn()} onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()} />);
     const header = container.querySelector("[data-detail-card-name]")!;
     expect(header).toHaveTextContent(name);
     expect(header.textContent).toBe(name);
@@ -496,6 +497,7 @@ describe("Detail", () => {
       onTagsChanged: vi.fn(),
       onRequestRename: vi.fn(),
       onRequestDelete: vi.fn(),
+      onOpenRelatedNote: vi.fn(),
     };
 
     const { container } = render(<Detail {...props} />);
@@ -521,7 +523,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
       />,
     );
 
@@ -693,7 +695,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
       />,
     );
 
@@ -746,7 +748,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
       />,
     );
 
@@ -1289,7 +1291,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
       />,
     );
 
@@ -1321,7 +1323,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
       />,
     );
 
@@ -1364,7 +1366,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
         onTextSelectionDrop={onTextSelectionDrop}
         onTextSelectionDelete={onTextSelectionDelete}
       />,
@@ -1487,12 +1489,12 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
       />,
     );
 
     const paragraphs = container.querySelectorAll("p");
-    const secondParagraph = paragraphs[1];
+    const secondParagraph = paragraphs[1]!;
     const textNode = secondParagraph.firstChild!;
     expect(secondParagraph).toHaveAttribute("data-mine-md-start", "8");
     expect(secondParagraph).toHaveAttribute("data-mine-md-end", "14");
@@ -1534,7 +1536,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
       />,
     );
 
@@ -1580,7 +1582,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
       />,
     );
 
@@ -1611,7 +1613,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
         onOpenImagePreview={onOpenImagePreview}
       />,
     );
@@ -1661,7 +1663,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
       />,
     );
 
@@ -1688,7 +1690,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
       />,
     );
 
@@ -1723,7 +1725,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
       />,
     );
 
@@ -1767,7 +1769,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
       />,
     );
 
@@ -1799,7 +1801,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
         onRenameMediaAsset={onRenameMediaAsset}
       />,
     );
@@ -1895,7 +1897,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
         onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
       />,
     );
@@ -1942,7 +1944,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
         onOpenImagePreview={onOpenImagePreview}
       />,
     );
@@ -2081,6 +2083,7 @@ describe("Detail", () => {
     prepareDeleteMediaAssetMock.mockResolvedValueOnce({
       media_ref: "photo.jpg",
       media_kind: "image",
+      canvases: [],
       referenced_by: [
         {
           slug: "Photo Card",
@@ -2216,6 +2219,7 @@ describe("Detail", () => {
     prepareDeleteMediaAssetMock.mockResolvedValueOnce({
       media_ref: "photo.jpg",
       media_kind: "image",
+      canvases: [],
       referenced_by: [
         {
           slug: "Long Source Article",
@@ -2295,6 +2299,7 @@ describe("Detail", () => {
     prepareDeleteMediaAssetMock.mockResolvedValueOnce({
       media_ref: "photo.jpg",
       media_kind: "image",
+      canvases: [],
       referenced_by: [
         {
           slug: "Source Article",
@@ -2383,7 +2388,7 @@ describe("Detail", () => {
       // shows the media named.
       const onRemoveMediaAssetFromCard = vi.fn(async (asset: MediaAssetRef) => {
         const openers = [...body.matchAll(/!\[/g)].map((match) => match.index);
-        const start = asset.occurrence_index === null ? undefined : openers[asset.occurrence_index];
+        const start = asset.occurrence_index == null ? undefined : openers[asset.occurrence_index];
         const fileName = asset.media_ref.split("/").pop() ?? asset.media_ref;
         if (start === undefined || !body.startsWith(`![[${fileName}]]`, start)) {
           const error = { kind: "invalid_media_ref", reason: "the image at that opener shows other media" };
@@ -2465,7 +2470,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
       />,
     );
 
@@ -2501,7 +2506,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
       />,
     );
 
@@ -2525,7 +2530,7 @@ describe("Detail", () => {
         onCreateAndAssign={vi.fn()}
         onTagsChanged={vi.fn()}
         onRequestRename={vi.fn()}
-        onRequestDelete={vi.fn()}
+        onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
       />,
     );
 
@@ -2886,11 +2891,13 @@ describe("Detail", () => {
   // broken card. See SPEC_CLOUD_STORAGE.md Х9, Х11.
   function cloudImageProps(contentInCloud: boolean) {
     return {
-      block: block({
-        card_kind: "media" as const,
-        block_type: "image" as const,
+      // The feed's light card: only it knows where its media lives
+      // (isContentInCloud in Detail.tsx, SPEC_CLOUD_STORAGE.md Х5).
+      block: lightBlock({
+        slug: "test-block",
+        card_kind: "media",
+        block_type: "image",
         title: "Photo",
-        url: null,
         media_file: "photo.jpg",
         content_in_cloud: contentInCloud,
       }),
@@ -2904,6 +2911,7 @@ describe("Detail", () => {
       onTagsChanged: vi.fn(),
       onRequestRename: vi.fn(),
       onRequestDelete: vi.fn(),
+      onOpenRelatedNote: vi.fn(),
     };
   }
 
@@ -3472,14 +3480,19 @@ describe("an open card whose text could not be read", () => {
   it("says it shows only the beginning of the text", async () => {
     clearActionFailures();
     vi.mocked(getBlock).mockRejectedValue(new Error("The file is in iCloud and could not be read."));
-    const { tags: _tags, ...light } = block({ body: "A long beginning ".repeat(20) });
+    const light = lightBlock({
+      slug: "test-block",
+      title: "Test Block",
+      url: "https://example.com/article",
+      body: "A long beginning ".repeat(20),
+    });
     render(
       <>
         <Detail
-          block={light as LightBlock}
+          block={light}
           vaultPath="/tmp/fixture" thumbsRootPath="/tmp/thumbs" tags={[]}
           onClose={vi.fn()} onNavigate={vi.fn()} onToggleTag={vi.fn()} onCreateAndAssign={vi.fn()}
-          onTagsChanged={vi.fn()} onRequestRename={vi.fn()} onRequestDelete={vi.fn()}
+          onTagsChanged={vi.fn()} onRequestRename={vi.fn()} onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
         />
         <ActionFailureNoticeStack />
       </>,

@@ -104,7 +104,6 @@ import {
 } from "@/lib/keyboardTargets";
 import {
   buildSidebarSearchNavigationRows,
-  filterSidebarTags,
   sidebarRowDomId,
   sidebarRowKeyToRoute,
 } from "@/lib/sidebarSearch";
@@ -145,10 +144,7 @@ import {
 } from "@/lib/nativeWindowChromeSurface";
 import { Input } from "@/components/ui/input";
 import { CardPointMenu } from "@/components/CardHoverMenu";
-import {
-  CompactDetailTopMenu,
-  MainSecondaryTopBar,
-} from "@/components/MainSecondaryChrome";
+import { MainSecondaryTopBar } from "@/components/MainSecondaryChrome";
 
 type CardActionsMenuTarget = {
   block: LightBlock | IndexedBlock;
@@ -259,7 +255,6 @@ import type {
   TabView,
   TabVisibility,
   VaultChangedPayload,
-  VaultStats,
 } from "@/types";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -275,7 +270,6 @@ import {
   recordStartupMilestone,
   type StartupMilestone,
   startStartupMaintenance,
-  getVaultStats,
   listGridBlocks,
   getGridRows,
   listTaxonomySnapshot,
@@ -389,12 +383,6 @@ import { applyTheme, getStoredTheme, THEME_STORAGE_KEY } from "@/lib/themeMode";
 import { flipWindowButtonStyleHere } from "@/lib/buttonStyle";
 import { ButtonStyleNotice } from "@/components/ButtonStyleNotice";
 import {
-  applyDesign,
-  getStoredDesignMode,
-  useDesignMode,
-  DESIGN_STORAGE_KEY,
-} from "@/lib/designMode";
-import {
   GRAPH_PREFERENCES_STORAGE_KEY,
   reloadGraphPreferences,
   useGraphPreferences,
@@ -437,7 +425,6 @@ const GRID_PAGE_SIZE = 200;
 /// screen instead of being polled forever (SPEC_AUDIT_FIXES.md, Г4.1, Д1.4).
 const FEED_READ_RETRY_DELAYS_MS = [1_000, 4_000, 15_000] as const;
 const DETAIL_SECONDARY_CHROME_EXIT_MS = 190;
-const DETAIL_COMPACT_CHROME_EXIT_MS = 260;
 /// How many further feed pages a restored tab reads to find the card it was
 /// scrolled to before it starts at the top instead (SPEC_TABS.md, В40):
 /// GRID_PAGE_SIZE cards each.
@@ -945,7 +932,6 @@ export function AppWithVault({
     routeKey: string;
     generation: number;
   } | null>(null);
-  const [vaultStats, setVaultStats] = useState<VaultStats | null>(null);
   const [hasMoreBlocks, setHasMoreBlocks] = useState(false);
   const [loadingMoreBlocks, setLoadingMoreBlocks] = useState(false);
   // The id of the latest route load whose answer is on screen. Paging continues
@@ -978,7 +964,6 @@ export function AppWithVault({
   const [channels, setChannels] = useState<ChannelDto[]>([]);
   // The space's collections were read at least once.
   const [taxonomyLoaded, setTaxonomyLoaded] = useState(false);
-  const compactDetailTopMenuEnabled = false;
   const [bottomActionBarHidden, setBottomActionBarHidden] = useState(
     getStoredBottomActionBarHidden,
   );
@@ -1176,8 +1161,8 @@ export function AppWithVault({
   const sidebarSearchInputRef = useRef<HTMLInputElement>(null);
   const lastSidebarSearchFocusSequenceRef = useRef(0);
   const sidebarSearchChromeDragGesture = useChromeDragGesture();
-  const [compactDetailTopMenuRequestSequence, setCompactDetailTopMenuRequestSequence] = useState(0);
-  const [compactDetailChromeEntered, setCompactDetailChromeEntered] = useState(false);
+  const [detailMenuOpenRequestSequence, setDetailMenuOpenRequestSequence] = useState(0);
+  const [detailChromeEntered, setDetailChromeEntered] = useState(false);
   const gridColumnCountRef = useRef(1);
   const suppressRedirectRef = useRef(false);
   const vaultPathRef = useRef(vaultPath);
@@ -1192,8 +1177,6 @@ export function AppWithVault({
   blocksRef.current = blocks;
   const loadRequestIdRef = useRef(0);
   const taxonomyRequestIdRef = useRef(0);
-  const vaultStatsRequestIdRef = useRef(0);
-  const vaultStatsFrameRef = useRef<number | null>(null);
   const routeSnapshotCacheRef = useRef<Map<string, GridSnapshot>>(new Map());
   const gridGenerationRef = useRef<number | null>(null);
   const warmRoutePageBufferRef = useRef<Set<string>>(new Set());
@@ -1440,28 +1423,8 @@ export function AppWithVault({
   const renderedLinkedTags = selectedBlock
     ? selectedBlockTags
     : (detailChromeClosing ? closingDetailTags : []);
-  // Alt 2 moves the metadata row to the foot of the window and drops the button
-  // bar entirely: one strip along the bottom instead of two, with the row that
-  // describes what you are looking at nearest to the content it describes.
-  const design = useDesignMode();
-  const metadataRowAtBottom = design === "alt2";
-  const compactDetailTopMenuActive =
-    (compactDetailTopMenuEnabled || metadataRowAtBottom) && renderedDetailBlock !== null;
-  // At the bottom the row survives an open card — that is where its collections
-  // and note metadata now live, so hiding it would take them away.
-  const mainSecondaryTopBarVisible = metadataRowAtBottom || !compactDetailTopMenuActive;
-  const detailChromeCloseDuration = compactDetailTopMenuActive
-    ? DETAIL_COMPACT_CHROME_EXIT_MS
-    : DETAIL_SECONDARY_CHROME_EXIT_MS;
   const topChromeSurfaceClass = "bg-chrome";
   const topChromeSurfaceToken: NativeWindowChromeSurfaceToken = "--chrome";
-  // No third row: what it held over the feed joins the second row after the
-  // collection switcher; a line parts each step of the path, the sidebar open
-  // or collapsed (DESIGN_SYSTEM.md, «Верхние ряды»).
-  const foldedMetadataRow = !metadataRowAtBottom;
-  // The open card is named by the shared visible title rule, without its
-  // folder or extension (SPEC_DISPLAY_TITLE.md).
-  const compactDetailCardTitle = renderedDetailBlock ? getNavigationLabel(renderedDetailBlock) : "";
   // The search overlay is modal: while it is open the feed answers no key,
   // ⌘K included (SPEC_SEARCH_OVERLAY.md; SPEC_AUDIT_FIXES.md, Г4.2).
   const gridKeyboardNavigationDisabled = Boolean(renderedDetailBlock)
@@ -1480,12 +1443,12 @@ export function AppWithVault({
 
   useEffect(() => {
     if (!renderedDetailBlock || detailChromeClosing) {
-      setCompactDetailChromeEntered(false);
+      setDetailChromeEntered(false);
       return;
     }
-    setCompactDetailChromeEntered(false);
+    setDetailChromeEntered(false);
     const frame = window.requestAnimationFrame(() => {
-      setCompactDetailChromeEntered(true);
+      setDetailChromeEntered(true);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [detailChromeClosing, renderedDetailBlock]);
@@ -1805,25 +1768,6 @@ export function AppWithVault({
     [projectionRevisionOwner],
   );
 
-  const loadVaultStats = useCallback(async (tag = currentTagRef.current) => {
-    const requestId = ++vaultStatsRequestIdRef.current;
-    const pathAtStart = vaultPathRef.current;
-    const tagAtStart = tag ?? null;
-    try {
-      const stats = await getVaultStats(tagAtStart);
-      if (
-        vaultStatsRequestIdRef.current !== requestId
-        || vaultPathRef.current !== pathAtStart
-        || (currentTagRef.current ?? null) !== tagAtStart
-      ) {
-        return;
-      }
-      setVaultStats(stats);
-    } catch (err) {
-      console.warn("[VAULT_STATS] failed:", err);
-    }
-  }, []);
-
   const loadGridSnapshotRef = useRef(loadGridSnapshot);
   loadGridSnapshotRef.current = loadGridSnapshot;
 
@@ -1842,19 +1786,7 @@ export function AppWithVault({
   }, [feedSort, invalidateRouteSnapshots, vaultReady]);
   const loadTaxonomySnapshotRef = useRef(loadTaxonomySnapshotState);
   loadTaxonomySnapshotRef.current = loadTaxonomySnapshotState;
-  const loadVaultStatsRef = useRef(loadVaultStats);
-  loadVaultStatsRef.current = loadVaultStats;
   const initialRouteLoadDoneRef = useRef(false);
-
-  const requestVaultStatsRefresh = useCallback(() => {
-    if (!vaultReady || vaultStatsFrameRef.current !== null) {
-      return;
-    }
-    vaultStatsFrameRef.current = window.requestAnimationFrame(() => {
-      vaultStatsFrameRef.current = null;
-      void loadVaultStatsRef.current();
-    });
-  }, [vaultReady]);
 
   useEffect(() => {
     if (!selectedBlock) {
@@ -1952,9 +1884,6 @@ export function AppWithVault({
     if (!vaultReady) {
       return;
     }
-    if (flags.grid || flags.taxonomy) {
-      requestVaultStatsRefresh();
-    }
     if (flags.grid) pendingRefreshRef.current.grid = true;
     if (flags.taxonomy) pendingRefreshRef.current.taxonomy = true;
     if (flags.previews) pendingRefreshRef.current.previews = true;
@@ -1969,7 +1898,7 @@ export function AppWithVault({
       refreshTimerRef.current = null;
       void flushRefreshQueue();
     }, delayMs);
-  }, [flushRefreshQueue, requestVaultStatsRefresh, vaultReady]);
+  }, [flushRefreshQueue, vaultReady]);
 
   const handleCardMenuOpenChange = useCallback((slug: string, open: boolean) => {
     let wasHeld = false;
@@ -2007,10 +1936,9 @@ export function AppWithVault({
       // touched one card.
       loadGridSnapshot({ invalidateCachedRoutes: true, preserveLoadedRange: true }),
       loadTaxonomySnapshotState(),
-      loadVaultStats(),
       loadPreviews(),
     ]);
-  }, [invalidateRouteSnapshots, loadGridSnapshot, loadPreviews, loadTaxonomySnapshotState, loadVaultStats]);
+  }, [invalidateRouteSnapshots, loadGridSnapshot, loadPreviews, loadTaxonomySnapshotState]);
 
   // A failed next page is asked again on its own, a bounded number of times,
   // while the route load it continues is still the one on screen. Any route
@@ -2213,7 +2141,6 @@ export function AppWithVault({
     setDeleteCollectionKeptLinks(null);
     cancelGridRetry();
     cancelPageRetry();
-    setVaultStats(null);
     setThumbsRootPath(null);
     invalidateRouteSnapshots();
     pendingRefreshRef.current = {
@@ -2225,10 +2152,6 @@ export function AppWithVault({
     if (refreshTimerRef.current !== null) {
       window.clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = null;
-    }
-    if (vaultStatsFrameRef.current !== null) {
-      window.cancelAnimationFrame(vaultStatsFrameRef.current);
-      vaultStatsFrameRef.current = null;
     }
     const started = performance.now();
     console.info("[startup] openVault:start", { vaultPath });
@@ -2277,7 +2200,6 @@ export function AppWithVault({
       const [gridLoaded] = await Promise.all([
         loadGridSnapshotRef.current({ place: initialPlace }),
         loadTaxonomySnapshotRef.current(),
-        loadVaultStatsRef.current(locationCollection(initialPlace)),
       ]);
       if (cancelled) return;
       initialRouteLoadDoneRef.current = true;
@@ -2333,13 +2255,6 @@ export function AppWithVault({
       cancelPostPaint?.();
     };
   }, [routeKeyFor, vaultPath, vaultReady]);
-
-  useEffect(() => {
-    if (!vaultReady) {
-      return;
-    }
-    void loadVaultStatsRef.current(currentTag);
-  }, [currentTag, vaultReady]);
 
   // Filesystem catch-up plus passive thumb sweep when the person comes back to
   // Mine. The route refresh joins VaultReconciler before querying, so missed
@@ -2494,6 +2409,21 @@ export function AppWithVault({
     });
   }, [currentPlaceKey, reportPlaceHistory, selectedSlug, viewRestored]);
 
+  // A step's route commits in a transition (react-router navigates inside
+  // startTransition) and can land well after the card the step opens, which
+  // commits at once. The step settles once the route it asked for is on
+  // screen: settling earlier wrote the old route with the new card into the
+  // history (В81).
+  const locationKeyRef = useRef(location.key);
+  locationKeyRef.current = location.key;
+  const stepRouteRef = useRef<{ from: string; landed: (() => void) | null } | null>(null);
+  useEffect(() => {
+    const awaited = stepRouteRef.current;
+    if (awaited === null || awaited.from === location.key) return;
+    stepRouteRef.current = null;
+    awaited.landed?.();
+  }, [location.key]);
+
   /// Go to `target`, unless a later step took over while its card was read.
   const goToPlace = useCallback(async (target: Place, latest: () => boolean) => {
     const block = target.card === null
@@ -2508,6 +2438,7 @@ export function AppWithVault({
     if (routeChanges) {
       // The place's card opens over its route instead of being closed by it.
       if (block) keepDetailOnRouteChangeRef.current = true;
+      stepRouteRef.current = { from: locationKeyRef.current, landed: null };
       navigate(tabLocationPath(target.location));
     }
     if (block) openDetailBlock(block);
@@ -2532,18 +2463,26 @@ export function AppWithVault({
       cancelSettle?.();
       void goToPlace(step.target, latest).finally(() => {
         if (!latest()) return;
-        // Whatever the step reached is on screen two frames later.
-        cancelSettle = afterTwoFrames(() => {
-          if (!latest() || stepTargetRef.current === null) return;
-          stepTargetRef.current = null;
-          placeHistoryRef.current = settlePlace(placeHistoryRef.current, placeRef.current);
-          reportPlaceHistory();
-        });
+        // Whatever the step reached is on screen two frames after its route
+        // landed.
+        const settle = () => {
+          if (!latest()) return;
+          cancelSettle = afterTwoFrames(() => {
+            if (!latest() || stepTargetRef.current === null) return;
+            stepTargetRef.current = null;
+            placeHistoryRef.current = settlePlace(placeHistoryRef.current, placeRef.current);
+            reportPlaceHistory();
+          });
+        };
+        const awaited = stepRouteRef.current;
+        if (awaited === null) settle();
+        else awaited.landed = settle;
       });
     });
     return () => {
       disposed = true;
       cancelSettle?.();
+      stepRouteRef.current = null;
       void subscription.then((stop) => stop());
     };
   }, [goToPlace, reportPlaceHistory, tabPage, viewRestored]);
@@ -2792,15 +2731,6 @@ export function AppWithVault({
       });
     }));
 
-    unlistenFns.push(listenPage<VaultStats>("vault:stats-updated", (event) => {
-      const currentCollection = currentTagRef.current ?? null;
-      if (event.payload.currentCollection === currentCollection) {
-        setVaultStats(event.payload);
-        return;
-      }
-      requestVaultStatsRefresh();
-    }));
-
     unlistenFns.push(listenPage<VaultSyncStartedEvent>("vault-sync-started", (event) => {
       if (event.payload.path === vaultPathRef.current) {
         setIsSyncing(true);
@@ -2864,7 +2794,7 @@ export function AppWithVault({
         unlisten.then((fn) => fn());
       }
     };
-  }, [bumpThumbVersion, bumpFeedThumbVersion, invalidateRouteSnapshots, indexBuiltOnOpen, invalidateRoutesForTags, reloadAllSnapshots, requestVaultStatsRefresh, scheduleRefresh, vaultReady]);
+  }, [bumpThumbVersion, bumpFeedThumbVersion, invalidateRouteSnapshots, indexBuiltOnOpen, invalidateRoutesForTags, reloadAllSnapshots, scheduleRefresh, vaultReady]);
 
   useEffect(() => {
     return () => {
@@ -2879,10 +2809,6 @@ export function AppWithVault({
       if (pageRetryTimerRef.current !== null) {
         window.clearTimeout(pageRetryTimerRef.current);
         pageRetryTimerRef.current = null;
-      }
-      if (vaultStatsFrameRef.current !== null) {
-        window.cancelAnimationFrame(vaultStatsFrameRef.current);
-        vaultStatsFrameRef.current = null;
       }
     };
   }, []);
@@ -3030,8 +2956,6 @@ export function AppWithVault({
       const { key } = event.payload;
       if (key === THEME_STORAGE_KEY) {
         applyTheme(getStoredTheme());
-      } else if (key === DESIGN_STORAGE_KEY) {
-        applyDesign(getStoredDesignMode());
       } else if (key === BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY) {
         setBottomActionBarHidden(getStoredBottomActionBarHidden());
       } else if (key === GRAPH_PREFERENCES_STORAGE_KEY) {
@@ -3113,7 +3037,7 @@ export function AppWithVault({
       if (commandPressed("element-menu-open", e) && renderedDetailBlock) {
         if (isDetailShortcutBlockedTarget(e.target)) return;
         e.preventDefault();
-        setCompactDetailTopMenuRequestSequence((current) => current + 1);
+        setDetailMenuOpenRequestSequence((current) => current + 1);
         return;
       }
       if (commandPressed("copy-path", e) && selectedBlock) {
@@ -3136,7 +3060,6 @@ export function AppWithVault({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [
-    compactDetailTopMenuActive,
     handleSurfaceSearchShortcut,
     handleSwitchVault,
     navigate,
@@ -3156,7 +3079,7 @@ export function AppWithVault({
     if (!selectedBlock || detailChromeClosing) return;
     requestGridFocusRestore(selectedBlock.slug);
     setSelectedBlockAnchor(null);
-    setCompactDetailChromeEntered(false);
+    setDetailChromeEntered(false);
     setClosingDetailBlock(selectedBlock);
     setClosingDetailTags(selectedBlockTags);
     setDetailChromeClosing(true);
@@ -3167,14 +3090,13 @@ export function AppWithVault({
     detailCloseTimerRef.current = window.setTimeout(() => {
       detailCloseTimerRef.current = null;
       cancelPendingDetailClose();
-    }, detailChromeCloseDuration);
+    }, DETAIL_SECONDARY_CHROME_EXIT_MS);
   }, [
     selectedBlock,
     selectedBlockTags,
     detailChromeClosing,
     cancelPendingDetailClose,
     requestGridFocusRestore,
-    detailChromeCloseDuration,
   ]);
   handleDetailCloseRef.current = handleDetailClose;
 
@@ -3182,7 +3104,7 @@ export function AppWithVault({
     if (selectedBlock) {
       if (detailChromeClosing) return;
       setSelectedBlockAnchor(null);
-      setCompactDetailChromeEntered(false);
+      setDetailChromeEntered(false);
       setClosingDetailBlock(selectedBlock);
       setClosingDetailTags(selectedBlockTags);
       setDetailChromeClosing(true);
@@ -3194,7 +3116,7 @@ export function AppWithVault({
       detailCloseTimerRef.current = window.setTimeout(() => {
         detailCloseTimerRef.current = null;
         cancelPendingDetailClose();
-      }, detailChromeCloseDuration);
+      }, DETAIL_SECONDARY_CHROME_EXIT_MS);
       return;
     }
     setScrollToTopSignal((n) => n + 1);
@@ -3203,7 +3125,6 @@ export function AppWithVault({
     selectedBlockTags,
     detailChromeClosing,
     cancelPendingDetailClose,
-    detailChromeCloseDuration,
   ]);
 
   const handleDetailNavigate = useCallback(
@@ -4524,39 +4445,6 @@ export function AppWithVault({
     || showFirstCardMarker
     || showIndexingNotice;
 
-  const metadataRowOf = (part: "both" | "content") => mainSecondaryTopBarVisible ? (
-    <MainSecondaryTopBar
-          part={part}
-          sidebarCollapsed={sidebarCollapsed}
-          sidebarResizing={sidebarResizing}
-          onCreateCollection={beginCreateCollection}
-          collectionCount={sidebarSearchQuery.trim()
-            ? filterSidebarTags(orderedTags, sidebarSearchQuery).length
-            : orderedTags.length}
-          stats={vaultStats}
-          detailBlock={renderedDetailBlock}
-          detailEntered={compactDetailChromeEntered}
-          viewMode={feedViewMode}
-          viewModeSwitch={!onAuthorPlace}
-          onViewModeChange={handleMainViewModeChange}
-          vaultPath={vaultPath}
-          tags={orderedTags}
-          currentTag={currentTag}
-          onToggleTag={handleToggleTag}
-          onCreateAndAssign={handleCreateTagFromMenu}
-          onRequestRename={setRenamingBlock}
-          onRenameFile={handleRenameBlock}
-          onCheckFileName={handleCheckFileName}
-          onRequestDelete={requestDeleteBlock}
-          onDetailClose={handleDetailClose}
-          detailMenuOpenRequestSequence={compactDetailTopMenuRequestSequence}
-          placement={metadataRowAtBottom ? "bottom" : "top"}
-          selectionActive={hasSelection}
-          selectionHostRef={setSelectionCommandsHost}
-        />
-  ) : null;
-  const metadataRow = metadataRowOf("both");
-
   return (
     // Cards tell a preview still being built from a lost file (SPEC_CARD_MEDIA_GEOMETRY.md).
     <PreviewsPendingContext.Provider value={previewsPending}>
@@ -4667,9 +4555,8 @@ export function AppWithVault({
                       variant="chrome"
                       size="chrome-icon"
                       aria-label="Clear collection search"
-                      // The filter's actions follow it; at the foot-row
-                      // layout the clear button ends the row, 8px in.
-                      className={metadataRowAtBottom ? "mr-2" : "mr-1"}
+                      // The filter's actions follow it.
+                      className="mr-1"
                       onClick={handleClearSidebarSearch}
                       data-sidebar-top-search-clear=""
                     >
@@ -4677,25 +4564,22 @@ export function AppWithVault({
                     </Button>
                   )}
                   {/* The sidebar column has no third row (03.10.2026): what lived
-                      over the table lives here, at the filter's right. At the
-                      foot of the window the metadata row still carries it. */}
-                  {!metadataRowAtBottom && (
-                    // Icon buttons 4px apart, 8px from the column's line.
-                    <div className="mr-2 flex shrink-0 items-center gap-1" data-sidebar-top-search-actions="">
-                      <Button
-                        type="button"
-                        variant="chrome"
-                        size="chrome-icon"
-                        plate="raised"
-                        aria-label="New Collection"
-                        shortcut={commandById("new-collection").combo}
-                        onClick={beginCreateCollection}
-                        data-sidebar-new-collection=""
-                      >
-                        <Plus />
-                      </Button>
-                    </div>
-                  )}
+                      over the table lives here, at the filter's right. Icon
+                      buttons 4px apart, 8px from the column's line. */}
+                  <div className="mr-2 flex shrink-0 items-center gap-1" data-sidebar-top-search-actions="">
+                    <Button
+                      type="button"
+                      variant="chrome"
+                      size="chrome-icon"
+                      plate="raised"
+                      aria-label="New Collection"
+                      shortcut={commandById("new-collection").combo}
+                      onClick={beginCreateCollection}
+                      data-sidebar-new-collection=""
+                    >
+                      <Plus />
+                    </Button>
+                  </div>
                 </div>
               </>
             )}
@@ -4709,28 +4593,31 @@ export function AppWithVault({
             onNavigate={handleTopCollectionNavigate}
             onCreateCollection={handleWindowCreateCollection}
             onCheckCollectionName={checkNewCollectionName}
-            joinsNext={foldedMetadataRow}
+            joinsNext
           />
-          {compactDetailTopMenuActive && renderedDetailBlock ? (
-            <CompactDetailTopMenu
-              block={renderedDetailBlock}
-              cardTitle={compactDetailCardTitle}
-              vaultPath={vaultPath}
-              tags={orderedTags}
-              currentTag={currentTag}
-              onToggleTag={handleToggleTag}
-              onCreateAndAssign={handleCreateTagFromMenu}
-              onRequestRename={setRenamingBlock}
-              onRequestDelete={requestDeleteBlock}
-              onClose={handleDetailClose}
-              menuOpenRequestSequence={compactDetailTopMenuRequestSequence}
-              entered={compactDetailChromeEntered}
-            />
-          ) : foldedMetadataRow ? (
-            metadataRowOf("content")
-          ) : (
-            <div data-tauri-drag-region className="h-full min-w-0 flex-1" />
-          )}
+          {/* No third row: what it held over the feed joins this row after
+              the collection switcher; a line parts each step of the path, the
+              sidebar open or collapsed (DESIGN_SYSTEM.md, «Верхние ряды»). */}
+          <MainSecondaryTopBar
+            detailBlock={renderedDetailBlock}
+            detailEntered={detailChromeEntered}
+            viewMode={feedViewMode}
+            viewModeSwitch={!onAuthorPlace}
+            onViewModeChange={handleMainViewModeChange}
+            vaultPath={vaultPath}
+            tags={orderedTags}
+            currentTag={currentTag}
+            onToggleTag={handleToggleTag}
+            onCreateAndAssign={handleCreateTagFromMenu}
+            onRequestRename={setRenamingBlock}
+            onRenameFile={handleRenameBlock}
+            onCheckFileName={handleCheckFileName}
+            onRequestDelete={requestDeleteBlock}
+            onDetailClose={handleDetailClose}
+            detailMenuOpenRequestSequence={detailMenuOpenRequestSequence}
+            selectionActive={hasSelection}
+            selectionHostRef={setSelectionCommandsHost}
+          />
           {/* A tab's settings menu lives in its window's tab bar (В43). */}
           {!tabPage && <AppSettingsMenu onSelectSection={handleOpenSettings} />}
         </div>
@@ -5097,12 +4984,7 @@ export function AppWithVault({
       ) : null}
     </div>{/* end body */}
 
-      {/* Alt 2: the metadata row lands here, directly under the content it
-          describes, and takes the place of the button bar rather than sitting
-          above it. */}
-      {metadataRowAtBottom && metadataRow}
-
-      {!bottomActionBarHidden && !metadataRowAtBottom && (
+      {!bottomActionBarHidden && (
         <ChromeRow separator="top"
           // The left end stands under the sidebar column: the first button's
           // plate lines up under the row names (--sidebar-label-inset, 16px),
@@ -5196,7 +5078,7 @@ export function AppWithVault({
                 hotkey={barMenuCommand.combo}
                 onClick={() => {
                   if (renderedDetailBlock) {
-                    setCompactDetailTopMenuRequestSequence((current) => current + 1);
+                    setDetailMenuOpenRequestSequence((current) => current + 1);
                     return;
                   }
                   cardMenuActivateRef.current?.();

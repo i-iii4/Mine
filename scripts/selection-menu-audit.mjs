@@ -1,17 +1,28 @@
+// The Connect menu of search results and the selection menu of the expanded
+// card in headless Chromium, on the fixture scripts/fixtures/selection-menu.*
+// (SPEC_SEARCH_OVERLAY.md). Starts and stops its own Vite.
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
+import { COLD_START_MS, startAuditVite } from "./audit-vite.mjs";
 
-const browser = await chromium.launch({ headless: true, channel: process.env.MINE_AUDIT_BROWSER_CHANNEL || undefined });
+const FIXTURE_PATH = "/scripts/fixtures/selection-menu.html";
+
+const vite = await startAuditVite();
+let browser;
 try {
+  browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
   const errors = [];
   page.setDefaultTimeout(10000);
+  page.setDefaultNavigationTimeout(COLD_START_MS);
   page.on("pageerror", (error) => { errors.push(error.message); console.error(error.message); });
-  const url = process.env.MINE_SELECTION_AUDIT_URL ?? "http://127.0.0.1:1427/scripts/fixtures/selection-menu.html";
+  const url = new URL(FIXTURE_PATH, vite.origin).href;
   await page.goto(url);
   await page.waitForLoadState("networkidle");
-  await page.locator("[data-search-overlay-preview]").hover();
-  await page.getByRole("button", { name: /Connect/ }).click();
+  // A result row's commands show for the row under the pointer
+  // (SPEC_CARD_STATES.md, С10); the preview beside the list has none.
+  await page.getByRole("option").first().hover();
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
   const list = page.locator("[data-quantized-menu-scroll-area]");
   await list.waitFor();
   await page.getByRole("menu").evaluate(async (element) => {
@@ -51,5 +62,6 @@ try {
   assert.deepEqual(errors, []);
   console.log("PASS: selection menu survives focus/hover and creates from the second paragraph");
 } finally {
-  await browser.close();
+  await browser?.close();
+  await vite.close();
 }

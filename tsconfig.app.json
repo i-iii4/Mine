@@ -1,0 +1,15 @@
+{
+  // The app's pages in the Tauri webview: neither Node nor the chrome.* API
+  // exists there.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": []
+  },
+  "include": ["src"],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.fixtures.ts",
+    "src/test"
+  ]
+}

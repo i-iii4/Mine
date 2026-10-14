@@ -11,9 +11,10 @@ import {
 } from "./fontMetrics";
 import { SYSTEM_SANS_STACK } from "./fontChoice";
 import type { WordWidths, WorkerInMessage, WorkerOutMessage } from "@/types/fontMetrics";
+import { lightBlock } from "@/test/blocks";
 
 function makeBlock(overrides: Partial<LightBlock> = {}): LightBlock {
-  return {
+  return lightBlock({
     id: 1,
     slug: "test-block",
     card_kind: "article",
@@ -35,7 +36,7 @@ function makeBlock(overrides: Partial<LightBlock> = {}): LightBlock {
     collections: [],
     feed_playback: null,
     ...overrides,
-  };
+  });
 }
 
 describe("createFontMetricsCacheIdentity", () => {
@@ -247,7 +248,7 @@ describe("card titles are measured with the weight they are painted with (01.10.
       addEventListener(type: string, listener: Listener) {
         if (type === "message") this.listeners.push(listener);
       }
-      removeEventListener(type: string, listener: Listener) {
+      removeEventListener(_type: string, listener: Listener) {
         this.listeners = this.listeners.filter((candidate) => candidate !== listener);
       }
       postMessage(message: WorkerInMessage) {
@@ -358,7 +359,7 @@ describe("cards are measured in the system font (06.10.2026)", () => {
       addEventListener(type: string, listener: Listener) {
         if (type === "message") this.listeners.push(listener);
       }
-      removeEventListener(type: string, listener: Listener) {
+      removeEventListener(_type: string, listener: Listener) {
         this.listeners = this.listeners.filter((candidate) => candidate !== listener);
       }
       postMessage(message: WorkerInMessage) {

@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
+import { existsSync, readdirSync } from 'node:fs';
 import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { SAFARI_MIRRORS, verifyExtensionMirrors } from './verify-extension-mirrors.mjs';
+import { SAFARI_MIRRORS, SAFARI_RESOURCES, safariMirrors, verifyExtensionMirrors } from './verify-extension-mirrors.mjs';
+
+const repository = fileURLToPath(new URL('../', import.meta.url));
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'mine-extension-mirrors-'));
@@ -37,4 +41,29 @@ test('a missing file or symlink cannot satisfy mirror equality', async t => {
   await assert.rejects(verifyExtensionMirrors(root), /ENOENT/);
   await symlink(join(root, pair.source), join(root, pair.mirror));
   await assert.rejects(verifyExtensionMirrors(root), /regular file/);
+});
+
+test('every Safari script and manifest copied from the extension is a compared mirror', () => {
+  const mirrors = new Set(SAFARI_MIRRORS.map(item => item.mirror));
+  const copies = [];
+  function visit(directory, prefix = '') {
+    for (const entry of readdirSync(join(repository, directory), { withFileTypes: true })) {
+      const path = `${prefix}${entry.name}`;
+      // Build output the build copies whole; Git does not keep it.
+      if (entry.isDirectory() && !['dist', 'generated'].includes(path)) visit(`${directory}/${entry.name}`, `${path}/`);
+      else if (entry.isFile() && /\.(?:js|json)$/.test(path) && existsSync(join(repository, 'extension', path))) copies.push(path);
+    }
+  }
+  visit(SAFARI_RESOURCES);
+  assert.ok(copies.includes('content.js') && copies.includes('lib/xThread.js'), 'the walk must see the copied scripts');
+  for (const path of copies) assert.ok(mirrors.has(`${SAFARI_RESOURCES}/${path}`), `${path} is copied but never compared`);
+});
+
+test('a library script added to the extension becomes a mirror, a test of it does not', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'mine-extension-mirror-rule-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'extension/lib'), { recursive: true });
+  for (const name of ['added.js', 'added.test.js', 'added.types.d.ts']) await writeFile(join(root, 'extension/lib', name), '');
+  assert.deepEqual(safariMirrors(root).map(item => item.source),
+    ['extension/background.js', 'extension/content.js', 'extension/manifest.json', 'extension/lib/added.js']);
 });

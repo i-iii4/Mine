@@ -1347,10 +1347,11 @@ mod tests {
         crate::storage::cloud_waits::begin_session(vault.derived_root(), "2026-09-29T12:00:00Z")
             .unwrap();
         // iCloud keeps the name and size and frees the contents
-        // (`SF_DATALESS`, which only the kernel sets).
-        std::fs::File::create(root.join("cloud.jpg"))
-            .unwrap()
-            .set_len(64 * 1024)
+        // (`SF_DATALESS`, which only the kernel sets). The picture's real
+        // contents stay on disk: what the passes report follows the seam, not
+        // a file of zeros that no pass could decode.
+        image::RgbImage::from_pixel(32, 24, image::Rgb([10, 20, 30]))
+            .save_with_format(root.join("cloud.jpg"), image::ImageFormat::Jpeg)
             .unwrap();
         crate::storage::cloud_files::test_seam::mark_offloaded(&root.join("cloud.jpg"));
         files::write_block_file(&vault, &image_block("Cloud", "cloud.jpg")).unwrap();
@@ -1380,11 +1381,17 @@ mod tests {
         assert!(first.failed.iter().any(|failure| failure.slug == "Cloud"
             && failure.error_kind == PreviewErrorKind::ContentInCloud));
         assert!(first.changed_slugs.contains(&"Cloud".to_string()));
-        // The second pass tried the cloud card again, and it is counted once.
+        // The second pass fetched the cloud card and built its preview, and
+        // the card is counted once.
         assert_eq!(batches.len(), 2);
         assert_eq!(batches[1].checked, 1);
+        assert_eq!(batches[1].ready, 1, "the fetched card got its preview");
         assert_eq!(report.checked, 2);
-        assert_eq!(report.failed.iter().filter(|failure| failure.slug == "Cloud").count(), 1);
+        assert!(
+            report.failed.iter().all(|failure| failure.slug != "Cloud"),
+            "{:?}",
+            report.failed
+        );
         let waits = crate::storage::cloud_waits::load(vault.derived_root());
         assert_eq!(waits.sessions.last().unwrap().slugs, vec!["Cloud".to_string()]);
     }

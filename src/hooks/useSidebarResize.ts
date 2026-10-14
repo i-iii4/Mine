@@ -3,19 +3,17 @@ import {
   SIDEBAR_MAX_WIDTH_PX,
   sidebarMinWidth,
 } from "@/lib/appLayout";
-import { getDesignMode, useDesignMode } from "@/lib/designMode";
 import { setWindowSidebar } from "@/lib/commands";
 import type { SidebarLayout } from "@/types";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const MAX_WIDTH = SIDEBAR_MAX_WIDTH_PX;
+/// The three equal columns; see appLayout. A drag keeps the panel between it
+/// and MAX_WIDTH: it never collapses the panel, which the sidebar button and
+/// its hotkey do (user's decision of 07.10.2026).
+const MIN_WIDTH = sidebarMinWidth();
 const CSS_VAR = "--sidebar-width";
-
-// MIN_WIDTH (three equal columns) depends on the design variant's chrome; see
-// appLayout. A drag keeps the panel between it and MAX_WIDTH: it never
-// collapses the panel, which the sidebar button and its hotkey do (user's
-// decision of 07.10.2026).
 
 // ─── Ownership ──────────────────────────────────────────────────────────────
 //
@@ -32,10 +30,9 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function initialLayout(windowSidebar: SidebarLayout | null): { width: number; collapsed: boolean } {
-  const design = getDesignMode();
-  if (!windowSidebar) return { width: sidebarMinWidth(design), collapsed: false };
+  if (!windowSidebar) return { width: MIN_WIDTH, collapsed: false };
   return {
-    width: clamp(windowSidebar.width_px, sidebarMinWidth(design), MAX_WIDTH),
+    width: clamp(windowSidebar.width_px, MIN_WIDTH, MAX_WIDTH),
     collapsed: windowSidebar.collapsed,
   };
 }
@@ -75,9 +72,6 @@ export interface UseSidebarResizeReturn {
  * a tab.
  */
 export function useSidebarResize(windowSidebar: SidebarLayout | null = null): UseSidebarResizeReturn {
-  const design = useDesignMode();
-  const MIN_WIDTH = sidebarMinWidth(design);
-
   const [storedWidth, setStoredWidth] = useState(() => initialLayout(windowSidebar).width);
   const [collapsed, setCollapsed] = useState(() => initialLayout(windowSidebar).collapsed);
   const [isResizing, setIsResizing] = useState(false);
@@ -104,8 +98,6 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
   // Keep refs in sync so the stable callbacks read fresh values at fire time.
   const storedWidthRef = useRef(storedWidth);
   useEffect(() => { storedWidthRef.current = storedWidth; }, [storedWidth]);
-  const minWidthRef = useRef(MIN_WIDTH);
-  minWidthRef.current = MIN_WIDTH;
   const collapsedRef = useRef(collapsed);
   collapsedRef.current = collapsed;
 
@@ -119,12 +111,6 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
     if (!isResizing) writeCssVar(width);
   }, [width, isResizing]);
 
-  // Design variant change moves the minimum; lift a stored width now below it.
-  // The window's stored width is left alone: every page clamps it on arrival.
-  useEffect(() => {
-    setStoredWidth((w) => clamp(w, MIN_WIDTH, MAX_WIDTH));
-  }, [MIN_WIDTH]);
-
   // The window's layout changed: another tab, the tab bar's button, the View
   // menu or the two-finger swipe (В56). A drag in progress here keeps the
   // panel under the pointer; its own result follows when it ends.
@@ -134,7 +120,7 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
   const windowCollapsed = windowSidebar?.collapsed;
   useEffect(() => {
     if (windowWidth === undefined || windowCollapsed === undefined || isResizingRef.current) return;
-    setStoredWidth(clamp(windowWidth, minWidthRef.current, MAX_WIDTH));
+    setStoredWidth(clamp(windowWidth, MIN_WIDTH, MAX_WIDTH));
     setCollapsed(windowCollapsed);
   }, [windowCollapsed, windowWidth]);
 
@@ -149,7 +135,7 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
   // The line follows the cursor 1:1 between the bounds and stops at them.
   const updateResize = useCallback((clientX: number) => {
     const { startX, startWidth } = startRef.current;
-    const next = clamp(startWidth + (clientX - startX), minWidthRef.current, MAX_WIDTH);
+    const next = clamp(startWidth + (clientX - startX), MIN_WIDTH, MAX_WIDTH);
     writeCssVar(next);
     pendingWidthRef.current = next;
 
@@ -171,14 +157,14 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
     }
     setIsResizing(false);
     document.body.classList.remove("sidebar-resizing");
-    const finalWidth = clamp(pendingWidthRef.current, minWidthRef.current, MAX_WIDTH);
+    const finalWidth = clamp(pendingWidthRef.current, MIN_WIDTH, MAX_WIDTH);
     setStoredWidth(finalWidth);
     setDragWidth(finalWidth);
     commit(finalWidth, false);
   }, [commit]);
 
   const resizeTo = useCallback((nextWidth: number) => {
-    const next = clamp(nextWidth, minWidthRef.current, MAX_WIDTH);
+    const next = clamp(nextWidth, MIN_WIDTH, MAX_WIDTH);
     setStoredWidth(next);
     commit(next, collapsedRef.current);
   }, [commit]);

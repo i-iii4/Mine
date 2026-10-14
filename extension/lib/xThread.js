@@ -1,8 +1,53 @@
 // Pure X response normalization and author-chain selection. Shared by both worlds.
 (function (root) {
   "use strict";
+  /** @typedef {import("./xThread.types").XPostContent} XPostContent */
+  /** @typedef {import("./xThread.types").XPostMedia} XPostMedia */
+  /** @typedef {import("./xThread.types").XThreadPost} XThreadPost */
+  /** @typedef {import("./xThread.types").XThreadCursor} XThreadCursor */
+  /** @typedef {import("./xThread.types").XThreadModule} XThreadModule */
+  /** @typedef {import("./xThread.types").XThreadPageData} XThreadPageData */
+  // X's answers are read as they come: each level is checked before it is
+  // used, and a value of another shape reads as absent.
+  /**
+   * `value` when it is an object whose fields can be read, else `null`. Any
+   * object can be read field by field; each field is still `unknown`.
+   * @param {unknown} value
+   * @returns {Record<string, unknown> | null}
+   */
+  const record = value => value !== null && typeof value === "object" ? /** @type {Record<string, unknown>} */ (value) : null;
+  /**
+   * The value at `keys` below `value`, read through objects only.
+   * @param {unknown} value
+   * @param {...string} keys
+   * @returns {unknown}
+   */
+  function field(value, ...keys) {
+    let current = value;
+    for (const key of keys) current = record(current)?.[key];
+    return current;
+  }
+  /**
+   * @param {unknown} value
+   * @returns {unknown[]}
+   */
+  const list = value => Array.isArray(value) ? value : [];
+  /**
+   * @param {unknown} value
+   * @returns {string}
+   */
+  const str = value => typeof value === "string" ? value : "";
+  /**
+   * @param {unknown} value
+   * @returns {string | null}
+   */
   const id = value => typeof value === "string" && /^\d+$/.test(value) ? value : null;
+  /**
+   * @param {unknown} value
+   * @returns {string | null}
+   */
   const https = value => {
+    if (typeof value !== "string") return null;
     try { const u = new URL(value); return u.protocol === "https:" ? u.href : null; }
     catch { return null; }
   };
@@ -11,24 +56,35 @@
   // unescaped (live answers of 13.10.2026, xPost.live.test.json). One
   // pass, so an escaped `&lt;` the author typed stays `&lt;`.
   const ENTITIES = { amp: "&", lt: "<", gt: ">" };
-  const unescapeText = value => value.replace(/&(amp|lt|gt);/g, (_, name) => ENTITIES[name]);
+  /** @param {string} value */
+  const unescapeText = value => value.replace(/&(amp|lt|gt);/g,
+    // The pattern captures only the names ENTITIES holds.
+    /** @param {string} _ @param {keyof typeof ENTITIES} name */ (_, name) => ENTITIES[name]);
   // The part of the legacy text X shows: the mentions a reply starts with
   // and a trailing media link fall outside `display_text_range`. GraphQL
   // counts it in code points, the syndication service in UTF-16 units, both
   // over the escaped text.
+  /**
+   * @param {unknown} text
+   * @param {unknown} range
+   * @param {"utf16" | "codepoints"} units
+   */
   function shownText(text, range, units) {
     const value = String(text || "");
     if (!Array.isArray(range) || range.length !== 2 || !range.every(Number.isInteger)) return unescapeText(value);
-    const [start, end] = range;
+    // Checked above: two integers.
+    const [start, end] = /** @type {[number, number]} */ (range);
     const shown = units === "utf16" ? value.slice(start, end) : Array.from(value).slice(start, end).join("");
     return unescapeText(shown);
   }
   /// The text a syndication answer of a post (or of its quote) shows.
+  /** @param {{ text?: unknown; display_text_range?: unknown } | null | undefined} data */
   const syndicationText = data => shownText(data?.text, data?.display_text_range, "utf16");
   // The hosts of X whose `/<handle>/status/<id>` address is a post: one rule
   // for every check, a host that merely ends in "x.com" is not X.
   const X_HOSTS = new Set(["x.com", "www.x.com", "pro.x.com", "twitter.com", "www.twitter.com"]);
   /// The address `value` parsed, when it is a page of X.
+  /** @param {unknown} value */
   function xPage(value) {
     let url;
     try { url = new URL(String(value ?? "")); } catch { return null; }
@@ -36,116 +92,175 @@
     return X_HOSTS.has(url.hostname.toLowerCase()) ? url : null;
   }
   /// Whether `value` is a page of X, any page.
+  /** @param {unknown} value */
   const isXPage = value => xPage(value) !== null;
   /// The post an address of X names, `{ handle, id }`, or `null`.
+  /**
+   * @param {unknown} value
+   * @returns {{ handle: string; id: string } | null}
+   */
   function postAddress(value) {
     const url = xPage(value);
     const match = url?.pathname.match(/^\/([^/]+)\/status\/(\d+)(?:\/|$)/);
-    return match ? { handle: match[1], id: match[2] } : null;
+    if (!match) return null;
+    // Both groups of the pattern are required, so a match has them.
+    const [, handle, postId] = /** @type {[string, string, string]} */ (match);
+    return { handle, id: postId };
   }
+  /**
+   * @param {unknown} result
+   * @param {number} [quoteDepth]
+   * @returns {XThreadPost | null}
+   */
   function post(result, quoteDepth = 0) {
-    const t = result?.tweet || result;
-    const l = t?.legacy;
-    const user = t?.core?.user_results?.result;
-    if (!l || !id(t.rest_id || l.id_str) || !id(user?.rest_id)) return null;
-    const note = t.note_tweet?.note_tweet_results?.result;
-    let text = note?.text || shownText(l.full_text, l.display_text_range, "codepoints");
-    const entities = note?.entity_set || l.entities || {};
-    for (const link of entities.urls || []) {
-      if (link.url && link.expanded_url) text = text.split(link.url).join(link.expanded_url);
+    const t = record(field(result, "tweet") || result);
+    const l = record(t?.legacy);
+    const user = record(field(t, "core", "user_results", "result"));
+    const postId = id(t?.rest_id || l?.id_str);
+    const authorId = id(user?.rest_id);
+    if (!t || !l || !user || !postId || !authorId) return null;
+    const note = record(field(t, "note_tweet", "note_tweet_results", "result"));
+    let text = str(note?.text) || shownText(l.full_text, l.display_text_range, "codepoints");
+    const entities = record(note?.entity_set || l.entities);
+    for (const link of list(entities?.urls)) {
+      const shortUrl = str(field(link, "url")), expandedUrl = str(field(link, "expanded_url"));
+      if (shortUrl && expandedUrl) text = text.split(shortUrl).join(expandedUrl);
     }
+    /** @type {XPostMedia[]} */
     const media = [];
     let incomplete = !!l.truncated && !note?.text;
     let hasVideo = false;
-    for (const m of l.extended_entities?.media || l.entities?.media || []) {
-      const isVideo = m.type === "video" || m.type === "animated_gif";
+    for (const m of list(field(l, "extended_entities", "media") || field(l, "entities", "media"))) {
+      const type = field(m, "type");
+      const isVideo = type === "video" || type === "animated_gif";
       hasVideo ||= isVideo;
-      const variants = (m.video_info?.variants || []).filter(v => v.content_type === "video/mp4" && https(v.url));
-      variants.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-      const url = https(isVideo ? variants[0]?.url : m.media_url_https);
+      const variants = list(field(m, "video_info", "variants")).filter(v => field(v, "content_type") === "video/mp4" && https(field(v, "url")));
+      variants.sort((a, b) => (Number(field(b, "bitrate")) || 0) - (Number(field(a, "bitrate")) || 0));
+      const url = https(isVideo ? field(variants[0], "url") : field(m, "media_url_https"));
       if (!url) incomplete = true;
-      else if (!media.some(existing => existing.url === url)) media.push({ url, kind: isVideo ? "video" : "image", poster: https(m.media_url_https) });
-      if (m.url) text = text.split(m.url).join("");
+      else if (!media.some(existing => existing.url === url)) media.push({ url, kind: isVideo ? "video" : "image", poster: https(field(m, "media_url_https")) });
+      const mediaLink = str(field(m, "url"));
+      if (mediaLink) text = text.split(mediaLink).join("");
     }
-    const quoted = t.quoted_status_result?.result;
+    const quoted = field(t, "quoted_status_result", "result");
     const quote = quoteDepth === 0 && quoted ? post(quoted, 1) : null;
     if (quoted && !quote || quote?.incomplete) incomplete = true;
     // The quote block names and links the quoted post; a trailing permalink
     // to it in the parent text would only repeat that link.
     if (quote) text = text.replace(new RegExp(`\\s*https?://(?:www\\.|mobile\\.)?(?:x|twitter)\\.com/[^/\\s]+/status/${quote.id}(?:[/?#]\\S*)?\\s*$`, "i"), "");
-    const mediaComplete = Array.isArray(l.extended_entities?.media)
-      && media.length === l.extended_entities.media.length;
-    return { id: t.rest_id || l.id_str, authorId: user.rest_id,
-      handle: user.core?.screen_name || user.legacy?.screen_name || "",
-      name: user.core?.name || user.legacy?.name || "",
+    const declaredMedia = field(l, "extended_entities", "media");
+    const mediaComplete = Array.isArray(declaredMedia) && media.length === declaredMedia.length;
+    return { id: postId, authorId,
+      handle: str(field(user, "core", "screen_name")) || str(field(user, "legacy", "screen_name")),
+      name: str(field(user, "core", "name")) || str(field(user, "legacy", "name")),
       parentId: id(l.in_reply_to_status_id_str), text: text.trim(), media, quote, incomplete, hasVideo, mediaComplete };
   }
   // A feed shows a repost as the post it reposts: that post, under its own ID,
   // is what the feed card and its timestamp link stand for.
+  /** @param {unknown} result */
   function feedPost(result) {
-    const t = result?.tweet || result;
-    const original = t?.legacy?.retweeted_status_result?.result || t?.retweeted_status_result?.result;
+    const t = field(result, "tweet") || result;
+    const original = field(t, "legacy", "retweeted_status_result", "result") || field(t, "retweeted_status_result", "result");
     return post(original || result);
   }
+  /**
+   * @param {unknown} data
+   * @returns {XThreadPageData}
+   */
   function page(data) {
-    const instructions = data?.data?.threaded_conversation_with_injections_v2?.instructions;
-    if (!Array.isArray(instructions) || data.errors?.length) throw new Error("X did not return a readable conversation.");
+    const instructions = field(data, "data", "threaded_conversation_with_injections_v2", "instructions");
+    if (!Array.isArray(instructions) || field(data, "errors", "length")) throw new Error("X did not return a readable conversation.");
     return walk(instructions, { normalize: post, promoted: false });
   }
   // Every `instructions` list of a feed response: its place above them differs
   // per operation (list, home, profile, search, X Pro column).
+  /**
+   * @param {unknown} value
+   * @param {number} depth
+   * @param {unknown[][]} out
+   * @returns {unknown[][]}
+   */
   function instructionLists(value, depth, out) {
-    if (!value || typeof value !== "object" || Array.isArray(value) || depth > 8) return out;
-    if (Array.isArray(value.instructions)) out.push(value.instructions);
-    for (const key of Object.keys(value)) if (key !== "instructions") instructionLists(value[key], depth + 1, out);
+    const object = record(value);
+    if (!object || Array.isArray(object) || depth > 8) return out;
+    if (Array.isArray(object.instructions)) out.push(object.instructions);
+    for (const key of Object.keys(object)) if (key !== "instructions") instructionLists(object[key], depth + 1, out);
     return out;
   }
   // The posts of a feed response (SPEC_CLIPPER.md, «Кнопка Mine в ленте X»,
   // rule 6). A shape it does not know gives no posts, never an error.
+  /** @param {unknown} data */
   function feed(data) {
-    return instructionLists(data?.data, 0, []).flatMap(list => walk(list, { normalize: feedPost, promoted: true }).posts);
+    return instructionLists(field(data, "data"), 0, []).flatMap(list => walk(list, { normalize: feedPost, promoted: true }).posts);
   }
+  /** @type {ReadonlyArray<XThreadCursor["direction"]>} */
+  const CURSOR_DIRECTIONS = ["Bottom", "ShowMore", "Top", "ShowMoreThreads"];
+  /**
+   * @param {unknown} value
+   * @returns {value is XThreadCursor["direction"]}
+   */
+  const isCursorDirection = value => CURSOR_DIRECTIONS.some(direction => direction === value);
+  /**
+   * @param {readonly unknown[]} instructions
+   * @param {{ normalize: (result: unknown) => XThreadPost | null, promoted: boolean }} options
+   * @returns {XThreadPageData}
+   */
   function walk(instructions, { normalize, promoted }) {
-    const posts = [], cursors = [], modules = [];
+    /** @type {XThreadPost[]} */
+    const posts = [];
+    /** @type {XThreadCursor[]} */
+    const cursors = [];
+    /** @type {XThreadModule[]} */
+    const modules = [];
     let unavailable = false;
-    function item(content, scope = null) {
+    /**
+     * @param {unknown} value
+     * @param {XThreadModule | null} [scope]
+     */
+    function item(value, scope = null) {
+      const content = record(value);
       if (!content) return;
       const type = content.__typename || content.itemType || content.entryType;
       if (type === "TimelineTimelineCursor" || type === "TimelineCursor") {
         const direction = content.cursorType;
-        if (["Bottom", "ShowMore", "Top", "ShowMoreThreads"].includes(direction) && typeof content.value === "string") {
+        if (isCursorDirection(direction) && typeof content.value === "string") {
           cursors.push({ value: content.value, direction, moduleId: scope?.id || null });
         }
       } else if (type === "TimelineTweet" && (promoted || !content.promotedMetadata)) {
-        const normalized = normalize(content.tweet_results?.result);
+        const normalized = normalize(field(content, "tweet_results", "result"));
         if (normalized) { posts.push(normalized); scope?.postIds.push(normalized.id); }
         else if (scope) scope.unavailable = true;
         else unavailable = true;
       } else if (content.itemContent) item(content.itemContent, scope);
       else if (content.item) item(content.item, scope);
-      else if (Array.isArray(content.items)) content.items.forEach(value => item(value, scope));
+      else if (Array.isArray(content.items)) content.items.forEach(/** @param {unknown} value */ value => item(value, scope));
     }
+    /** @param {unknown} e */
     function entry(e) {
-      const content = e.content;
-      if (Array.isArray(content?.items)) {
-        const scope = { id: e.entryId || e.entry_id || `anonymous-${modules.length}`, postIds: [], unavailable: false };
+      const content = field(e, "content");
+      if (Array.isArray(field(content, "items"))) {
+        const scope = { id: str(field(e, "entryId")) || str(field(e, "entry_id")) || `anonymous-${modules.length}`, postIds: [], unavailable: false };
         modules.push(scope);
         item(content, scope);
       } else item(content);
     }
     for (const instruction of instructions) {
-      const type = instruction.type || instruction.__typename;
-      if (type === "TimelineAddEntries") for (const e of instruction.entries || []) entry(e);
+      const type = field(instruction, "type") || field(instruction, "__typename");
+      if (type === "TimelineAddEntries") for (const e of list(field(instruction, "entries"))) entry(e);
       else if (type === "TimelineAddToModule") {
-        const scope = { id: instruction.moduleEntryId || instruction.module_entry_id || `anonymous-${modules.length}`, postIds: [], unavailable: false };
+        const scope = { id: str(field(instruction, "moduleEntryId")) || str(field(instruction, "module_entry_id")) || `anonymous-${modules.length}`, postIds: [], unavailable: false };
         modules.push(scope);
-        for (const e of instruction.moduleItems || []) item(e, scope);
-      } else if ((type === "TimelineReplaceEntry" || type === "TimelinePinEntry") && instruction.entry) entry(instruction.entry);
+        for (const e of list(field(instruction, "moduleItems"))) item(e, scope);
+      } else if ((type === "TimelineReplaceEntry" || type === "TimelinePinEntry") && field(instruction, "entry")) entry(field(instruction, "entry"));
     }
     return { posts, cursors, modules, unavailable };
   }
   // Global Bottom/ShowMore paginate the discussion, not the author chain.
   // Module continuations keep their ownership through normalization and appends.
+  /**
+   * @param {readonly XThreadPageData[]} pages
+   * @param {string} targetId
+   */
   function continuations(pages, targetId) {
     const allPosts = pages.flatMap(p => p.posts);
     const selected = select(allPosts, targetId);
@@ -159,8 +274,16 @@
     const unavailable = pages.some(p => p.unavailable || (p.modules || []).some(m => selectedModules.has(m.id) && m.unavailable));
     return { cursors: [...new Map(cursors.map(c => [c.value, c])).values()], unavailable };
   }
+  /**
+   * @param {readonly XThreadPost[]} posts
+   * @param {string} targetId
+   * @returns {{ posts: XThreadPost[]; issues: string[] }}
+   */
   function select(posts, targetId) {
-    const byId = new Map(), issues = [];
+    /** @type {Map<string, XThreadPost>} */
+    const byId = new Map();
+    /** @type {string[]} */
+    const issues = [];
     for (const p of posts) {
       const previous = byId.get(p.id);
       if (previous && (previous.parentId !== p.parentId || previous.authorId !== p.authorId)) issues.push("Conflicting post relationships.");
@@ -169,6 +292,7 @@
     const target = byId.get(targetId);
     if (!target) return { posts: [], issues: ["The requested post was not found."] };
     let first = target;
+    /** @type {Set<string>} */
     const visited = new Set();
     while (first.parentId) {
       if (visited.has(first.id)) { issues.push("Invalid reply cycle."); break; }
@@ -178,13 +302,18 @@
       if (parent.authorId !== target.authorId) break;
       first = parent;
     }
-    const selected = [], queue = [first], included = new Set();
+    /** @type {XThreadPost[]} */
+    const selected = [];
+    const queue = [first];
+    /** @type {Set<string>} */
+    const included = new Set();
+    /** @param {XThreadPost} a @param {XThreadPost} b */
     const compare = (a, b) => a.id.length - b.id.length || a.id.localeCompare(b.id);
-    while (queue.length) {
-      const p = queue.shift();
+    for (let p = queue.shift(); p; p = queue.shift()) {
       if (included.has(p.id)) continue;
       included.add(p.id); selected.push(p);
-      const children = [...byId.values()].filter(c => c.parentId === p.id && c.authorId === target.authorId);
+      const parentId = p.id;
+      const children = [...byId.values()].filter(c => c.parentId === parentId && c.authorId === target.authorId);
       queue.push(...children); queue.sort(compare);
     }
     if (selected.some(p => p.incomplete)) issues.push("Some text or media could not be loaded.");
@@ -192,8 +321,9 @@
   }
   // Name, @handle and a link to the quoted post: the first line of its block
   // (SPEC_CLIPPER.md, «Пост с цитатой как в оригинале», rule 2).
+  /** @param {XPostContent} q */
   function quoteAuthor(q) {
-    const handle = /^\w{1,15}$/.test(q.handle || "") ? q.handle : "";
+    const handle = q.handle && /^\w{1,15}$/.test(q.handle) ? q.handle : "";
     const name = String(q.name || "").replace(/\s+/g, " ").trim().replace(/[\\`*_[\]<>~]/g, "\\$&");
     // Only an underscore at the edge of a handle can open emphasis.
     const at = handle && `@${handle.replace(/^_+|_+$/g, edge => edge.replace(/_/g, "\\_"))}`;
@@ -204,7 +334,13 @@
   // Each post: its text, then its own media in post order, then the quote as
   // one blockquote with its author, text and media. Parts are joined by `***`,
   // not `---`: three dashes at the top of a body read as front matter.
+  /** @param {readonly XPostContent[]} posts */
   function compose(posts) {
+    /**
+     * @param {XPostContent} p
+     * @param {boolean} [quoted]
+     * @returns {string}
+     */
     function body(p, quoted = false) {
       const parts = [quoted ? quoteAuthor(p) : "", p.text, ...p.media.map(m => `![](${m.url})`)].filter(Boolean);
       if (p.quote) parts.push(body(p.quote, true).split("\n").map(line => `> ${line}`).join("\n"));

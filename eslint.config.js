@@ -10,7 +10,11 @@ export default tseslint.config(
       "build/",
       "node_modules/",
       "src-tauri/",
-      "extension/",
+      // Clipper build output: the popup bundle and the save core glue.
+      "extension/dist/",
+      "extension/generated/",
+      // Vendored Defuddle release, one minified third-party UMD bundle.
+      "extension/lib/defuddle.js",
       "safari-extension/",
       "scripts/",
       "target/",
@@ -53,6 +57,16 @@ export default tseslint.config(
         },
       ],
     },
+  },
+  {
+    // The clipper's service worker and content scripts are classic scripts.
+    // tsc checks every name they use against the declarations of the browser,
+    // the chrome.* API and the clipper's own globals (tsconfig.extension.json,
+    // checkJs); no-undef knows none of them and would only repeat that check
+    // badly, as typescript-eslint advises for type-checked code.
+    files: ["extension/**/*.js"],
+    languageOptions: { sourceType: "script" },
+    rules: { "no-undef": "off" },
   },
   {
     // Tab pages and tab bars are child pages of a window (SPEC_TABS.md, В22).

@@ -120,7 +120,11 @@ local-arena/
 ├── src-tauri/                  # Rust-бэкенд (Tauri)
 │   ├── src/
 │   │   ├── bin/
-│   │   │   ├── native_host.rs  # Native messaging host для расширения (stdin/stdout JSON)
+│   │   │   └── native_host.rs  # Native messaging host для расширения (stdin/stdout JSON)
+│   │   ├── native_host_tests/  # Тестовые модули помощника: cloud_tests.rs, e4_tests.rs, fake_web.rs (поддельный веб-сервер)
+│   │   ├── tooling/            # Остальные исполняемые файлы ([[bin]] в Cargo.toml)
+│   │   │   ├── mine_cli.rs     # CLI `mine` и MCP
+│   │   │   ├── clipper_runtime_install.rs, cli_runtime_install.rs # Установка помощника клиппера и CLI
 │   │   │   ├── cold_space_audit.rs # Read-only source + disposable derived acceptance CLI
 │   │   │   ├── export_bindings.rs # Rust/Specta → committed TypeScript bindings
 │   │   │   ├── localize_remote_media.rs # CLI: найти медиа, оставшееся удалённой ссылкой
@@ -151,6 +155,7 @@ local-arena/
 │   │   ├── domain/             # Чистая бизнес-логика (без Tauri, без SQLite)
 │   │   │   ├── mod.rs
 │   │   │   ├── block.rs        # Block, BlockType, frontmatter parsing
+│   │   │   ├── canvas.rs       # Какие файлы пространства называет холст Obsidian (.canvas): медиа, которым пользуется холст
 │   │   │   ├── card_association.rs # Правила связей карточек: автор, сайт, адрес (путь к mine-core)
 │   │   │   ├── channel.rs      # Channel: страница коллекции (type: channel); коллекция существует только как страница
 │   │   │   ├── collection.rs   # Collection helpers
@@ -184,7 +189,7 @@ local-arena/
 │   │   │   ├── clipper_uploads.rs # Pending uploads расширения
 │   │   │   ├── article_audio.rs # Article audio sidecar persistence
 │   │   │   ├── cloud_waits.rs  # Журнал ожиданий iCloud по сессиям (рекомендация Keep Downloaded)
-│   │   │   ├── vault_stats.rs  # Read model статистики хранилища
+│   │   │   ├── vault_stats.rs  # Число карточек места ленты: Everything или коллекция
 │   │   │   ├── files.rs        # File operations (copy, move, delete)
 │   │   │   ├── cloud_files.rs  # Одно правило iCloud: выгрузка по флагу SF_DATALESS, принадлежность по isUbiquitousItem
 │   │   │   ├── layout_copy.rs  # Копия раскладки .mine/layout.json на этом Маке: действия не ждут iCloud
@@ -224,11 +229,10 @@ local-arena/
 │   │       ├── cloud_recommendation.rs # Состояние и закрытие рекомендации Keep Downloaded
 │   │       ├── article_audio.rs # Article audio state/generate/delete
 │   │       ├── article_audio_desktop.rs # Desktop synthesis через Swift helper
-│   │       ├── vault_stats.rs  # Statistics bar read model
 │   │       ├── graph.rs        # list_graph_snapshot command
 │   │       ├── tags.rs
 │   │       ├── search.rs
-│   │       ├── vault.rs        # select_vault, get_vault_path, rebuild_index
+│   │       ├── vault.rs        # select_vault, open_vault, get_vault_path, раскладка записи, недоступное пространство
 │   │       ├── settings.rs     # Окно настроек: spaces list, orphan media (scan/promote/delete)
 │   │       └── import.rs       # list_arena_channels, import_arena_channels
 │   ├── native/                 # Нативные помощники, собираются build.rs
@@ -301,6 +305,9 @@ local-arena/
 │   ├── graph-view-audit.mjs    # Dark/light Canvas pixel/interaction/performance acceptance
 │   ├── cold-space-browser-audit.mjs # First/settled/deep cold Grid acceptance
 │   ├── edge-states-audit.mjs   # Витрина краевых состояний: варианты, контексты, обрезка, невидимый текст
+│   ├── audit-vite.mjs          # Свой Vite браузерной проверки: свободный порт, кэш зависимостей во временной папке
+│   ├── selection-menu-audit.mjs, sidebar-action-audit.mjs, detail-image-geometry-audit.mjs # Самостоятельные браузерные проверки на audit-vite.mjs
+│   ├── x-thread-smoke.mjs      # Собранное расширение: цепочка автора X во временном Chromium, сеть перехвачена
 │   ├── fetch-ytdlp.mjs         # Загрузка распакованной сборки yt-dlp (onedir, сумма SHA-256) в ресурсы бандла
 │   ├── disposable-app-home.mjs # Свой HOME в папке прогона для скриптов, которые запускают помощника
 │   ├── ytdlp-layout.mjs        # Имена каталога yt-dlp и его запускающего файла (общие со сборкой и тестами)
@@ -351,7 +358,10 @@ local-arena/
 ├── components.json             # Конфигурация shadcn/ui
 ├── vite.config.ts
 ├── settings.html               # Второй Vite-entry: окно настроек
-├── tsconfig.json
+├── tsconfig.base.json          # Опции, общие для трёх программ ниже
+├── tsconfig.json               # Всё одной программой (`bunx tsc --noEmit`): приложение, клиппер с JavaScript (checkJs), тесты
+├── tsconfig.app.json           # Страницы приложения по своей среде: без Node и chrome.*
+├── tsconfig.extension.json     # Клиппер по своей среде: попап и скрипты с JSDoc, без вендорного defuddle.js
 ├── package.json
 ├── CLAUDE.md
 ├── PRINCIPLES.md
@@ -451,7 +461,9 @@ bun run build:extension        # Обязательная отдельная с�
 bun run pack:extension         # Упаковка расширения в архив
 bun run clipper:install-host   # Установка/обновление native host бинарника
 bun run cli:install            # Сборка release и установка CLI как ~/.local/bin/mine
-bun run lint                   # Линтинг фронтенда
+bun run lint                   # Линтинг фронтенда, клиппера и тестов
+bunx tsc --noEmit              # Типы: приложение, клиппер с его JavaScript и тесты одной программой
+bun run typecheck              # То же, плюс приложение и клиппер каждый по глобалам своей среды (CI, build)
 bun run test                   # Полная проверка: Vitest + Rust workspace tests
 bun run test:frontend          # Сборка actual WASM + Vitest
 bun run test:save-core         # Native/WASM byte/error/recovery parity
@@ -462,9 +474,13 @@ bun run test:graph             # Browser Graph Canvas acceptance (requires runni
 bun run test:cold-space        # Browser cold first/settled/deep Grid acceptance (requires running dev server)
 bun run test:edge-states       # Browser edge-states showcase acceptance (requires running dev server)
 bun run test:sidebar-reorder   # Browser sidebar collection reorder gesture acceptance (requires running dev server)
+bun run test:selection-menu    # Меню Connect поиска и меню выделения Detail в Chromium без окна (свой Vite)
+bun run test:sidebar-actions   # Кнопка Connect строки бокового меню: поля 8px и ширина во всех состояниях (свой Vite)
+bun run test:detail-image-geometry # Рамка изображения Detail: подмена превью оригиналом, contain, resize (свой Vite)
+bun run test:x-thread          # Сборка расширения и цепочка автора X во временном Chromium, сеть перехвачена
 bun run test:browser           # Сам поднимает Vite и запускает все browser gates
 bun run test:native-shell      # Packaged macOS WKWebView + real Tauri invoke smoke
-bun run test:clipper-worker    # Собранное расширение/CSP/WASM в отдельном headless Chromium
+bun run test:clipper-worker    # Собранное расширение/CSP/WASM и цепочка X (x-thread-smoke) в отдельном headless Chromium
 bun run bindings:generate      # Обновить committed Rust/Specta TypeScript bindings
 bun run bindings:check         # Проверить bindings на drift
 bun run verify:core            # Bindings + lint + frontend/Rust tests

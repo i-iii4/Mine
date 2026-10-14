@@ -7,6 +7,7 @@ import {
 import { PROVISIONAL_MEDIA_ASPECT } from "./cardAspect";
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
+import { lightBlock } from "@/test/blocks";
 
 function cardKindForBlockType(blockType: LightBlock["block_type"]): LightBlock["card_kind"] {
   return blockType === "article"
@@ -20,7 +21,7 @@ function cardKindForBlockType(blockType: LightBlock["block_type"]): LightBlock["
 
 function makeBlock(overrides: Partial<LightBlock> & { block_type: LightBlock["block_type"] }): LightBlock {
   const cardKind = overrides.card_kind ?? cardKindForBlockType(overrides.block_type);
-  return {
+  return lightBlock({
     id: 1,
     slug: "test",
     card_kind: cardKind,
@@ -38,7 +39,7 @@ function makeBlock(overrides: Partial<LightBlock> & { block_type: LightBlock["bl
     media_dimensions: null,
     preview_manifest: null,
     ...overrides,
-  };
+  });
 }
 
 /// A link whose page picture came from a source of one shape, with a preview
@@ -445,6 +446,8 @@ describe("computeCardHeight — article", () => {
     preview: [20, 30, 25, 40, 35, 20, 45, 30, 25, 35, 50, 20, 30],
     titleSpace: 4,
     previewSpace: 4,
+    titleNoSpaceBefore: [false, false, false, false, false],
+    previewNoSpaceBefore: [false, false, false, false, false, false, false, false, false, false, false, false, false],
   };
 
   it("returns positive height with word widths", () => {
@@ -502,6 +505,8 @@ describe("computeCardHeight — social", () => {
     preview: [30, 28, 35, 20, 40, 18, 30],
     titleSpace: 4,
     previewSpace: 4,
+    titleNoSpaceBefore: [],
+    previewNoSpaceBefore: [false, false, false, false, false, false, false],
   };
 
   it("single-media social card uses exact media aspect ratio", () => {

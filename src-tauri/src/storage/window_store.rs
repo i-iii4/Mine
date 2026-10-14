@@ -286,7 +286,13 @@ mod tests {
         store.schedule(sample("t1"));
         store.schedule(sample("t2"));
         assert_eq!(load(dir.path()).unwrap(), Loaded::Missing, "written before the debounce");
-        std::thread::sleep(SAVE_WINDOWS_DEBOUNCE * 3);
+        // Written once the writer thread gets to it: a deadline only ends a
+        // test that would hang, it does not guess the thread's pace.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while load(dir.path()).unwrap() == Loaded::Missing {
+            assert!(std::time::Instant::now() < deadline, "the burst was never written");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         assert_eq!(load(dir.path()).unwrap(), Loaded::Windows(sample("t2")));
     }
 

@@ -84,7 +84,7 @@ handle_event(conn: &Connection, vault: &VaultLayout, event: &VaultEvent) -> Resu
 - Classic thumbnails and existence-backed derived previews are scheduled after
   the committed index generation; preview encoding is never part of the source
   transaction.
-- Startup, rebuild and focus recovery use the same thumbnail-sweep coordinator.
+- Startup, background sync and focus recovery use the same thumbnail-sweep coordinator.
   Same-vault requests coalesce, the latest switched vault replaces obsolete
   pending work, and a running sweep checks active-vault identity between jobs.
 
@@ -188,8 +188,8 @@ missed watcher event and never blocks a readable route snapshot.
 ### Route-facing read sequence
 
 The following commands use one shared helper before their final query:
-`list_grid_blocks`, `list_tags`, `list_channels`, `list_channel_previews`,
-`search`, `get_block`, `get_vault_stats`, and `list_graph_snapshot`.
+`list_grid_blocks`, `list_taxonomy_snapshot`, `list_channel_previews`,
+`search_grid_blocks`, `get_block`, and `list_graph_snapshot`.
 
 1. Capture vault identity/path without retaining `vault_state` mutex ownership.
 2. If no committed local snapshot exists, join the first reconciliation until a
@@ -338,11 +338,9 @@ enum CommandError {
 ## commands/blocks
 
 ```rust
-#[tauri::command] list_blocks(state) -> Result<Vec<IndexedBlock>, CommandError>
 #[tauri::command] list_grid_blocks(state, current_tag: Option<String>, offset: Option<usize>, limit: Option<usize>) -> Result<GridSnapshot, CommandError>
 #[tauri::command] get_block(state, slug: String) -> Result<Option<IndexedBlock>, CommandError>
 #[tauri::command] create_block(state, params: CreateBlockParams) -> Result<IndexedBlock, CommandError>
-#[tauri::command] extract_inline_media(state, params: ExtractInlineMediaParams) -> Result<IndexedBlock, InlineMediaExtractError>
 #[tauri::command] create_media_asset_card(state, params: CreateMediaAssetCardParams) -> Result<IndexedBlock, MediaAssetActionError>
 #[tauri::command] rename_media_asset(state, params: RenameMediaAssetParams) -> Result<MediaAssetMutationResult, MediaAssetActionError>
 #[tauri::command] remove_media_asset_from_card(state, params: RemoveMediaAssetFromCardParams) -> Result<MediaAssetMutationResult, MediaAssetActionError>
@@ -609,7 +607,6 @@ Boundary:
 ## commands/tags
 
 ```rust
-#[tauri::command] list_tags(state) -> Result<Vec<TagCount>, CommandError>
 #[tauri::command] add_tag(state, slug: String, tag: String) -> Result<(), CommandError>
 #[tauri::command] remove_tag(state, slug: String, tag: String) -> Result<(), CommandError>
 #[tauri::command] set_blocks_membership(state, slugs: Vec<String>, tag: String, connected: bool) -> Result<(), CommandError>
@@ -641,20 +638,19 @@ Boundary:
    без страницы, остаются на своих местах.
 4. Записать файл и переиндексировать блок.
 
-`list_tags` отдаёт счётчики только для коллекций со страницей (К9).
+Счётчики коллекций (`TagCount` в `list_taxonomy_snapshot`) есть только у коллекций со страницей (К9).
 
 ---
 
 ## commands/search
 
 ```rust
-#[tauri::command] search(state, query: String) -> Result<Vec<IndexedBlock>, CommandError>
 #[tauri::command] search_grid_blocks(state, current_tag: Option<String>, query: String, limit: Option<usize>, cursor: Option<SearchPageToken>) -> Result<SearchSnapshot, CommandError>
 ```
 
-Делегирует в `domain::search::parse_search_query` → `storage::index::search_blocks`.
-Это legacy/backend utility command. Новый пользовательский Surface Search не
-должен восстанавливать отдельный Search frontend или `Cmd+K` command palette:
+Команды `search` нет с 13.10.2026 (срез 46.10): интерфейс её не вызывал.
+Пользовательский Surface Search не должен восстанавливать отдельный Search
+frontend или `Cmd+K` command palette:
 Search Overlay идёт через `search_grid_blocks` и возвращает `SearchSnapshot`,
 не изменяя обычный Grid route. Snapshot содержит `ProjectionRevision`,
 независимый `SearchRevision` и opaque pagination cursor. Hybrid Search остаётся
@@ -662,6 +658,19 @@ Search Overlay идёт через `search_grid_blocks` и возвращает 
 fusion/rerank реализуются внутри backend SearchEngine, без нового frontend route
 или отдельной command palette. Cursor, чей projection/search revision или
 query fingerprint устарел, сбрасывается на offset zero.
+
+## Команды, удалённые как мёртвые (13.10.2026)
+
+Срез 46.10 (SPEC_DEEP_AUDIT.md, Е8.2, правило Н14): `rebuild_index`
+(индекс восстанавливается сам, поколения и пересборка при порче),
+`search` (`search_grid_blocks`), `extract_inline_media`
+(`create_media_asset_card`, SPEC_MEDIA_ASSET_ACTIONS.md),
+`organize_vault_layout` (раздел настроек `New files`), `list_blocks`
+(`list_grid_blocks`), `list_tags` и `list_channels`
+(`list_taxonomy_snapshot`), `rename_tag` (`rename_channel`),
+`set_sidebar_menu_collapsed` (заголовок пункта View ставит бэкенд,
+`window_chrome::reflect_sidebar`), `get_vault_stats` (счётчика в интерфейсе
+нет). У `create_channel` нет параметра `title`.
 
 ## Generated IPC contract
 
@@ -691,7 +700,7 @@ CommandError>` удаляла только `.md` выбранных карточ
 ## commands/channels
 
 ```rust
-#[tauri::command] list_channels(state) -> Result<Vec<ChannelDto>, CommandError>
+#[tauri::command] list_taxonomy_snapshot(state) -> Result<TaxonomySnapshot, CommandError> // collections, counts, total
 #[tauri::command] create_channel(state, tag: String) -> Result<ChannelDto, CommandError>
 #[tauri::command] delete_channel(state, tag: String) -> Result<bool, CommandError>
 ```
@@ -708,7 +717,7 @@ collection ref / имени файла.
 
 Коллекция существует только как страница (решение пользователя 10.10.2026,
 [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)).
-`list_channels` отдаёт только страницы. `reorder_channels` пишет `position`
+`list_taxonomy_snapshot` отдаёт только страницы. `reorder_channels` пишет `position`
 только в существующие страницы: элемент без страницы пропускается, файл не
 создаётся (К6). Страницу создают только `create_channel` и явные команды
 создания из К5.

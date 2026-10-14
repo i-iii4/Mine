@@ -6,17 +6,33 @@ import {
 } from "./xFeed.fixtures";
 
 const api = globalThis.MineXThread;
-function raw(id: string, parent: string | null = null, author = "7", extra = {}) {
+
+// X's GraphQL answers as the tests build them. Their shapes are X's and vary by
+// kind of entry; the tests put in ones the reader has to tell apart or skip.
+/** A post, or another result X puts in its place (a tombstone, a wrapper). */
+type RawResult = { __typename: string } & Record<string, unknown>;
+type RawItem = { itemContent: { itemType: string; tweet_results: { result: RawResult }; promotedMetadata?: object } };
+interface RawEntry { entryId?: string; content: Record<string, unknown> }
+interface RawInstruction { type: string; entries?: RawEntry[]; moduleEntryId?: string; moduleItems?: unknown[]; entry?: RawEntry }
+interface ConversationAnswer { data: { threaded_conversation_with_injections_v2: { instructions: RawInstruction[] } } }
+
+function raw(id: string, parent: string | null = null, author = "7", extra: Record<string, unknown> = {}): RawResult {
   return { __typename: "Tweet", rest_id: id, core: { user_results: { result: { rest_id: author, core: { screen_name: "author" } } } },
     legacy: { id_str: id, full_text: `post ${id}`, in_reply_to_status_id_str: parent, ...extra } };
 }
-const item = (t: ReturnType<typeof raw>) => ({ itemContent: { itemType: "TimelineTweet", tweet_results: { result: t } } });
-function response(tweets: ReturnType<typeof raw>[]) {
+const item = (t: RawResult): RawItem => ({ itemContent: { itemType: "TimelineTweet", tweet_results: { result: t } } });
+function response(tweets: RawResult[]): ConversationAnswer {
   return { data: { threaded_conversation_with_injections_v2: { instructions: [
     { type: "TimelineAddEntries", entries: tweets.map(t => ({ content: item(t) })) },
   ] } } };
 }
-const select = (tweets: ReturnType<typeof raw>[], target = "10") => api.select(api.page(response(tweets)).posts, target);
+/** The entries of the answer's first instruction, where `response` puts the posts. */
+function entries(answer: ConversationAnswer): RawEntry[] {
+  const added = answer.data.threaded_conversation_with_injections_v2.instructions[0]?.entries;
+  if (!added) throw new Error("the answer has no entries to add to");
+  return added;
+}
+const select = (tweets: RawResult[], target = "10") => api.select(api.page(response(tweets)).posts, target);
 
 describe("X author-chain contract", () => {
   it("distinguishes complete extended media from a partial entity or unresolved player", () => {
@@ -28,13 +44,13 @@ describe("X author-chain contract", () => {
   });
   it("ignores global discussion cursors when the four-part author chain is loaded", () => {
     const d = response([raw("10"), raw("11", "10"), raw("12", "11"), raw("13", "12")]);
-    d.data.threaded_conversation_with_injections_v2.instructions[0].entries.push({ content: { __typename: "TimelineTimelineCursor", cursorType: "Bottom", value: "infinite-comments" } });
+    entries(d).push({ content: { __typename: "TimelineTimelineCursor", cursorType: "Bottom", value: "infinite-comments" } });
     expect(api.continuations([api.page(d)], "10").cursors).toEqual([]);
   });
   it("loads only the selected author module and preserves ownership on append", () => {
-    const cursor = value => ({ item: { itemContent: { __typename: "TimelineTimelineCursor", cursorType: "ShowMore", value } } });
+    const cursor = (value: string) => ({ item: { itemContent: { __typename: "TimelineTimelineCursor", cursorType: "ShowMore", value } } });
     const d = response([raw("10")]);
-    d.data.threaded_conversation_with_injections_v2.instructions[0].entries.push(
+    entries(d).push(
       { entryId: "conversationthread-author", content: { items: [{ item: item(raw("11", "10")) }, cursor("author-next")] } },
       { entryId: "conversationthread-comment", content: { items: [{ item: item(raw("20", "10", "8")) }, cursor("comment-next")] } },
     );
@@ -47,7 +63,7 @@ describe("X author-chain contract", () => {
   });
   it("uses the top cursor only when an ancestor is missing", () => {
     const d = response([raw("11", "10")]);
-    d.data.threaded_conversation_with_injections_v2.instructions[0].entries.push({ content: { __typename: "TimelineTimelineCursor", cursorType: "Top", value: "ancestors" } });
+    entries(d).push({ content: { __typename: "TimelineTimelineCursor", cursorType: "Top", value: "ancestors" } });
     const p = api.page(d);
     expect(api.continuations([p], "11").cursors).toHaveLength(1);
     expect(api.continuations([p, api.page(response([raw("10")]))], "11").cursors).toEqual([]);
@@ -96,10 +112,11 @@ describe("X author-chain contract", () => {
     expect(() => api.page({ ...response([]), errors: [{ message: "denied" }] })).toThrow();
   });
   it("marks unavailable posts and ignores promoted entries", () => {
-    const d = response([raw("10")]);
-    d.data.threaded_conversation_with_injections_v2.instructions[0].entries.push({ content: { itemContent: { itemType: "TimelineTweet", tweet_results: { result: { __typename: "TweetTombstone" } } } } });
+    const post = item(raw("10"));
+    const d = response([]);
+    entries(d).push({ content: post }, { content: item({ __typename: "TweetTombstone" }) });
     expect(api.page(d).unavailable).toBe(true);
-    d.data.threaded_conversation_with_injections_v2.instructions[0].entries[0].content.itemContent.promotedMetadata = {};
+    post.itemContent.promotedMetadata = {};
     expect(api.page(d).posts).toHaveLength(0);
   });
   it("collects photos and highest-bitrate MP4 from a continuation", () => {
@@ -113,7 +130,7 @@ describe("X author-chain contract", () => {
     ] } });
     const result = select([raw("10"), t]);
     expect(api.compose(result.posts)).toContain("https://video.twimg.com/full.mp4");
-    expect(result.posts[1].media).toHaveLength(2);
+    expect(result.posts[1]?.media).toHaveLength(2);
     expect(result.issues).toEqual([]);
   });
   it("does not mistake a poster or blob for a saved video", () => {
@@ -192,7 +209,7 @@ describe("posts of an X feed response", () => {
     expect(posts.map(p => p.id)).toEqual([QUOTE_POST_ID, VIDEO_POST_ID, REPOSTED_ID]);
     expect(posts[0]).toMatchObject({ handle: "artignatev", name: "Art Ignatev", mediaComplete: true,
       quote: { id: QUOTED_ID, handle: "alexisohanian", hasVideo: true } });
-    expect(api.compose([posts[0]])).toBe([
+    expect(api.compose(posts.slice(0, 1))).toBe([
       "Main text",
       "![](https://pbs.twimg.com/media/one.jpg)",
       "![](https://pbs.twimg.com/media/two.jpg)",
@@ -207,8 +224,10 @@ describe("posts of an X feed response", () => {
   });
   it("keeps a promoted post a feed shows: its Mine button saves it", () => {
     const d = listResponse([quotePost()]);
-    const first = d.data.list.tweets_timeline.timeline.instructions[1].entries?.[0].content as { itemContent: Record<string, unknown> };
-    first.itemContent.promotedMetadata = { advertiser_results: {} };
+    const added = d.data.list.tweets_timeline.timeline.instructions[1];
+    const first = added?.entries?.[0]?.content;
+    if (!first || !("itemContent" in first)) throw new Error("the list has no post entry");
+    Object.assign(first.itemContent, { promotedMetadata: { advertiser_results: {} } });
     expect(api.feed(d).map(p => p.id)).toEqual([QUOTE_POST_ID]);
   });
   it("gives no posts for a response it cannot read, without an error", () => {

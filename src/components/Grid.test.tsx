@@ -33,6 +33,7 @@ import {
 } from "@/lib/collectionHover";
 import type { ComponentProps } from "react";
 import type { DeleteBlockMedia, DeleteBlocksPlan, LightBlock } from "@/types";
+import { lightBlock } from "@/test/blocks";
 
 // These constants must match the ones in Grid.tsx. If Grid.tsx changes
 // them, this test must be updated in lockstep — but since the test's
@@ -44,7 +45,7 @@ const TEST_GAP = 32;
 // ─── Test fixtures ──────────────────────────────────────────────────────────
 
 function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock {
-  return {
+  return lightBlock({
     id,
     slug: `block-${id}`,
     block_type: "article",
@@ -63,15 +64,15 @@ function makeBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock 
     preview_manifest: null,
     collections: [],
     feed_playback: null,
-    tags: ["test"],
     ...overrides,
-  };
+  });
 }
 
 /// A video as a capture saves it: its file, its poster, no words of its own.
 function makeVideoBlock(id: number, overrides: Partial<LightBlock> = {}): LightBlock {
   return makeBlock(id, {
     block_type: "video",
+    card_kind: "media",
     title: null,
     body: "",
     media_file: `clip-${id}.mp4`,
@@ -686,7 +687,7 @@ describe("Grid — no collapse after add / revisit", () => {
     document.documentElement.setAttribute("data-theme", "dark");
 
     const blocks = Array.from({ length: 12 }, (_, index) => makeBlock(8200 + index));
-    blocks.forEach((block, index) => setBlockHeight(8200 + index, 200 + index));
+    blocks.forEach((_block, index) => setBlockHeight(8200 + index, 200 + index));
 
     render(
       <Grid {...BASE_PROPS} blocks={blocks} currentTag="fade-on" scrollEdgeFade />,
@@ -1176,6 +1177,7 @@ describe("Grid — no collapse after add / revisit", () => {
     ];
     const picture = (id: number, [width, height]: [number, number]) => makeBlock(id, {
       block_type: "image",
+      card_kind: "media",
       title: null,
       body: "",
       media_file: `p${id}.jpg`,
@@ -2726,7 +2728,7 @@ describe("Grid — no collapse after add / revisit", () => {
     await flushAsync();
 
     // Simulate a clipper save: new block id=5 added to the channel at
-    // the FRONT of the array (newest-first sort, as listBlocks() returns).
+    // the FRONT of the array (newest-first sort, as the feed read returns).
     // Placing it at the front means its (possibly stale/fallback) height
     // affects every subsequent block's column placement — which is what
     // makes the stale-layout bug visible.

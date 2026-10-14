@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { LightBlock } from "@/types";
 import { feedMediaCandidatesForBlock } from "./feedMediaCandidates";
+import { lightBlock } from "@/test/blocks";
 
 function block(overrides: Partial<LightBlock> = {}): LightBlock {
-  return {
+  return lightBlock({
     id: 1,
     slug: "alpha",
     card_kind: "media",
@@ -25,7 +26,7 @@ function block(overrides: Partial<LightBlock> = {}): LightBlock {
     feed_playback: null,
     search_match: null,
     ...overrides,
-  };
+  });
 }
 
 describe("feedMediaCandidatesForBlock", () => {

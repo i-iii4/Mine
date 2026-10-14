@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::time::Instant;
 use tauri::{AppHandle, Manager, State};
 
-use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::space_registry::{
@@ -29,7 +28,7 @@ use crate::domain::vault::{VaultLayout, VaultWriteLayout};
 use crate::storage::clipper_uploads;
 use crate::storage::index;
 use crate::storage::search_engine;
-use crate::storage::{db, files, reconcile, thumbnails};
+use crate::storage::{db, files, thumbnails};
 use crate::util::append_startup_trace;
 use crate::watcher::handler::{self, ScanResult};
 use crate::watcher::watch;
@@ -621,36 +620,6 @@ pub fn set_vault_write_layout(
     Ok(dto)
 }
 
-/// Create the standard folders in the current space and adopt them for writes.
-#[tauri::command(async)]
-pub fn organize_vault_layout(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    vault_id: Option<String>,
-) -> Result<VaultWriteLayoutDto, CommandError> {
-    let _write = crate::storage::source_mutation::begin_write()
-        .map_err(|error| CommandError::Internal(error.to_string()))?;
-    let standard = VaultWriteLayout::standard();
-    let space = chosen_space(&state, vault_id.as_deref())?;
-    {
-        let vault_state = space
-            .vault_state
-            .lock()
-            .map_err(|_| CommandError::Internal("vault state mutex poisoned".into()))?;
-        let vs = vault_state.as_ref().ok_or(CommandError::NoVault)?;
-        for folder in [&standard.cards, &standard.media, &standard.collections] {
-            std::fs::create_dir_all(vs.vault.root().join(folder))
-                .map_err(|e| CommandError::Internal(format!("failed to create {folder}: {e}")))?;
-        }
-    }
-    set_vault_write_layout(
-        app,
-        state,
-        VaultWriteLayoutDto::from(&standard),
-        Some(space.vault_id().to_string()),
-    )
-}
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct VaultWriteLayoutDto {
     pub cards: String,
@@ -792,90 +761,6 @@ pub fn start_vault_sync(webview: tauri::Webview, app: AppHandle, state: State<'_
     };
 
     start_background_sync(app, path)
-}
-
-/// Rebuild the index from scratch: drop all indexed data, re-scan vault files.
-/// Use when the index is corrupted or out of sync with the filesystem.
-async fn rebuild_index_unannounced(
-    webview: tauri::Webview,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<ScanResult, CommandError> {
-    let vault = tab_layout(&state, &webview)?;
-    let app_for_task = app.clone();
-    let result =
-        tauri::async_runtime::spawn_blocking(move || -> Result<ScanResult, CommandError> {
-            // Force every source through the canonical reconciler without deleting
-            // the last-good projection first. A fatal or per-file failure therefore
-            // preserves readable Grid/Search/Detail state and remains retryable.
-            let app_state = app_for_task.state::<AppState>();
-            let owned = app_state
-                .spaces
-                .by_root(vault.root())
-                .ok_or(CommandError::NoVault)?
-                .layout()?;
-            let attempt = |layout: &VaultLayout| -> anyhow::Result<_> {
-                let conn = db::open_or_create(&layout.index_db_path())?;
-                let report = rebuild_index_projection(&conn, layout)?;
-                search_engine::warm_search_index(&conn, None)?;
-                Ok(report)
-            };
-            let (selected, report) = match attempt(&owned) {
-                Ok(report) => (owned.clone(), report),
-                Err(error) if db::is_index_corruption(&error) => {
-                    let recovered = db::recover_vault_index_after_error(owned.clone(), &error)
-                        .map_err(|error| CommandError::Internal(error.to_string()))?;
-                    let report = attempt(&recovered)?;
-                    (recovered, report)
-                }
-                Err(error) => return Err(error.into()),
-            };
-            super::state::adopt_recovered_projection(&app_for_task, &owned, selected.clone(), ())?;
-            start_thumbnail_sweep(&app_for_task, &app_state, selected.clone())?;
-            schedule_preview_reconcile(
-                &app_for_task,
-                selected,
-                std::iter::empty::<String>(),
-                true,
-            )?;
-            Ok(ScanResult {
-                indexed: report.upserted.len(),
-                errors: report.errors.len(),
-            })
-        })
-        .await
-        .map_err(|error| {
-            CommandError::Internal(format!("rebuild_index task join failed: {error}"))
-        })??;
-
-    log::info!(
-        "index rebuilt: {} indexed, {} errors",
-        result.indexed,
-        result.errors
-    );
-
-    Ok(result)
-}
-
-/// [`rebuild_index_unannounced`], then the other tabs of the space hear of the
-/// change (SPEC_TABS.md, В15).
-#[tauri::command]
-pub async fn rebuild_index(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>) -> Result<ScanResult, CommandError> {
-    let announcing = super::effects::ChangeNews::before(&webview);
-    let outcome = rebuild_index_unannounced(webview, app, state).await;
-    if outcome.is_ok() {
-        announcing.send(Vec::new());
-    }
-    outcome
-}
-
-fn rebuild_index_projection(
-    conn: &Connection,
-    vault: &VaultLayout,
-) -> anyhow::Result<reconcile::ReconcileReport> {
-    db::set_index_ready(conn, false)?;
-    conn.execute("DELETE FROM source_index_state", [])?;
-    Ok(reconcile::reconcile_vault(conn, vault)?)
 }
 
 /// Re-verify the thumb cache against current media dependencies and
@@ -2677,67 +2562,6 @@ mod tests {
     }
 
     #[test]
-    fn rebuild_failure_preserves_last_good_index_projection() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = VaultLayout::new(dir.path().to_path_buf());
-        let source_path = vault.block_path("Stable");
-        std::fs::write(
-            &source_path,
-            "---\ntype: article\nsaved_at: 2026-07-10T00:00:00Z\n---\nold body",
-        )
-        .unwrap();
-        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
-        reconcile::reconcile_vault(&conn, &vault).unwrap();
-        std::fs::write(
-            &source_path,
-            "---\ntype: article\nsaved_at: 2026-07-10T00:00:00Z\n---\nnew body",
-        )
-        .unwrap();
-        conn.execute_batch(
-            "CREATE TRIGGER reject_rebuild_update
-             BEFORE UPDATE ON blocks
-             WHEN new.slug = 'Stable'
-             BEGIN
-                 SELECT RAISE(ABORT, 'injected rebuild failure');
-             END;",
-        )
-        .unwrap();
-
-        let report = rebuild_index_projection(&conn, &vault).unwrap();
-
-        assert_eq!(report.errors.len(), 1);
-        // A pass that finished with an error in one note publishes the index
-        // ready and names the note (SPEC_DEEP_AUDIT.md, Н6); the note keeps
-        // its last good row.
-        assert!(db::index_is_ready(&conn).unwrap());
-        let indexed = index::get_block(&conn, "Stable").unwrap().unwrap();
-        assert_eq!(indexed.body.trim(), "old body");
-    }
-
-    #[test]
-    fn reliability_explicit_rebuild_marks_incomplete_before_clear_failure() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = VaultLayout::new(dir.path().to_path_buf());
-        std::fs::write(vault.block_path("Stable"), "stable source").unwrap();
-        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
-        reconcile::reconcile_vault(&conn, &vault).unwrap();
-        assert!(db::index_is_ready(&conn).unwrap());
-        conn.execute_batch(
-            "CREATE TRIGGER reject_state_clear BEFORE DELETE ON source_index_state
-             BEGIN SELECT RAISE(ABORT, 'injected clear failure'); END;",
-        )
-        .unwrap();
-        let error = rebuild_index_projection(&conn, &vault).unwrap_err();
-        assert!(error.downcast_ref::<rusqlite::Error>().is_some());
-        assert!(!db::is_index_corruption(&error));
-        assert!(!db::index_is_ready(&conn).unwrap());
-        assert_eq!(
-            std::fs::read_to_string(vault.block_path("Stable")).unwrap(),
-            "stable source"
-        );
-    }
-
-    #[test]
     fn generation_selection_preserves_legacy_sqlite_files() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("vault");
@@ -3355,11 +3179,11 @@ mod space_root_watch_tests {
         // В2.1 in a world of tabs: a space nobody shows any more is never
         // reopened after a move nor reported lost.
         let dir = tempfile::tempdir().unwrap();
-        let spaces = SpaceHost::with_grace(Duration::from_millis(10));
+        let spaces = SpaceHost::with_manual_grace();
         let (lease, _, moved) = open_space_a(&spaces, dir.path());
         let space = std::sync::Arc::clone(lease.space());
         drop(lease);
-        std::thread::sleep(Duration::from_millis(80));
+        spaces.elapse_grace();
         let host = RootHost::new(Located::Moved { from: String::new(), path: moved });
 
         assert_eq!(check_space_root(&host, &space), RootWatch::Retired);

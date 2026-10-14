@@ -193,18 +193,26 @@ fn short_requests_answer_while_a_save_runs() {
 /// Е4.2, Н9: the open folder chooser does not hold the other requests.
 #[test]
 fn the_status_answers_while_the_folder_chooser_is_open() {
-    let mut helper = Helper::start("/bin/sleep 4\necho 'execution error: User canceled. (-128)' >&2\nexit 1");
+    // The chooser stays open until the test closes it. Only `/bin` is on the
+    // path: the marker is written by the shell itself.
+    let mut helper = Helper::start(
+        ": > \"$TMPDIR/chooser-open\"\nwhile [ ! -f \"$TMPDIR/chooser-close\" ]; do /bin/sleep 0.05; done\necho 'execution error: User canceled. (-128)' >&2\nexit 1",
+    );
     let space = helper.space();
 
     helper.send(serde_json::json!({ "action": "pick_vault_folder", "_messageId": 1 }));
-    std::thread::sleep(Duration::from_millis(300));
-    let started = Instant::now();
+    // The chooser is open once its stand-in has started.
+    let open_by = Instant::now() + Duration::from_secs(30);
+    while !helper.root.join("chooser-open").exists() {
+        assert!(Instant::now() < open_by, "the folder chooser never opened");
+        std::thread::sleep(Duration::from_millis(5));
+    }
     helper.send(serde_json::json!({ "action": "get_status", "_messageId": 2, "vault_path": space }));
-    let status = helper.answer(2, Duration::from_secs(3));
+    let status = helper.answer(2, Duration::from_secs(30));
     assert_eq!(status["ok"], true, "{status}");
-    assert!(started.elapsed() < Duration::from_secs(3));
 
-    let picked = helper.answer(1, Duration::from_secs(10));
+    std::fs::write(helper.root.join("chooser-close"), "").unwrap();
+    let picked = helper.answer(1, Duration::from_secs(30));
     assert_eq!(picked["cancelled"], true, "{picked}");
 }
 

@@ -10,11 +10,10 @@ SearchOverlay/CollectionPicker и меню выделения Detail на вым
 неподвижность поля поиска и выбор канала после focus/hover со вторым одинаковым
 абзацем. Пользовательские хранилище и профиль браузера не используются.
 
-Запуск из корня проекта: в одном терминале
-`bun run dev -- --host 127.0.0.1 --port 1427 --strictPort`, в другом —
-`node scripts/selection-menu-audit.mjs`. Для установленного Chrome вместо
-браузера Playwright: `MINE_AUDIT_BROWSER_CHANNEL=chrome node scripts/selection-menu-audit.mjs`.
-После проверки остановить тестовый Vite. Команда не запускает установленный Mine.
+Запуск из корня проекта: `bun run test:selection-menu`. Проверка сама поднимает
+свой Vite на свободном порту и Chromium без окна, после прогона гасит оба.
+Меню Connect открывается командой строки результата под указателем: у превью
+справа команд нет (SPEC_CARD_STATES.md, С10). Команда не запускает установленный Mine.
 
 Related documents: [SPEC_SEARCH.md](SPEC_SEARCH.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_GRID.md](SPEC_GRID.md) | [ARCHITECTURE.md](ARCHITECTURE.md)
 

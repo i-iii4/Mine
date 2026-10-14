@@ -1,11 +1,19 @@
+// Registry check (SPEC_SYSTEM_RELIABILITY.md, INV-01): compares the
+// reliability registry with the sources. It runs no test. It checks that every
+// requirement heading exists, that every named command runs the tests it is
+// named with, that every test imports, reads or launches each path bound to it
+// (scripts/test-reach.mjs), and that every changed file is bound that way.
+// Whether the tests pass is the business of their own commands.
+import { existsSync, readFileSync } from 'node:fs';
 import { lstat, mkdtemp, readFile, readdir, readlink, realpath, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
-import { join, resolve, sep } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { sha256, fixturePath } from './reliability-source-guard.mjs';
 import { prepareUpdateChannel } from './prepare-update-channel.mjs';
-import { verifyExtensionMirrors } from './verify-extension-mirrors.mjs';
+import { createReach } from './test-reach.mjs';
+import { SAFARI_MIRRORS, verifyExtensionMirrors } from './verify-extension-mirrors.mjs';
 
 export const repository = fileURLToPath(new URL('../', import.meta.url));
 export const registryPath = fileURLToPath(new URL('./fixtures/reliability/registry.json', import.meta.url));
@@ -59,16 +67,99 @@ export async function artifactDigest(path) {
   return sha256(JSON.stringify(entries));
 }
 
+/** Heading lines of a Markdown document, outside fenced code. */
+export function markdownHeadings(source) {
+  const headings = new Set();
+  let fence = null;
+  for (const line of source.split(/\r?\n/)) {
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (marker) {
+      if (!fence) fence = marker[1];
+      else if (marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = null;
+      continue;
+    }
+    if (!fence && /^#{1,6} \S/.test(line)) headings.add(line.trimEnd());
+  }
+  return headings;
+}
+
+/** `path#heading`, where the heading is one whole heading line of the file:
+ *  a word that merely occurs in it, or the start of a heading, is not one. */
 async function validateReference(root, reference) {
-  requireCondition(typeof reference === 'string', 'Missing requirement reference');
+  requireCondition(typeof reference === 'string' && reference.includes('#'), `Missing requirement reference: ${reference}`);
   const separator = reference.indexOf('#');
   const path = reference.slice(0, separator);
   const heading = reference.slice(separator + 1);
   const source = await readFile(await localFile(root, path), 'utf8');
-  requireCondition(heading && source.includes(heading), `Requirement heading missing: ${reference}`);
+  requireCondition(markdownHeadings(source).has(heading), `Requirement heading missing: ${reference}`);
 }
 
-export async function validateRegistry(registry, root = repository) {
+/** The one format of the registry file: two-space JSON and a final newline. */
+export function verifyRegistryFormat(text) {
+  requireCondition(text === `${JSON.stringify(JSON.parse(text), null, 2)}\n`,
+    'registry.json is not in its format: JSON.stringify(registry, null, 2) and a final newline');
+}
+
+// Files whose change changes what the product or its checks do. Styles,
+// pages and shell scripts count as much as code (SPEC_AUDIT_FIXES.md, А10.4).
+const BEHAVIOR = /\.(?:rs|tsx?|mjs|js|json|toml|swift|css|html|sh)$/;
+export function isBehaviorPath(path) {
+  return BEHAVIOR.test(path) && !/(?:^|\/)(?:package-lock|bun\.lock)/.test(path);
+}
+
+/**
+ * Every claim of the change coverage holds: the command runs each test, and
+ * each path is imported, read or launched by one of the tests itself. A path
+ * cannot be covered by naming it next to a test that never touches it, and a
+ * directory cannot cover files added to it later.
+ */
+async function validateChangeCoverage(registry, root, packageJson, reach) {
+  requireCondition(registry.changeCoverage?.length > 0, 'No contract coverage for changes');
+  const problems = [];
+  for (const [index, coverage] of registry.changeCoverage.entries()) {
+    const label = `changeCoverage[${index}] ${coverage.requirement}`;
+    try { await validateReference(root, coverage.requirement); } catch (error) { problems.push(`${label}: ${error.message}`); }
+    if (!packageJson.scripts[coverage.command]) problems.push(`${label}: no package.json script ${coverage.command}`);
+    if (!(coverage.paths?.length > 0)) problems.push(`${label}: no paths`);
+    if (!(coverage.tests?.length > 0)) problems.push(`${label}: no tests`);
+    const running = [];
+    for (const test of coverage.tests ?? []) {
+      try { await localFile(root, test); } catch { problems.push(`${label}: test does not exist: ${test}`); continue; }
+      let runs = false;
+      try { runs = packageJson.scripts[coverage.command] !== undefined && reach.commandRuns(coverage.command, test); } catch (error) { problems.push(`${label}: ${error.message}`); continue; }
+      if (runs) running.push(test);
+      else problems.push(`${label}: ${coverage.command} does not run ${test}`);
+    }
+    for (const path of coverage.paths ?? []) {
+      if (path.endsWith('/')) { problems.push(`${label}: a directory would cover files no test touches: ${path}`); continue; }
+      try { await localFile(root, path); } catch { problems.push(`${label}: path does not exist: ${path}`); continue; }
+      if (!running.some(test => reach.executes(test, path))) problems.push(`${label}: no test of the entry imports, reads or launches ${path}`);
+    }
+  }
+  requireCondition(problems.length === 0, `Registry claims that do not hold (${problems.length}):\n${problems.slice(0, 50).join('\n')}${problems.length > 50 ? `\n… and ${problems.length - 50} more` : ''}`);
+}
+
+/**
+ * A case label of the reliability fixture is only a name. The fixture is
+ * covered when the registry binds it to a test that reads it and checks each
+ * required case in its own branch, a match arm or a switch case on the label,
+ * the way storage/db.rs, reliability_fixture_cases_have_their_behavior, does
+ * (SPEC_DEEP_AUDIT.md, Е7.8). Whether the branches pass is that test's command.
+ */
+async function verifyFixtureBehavior(registry, root, reach, requiredCases) {
+  const fixture = relative(root, fixturePath).split(sep).join('/');
+  const tests = [...new Set(registry.changeCoverage.filter(entry => entry.paths.includes(fixture))
+    .flatMap(entry => entry.tests).filter(test => reach.executes(test, fixture)))];
+  requireCondition(tests.length > 0, `The reliability fixture is bound to no test that reads it: ${fixture}`);
+  const sources = await Promise.all(tests.map(async test => readFile(await localFile(root, test), 'utf8')));
+  const escape = id => id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const unchecked = requiredCases.filter(id => !sources.some(source =>
+    new RegExp(`"${escape(id)}"\\s*(?:=>|\\|)|case\\s+(["'])${escape(id)}\\1\\s*:`).test(source)));
+  requireCondition(unchecked.length === 0,
+    `Fixture cases no test bound to ${fixture} checks in a branch of their own (${tests.join(', ')}): ${unchecked.join(', ')}`);
+}
+
+export async function validateRegistry(registry, root = repository, reach = createReach(root)) {
   requireCondition(registry.schemaVersion === 1, 'Unknown registry schema');
   exactIds(registry.principles, PRINCIPLES, 'principles');
   exactIds(registry.acceptance, ACCEPTANCE, 'acceptance');
@@ -91,13 +182,8 @@ export async function validateRegistry(registry, root = repository) {
     'missing-attachment', 'unavailable-cloud-file'];
   requireCondition(fixture.version === registry.fixtureVersion && fixture.synthetic === true &&
     requiredCases.every(id => fixture.cases.includes(id)), 'Versioned fixture coverage incomplete');
-  requireCondition(registry.changeCoverage?.length > 0, 'No contract coverage for changes');
-  for (const coverage of registry.changeCoverage) {
-    requireCondition(coverage.paths?.length > 0, 'Empty change coverage');
-    await validateReference(root, coverage.requirement);
-    for (const test of coverage.tests ?? []) await localFile(root, test);
-    requireCondition(coverage.tests?.length > 0 && packageJson.scripts[coverage.command], 'Change coverage lacks an executable check');
-  }
+  await validateChangeCoverage(registry, root, packageJson, reach);
+  await verifyFixtureBehavior(registry, root, reach, requiredCases);
   return registry;
 }
 
@@ -117,16 +203,34 @@ export async function verifyModuleBoundaries(root = repository) {
   await visit(resolve(root, 'src-tauri/src/storage'), /(?:crate|super)\s*::\s*commands\b|use\s+crate\s*::\s*\{[^;]*\bcommands\b/);
 }
 
-export function verifyChangeCoverage(registry, paths) {
-  // Styles, pages and shell scripts change what the product does as much as
-  // code does (SPEC_AUDIT_FIXES.md, А10.4).
-  const behaviorPaths = paths.filter(path => /\.(?:rs|tsx?|mjs|js|json|toml|swift|css|html|sh)$/.test(path) &&
-    !/(?:^|\/)(?:package-lock|bun\.lock)/.test(path));
-  for (const path of behaviorPaths) {
-    requireCondition(registry.changeCoverage.some(item => item.paths.some(candidate =>
-      candidate.endsWith('/') ? path.startsWith(candidate) : path === candidate)),
-    `Behavior change has no requirement and check: ${path}`);
+/**
+ * Every changed behavior file is named by the change coverage, whose claims
+ * `validateRegistry` holds true. Three kinds of change have nothing a test
+ * could execute, and are counted apart: a deleted file (the files that used
+ * it changed too and are checked), a file that only declares (TypeScript
+ * types, Rust `mod` and `use`: the compilers check it), and a Safari mirror,
+ * which this check compares byte for byte with its bound source.
+ */
+export function verifyChangeCoverage(registry, paths, {
+  exists = path => existsSync(join(repository, path)),
+  declarationsOnly = path => path.endsWith('.d.ts'),
+  explain = null,
+} = {}) {
+  const listed = new Set(registry.changeCoverage.flatMap(item => item.paths));
+  const mirrors = new Map(SAFARI_MIRRORS.map(item => [item.mirror, item.source]));
+  const result = { checked: [], deleted: [], declarations: [], mirrors: [] };
+  const unbound = [];
+  for (const path of paths.filter(isBehaviorPath)) {
+    if (!exists(path)) result.deleted.push(path);
+    else if (listed.has(path)) result.checked.push(path);
+    else if (mirrors.has(path) && listed.has(mirrors.get(path))) result.mirrors.push(path);
+    else if (declarationsOnly(path)) result.declarations.push(path);
+    else unbound.push(path);
   }
+  const notes = unbound.length && explain ? explain(unbound) : new Map();
+  requireCondition(unbound.length === 0, `Changed files with no requirement and no test that imports, reads or launches them (${unbound.length}):\n${
+    unbound.map(path => (notes.get(path) ? `${path}: ${notes.get(path)}` : path)).join('\n')}`);
+  return result;
 }
 
 /**
@@ -181,7 +285,7 @@ function verifyReportArtifacts(report, artifacts, id) {
 
 /** Release evidence is accepted only for current bytes and a clean commit. */
 export async function verifyRelease(registry, root = repository, options = {}) {
-  await validateRegistry(registry, root);
+  await validateRegistry(registry, root, options.reach);
   const incomplete = [...registry.principles, ...registry.acceptance, ...registry.levels].filter(item => item.result !== 'passed');
   requireCondition(!incomplete.length, `Release blocked. Missing successful evidence: ${incomplete.map(item => `${item.id} (${item.result})`).join(', ')}`);
   const release = registry.release;
@@ -263,17 +367,37 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     const registryArgument = process.argv.indexOf('--registry');
     requireCondition(registryArgument < 0 || process.argv[registryArgument + 1], 'Missing --registry path');
-    const registry = JSON.parse(await readFile(registryArgument < 0 ? registryPath : resolve(process.argv[registryArgument + 1]), 'utf8'));
-    await validateRegistry(registry); await verifyModuleBoundaries();
+    const text = await readFile(registryArgument < 0 ? registryPath : resolve(process.argv[registryArgument + 1]), 'utf8');
+    verifyRegistryFormat(text);
+    const registry = JSON.parse(text);
+    const reach = createReach(repository);
+    await validateRegistry(registry, repository, reach); await verifyModuleBoundaries();
     if (process.argv.includes('--release')) await verifyRelease(registry);
     const baseArgument = process.argv.indexOf('--base');
     requireCondition(baseArgument < 0 || process.argv[baseArgument + 1], 'Missing --base revision');
     const requestedBase = baseArgument < 0 ? undefined : process.argv[baseArgument + 1];
     const paths = changedPaths(repository, changeBase(repository, requestedBase));
-    verifyChangeCoverage(registry, paths);
+    // For a file that fails, name the tests that do execute it, or say there is none.
+    const explain = unbound => {
+      const listed = spawnSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], { cwd: repository, encoding: 'utf8' });
+      const scripts = Object.keys(JSON.parse(readFileSync(join(repository, 'package.json'), 'utf8')).scripts);
+      const found = reach.testsExecuting(unbound, listed.stdout.split('\n').filter(Boolean), scripts.filter(name => name.startsWith('test:')));
+      return new Map(unbound.map(path => [path, found.get(path)?.length
+        ? `executed by ${found.get(path).map(item => `${item.test} (${item.command})`).join(', ')}`
+        : 'no test executes it']));
+    };
+    const { checked, deleted, declarations, mirrors } = verifyChangeCoverage(registry, paths,
+      { declarationsOnly: path => reach.declarationsOnly(path), explain });
     const notice = automaticBaseNotice(paths, requestedBase);
     if (notice) console.warn(notice);
     await verifyExtensionMirrors();
-    console.log(process.argv.includes('--release') ? 'Release evidence verified.' : 'Registry and module boundaries verified. Release acceptance remains separate.');
+    // Say what was compared, and that no test ran: the tests pass or fail in
+    // their own commands (SPEC_DEEP_AUDIT.md, Е7.7).
+    console.log(process.argv.includes('--release')
+      ? 'Release evidence matches the registry. No test was run.'
+      : [`Registry check passed, no test was run: ${checked.length} changed files are bound to a requirement and to a test that imports, reads or launches them.`,
+        mirrors.length ? `${mirrors.length} Safari mirrors equal their bound sources.` : '',
+        declarations.length ? `${declarations.length} changed files only declare types or modules: the compilers check them.` : '',
+        deleted.length ? `${deleted.length} deleted files have nothing to bind.` : ''].filter(Boolean).join('\n'));
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

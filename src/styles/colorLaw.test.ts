@@ -32,7 +32,8 @@ function ruleTokens(opening: RegExp): Tokens {
   const start = match.index + match[0].length;
   const body = css.slice(start, css.indexOf("}", start));
   const tokens: Tokens = {};
-  for (const [, name, value] of body.matchAll(/(--[\w-]+):\s*([^;]+);/g)) tokens[name] = value.trim();
+  // Both groups are required by the pattern, so every match carries them.
+  for (const [, name, value] of body.matchAll(/(--[\w-]+):\s*([^;]+);/g)) tokens[name!] = value!.trim();
   return tokens;
 }
 

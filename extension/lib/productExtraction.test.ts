@@ -2,15 +2,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
 import { afterAll, describe, expect, it } from "vitest";
-import type { ArticleData } from "../popup/lib/messaging";
 import "./productExtraction.js";
 
 type Converter = (html: string, url: string) => string;
-const { extractProductArticle } = (globalThis as unknown as {
-  MineProductExtraction: {
-    extractProductArticle: (doc: Document, pageUrl: string, toMarkdown: Converter) => ArticleData | null;
-  };
-}).MineProductExtraction;
+const { extractProductArticle } = globalThis.MineProductExtraction;
 
 const pageUrl = "https://shop.example/products/meridian";
 const product = { "@type": "Product", name: "Meridian", url: pageUrl };
@@ -86,7 +81,7 @@ describe("product extraction", () => {
     const gallery = '<div data-product-single-media-wrapper data-product-media-type-image data-media-id="one"><picture><img alt="View" src="/images/small.jpg" srcset="/images/small.jpg 320w, /images/large.jpg?variant=blue&amp;token=signed 1600w"></picture></div>';
     const output = extractedHtml(fixture(root(gallery)));
     expect(output.images).toHaveLength(1);
-    expect(output.images[0].src).toBe("https://shop.example/images/large.jpg?variant=blue&token=signed");
+    expect(output.images[0]?.src).toBe("https://shop.example/images/large.jpg?variant=blue&token=signed");
   });
 
   it("accepts Product in arrays and graph with supported page identities", () => {
@@ -177,7 +172,7 @@ describe("product extraction", () => {
   it("preserves literal commas in the selected srcset URL", () => {
     const gallery = '<div data-product-single-media-wrapper data-product-media-type-image><img src="/small.jpg" srcset="/small.jpg 320w, /large.jpg?crop=0,0,1200,800&amp;token=signed 1600w"></div>';
     const output = extractedHtml(fixture(root(gallery)));
-    expect(output.images[0].src).toBe("https://shop.example/large.jpg?crop=0,0,1200,800&token=signed");
+    expect(output.images[0]?.src).toBe("https://shop.example/large.jpg?crop=0,0,1200,800&token=signed");
   });
 
   it("rejects matching Product cards nested in non-product page regions", () => {
@@ -198,12 +193,12 @@ describe("product extraction", () => {
 
   it("uses a picture source without a media condition", () => {
     const gallery = '<div data-product-single-media-wrapper data-product-media-type-image><picture><source srcset="/medium.webp 640w, /large.webp 1600w"><img src="/small.jpg"></picture></div>';
-    expect(extractedHtml(fixture(root(gallery))).images[0].src).toBe("https://shop.example/large.webp");
+    expect(extractedHtml(fixture(root(gallery))).images[0]?.src).toBe("https://shop.example/large.webp");
   });
 
   it("uses lazy data-src instead of a placeholder", () => {
     const gallery = '<div data-product-single-media-wrapper data-product-media-type-image><img src="data:image/gif;base64,AA==" data-src="/actual.jpg"></div>';
-    expect(extractedHtml(fixture(root(gallery))).images[0].src).toBe("https://shop.example/actual.jpg");
+    expect(extractedHtml(fixture(root(gallery))).images[0]?.src).toBe("https://shop.example/actual.jpg");
   });
 
   it("removes active attributes and unsafe nested content from descriptions", () => {

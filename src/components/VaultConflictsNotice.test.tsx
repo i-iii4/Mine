@@ -112,10 +112,10 @@ describe("the version rows", () => {
       return `${date.toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric" })}, ${date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`;
     };
     expect(versionLabel(NOTE.current, true)).toBe(`In the folder · ${time("2026-10-11T08:00:00Z")}`);
-    expect(versionLabel(NOTE.versions[0], false)).toBe(
+    expect(versionLabel(NOTE.versions[0]!, false)).toBe(
       `Hidden version · Anna’s MacBook Pro · ${time("2026-10-10T12:54:00Z")}`,
     );
-    expect(versionLabel(NOTE.versions[1], false)).toBe(
+    expect(versionLabel(NOTE.versions[1]!, false)).toBe(
       `Hidden version · Unknown device · ${time("2026-10-09T07:05:00Z")}`,
     );
     expect(versionLabel({ token: "t", modified: null, device: null }, false)).toBe("Hidden version · Unknown device");
@@ -216,7 +216,7 @@ describe("the window", () => {
     await openWindow([NOTE]);
     await waitFor(() => expect(group(NOTE.path)).toBeInTheDocument());
 
-    fireEvent.click(within(group(NOTE.path)).getAllByRole("button", { name: "Keep" })[1]);
+    fireEvent.click(within(group(NOTE.path)).getAllByRole("button", { name: "Keep" })[1]!);
 
     expect(resolveMock).toHaveBeenCalledWith(
       "Cards/Note.md",
@@ -239,7 +239,7 @@ describe("the window", () => {
     await waitFor(() => expect(group(OTHER.path)).toBeInTheDocument());
 
     listMock.mockResolvedValue([OTHER]);
-    fireEvent.click(within(group(NOTE.path)).getAllByRole("button", { name: "Keep" })[0]);
+    fireEvent.click(within(group(NOTE.path)).getAllByRole("button", { name: "Keep" })[0]!);
     await waitFor(() => expect(document.querySelector(`[data-conflict-group="${NOTE.path}"]`)).toBeNull());
     expect(resolveMock).toHaveBeenLastCalledWith(
       "Cards/Note.md",
@@ -304,7 +304,7 @@ describe("the window", () => {
     await waitFor(() => expect(group(NOTE.path)).toBeInTheDocument());
 
     listMock.mockResolvedValue([]);
-    fireEvent.click(within(group(NOTE.path)).getAllByRole("button", { name: "Keep" })[0]);
+    fireEvent.click(within(group(NOTE.path)).getAllByRole("button", { name: "Keep" })[0]!);
 
     await waitFor(() => expect(group(NOTE.path)).toHaveTextContent(
       "The other versions stayed next to the note as separate notes: the Trash refused them.",

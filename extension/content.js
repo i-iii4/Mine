@@ -5,6 +5,168 @@
 // Uses Defuddle (https://github.com/kepano/defuddle) for article extraction
 // and Markdown conversion. Twitter/X threads use a specialized extractor.
 
+/** @typedef {import("./popup/lib/messaging").ArticleData} ArticleData */
+/** @typedef {import("./popup/lib/messaging").PageMetadata} PageMetadata */
+/** @typedef {import("./popup/lib/messaging").CaptureDocument} CaptureDocument */
+/** @typedef {import("./popup/lib/messaging").EmbeddedVideoPreview} EmbeddedVideoPreview */
+/** @typedef {import("./popup/lib/messaging").TwitterLightboxResult} TwitterLightboxResult */
+/** @typedef {import("./pageGlobals.types").PageImageInfo} PageImageInfo */
+/** @typedef {import("./pageGlobals.types").MineContentHelpers} MineContentHelpers */
+/** @typedef {import("./pageGlobals.types").MinePageCrop} MinePageCrop */
+/** @typedef {import("./lib/xThread.types").XPostContent} XPostContent */
+/** @typedef {import("./lib/xThread.types").XPostMedia} XPostMedia */
+/** @typedef {import("./lib/twitterTweetContent.types").TweetContentParts} TweetContentParts */
+/** @typedef {import("./lib/twitterTweetContent.types").TweetQuoteGroup} TweetQuoteGroup */
+/** @typedef {import("./lib/twitterTweetContent.types").TweetQuoteText} TweetQuoteText */
+/** @typedef {import("./lib/xLongformArticleExtraction.types").XLongformResult} XLongformResult */
+/** @typedef {import("./lib/feedButtonSettings.types").FeedButtonSettings} FeedButtonSettings */
+/** @typedef {import("./lib/youtubeSource.types").YoutubeSource} YoutubeSource */
+
+/**
+ * The metadata of the page before its type is detected.
+ * @typedef {Omit<PageMetadata, "detectedType" | "isArticle">} PageMetadataDraft
+ */
+
+/**
+ * A request this script answers: from background, or from the clipper
+ * window through `chrome.tabs.sendMessage`.
+ * @typedef {{ action: "startCropOverlay", cropId?: string | null }
+ *   | { action: "getImageInfo", src: string }
+ *   | { action: "prepareViewportCapture" | "finishViewportCapture" | "extractMetadata" | "extractArticle"
+ *       | "extractArticleAsync" | "detectTwitterLightboxImage" }} ContentRequest
+ */
+
+/**
+ * What background answers the requests of this script; each action fills
+ * its own fields.
+ * @typedef {object} BackgroundAnswer
+ * @property {boolean} [ok]
+ * @property {unknown} [data] `readXSyndication`: the service's answer for the post, as it came.
+ * @property {XPostContent | null} [post] `readXPost`: the post as the page's feeds delivered it.
+ * @property {string} [mode] `showOverlayInThisTab`, `restoreOpenClip`: how the clipper opens.
+ * @property {string} [error]
+ */
+
+/**
+ * The author chain background collects from the page's own world.
+ * @typedef {object} CollectedThread
+ * @property {XPostContent[]} [posts]
+ * @property {string[]} [issues]
+ */
+
+/**
+ * One medium of a post in X's syndication answer; only the fields read here.
+ * @typedef {object} XSyndicationMedia
+ * @property {string} [type] `photo`, `video` or `animated_gif`.
+ * @property {string} [media_url_https] The picture, or the poster of a video.
+ * @property {string} [url] The short link the post's text carries for the medium.
+ * @property {{ variants?: XSyndicationVariant[] }} [video_info]
+ */
+
+/**
+ * @typedef {object} XSyndicationVariant
+ * @property {string} [content_type]
+ * @property {number | null} [bitrate]
+ * @property {string} url
+ */
+
+/**
+ * A post in X's syndication answer; only the fields read here.
+ * @typedef {object} XSyndicationPost
+ * @property {unknown} [text]
+ * @property {unknown} [display_text_range]
+ * @property {string} [id_str]
+ * @property {{ screen_name?: string, name?: string }} [user]
+ * @property {XSyndicationMedia[]} [mediaDetails]
+ * @property {XSyndicationPost} [quoted_tweet]
+ */
+
+/**
+ * A medium read from the syndication answer.
+ * @typedef {object} SyndicationMediaEntry
+ * @property {"image" | "video"} kind
+ * @property {string} url
+ * @property {string | null} poster
+ * @property {string | null} shortUrl The short link to strip from the post's text.
+ * @property {string} [mediaType] The syndication type of a video: `video` or `animated_gif`.
+ */
+
+/**
+ * A quoted post: as the card shows it, or as syndication gives it with the
+ * details of its media.
+ * @typedef {TweetQuoteGroup & { mediaDetails?: SyndicationMediaEntry[] }} QuotedPost
+ */
+
+/**
+ * The post's syndication reading: its media, its quote and its text.
+ * @typedef {object} TweetDetails
+ * @property {SyndicationMediaEntry[]} mediaDetails
+ * @property {QuotedPost | null} quotedTweet
+ * @property {string} text
+ */
+
+/**
+ * A service entry of a DID document; only the fields read here.
+ * @typedef {object} DidService
+ * @property {string} [type]
+ * @property {string} [id]
+ * @property {string} [serviceEndpoint]
+ */
+
+/**
+ * An embed of a Bluesky post: pictures, or a video's playlist and poster.
+ * @typedef {object} BlueskyEmbed
+ * @property {{ fullsize?: string }[]} [images]
+ * @property {string} [playlist]
+ * @property {string} [thumbnail]
+ * @property {string} [cid]
+ * @property {BlueskyEmbed} [media] The post's own media when it also quotes a post.
+ */
+
+/**
+ * A post of Bluesky's `getPostThread` answer; only the fields read here.
+ * @typedef {object} BlueskyPost
+ * @property {{ text?: string }} [record]
+ * @property {{ handle?: string }} [author]
+ * @property {BlueskyEmbed} [embed]
+ */
+
+/**
+ * A medium of Instagram's media info answer.
+ * @typedef {object} InstagramMediaItem
+ * @property {{ text?: string } | null} [caption]
+ * @property {{ username?: string }} [user]
+ * @property {InstagramMediaItem[]} [carousel_media] The slides of a carousel.
+ * @property {{ candidates?: { url: string }[] }} [image_versions2]
+ * @property {{ url: string }[]} [video_versions]
+ */
+
+/**
+ * A medium of a post, as Bluesky and Instagram posts list them here.
+ * @typedef {object} PostMediaEntry
+ * @property {"image" | "video"} kind
+ * @property {string} url
+ * @property {string | null} [poster]
+ */
+
+/**
+ * The clip a Mine button of a feed opens the clipper with.
+ * @typedef {{ metadata: PageMetadata, article: ArticleData }} PreloadedClip
+ */
+
+/**
+ * The crop under way: the clipper's name for it, and how its clipper
+ * cancels it.
+ * @typedef {object} ActiveCrop
+ * @property {string | null} id
+ * @property {() => void} cancel
+ */
+
+/**
+ * The crop's result for the clipper.
+ * @typedef {{ status: "done", dataUrl: string } | { status: "cancelled", error?: string }} CropResult
+ */
+
 (() => {
   "use strict";
 
@@ -21,6 +183,7 @@
   const CONTENT_SCRIPT_STARTED = "mine-content-script-started";
   const contentScript = {};
   const extensionAtStart = extensionNow();
+  /** @type {(() => void)[]} */
   const stopsOnRetire = [];
   let retired = false;
 
@@ -35,6 +198,7 @@
   }
 
   /// `stop` takes something of this script off the page when it retires.
+  /** @param {() => void} stop */
   function onRetire(stop) {
     stopsOnRetire.push(stop);
   }
@@ -90,6 +254,7 @@
     });
   }
 
+  /** @param {CaptureDocument} snapshot */
   function assertCaptureDocument(snapshot) {
     const current = captureDocumentSnapshot();
     if (current.documentUrl !== snapshot.documentUrl || current.captureGeneration !== snapshot.captureGeneration) {
@@ -97,12 +262,17 @@
     }
   }
 
+  /**
+   * @param {unknown} url
+   * @returns {YoutubeSource | null}
+   */
   function youtubeSource(url) {
     return globalThis.MineYoutubeSource?.parse(url) || null;
   }
 
   // ── Metadata extraction ─────────────────────────────────────────────────
 
+  /** @param {string} name */
   function getMeta(name) {
     const el =
       document.querySelector(`meta[property="${name}"]`) ||
@@ -116,6 +286,7 @@
   }
 
   // Metadata is only a candidate source, never authority over a concrete post.
+  /** @param {string} pageUrl */
   function capturePageSource(pageUrl) {
     const youtube = youtubeSource(pageUrl);
     if (youtube) return youtube.sourceUrl;
@@ -149,11 +320,19 @@
     return "/favicon.ico";
   }
 
-  /** A YouTube page poster belongs to its current address, regardless of stale metadata. */
+  /**
+   * A YouTube page poster belongs to its current address, regardless of stale metadata.
+   * @param {string | null} imageUrl
+   * @param {string} pageUrl
+   */
   function upgradeYoutubeThumbnail(imageUrl, pageUrl) {
     return youtubeSource(pageUrl)?.posterUrl || imageUrl || null;
   }
 
+  /**
+   * @param {string | null | undefined} url
+   * @returns {string | null}
+   */
   function absoluteUrl(url) {
     if (!url) return null;
     try {
@@ -165,6 +344,7 @@
 
   const MINE_OWNED_NODE_SELECTOR = "[data-mine-clipper-overlay], [data-la-clip], [data-mine-x-post]";
 
+  /** @param {ParentNode | null | undefined} root */
   function removeMineOwnedNodes(root) {
     if (!root?.querySelectorAll) return;
     for (const node of root.querySelectorAll(MINE_OWNED_NODE_SELECTOR)) {
@@ -173,7 +353,9 @@
   }
 
   function createExtractionDocument() {
-    const clonedDocument = document.cloneNode(true);
+    // A deep clone of a document is a document; `cloneNode` is declared on
+    // Node and answers Node for every kind of node.
+    const clonedDocument = /** @type {Document} */ (document.cloneNode(true));
     removeMineOwnedNodes(clonedDocument);
     rootSanitizeExtractionDocument(clonedDocument);
 
@@ -187,6 +369,7 @@
     return clonedDocument;
   }
 
+  /** @param {Document} extractionDocument */
   function rootSanitizeExtractionDocument(extractionDocument) {
     const sanitizer = globalThis.MineExtractionDocumentSanitizer;
     if (!sanitizer?.sanitizeExtractionDocument) return;
@@ -200,15 +383,21 @@
     return body.innerText || body.textContent || "";
   }
 
+  /** @param {string | null | undefined} url */
   function youtubeIdFromUrl(url) {
     return youtubeSource(absoluteUrl(url))?.videoId || null;
   }
 
+  /** @param {string | null | undefined} url */
   function youtubePosterFromUrl(url) {
     const id = youtubeIdFromUrl(url);
     return id ? `https://i.ytimg.com/vi/${id}/maxresdefault.jpg` : null;
   }
 
+  /**
+   * @param {EmbeddedVideoPreview[]} out
+   * @param {EmbeddedVideoPreview | null | undefined} video
+   */
   function pushUniqueVideo(out, video) {
     if (!video || (!video.src && !video.poster)) return;
     const key = video.src || video.poster;
@@ -216,10 +405,17 @@
     out.push(video);
   }
 
+  /** @param {string | null | undefined} url */
   function isInlineVideoUrl(url) {
     return /\.(mp4|webm|m4v|mov)(\?|#|$)/i.test(url || "");
   }
 
+  /**
+   * @param {EmbeddedVideoPreview[]} out
+   * @param {string | null | undefined} src
+   * @param {string | null | undefined} poster
+   * @param {string} title
+   */
   function pushVideoUrlPreview(out, src, poster, title) {
     const absoluteSrc = absoluteUrl(src);
     if (!absoluteSrc || !isInlineVideoUrl(absoluteSrc)) return;
@@ -230,8 +426,10 @@
     });
   }
 
+  /** @type {Promise<boolean> | null} */
   let defuddleLoadPromise = null;
 
+  /** @returns {Promise<boolean>} */
   async function ensureDefuddleLoaded() {
     if (typeof Defuddle !== "undefined") return true;
     if (defuddleLoadPromise) return defuddleLoadPromise;
@@ -243,7 +441,7 @@
       }
       chrome.runtime.sendMessage(
         { target: "background", action: "ensureDefuddle" },
-        (response) => {
+        (/** @type {BackgroundAnswer | undefined} */ response) => {
           if (chrome.runtime.lastError) {
             resolve(false);
             return;
@@ -259,12 +457,17 @@
   }
 
   /// `scope`: the post the clip is of, when the page shows many (an X feed).
+  /**
+   * @param {ParentNode | null} [scope]
+   * @returns {EmbeddedVideoPreview[]}
+   */
   function extractEmbeddedVideoPreviews(scope = null) {
     const youtube = youtubeSource(window.location.href);
     if (youtube) return [{ src: youtube.embedUrl, poster: youtube.posterUrl, title: document.title }];
     const root = scope || document.querySelector("article") || document.body;
     if (!root) return [];
 
+    /** @type {EmbeddedVideoPreview[]} */
     const out = [];
     for (const video of root.querySelectorAll("video")) {
       const rawSrc = absoluteUrl(
@@ -307,6 +510,7 @@
     return out;
   }
 
+  /** @param {HTMLVideoElement | null} video */
   function drawVideoFrameDataUrl(video) {
     if (!video || !video.videoWidth || !video.videoHeight) return null;
     const maxWidth = 640;
@@ -324,6 +528,10 @@
     }
   }
 
+  /**
+   * @param {HTMLVideoElement | null} video
+   * @returns {Promise<string | null>}
+   */
   function captureVideoFrameDataUrl(video, timeoutMs = 350) {
     if (!video) return Promise.resolve(null);
     const readyFrame = drawVideoFrameDataUrl(video);
@@ -334,6 +542,7 @@
 
     return new Promise((resolve) => {
       let done = false;
+      /** @param {string | null} value */
       const finish = (value) => {
         if (done) return;
         done = true;
@@ -352,6 +561,10 @@
     });
   }
 
+  /**
+   * @param {string | null | undefined} src
+   * @returns {Promise<string | null>}
+   */
   function captureVideoUrlFrameDataUrl(src, targetTime = 0.2, timeoutMs = 650) {
     const absoluteSrc = absoluteUrl(src);
     if (!absoluteSrc || !isInlineVideoUrl(absoluteSrc)) return Promise.resolve(null);
@@ -360,6 +573,7 @@
       const video = document.createElement("video");
       let done = false;
       let waitingForSeek = false;
+      /** @param {string | null} value */
       const finish = (value) => {
         if (done) return;
         done = true;
@@ -406,6 +620,11 @@
     });
   }
 
+  /**
+   * @param {Element | null} article
+   * @param {SyndicationMediaEntry[] | null} videoMedia
+   * @returns {Promise<(string | null)[]>}
+   */
   async function captureArticleVideoPosters(article, videoMedia, maxCount = 3) {
     if (!article) return [];
     const domVideos = Array.from(article.querySelectorAll("video")).slice(0, maxCount);
@@ -418,16 +637,19 @@
 
       const candidate = media[index];
       if (!candidate || candidate.mediaType !== "animated_gif") return null;
-      const currentTime = Number.isFinite(domVideo?.currentTime) ? domVideo.currentTime : 0.2;
+      const currentTime = domVideo && Number.isFinite(domVideo.currentTime) ? domVideo.currentTime : 0.2;
       return captureVideoUrlFrameDataUrl(candidate.url, currentTime);
     }));
     return posters;
   }
 
+  /** @returns {PageMetadataDraft} */
   function extractMetadata() {
     const snapshot = captureDocumentSnapshot();
     const sel = window.getSelection();
-    const selectionText = sel.toString().trim();
+    // `getSelection` answers null only for a document without a browsing
+    // context: nothing is selected there.
+    const selectionText = sel ? sel.toString().trim() : "";
 
     const pageUrl = snapshot.documentUrl;
     let title = youtubeSource(pageUrl) ? document.title || ""
@@ -457,8 +679,19 @@
     };
   }
 
+  /**
+   * The metadata of the page with its type detected.
+   * @returns {PageMetadata}
+   */
+  function extractDetectedMetadata() {
+    const meta = extractMetadata();
+    const detectedType = detectType(meta);
+    return { ...meta, detectedType, isArticle: isArticlePage(meta) };
+  }
+
   // ── Auto-detection heuristic ────────────────────────────────────────────
 
+  /** @param {string} url */
   function isVideoUrl(url) {
     if (youtubeSource(url)) return true;
     try {
@@ -468,6 +701,7 @@
     } catch { return false; }
   }
 
+  /** @param {PageMetadataDraft} meta */
   function isArticlePage(meta) {
     let signals = 0;
     if (document.querySelector("article")) signals++;
@@ -477,6 +711,7 @@
     return signals >= 2;
   }
 
+  /** @param {PageMetadataDraft} meta */
   function detectType(meta) {
     // Selection takes priority
     if (meta.selection.length > 0) return "selection";
@@ -498,26 +733,41 @@
 
   /// The post an address of X names, by the one rule of lib/xThread.js: a
   /// host that merely ends in "x.com" is not X (SPEC_DEEP_AUDIT.md, Е3.15).
+  /** @param {string | null | undefined} url */
   function xPostAddress(url) {
     return globalThis.MineXThread?.postAddress?.(url) ?? null;
   }
 
+  /** @param {string | null | undefined} url */
   function isTwitterUrl(url) {
     return xPostAddress(url) !== null;
   }
 
+  /**
+   * @param {Element} article
+   * @returns {TweetContentParts}
+   */
   function extractTweetContentParts(article) {
     return window.MineTwitterTweetContent?.extractTweetContentParts?.(article) || {
       mainText: "",
       media: [],
+      hasVideo: false,
       quotes: [],
     };
   }
 
+  /**
+   * @param {string} mainText
+   * @param {readonly TweetQuoteText[]} quotes
+   */
   function composeTweetText(mainText, quotes) {
     return window.MineTwitterTweetContent?.composeTweetText?.(mainText, quotes) || String(mainText || "").trim();
   }
 
+  /**
+   * @param {string} domText
+   * @param {string} apiText
+   */
   function preferCompleteTweetText(domText, apiText) {
     return window.MineTweetTextCompletion?.preferCompleteTweetText?.(domText, apiText)
       ?? String(domText || "").trim();
@@ -526,6 +776,10 @@
   /// The text a syndication answer shows, without the links of its media: a
   /// reply's leading mentions left out and what X escapes decoded
   /// (lib/xThread.js, SPEC_DEEP_AUDIT.md, Е3.6).
+  /**
+   * @param {XSyndicationPost} data
+   * @param {readonly SyndicationMediaEntry[]} mediaDetails
+   */
   function cleanSyndicationText(data, mediaDetails) {
     let cleaned = globalThis.MineXThread?.syndicationText?.(data) ?? String(data?.text || "");
     for (const media of mediaDetails || []) {
@@ -534,6 +788,10 @@
     return cleaned.trim();
   }
 
+  /**
+   * @param {XSyndicationMedia} media
+   * @returns {SyndicationMediaEntry | null}
+   */
   function syndicationMediaEntry(media) {
     if (media.type === "photo" && media.media_url_https) {
       return {
@@ -545,12 +803,15 @@
     }
     if (media.type === "video" || media.type === "animated_gif") {
       const variants = (media.video_info?.variants || [])
-        .filter((variant) => variant.content_type === "video/mp4" && variant.bitrate != null)
+        .filter(
+          /** @returns {variant is XSyndicationVariant & { bitrate: number }} */
+          (variant) => variant.content_type === "video/mp4" && variant.bitrate != null)
         .sort((a, b) => b.bitrate - a.bitrate);
-      if (variants.length > 0) {
+      const best = variants[0];
+      if (best) {
         return {
           kind: "video",
-          url: variants[0].url,
+          url: best.url,
           poster: media.media_url_https || null,
           mediaType: media.type,
           shortUrl: media.url || null,
@@ -568,19 +829,31 @@
    * so a request from this page fails on CORS (SPEC_CLIPPER.md, «Кнопка Mine
    * в ленте X», rule 6, 13.10.2026).
    */
+  /**
+   * @param {string} tweetId
+   * @returns {Promise<TweetDetails>}
+   */
   async function fetchTweetDetails(tweetId) {
     try {
       const reply = await askBackground({ action: "readXSyndication", tweetId: String(tweetId) });
-      if (!reply?.ok) return { mediaDetails: [], quotedTweet: null, text: "" };
-      const data = reply.data;
+      if (!reply?.ok || typeof reply.data !== "object" || reply.data === null) {
+        return { mediaDetails: [], quotedTweet: null, text: "" };
+      }
+      // Background hands the service's JSON object over as it came. Every
+      // field is read optionally, and a field of another shape throws into
+      // the catch below, which answers no details.
+      const data = /** @type {XSyndicationPost} */ (reply.data);
+      /** @type {SyndicationMediaEntry[]} */
       const media = [];
       for (const m of (data.mediaDetails || [])) {
         const entry = syndicationMediaEntry(m);
         if (entry) media.push(entry);
       }
 
+      /** @type {QuotedPost | null} */
       let quotedTweet = null;
       if (data.quoted_tweet) {
+        /** @type {SyndicationMediaEntry[]} */
         const quoteMedia = [];
         for (const m of (data.quoted_tweet.mediaDetails || [])) {
           const entry = syndicationMediaEntry(m);
@@ -611,19 +884,28 @@
 
   /// The clip of collected X posts: the body every X path composes alike
   /// (SPEC_CLIPPER.md, «Пост с цитатой как в оригинале»).
+  /**
+   * @param {XPostContent[]} posts
+   * @param {string} authorHandle
+   * @returns {ArticleData}
+   */
   function articleFromXPosts(posts, authorHandle) {
     const content = globalThis.MineXThread.compose(posts);
+    /** @type {EmbeddedVideoPreview[]} */
     const embeddedVideos = [];
     for (const part of posts) {
       for (const media of [...part.media, ...(part.quote?.media || [])]) {
         if (media.kind === "video") pushVideoUrlPreview(embeddedVideos, media.url, media.poster, "Tweet video preview");
       }
     }
-    const title = posts[0].text.replace(/\n/g, " ").slice(0, 80) || `@${authorHandle}`;
-    return { title, content, twitterPosts: posts, byline: `@${authorHandle}`, excerpt: posts[0].text.slice(0, 200),
+    // Every caller brings at least one post.
+    const leadText = posts[0]?.text ?? "";
+    const title = leadText.replace(/\n/g, " ").slice(0, 80) || `@${authorHandle}`;
+    return { title, content, twitterPosts: posts, byline: `@${authorHandle}`, excerpt: leadText.slice(0, 200),
       embeddedVideos, threadPostCount: posts.length };
   }
 
+  /** @returns {Promise<ArticleData | null>} */
   async function extractTwitterThread() {
     const url = window.location.href;
 
@@ -633,10 +915,12 @@
     const authorHandle = address.handle;
     const tweetId = address.id;
 
+    /** @type {CollectedThread | null} */
     const snapshot = await new Promise(resolve => {
-      chrome.runtime.sendMessage({ target: "background", action: "collectXThread", tweetId }, result => {
-        resolve(chrome.runtime.lastError ? null : result);
-      });
+      chrome.runtime.sendMessage({ target: "background", action: "collectXThread", tweetId },
+        (/** @type {CollectedThread | undefined} */ result) => {
+          resolve(chrome.runtime.lastError ? null : result ?? null);
+        });
     });
     if (window.location.href !== url) return null;
     if (snapshot?.posts?.length) {
@@ -664,6 +948,16 @@
   /// `videoScope` narrows the page-wide video scan to this card. With
   /// `requireApi` the card alone is not enough (SPEC_CLIPPER.md, «Кнопка Mine
   /// в ленте X», rule 6): a feed cuts long text and keeps video behind `blob:`.
+  /**
+   * @param {Element} targetArticle
+   * @param {string} tweetId
+   * @param {string} authorHandle
+   * @param {object} options
+   * @param {string} options.postUrl
+   * @param {ParentNode | null} [options.videoScope]
+   * @param {boolean} [options.requireApi]
+   * @returns {Promise<ArticleData | null>}
+   */
   async function extractTwitterPostFromArticle(targetArticle, tweetId, authorHandle, { postUrl, videoScope = null, requireApi = false }) {
     // Fetch media from syndication API (includes videos that DOM can't capture).
     // Quote tweets stay inside the parent tweet body; they are not thread items.
@@ -678,6 +972,7 @@
     // Prefer API media (complete — photos + GIFs + videos).
     // Fallback to DOM media if API returned nothing.
     const finalMedia = apiMedia.length > 0 ? apiMedia : contentParts.media;
+    /** @type {QuotedPost[]} */
     const quotes = apiQuotedTweet ? [apiQuotedTweet] : contentParts.quotes;
     // X collapses a long post behind "Show more" and keeps only the visible
     // half in the markup, so DOM text can stop mid-word. The syndication API
@@ -685,7 +980,8 @@
     const mainText = preferCompleteTweetText(contentParts.mainText, apiTargetText);
     const text = composeTweetText(mainText, quotes);
     if (!text && finalMedia.length === 0 && !contentParts.hasVideo && !quotes.some(quote => quote.hasVideo)) return null;
-    const tweets = [{ text, mainText, quotes, media: finalMedia, hasVideo: contentParts.hasVideo }];
+    const target = { text, mainText, quotes, media: finalMedia, hasVideo: contentParts.hasVideo };
+    const tweets = [target];
 
     // For X/Twitter animated media, the API thumbnail can differ from the
     // actual frame the user sees in the page. Prefer a preview-only snapshot
@@ -705,8 +1001,9 @@
       }
     }
 
-    const firstText = (tweets[0]?.text || "").replace(/\n/g, " ").trim();
+    const firstText = (target.text || "").replace(/\n/g, " ").trim();
     const tweetTitle = firstText.slice(0, 80) || `@${authorHandle}`;
+    /** @type {EmbeddedVideoPreview[]} */
     const embeddedVideos = [];
     for (const media of apiMediaDetails) {
       if (media.kind === "video") {
@@ -737,7 +1034,7 @@
     // has video the anonymous paths cannot see: the API answers with a
     // tombstone for age-restricted posts, and the DOM only carries a `blob:`
     // URL. Flag it so the save path can ask the authenticated route.
-    const hasPlayerInPage = !!tweets[0].hasVideo;
+    const hasPlayerInPage = !!target.hasVideo;
     // A preview entry with no `src` is exactly the case this path exists for:
     // the player runs off a blob: URL, so the entry carries a poster and
     // nothing fetchable. Counting entries would treat that as resolved.
@@ -746,16 +1043,23 @@
       || apiMediaDetails.some((media) => media.kind === "video");
     const needsAuthenticatedVideo = hasPlayerInPage && !hasResolvedVideo;
 
-    const target = tweets[0];
-    const quote = target.quotes?.length === 1 && target.quotes[0].tweetId ? target.quotes[0] : null;
+    // A single quote with its own post id stands as the post's quote; the
+    // post's text is then its own, without the quote's blockquote.
+    const onlyQuote = target.quotes.length === 1 ? target.quotes[0] : undefined;
+    /** @type {(urls: readonly string[], details?: readonly SyndicationMediaEntry[]) => XPostMedia[]} */
     const structuredMedia = (urls, details = []) => urls.map(src => ({ url: src,
       kind: isInlineVideoUrl(src) ? "video" : "image",
       poster: details.find(media => media.url === src)?.poster || null }));
+    /** @type {XPostContent | null} */
+    const quote = onlyQuote?.tweetId
+      ? { id: onlyQuote.tweetId, handle: onlyQuote.handle || "", name: onlyQuote.name || "", text: onlyQuote.text,
+        media: structuredMedia(onlyQuote.media || [], onlyQuote.mediaDetails), hasVideo: !!onlyQuote.hasVideo }
+      : null;
+    /** @type {XPostContent[]} */
     const twitterPosts = [{ id: tweetId, text: quote ? target.mainText : target.text,
       media: structuredMedia(target.media || [], apiMediaDetails),
       hasVideo: hasPlayerInPage,
-      quote: quote ? { id: quote.tweetId, handle: quote.handle || "", name: quote.name || "", text: quote.text,
-        media: structuredMedia(quote.media || [], quote.mediaDetails), hasVideo: !!quote.hasVideo } : null }];
+      quote }];
     return {
       title: tweetTitle,
       twitterPosts,
@@ -772,6 +1076,7 @@
     };
   }
 
+  /** @returns {XLongformResult | null} */
   function extractXLongformArticle() {
     const extractor = window.MineXLongformArticleExtraction;
     if (!extractor?.extractXLongformArticle) return null;
@@ -788,6 +1093,7 @@
 
   // ── Bluesky post extraction ────────────────────────────────────────────
 
+  /** @param {string | null | undefined} url */
   function isBlueskyPostUrl(url) {
     return /(?:^|\/\/)(?:[\w.-]*\.)?bsky\.app\/profile\/[^/]+\/post\/[\w]+/i.test(url ?? "");
   }
@@ -797,13 +1103,15 @@
   /// The playlist path carries both halves of the blob's address —
   /// `/watch/<did>/<cid>/playlist.m3u8` — so it is preferred over the embed's
   /// own fields, which describe the view rather than the record.
+  /** @param {unknown} playlist */
   function parseBlueskyPlaylist(playlist) {
     const match = String(playlist ?? "").match(
       /\/watch\/([^/]+)\/([^/]+)\/playlist\.m3u8/i,
     );
-    if (!match) return null;
+    const [, did, cid] = match ?? [];
+    if (did === undefined || cid === undefined) return null;
     try {
-      return { did: decodeURIComponent(match[1]), cid: decodeURIComponent(match[2]) };
+      return { did: decodeURIComponent(did), cid: decodeURIComponent(cid) };
     } catch {
       return null;
     }
@@ -814,6 +1122,10 @@
   /// `did:plc` identifiers are looked up in the PLC directory; `did:web` ones
   /// resolve against the domain itself. Both return a DID document whose
   /// AT Protocol service entry names the host.
+  /**
+   * @param {string} did
+   * @returns {Promise<string | null>}
+   */
   async function resolveBlueskyPds(did) {
     let documentUrl;
     if (did.startsWith("did:plc:")) {
@@ -827,10 +1139,13 @@
 
     const resp = await fetch(documentUrl);
     if (!resp.ok) return null;
+    /** @type {unknown} */
     const services = (await resp.json())?.service;
     if (!Array.isArray(services)) return null;
 
-    const pds = services.find(
+    // The entries of a DID document's `service` list; every field is read
+    // optionally and checked as a string below.
+    const pds = /** @type {(DidService | null | undefined)[]} */ (services).find(
       (service) =>
         service?.type === "AtprotoPersonalDataServer" ||
         String(service?.id ?? "").endsWith("#atproto_pds"),
@@ -844,6 +1159,11 @@
   /// Returns null when the address cannot be determined, leaving the caller to
   /// fall back to the poster rather than emitting a link that would download a
   /// playlist instead of a video.
+  /**
+   * @param {BlueskyEmbed} embed
+   * @param {string} authorDid
+   * @returns {Promise<string | null>}
+   */
   async function resolveBlueskyVideoBlobUrl(embed, authorDid) {
     const parsed = parseBlueskyPlaylist(embed?.playlist);
     const did = parsed?.did || authorDid;
@@ -865,12 +1185,13 @@
   /// scraping: `public.api.bsky.app` is a documented, unauthenticated interface
   /// that returns the post record with direct CDN links to its media. That also
   /// makes it stable — there is no private endpoint to break.
+  /** @returns {Promise<ArticleData | null>} */
   async function extractBlueskyPost() {
     const match = window.location.href.match(
       /bsky\.app\/profile\/([^/]+)\/post\/([\w]+)/i,
     );
-    if (!match) return null;
-    const [, handleOrDid, rkey] = match;
+    const [, handleOrDid, rkey] = match ?? [];
+    if (handleOrDid === undefined || rkey === undefined) return null;
 
     try {
       // A handle in the URL has to be resolved; a DID is already one.
@@ -880,8 +1201,10 @@
           `https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handleOrDid)}`,
         );
         if (!resolved.ok) return null;
-        did = (await resolved.json())?.did;
-        if (!did) return null;
+        /** @type {unknown} */
+        const resolvedDid = (await resolved.json())?.did;
+        if (typeof resolvedDid !== "string" || !resolvedDid) return null;
+        did = resolvedDid;
       }
 
       const uri = `at://${did}/app.bsky.feed.post/${rkey}`;
@@ -890,17 +1213,22 @@
       );
       if (!resp.ok) return null;
 
+      // The post of Bluesky's `getPostThread` answer: every field is read
+      // optionally, and a field of another shape throws into the catch below.
+      /** @type {BlueskyPost | undefined} */
       const post = (await resp.json())?.thread?.post;
       if (!post) return null;
 
       const text = (post.record?.text || "").trim();
       const handle = post.author?.handle || handleOrDid;
 
+      /** @type {PostMediaEntry[]} */
       const mediaEntries = [];
+      /** @type {EmbeddedVideoPreview[]} */
       const embeddedVideos = [];
       // Media sits under one of a few embed shapes: when a post both quotes
       // another and carries media, its own media moves under `media`.
-      const embeds = [post.embed, post.embed?.media].filter(Boolean);
+      const embeds = [post.embed, post.embed?.media].filter((embed) => !!embed);
       for (const embed of embeds) {
         for (const image of embed.images || []) {
           if (image.fullsize) mediaEntries.push({ kind: "image", url: image.fullsize });
@@ -929,6 +1257,7 @@
         }
       }
 
+      /** @type {string[]} */
       const parts = [];
       if (text) parts.push(text);
       for (const entry of mediaEntries) parts.push(`![](${entry.url})`);
@@ -948,20 +1277,23 @@
 
   // ── Instagram post extraction ──────────────────────────────────────────
 
+  /** @param {string} url */
   function isInstagramPostUrl(url) {
     const lc = url.toLowerCase();
     return lc.includes("instagram.com/p/") || lc.includes("instagram.com/reel/") || lc.includes("instagram.com/stories/");
   }
 
+  /** @param {string} url */
   function extractInstagramShortcode(url) {
     const match = url.match(/instagram\.com\/(?:p|reel)\/([\w-]+)/);
-    return match ? match[1] : null;
+    return match?.[1] ?? null;
   }
 
   /**
    * Convert Instagram shortcode to numeric media ID.
    * Shortcodes are base64-encoded (custom alphabet) media IDs.
    */
+  /** @param {string} shortcode */
   function shortcodeToMediaId(shortcode) {
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let id = BigInt(0);
@@ -971,6 +1303,30 @@
     return id.toString();
   }
 
+  /// The pictures and videos of an Instagram medium, a carousel's slides in
+  /// order, each with its poster.
+  /**
+   * @param {InstagramMediaItem} item
+   * @returns {PostMediaEntry[]}
+   */
+  function instagramMediaEntries(item) {
+    /** @type {PostMediaEntry[]} */
+    const mediaEntries = [];
+    const carousel = item.carousel_media || [];
+    for (const slide of carousel.length > 0 ? carousel : [item]) {
+      const poster = slide.image_versions2?.candidates?.[0]?.url || null;
+      const video = slide.video_versions?.[0];
+      const image = slide.image_versions2?.candidates?.[0];
+      if (video) {
+        mediaEntries.push({ kind: "video", url: video.url, poster });
+      } else if (image) {
+        mediaEntries.push({ kind: "image", url: image.url, poster });
+      }
+    }
+    return mediaEntries;
+  }
+
+  /** @returns {Promise<ArticleData | null>} */
   async function extractInstagramPost() {
     const url = window.location.href;
 
@@ -997,11 +1353,13 @@
       });
 
       if (!resp.ok) return null;
+      // Instagram's media info answer: every field is read optionally, and a
+      // field of another shape throws into the catch below.
+      /** @type {{ items?: InstagramMediaItem[] }} */
       const json = await resp.json();
 
-      const items = json.items || [];
-      if (items.length === 0) return null;
-      const item = items[0];
+      const item = (json.items || [])[0];
+      if (!item) return null;
 
       // Caption
       const caption = item.caption?.text || "";
@@ -1010,28 +1368,11 @@
       const author = item.user?.username || "";
 
       // Media URLs (carousel or single)
-      const mediaEntries = [];
-      const carousel = item.carousel_media || [];
-      if (carousel.length > 0) {
-        for (const slide of carousel) {
-          const poster = slide.image_versions2?.candidates?.[0]?.url || null;
-          if (slide.video_versions?.length > 0) {
-            mediaEntries.push({ kind: "video", url: slide.video_versions[0].url, poster });
-          } else if (slide.image_versions2?.candidates?.length > 0) {
-            mediaEntries.push({ kind: "image", url: slide.image_versions2.candidates[0].url, poster });
-          }
-        }
-      } else {
-        const poster = item.image_versions2?.candidates?.[0]?.url || null;
-        if (item.video_versions?.length > 0) {
-          mediaEntries.push({ kind: "video", url: item.video_versions[0].url, poster });
-        } else if (item.image_versions2?.candidates?.length > 0) {
-          mediaEntries.push({ kind: "image", url: item.image_versions2.candidates[0].url, poster });
-        }
-      }
+      const mediaEntries = instagramMediaEntries(item);
       const mediaUrls = mediaEntries.map((entry) => entry.url);
 
       // Build markdown body
+      /** @type {string[]} */
       const parts = [];
       if (caption) parts.push(caption);
       for (const url of mediaUrls) {
@@ -1039,6 +1380,7 @@
       }
 
       const titleText = caption.replace(/\n/g, " ").trim().slice(0, 80) || `@${author}`;
+      /** @type {EmbeddedVideoPreview[]} */
       const embeddedVideos = [];
       for (const entry of mediaEntries) {
         if (entry.kind === "video") {
@@ -1068,10 +1410,16 @@
   /// on and off at once, without a reload. `start` puts the buttons on the
   /// page and returns the function that stops them and takes them away. They
   /// go for good when this content script retires (К4).
+  /**
+   * @param {keyof FeedButtonSettings} key
+   * @param {() => () => void} start
+   */
   function followFeedButtonSetting(key, start) {
     const settings = window.MineFeedButtonSettings;
+    /** @type {(() => void) | null} */
     let stop = null;
     let ended = false;
+    /** @param {boolean} enabled */
     const apply = (enabled) => {
       if (ended) return;
       if (enabled && !stop) stop = start();
@@ -1080,6 +1428,7 @@
         stop = null;
       }
     };
+    /** @type {(() => void) | null} */
     let unwatch = null;
     onRetire(() => {
       ended = true;
@@ -1118,6 +1467,7 @@
     const BUTTON_VERSION = "3";
     const INSTAGRAM_POST_UNAVAILABLE = "Mine couldn't read this Instagram post. Save it as Screenshot or Link.";
 
+    /** @param {Element} article */
     function findShortcode(article) {
       for (const a of article.querySelectorAll('a[href*="/p/"], a[href*="/reel/"]')) {
         const match = a.getAttribute("href")?.match(/\/(p|reel)\/([\w-]+)/);
@@ -1166,6 +1516,10 @@
     /// on the button. Nothing fails only in the console (SPEC_DEEP_AUDIT.md,
     /// Е3.16, the way of the X button, SPEC_CLIPPER.md, «Кнопка Mine в ленте
     /// X», rule 7).
+    /**
+     * @param {string} shortcode
+     * @param {HTMLButtonElement} btn
+     */
     async function clipPost(shortcode, btn) {
       btn.style.opacity = "0.5";
       btn.style.pointerEvents = "none";
@@ -1177,6 +1531,7 @@
         console.warn("[Mine] Instagram post unavailable:", e);
         preloadData = instagramPostUnavailable(postUrl);
       }
+      /** @type {BackgroundAnswer | undefined} */
       let response;
       try {
         // The post read here travels with this opening only: background keeps
@@ -1191,7 +1546,7 @@
           preloaded: preloadData,
         });
       } catch (e) {
-        response = { ok: false, error: String(e?.message ?? e) };
+        response = { ok: false, error: String(errorMessage(e) ?? e) };
       }
       btn.style.opacity = "1";
       btn.style.pointerEvents = "auto";
@@ -1206,6 +1561,10 @@
       btn.title = `Mine could not open: ${response?.error ?? "the extension did not answer"}`;
     }
 
+    /**
+     * @param {string} postUrl
+     * @returns {PreloadedClip}
+     */
     function instagramPostUnavailable(postUrl) {
       return {
         metadata: {
@@ -1216,6 +1575,11 @@
       };
     }
 
+    /**
+     * @param {string} shortcode
+     * @param {string} postUrl
+     * @returns {Promise<PreloadedClip>}
+     */
     async function readInstagramPost(shortcode, postUrl) {
       const mediaId = shortcodeToMediaId(shortcode);
       const resp = await fetch(`https://i.instagram.com/api/v1/media/${mediaId}/info/`, {
@@ -1223,6 +1587,10 @@
         credentials: "include",
       });
       if (!resp.ok) throw new Error(`API ${resp.status}`);
+      // Instagram's media info answer: every field is read optionally, and a
+      // field of another shape throws to the caller, which reports the post
+      // unavailable.
+      /** @type {{ items?: InstagramMediaItem[] }} */
       const json = await resp.json();
 
       const item = (json.items || [])[0];
@@ -1231,26 +1599,9 @@
       const caption = item.caption?.text || "";
       const author = item.user?.username || "";
 
-      const mediaEntries = [];
-      const carousel = item.carousel_media || [];
-      if (carousel.length > 0) {
-        for (const slide of carousel) {
-          const poster = slide.image_versions2?.candidates?.[0]?.url || null;
-          if (slide.video_versions?.length > 0) {
-            mediaEntries.push({ kind: "video", url: slide.video_versions[0].url, poster });
-          } else if (slide.image_versions2?.candidates?.length > 0) {
-            mediaEntries.push({ kind: "image", url: slide.image_versions2.candidates[0].url, poster });
-          }
-        }
-      } else {
-        const poster = item.image_versions2?.candidates?.[0]?.url || null;
-        if (item.video_versions?.length > 0) {
-          mediaEntries.push({ kind: "video", url: item.video_versions[0].url, poster });
-        } else if (item.image_versions2?.candidates?.length > 0) {
-          mediaEntries.push({ kind: "image", url: item.image_versions2.candidates[0].url, poster });
-        }
-      }
+      const mediaEntries = instagramMediaEntries(item);
       const mediaUrls = mediaEntries.map((entry) => entry.url);
+      /** @type {EmbeddedVideoPreview[]} */
       const embeddedVideos = [];
       for (const entry of mediaEntries) {
         if (entry.kind === "video") {
@@ -1258,6 +1609,7 @@
         }
       }
 
+      /** @type {string[]} */
       const parts = [];
       if (caption) parts.push(caption);
       for (const url of mediaUrls) {
@@ -1340,10 +1692,14 @@
 
   /// One request to background; `null` when it does not answer, including
   /// an extension reloaded under the page.
+  /**
+   * @param {{ action: string } & Record<string, unknown>} message
+   * @returns {Promise<BackgroundAnswer | null>}
+   */
   function askBackground(message) {
     return new Promise((resolve) => {
       try {
-        chrome.runtime.sendMessage({ target: "background", ...message }, (response) => {
+        chrome.runtime.sendMessage({ target: "background", ...message }, (/** @type {BackgroundAnswer | undefined} */ response) => {
           resolve(chrome.runtime.lastError ? null : response ?? null);
         });
       } catch {
@@ -1356,13 +1712,18 @@
   /// timestamp link spells it, or as the post's own links spell them where
   /// the time is not a link (the post X Pro opened, «Доработки после живого
   /// просмотра», Р3). A repost card stands for the reposted post.
+  /**
+   * @param {Element} article
+   * @returns {{ tweetId: string, handle: string } | null}
+   */
   function xFeedPostIdentity(article) {
     const identity = window.MineXFeedButton?.postIdentity?.(article);
     return identity?.tweetId ? { tweetId: identity.tweetId, handle: identity.handle } : null;
   }
 
+  /** @param {readonly XPostContent[] | undefined} posts */
   function firstXPostPicture(posts) {
-    const post = posts[0];
+    const post = posts?.[0];
     const media = [...(post?.media || []), ...(post?.quote?.media || [])][0];
     if (!media) return null;
     return media.kind === "image" ? media.url : media.poster || null;
@@ -1372,6 +1733,11 @@
   /// page's feeds delivered it, else as syndication gives it through
   /// background, else the reason it could not be read (rules 4, 6, 7). Never
   /// the thread, never the feed.
+  /**
+   * @param {Element} article
+   * @param {{ tweetId: string, handle: string }} identity
+   * @returns {Promise<PreloadedClip & { snapshot: Readonly<CaptureDocument> }>}
+   */
   async function readXFeedPost(article, identity) {
     const snapshot = captureDocumentSnapshot();
     const { tweetId } = identity;
@@ -1381,6 +1747,7 @@
     const post = cached
       ? articleFromXPosts([cached], handle)
       : await extractTwitterPostFromArticle(article, tweetId, handle, { postUrl, videoScope: article, requireApi: true });
+    /** @type {ArticleData} */
     const extracted = post || {
       title: `@${handle}`, content: "", byline: `@${handle}`, excerpt: "",
       twitterPosts: [], embeddedVideos: [], threadPostCount: 0, unavailableReason: X_POST_UNAVAILABLE,
@@ -1411,6 +1778,10 @@
 
   /// The Mine button of an X post was pressed: the clipper opens in this page
   /// with this post, the way the Instagram button opens it (rule 3).
+  /**
+   * @param {Element} article
+   * @param {Element} control
+   */
   async function clipXFeedPost(article, control) {
     if (retireIfReplaced() || xFeedOpenings.has(control)) return;
     const identity = xFeedPostIdentity(article);
@@ -1465,6 +1836,7 @@
 
   async function restoreOpenClip() {
     try {
+      /** @type {unknown} */
       const tabs = (await chrome.storage.session.get(OPEN_CLIP_TABS_KEY))?.[OPEN_CLIP_TABS_KEY];
       if (!Array.isArray(tabs) || tabs.length === 0) return;
     } catch {
@@ -1477,6 +1849,7 @@
 
   if (window.top === window) {
     void restoreOpenClip();
+    /** @param {PageTransitionEvent} event */
     const onPageShow = (event) => {
       if (event.persisted) void restoreOpenClip();
     };
@@ -1486,6 +1859,7 @@
 
   // ── Article extraction (Defuddle) ─────────────────────────────────────
 
+  /** @returns {ArticleData} */
   function extractArticle() {
     const snapshot = captureDocumentSnapshot();
     const sourceUrl = capturePageSource(snapshot.documentUrl);
@@ -1494,6 +1868,7 @@
     return { ...article, sourceUrl, documentUrl: snapshot.documentUrl, captureGeneration: snapshot.captureGeneration };
   }
 
+  /** @returns {ArticleData} */
   function extractArticleForCurrentDocument() {
     // Twitter/X: long-form article can be extracted synchronously; tweet/thread
     // fallback is async because it can use the syndication API.
@@ -1550,13 +1925,17 @@
   }
 
   // Async version — custom YouTube fetcher, Defuddle for everything else
+  /** @returns {ArticleData | null} */
   function extractProductArticle() {
     const extractor = globalThis.MineProductExtraction;
-    if (!extractor || typeof Defuddle.createMarkdownContent !== "function") return null;
+    // Both callers load Defuddle first; without it there is no converter.
+    if (!extractor || typeof Defuddle === "undefined" || typeof Defuddle.createMarkdownContent !== "function") return null;
+    const defuddle = Defuddle;
     return extractor.extractProductArticle(document, window.location.href,
-      (html, url) => Defuddle.createMarkdownContent(html, url));
+      (html, url) => defuddle.createMarkdownContent(html, url));
   }
 
+  /** @returns {Promise<ArticleData>} */
   async function extractArticleAsync() {
     const snapshot = captureDocumentSnapshot();
     const pageUrl = snapshot.documentUrl;
@@ -1566,6 +1945,7 @@
     return { ...article, sourceUrl, documentUrl: pageUrl, captureGeneration: snapshot.captureGeneration };
   }
 
+  /** @returns {Promise<ArticleData>} */
   async function extractArticleForCurrentPage() {
     if (isTwitterUrl(window.location.href)) {
       const longform = extractXLongformArticle();
@@ -1591,7 +1971,8 @@
     // YouTube: Defuddle parseAsync extracts transcript via InnerTube API (needs browser cookies).
     // Key: read result.variables.transcript (not contentMarkdown, which is an iframe embed).
     if (isVideoUrl(window.location.href)) {
-      if (!(await ensureDefuddleLoaded())) {
+      // `ensureDefuddleLoaded` answers true only with Defuddle on the page.
+      if (!(await ensureDefuddleLoaded()) || typeof Defuddle === "undefined") {
         return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
       }
       try {
@@ -1610,7 +1991,7 @@
     }
 
     // Other pages: use Defuddle
-    if (!(await ensureDefuddleLoaded())) {
+    if (!(await ensureDefuddleLoaded()) || typeof Defuddle === "undefined") {
       return { title: document.title, content: "", byline: null, excerpt: "", embeddedVideos: extractEmbeddedVideoPreviews() };
     }
     try {
@@ -1646,15 +2027,19 @@
   // the cropped dataUrl back to background with "cropDone". Background persists
   // the result and reopens the popup, which rehydrates state from session storage.
 
+  /** @type {HTMLDivElement | null} */
   let cropOverlayHost = null;
+  /** @type {HTMLDivElement | null} */
   let cropToastHost = null;
   // The crop under way, from its start until its result is handed over,
   // capture included. One at a time: another start meanwhile is ignored
   // (SPEC_AUDIT_FIXES.md, В4.3). It carries the id the clipper named it with:
   // its result goes out under that id, only that clipper takes it, and that
   // clipper cancels it when it closes (Г3.3).
+  /** @type {ActiveCrop | null} */
   let activeCrop = null;
 
+  /** @param {() => void} callback */
   function afterViewportPaint(callback) {
     let done = false;
     const finish = () => {
@@ -1671,6 +2056,7 @@
     setTimeout(finish, 120);
   }
 
+  /** @param {(response: { ok: boolean }) => void} sendResponse */
   function prepareViewportCapture(sendResponse) {
     // Hide every Mine-owned UI layer before background calls
     // captureVisibleTab. DOM mutations are not enough: Chrome can capture the
@@ -1678,7 +2064,8 @@
     if (window.__mineOverlay) {
       window.__mineOverlay.hide();
     }
-    for (const host of document.querySelectorAll("[data-mine-clipper-overlay]")) {
+    // The overlay's hosts are <div> elements (popup/overlay-entry.tsx).
+    for (const host of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll("[data-mine-clipper-overlay]"))) {
       host.style.display = "none";
     }
     if (cropOverlayHost) {
@@ -1698,6 +2085,7 @@
   // background never reports still brings them back after
   // FEED_BUTTONS_HIDDEN_AT_MOST_MS.
   const FEED_BUTTONS_HIDDEN_AT_MOST_MS = 5_000;
+  /** @type {{ style: HTMLStyleElement, timer: ReturnType<typeof setTimeout> | undefined } | null} */
   let feedButtonsHidden = null;
 
   function hideFeedButtonsForCapture() {
@@ -1706,7 +2094,7 @@
       style.setAttribute("data-mine-capture", "");
       style.textContent = "[data-mine-x-post], [data-la-clip] { visibility: hidden !important; }";
       (document.head ?? document.documentElement).appendChild(style);
-      feedButtonsHidden = { style, timer: null };
+      feedButtonsHidden = { style, timer: undefined };
     }
     clearTimeout(feedButtonsHidden.timer);
     feedButtonsHidden.timer = setTimeout(showFeedButtonsAfterCapture, FEED_BUTTONS_HIDDEN_AT_MOST_MS);
@@ -1728,6 +2116,7 @@
     document.documentElement.style.cursor = "";
   }
 
+  /** @param {string} message */
   function showCropToast(message) {
     if (cropToastHost) cropToastHost.remove();
 
@@ -1763,15 +2152,21 @@
 
   /// Hand `crop`'s result over, unless its clipper cancelled it meanwhile:
   /// then nothing is shown and nothing is reported (Г3.3).
+  /**
+   * @param {ActiveCrop} crop
+   * @param {CropResult} payload
+   */
   function sendCropResult(crop, payload) {
     // Restore clipper overlay (hidden on crop start). In the overlay
     // architecture the React state is still live — we just toggle the
     // host's display:none, no rehydrate needed, no toast needed.
-    if (window.__mineOverlay) {
+    const overlay = window.__mineOverlay;
+    if (overlay) {
+      /** @param {{ error?: string, dataUrl?: string, screenshotId?: string | null }} detail */
       const handOver = (detail) => {
         if (activeCrop !== crop) return;
         activeCrop = null;
-        window.__mineOverlay.show();
+        overlay.show();
         window.dispatchEvent(new CustomEvent("mine-crop-result", { detail: { cropId: crop.id, ...detail } }));
       };
       if (payload.status === "cancelled" && payload.error) {
@@ -1779,9 +2174,11 @@
         return;
       }
       if (payload.status === "done" && payload.dataUrl) {
+        const dataUrl = payload.dataUrl;
         chrome.runtime.sendMessage(
-          { target: "background", action: "cacheScreenshotUpload", dataUrl: payload.dataUrl },
-          (resp) => handOver({ dataUrl: payload.dataUrl, screenshotId: resp?.ok ? resp.screenshotId : null }),
+          { target: "background", action: "cacheScreenshotUpload", dataUrl },
+          (/** @type {{ ok?: boolean, screenshotId?: string } | undefined} */ resp) =>
+            handOver({ dataUrl, screenshotId: resp?.ok ? resp.screenshotId : null }),
         );
         return;
       }
@@ -1804,18 +2201,25 @@
 
   /// The crop's result: `{status:"done", dataUrl}` or `{status:"cancelled"}`
   /// with the reason when the capture was refused.
+  /**
+   * @param {{ x: number, y: number, width: number, height: number }} rect
+   * @returns {Promise<CropResult>}
+   */
   async function performCrop(rect) {
     // Ask background for a full viewport capture
+    /** @type {{ ok?: boolean, dataUrl?: string, error?: string }} */
     const captureResp = await new Promise((resolve) => {
       chrome.runtime.sendMessage(
         // The page shown now, for any clip (SPEC_CLIPPER.md, «Доработки после
         // живого просмотра», Р9).
         { target: "background", action: "captureForCrop" },
-        (resp) => resolve(resp || { ok: false, error: "No response" }),
+        (/** @type {{ ok?: boolean, dataUrl?: string, error?: string } | undefined} */ resp) =>
+          resolve(resp || { ok: false, error: "No response" }),
       );
     });
 
-    if (!captureResp.ok || !captureResp.dataUrl) {
+    const capturedDataUrl = captureResp.dataUrl;
+    if (!captureResp.ok || !capturedDataUrl) {
       return { status: "cancelled", error: captureResp.error || "Screenshot capture failed" };
     }
 
@@ -1827,29 +2231,30 @@
 
     try {
       // Load the captured viewport into an image
+      /** @type {HTMLImageElement} */
       const img = await new Promise((resolve, reject) => {
         const el = new Image();
         el.onload = () => resolve(el);
         el.onerror = () => reject(new Error("Failed to load captured image"));
-        el.src = captureResp.dataUrl;
+        el.src = capturedDataUrl;
       });
 
       // Crop via OffscreenCanvas (or fall back to regular canvas)
-      const canvas = typeof OffscreenCanvas !== "undefined"
-        ? new OffscreenCanvas(sw, sh)
-        : Object.assign(document.createElement("canvas"), { width: sw, height: sh });
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-
+      /** @type {string} */
       let croppedDataUrl;
-      if (canvas.convertToBlob) {
+      if (typeof OffscreenCanvas !== "undefined") {
+        const canvas = new OffscreenCanvas(sw, sh);
+        drawCrop(canvas.getContext("2d"), img, sx, sy, sw, sh);
         const blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.9 });
         croppedDataUrl = await new Promise((resolve) => {
           const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result);
+          // `readAsDataURL` leaves a string in `result`.
+          reader.onloadend = () => resolve(/** @type {string} */ (reader.result));
           reader.readAsDataURL(blob);
         });
       } else {
+        const canvas = Object.assign(document.createElement("canvas"), { width: sw, height: sh });
+        drawCrop(canvas.getContext("2d"), img, sx, sy, sw, sh);
         croppedDataUrl = canvas.toDataURL("image/jpeg", 0.9);
       }
 
@@ -1860,10 +2265,28 @@
     }
   }
 
+  /// Draws the picked part `sx, sy, sw, sh` of the captured viewport onto a
+  /// canvas of that size. A canvas without a 2D context throws, and the crop
+  /// fails as a whole.
+  /**
+   * @param {CanvasDrawImage | null} ctx
+   * @param {HTMLImageElement} img
+   * @param {number} sx
+   * @param {number} sy
+   * @param {number} sw
+   * @param {number} sh
+   */
+  function drawCrop(ctx, img, sx, sy, sw, sh) {
+    if (!ctx) throw new Error("The canvas has no 2D context");
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  }
+
   /// `cropId` is the clipper's name for this crop; the result carries it.
+  /** @param {unknown} cropId */
   function startCropOverlay(cropId) {
     // A crop already under way, its capture included, is not started again.
     if (activeCrop) return;
+    /** @type {ActiveCrop} */
     const crop = { id: typeof cropId === "string" ? cropId : null, cancel: () => undefined };
 
     const host = document.createElement("div");
@@ -1943,10 +2366,11 @@
     cropOverlayHost = host;
     activeCrop = crop;
 
-    const overlay = shadow.querySelector(".overlay");
-    const dim = shadow.querySelector(".dim");
-    const selection = shadow.querySelector(".selection");
-    const sizeLabel = shadow.querySelector(".size-label");
+    // The markup just written holds every one of these <div> elements.
+    const overlay = /** @type {HTMLDivElement} */ (shadow.querySelector(".overlay"));
+    const dim = /** @type {HTMLDivElement} */ (shadow.querySelector(".dim"));
+    const selection = /** @type {HTMLDivElement} */ (shadow.querySelector(".selection"));
+    const sizeLabel = /** @type {HTMLDivElement} */ (shadow.querySelector(".size-label"));
 
     // Lock page scroll so coordinates stay stable throughout the drag
     const prevOverflow = document.documentElement.style.overflow;
@@ -1974,6 +2398,7 @@
       sizeLabel.style.top = `${labelY}px`;
     }
 
+    /** @param {MouseEvent} e */
     function onMouseDown(e) {
       if (e.button !== 0) return;
       e.preventDefault();
@@ -1983,6 +2408,7 @@
       rect = { x: startX, y: startY, width: 0, height: 0 };
     }
 
+    /** @param {MouseEvent} e */
     function onMouseMove(e) {
       if (!dragging) return;
       const x = Math.min(e.clientX, startX);
@@ -2014,6 +2440,7 @@
     }
 
     // Hands the result over once; the next crop may start after it.
+    /** @param {CropResult} payload */
     function finish(payload) {
       if (finished) return;
       finished = true;
@@ -2046,12 +2473,13 @@
       sizeLabel.classList.remove("visible");
       dim.classList.remove("active");
       cleanup();
-      performCrop(finalRect).then(finish, (e) => {
+      performCrop(finalRect).then(finish, (/** @type {unknown} */ e) => {
         console.error("[Mine] crop failed:", e);
         finish({ status: "cancelled" });
       });
     }
 
+    /** @param {KeyboardEvent} e */
     function onKeyDown(e) {
       if (e.key !== "Escape" || cleanedUp) return;
       e.preventDefault();
@@ -2066,6 +2494,7 @@
   }
 
   /// Cancel the crop under way when it is the one named `cropId`.
+  /** @param {unknown} cropId */
   function cancelCropOverlay(cropId) {
     if (activeCrop !== null && typeof cropId === "string" && activeCrop.id === cropId) activeCrop.cancel();
   }
@@ -2076,6 +2505,7 @@
   // read from disk at every opening, this script only when the extension
   // loads, so an overlay of a later build keeps the same order of arguments
   // for a script of an earlier one.
+  /** @type {MinePageCrop} */
   const pageCrop = {
     start: (_page, cropId) => startCropOverlay(cropId),
     cancel: cancelCropOverlay,
@@ -2096,6 +2526,12 @@
   chrome.runtime.onMessage.addListener(answerMessage);
   onRetire(() => chrome.runtime.onMessage.removeListener(answerMessage));
 
+  /**
+   * @param {ContentRequest} msg
+   * @param {chrome.runtime.MessageSender} _sender
+   * @param {(response?: unknown) => void} sendResponse
+   * @returns {boolean} whether the answer comes later
+   */
   function answerMessage(msg, _sender, sendResponse) {
     if (retireIfReplaced()) return false;
     if (msg.action === "prepareViewportCapture") {
@@ -2119,10 +2555,7 @@
     }
 
     if (msg.action === "extractMetadata") {
-      const meta = extractMetadata();
-      meta.detectedType = detectType(meta);
-      meta.isArticle = isArticlePage(meta);
-      sendResponse(meta);
+      sendResponse(extractDetectedMetadata());
       return true;
     }
 
@@ -2136,10 +2569,10 @@
       const snapshot = captureDocumentSnapshot();
       const title = document.title;
       const sourceUrl = capturePageSource(snapshot.documentUrl);
-      extractArticleAsync().then(sendResponse).catch(error => sendResponse({
+      extractArticleAsync().then(sendResponse).catch((/** @type {unknown} */ error) => sendResponse({
         title, content: "", byline: null, excerpt: "",
         sourceUrl, documentUrl: snapshot.documentUrl, captureGeneration: snapshot.captureGeneration,
-        threadWarning: `Content extraction failed: ${error.message || "unknown error"}`,
+        threadWarning: `Content extraction failed: ${errorMessage(error) || "unknown error"}`,
       }));
       return true;
     }
@@ -2157,11 +2590,19 @@
     return false;
   }
 
+  /// The `message` of what a promise rejected with, read as it comes: an
+  /// Error of another world is not an `instanceof Error` here.
+  /** @param {unknown} error */
+  function errorMessage(error) {
+    return typeof error === "object" && error !== null && "message" in error ? error.message : undefined;
+  }
+
   // Detect Twitter/X lightbox overlay and extract the image URL.
   // Twitter renders the lightbox as a modal with role="dialog" (or a
   // layer with [data-testid="swipe-to-dismiss"]). Inside it, the main
   // image is either an <img> tag or a <div> with background-image.
   // Returns { src, width, height } or null if no lightbox is open.
+  /** @returns {TwitterLightboxResult | null} */
   function detectTwitterLightboxImage() {
     if (!isTwitterUrl(window.location.href)) return null;
 
@@ -2219,6 +2660,10 @@
     return null;
   }
 
+  /**
+   * @param {string} src
+   * @returns {PageImageInfo}
+   */
   function getImageInfoBySrc(src) {
     const img = findImageBySrc(src);
     if (img) {
@@ -2234,6 +2679,7 @@
     return { src, alt: null, title: null, width: null, height: null, postUrl: null };
   }
 
+  /** @param {string} src */
   function findImageBySrc(src) {
     const imgs = document.querySelectorAll("img");
     for (const img of imgs) {
@@ -2253,6 +2699,7 @@
     return null;
   }
 
+  /** @param {string} url */
   function stableImageId(url) {
     const value = String(url ?? "");
     const twitter = value.match(/pbs\.twimg\.com\/media\/([\w-]+)/i);
@@ -2265,13 +2712,19 @@
   /// The permalink of the publication the image belongs to, read from the
   /// markup around it. This is the only place the image→post relation exists:
   /// neither X nor Bluesky offers a public file→post lookup.
+  /**
+   * @param {HTMLImageElement} img
+   * @returns {string | null}
+   */
   function findPostUrlForImage(img) {
+    /** @param {string} href */
     const isPostHref = (href) =>
       /\/(?:[\w]+)\/status\/\d+/i.test(href) || /\/profile\/[^/]+\/post\/[\w]+/i.test(href);
 
     // A quoted image's own photo link is more specific than the outer
     // article's timestamp, which belongs to the quoting post.
-    const imageLink = img.closest("a[href]");
+    // `a[href]` matches anchors; the page's are HTML <a> elements.
+    const imageLink = /** @type {HTMLAnchorElement | null} */ (img.closest("a[href]"));
     if (imageLink && isPostHref(imageLink.getAttribute("href") || "")) return imageLink.href;
 
     // X wraps a tweet in <article>; the timestamp link is the tweet's own
@@ -2290,13 +2743,18 @@
     // before a feed-level container, where links to different posts collide.
     let node = img.parentElement;
     while (node && node !== document.body) {
-      const links = node.querySelectorAll("a[href]");
+      // `a[href]` matches anchors; the page's are HTML <a> elements.
+      const links = /** @type {NodeListOf<HTMLAnchorElement>} */ (node.querySelectorAll("a[href]"));
+      /** @type {Set<string>} */
       const hrefs = new Set();
       for (const link of links) {
         const href = link.getAttribute("href") || "";
-        if (isPostHref(href)) hrefs.add(link.href.split("?")[0]);
+        if (isPostHref(href)) hrefs.add(link.href.split("?")[0] ?? "");
       }
-      if (hrefs.size === 1) return hrefs.values().next().value;
+      if (hrefs.size === 1) {
+        const [only] = hrefs;
+        return only ?? null;
+      }
       if (hrefs.size > 1) return null;
       node = node.parentElement;
     }
@@ -2311,13 +2769,9 @@
   // The isolated world `window` is shared between all scripts injected
   // into the same frame by this extension, so this assignment is visible
   // from overlay.js as `window.__mineClipper`.
+  /** @type {MineContentHelpers} */
   const helpers = {
-    extractMetadata: () => {
-      const meta = extractMetadata();
-      meta.detectedType = detectType(meta);
-      meta.isArticle = isArticlePage(meta);
-      return meta;
-    },
+    extractMetadata: extractDetectedMetadata,
     extractArticle,
     extractArticleAsync,
     captureDocumentSnapshot,

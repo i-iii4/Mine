@@ -10,6 +10,7 @@ import { getBlock, startWindowDrag } from "@/lib/commands";
 import { clearActionFailures } from "@/lib/actionFailures";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { LightBlock } from "@/types";
+import { indexedBlock, lightBlock } from "@/test/blocks";
 
 vi.mock("@/lib/commands", () => ({
   getBlock: vi.fn(async () => ({ tags: [] })),
@@ -25,10 +26,12 @@ const writeText = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText }));
 
 function makeBlock(): LightBlock {
-  return {
+  return lightBlock({
     id: 1,
     slug: "alpha-block",
     block_type: "article",
+    // A note with an address and no text: the feed shows it as a link.
+    card_kind: "link",
     title: "Alpha Title",
     url: "https://example.com",
     media_file: null,
@@ -44,7 +47,7 @@ function makeBlock(): LightBlock {
     preview_manifest: null,
     collections: [],
     feed_playback: null,
-  };
+  });
 }
 
 function dragPastChromeThreshold(element: HTMLElement) {
@@ -71,7 +74,7 @@ describe("CardHoverMenu", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearActionFailures();
-    vi.mocked(getBlock).mockResolvedValue({ tags: [] } as Awaited<ReturnType<typeof getBlock>>);
+    vi.mocked(getBlock).mockResolvedValue(indexedBlock({ slug: "alpha-block" }));
   });
 
   /// SPEC_DEEP_AUDIT.md, Е6.12: the menu shows the card's collections the
@@ -325,7 +328,7 @@ describe("CardHoverMenu", () => {
   // at the menu's width instead of wrapping.
   it("cuts a long collection name in Disconnect with an ellipsis", async () => {
     const name = "a collection whose name is far longer than the menu";
-    vi.mocked(getBlock).mockResolvedValueOnce({ tags: [name] } as Awaited<ReturnType<typeof getBlock>>);
+    vi.mocked(getBlock).mockResolvedValueOnce(indexedBlock({ slug: "alpha-block", tags: [name] }));
     render(
       <CardMoreMenu
         block={makeBlock()}
@@ -403,9 +406,7 @@ describe("CardHoverMenu", () => {
   });
 
   it("uses conservative overflow menu icons and Disconnect terminology", async () => {
-    vi.mocked(getBlock).mockResolvedValueOnce(
-      { tags: ["design"] } as Awaited<ReturnType<typeof getBlock>>,
-    );
+    vi.mocked(getBlock).mockResolvedValueOnce(indexedBlock({ slug: "alpha-block", tags: ["design"] }));
 
     render(
       <CardMoreMenu
