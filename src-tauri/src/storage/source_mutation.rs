@@ -867,8 +867,8 @@ fn publish(file: &StagedSourceFile) -> std::result::Result<OriginalSource, Sourc
     match &file.original {
         OriginalSource::Absent(_) => {
             let temp = file.temp.as_ref().expect("create mutation has temp");
-            let fingerprint = link_published(temp, &file.path)
-                .with_context(|| format!("link {}", file.path.display()))
+            let fingerprint = move_published(temp, &file.path)
+                .with_context(|| format!("publish {}", file.path.display()))
                 .map_err(failed)?;
             Ok(OriginalSource::Absent(Some(fingerprint)))
         }
@@ -943,7 +943,7 @@ fn publish_rewritten_rename(
     if files::names_same_entry(source, destination) {
         return publish_rewritten_respelling(temp, source, destination, expected);
     }
-    let published = link_published(temp, destination).with_context(|| {
+    let published = move_published(temp, destination).with_context(|| {
         format!(
             "failed to publish rewritten rename {} -> {}",
             source.display(),
@@ -991,7 +991,7 @@ fn publish_rewritten_rename(
 
 /// [`publish_rewritten_rename`] when the new name is the source's own name in
 /// other letter case, on a disk that ignores case (06.10.2026). The new name
-/// finds the source until the source leaves it, so nothing can be linked there
+/// finds the source until the source leaves it, so nothing can be moved there
 /// first: the source moves aside in one step, is checked there, and only then
 /// the rewritten file takes the new name. Every way out but success puts the
 /// source back under its name; a file that took the name meanwhile keeps it,
@@ -1013,7 +1013,7 @@ fn publish_rewritten_respelling(
     #[cfg(test)]
     hooks::run_after_move_aside(&aside);
     let failure = match std::fs::read(&aside) {
-        Ok(bytes) if bytes == expected => match link_published(temp, destination) {
+        Ok(bytes) if bytes == expected => match move_published(temp, destination) {
             Ok(published) => return Ok((aside, published)),
             Err(error) => error,
         },
@@ -1198,19 +1198,23 @@ fn bring_back_from_trash(at: &Path, path: &Path) -> Result<()> {
     files::sync_parent_directory(path)
 }
 
-/// Link the staged `temp` under `destination`, which must not exist yet, and
+/// Move the staged `temp` under `destination`, which must not exist yet, and
 /// return the identity of the published file for rollback.
 ///
-/// The identity is taken from the temp before the link: a hard link shares
+/// One exclusive rename, not link + unlink: hard links are unreliable in
+/// cloud storage (iCloud Drive), and a crash between two steps would leave a
+/// visible `name.tmp.*` duplicate in the space.
+///
+/// The identity is taken from the temp before the move: a rename keeps
 /// device, inode, size and modification time, so this is the identity of
 /// exactly the file this operation publishes. Read from the destination after
-/// the link instead, it would record a foreign file that replaced ours in
+/// the move instead, it would record a foreign file that replaced ours in
 /// between as ours, and rollback would delete it. A destination that no
-/// longer matches right after the link is refused and left as it is.
-fn link_published(temp: &Path, destination: &Path) -> Result<files::FileFingerprint> {
+/// longer matches right after the move is refused and left as it is.
+fn move_published(temp: &Path, destination: &Path) -> Result<files::FileFingerprint> {
     let published = files::fingerprint(temp)?;
-    std::fs::hard_link(temp, destination)
-        .with_context(|| format!("link {} -> {}", temp.display(), destination.display()))?;
+    crate::util::rename_exclusive(temp, destination)
+        .with_context(|| format!("move {} -> {}", temp.display(), destination.display()))?;
     #[cfg(test)]
     tests::run_after_link_hook(destination);
     match files::fingerprint(destination) {
@@ -1640,6 +1644,38 @@ mod tests {
         assert!(matches!(error, SourceMutationError::CommitFile { .. }));
         assert!(!first.exists());
         assert_eq!(std::fs::read(&second).unwrap(), b"external winner");
+    }
+
+    /// A created file is published by one exclusive rename: one name, no
+    /// temp left, and a taken name is refused with `EEXIST`.
+    #[test]
+    fn created_file_is_moved_into_place_and_never_replaces_a_taken_name() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        let created = dir.path().join("created.md");
+        let staged =
+            StagedSourceMutation::stage(vec![SourceFileWrite::create(created.clone(), b"ours".to_vec())])
+                .unwrap();
+        staged.commit().unwrap().finalize();
+        assert_eq!(std::fs::read(&created).unwrap(), b"ours");
+        assert_eq!(std::fs::metadata(&created).unwrap().nlink(), 1);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+
+        let taken = dir.path().join("taken.md");
+        let staged =
+            StagedSourceMutation::stage(vec![SourceFileWrite::create(taken.clone(), b"ours".to_vec())])
+                .unwrap();
+        std::fs::write(&taken, b"external winner").unwrap();
+        let error = staged.commit().unwrap_err();
+
+        let SourceMutationError::CommitFile { source, .. } = &error else {
+            panic!("expected a publication failure: {error}");
+        };
+        assert!(source.chain().any(|cause| cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists)));
+        assert_eq!(std::fs::read(&taken).unwrap(), b"external winner");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
     }
 
     #[test]

@@ -354,6 +354,105 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     (y, m, d)
 }
 
+/// One-step renames through `renamex_np`, the only declaration of it in the
+/// app and the native host for `RENAME_EXCL` and `RENAME_SWAP`.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod renamex {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Path;
+
+    unsafe extern "C" {
+        fn renamex_np(
+            from: *const std::ffi::c_char,
+            to: *const std::ffi::c_char,
+            flags: std::ffi::c_uint,
+        ) -> std::ffi::c_int;
+    }
+    const RENAME_SWAP: std::ffi::c_uint = 0x0000_0002;
+    const RENAME_EXCL: std::ffi::c_uint = 0x0000_0004;
+
+    fn renamex(from: &Path, to: &Path, flags: std::ffi::c_uint) -> std::io::Result<()> {
+        let from = CString::new(from.as_os_str().as_bytes())?;
+        let to = CString::new(to.as_os_str().as_bytes())?;
+        // SAFETY: both pointers are NUL-terminated strings that outlive the call.
+        if unsafe { renamex_np(from.as_ptr(), to.as_ptr(), flags) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub(super) fn exclusive(from: &Path, to: &Path) -> std::io::Result<()> {
+        renamex(from, to, RENAME_EXCL)
+    }
+
+    pub(super) fn swap(a: &Path, b: &Path) -> std::io::Result<()> {
+        renamex(a, b, RENAME_SWAP)
+    }
+}
+
+/// Move `from` to `to` in one atomic step, refusing when `to` exists: the
+/// error is `EEXIST` (`ErrorKind::AlreadyExists`) and `from` stays in place.
+/// A filesystem without `RENAME_EXCL` fails with its own error (`ENOTSUP`,
+/// `EINVAL`); this never falls back to a rename that could replace `to`.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub fn rename_exclusive(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    renamex::exclusive(from, to)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+pub fn rename_exclusive(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        format!(
+            "exclusive move is unavailable on this platform: {} -> {}",
+            from.display(),
+            to.display()
+        ),
+    ))
+}
+
+/// Exchange two existing paths in one atomic step.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub fn rename_swap(a: &std::path::Path, b: &std::path::Path) -> std::io::Result<()> {
+    renamex::swap(a, b)
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "ios")))]
+mod rename_tests {
+    use super::rename_exclusive;
+    use std::os::unix::fs::MetadataExt;
+
+    #[test]
+    fn exclusive_rename_moves_the_file_under_one_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("note.md.tmp.1.2");
+        let to = dir.path().join("note.md");
+        std::fs::write(&from, b"complete").unwrap();
+
+        rename_exclusive(&from, &to).unwrap();
+
+        assert!(!from.exists());
+        assert_eq!(std::fs::read(&to).unwrap(), b"complete");
+        assert_eq!(std::fs::metadata(&to).unwrap().nlink(), 1);
+    }
+
+    #[test]
+    fn exclusive_rename_refuses_a_taken_name_and_keeps_both_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("note.md.tmp.1.2");
+        let to = dir.path().join("note.md");
+        std::fs::write(&from, b"new").unwrap();
+        std::fs::write(&to, b"existing").unwrap();
+
+        let error = rename_exclusive(&from, &to).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&to).unwrap(), b"existing");
+        assert_eq!(std::fs::read(&from).unwrap(), b"new");
+    }
+}
+
 #[cfg(test)]
 mod saved_at_tests {
     use super::*;

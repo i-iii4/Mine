@@ -393,7 +393,10 @@ fn download_resumable(
         let _ = std::fs::remove_file(&tmp);
         return Err(error);
     }
-    if let Err(error) = std::fs::hard_link(&tmp, dest).with_context(|| {
+    // One exclusive rename, not link + unlink: hard links are unreliable in
+    // cloud storage (iCloud Drive), and a crash between two steps would leave
+    // a visible `name.tmp.*` duplicate in the space.
+    if let Err(error) = crate::util::rename_exclusive(&tmp, dest).with_context(|| {
         format!(
             "failed to publish download {} -> {}",
             tmp.display(),
@@ -403,7 +406,6 @@ fn download_resumable(
         let _ = std::fs::remove_file(&tmp);
         return Err(error);
     }
-    let _ = std::fs::remove_file(&tmp);
     std::fs::File::open(parent)
         .and_then(|directory| directory.sync_all())
         .with_context(|| format!("failed to fsync directory {}", parent.display()))?;
@@ -681,6 +683,34 @@ mod tests {
         })
         .unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), b"hello world");
+    }
+
+    #[test]
+    fn a_finished_download_is_moved_into_place_under_one_name() {
+        use std::os::unix::fs::MetadataExt;
+        let dest = scratch();
+        download_resumable(&dest, Duration::ZERO, &|| (), |_| {
+            Ok(response(200, None, None, whole(b"hello world")))
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello world");
+        assert_eq!(std::fs::metadata(&dest).unwrap().nlink(), 1);
+        assert_eq!(std::fs::read_dir(dest.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn a_download_never_replaces_a_file_already_at_its_name() {
+        let dest = scratch();
+        std::fs::write(&dest, b"existing").unwrap();
+        let error = download_resumable(&dest, Duration::ZERO, &|| (), |_| {
+            Ok(response(200, None, None, whole(b"hello world")))
+        })
+        .unwrap_err();
+        assert!(error.chain().any(|cause| cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists)));
+        assert_eq!(std::fs::read(&dest).unwrap(), b"existing");
+        assert_eq!(std::fs::read_dir(dest.parent().unwrap()).unwrap().count(), 1);
     }
 
     #[test]

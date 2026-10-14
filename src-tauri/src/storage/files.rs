@@ -234,60 +234,12 @@ pub(crate) fn names_same_entry(a: &Path, b: &Path) -> bool {
     matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-mod exchange {
-    use anyhow::Result;
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-    use std::path::Path;
-
-    unsafe extern "C" {
-        fn renamex_np(
-            from: *const std::ffi::c_char,
-            to: *const std::ffi::c_char,
-            flags: u32,
-        ) -> i32;
-    }
-    const RENAME_SWAP: u32 = 0x0000_0002;
-    const RENAME_EXCL: u32 = 0x0000_0004;
-
-    fn renamex(from: &Path, to: &Path, flags: u32) -> std::io::Result<()> {
-        let from = CString::new(from.as_os_str().as_bytes())?;
-        let to = CString::new(to.as_os_str().as_bytes())?;
-        let status = unsafe { renamex_np(from.as_ptr(), to.as_ptr(), flags) };
-        if status != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        Ok(())
-    }
-
-    /// Exchange two paths in one step.
-    pub(super) fn swap(a: &Path, b: &Path) -> Result<()> {
-        Ok(renamex(a, b, RENAME_SWAP)?)
-    }
-
-    /// Move `from` to `to` in one step, refusing when `to` exists.
-    pub(super) fn rename_exclusive(from: &Path, to: &Path) -> std::io::Result<()> {
-        renamex(from, to, RENAME_EXCL)
-    }
-}
-
 /// Move a file in one step without replacing anything at the destination.
 /// Whatever version is at `from` at that moment moves, edits included.
-#[cfg(any(target_os = "macos", target_os = "ios"))]
 pub(crate) fn rename_exclusive(from: &Path, to: &Path) -> Result<()> {
-    exchange::rename_exclusive(from, to)
+    crate::util::rename_exclusive(from, to)
         .map_err(anyhow::Error::from)
         .with_context(|| format!("move {} -> {}", from.display(), to.display()))
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "ios")))]
-pub(crate) fn rename_exclusive(from: &Path, to: &Path) -> Result<()> {
-    anyhow::bail!(
-        "exclusive move is unavailable on this platform: {} -> {}",
-        from.display(),
-        to.display()
-    )
 }
 
 /// Move a file without replacing anything at the destination, across volumes
@@ -406,7 +358,7 @@ fn exchange_if_unchanged_with_hooks(
     }
     before_exchange();
     let outcome = (|| -> Result<()> {
-        exchange::swap(tmp, path)?;
+        crate::util::rename_swap(tmp, path)?;
         if std::fs::read(tmp)? == expected {
             std::fs::remove_file(tmp)?;
             sync_published_parent(path)?;
@@ -419,7 +371,7 @@ fn exchange_if_unchanged_with_hooks(
         let live_was_ours = std::fs::read(path)? == replacement;
         if live_was_ours {
             before_rollback();
-            exchange::swap(tmp, path)?;
+            crate::util::rename_swap(tmp, path)?;
             if std::fs::read(tmp)? == replacement {
                 std::fs::remove_file(tmp)?;
                 sync_published_parent(path)?;
@@ -619,7 +571,7 @@ pub fn image_type(path: &Path) -> Option<ImageType> {
 }
 
 /// Atomically publish a new file without replacing an existing destination.
-/// The complete fsynced temp inode is linked under the final name in one
+/// The complete fsynced temp file is moved under the final name in one
 /// operation, preserving create-new semantics without exposing partial bytes.
 pub fn write_new_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
     let _write = crate::storage::source_mutation::begin_write()?;
@@ -632,7 +584,10 @@ fn write_new_atomically_with_sync(
     confirm: impl FnOnce(&Path) -> Result<()>,
 ) -> Result<()> {
     let tmp = prepare_temp_file(path, |file| file.write_all(bytes))?;
-    if let Err(error) = std::fs::hard_link(&tmp, path).with_context(|| {
+    // One exclusive rename, not link + unlink: hard links are unreliable in
+    // cloud storage (iCloud Drive), and a crash between two steps would leave
+    // a visible `name.tmp.*` duplicate in the space.
+    if let Err(error) = crate::util::rename_exclusive(&tmp, path).with_context(|| {
         format!(
             "failed to publish new file {} -> {}",
             tmp.display(),
@@ -642,7 +597,6 @@ fn write_new_atomically_with_sync(
         let _ = std::fs::remove_file(&tmp);
         return Err(error);
     }
-    let _ = std::fs::remove_file(&tmp);
     confirm(path).map_err(|source| PublicationUncertain {
         path: path.to_path_buf(),
         source,
@@ -658,7 +612,8 @@ pub fn copy_new_atomically(source: &Path, destination: &Path) -> Result<()> {
     let tmp = prepare_temp_file(destination, |file| {
         std::io::copy(&mut source_file, file).map(|_| ())
     })?;
-    if let Err(error) = std::fs::hard_link(&tmp, destination).with_context(|| {
+    // One exclusive rename, as in `write_new_atomically_with_sync`.
+    if let Err(error) = crate::util::rename_exclusive(&tmp, destination).with_context(|| {
         format!(
             "failed to publish copied file {} -> {}",
             tmp.display(),
@@ -668,7 +623,6 @@ pub fn copy_new_atomically(source: &Path, destination: &Path) -> Result<()> {
         let _ = std::fs::remove_file(&tmp);
         return Err(error);
     }
-    let _ = std::fs::remove_file(&tmp);
     sync_published_parent(destination)?;
     Ok(())
 }
@@ -1905,6 +1859,45 @@ mod tests {
         assert!(load_vault_write_layout(&vault).is_err());
         std::fs::write(vault.write_layout_path(), b"truncated").unwrap();
         assert!(load_vault_write_layout(&vault).is_err());
+    }
+
+    fn already_exists(error: &anyhow::Error) -> bool {
+        error.chain().any(|cause| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists)
+        })
+    }
+
+    #[test]
+    fn new_files_are_moved_into_place_under_one_name() {
+        use std::os::unix::fs::MetadataExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let written = tmp.path().join("Written.md");
+        let copied = tmp.path().join("Copied.md");
+        write_new_atomically(&written, b"written").unwrap();
+        copy_new_atomically(&written, &copied).unwrap();
+
+        for (path, bytes) in [(&written, &b"written"[..]), (&copied, &b"written"[..])] {
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+            assert_eq!(std::fs::metadata(path).unwrap().nlink(), 1);
+        }
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn new_files_never_replace_a_taken_name_and_leave_no_temp() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("Source.md");
+        let taken = tmp.path().join("Taken.md");
+        std::fs::write(&source, b"new").unwrap();
+        std::fs::write(&taken, b"existing").unwrap();
+
+        assert!(already_exists(&write_new_atomically(&taken, b"new").unwrap_err()));
+        assert!(already_exists(&copy_new_atomically(&source, &taken).unwrap_err()));
+
+        assert_eq!(std::fs::read(&taken).unwrap(), b"existing");
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 2);
     }
 
     #[test]

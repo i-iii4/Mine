@@ -399,23 +399,8 @@ fn publish_cli_pointer(
     let existing = installed_cli(entrypoint, owner)?;
     #[cfg(target_os = "macos")]
     if existing.is_none() {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
-        unsafe extern "C" {
-            fn renamex_np(
-                from: *const std::ffi::c_char,
-                to: *const std::ffi::c_char,
-                flags: std::ffi::c_uint,
-            ) -> std::ffi::c_int;
-        }
-        let from = CString::new(pointer.as_os_str().as_bytes())
-            .map_err(|_| invalid("unsafe CLI pointer path"))?;
-        let to = CString::new(entrypoint.as_os_str().as_bytes())
-            .map_err(|_| invalid("unsafe CLI entry path"))?;
         // RENAME_EXCL atomically refuses any entry introduced after the check.
-        if unsafe { renamex_np(from.as_ptr(), to.as_ptr(), 0x00000004) } != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
+        crate::util::rename_exclusive(&pointer, entrypoint)?;
     } else {
         std::fs::rename(&pointer, entrypoint)?;
     }
