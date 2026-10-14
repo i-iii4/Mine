@@ -8,7 +8,10 @@ import { YTDLP_DIRECTORY } from './ytdlp-layout.mjs';
 
 const MACHO_MAGIC = new Set(['feedface', 'cefaedfe', 'feedfacf', 'cffaedfe', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca']);
 function run(execute, command, args) {
-  const result = execute(command, args, { encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024 });
+  // codesign with the local certificate may wait for the keychain dialog the
+  // first time; the person answers it, so it gets minutes, not seconds.
+  const timeout = command === '/usr/bin/codesign' ? 600_000 : 30_000;
+  const result = execute(command, args, { encoding: 'utf8', timeout, maxBuffer: 1024 * 1024 });
   if (result.error || result.status !== 0) throw new Error(`Bundle finalization failed: ${command}: ${result.error?.message ?? result.stderr ?? result.status}`);
   return result.stdout ?? '';
 }
