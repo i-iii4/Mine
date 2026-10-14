@@ -161,9 +161,8 @@ import { deriveSearchResultRow } from "@/lib/searchResultRow";
 import { associationHeading, authorFeedHint } from "@/lib/cardAssociations";
 import { useCardAssociations } from "@/hooks/useCardAssociations";
 import type { ImagePreviewRequest, ImagePreviewSibling } from "./ImagePreviewOverlay";
-import { copyTextToClipboard } from "@/lib/clipboard";
+import { COPY_PATH_FAILED_TITLE, copyTextToClipboard } from "@/lib/clipboard";
 import {
-  COPY_PATH_FAILED_TITLE,
   READ_ELEMENT_FAILED_TITLE,
   dismissActionFailure,
   reportActionError,

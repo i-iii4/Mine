@@ -1,23 +1,12 @@
-// A command of the tab bar that failed, told by the visible tab of its window
-// (SPEC_DEEP_AUDIT.md, Н11, Е6.10). The bar is one row 31 px high with no
-// room for a notice; the tab under it has the notice corner, and it is the
-// tab the person is looking at. Before 13.10.2026 the failure went to the
-// console only.
+// A command of the tab bar that failed goes to Mine's log only: it is rare
+// and leaves the person nothing to do (SPEC_DEEP_AUDIT.md, «Решения
+// пользователя 14.10.2026»). From 13.10.2026 to then the visible tab of the
+// window showed it as a notice (Е6.10); the bar itself is one row 31 px high
+// with no room for one.
 
-import { emitTo } from "@tauri-apps/api/event";
-import type { TabId } from "@/types";
+import { logFailure } from "./appLog";
 
-/** The event a tab page hears from the bar of its window. */
-export const TAB_BAR_ACTION_FAILED_EVENT = "tab-bar-action-failed";
-
-export interface TabBarActionFailed {
-  /** `Could not …`, the action in words (`tabBarFailureTitle`). */
-  title: string;
-  /** Why, in the words of the error. */
-  message: string;
-}
-
-/** What the person did, in the words of the notice's title. */
+/** What the person did, in the words of the log line. */
 export type TabBarAction =
   | "show the tab"
   | "close the tab"
@@ -40,12 +29,7 @@ export function tabBarFailureTitle(action: TabBarAction): string {
   return `Could not ${action}`;
 }
 
-/** The page label of a tab (`TabId::label` in domain/windows.rs). */
-export function tabPageLabel(tab: TabId): string {
-  return `tab-${tab}`;
-}
-
-/// Send `failure` to the page of `tab`, the visible tab of the bar's window.
-export function tellVisibleTabOfFailure(tab: TabId, failure: TabBarActionFailed): Promise<void> {
-  return emitTo(tabPageLabel(tab), TAB_BAR_ACTION_FAILED_EVENT, failure);
+/** Write that `action` of the tab bar failed, with why, to the log. */
+export function logTabBarFailure(action: TabBarAction, error: unknown): void {
+  logFailure(tabBarFailureTitle(action), error);
 }

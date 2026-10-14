@@ -1179,6 +1179,24 @@ pub fn delete_user_files(paths: &[PathBuf]) -> Result<()> {
     }
 }
 
+/// The Trash refused to take a file: nothing moved. `permission` says macOS
+/// denied Mine access to it, which the person can change in System Settings
+/// (SPEC_DEEP_AUDIT.md, decision of 14.10.2026).
+#[derive(Debug, thiserror::Error)]
+#[error("failed to move {} to the system Trash: {detail}", path.display())]
+pub struct TrashRefused {
+    pub path: PathBuf,
+    pub permission: bool,
+    pub detail: String,
+}
+
+/// Whether an error of the file manager is macOS denying access: Cocoa's
+/// no-permission read and write errors, or `EPERM` and `EACCES`.
+#[cfg(any(test, target_os = "macos"))]
+fn is_permission_error(domain: &str, code: isize) -> bool {
+    matches!((domain, code), ("NSCocoaErrorDomain", 257 | 513) | ("NSPOSIXErrorDomain", 1 | 13))
+}
+
 /// Where the Trash put a file it took.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrashedTo {
@@ -1226,8 +1244,11 @@ fn file_manager_trash(path: &Path) -> Result<TrashedTo> {
     let mut resulting = None;
     NSFileManager::defaultManager()
         .trashItemAtURL_resultingItemURL_error(&url, Some(&mut resulting))
-        .map_err(|error| anyhow::anyhow!("{}", error.localizedDescription()))
-        .context("failed to move the file to the system Trash")?;
+        .map_err(|error| TrashRefused {
+            path: path.to_path_buf(),
+            permission: is_permission_error(&error.domain().to_string(), error.code()),
+            detail: error.localizedDescription().to_string(),
+        })?;
     Ok(resulting
         .and_then(|url| url.to_file_path())
         .map_or(TrashedTo::Unreported, TrashedTo::Path))
@@ -1342,6 +1363,17 @@ pub(crate) mod test_trash {
         hooks::record_asked(path);
         std::fs::symlink_metadata(path)
             .with_context(|| format!("failed to move {} to the test trash", path.display()))?;
+        if let Some(permission) = hooks::take_refusal() {
+            return Err(super::TrashRefused {
+                path: path.to_path_buf(),
+                permission,
+                detail: format!(
+                    "“{}” couldn’t be moved to the trash because you don’t have permission to access it.",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ),
+            }
+            .into());
+        }
         let taken = name_the_trash_takes(path);
         let name = taken
             .file_name()
@@ -1385,6 +1417,7 @@ pub(crate) mod test_trash {
 
         thread_local! {
             static LEAVE_IN_PLACE: Cell<bool> = const { Cell::new(false) };
+            static REFUSE: Cell<Option<bool>> = const { Cell::new(None) };
             static AFTER_MOVE: RefCell<Option<Hook>> = const { RefCell::new(None) };
             static ASKED: RefCell<Vec<std::path::PathBuf>> = const { RefCell::new(Vec::new()) };
         }
@@ -1407,6 +1440,16 @@ pub(crate) mod test_trash {
 
         pub(super) fn take_leave_in_place() -> bool {
             LEAVE_IN_PLACE.with(|slot| slot.replace(false))
+        }
+
+        /// The Trash refuses the next file it is asked to take, as macOS
+        /// does without access to it (`permission`) or for another reason.
+        pub(crate) fn refuse_next(permission: bool) {
+            REFUSE.with(|slot| slot.set(Some(permission)));
+        }
+
+        pub(super) fn take_refusal() -> Option<bool> {
+            REFUSE.with(|slot| slot.replace(None))
         }
 
         /// Run `hook` with the place in the Trash of the next file it takes,
@@ -1645,6 +1688,18 @@ fn commit_new_block_source(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The file manager's refusal for lack of access, as on 14.10.2026 for
+    /// a card in iCloud Drive («you don’t have permission to access it»), is
+    /// told apart from any other refusal.
+    #[test]
+    fn a_refusal_for_lack_of_access_is_told_apart() {
+        assert!(is_permission_error("NSCocoaErrorDomain", 513));
+        assert!(is_permission_error("NSCocoaErrorDomain", 257));
+        assert!(is_permission_error("NSPOSIXErrorDomain", 13));
+        assert!(!is_permission_error("NSCocoaErrorDomain", 4));
+        assert!(!is_permission_error("NSPOSIXErrorDomain", 2));
+    }
 
     #[test]
     fn unit_tests_trash_into_the_test_trash_not_the_persons_trash() {

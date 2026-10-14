@@ -17,6 +17,12 @@
 //! its Cancel and its video (Н4). Quitting Mine stops every download, and a
 //! video already finished but not yet in its card is kept for the next launch
 //! (Н3).
+//!
+//! YouTube refusing with HTTP 403 means the downloader is older than
+//! YouTube's player: the job updates the downloader once
+//! (`ytdlp_update`, SPEC_DEEP_AUDIT.md, Н15) and tries again; only a second
+//! refusal is told. A downloader that macOS blocked, that fell silent or that
+//! crashed is told in one sentence, its details in the log.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -53,6 +59,59 @@ const JOIN_TIME_LIMIT: Duration = Duration::from_secs(15 * 60);
 /// The error of a step that ended because the person cancelled or Mine is
 /// quitting: never shown, the job's final state says what happened.
 const STOPPED: &str = "stopped";
+/// YouTube refused the download again after the downloader was updated
+/// (SPEC_DEEP_AUDIT.md, «Решения пользователя 14.10.2026»).
+pub const REFUSED_MESSAGE: &str = "YouTube refused the download. Try again later.";
+/// The downloader was blocked by macOS, fell silent, crashed or is missing:
+/// one sentence for all, the details in the log.
+pub const COULD_NOT_DOWNLOAD: &str = "Could not download the video.";
+
+/// Why a step of the download ended without its result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StepError {
+    /// The person cancelled or Mine is quitting.
+    Stopped,
+    /// YouTube answered HTTP 403: the downloader may be out of date.
+    Refused,
+    /// Anything else, in the words the person reads.
+    Shown(String),
+}
+
+impl StepError {
+    fn into_message(self) -> String {
+        match self {
+            Self::Stopped => STOPPED.to_owned(),
+            Self::Refused => REFUSED_MESSAGE.to_owned(),
+            Self::Shown(message) => message,
+        }
+    }
+}
+
+impl From<String> for StepError {
+    fn from(message: String) -> Self {
+        if message == STOPPED {
+            Self::Stopped
+        } else {
+            Self::Shown(message)
+        }
+    }
+}
+
+impl From<&str> for StepError {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_owned())
+    }
+}
+
+/// What became of a finished video.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Delivered {
+    /// It went into its card.
+    Attached,
+    /// It could not go in now and is kept; it goes in the next time the
+    /// space opens. Nothing is said: there is nothing to do.
+    Kept,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -64,6 +123,10 @@ pub enum DownloadState {
     Done,
     Failed { message: String },
     Cancelled,
+    /// The card was not there to take the video (it vanished, or was busy):
+    /// the video is kept and goes in when the space opens next. The row
+    /// under the player says nothing.
+    Kept,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -162,12 +225,13 @@ fn overall_percent(choice: &FormatChoice, done: &HashMap<String, (u64, u64)>) ->
     ((received * 100 / expected).min(99)) as u8
 }
 
-/// A readable reason from `yt-dlp`'s error output. A refusal of macOS to
-/// load the downloader is told apart (Н4): it says the tool is unusable here,
-/// not that this video failed.
-fn failure_message(stderr: &str) -> String {
+/// A reason from `yt-dlp`'s error output. A refusal of macOS to load the
+/// downloader and a run that ended without a reason are one sentence, the
+/// details in the log; a 403 is `Refused`, which updates the downloader.
+fn failure_message(stderr: &str) -> StepError {
     if let ToolFailure::Blocked(detail) = crate::tool_process::classify_failure(stderr) {
-        return blocked_message(&detail);
+        log::warn!("macOS blocked the video downloader: {detail}");
+        return StepError::Shown(COULD_NOT_DOWNLOAD.to_owned());
     }
     let last_error = stderr
         .lines()
@@ -176,17 +240,28 @@ fn failure_message(stderr: &str) -> String {
         .map(|line| line.trim_start_matches("ERROR:").trim().to_owned());
     match last_error {
         Some(error) if error.contains("Sign in to confirm") => {
-            "YouTube asked to sign in to confirm this is not a bot.".to_owned()
+            StepError::Shown("YouTube asked to sign in to confirm this is not a bot.".to_owned())
         }
         // YouTube changes its player, and a downloader older than the change
         // gets 403 for every video (SPEC_MEDIA_ASSET_ACTIONS.md, «Download
-        // Media»): the person learns the likely cause, not only the code (Е2.5).
+        // Media»).
         Some(error) if error.contains("403") => {
-            "YouTube refused the download (HTTP 403). The bundled video downloader may be out of date.".to_owned()
+            log::warn!("YouTube refused the download: {error}");
+            StepError::Refused
         }
-        Some(error) => error,
-        None => "The video downloader stopped without a reason.".to_owned(),
+        Some(error) => StepError::Shown(error),
+        None => {
+            log::warn!("the video downloader stopped without a reason: {}", stderr.trim());
+            StepError::Shown(COULD_NOT_DOWNLOAD.to_owned())
+        }
     }
+}
+
+/// The downloader did not run to its end: missing, blocked, silent past its
+/// limit, or lost. One sentence; the details go to the log.
+fn downloader_failure(failure: &ToolFailure) -> StepError {
+    log::warn!("video downloader: {failure}");
+    StepError::Shown(COULD_NOT_DOWNLOAD.to_owned())
 }
 
 fn blocked_message(detail: &str) -> String {
@@ -345,11 +420,12 @@ impl Job {
 }
 
 /// What a job's end shows: a video that went into its card is Done even when
-/// a Cancel came during the delivery (Е2.6); a stopped job that delivered
-/// nothing is Cancelled.
-fn final_state(outcome: &Result<(), String>, phase: Phase) -> DownloadState {
+/// a Cancel came during the delivery (Е2.6); a kept one says nothing; a
+/// stopped job that delivered nothing is Cancelled.
+fn final_state(outcome: &Result<Delivered, String>, phase: Phase) -> DownloadState {
     match (outcome, phase) {
-        (Ok(()), _) => DownloadState::Done,
+        (Ok(Delivered::Attached), _) => DownloadState::Done,
+        (Ok(Delivered::Kept), _) => DownloadState::Kept,
         (Err(_), Phase::Cancelled) => DownloadState::Cancelled,
         (Err(message), _) => DownloadState::Failed {
             message: message.clone(),
@@ -416,7 +492,10 @@ impl SourceVideoDownloads {
     /// A new job for the card `slug`, unless one is running for it.
     fn register(&self, vault: &VaultLayout, slug: &str, video_id: &str) -> Result<Option<Arc<Job>>, String> {
         if self.quitting.load(Ordering::SeqCst) {
-            return Err("Mine is quitting; the download did not start.".to_owned());
+            // Quitting is said only in the log (SPEC_DEEP_AUDIT.md,
+            // «Решения пользователя 14.10.2026»).
+            log::info!("Mine is quitting; the download of {slug} did not start");
+            return Ok(None);
         }
         if self.job_for(vault, slug).is_some_and(|job| job.is_running()) {
             return Ok(None);
@@ -435,7 +514,7 @@ impl SourceVideoDownloads {
     /// unless it already is.
     ///
     /// # Errors
-    /// The card has no YouTube source, or Mine is quitting.
+    /// The card has no YouTube source.
     pub fn start(
         &self,
         app: &AppHandle,
@@ -579,16 +658,70 @@ fn staging_dir(video_id: &str) -> PathBuf {
     ))
 }
 
-fn run(app: &AppHandle, job: &Job) -> Result<(), String> {
-    let tools = Tools {
-        ytdlp: bundled_ytdlp(app).ok_or("The bundled video downloader is missing.")?,
-        joiner: bundled_tool(app, "video-mux-helper").ok_or("The bundled video joiner is missing.")?,
-    };
-    let staging = Staging(staging_dir(&job.video_id));
-    let finished = download_to_file(job, &tools, &staging.0, |state| report(app, job, state))?;
+fn run(app: &AppHandle, job: &Job) -> Result<Delivered, String> {
+    let joiner = bundled_tool(app, "video-mux-helper").ok_or("The bundled video joiner is missing.")?;
+    let app_data = app.path().app_data_dir().ok();
+    let (_staging, finished) = with_one_update(
+        || crate::ytdlp_update::choose(app_data.as_deref(), bundled_ytdlp(app)),
+        || {
+            report(app, job, DownloadState::Preparing);
+            update_downloader(app_data.as_deref(), job);
+        },
+        |ytdlp| {
+            let staging = Staging(staging_dir(&job.video_id));
+            let tools = Tools { ytdlp: ytdlp.to_path_buf(), joiner: joiner.clone() };
+            let finished = download_to_file(job, &tools, &staging.0, |state| report(app, job, state))?;
+            Ok((staging, finished))
+        },
+    )
+    .map_err(StepError::into_message)?;
     deliver_finished(job, &finished, |slug, key, finished| {
         crate::commands::blocks::attach_downloaded_source_video(app, &job.vault, slug, key, &job.video_id, finished)
     })
+}
+
+/// Run `attempt` with the downloader `locate` finds; when YouTube refuses
+/// with 403, `update` the downloader once and run `attempt` again with what
+/// `locate` finds then (SPEC_DEEP_AUDIT.md, Н15).
+fn with_one_update<T>(
+    locate: impl Fn() -> Option<PathBuf>,
+    update: impl FnOnce(),
+    mut attempt: impl FnMut(&Path) -> Result<T, StepError>,
+) -> Result<T, StepError> {
+    let downloader = || {
+        locate().ok_or_else(|| {
+            log::warn!("the video downloader is missing");
+            StepError::Shown(COULD_NOT_DOWNLOAD.to_owned())
+        })
+    };
+    match attempt(&downloader()?) {
+        Err(StepError::Refused) => {
+            update();
+            attempt(&downloader()?)
+        }
+        other => other,
+    }
+}
+
+/// Fetch the newest downloader from the project's releases into this Mac's
+/// app data. Runs on the job's thread, its tools among the job's, so a
+/// Cancel or the exit ends it; a failure leaves the downloader as it was
+/// and is said only in the log.
+fn update_downloader(app_data: Option<&Path>, job: &Job) {
+    let Some(app_data) = app_data else {
+        log::warn!("the video downloader was not updated: no app data folder");
+        return;
+    };
+    let releases = crate::ytdlp_update::GitHubReleases::default();
+    match crate::ytdlp_update::update(app_data, &releases, &job.tools, &|| job.stopped()) {
+        Ok(crate::ytdlp_update::UpdateOutcome::Installed(version)) => {
+            log::info!("video downloader updated to {version}");
+        }
+        Ok(crate::ytdlp_update::UpdateOutcome::Current(version)) => {
+            log::info!("video downloader {version} is the newest release");
+        }
+        Err(error) => log::warn!("the video downloader was not updated: {error}"),
+    }
 }
 
 /// A finished video goes into its card under the card's name now (Н4), or,
@@ -598,7 +731,7 @@ fn deliver_finished(
     job: &Job,
     finished: &Path,
     attach: impl FnOnce(&str, Option<CardKey>, &Path) -> AttachOutcome,
-) -> Result<(), String> {
+) -> Result<Delivered, String> {
     match job.begin_delivery() {
         Ok(()) => {
             let slug = job.slug();
@@ -624,7 +757,8 @@ fn deliver_finished(
 /// card edited in Obsidian between the read and the write, a folder that
 /// cannot be read now. Then the video is kept for the space, as a download
 /// finished for a closed space is, and attached when the space opens again;
-/// the job still reports the failure, saying the video is kept.
+/// the person is told nothing, the log says why (SPEC_DEEP_AUDIT.md,
+/// «Решения пользователя 14.10.2026»).
 pub(crate) fn deliver_download(
     vault: &VaultLayout,
     slug: &str,
@@ -632,18 +766,19 @@ pub(crate) fn deliver_download(
     video_id: &str,
     finished: &Path,
     attach: impl FnOnce(&Path) -> AttachOutcome,
-) -> Result<(), String> {
+) -> Result<Delivered, String> {
     let outcome = attach(finished);
     let Err(error) = &outcome else {
-        return Ok(());
+        return Ok(Delivered::Attached);
     };
     if kept_fate(&outcome) == KeptFate::Settled {
         return Err(error.to_string());
     }
     match keep_download(vault, slug, key, video_id, finished) {
-        Ok(()) => Err(format!(
-            "{error}. The video is kept and will be added the next time this space opens."
-        )),
+        Ok(()) => {
+            log::info!("video for {slug} kept for the next opening of the space: {error}");
+            Ok(Delivered::Kept)
+        }
         Err(keeping) => Err(format!("{error}. The video could not be kept: {keeping}")),
     }
 }
@@ -881,7 +1016,7 @@ fn download_to_file(
     tools: &Tools,
     staging: &Path,
     mut on_state: impl FnMut(DownloadState),
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, StepError> {
     std::fs::create_dir_all(staging).map_err(|error| error.to_string())?;
     let watch_url = format!("https://www.youtube.com/watch?v={}", job.video_id);
 
@@ -939,7 +1074,7 @@ fn download_to_file(
         .and_then(serde_json::Value::as_f64)
         .filter(|seconds| *seconds > 0.0)
         .ok_or("YouTube did not report the video's length.")?;
-    join_streams(job, &tools.joiner, staging, &[file_for(0), file_for(1)], &joined, seconds)
+    Ok(join_streams(job, &tools.joiner, staging, &[file_for(0), file_for(1)], &joined, seconds)?)
 }
 
 /// Join the video and audio files into `output` with the `helper`. A long
@@ -984,20 +1119,20 @@ fn run_ytdlp(
     args: &[&str],
     limits: Limits,
     on_line: impl FnMut(&str),
-) -> Result<String, String> {
+) -> Result<String, StepError> {
     if job.stopped() {
-        return Err(STOPPED.into());
+        return Err(StepError::Stopped);
     }
     let mut command = Command::new(ytdlp);
     command.args(args).env("PATH", tool_search_path()).env("TMPDIR", temp);
     let outcome = crate::tool_process::run_lines(&mut command, limits, &job.tools, on_line);
     if job.stopped() {
-        return Err(STOPPED.into());
+        return Err(StepError::Stopped);
     }
     match outcome {
         Ok(exit) if exit.success => Ok(exit.stdout),
         Ok(exit) => Err(failure_message(&exit.stderr)),
-        Err(failure) => Err(tool_failure_message("video downloader", &failure)),
+        Err(failure) => Err(downloader_failure(&failure)),
     }
 }
 
@@ -1013,7 +1148,8 @@ fn tool_search_path() -> String {
 }
 
 /// The launcher of the bundled unpacked `yt-dlp` (SPEC_ONBOARDING.md, О8.1),
-/// or in development the one `bun run fetch:ytdlp` staged.
+/// or in development the one `bun run fetch:ytdlp` staged. An updated copy
+/// in the app data is taken over it when newer (`ytdlp_update::choose`).
 fn bundled_ytdlp(app: &AppHandle) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(resources) = app.path().resource_dir() {
@@ -1066,7 +1202,7 @@ mod tests {
         assert!(job.cancel());
         let started = Instant::now();
         let outcome = run_ytdlp(&job, &sleeper, dir.path(), &[], Limits { total: None, idle: None }, |_| {});
-        assert_eq!(outcome, Err(STOPPED.to_owned()));
+        assert_eq!(outcome, Err(StepError::Stopped));
         assert!(started.elapsed() < CANCEL_DEADLINE);
     }
 
@@ -1104,7 +1240,7 @@ mod tests {
             job.cancel();
             running.join().unwrap()
         });
-        assert_eq!(outcome, Err(STOPPED.to_owned()));
+        assert_eq!(outcome, Err(StepError::Stopped));
         assert!(started.elapsed() < CANCEL_DEADLINE, "{:?}", started.elapsed());
     }
 
@@ -1122,14 +1258,16 @@ mod tests {
             job.cancel();
             running.join().unwrap()
         });
-        assert_eq!(outcome, Err(STOPPED.to_owned()));
+        assert_eq!(outcome, Err(StepError::Stopped));
         assert!(started.elapsed() < CANCEL_DEADLINE, "{:?}", started.elapsed());
     }
 
     /// Е2.4: a downloader that stops reporting is ended at its limit and says
-    /// so, instead of holding the job for good.
+    /// so, instead of holding the job for good: one sentence for the person,
+    /// the limit in the log (decision of 14.10.2026).
     #[test]
     fn a_silent_downloader_is_ended_at_its_limit() {
+        let capture = crate::test_log::capture();
         let dir = tempfile::tempdir().unwrap();
         let job = job();
         let started = Instant::now();
@@ -1141,16 +1279,17 @@ mod tests {
             Limits { total: None, idle: Some(Duration::from_millis(500)) },
             |_| {},
         );
-        assert_eq!(
-            outcome,
-            Err("The video downloader stopped responding and was ended after 0 s.".to_owned())
-        );
+        assert_eq!(outcome.map_err(StepError::into_message), Err("Could not download the video.".to_owned()));
         assert!(started.elapsed() < CANCEL_DEADLINE, "{:?}", started.elapsed());
+        let warnings = capture.warnings();
+        assert!(warnings.iter().any(|line| line.contains("did not finish within")), "{warnings:?}");
     }
 
-    /// Е2.4: macOS refusing to load the downloader is named as such.
+    /// Е2.4: macOS refusing to load the downloader is the same one sentence;
+    /// the refusal itself is in the log.
     #[test]
     fn a_downloader_macos_refuses_is_told_apart() {
+        let capture = crate::test_log::capture();
         let dir = tempfile::tempdir().unwrap();
         let job = job();
         let outcome = run_ytdlp(
@@ -1161,8 +1300,80 @@ mod tests {
             Limits { total: Some(CANCEL_DEADLINE), idle: None },
             |_| {},
         );
-        let message = outcome.unwrap_err();
-        assert!(message.starts_with("macOS blocked the bundled video downloader"), "{message}");
+        assert_eq!(outcome.map_err(StepError::into_message), Err("Could not download the video.".to_owned()));
+        let warnings = capture.warnings();
+        assert!(warnings.iter().any(|line| line.contains("macOS blocked the video downloader")), "{warnings:?}");
+    }
+
+    /// A downloader YouTube refuses with 403 the first time, and one that
+    /// works after the update: the 403 leads to exactly one update and
+    /// one more run, with the downloader found after the update.
+    #[test]
+    fn a_403_updates_the_downloader_once_and_tries_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = script(dir.path(), "old", "echo 'ERROR: unable to download video data: HTTP Error 403: Forbidden' >&2; exit 1");
+        let new = script(dir.path(), "new", "echo '{\"ok\":true}'");
+        let job = job();
+        let current = std::cell::RefCell::new(old.clone());
+        let updates = std::cell::Cell::new(0);
+        let mut runs = Vec::new();
+        let outcome = with_one_update(
+            || Some(current.borrow().clone()),
+            || {
+                updates.set(updates.get() + 1);
+                *current.borrow_mut() = new.clone();
+            },
+            |ytdlp| {
+                runs.push(ytdlp.to_path_buf());
+                run_ytdlp(&job, ytdlp, dir.path(), &[], Limits { total: Some(CANCEL_DEADLINE), idle: None }, |_| {})
+            },
+        );
+        assert_eq!(outcome.map(|out| out.trim().to_owned()), Ok("{\"ok\":true}".to_owned()));
+        assert_eq!(updates.get(), 1);
+        assert_eq!(runs, vec![old, new]);
+    }
+
+    /// When YouTube refuses again after the update, that is what the person
+    /// reads; there is no third run and no second update.
+    #[test]
+    fn a_403_after_the_update_says_youtube_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let refused = script(dir.path(), "refused", "echo 'ERROR: HTTP Error 403: Forbidden' >&2; exit 1");
+        let job = job();
+        let updates = std::cell::Cell::new(0);
+        let runs = std::cell::Cell::new(0);
+        let outcome = with_one_update(
+            || Some(refused.clone()),
+            || updates.set(updates.get() + 1),
+            |ytdlp| {
+                runs.set(runs.get() + 1);
+                run_ytdlp(&job, ytdlp, dir.path(), &[], Limits { total: Some(CANCEL_DEADLINE), idle: None }, |_| {})
+            },
+        );
+        assert_eq!(
+            outcome.map_err(StepError::into_message),
+            Err("YouTube refused the download. Try again later.".to_owned())
+        );
+        assert_eq!((updates.get(), runs.get()), (1, 2));
+    }
+
+    /// Any other failure is said at once: no update, no second run.
+    #[test]
+    fn only_a_403_updates_the_downloader() {
+        let dir = tempfile::tempdir().unwrap();
+        let unavailable = script(dir.path(), "unavailable", "echo 'ERROR: Video unavailable' >&2; exit 1");
+        let job = job();
+        let updates = std::cell::Cell::new(0);
+        let outcome = with_one_update(
+            || Some(unavailable.clone()),
+            || updates.set(updates.get() + 1),
+            |ytdlp| run_ytdlp(&job, ytdlp, dir.path(), &[], Limits { total: Some(CANCEL_DEADLINE), idle: None }, |_| {}),
+        );
+        assert_eq!(outcome, Err(StepError::Shown("Video unavailable".to_owned())));
+        assert_eq!(updates.get(), 0);
+        // No downloader at all is the one sentence too.
+        let missing: Result<(), StepError> = with_one_update(|| None, || {}, |_| Ok(()));
+        assert_eq!(missing.map_err(StepError::into_message), Err("Could not download the video.".to_owned()));
     }
 
     /// The bundled unpacked `yt-dlp` from `binaries/`, stopped while it waits
@@ -1195,7 +1406,7 @@ mod tests {
             job.cancel();
             running.join().unwrap()
         });
-        assert_eq!(outcome, Err(STOPPED.to_owned()));
+        assert_eq!(outcome, Err(StepError::Stopped));
         assert_eq!(job.tools.count(), 0, "a process of the group survived");
         assert_eq!(unpacked(&std::env::temp_dir()), system_before);
     }
@@ -1316,11 +1527,15 @@ mod tests {
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].slug, "Cards/Other");
         assert!(kept_dir(&vault).join(&kept[0].file).is_file());
-        // And nothing starts any more.
-        assert!(downloads.register(&vault, "Cards/Third", "9KDDhAOyv9k").is_err());
+        // And nothing starts any more; that is said only in the log.
+        let capture = crate::test_log::capture();
+        assert!(downloads.register(&vault, "Cards/Third", "9KDDhAOyv9k").unwrap().is_none());
+        assert!(downloads.status(&vault, "Cards/Third").is_none());
+        assert!(capture.lines().iter().any(|(_, line)| line.contains("Mine is quitting")));
     }
 
-    /// Н4: a card not found keeps its video for the next opening.
+    /// Н4: a card not found keeps its video for the next opening, and the
+    /// person is told nothing (decision of 14.10.2026).
     #[test]
     fn a_card_not_found_keeps_the_video() {
         let dir = tempfile::tempdir().unwrap();
@@ -1329,7 +1544,9 @@ mod tests {
         let outcome = deliver_download(&vault, "Cards/Film", None, "9KDDhAOyv9k", &finished, |_| {
             Err(MediaAssetActionError::Internal { message: "the card of this download was not found".into() })
         });
-        assert!(outcome.unwrap_err().contains("The video is kept"));
+        assert_eq!(outcome, Ok(Delivered::Kept));
+        assert_eq!(final_state(&outcome, Phase::Delivering), DownloadState::Kept);
+        assert_eq!(serde_json::to_value(DownloadState::Kept).unwrap(), serde_json::json!({ "state": "kept" }));
         let kept = kept_downloads(&vault);
         assert_eq!(kept.len(), 1);
         assert!(kept_dir(&vault).join(&kept[0].file).is_file());
@@ -1521,7 +1738,7 @@ mod tests {
         let staging = tempfile::tempdir().unwrap();
         let mut states = Vec::new();
         let file = download_to_file(&job, &tools, staging.path(), |state| states.push(state))
-            .unwrap_or_else(|error| panic!("download failed: {error}"));
+            .unwrap_or_else(|error| panic!("download failed: {error:?}"));
         assert!(file.metadata().unwrap().len() > 100_000, "{}", file.display());
         assert!(states.iter().any(|state| matches!(state, DownloadState::Downloading { percent } if *percent > 0)));
         assert_eq!(states.last(), Some(&DownloadState::Finishing));
@@ -1542,12 +1759,15 @@ mod tests {
     #[test]
     fn explains_the_usual_refusals() {
         // Е2.5: a 403 names the likely cause, an outdated downloader.
+        // A 403 updates the downloader before anything is said (Н15).
         assert_eq!(
             failure_message("WARNING: x\nERROR: unable to download video data: HTTP Error 403: Forbidden\n"),
-            "YouTube refused the download (HTTP 403). The bundled video downloader may be out of date."
+            StepError::Refused
         );
-        assert_eq!(failure_message("ERROR: [youtube] abc: Sign in to confirm you’re not a bot"), "YouTube asked to sign in to confirm this is not a bot.");
-        assert_eq!(failure_message("ERROR: Video unavailable"), "Video unavailable");
-        assert_eq!(failure_message(""), "The video downloader stopped without a reason.");
+        let said = |stderr: &str| failure_message(stderr).into_message();
+        assert_eq!(said("ERROR: [youtube] abc: Sign in to confirm you’re not a bot"), "YouTube asked to sign in to confirm this is not a bot.");
+        assert_eq!(said("ERROR: Video unavailable"), "Video unavailable");
+        // A downloader that crashed without a reason: one sentence.
+        assert_eq!(said(""), "Could not download the video.");
     }
 }

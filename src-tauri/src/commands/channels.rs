@@ -1893,7 +1893,7 @@ mod tests {
 
         let refused = delete_channel_inner(None, &vs.conn, &vs.vault, "Photos").unwrap_err();
 
-        assert!(refused.to_string().contains("the Trash did not take"), "{refused}");
+        assert_eq!(refused.to_string(), "Could not move “Photos.md” to the Trash. Nothing was deleted.");
         assert_eq!(
             std::fs::read_to_string(vault.block_path("Collections/Photos")).unwrap(),
             WRITTEN_PAGE

@@ -362,6 +362,12 @@ pub enum SourceMutationError {
         path: PathBuf,
         kept: Option<PathBuf>,
     },
+    /// The Trash refused the file at `path`; nothing was deleted.
+    /// `permission`: macOS denied Mine access to it.
+    TrashRefused {
+        path: PathBuf,
+        permission: bool,
+    },
     Stage {
         path: PathBuf,
         #[source]
@@ -403,13 +409,12 @@ impl std::fmt::Display for SourceMutationError {
                     preserved_note(preserved)
                 );
             }
-            Self::NotTrashed { path, kept } => {
-                return write!(
-                    f,
-                    "the Trash did not take {}{}; nothing was deleted",
-                    path.display(),
-                    kept_note(kept)
-                );
+            // The words the person reads (decision of 14.10.2026); the
+            // system's own words and where a displaced file went are in the
+            // log (`commit_file_error`).
+            Self::NotTrashed { path, .. } => return f.write_str(&trash_refusal_text(path, false)),
+            Self::TrashRefused { path, permission } => {
+                return f.write_str(&trash_refusal_text(path, *permission));
             }
             Self::Rollback { original, .. } => {
                 return write!(f, "source mutation rollback was incomplete after: {original}");
@@ -442,13 +447,42 @@ fn preserved_note(preserved: &Option<PathBuf>) -> String {
         .unwrap_or_default()
 }
 
-/// A publication error, typed as `Changed` when an outside edit won and as
-/// `NotTrashed` when the Trash left the file.
+/// What a refused move to the Trash says: the file's name, never its path,
+/// and, when macOS denied access, where to allow it (SPEC_DEEP_AUDIT.md,
+/// «Решения пользователя 14.10.2026»).
+#[must_use]
+pub fn trash_refusal_text(path: &Path, permission: bool) -> String {
+    let name = path
+        .file_name()
+        .map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned());
+    let mut text = format!("Could not move “{name}” to the Trash. Nothing was deleted.");
+    if permission {
+        text.push('\n');
+        text.push_str(TRASH_PERMISSION_HINT);
+    }
+    text
+}
+
+/// The second line of a refusal macOS gave for lack of access.
+pub const TRASH_PERMISSION_HINT: &str =
+    "Allow Mine to access iCloud Drive in System Settings, Privacy & Security, Files and Folders.";
+
+/// A publication error, typed as `Changed` when an outside edit won, as
+/// `NotTrashed` when the Trash left the file and as `TrashRefused` when it
+/// would not take it. The Trash's own words go to the log only.
 fn commit_file_error(path: &Path, source: anyhow::Error) -> SourceMutationError {
     if let Some(left) = source.chain().find_map(|cause| cause.downcast_ref::<NotTrashed>()) {
+        log::warn!("{source:#}");
         return SourceMutationError::NotTrashed {
             path: left.path.clone(),
             kept: left.kept.clone(),
+        };
+    }
+    if let Some(refused) = source.chain().find_map(|cause| cause.downcast_ref::<files::TrashRefused>()) {
+        log::warn!("{source:#}");
+        return SourceMutationError::TrashRefused {
+            path: refused.path.clone(),
+            permission: refused.permission,
         };
     }
     match files::source_changed(&source) {
@@ -1737,10 +1771,49 @@ mod tests {
             matches!(&error, SourceMutationError::NotTrashed { path: left, kept: None } if left == &path),
             "{error}"
         );
-        assert!(format!("{error:#}").contains("the Trash did not take"), "{error:#}");
+        // Decision of 14.10.2026: the file's name, never its path.
+        assert_eq!(format!("{error:#}"), "Could not move “note.md” to the Trash. Nothing was deleted.");
         assert_eq!(std::fs::read(&path).unwrap(), b"read by Mine");
         assert!(!created.exists());
         assert!(hidden_leftovers(dir.path()).is_empty(), "{:?}", hidden_leftovers(dir.path()));
+    }
+
+    /// Decision of 14.10.2026: a Trash that refuses the file says so in one
+    /// sentence with the file's name; a refusal for lack of access adds where
+    /// to allow it; the system's own words go to the log only. Nothing is
+    /// deleted.
+    #[test]
+    fn a_file_the_trash_refused_names_the_file_and_the_permission() {
+        let capture = crate::test_log::capture();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("DOWN THE SPINAL LADDER.md");
+        std::fs::write(&path, b"card").unwrap();
+        let staged =
+            StagedSourceMutation::stage(vec![SourceFileWrite::delete_if_unchanged(path.clone(), b"card".to_vec())])
+                .unwrap();
+        files::test_trash::hooks::refuse_next(true);
+
+        let error = staged.commit().unwrap_err();
+
+        assert!(matches!(error, SourceMutationError::TrashRefused { permission: true, .. }), "{error}");
+        assert_eq!(
+            format!("{error:#}"),
+            "Could not move “DOWN THE SPINAL LADDER.md” to the Trash. Nothing was deleted.\nAllow Mine to access iCloud Drive in System Settings, Privacy & Security, Files and Folders."
+        );
+        assert!(!format!("{error:#}").contains(&dir.path().display().to_string()));
+        assert_eq!(std::fs::read(&path).unwrap(), b"card");
+        let warnings = capture.warnings();
+        assert!(warnings.iter().any(|line| line.contains("don’t have permission")), "{warnings:?}");
+
+        // Refused for another reason: the one sentence alone.
+        let staged = StagedSourceMutation::stage(vec![SourceFileWrite::delete(path.clone())]).unwrap();
+        files::test_trash::hooks::refuse_next(false);
+        let error = staged.commit().unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "Could not move “DOWN THE SPINAL LADDER.md” to the Trash. Nothing was deleted."
+        );
+        assert!(path.exists());
     }
 
     /// Е1.11 for a delete that takes a file whatever it holds.

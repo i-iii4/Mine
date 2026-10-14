@@ -3691,6 +3691,33 @@
         "src/components/FirstCardMarker.test.tsx"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/ytdlp_update.rs"
+      ],
+      "requirement": "SPEC_DEEP_AUDIT.md### Решения пользователя 14.10.2026: сообщения и загрузчик видео",
+      "tests": [
+        "src-tauri/src/ytdlp_update.rs",
+        "src-tauri/src/source_video_download.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/lib/appLog.ts",
+        "src/lib/appLog.test.ts",
+        "src/lib/notificationPlacement.ts",
+        "src/components/ui/modal-window.ts",
+        "src/dev/CloudOpenPage.tsx",
+        "src-tauri/capabilities/default.json"
+      ],
+      "requirement": "SPEC_DEEP_AUDIT.md### Решения пользователя 14.10.2026: сообщения и загрузчик видео",
+      "tests": [
+        "src/lib/appLog.test.ts",
+        "src/components/NotificationCard.test.tsx"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

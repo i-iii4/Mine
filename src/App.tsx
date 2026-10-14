@@ -88,6 +88,7 @@ import {
   DELETE_ELEMENT_FAILED_TITLE,
   deleteCollectionKeptLinksText,
 } from "@/lib/deleteFailure";
+import { NOTIFICATION_BOTTOM_VAR, publishNotificationBottom } from "@/lib/notificationPlacement";
 import { reconcileBlocks } from "@/lib/blockIdentity";
 import { refreshPageLimit } from "@/lib/gridPaging";
 import { createPreviewRowQueue } from "@/lib/previewRowQueue";
@@ -350,7 +351,7 @@ import { CollectionNameCheckContext } from "@/hooks/useCollectionNameRefusal";
 import { errorMessage } from "@/lib/errorMessage";
 import { createElementsInTurn } from "@/lib/createElements";
 import { revealInFinder } from "@/lib/systemActions";
-import { TAB_BAR_ACTION_FAILED_EVENT, tabBarFailureTitle, type TabBarActionFailed } from "@/lib/tabBarFailure";
+import { logTabBarFailure } from "@/lib/tabBarFailure";
 import { mediaAssetErrorMessage } from "@/lib/mediaAssetErrors";
 import {
   reportActionError,
@@ -361,7 +362,6 @@ import {
   useActionFailures,
   NOTHING_CHANGED,
   CREATE_COLLECTION_FAILED_TITLE,
-  COPY_PATH_FAILED_TITLE,
 } from "@/lib/actionFailures";
 import {
   IndexingProgress,
@@ -403,7 +403,7 @@ import {
   ImagePreviewOverlay,
   type ImagePreviewRequest,
 } from "@/components/ImagePreviewOverlay";
-import { copyTextToClipboard } from "@/lib/clipboard";
+import { COPY_PATH_FAILED_TITLE, copyTextToClipboard } from "@/lib/clipboard";
 import { setCollectionMemberships } from "@/lib/collectionHover";
 
 const Detail = lazy(async () => {
@@ -705,10 +705,10 @@ export function App() {
       if (direction === null) return;
       event.preventDefault();
       event.stopPropagation();
-      // A tab command that failed is this tab's notice, as one of the tab
-      // bar's (SPEC_DEEP_AUDIT.md, Н11, Е6.10).
+      // A tab command that failed goes to the log, as one of the tab bar's
+      // (SPEC_DEEP_AUDIT.md, «Решения пользователя 14.10.2026»).
       void activateAdjacentTab(direction === "forward").catch((error: unknown) => {
-        reportActionError("tab-bar", tabBarFailureTitle("switch tabs"), error);
+        logTabBarFailure("switch tabs", error);
       });
     };
     window.addEventListener("keydown", onKeyDown, true);
@@ -1014,6 +1014,15 @@ export function AppWithVault({
   // Widths are cached from the last visible render, so a hidden entry keeps
   // its claim and returns the moment there is room again.
   const bottomBarRef = useRef<HTMLDivElement | null>(null);
+  // The bar as an element the notice corner follows: it mounts after the
+  // page's first commit (the space opens first), and an effect that read the
+  // ref once found no bar and never looked again, so notices covered the bar
+  // (live case of 14.10.2026).
+  const [bottomBarNode, setBottomBarNode] = useState<HTMLDivElement | null>(null);
+  const attachBottomBar = useCallback((node: HTMLDivElement | null) => {
+    bottomBarRef.current = node;
+    setBottomBarNode(node);
+  }, []);
   const [hiddenBarEntries, setHiddenBarEntries] = useState<ReadonlySet<string>>(new Set());
   // Overflow is measured, not computed. An arithmetic guess at the free width
   // has to model padding, gaps, the spacer and every fixed child correctly, and
@@ -1057,24 +1066,26 @@ export function AppWithVault({
     observer.observe(bar);
     return () => observer.disconnect();
   }, [remeasureBottomBar, bottomActionBarHidden]);
-  // The bar's height, for what stands above it: notifications keep the
-  // feed's inset over the bar instead of covering it (DESIGN_SYSTEM.md,
-  // «Уведомления»). No bar, no height.
+  // Where the bar stands, for what stands above it: notifications keep 16 px
+  // over its top edge instead of covering it (DESIGN_SYSTEM.md,
+  // «Уведомления», decision of 14.10.2026). Read from the bar's place in the
+  // layout against the window, so the frame line under it counts too; no
+  // bar, no property, and the corner keeps its window inset.
   useLayoutEffect(() => {
     const root = document.documentElement;
-    const bar = bottomBarRef.current;
-    const publish = () => {
-      root.style.setProperty("--bottom-bar-height", `${bar?.offsetHeight ?? 0}px`);
-    };
+    const bar = bottomBarNode;
+    const publish = () => publishNotificationBottom(root, bar, window.innerHeight);
     publish();
-    if (!bar) return () => root.style.removeProperty("--bottom-bar-height");
+    if (!bar) return () => root.style.removeProperty(NOTIFICATION_BOTTOM_VAR);
     const observer = new ResizeObserver(publish);
     observer.observe(bar);
+    window.addEventListener("resize", publish);
     return () => {
       observer.disconnect();
-      root.style.removeProperty("--bottom-bar-height");
+      window.removeEventListener("resize", publish);
+      root.style.removeProperty(NOTIFICATION_BOTTOM_VAR);
     };
-  }, [bottomActionBarHidden]);
+  }, [bottomBarNode]);
   // The set of entries changes with state (focus, selection, open element), so
   // the bar is measured again after every commit; the setter ignores a result
   // that did not change.
@@ -2827,7 +2838,7 @@ export function AppWithVault({
   // this tab keeps its own (SPEC_TABS.md, В52).
   const openSpaceInNewTab = useCallback((vaultId: string) => {
     void newTab(vaultId).catch((error: unknown) => {
-      reportActionError("tab-bar", tabBarFailureTitle("open a new tab"), error);
+      logTabBarFailure("open a new tab", error);
     });
   }, []);
 
@@ -2921,11 +2932,7 @@ export function AppWithVault({
       collection_filter: "",
     };
     void openPlace(view, newWindow).catch((error: unknown) => {
-      reportActionError(
-        "tab-bar",
-        tabBarFailureTitle(newWindow ? "open a new window" : "open a new tab"),
-        error,
-      );
+      logTabBarFailure(newWindow ? "open a new window" : "open a new tab", error);
     });
   }, [mainViewMode]);
   const handleOpenBlockElsewhere = useCallback(
@@ -2938,7 +2945,7 @@ export function AppWithVault({
 
   const handleOpenSettings = useCallback((section?: SettingsSection) => {
     void openSettingsWindow(section).catch((error: unknown) => {
-      reportActionError("tab-bar", tabBarFailureTitle("open Settings"), error);
+      logTabBarFailure("open Settings", error);
     });
   }, []);
 
@@ -2981,17 +2988,6 @@ export function AppWithVault({
     return () => {
       cancelled = true;
       unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  // The tab bar of this window could not do what was asked: this tab, the
-  // visible one, says so (SPEC_DEEP_AUDIT.md, Е6.10).
-  useEffect(() => {
-    const unlisten = listenPage<TabBarActionFailed>(TAB_BAR_ACTION_FAILED_EVENT, (event) => {
-      reportActionFailure({ kind: "tab-bar", title: event.payload.title, messages: [event.payload.message] });
-    });
-    return () => {
-      void unlisten.then((stop) => stop());
     };
   }, []);
 
@@ -4993,7 +4989,7 @@ export function AppWithVault({
           // entry is Show/Hide Sidebar itself, and the button just clicked
           // must not jump under the pointer. The right end is ordinary
           // chrome, on --chrome-edge-pad.
-          ref={bottomBarRef}
+          ref={attachBottomBar}
           className="gap-2 bg-accent pl-[var(--sidebar-label-inset)] pr-[var(--chrome-edge-pad)]"
           data-bottom-action-bar=""
         >

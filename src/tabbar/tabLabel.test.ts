@@ -2,19 +2,11 @@ import { describe, expect, it } from "vitest";
 import { CHOOSE_SPACE_LABEL, tabLabel, tabTitle } from "./tabLabel";
 
 describe("tab title (Е2.9)", () => {
-  it("is the label for a tab that opened", () => {
-    expect(tabTitle({ space_name: "Mine", place: null, card: null, error: null })).toBe("Mine");
-  });
-
-  it("says why a tab could not open and how to try again", () => {
-    expect(
-      tabTitle({
-        space_name: "Mine",
-        place: "Beautiful web",
-        card: null,
-        error: "the page of this tab could not be made: no memory",
-      }),
-    ).toBe("Beautiful web\nThe page of this tab could not be made: no memory. Select the tab to try again.");
+  // Decision of 14.10.2026: a tab whose page could not be made says nothing
+  // of it; its tooltip is its label, and selecting it tries again.
+  it("is the label, whatever happened to the tab's page", () => {
+    expect(tabTitle({ space_name: "Mine", place: null, card: null })).toBe("Mine");
+    expect(tabTitle({ space_name: "Mine", place: "Beautiful web", card: null })).toBe("Beautiful web");
   });
 });
 

@@ -640,7 +640,11 @@ export type SourceVideoDownloadState =
   | { state: "finishing" }
   | { state: "done" }
   | { state: "failed"; message: string }
-  | { state: "cancelled" };
+  | { state: "cancelled" }
+  /** The card could not take the video now; it is kept and goes in when the
+   *  space opens next. Nothing is shown (SPEC_DEEP_AUDIT.md, decision of
+   *  14.10.2026). */
+  | { state: "kept" };
 
 /** Download the card's source video into the space; progress arrives as
  *  `source-video-download` events. */

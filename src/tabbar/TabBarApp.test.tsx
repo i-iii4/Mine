@@ -46,7 +46,7 @@ function emitToPage(event: string, payload: unknown) {
 }
 
 function tab(id: string, space_name: string, place: string | null, live: boolean): TabBarTab {
-  return { id, space_name, place, card: null, live, history: { back: false, forward: false }, error: null };
+  return { id, space_name, place, card: null, live, history: { back: false, forward: false } };
 }
 
 function barState(overrides: Partial<TabBarState> = {}): TabBarState {

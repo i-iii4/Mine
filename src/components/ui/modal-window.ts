@@ -40,5 +40,6 @@ export const MODAL_DESCRIPTION_CLASS = "text-base text-muted-foreground"
  *  long name wraps inside the window rather than widening it. */
 export const MODAL_DETAIL_CLASS = "min-w-0 wrap-anywhere font-mono text-sm text-muted-foreground"
 
-/** What went wrong, under what it concerns. */
-export const MODAL_ERROR_CLASS = "text-sm text-destructive"
+/** What went wrong, under what it concerns. A second line the error carries
+ *  (a refused Trash's way out, decision of 14.10.2026) stays a line. */
+export const MODAL_ERROR_CLASS = "whitespace-pre-line text-sm text-destructive"

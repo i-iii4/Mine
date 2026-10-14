@@ -16,6 +16,7 @@ import { NotificationAnchor } from "@/components/NotificationCard";
 import { computeCardHeight } from "@/lib/cardHeight";
 import { commandById } from "@/lib/commandRegistry";
 import { FeedShowContext } from "@/lib/feedDisplay";
+import { publishNotificationBottom } from "@/lib/notificationPlacement";
 import type { LightBlock } from "@/types";
 
 const PICTURES = [0, 1, 2, 3, 4, 5].map((index) => `/feed-scroll-audit/audit-${index}.svg`);
@@ -165,7 +166,7 @@ function OpeningWindow() {
     const frame = frameRef.current;
     const bar = barRef.current;
     if (!frame || !bar) return;
-    const publish = () => frame.style.setProperty("--bottom-bar-height", `${bar.offsetHeight}px`);
+    const publish = () => publishNotificationBottom(frame, bar, frame.getBoundingClientRect().bottom);
     publish();
     const observer = new ResizeObserver(publish);
     observer.observe(bar);

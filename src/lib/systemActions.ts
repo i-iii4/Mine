@@ -1,28 +1,22 @@
 // Actions that hand something to the system: a link to the browser, a file
-// to Finder. A menu item that does this closes on the press, so its failure
-// is the tab's notice (SPEC_DEEP_AUDIT.md, Н11, Е6.16); before 13.10.2026 a
-// refused link or a file Finder could not show did nothing and said nothing.
+// to Finder. A failure is rare and leaves the person nothing to do, so it
+// goes to Mine's log only (SPEC_DEEP_AUDIT.md, «Решения пользователя
+// 14.10.2026»); from 13.10.2026 to then it was a notice of the tab (Е6.16).
 
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import {
-  OPEN_LINK_FAILED_TITLE,
-  REVEAL_FAILED_TITLE,
-  dismissActionFailure,
-  reportActionError,
-} from "./actionFailures";
+import { logFailure } from "./appLog";
 
-/** Open `url` in the browser; a failure is the tab's notice. */
+/** The log line of a link the browser would not open. */
+export const OPEN_LINK_FAILED = "Could not open the link";
+/** The log line of a file Finder could not show. */
+export const REVEAL_FAILED = "Could not reveal in Finder";
+
+/** Open `url` in the browser; a failure goes to the log. */
 export function openLinkInBrowser(url: string): void {
-  void openUrl(url).then(
-    () => dismissActionFailure("open-link"),
-    (error: unknown) => reportActionError("open-link", OPEN_LINK_FAILED_TITLE, error),
-  );
+  void openUrl(url).catch((error: unknown) => logFailure(`${OPEN_LINK_FAILED} ${url}`, error));
 }
 
-/** Show `path` in Finder; a failure is the tab's notice. */
+/** Show `path` in Finder; a failure goes to the log. */
 export function revealInFinder(path: string): void {
-  void revealItemInDir(path).then(
-    () => dismissActionFailure("reveal"),
-    (error: unknown) => reportActionError("reveal", REVEAL_FAILED_TITLE, error),
-  );
+  void revealItemInDir(path).catch((error: unknown) => logFailure(`${REVEAL_FAILED} ${path}`, error));
 }

@@ -41,7 +41,7 @@ const resolveMock = vi.mocked(resolveVaultConflict);
 /** The event as the backend sends it: the count and no failed check. */
 function send(event: string) {
   act(() => {
-    for (const handler of listeners.get(event) ?? []) handler({ payload: { count: 1, check_error: null } });
+    for (const handler of listeners.get(event) ?? []) handler({ payload: { count: 1 } });
   });
 }
 
@@ -315,34 +315,29 @@ describe("the window", () => {
   });
 });
 
-/// SPEC_DEEP_AUDIT.md, Е6.17 (Е5.11): a check of the space for conflicts that
-/// failed is the notice's news too; before, the reason reached the page and
-/// was dropped.
+/// SPEC_DEEP_AUDIT.md, Е5.11: a check of the space for conflicts that failed
+/// goes to the log only (decision of 14.10.2026).
 describe("a failed check of the space for conflicts", () => {
   beforeEach(() => {
     listeners.clear();
     pathsMock.mockReset().mockResolvedValue([]);
   });
 
-  function sendChanged(payload: { count: number; check_error: string | null }) {
-    act(() => {
-      for (const handler of listeners.get(VAULT_CONFLICTS_CHANGED_EVENT) ?? []) {
-        handler({ payload });
-      }
-    });
-  }
-
-  it("says the check failed and why, and goes away after a check that did not", async () => {
+  // Decision of 14.10.2026: a check that failed goes to the log only; the
+  // space's tabs hear only the count, and nothing says the check failed.
+  it("shows nothing of a check that failed", async () => {
     render(<VaultConflictsNotice vaultReady />);
     await waitFor(() => expect(listeners.get(VAULT_CONFLICTS_CHANGED_EVENT)?.length).toBe(1));
 
-    sendChanged({ count: 0, check_error: "the iCloud helper did not answer" });
+    act(() => {
+      for (const handler of listeners.get(VAULT_CONFLICTS_CHANGED_EVENT) ?? []) {
+        handler({ payload: { count: 0 } });
+      }
+    });
 
-    expect(await screen.findByText("Could not check for iCloud sync conflicts")).toBeInTheDocument();
-    expect(screen.getByText("the iCloud helper did not answer")).toBeInTheDocument();
-
-    sendChanged({ count: 0, check_error: null });
-    await waitFor(() => expect(screen.queryByText("Could not check for iCloud sync conflicts")).toBeNull());
+    await waitFor(() => expect(pathsMock).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(/Could not check/)).toBeNull();
+    expect(document.querySelector("[data-notification-card]")).toBeNull();
   });
 });
 

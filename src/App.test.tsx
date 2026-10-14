@@ -3050,26 +3050,6 @@ describe("AppWithVault", () => {
     });
   });
 
-  /// SPEC_DEEP_AUDIT.md, Е6.10: the tab bar has no room for a notice; the
-  /// visible tab of its window shows what the bar could not do.
-  it("shows the failure of a tab bar command in the visible tab", async () => {
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-      </MemoryRouter>,
-    );
-    await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
-
-    act(() => {
-      window.dispatchEvent(new CustomEvent("tab-bar-action-failed", {
-        detail: { payload: { title: "Could not open a new tab", message: "no window" } },
-      }));
-    });
-
-    expect(await screen.findByText("Could not open a new tab")).toBeInTheDocument();
-    expect(screen.getByText("no window")).toBeInTheDocument();
-  });
-
   // SPEC_DEEP_AUDIT.md, Е6.15: the opening screen speaks of a space.
   it("says the space is opening in the words of the dictionary", async () => {
     commandMocks.openVault.mockImplementation(() => new Promise<VaultOpenResult>(() => {}));
@@ -3808,6 +3788,64 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(screen.queryByText("Could not delete the element")).toBeNull();
     });
+  });
+
+  // Decision of 14.10.2026: notices stand 16 px above the bottom bar's top
+  // edge, read from where the bar stands in the window, not over the bar.
+  it("puts the notice corner 16 px above the bottom bar", async () => {
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      const top = this.hasAttribute("data-bottom-action-bar") ? 727 : 0;
+      return { top, bottom: top + 40, left: 0, right: 1024, width: 1024, height: 40, x: 0, y: top, toJSON: () => ({}) };
+    });
+    try {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      expect(document.querySelector("[data-bottom-action-bar]")).not.toBeNull();
+      expect(document.documentElement.style.getPropertyValue("--notification-bottom"))
+        .toBe(`${window.innerHeight - 727 + 16}px`);
+    } finally {
+      rect.mockRestore();
+    }
+  });
+
+  // Live case of 14.10.2026: the first refusal of a delete showed nothing and
+  // only a second press told it. A refusal that comes later, as the real one
+  // does after the Trash answered, shows at the first press, and the card
+  // stays in the feed.
+  it("tells the first refusal of a delete that answers late", async () => {
+    const REFUSED_TRASH = "Could not move “alpha-block.md” to the Trash. Nothing was deleted.\n"
+      + "Allow Mine to access iCloud Drive in System Settings, Privacy & Security, Files and Folders.";
+    commandMocks.deleteBlock.mockImplementationOnce(
+      () => new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(REFUSED_TRASH)), 50);
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete detail" }));
+    expect(await screen.findByText("Delete element?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(await screen.findByText("Could not delete the element")).toBeInTheDocument();
+    const notice = document.querySelector('[data-delete-failed-notice="element"]');
+    // Two lines: the refusal with the file's name, then where to allow access.
+    expect(notice?.textContent).toBe(REFUSED_TRASH);
+    expect(notice?.parentElement).toHaveClass("whitespace-pre-line");
+    expect(commandMocks.deleteBlock).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
   });
 
   // SPEC_DEEP_AUDIT.md, Е1.3 (Н2): the collection goes in one backend

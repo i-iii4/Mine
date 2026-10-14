@@ -182,6 +182,25 @@ function frontendFiles(directory: string): string[] {
   });
 }
 
+/** The commands of Tauri plugins the pages call, which live outside this
+ *  tree: their keys as the plugin's Rust signature reads them.
+ *  `plugin:log|log` is `tauri-plugin-log` 2.8.0, `commands.rs`: `level`,
+ *  `message`, `location`, `file`, `line`, `key_values` (camelCase by
+ *  default), the first two required (`src/lib/appLog.ts`). */
+const PLUGIN_COMMANDS: ReadonlyMap<string, RustCommand> = new Map([
+  ["plugin:log|log", {
+    keys: new Map([
+      ["level", { required: true }],
+      ["message", { required: true }],
+      ["location", { required: false }],
+      ["file", { required: false }],
+      ["line", { required: false }],
+      ["keyValues", { required: false }],
+    ]),
+    raw: false,
+  }],
+]);
+
 /** What is wrong with `call` against `command`, if anything. */
 function mismatches(call: FrontendCall, command: RustCommand | null): string[] {
   if (command === null) return [`${call.where}: "${call.command}" is not a registered command`];
@@ -221,6 +240,8 @@ describe("the arguments of every command call (Е7.2)", () => {
     expect(calls.length).toBeGreaterThan(80);
 
     const problems = calls.flatMap((call) => {
+      const plugin = PLUGIN_COMMANDS.get(call.command);
+      if (plugin !== undefined) return mismatches(call, plugin);
       const file = registered.get(call.command);
       const command = file === undefined
         ? null

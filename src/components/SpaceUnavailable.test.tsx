@@ -30,9 +30,7 @@ describe("SpaceUnavailable (SPEC_VAULT_LIFECYCLE.md, П12, П25)", () => {
     );
     await screen.findByRole("button", { name: "Open NSFV" });
     expect(
-      screen.getByText(
-        "The “Mine” folder at the saved path is not this space: its identity file .mine/vault-id is missing or names another space. Mine did not move or delete anything.",
-      ),
+      screen.getByText("This folder holds another space. Mine changed nothing."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/There is no “Mine” folder/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Locate folder…" })).toBeInTheDocument();

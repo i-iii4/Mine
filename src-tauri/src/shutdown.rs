@@ -7,7 +7,8 @@
 //! orphaned joiner (Е2.1, Е2.2). Now the first request is held: the windows
 //! are saved as they stand (SPEC_TABS.md, В33), every download stops with its
 //! process group and keeps a finished video for the next launch, no new write
-//! starts, and the writes that began are waited for. Then the app exits for
+//! starts, and the writes that began are waited for; the windows are hidden
+//! at once, so nothing of this is shown, only logged. Then the app exits for
 //! real; the second request passes.
 
 use std::sync::Mutex;
@@ -76,6 +77,15 @@ pub fn exit_requested(app: &AppHandle) -> bool {
             // still running (В33, В68).
             if let Some(shell) = app.try_state::<crate::tabs::TabShell>() {
                 shell.quit();
+            }
+            // The person asked to quit: the windows go now, saved as they
+            // stood, and what finishing meets is said only in the log
+            // (SPEC_DEEP_AUDIT.md, «Решения пользователя 14.10.2026»). A
+            // window left on screen took presses that quitting refused.
+            for window in app.windows().values() {
+                if let Err(error) = window.hide() {
+                    log::warn!("cannot hide {} while quitting: {error}", window.label());
+                }
             }
             let handle = app.clone();
             let finishing = std::thread::Builder::new()

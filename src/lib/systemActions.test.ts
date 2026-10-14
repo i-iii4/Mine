@@ -1,12 +1,8 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import {
-  OPEN_LINK_FAILED_TITLE,
-  REVEAL_FAILED_TITLE,
-  clearActionFailures,
-  useActionFailures,
-} from "./actionFailures";
+import { clearActionFailures, useActionFailures } from "./actionFailures";
 import { openLinkInBrowser, revealInFinder } from "./systemActions";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(), revealItemInDir: vi.fn() }));
@@ -15,37 +11,34 @@ afterEach(() => {
   act(() => clearActionFailures());
   vi.mocked(openUrl).mockReset();
   vi.mocked(revealItemInDir).mockReset();
+  vi.mocked(invoke).mockClear();
 });
 
-// A link or a file handed to the system from a menu that closed on the press:
-// its failure is the tab's notice, and the next success takes it away
-// (DESIGN_SYSTEM.md, «Сбой после закрытия окна»; SPEC_DEEP_AUDIT.md, Е6.16).
+function logged(): string[] {
+  return vi.mocked(invoke).mock.calls
+    .filter(([command]) => command === "plugin:log|log")
+    .map(([, args]) => String((args as { message: string }).message));
+}
+
+// A link or a file handed to the system: a failure is rare and leaves the
+// person nothing to do, so it goes to the log and the screen shows nothing
+// (SPEC_DEEP_AUDIT.md, «Решения пользователя 14.10.2026»).
 describe("system actions", () => {
-  it("shows a link the browser refused, and hides it once a link opens", async () => {
+  it("logs a link the browser refused and shows no notice", async () => {
     const { result } = renderHook(() => useActionFailures());
     vi.mocked(openUrl).mockRejectedValueOnce(new Error("No browser."));
     act(() => openLinkInBrowser("https://example.com"));
     expect(openUrl).toHaveBeenCalledWith("https://example.com");
-    await waitFor(() => expect(result.current).toEqual([
-      { kind: "open-link", title: OPEN_LINK_FAILED_TITLE, summary: undefined, messages: ["No browser."] },
-    ]));
-
-    vi.mocked(openUrl).mockResolvedValueOnce(undefined);
-    act(() => openLinkInBrowser("https://example.org"));
-    await waitFor(() => expect(result.current).toEqual([]));
+    await waitFor(() => expect(logged()).toEqual(["Could not open the link https://example.com: No browser."]));
+    expect(result.current).toEqual([]);
   });
 
-  it("shows a file Finder could not show, and hides it once one shows", async () => {
+  it("logs a file Finder could not show and shows no notice", async () => {
     const { result } = renderHook(() => useActionFailures());
     vi.mocked(revealItemInDir).mockRejectedValueOnce("The file is gone.");
     act(() => revealInFinder("/space/Cards/note.md"));
     expect(revealItemInDir).toHaveBeenCalledWith("/space/Cards/note.md");
-    await waitFor(() => expect(result.current).toEqual([
-      { kind: "reveal", title: REVEAL_FAILED_TITLE, summary: undefined, messages: ["The file is gone."] },
-    ]));
-
-    vi.mocked(revealItemInDir).mockResolvedValueOnce(undefined);
-    act(() => revealInFinder("/space/Cards/note.md"));
-    await waitFor(() => expect(result.current).toEqual([]));
+    await waitFor(() => expect(logged()).toEqual(["Could not reveal in Finder /space/Cards/note.md: The file is gone."]));
+    expect(result.current).toEqual([]);
   });
 });

@@ -14,12 +14,9 @@ export function tabLabel(tab: Pick<TabBarTab, "space_name" | "place" | "card">):
   return tab.card ?? tab.place ?? tab.space_name;
 }
 
-/** What a tab's tooltip says: its label, and for a tab whose page or window
- *  could not be made, why and what to do (SPEC_TABS.md, «Ошибки»;
- *  SPEC_DEEP_AUDIT.md, Е2.9). The backend's reason starts lowercase. */
-export function tabTitle(tab: Pick<TabBarTab, "space_name" | "place" | "card" | "error">): string {
-  const label = tabLabel(tab);
-  if (!tab.error) return label;
-  const reason = tab.error.charAt(0).toUpperCase() + tab.error.slice(1);
-  return `${label}\n${reason}. Select the tab to try again.`;
+/** What a tab's tooltip says: its label. A tab whose page could not be made
+ *  says nothing more; selecting it makes the page again, and why it failed
+ *  is in the log (SPEC_TABS.md, «Ошибки»; decision of 14.10.2026). */
+export function tabTitle(tab: Pick<TabBarTab, "space_name" | "place" | "card">): string {
+  return tabLabel(tab);
 }

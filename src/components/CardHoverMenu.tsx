@@ -32,8 +32,7 @@ import {
   COLLECTION_PICKER_CONTENT_CLASS,
   CollectionPicker,
 } from "./CollectionPicker";
-import { copyTextToClipboard } from "@/lib/clipboard";
-import { COPY_PATH_FAILED_TITLE } from "@/lib/actionFailures";
+import { COPY_PATH_FAILED_TITLE, copyTextToClipboard } from "@/lib/clipboard";
 import { openLinkInBrowser, revealInFinder } from "@/lib/systemActions";
 import { useCardMembership } from "@/hooks/useCardMembership";
 import { CardCollectionsContext } from "@/lib/cardCollections";

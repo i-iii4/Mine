@@ -1958,6 +1958,30 @@ pub async fn delete_blocks(
     outcome
 }
 
+/// The files of `paths` there to delete. Only a file that is not there at
+/// all is left out. A file macOS will not let Mine look at (`EPERM`,
+/// `EACCES`: iCloud Drive without access) is there: `Path::exists` called it
+/// absent, and the delete took the card's index row, answered done and left
+/// the file (live case of 14.10.2026). Now the delete refuses with the
+/// Trash's words, and the reason goes to the log.
+fn present_for_delete(paths: impl IntoIterator<Item = PathBuf>) -> Result<Vec<PathBuf>, CommandError> {
+    let mut present = Vec::new();
+    for path in paths {
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) => present.push(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                log::warn!("delete: cannot look at {}: {error}", path.display());
+                let permission = matches!(error.raw_os_error(), Some(libc::EPERM | libc::EACCES));
+                return Err(CommandError::Internal(
+                    crate::storage::source_mutation::trash_refusal_text(&path, permission),
+                ));
+            }
+        }
+    }
+    Ok(present)
+}
+
 /// Delete the selected cards in one batch (SPEC_GROUP_SELECTION.md, «Batch
 /// Delete»). With `delete_unused_media`, the plan is built again from the
 /// index and every file it calls unused is checked against the notes on disk
@@ -2002,11 +2026,7 @@ pub(crate) fn delete_blocks_inner(
         )?;
     }
     let staged = StagedSourceMutation::stage(
-        paths
-            .into_iter()
-            .filter(|path| path.exists())
-            .map(SourceFileWrite::delete)
-            .collect(),
+        present_for_delete(paths)?.into_iter().map(SourceFileWrite::delete).collect(),
     )
     .map_err(CommandError::from)?;
     let removed = staged
@@ -2091,10 +2111,8 @@ pub(crate) fn delete_block_inner(
     }
 
     let staged = StagedSourceMutation::stage(
-        source_paths
-            .iter()
-            .filter(|path| path.exists())
-            .cloned()
+        present_for_delete(source_paths.iter().cloned())?
+            .into_iter()
             .map(SourceFileWrite::delete)
             .collect(),
     )
@@ -7926,6 +7944,37 @@ mod tests {
         assert!(vault.root().join("shared.png").exists());
     }
 
+    /// Live case of 14.10.2026: a card macOS would not let Mine look at
+    /// (iCloud Drive without access) passed for a file not there, so Delete
+    /// took its index row, answered done and left the file: the card went
+    /// and came back, and only the next press told the refusal. A file Mine
+    /// cannot look at refuses the delete at the first press, with the file's
+    /// name and where to allow access; the card stays.
+    #[test]
+    fn a_card_mine_cannot_look_at_refuses_the_delete_at_once() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        std::fs::create_dir_all(vault.root().join("Locked")).unwrap();
+        persist_block(&conn, &vault, &article("Locked/Card", "Body"));
+        let folder = vault.root().join("Locked");
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let single = delete_block_inner(Some(&state), &conn, &vault, "Locked/Card", Some(false), None);
+        let with_media = delete_block_inner(Some(&state), &conn, &vault, "Locked/Card", Some(true), Some(&[]));
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let expected = "Could not move “Card.md” to the Trash. Nothing was deleted.\nAllow Mine to access iCloud Drive in System Settings, Privacy & Security, Files and Folders.";
+        match single {
+            Err(CommandError::Internal(message)) => assert_eq!(message, expected),
+            other => panic!("the delete passed for a file Mine cannot see: {other:?}"),
+        }
+        // With its media the delete first reads the space, and refuses there.
+        assert!(with_media.is_err(), "{with_media:?}");
+        assert!(index::get_block(&conn, "Locked/Card").unwrap().is_some(), "the card left the feed");
+        assert!(vault.block_path("Locked/Card").exists());
+    }
+
     #[test]
     fn delete_block_sql_failure_restores_markdown_media_and_index() {
         let (_root, _derived, vault, conn) = make_vault();
@@ -9912,7 +9961,7 @@ mod tests {
             },
         );
 
-        assert!(delivered.is_err());
+        assert_eq!(delivered, Ok(crate::source_video_download::Delivered::Kept));
         let kept = crate::source_video_download::kept_downloads(&vault);
         assert_eq!(kept.len(), 1, "{kept:?}");
         assert!(!finished.exists());
@@ -10365,7 +10414,7 @@ mod tests {
             },
         );
 
-        assert!(delivered.is_err());
+        assert_eq!(delivered, Ok(crate::source_video_download::Delivered::Kept));
         let kept = crate::source_video_download::kept_downloads(&vault);
         assert_eq!(kept.len(), 1, "{kept:?}");
         assert_eq!(kept[0].slug, "Film");
@@ -10448,7 +10497,7 @@ mod tests {
             &another,
             |finished| attach_downloaded_source_video_inner(&state, &conn, &vault, "Clip", lost_key, "9KDDhAOyv9k", finished),
         );
-        assert!(delivered.is_err());
+        assert_eq!(delivered, Ok(crate::source_video_download::Delivered::Kept), "nothing is said of a kept video");
         let kept = crate::source_video_download::kept_downloads(&vault);
         assert_eq!(kept.len(), 1, "{kept:?}");
         assert_eq!(kept[0].card, lost_key);

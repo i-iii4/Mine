@@ -12,14 +12,16 @@ import { Button } from "@/components/ui/button";
 
 /**
  * The corner every notification appears in: on the feed's own inset from
- * the window's right edge, so it stands on the cards' right edge, and the
- * same inset above the bottom bar, which it never covers (user's decision of
- * 08.10.2026). The page publishes the bar's height; without a bar it is 0.
+ * the window's right edge, so it stands on the cards' right edge (user's
+ * decision of 08.10.2026), and 16 px above the bottom bar's top edge, which
+ * it never covers (decision of 14.10.2026). The page publishes that distance
+ * from where the bar stands (`publishNotificationBottom`); without a bar the
+ * corner keeps the feed's inset from the window's edge.
  */
 export function NotificationAnchor({ children }: { children: ReactNode }) {
   return (
     <div
-      className="fixed right-[var(--edge-rhythm,32px)] bottom-[calc(var(--bottom-bar-height,0px)+var(--edge-rhythm,32px))] z-40"
+      className="fixed right-[var(--edge-rhythm,32px)] bottom-[var(--notification-bottom,var(--edge-rhythm,32px))] z-40"
       data-notification-anchor=""
     >
       {children}
@@ -72,7 +74,9 @@ export function NotificationCard({
           </Button>
         )}
       </div>
-      <div className="mt-1 grid gap-2 text-left">{children}</div>
+      {/* A line break an error carries stays a line (a refused Trash's way
+          out, decision of 14.10.2026). */}
+      <div className="mt-1 grid gap-2 text-left whitespace-pre-line">{children}</div>
     </div>
   );
 }

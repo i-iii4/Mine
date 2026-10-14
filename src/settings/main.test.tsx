@@ -44,4 +44,5 @@ it("applies the stored look before the first render and renders Settings into #r
   expect(root.style.getPropertyValue("--edge-rhythm")).toBe("24px");
   expect(root.hasAttribute("data-design")).toBe(false);
   expect(localStorage.getItem("mine.design")).toBeNull();
-});
+  // The entry imports the whole window with its stylesheet; under a full parallel run that alone takes about 5 s.
+}, 30_000);

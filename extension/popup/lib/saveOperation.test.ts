@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { native, save, lookup } = vi.hoisted(() => ({ native: vi.fn(), save: vi.fn(), lookup: vi.fn() }));
 vi.mock("./messaging", () => ({ sendToNative: native }));
 vi.mock("./standalone", () => ({ standaloneSave: save, standaloneLookup: lookup }));
-import { clearCommittedSaves, clearPendingSave, executePinnedSave, findPendingSave, persistPendingSave, persistSaveReceipt, type PinnedSaveOperation } from "./saveOperation";
+import { BUSY_RECHECK_MS, clearCommittedSaves, clearPendingSave, executePinnedSave, findPendingSave, lookupPinnedSave, persistPendingSave, persistSaveReceipt, type PinnedSaveOperation } from "./saveOperation";
 
 function operation(executor: "native" | "browser" = "native"): PinnedSaveOperation {
   return { id: "same-operation", executor, bindingId: "same-folder", vaultPath: executor === "native" ? "/v" : null,
@@ -72,6 +72,19 @@ describe("pinned save operation", () => {
     expect(native.mock.calls[0]![0]).toMatchObject({ action: "save_block", operation_id: "same-operation", binding_id: "same-folder", vault_path: "/v" });
     expect(native.mock.calls[1]![0]).toMatchObject({ action: "get_save_operation", operation_id: "same-operation", vault_path: "/v" });
     expect(save).not.toHaveBeenCalled();
+  });
+
+  // Decision of 14.10.2026: a check that meets another save of the space
+  // waits for it and asks again; nothing says «Mine is saving» meanwhile.
+  it("waits while another save holds the journal, then answers its outcome", async () => {
+    native.mockResolvedValueOnce({ ok: false, outcome: "unknown", code: "operation_busy" })
+      .mockResolvedValueOnce({ ok: false, outcome: "unknown", code: "operation_busy" })
+      .mockResolvedValue({ ok: true, outcome: "committed" });
+    const waits: number[] = [];
+    const answer = await lookupPinnedSave({ ...operation(), attempted: true }, async (ms) => { waits.push(ms); });
+    expect(answer).toEqual({ ok: true, outcome: "committed" });
+    expect(native.mock.calls.map(([request]) => request.action)).toEqual(["get_save_operation", "get_save_operation", "get_save_operation"]);
+    expect(waits).toEqual([BUSY_RECHECK_MS, BUSY_RECHECK_MS]);
   });
 
   it("does not interpret not_committed conflict as permission to create another operation", async () => {

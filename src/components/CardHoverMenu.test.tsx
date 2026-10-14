@@ -9,6 +9,7 @@ import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { getBlock, startWindowDrag } from "@/lib/commands";
 import { clearActionFailures } from "@/lib/actionFailures";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { invoke } from "@tauri-apps/api/core";
 import type { LightBlock } from "@/types";
 import { indexedBlock, lightBlock } from "@/test/blocks";
 
@@ -128,13 +129,14 @@ describe("CardHoverMenu", () => {
     expect(await screen.findByText("Disconnect from “alpha”")).toBeInTheDocument();
   });
 
-  /// Е6.16: Source, Reveal in Finder and Copy Path that fail say so in the
-  /// tab's notice; before, nothing happened and nothing was said.
+  /// Decision of 14.10.2026: Source, Reveal in Finder and Copy Path that
+  /// fail write to the log; the tab shows no notice.
   it.each([
     ["Source", "Could not open the link"],
     ["Reveal in Finder", "Could not reveal in Finder"],
     ["Copy Path", "Could not copy the path"],
-  ])("says when %s failed", async (item, title) => {
+  ])("logs when %s failed and shows nothing", async (item, title) => {
+    vi.mocked(invoke).mockClear();
     vi.mocked(openUrl).mockRejectedValueOnce(new Error("no browser"));
     vi.mocked(revealItemInDir).mockRejectedValueOnce(new Error("no browser"));
     writeText.mockRejectedValueOnce(new Error("no browser"));
@@ -156,8 +158,14 @@ describe("CardHoverMenu", () => {
 
     fireEvent.click(await screen.findByText(item));
 
-    expect(await screen.findByText(title)).toBeInTheDocument();
-    expect(screen.getByText("no browser")).toBeInTheDocument();
+    await waitFor(() => {
+      const lines = vi.mocked(invoke).mock.calls
+        .filter(([command]) => command === "plugin:log|log")
+        .map(([, args]) => String((args as { message: string }).message));
+      expect(lines.some((line) => line.startsWith(title) && line.endsWith(": no browser"))).toBe(true);
+    });
+    expect(screen.queryByText(title)).toBeNull();
+    expect(screen.queryByText("no browser")).toBeNull();
   });
 
   it("opens the overflow menu from a keyboard action request", async () => {

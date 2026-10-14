@@ -116,7 +116,7 @@ pub fn begin(app: &AppHandle, tab: &TabId, grab: (f64, f64)) {
             return;
         };
         if let Err(error) = create_window(app, &saved, true) {
-            // The tab goes back where it was, marked with why (Е2.9):
+            // The tab goes back where it was, why in the log (Е2.9):
             // until 13.10.2026 it stayed in a window that did not exist.
             super::put_back(app, tab, &source.id, index, &error);
             return;

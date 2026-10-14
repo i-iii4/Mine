@@ -20,7 +20,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { ChevronLeft, ChevronRight, CircleAlert, Plus, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Search, X } from "lucide-react";
 import { ChromeActions, ChromeRow } from "@/components/ChromeRow";
 import { MineLogo } from "@/components/MineLogo";
 import { SidebarToggleButton } from "@/components/SidebarToggleButton";
@@ -80,8 +80,7 @@ import {
 } from "@/lib/buttonStyle";
 import { createTabMenu, type TabMenu } from "./tabMenu";
 import { listenHere } from "./useTabBarState";
-import { errorMessage } from "@/lib/errorMessage";
-import { tabBarFailureTitle, tellVisibleTabOfFailure, type TabBarAction } from "@/lib/tabBarFailure";
+import { logTabBarFailure, type TabBarAction } from "@/lib/tabBarFailure";
 
 export const NEW_TAB_LABEL = "New Tab";
 export const CLOSE_TAB_BUTTON_LABEL = "Close Tab";
@@ -94,26 +93,14 @@ export const SEARCH_LABEL = "Find elements";
 const PRIMARY_BUTTON = 0;
 const MIDDLE_BUTTON = 1;
 
-/// The visible tab of this bar's window: the page that says what the bar
-/// could not do. One bar per page, kept by the bar as it draws.
-let visibleTabOfBar: TabId | null = null;
-
-/// Tell the visible tab of the window that `action` failed (SPEC_DEEP_AUDIT.md,
-/// Н11, Е6.10). Only when even that cannot be told, the console has it.
+/// `action` of the bar failed: the log has it, the screen does not
+/// (SPEC_DEEP_AUDIT.md, «Решения пользователя 14.10.2026»).
 function tellFailure(action: TabBarAction, error: unknown): void {
-  const visible = visibleTabOfBar;
-  const failure = { title: tabBarFailureTitle(action), message: errorMessage(error) };
-  if (visible === null) {
-    console.error(`${failure.title}: ${failure.message}`);
-    return;
-  }
-  void tellVisibleTabOfFailure(visible, failure).catch((sendError: unknown) => {
-    console.error(`${failure.title}: ${failure.message}`, sendError);
-  });
+  logTabBarFailure(action, error);
 }
 
 /// Run a command for its effect. A failure undoes what the bar showed at once
-/// (`undo`) and is told by the visible tab.
+/// (`undo`) and goes to the log.
 function run(command: Promise<unknown>, action: TabBarAction, undo?: () => void): void {
   command.catch((error: unknown) => {
     undo?.();
@@ -227,7 +214,6 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   const latestWindow = useRef({ windowId: bar.window_id, tabs: sourceTabs, activeTab });
   useLayoutEffect(() => {
     latestWindow.current = { windowId: bar.window_id, tabs: sourceTabs, activeTab };
-    visibleTabOfBar = activeTab;
   });
   const tabIdsKey = sourceTabs.map((tab) => tab.id).join(" ");
   useEffect(() => {
@@ -645,7 +631,6 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
                 tabIndex={tab.id === rovingId ? 0 : -1}
                 title={tabTitle(tab)}
                 data-tab-id={tab.id}
-                data-tab-error={tab.error ? "" : undefined}
                 data-active={active ? "true" : undefined}
                 data-dragging={follows ? "true" : undefined}
                 // Square tabs the full height of the row, outlined by the
@@ -694,17 +679,6 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
                   openMenu(tab.id);
                 }}
               >
-                {/* A tab whose page or window could not be made says so
-                    before its label; the tooltip says why, and selecting
-                    the tab tries again (SPEC_TABS.md, «Ошибки»). */}
-                {tab.error && (
-                  <CircleAlert
-                    aria-hidden="true"
-                    data-tab-error-mark=""
-                    className="mr-1.5 size-[13px] shrink-0 text-destructive"
-                    strokeWidth={1}
-                  />
-                )}
                 {/* One line that dissolves at the right edge when it does
                     not fit (В46), by the chrome's shared rule. */}
                 <FadeText

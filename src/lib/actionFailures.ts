@@ -4,8 +4,10 @@
 // An action whose menu or window has already closed has nowhere of its own to
 // say that it failed, and before 13.10.2026 such failures went to the console
 // only: a Disconnect of a selection, a Connect of one card, ⌘V, a drop of
-// files, Source, Reveal in Finder, Copy Path, a command of the tab bar. They
-// report here; the tab's notice stack shows them (`ActionFailureNotices`).
+// files. They report here; the tab's notice stack shows them
+// (`ActionFailureNotices`). Source, Reveal in Finder, Copy Path, Copy Link
+// and the commands of the tab bar go to the log instead (`appLog.ts`,
+// decision of 14.10.2026).
 // The store belongs to the page: each tab is its own page, so a failure shows
 // in the tab where the action started, lead or not.
 
@@ -18,11 +20,7 @@ export type ActionFailureKind =
   | "membership"
   | "create-collection"
   | "create-elements"
-  | "open-link"
-  | "reveal"
-  | "copy"
-  | "read-element"
-  | "tab-bar";
+  | "read-element";
 
 export interface ActionFailure {
   kind: ActionFailureKind;
@@ -36,10 +34,6 @@ export interface ActionFailure {
 /** Said under a failed change that changed no file. */
 export const NOTHING_CHANGED = "Nothing changed.";
 
-export const OPEN_LINK_FAILED_TITLE = "Could not open the link";
-export const REVEAL_FAILED_TITLE = "Could not reveal in Finder";
-export const COPY_PATH_FAILED_TITLE = "Could not copy the path";
-export const COPY_LINK_FAILED_TITLE = "Could not copy the link";
 export const CREATE_COLLECTION_FAILED_TITLE = "Could not create the collection";
 export const READ_ELEMENT_FAILED_TITLE = "Could not read the element";
 

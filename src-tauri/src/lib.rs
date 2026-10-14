@@ -44,6 +44,7 @@ pub mod update_activation;
 #[cfg(feature = "desktop")]
 pub mod updater;
 pub mod util;
+pub mod ytdlp_update;
 #[cfg(feature = "desktop")]
 mod watcher;
 #[cfg(feature = "desktop")]

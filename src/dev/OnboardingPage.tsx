@@ -31,6 +31,7 @@ import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
 import { TabBar } from "@/tabbar/TabBar";
 import "@/tabbar/tabbar.css";
 import type { LightBlock, PreviewCard, TabBarState } from "@/types";
+import { publishNotificationBottom } from "@/lib/notificationPlacement";
 
 // The tab bar and the space switcher talk to the backend: here they get
 // empty answers, and their event listeners a local bus.
@@ -199,7 +200,6 @@ function tabBarState(spaceName: string | null): TabBarState {
       card: null,
       live: true,
       history: { back: false, forward: false },
-      error: null,
     }],
     active_tab: "0".repeat(32),
     sidebar: { width_px: SIDEBAR_WIDTH, collapsed: false },
@@ -251,12 +251,12 @@ interface SpacePageProps {
 function SpacePage({ path, blocks, totalBlocks, previews, indexing, previewsPending, notice }: SpacePageProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const barRef = useRef<HTMLDivElement | null>(null);
-  // The page publishes its bottom bar's height for the notice, as App does.
+  // The page publishes where its bottom bar stands for the notice, as App does.
   useLayoutEffect(() => {
     const shell = shellRef.current;
     const bar = barRef.current;
     if (!shell || !bar) return;
-    const publish = () => shell.style.setProperty("--bottom-bar-height", `${bar.offsetHeight}px`);
+    const publish = () => publishNotificationBottom(shell, bar, shell.getBoundingClientRect().bottom);
     publish();
     const observer = new ResizeObserver(publish);
     observer.observe(bar);

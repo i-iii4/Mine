@@ -245,7 +245,11 @@ fn the_status_of_a_copy_writes_nothing() {
     assert_eq!(files_under(Path::new(&copy)), copy_before, "the status check wrote into the copy");
     assert_eq!(files_under(&vaults), stores_before, "the status check wrote a derived store");
     assert_eq!(status.state, "copy_unsettled", "{status:?}");
-    assert!(status.message().is_some());
+    // Decision of 14.10.2026: the line the clipper shows.
+    assert_eq!(
+        status.message().as_deref(),
+        Some("“Mine copy” is a copy of another space. Open it in Mine to use it.")
+    );
 }
 
 /// Е4.15: choosing a copy with Add space is the person's act, and the copy
@@ -531,6 +535,8 @@ fn a_lookup_answers_while_a_save_holds_the_journal() {
     assert_eq!(finished["slug"], done["slug"]);
     assert_eq!(running["outcome"], "unknown", "{running}");
     assert_eq!(running["code"], "operation_busy", "{running}");
+    // Decision of 14.10.2026: no words; the clipper waits for the save.
+    assert!(running.get("error").is_none(), "{running}");
 }
 
 /// Н9, Е4.3: while a Save keeps working the clipper hears so, at most once

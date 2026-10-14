@@ -152,12 +152,32 @@ export async function executePinnedSave(operation: PinnedSaveOperation): Promise
   return result;
 }
 
-export function lookupPinnedSave(operation: PinnedSaveOperation): Promise<NativeResponse> {
-  return operation.executor === "browser"
-    ? standaloneLookup(operation.id, operation.bindingId)
-    : sendToNative({
+/** How often a check of a save asks again while another save of the same
+ *  space holds the helper's journal. */
+export const BUSY_RECHECK_MS = 1_000;
+/** The longest a check waits for that save: a Save that keeps working may
+ *  take minutes, a helper that hangs must not hold the check for good. */
+export const BUSY_WAIT_LIMIT_MS = 10 * 60_000;
+
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** The outcome of the pinned save. While another save of the space holds
+ *  the journal (`operation_busy`) the check waits for it and asks again,
+ *  saying nothing meanwhile (SPEC_DEEP_AUDIT.md, «Решения пользователя
+ *  14.10.2026»); before, it said «Mine is saving to this space now». */
+export async function lookupPinnedSave(
+  operation: PinnedSaveOperation,
+  wait: (ms: number) => Promise<void> = pause,
+): Promise<NativeResponse> {
+  if (operation.executor === "browser") return standaloneLookup(operation.id, operation.bindingId);
+  const started = Date.now();
+  for (;;) {
+    const answer = await sendToNative({
       action: "get_save_operation", operation_id: operation.id,
       binding_id: operation.bindingId, executor_id: operation.executor,
       vault_path: operation.vaultPath,
     });
+    if (answer.code !== "operation_busy" || Date.now() - started >= BUSY_WAIT_LIMIT_MS) return answer;
+    await wait(BUSY_RECHECK_MS);
+  }
 }

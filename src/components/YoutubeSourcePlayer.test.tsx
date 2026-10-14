@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { sourceVideoDownloadStatus, youtubePlayerUrl } from "@/lib/commands";
+import { sourceVideoDownloadStatus, startSourceVideoDownload, youtubePlayerUrl } from "@/lib/commands";
 import { parseYoutubeSource } from "@/lib/youtubeSource";
 import { DeleteSourceVideoDialog, YoutubeSourcePlayer } from "./YoutubeSourcePlayer";
 
@@ -39,11 +39,26 @@ describe("YoutubeSourcePlayer", () => {
 
   it("shows why a download failed while the card was closed (Г4.4)", async () => {
     // The failure event fired with no player mounted; the shell still holds it.
-    const message = "Disk is gone. The video is kept and will be added the next time this space opens.";
+    const message = "Could not download the video.";
     vi.mocked(sourceVideoDownloadStatus).mockResolvedValue({ state: "failed", message });
     renderPlayer();
-    expect(await screen.findByText(`Download failed: ${message}`)).toBeInTheDocument();
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(screen.queryByText(/Download failed/)).toBeNull();
     expect(sourceVideoDownloadStatus).toHaveBeenCalledWith("film");
+  });
+
+  // Decision of 14.10.2026: a failed download is offered again in place.
+  it("tries a failed download again from its row", async () => {
+    vi.mocked(sourceVideoDownloadStatus).mockResolvedValue({
+      state: "failed",
+      message: "YouTube refused the download. Try again later.",
+    });
+    renderPlayer();
+    expect(await screen.findByText("YouTube refused the download. Try again later.")).toBeInTheDocument();
+    vi.mocked(startSourceVideoDownload).mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Try Again" }));
+    expect(startSourceVideoDownload).toHaveBeenCalledWith("film", SOURCE_URL);
+    expect(screen.getByText("Preparing…")).toBeInTheDocument();
   });
 
   it("keeps a newer event over a stored state that answers after it", async () => {
@@ -66,6 +81,8 @@ describe("YoutubeSourcePlayer", () => {
   it.each([
     ["finished", { state: "done" } as const],
     ["cancelled", { state: "cancelled" } as const],
+    // The card vanished meanwhile: the video is kept for the next opening.
+    ["was kept for the next opening", { state: "kept" } as const],
   ])("shows nothing for a download that %s while the card was closed", async (_case, status) => {
     vi.mocked(sourceVideoDownloadStatus).mockResolvedValue(status);
     const { container } = renderPlayer();

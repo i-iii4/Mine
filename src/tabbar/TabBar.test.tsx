@@ -64,11 +64,11 @@ vi.mock("./settingsMenu", () => ({ createSettingsMenu: settingsMenu.create }));
 const settingsChanged = vi.hoisted(() => ({ broadcastSettingsChange: vi.fn() }));
 vi.mock("@/lib/settingsChanged", () => settingsChanged);
 
-// The visible tab of the window hears a failed command of the bar (Е6.10).
-const tabBarFailure = vi.hoisted(() => ({ tellVisibleTab: vi.fn(async () => undefined) }));
+// A failed command of the bar goes to the log only (decision of 14.10.2026).
+const tabBarFailure = vi.hoisted(() => ({ log: vi.fn() }));
 vi.mock("@/lib/tabBarFailure", async (original) => ({
   ...(await original<typeof import("@/lib/tabBarFailure")>()),
-  tellVisibleTabOfFailure: tabBarFailure.tellVisibleTab,
+  logTabBarFailure: tabBarFailure.log,
 }));
 
 /** The zone the tabs and `+` share, and the slot `+` takes from it. */
@@ -89,7 +89,6 @@ function tab(
     card: null,
     live: true,
     history: { back: false, forward: false },
-    error: null,
     ...overrides,
   };
 }
@@ -154,20 +153,14 @@ afterEach(() => {
 });
 
 describe("a tab that could not open (Е2.9)", () => {
-  it("is marked in its bar, says why in its tooltip and opens on selection", () => {
-    renderBar(
-      barState([
-        tab("ok"),
-        tab("failed", "Mine", "Posters", { error: "the page of this tab could not be made: no memory" }),
-      ]),
-    );
+  // Decision of 14.10.2026: no text and no mark; selecting the tab makes its
+  // page again, and why it failed is in the log.
+  it("shows no mark and no reason, and opens on selection", () => {
+    renderBar(barState([tab("ok"), tab("failed", "Mine", "Posters")]));
     const failed = tabById("failed");
-    expect(failed.hasAttribute("data-tab-error")).toBe(true);
-    expect(failed.querySelector("[data-tab-error-mark]")).not.toBeNull();
-    expect(failed.title).toBe(
-      "Posters\nThe page of this tab could not be made: no memory. Select the tab to try again.",
-    );
-    expect(tabById("ok").querySelector("[data-tab-error-mark]")).toBeNull();
+    expect(failed.querySelector(".text-destructive")).toBeNull();
+    expect(failed.title).toBe("Posters");
+    expect(failed.textContent).not.toMatch(/could not/i);
     fireEvent.click(failed);
     expect(commands.activateTab).toHaveBeenCalledWith("failed");
   });
@@ -620,9 +613,8 @@ describe("reorder (В60)", () => {
   });
 
   /// SPEC_DEEP_AUDIT.md, Е6.10: a reorder the backend refused puts the tabs
-  /// back in their order, and the visible tab says why; before, the bar kept
-  /// the refused order and the failure went to the console.
-  it("puts the tabs back and tells the visible tab when the move was refused", async () => {
+  /// back in their order; why goes to the log (decision of 14.10.2026).
+  it("puts the tabs back and logs why when the move was refused", async () => {
     commands.moveTab.mockRejectedValueOnce(new Error("the saved windows could not be written"));
     renderBar(barState([tab("a"), tab("b"), tab("c")], { active_tab: "b" }));
     const gesture = press(tabById("a"), 100);
@@ -636,13 +628,13 @@ describe("reorder (В60)", () => {
     });
 
     expect(tabsShown().map((node) => node.dataset.tabId)).toEqual(["a", "b", "c"]);
-    expect(tabBarFailure.tellVisibleTab).toHaveBeenCalledWith("b", {
-      title: "Could not move the tab",
-      message: "the saved windows could not be written",
-    });
+    expect(tabBarFailure.log).toHaveBeenCalledWith(
+      "move the tab",
+      new Error("the saved windows could not be written"),
+    );
   });
 
-  it("tells the visible tab when a command of the bar failed", async () => {
+  it("logs a command of the bar that failed", async () => {
     commands.newTab.mockRejectedValueOnce(new Error("no window"));
     renderBar(barState([tab("a"), tab("b")], { active_tab: "a" }));
 
@@ -652,10 +644,7 @@ describe("reorder (В60)", () => {
       await Promise.resolve();
     });
 
-    expect(tabBarFailure.tellVisibleTab).toHaveBeenCalledWith("a", {
-      title: "Could not open a new tab",
-      message: "no window",
-    });
+    expect(tabBarFailure.log).toHaveBeenCalledWith("open a new tab", new Error("no window"));
   });
 
   it("returns the tab to its place on Escape", () => {

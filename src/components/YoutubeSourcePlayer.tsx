@@ -23,8 +23,7 @@ import {
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import { MODAL_ERROR_CLASS } from "@/components/ui/modal-window";
 import { Progress } from "@/components/ui/progress";
-import { copyTextToClipboard } from "@/lib/clipboard";
-import { COPY_LINK_FAILED_TITLE } from "@/lib/actionFailures";
+import { COPY_LINK_FAILED_TITLE, copyTextToClipboard } from "@/lib/clipboard";
 import { openLinkInBrowser } from "@/lib/systemActions";
 import {
   cancelSourceVideoDownload,
@@ -211,6 +210,7 @@ export function YoutubeSourcePlayer({ slug, source, poster, title, onDelete, onD
       </ContextMenu>
       <SourceVideoDownloadRow
         download={download}
+        onRetry={startDownload}
         onCancel={() => {
           void cancelSourceVideoDownload(slug).catch((error) => console.error("Could not cancel the download:", error));
         }}
@@ -231,17 +231,21 @@ export function YoutubeSourcePlayer({ slug, source, poster, title, onDelete, onD
 /** Progress of Download Media under the player, never over it: the video
  *  stays watchable while it downloads. Steps without a known length
  *  (preparing, joining) show the indeterminate bar; only real bytes move
- *  the determinate one. */
-function SourceVideoDownloadRow({ download, onCancel }: {
+ *  the determinate one. A failure says why in its own sentence and offers
+ *  the download again; a video kept for the next opening of the space says
+ *  nothing (SPEC_DEEP_AUDIT.md, decisions of 14.10.2026). */
+function SourceVideoDownloadRow({ download, onCancel, onRetry }: {
   download: SourceVideoDownloadState | null;
   onCancel: () => void;
+  onRetry: () => void;
 }) {
-  if (!download || download.state === "done" || download.state === "cancelled") return null;
+  if (!download || download.state === "done" || download.state === "cancelled" || download.state === "kept") return null;
   if (download.state === "failed") {
     return (
-      <p className="mt-2 text-sm text-destructive" data-source-video-download="failed">
-        Download failed: {download.message}
-      </p>
+      <div className="mt-2 flex items-center gap-3" data-source-video-download="failed">
+        <p className="flex-1 text-sm text-destructive">{download.message}</p>
+        <Button type="button" variant="secondary" size="sm" onClick={onRetry}>Try Again</Button>
+      </div>
     );
   }
   const label = download.state === "preparing"

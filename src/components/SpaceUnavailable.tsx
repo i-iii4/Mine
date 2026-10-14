@@ -49,7 +49,9 @@ export function unavailableDescription(reason: UnavailableVaultReason, folder: s
     case "access_denied":
       return `macOS is not letting Mine read the “${folder}” folder. Open System Settings, go to Privacy & Security, Files and Folders, and allow access for Mine.`;
     case "not_this_space":
-      return `The “${folder}” folder at the saved path is not this space: its identity file .mine/vault-id is missing or names another space. Mine did not move or delete anything.`;
+      // Decision of 14.10.2026: the plain sentence; the identity file is
+      // the reason, not the person's business.
+      return "This folder holds another space. Mine changed nothing.";
     case "missing":
       return `There is no “${folder}” folder at the saved path. This happens when it is renamed, moved or its drive is disconnected. Mine did not move or delete anything.`;
   }

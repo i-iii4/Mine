@@ -1,26 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
-import { emitTo } from "@tauri-apps/api/event";
-import {
-  TAB_BAR_ACTION_FAILED_EVENT,
-  tabBarFailureTitle,
-  tabPageLabel,
-  tellVisibleTabOfFailure,
-} from "./tabBarFailure";
+import { invoke } from "@tauri-apps/api/core";
+import { logTabBarFailure, tabBarFailureTitle } from "./tabBarFailure";
 
-// The tab bar has no room for a notice: it sends its failure to the page of
-// the visible tab of its window, which shows it (SPEC_TABS.md, «Ошибки»;
-// DESIGN_SYSTEM.md, «Сбой после закрытия окна»).
+// A failed command of the tab bar goes to Mine's log, not to any tab
+// (SPEC_DEEP_AUDIT.md, «Решения пользователя 14.10.2026»).
 describe("tab bar failure", () => {
-  it("sends the failure to the page of the visible tab", async () => {
-    vi.mocked(emitTo).mockClear();
-    const failure = { title: tabBarFailureTitle("close the tab"), message: "The window is gone." };
-    await tellVisibleTabOfFailure("0123abcd", failure);
-    expect(emitTo).toHaveBeenCalledExactlyOnceWith("tab-0123abcd", "tab-bar-action-failed", failure);
-    expect(TAB_BAR_ACTION_FAILED_EVENT).toBe("tab-bar-action-failed");
+  it("writes the action and why to the log", async () => {
+    vi.mocked(invoke).mockClear();
+    logTabBarFailure("close the tab", new Error("The window is gone."));
+    await Promise.resolve();
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("plugin:log|log", {
+      level: 4,
+      message: "Could not close the tab: The window is gone.",
+      location: "page",
+    });
   });
 
-  it("labels a tab's page as the backend does and titles the action in words", () => {
-    expect(tabPageLabel("ff00")).toBe("tab-ff00");
+  it("titles the action in words", () => {
     expect(tabBarFailureTitle("open Settings")).toBe("Could not open Settings");
   });
 });

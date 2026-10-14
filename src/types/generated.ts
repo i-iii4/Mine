@@ -787,12 +787,7 @@ live: boolean;
  * The tab's page has places to go back and forward to (В81). An
  * unloaded tab has neither: its history went with its page.
  */
-history: TabHistory;
-/**
- * Why the tab's page or window could not be made the last time it was
- * tried; selecting the tab tries again (SPEC_TABS.md, «Ошибки»).
- */
-error: string | null }
+history: TabHistory }
 
 /**
  * What a tab page needs to start (`get_tab_bootstrap`).
@@ -1005,12 +1000,7 @@ export type VaultConflictError = { kind: "no_vault" } |
 /**
  * `vault-conflicts-changed`: how many notes of the space are in conflict now.
  */
-export type VaultConflictsChanged = { count: number;
-/**
- * Why the last check of the space failed, when it did: the conflicts it
- * would have found are not counted (SPEC_DEEP_AUDIT.md, Н11, Е5.11).
- */
-check_error: string | null }
+export type VaultConflictsChanged = { count: number }
 
 /**
  * `vault-freshness-changed`: a pass of the space against its files ended.

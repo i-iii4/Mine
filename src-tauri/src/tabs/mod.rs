@@ -76,15 +76,11 @@ pub struct TabBarTab {
     /// The tab's page has places to go back and forward to (В81). An
     /// unloaded tab has neither: its history went with its page.
     pub history: TabHistory,
-    /// Why the tab's page or window could not be made the last time it was
-    /// tried; selecting the tab tries again (SPEC_TABS.md, «Ошибки»).
-    pub error: Option<String>,
 }
 
-/// Failures of the tab and window layer (SPEC_TABS.md, «Ошибки»). They reach
-/// the person as a mark on the tab in its bar, and the log; until 13.10.2026
-/// they went to a log the release build did not keep (SPEC_DEEP_AUDIT.md,
-/// Е2.9).
+/// Failures of the tab and window layer (SPEC_TABS.md, «Ошибки»). They go to
+/// the log only: the tab shows no text and no mark, and selecting it makes
+/// its page again (SPEC_DEEP_AUDIT.md, Е2.9; decision of 14.10.2026).
 #[derive(Debug, thiserror::Error)]
 pub enum TabError {
     #[error("the page of this tab could not be made: {reason}")]
@@ -190,8 +186,6 @@ struct Live {
     shown: BTreeMap<WindowId, TabId>,
     /// Where each page can step through its places (В81).
     history: BTreeMap<TabId, TabHistory>,
-    /// Why a tab's page or window could not be made, until it is (Е2.9).
-    errors: BTreeMap<TabId, String>,
     /// While the saved windows come back, the last window keeps the focus:
     /// focus that another restored window takes meanwhile changes nothing
     /// (Е2.7). Ends at the deadline.
@@ -474,7 +468,7 @@ pub fn restore(app: &AppHandle) -> anyhow::Result<()> {
 /// The steps come from [`SavedWindows::restore_steps`]: the others are made
 /// without the focus and the last window takes it back, so the order of the
 /// windows and `vault_path` stay as they were saved (Е2.7). A window that
-/// cannot be made hands its tabs to the last window, marked with the error
+/// cannot be made hands its tabs to the last window, the error in the log
 /// (Е2.9).
 pub fn restore_rest(app: &AppHandle) {
     let shell = shell(app);
@@ -585,9 +579,8 @@ fn hand_tabs_in(
     moved.into_iter().next()
 }
 
-/// The window `failed` could not be made: its tabs join `into`, the first of
-/// them marked with why, so nothing saved is lost and the person sees it
-/// (Е2.9).
+/// The window `failed` could not be made: its tabs join `into`, so nothing
+/// saved is lost; why is in the log (Е2.9).
 fn hand_tabs_to(app: &AppHandle, failed: &SavedWindow, into: &WindowId, error: TabError) {
     let shell = shell(app);
     let shown = lock(&shell.live).shown.get(into).cloned();
@@ -597,10 +590,11 @@ fn hand_tabs_to(app: &AppHandle, failed: &SavedWindow, into: &WindowId, error: T
     }
 }
 
-/// Mark `tab` with `error` in its bar and log it (Е2.9).
+/// Log why `tab`'s page or window could not be made and redraw its bar,
+/// which shows the tab as it stands now (Е2.9; decision of 14.10.2026: no
+/// mark on the tab).
 fn record_tab_error(app: &AppHandle, tab: &TabId, error: &TabError) {
     log::warn!("tab {}: {error:#}", tab.0);
-    lock(&shell(app).live).errors.insert(tab.clone(), error.to_string());
     if let Some(window) = window_of(app, tab) {
         emit_bar_state(app, &window);
     }
@@ -667,8 +661,8 @@ pub const CHROME_ROWS_EVENT: &str = "chrome-rows-changed";
 
 /// Create the native window `saved` with its tab bar and its visible tab,
 /// taking the focus or not (Е2.7). A window that cannot be made with its bar
-/// is not left half made; a page that cannot be made leaves its tab marked
-/// in the bar, to try again on selection (Е2.9).
+/// is not left half made; a page that cannot be made leaves its tab as it is
+/// in the bar, to try again on selection, the error in the log (Е2.9).
 fn create_window(app: &AppHandle, saved: &SavedWindow, focus: bool) -> Result<Window, TabError> {
     let label = saved.id.label();
     let frame = saved.frame;
@@ -729,7 +723,7 @@ fn furnish_window(app: &AppHandle, window: &Window, saved: &SavedWindow) -> anyh
             // The page takes the keyboard, or a page shortcut goes nowhere.
             native::keyboard_to_page(window, &page);
         }
-        // The window stands with its bar, the tab marked there (Е2.9).
+        // The window stands with its bar; why is in the log (Е2.9).
         Err(error) => {
             layout(app, &saved.id);
             record_tab_error(app, &saved.active_tab, &error);
@@ -787,7 +781,6 @@ fn create_page(app: &AppHandle, window: &Window, tab: &TabId) -> Result<Webview,
     let mut live = lock(&shell.live);
     live.pages.retain(|candidate| candidate != tab);
     live.pages.insert(0, tab.clone());
-    live.errors.remove(tab);
     drop(live);
     Ok(page)
 }
@@ -1066,9 +1059,9 @@ pub fn bar_state(app: &AppHandle, window_id: &WindowId) -> Option<TabBarState> {
     let snapshot = shell.snapshot();
     let window = snapshot.window(window_id)?;
     let paths = space_paths(app);
-    let (live, history, errors): (BTreeSet<TabId>, BTreeMap<TabId, TabHistory>, BTreeMap<TabId, String>) = {
+    let (live, history): (BTreeSet<TabId>, BTreeMap<TabId, TabHistory>) = {
         let live = lock(&shell.live);
-        (live.pages.iter().cloned().collect(), live.history.clone(), live.errors.clone())
+        (live.pages.iter().cloned().collect(), live.history.clone())
     };
     let tabs = window
         .tabs
@@ -1080,7 +1073,6 @@ pub fn bar_state(app: &AppHandle, window_id: &WindowId) -> Option<TabBarState> {
             card: open_card_title(&tab.view),
             live: live.contains(&tab.id),
             history: history.get(&tab.id).copied().unwrap_or_default(),
-            error: errors.get(&tab.id).cloned(),
         })
         .collect();
     Some(TabBarState {
@@ -1156,7 +1148,7 @@ pub fn activate(app: &AppHandle, tab: &TabId) {
     }
     let page = match create_page(app, &window, tab) {
         Ok(page) => page,
-        // The tab stays in its bar marked with why; selecting it again
+        // The tab stays in its bar, why in the log; selecting it again
         // tries again (SPEC_TABS.md, «Ошибки»; Е2.9).
         Err(error) => {
             // The window goes on showing the page it showed.
@@ -1393,7 +1385,7 @@ pub fn new_window_at(app: &AppHandle, space: TabSpace, view: TabView) {
     };
     shell.change(|model| model.add_window(window.clone()));
     if let Err(error) = create_window(app, &window, true) {
-        // The tab joins the window it came from, marked with why (Е2.9).
+        // The tab joins the window it came from, why in the log (Е2.9).
         match last {
             Some(last) => hand_tabs_to(app, &window, &last.id, error),
             None => {
@@ -1529,7 +1521,7 @@ pub fn move_tab_to_new_window(app: &AppHandle, tab: &TabId) {
 }
 
 /// The window `tab` was to move into could not be made: the tab goes back
-/// to `window` at `index`, shown and marked with why (Е2.9). Its page never
+/// to `window` at `index`, shown, why in the log (Е2.9). Its page never
 /// left the window.
 pub(crate) fn put_back(app: &AppHandle, tab: &TabId, window: &WindowId, index: usize, error: &TabError) {
     let shell = shell(app);

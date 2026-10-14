@@ -2371,6 +2371,16 @@ physics и не является отдельным интерактивным �
 - крестик закрывает уведомление; следующее удаление прячет прежнее;
 - ленту и поиск выправляет перечитывание снимков, которое и так идёт после
   удаления. Вывод только в консоль запрещён.
+- Корзина не взяла файл (решение пользователя 14.10.2026): текст
+  `Could not move “{имя файла}” to the Trash. Nothing was deleted.` с именем
+  файла, не путём; если macOS не дала Mine доступа к файлу, второй строкой
+  `Allow Mine to access iCloud Drive in System Settings, Privacy & Security,
+  Files and Folders.` Сырой ответ системы только в журнал. Перенос строки
+  в тексте ошибки сохраняется: тело `NotificationCard` и `MODAL_ERROR_CLASS`
+  несут `whitespace-pre-line`. Файл, на который macOS не даёт даже
+  посмотреть, отказывает так же при первом нажатии; до 14.10.2026 удаление
+  считало его отсутствующим, снимало строку индекса и отвечало успехом, а
+  карточка возвращалась.
 
 То же правило у `Delete collection?` (решение пользователя 11.10.2026): до
 11.10.2026 сбой удаления коллекции уходил только в консоль (`App.tsx`,
@@ -2413,16 +2423,20 @@ physics и не является отдельным интерактивным �
 | Connect и Disconnect выделения, бросок нескольких карточек | `Could not connect {N} elements`, `Could not disconnect {N} elements` | `Nothing changed.`: выделение меняется одной командой, всё или ничего |
 | ⌘V, бросок файлов, бросок медиа на коллекцию | `Could not create an element`, `Could not create {N} elements` | `{N} other elements were created.` (для одного `1 other element was created.`), когда часть вошла; строка ошибки на каждый файл: `“{имя файла}”: {ошибка}` |
 | Создание коллекции из выбора коллекций, у которого нет поля для причины | `Could not create the collection` | `Nothing changed.` |
-| Source, `Open Original` | `Could not open the link` | |
-| Reveal in Finder | `Could not reveal in Finder` | |
-| Copy Path, Copy Link | `Could not copy the path`, `Could not copy the link` | |
 | Полный текст открытой карточки не прочитан | `Could not read the element` | `The open element shows only the beginning of its text.`, когда показано начало, которое несёт лента |
-| Команда полосы вкладок и вкладок со страницы (⌃Tab, ⌘-щелчок, место в новой вкладке или окне, Settings) | `Could not {действие}`: `show the tab`, `close the tab`, `close the other tabs`, `switch tabs`, `move the tab`, `move the tab to a new window`, `open a new tab`, `open a new window`, `open Settings`, `change the height of the top rows`, `show or hide the sidebar`, `go back`, `go forward`, `open Find elements`, `show the tab menu`, `show the settings menu` | |
 
-У полосы вкладок места под уведомление нет: она шлёт сбой видимой вкладке
-своего окна событием `tab-bar-action-failed` (`src/lib/tabBarFailure.ts`), и
-уведомление показывает та вкладка (SPEC_TABS.md, «Ошибки»). Перестановка, которую
-бэкенд отклонил, возвращает вкладки на места.
+Только в журнал, без уведомления (решение пользователя 14.10.2026): сбой
+открытия ссылки (Source, `Open Original`), Reveal in Finder, Copy Path и
+Copy Link, сбои команд полосы вкладок и тех же команд со страницы (16 видов:
+`show the tab`, `close the tab`, `close the other tabs`, `switch tabs`,
+`move the tab`, `move the tab to a new window`, `open a new tab`,
+`open a new window`, `open Settings`, `change the height of the top rows`,
+`show or hide the sidebar`, `go back`, `go forward`, `open Find elements`,
+`show the tab menu`, `show the settings menu`), сбой проверки конфликтов
+iCloud. Страница пишет строку `Could not …: <причина>` через логгер
+приложения (`src/lib/appLog.ts`); они редки и человеку в них нечего делать.
+Перестановка вкладок, которую бэкенд отклонил, по-прежнему возвращает
+вкладки на места (SPEC_TABS.md, «Ошибки»).
 
 Окно, которое не закрывается по нажатию, и экран на месте ленты показывают
 сбой у себя: `New collection` строкой ошибки под полем, экран пустого
@@ -2844,10 +2858,14 @@ Radix-обёртка: `size-4 rounded-[2px] border border-primary`. Checked: `bg
 
 - **Место** (решение пользователя 08.10.2026). Правый нижний угол ленты:
   справа на интервале ленты `--edge-rhythm` от края окна, то есть на одной
-  вертикали с правым краем карточек; снизу на том же интервале над верхним
-  краем нижней панели (`--bottom-bar-height`, его публикует страница
-  вкладки; без панели ноль). Раньше угол стоял в `16px` от краёв окна, и
-  карточка наползала на нижнюю панель.
+  вертикали с правым краем карточек. Снизу (решение пользователя
+  14.10.2026): если нижняя панель есть, на `16px` выше её верхнего края;
+  если её нет, на интервале ленты `--edge-rhythm` от края окна. Расстояние
+  страница берёт из места панели в раскладке (её верхний край против высоты
+  окна, `publishNotificationBottom` в `src/lib/notificationPlacement.ts`) и
+  публикует свойством `--notification-bottom`. До 14.10.2026 страница
+  публиковала высоту панели один раз при первом кадре, когда панели ещё не
+  было, поэтому высота оставалась нулём и уведомление закрывало панель.
 - **Поверхность** без изменений: `w-80 rounded-1 border border-border
   bg-popover p-3 shadow-md`, ширина `320px` у всех уведомлений.
 - **Заголовок** как пункт меню: `text-base` обычного веса, `text-foreground`

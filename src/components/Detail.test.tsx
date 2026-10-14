@@ -348,8 +348,9 @@ describe("Detail source video independent of card kind", () => {
       expect(cancelSourceVideoDownload).toHaveBeenCalledWith(props.block.slug);
       sendDownload({ slug: props.block.slug, state: "cancelled" });
       expect(screen.queryByText(/Downloading/)).toBeNull();
-      sendDownload({ slug: props.block.slug, state: "failed", message: "YouTube refused the download (HTTP 403)." });
-      expect(screen.getByText("Download failed: YouTube refused the download (HTTP 403).")).toBeInTheDocument();
+      sendDownload({ slug: props.block.slug, state: "failed", message: "YouTube refused the download. Try again later." });
+      expect(screen.getByText("YouTube refused the download. Try again later.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Try Again" })).toBeInTheDocument();
     });
 
     it("shows a download that is still running when the card is opened again", async () => {

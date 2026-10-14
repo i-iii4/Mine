@@ -390,8 +390,9 @@ impl RequestSpace {
                 "“{}” is a copy of another space, and Mine cannot give it an identity of its own. Allow access to the folder or choose another space.",
                 name(path)
             )),
+            // Decision of 14.10.2026: what to do, in one sentence.
             (COPY_UNSETTLED, Some(path)) => Some(format!(
-                "“{}” is a copy of another space. Open it in Mine or add it with Add space to give it an identity of its own.",
+                "“{}” is a copy of another space. Open it in Mine to use it.",
                 name(path)
             )),
             _ => None,
@@ -428,6 +429,9 @@ const IDENTITY_UNWRITABLE: &str = "identity_unwritable";
 /// A copy of a space without an identity of its own, seen by a request that
 /// writes nothing (`get_status`, an upload).
 const COPY_UNSETTLED: &str = "copy_unsettled";
+/// A lookup met a save of the same space holding the journal: the clipper
+/// waits and asks again.
+const OPERATION_BUSY: &str = "operation_busy";
 
 /// Why which space a folder is cannot be settled now. The request is refused
 /// with a state saying so, never answered with a guess (Д2.1, П22).
@@ -1988,13 +1992,13 @@ fn handle_get_save_operation(vault: &VaultLayout, params: serde_json::Value) {
             }
             return Ok(Some(response));
         }
+        // Another save holds the journal: the clipper asks again until it
+        // is done and says nothing meanwhile (SPEC_DEEP_AUDIT.md, «Решения
+        // пользователя 14.10.2026»), so the answer carries no words.
         let Some(locked) = store.try_lock(&binding)? else {
-            return Ok(Some(operation_failure(
-                id,
-                "unknown",
-                "operation_busy",
-                "Mine is saving to this space now. Check this save again in a moment.",
-            )));
+            return Ok(Some(serde_json::json!({
+                "ok": false, "outcome": "unknown", "operation_id": id, "code": OPERATION_BUSY,
+            })));
         };
         let Some(mut record) = locked.load(id)? else {
             return Ok(None);
@@ -3402,12 +3406,16 @@ fn locate_ytdlp() -> Option<std::path::PathBuf> {
     // next to this host, so a person who never opened a terminal still gets
     // restricted video. A one-file build beside the host is never looked for:
     // it unpacks its Python at every start, and that copy is what Gatekeeper
-    // refused under Dia (SPEC_ONBOARDING.md, О8, О8.1).
-    if let Some(beside) = std::env::current_exe()
+    // refused under Dia (SPEC_ONBOARDING.md, О8, О8.1). The copy Mine
+    // updated in its app data is taken over it when newer, so the clipper
+    // runs the same downloader as Download Media (О8.4).
+    let beside = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(mine_lib::tool_process::ytdlp_in))
-    {
-        candidates.push(beside);
+        .filter(|path| path.is_file());
+    let app_data = native_app_data_dir().ok();
+    if let Some(chosen) = mine_lib::ytdlp_update::choose(app_data.as_deref(), beside) {
+        candidates.push(chosen);
     }
     candidates.extend::<Vec<std::path::PathBuf>>(vec![
         "/opt/homebrew/bin/yt-dlp".into(), // Homebrew, Apple silicon
