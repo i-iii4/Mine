@@ -3,7 +3,18 @@ import test from 'node:test';
 import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { finalizeLocalBundle } from './finalize-local-bundle.mjs';
+import { finalizeLocalBundle, findLocalSigningIdentity } from './finalize-local-bundle.mjs';
+
+test('the local signing certificate is found by name, and its absence means an ad hoc signature', () => {
+  const listing = [
+    '  1) 1111111111111111111111111111111111111111 "Apple Development: someone" (CSSMERR_TP_NOT_TRUSTED)',
+    '  2) FDD65DD9A0CF79462AE4CB3475E51A8752C3B664 "Mine Local Signing" (CSSMERR_TP_NOT_TRUSTED)',
+  ].join('\n');
+  const answer = (stdout, status = 0) => () => ({ status, stdout });
+  assert.equal(findLocalSigningIdentity(answer(listing)), 'FDD65DD9A0CF79462AE4CB3475E51A8752C3B664');
+  assert.equal(findLocalSigningIdentity(answer('  0 identities found')), null);
+  assert.equal(findLocalSigningIdentity(answer('', 1)), null);
+});
 import { fileComponentManifest, treeComponentManifest } from './build-clipper-runtime-manifest.mjs';
 
 function fixture() {

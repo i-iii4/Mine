@@ -42,8 +42,23 @@ function persistJson(path, value) {
   try { fsyncSync(parent); } finally { closeSync(parent); }
 }
 
-/** Local ad-hoc artifact only. Public Developer ID signing follows the same order. */
+/// The certificate local builds are signed with when this Mac has it: one
+/// identity for every build, so macOS keeps the permissions it granted Mine
+/// and its helper (iCloud Drive, Automation) across updates. Without it the
+/// build is signed ad hoc and every build is a new program to macOS.
+export const LOCAL_SIGNING_NAME = 'Mine Local Signing';
+
+/// The SHA-1 of the local signing identity in the user's keychains, or null.
+export function findLocalSigningIdentity(execute = spawnSync) {
+  const result = execute('/usr/bin/security', ['find-identity', '-p', 'codesigning'], { encoding: 'utf8', timeout: 30_000 });
+  if (result.error || result.status !== 0) return null;
+  const line = String(result.stdout ?? '').split('\n').find((entry) => entry.includes(`"${LOCAL_SIGNING_NAME}"`));
+  return line?.match(/\b([A-F0-9]{40})\b/)?.[1] ?? null;
+}
+
+/** Local artifact only. Public Developer ID signing follows the same order. */
 export function finalizeLocalBundle(bundle, options = {}) {
+  const signer = options.signingIdentity ?? '-';
   if ((options.platform ?? process.platform) !== 'darwin') throw new Error('Local bundle finalization requires macOS');
   bundle = resolve(bundle);
   if (!bundle.endsWith('.app') || !lstatSync(bundle).isDirectory()) throw new Error('Expected a real app bundle directory');
@@ -56,7 +71,7 @@ export function finalizeLocalBundle(bundle, options = {}) {
   const main = join(bundle, 'Contents/MacOS', info.CFBundleExecutable);
   if (!macho(main)) throw new Error('Bundle main executable is not Mach-O');
   const nested = nestedCode(bundle, main);
-  for (const path of nested) run(execute, '/usr/bin/codesign', ['--force', '--sign', '-', '--timestamp=none', path]);
+  for (const path of nested) run(execute, '/usr/bin/codesign', ['--force', '--sign', signer, '--timestamp=none', path]);
 
   const nativeHost = join(bundle, 'Contents/MacOS/native-host');
   const extension = join(bundle, 'Contents/Resources/clipper-extension');
@@ -72,7 +87,7 @@ export function finalizeLocalBundle(bundle, options = {}) {
   persistJson(manifestPath, manifest);
 
   // Never deep-sign here: it would mutate the bytes just recorded in the manifest.
-  run(execute, '/usr/bin/codesign', ['--force', '--sign', '-', '--timestamp=none', bundle]);
+  run(execute, '/usr/bin/codesign', ['--force', '--sign', signer, '--timestamp=none', bundle]);
   run(execute, '/usr/bin/codesign', ['--verify', '--deep', '--strict', bundle]);
   const actual = createRuntimeManifest(componentInputs);
   const reopened = JSON.parse(readFileSync(manifestPath, 'utf8'));
@@ -81,7 +96,7 @@ export function finalizeLocalBundle(bundle, options = {}) {
   }
   const launched = (options.probe ?? probeNativeHost)(nativeHost, info.CFBundleShortVersionString);
   if (launched.build_id !== manifest.native_host_build_id) throw new Error('Signed helper launch identity differs from sealed manifest');
-  return { bundle, signing: 'local-ad-hoc', signature_verified: true, runtime_verified: true,
+  return { bundle, signing: signer === '-' ? 'local-ad-hoc' : 'local-certificate', signature_verified: true, runtime_verified: true,
     nested_signed: nested.length, manifest };
 }
 
@@ -90,7 +105,8 @@ function main() {
   if (arguments_.length !== 3 || arguments_[0] !== '--bundle' || arguments_[2] !== '--ad-hoc') {
     throw new Error('Usage: node scripts/finalize-local-bundle.mjs --bundle <local .app path> --ad-hoc');
   }
-  const report = finalizeLocalBundle(arguments_[1]);
+  const signingIdentity = findLocalSigningIdentity() ?? '-';
+  const report = finalizeLocalBundle(arguments_[1], { signingIdentity });
   console.log(JSON.stringify(report, null, 2));
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
