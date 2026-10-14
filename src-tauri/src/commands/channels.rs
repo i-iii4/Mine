@@ -500,14 +500,19 @@ fn reconcile_before_collection_mutation(
         })
 }
 
-/// Rename the collection's name in a membership list, in place.
-fn rename_membership(tags: &mut Vec<String>, old: &str, new: &str) {
-    if !tags.iter().any(|tag| tag == old) {
+/// Rename the collection in a membership list, in place: a link by name
+/// gets the new name, a link by the page's path the page's new path
+/// (`renamed_collection_link`, SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К4).
+fn rename_membership(tags: &mut Vec<String>, old: (&str, &str), new: (&str, &str)) {
+    let rename = |tag: &str| {
+        crate::domain::collection::renamed_collection_link(tag, old.0, Some(old.1), new.0, Some(new.1))
+    };
+    if !tags.iter().any(|tag| rename(tag).is_some()) {
         return;
     }
     let mut renamed: Vec<String> = Vec::with_capacity(tags.len());
     for tag in tags.drain(..) {
-        let tag = if tag == old { new.to_string() } else { tag };
+        let tag = rename(&tag).unwrap_or(tag);
         if !renamed.contains(&tag) {
             renamed.push(tag);
         }
@@ -552,17 +557,22 @@ fn rename_reconciled_collection(
         .slug_for_path(&old_path)
         .map_err(|error| CommandError::Internal(error.to_string()))?;
 
-    let retag = |tags: &mut Vec<String>| rename_membership(tags, &normalized_old, &normalized_new);
+    let retag = |tags: &mut Vec<String>| {
+        rename_membership(tags, (&normalized_old, &old_slug), (&normalized_new, &new_slug));
+    };
     let mut planned = crate::commands::blocks::plan_note_move(conn, vault, &old_slug, &new_slug, &retag)
         .map_err(|error| CommandError::Internal(error.to_string()))?;
-    let reached: std::collections::BTreeSet<std::path::PathBuf> =
+    let mut reached: std::collections::BTreeSet<std::path::PathBuf> =
         planned.iter().map(|write| write.original_path.clone()).collect();
-    for member in index::list_blocks_by_tag(conn, &normalized_old)? {
+    // Members name the collection by its name or by its page's path (К4).
+    let mut members = index::list_blocks_by_tag(conn, &normalized_old)?;
+    members.extend(index::list_blocks_by_tag(conn, &old_slug)?);
+    for member in members {
         if member.slug.is_empty() {
             continue;
         }
         let path = vault.block_path(&member.slug);
-        if reached.contains(&path) {
+        if !reached.insert(path.clone()) {
             continue;
         }
         let (read_slug, content) = files::read_block_file(vault, &path)?;
@@ -1000,8 +1010,14 @@ impl ChannelDeletion {
     /// link and is named; it does not stop the deletion (Е1.3).
     fn with_members(mut self, conn: &rusqlite::Connection, vault: &VaultLayout) -> Result<Self, CommandError> {
         let page_path = self.page.as_ref().map(|page| page.path.clone());
-        for member in index::list_blocks_by_tag(conn, &self.tag)? {
-            if member.slug.is_empty() {
+        // Members name the collection by its name or by its page's path (К4).
+        let mut members = index::list_blocks_by_tag(conn, &self.tag)?;
+        if let Some(page) = &self.page {
+            members.extend(index::list_blocks_by_tag(conn, &page.slug)?);
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for member in members {
+            if member.slug.is_empty() || !seen.insert(member.slug.clone()) {
                 continue;
             }
             let path = vault.block_path(&member.slug);
@@ -1035,7 +1051,10 @@ impl ChannelDeletion {
             .map_err(|error| CommandError::Internal(error.to_string()))?;
         let mut collections = parsed.block.frontmatter.tags;
         let before = collections.len();
-        collections.retain(|collection| collection != &self.tag);
+        let page_slug = self.page.as_ref().map(|page| page.slug.as_str());
+        collections.retain(|collection| {
+            !crate::domain::collection::link_names_collection(collection, &self.tag, page_slug)
+        });
         if collections.len() == before {
             // The file no longer names it: nothing to take off.
             return Ok(None);
@@ -1653,6 +1672,63 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(vault.block_path("Cards/Sunset")).unwrap(),
             card.replace("[[Photos]]", "[[Pictures]]")
+        );
+    }
+
+    /// К4: a card that names the collection with its page's folder keeps that
+    /// form through a rename, the folder with the page's new name; a card
+    /// naming it by name gets the new name.
+    #[test]
+    fn a_rename_keeps_a_link_with_the_page_folder_in_that_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        let by_folder = "---\nMine Collections:\n  - \"[[Collections/Photos]]\"\n  - \"[[Other]]\"\nsaved_at: 2026-04-25T14:00:40Z\n---\nBody\n";
+        let by_name = "---\nMine Collections:\n  - \"[[Photos]]\"\nsaved_at: 2026-04-25T14:00:40Z\n---\nBody\n";
+        std::fs::write(vault.block_path("Cards/Folder"), by_folder).unwrap();
+        std::fs::write(vault.block_path("Cards/Name"), by_name).unwrap();
+        let state = app_state(&vault);
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+
+        rename_channel_inner(None, &vs.conn, &vs.vault, "Photos", "Pictures").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Cards/Folder")).unwrap(),
+            by_folder.replace("[[Collections/Photos]]", "[[Collections/Pictures]]")
+        );
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Cards/Name")).unwrap(),
+            by_name.replace("[[Photos]]", "[[Pictures]]")
+        );
+        let counted: Vec<(String, usize)> = index::get_all_tags(&vs.conn)
+            .unwrap()
+            .into_iter()
+            .map(|tag| (tag.tag, tag.count))
+            .collect();
+        assert_eq!(counted, vec![("Pictures".to_string(), 2)]);
+    }
+
+    /// К4 and К12: deleting a collection takes its link off a card that names
+    /// it with its page's folder too; other links stay.
+    #[test]
+    fn a_delete_takes_off_a_link_with_the_page_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = standard_space(dir.path());
+        std::fs::write(vault.block_path("Collections/Photos"), WRITTEN_PAGE).unwrap();
+        let by_folder = "---\nMine Collections:\n  - \"[[Collections/Photos]]\"\n  - \"[[Other]]\"\nsaved_at: 2026-04-25T14:00:40Z\n---\nBody\n";
+        std::fs::write(vault.block_path("Cards/Folder"), by_folder).unwrap();
+        let state = app_state(&vault);
+        let main_space = state.space_for("main").expect("main tab");
+        let guard = main_space.vault_state.lock().unwrap();
+        let vs = guard.as_ref().unwrap();
+
+        assert!(delete_channel_inner(None, &vs.conn, &vs.vault, "Photos").unwrap().deleted);
+
+        assert_eq!(
+            std::fs::read_to_string(vault.block_path("Cards/Folder")).unwrap(),
+            by_folder.replace("  - \"[[Collections/Photos]]\"\n", "")
         );
     }
 

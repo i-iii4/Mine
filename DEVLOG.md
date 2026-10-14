@@ -1,3 +1,9 @@
+## 14.10.2026: две формы ссылок Obsidian
+
+Тест образца надёжности (46.9) нашёл две формы Obsidian, которых Mine не понимал. Членство с папкой страницы `[[Collections/Имя]]` теперь даёт членство: общий фрагмент SQL `collection_membership_join_sql` сопоставляет ссылку со страницей по `channels.tag` или `channels.source_slug`, имя берётся со страницы; `list_collections` в mine-core считает так же. Отключение (одна карточка, выделение, CLI и MCP), удаление и переименование коллекции понимают обе формы через `link_names_collection` и `renamed_collection_link` в mine-core; ссылка с папкой при переименовании остаётся с папкой. Вставка `![[../Media/файл]]` разрешается от папки заметки и не выходит за корень (`links.rs`). `MEDIA_INDEX_VERSION` 9: медиа карточек один раз пересчитывается в фоне ([SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_COLLECTIONS_OBSIDIAN_LINKS.md>), К4, К9; [SPEC_OBSIDIAN_WIKILINKS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_OBSIDIAN_WIKILINKS.md>)). Ограничение: пока индекс не видел страницу коллекции, отключение находит только ссылку по имени.
+
+Живая проверка последней сборки: клиппер не получал коллекции, потому что macOS ждала разрешения нового помощника на iCloud Drive (подпись ad-hoc меняется с каждой сборкой); код ни при чём, разрешает пользователь. Работу сделали агенты. Проверки: `test:rust`, `test:save-core` (25), `test:frontend` (2913), tsc, lint, сверка реестра.
+
 ## 13.10.2026: проверки (46.9) и уборка (46.10)
 
 **Проверки (46.9, Е7 кроме Е7.5)** [SPEC_DEEP_AUDIT.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_DEEP_AUDIT.md>):

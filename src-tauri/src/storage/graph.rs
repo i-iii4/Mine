@@ -591,12 +591,12 @@ fn load_cards(conn: &Connection) -> Result<Vec<CardRow>> {
 fn load_memberships(conn: &Connection) -> Result<Vec<(String, String)>> {
     let membership = crate::storage::block_queries::collection_membership_join_sql("bt", "page");
     let mut stmt = conn.prepare(&format!(
-        "SELECT b.slug, bt.tag
+        "SELECT b.slug, page.tag
          FROM block_tags bt
          {membership}
          JOIN blocks b ON b.id = bt.block_id
          WHERE b.card_kind != 'channel'
-         ORDER BY bt.tag ASC, b.slug ASC"
+         ORDER BY page.tag ASC, b.slug ASC"
     ))?;
     let rows = stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?

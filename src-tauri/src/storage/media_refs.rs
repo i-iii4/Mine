@@ -658,6 +658,30 @@ mod tests {
         assert_eq!(got, Some(image));
     }
 
+    /// `![[../Media/one.svg]]` is a path from the note's folder, as Obsidian
+    /// writes embeds with relative links; it never leaves the space.
+    #[test]
+    fn obsidian_embed_up_a_folder_resolves_from_the_note_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(dir.path().join("Nested")).unwrap();
+        std::fs::create_dir_all(dir.path().join("Media")).unwrap();
+        std::fs::write(dir.path().join("Nested/Unicode ñ 日本.md"), "").unwrap();
+        let image = dir.path().join("Media/one.svg");
+        std::fs::write(&image, b"<svg/>").unwrap();
+
+        let mut resolver = MediaResolver::new(&vault);
+        let embed = |source: &str| reference(source, InlineMediaSyntax::ObsidianEmbed);
+        assert_eq!(
+            resolver.resolve_inline_media("Nested/Unicode ñ 日本", &embed("../Media/one.svg")),
+            Some(image)
+        );
+        assert_eq!(
+            resolver.resolve_inline_media("Nested/Unicode ñ 日本", &embed("../../Media/one.svg")),
+            None
+        );
+    }
+
     #[test]
     fn obsidian_embed_ignores_trash_and_service_dirs() {
         let dir = tempfile::tempdir().unwrap();

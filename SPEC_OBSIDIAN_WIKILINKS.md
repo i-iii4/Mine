@@ -52,7 +52,8 @@ source view.
 ```
 
 - `name` — relative filesystem path от vault root. Для flat Mine
-  vault это просто имя файла, без ведущего слэша.
+  vault это просто имя файла, без ведущего слэша. Путь, начинающийся с
+  `../`, читается от папки заметки и не выходит за корень пространства.
 - `alt` опциональный alt/caption, separator `|`.
 
 ### Plain link (non-embed text link)

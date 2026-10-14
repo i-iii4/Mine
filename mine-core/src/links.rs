@@ -182,6 +182,20 @@ impl LinkIndex {
                 }
                 literal
             }
+            LinkSyntax::Obsidian if target.starts_with("../") => {
+                // `[[../Media/a.jpg]]` is a path from the note's folder, as
+                // Obsidian writes links in its relative link format: it names
+                // that one place, never a file of the same name elsewhere,
+                // and never reaches above the space's root.
+                let Some(path) = path_from_note_folder(source_path, &target) else {
+                    return LinkResolution::Missing;
+                };
+                let literal = self.exact(&path);
+                if matches!(literal, LinkResolution::Missing) && !names_a_note(&path) {
+                    return self.exact(&format!("{path}.md"));
+                }
+                literal
+            }
             LinkSyntax::Obsidian => {
                 let Some(target) = normalize_path(target.strip_prefix('/').unwrap_or(&target))
                 else {
@@ -451,7 +465,12 @@ pub fn obsidian_target_name_keys(raw_target: &str) -> Vec<String> {
     let Some(target) = parse_target(raw_target, LinkSyntax::Obsidian) else {
         return Vec::new();
     };
-    let Some(path) = normalize_path(target.strip_prefix('/').unwrap_or(&target)) else {
+    // A path from the note's folder (`../Cards/Foo`) still ends in the name.
+    let mut path = target.strip_prefix('/').unwrap_or(&target);
+    while let Some(rest) = path.strip_prefix("../") {
+        path = rest;
+    }
+    let Some(path) = normalize_path(path) else {
         return Vec::new();
     };
     let Some(last) = path.rsplit('/').next() else {
@@ -496,6 +515,16 @@ fn parse_target(raw: &str, syntax: LinkSyntax) -> Option<String> {
         return None;
     }
     Some(target.nfc().collect())
+}
+
+/// The space path of `target` read from the folder of the note at
+/// `source_path`, or `None` when it climbs above the space's root.
+fn path_from_note_folder(source_path: &str, target: &str) -> Option<String> {
+    let source = normalize_path(source_path)?;
+    match source.rsplit_once('/') {
+        Some((folder, _)) => normalize_path(&format!("{folder}/{target}")),
+        None => normalize_path(target),
+    }
 }
 
 fn normalize_path(raw: &str) -> Option<String> {
@@ -827,6 +856,45 @@ mod tests {
         assert_eq!(obsidian_target_name_keys("cafe\u{301}"), vec!["café"]);
         assert!(obsidian_target_name_keys("https://example.com/a").is_empty());
         assert!(obsidian_target_name_keys("").is_empty());
+        assert_eq!(obsidian_target_name_keys("../Cards/Foo"), vec!["Foo"]);
+        assert_eq!(obsidian_target_name_keys("../../Foo|alias"), vec!["Foo"]);
+    }
+
+    /// A wikilink that starts with `../` is a path from the note's folder,
+    /// as Obsidian writes it with relative links: it names that file and no
+    /// other, and never reaches above the space's root.
+    #[test]
+    fn a_wikilink_up_from_the_note_folder_names_the_file_there() {
+        let index = LinkIndex::new([
+            "Media/one.svg",
+            "Nested/Media/one.svg",
+            "Nested/Unicode.md",
+            "Nested/Deep/Note.md",
+            "Plain note.md",
+        ]);
+        let resolve = |source: &str, target: &str| index.resolve(source, target, LinkSyntax::Obsidian);
+        assert_eq!(
+            resolve("Nested/Unicode.md", "../Media/one.svg"),
+            LinkResolution::Resolved("Media/one.svg".into())
+        );
+        assert_eq!(
+            resolve("Nested/Deep/Note.md", "../Media/one.svg|Second"),
+            LinkResolution::Resolved("Nested/Media/one.svg".into())
+        );
+        assert_eq!(
+            resolve("Nested/Deep/Note.md", "../../Plain note"),
+            LinkResolution::Resolved("Plain note.md".into())
+        );
+        assert_eq!(
+            resolve("Nested/Deep/Note.md", "../Unicode#Heading"),
+            LinkResolution::Resolved("Nested/Unicode.md".into())
+        );
+        // The path names one place: no file of that name elsewhere answers.
+        assert_eq!(resolve("Nested/Unicode.md", "../Nested/Missing.svg"), LinkResolution::Missing);
+        assert_eq!(resolve("Nested/Deep/Note.md", "../one.svg"), LinkResolution::Missing);
+        // Above the root is outside the space.
+        assert_eq!(resolve("Nested/Unicode.md", "../../Media/one.svg"), LinkResolution::Missing);
+        assert_eq!(resolve("Plain note.md", "../Media/one.svg"), LinkResolution::Missing);
     }
 
     /// Resolving among the notes a target names gives the answer of the
@@ -857,6 +925,10 @@ mod tests {
             "Ideas",
             "Missing",
             "Foo.md",
+            "../Qux",
+            "../Cards/Bar",
+            "../Bar",
+            "../../Qux",
         ];
         for target in targets {
             let keys = obsidian_target_name_keys(target);

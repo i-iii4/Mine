@@ -10,7 +10,8 @@ use crate::commands::channels::require_collection_page;
 use crate::commands::state::{AppState, CommandError};
 use crate::domain::block::{parse_markdown_document, Block, DateTime};
 use crate::domain::collection::{
-    normalize_collection_ref, patch_collections_frontmatter, validate_collection_ref,
+    link_names_collection, normalize_collection_ref, patch_collections_frontmatter,
+    validate_collection_ref,
 };
 use crate::domain::vault::{validate_slug, VaultLayout};
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
@@ -132,6 +133,7 @@ pub(crate) fn set_blocks_membership_inner(
     if connected {
         require_collection_page(conn, vault, &collection_ref)?;
     }
+    let names = collection_link_matcher(conn, &collection_ref)?;
 
     let mut seen = std::collections::HashSet::new();
     let mut writes = Vec::with_capacity(slugs.len());
@@ -149,13 +151,13 @@ pub(crate) fn set_blocks_membership_inner(
         let parsed = parse_markdown_document(slug, &content, file_saved_at(&path))
             .map_err(|e| CommandError::Internal(e.to_string()))?;
         let mut collections = parsed.block.frontmatter.tags;
-        if collections.contains(&collection_ref) == connected {
+        if collections.iter().any(|link| names(link)) == connected {
             continue;
         }
         if connected {
             collections.push(collection_ref.clone());
         } else {
-            collections.retain(|t| t != &collection_ref);
+            collections.retain(|link| !names(link));
         }
         let (write, projection) =
             MembershipRewrite::prepare(vault, slug, path, content, &collections)?.into_source_write();
@@ -177,6 +179,18 @@ pub(crate) fn set_blocks_membership_inner(
         },
     )?;
     Ok(())
+}
+
+/// Whether a card's link names the collection `collection_ref`: by the ref or
+/// by the path of the page the index last saw for it
+/// (`link_names_collection`, SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К4).
+pub(crate) fn collection_link_matcher(
+    conn: &Connection,
+    collection_ref: &str,
+) -> Result<impl Fn(&str) -> bool, CommandError> {
+    let collection_ref = collection_ref.to_string();
+    let page_slug = index::channel_source_slug(conn, &collection_ref)?;
+    Ok(move |link: &str| link_names_collection(link, &collection_ref, page_slug.as_deref()))
 }
 
 /// Connect the card `slug` to the collection `tag`, or disconnect it.
@@ -206,6 +220,7 @@ fn set_block_membership(
     if connected {
         require_collection_page(conn, vault, &collection_ref)?;
     }
+    let names = collection_link_matcher(conn, &collection_ref)?;
 
     let path = vault.block_path(slug);
     let (_, content) = files::read_block_file(vault, &path)?;
@@ -213,11 +228,11 @@ fn set_block_membership(
         .map_err(|e| CommandError::Internal(e.to_string()))?;
     let mut collections = parsed.block.frontmatter.tags;
     if connected {
-        if !collections.contains(&collection_ref) {
+        if !collections.iter().any(|link| names(link)) {
             collections.push(collection_ref);
         }
     } else {
-        collections.retain(|t| t != &collection_ref);
+        collections.retain(|link| !names(link));
     }
 
     let rewrite = MembershipRewrite::prepare(vault, slug, path, content, &collections)?;
@@ -734,6 +749,32 @@ mod tests {
             other => panic!("expected the ambiguity error, got {other:?}"),
         }
         assert_eq!(std::fs::read_to_string(vault.block_path("Note")).unwrap(), source);
+    }
+
+    /// К4: a card that names the collection with its page's folder,
+    /// `[[Collections/Design]]`, is a member: connecting adds no second link,
+    /// disconnecting takes that link off, for one card and for a selection.
+    #[test]
+    fn a_link_with_the_page_folder_is_taken_off_on_disconnect() {
+        let by_folder = "---\nsaved_at: 2026-07-10T00:00:00Z\nMine Collections:\n  - \"[[Collections/Design]]\"\n  - \"[[Other]]\"\n---\nBody";
+        let (_dir, vault, conn) =
+            space_with_cards(&[("Note", by_folder), ("A", by_folder), ("B", by_folder)]);
+        std::fs::create_dir_all(vault.root().join("Collections")).unwrap();
+        collection_page(&vault, &conn, "Collections/Design");
+
+        set_block_membership(&conn, &vault, "Note", "Design", true).unwrap();
+        assert_eq!(std::fs::read_to_string(vault.block_path("Note")).unwrap(), by_folder);
+        set_block_membership(&conn, &vault, "Note", "Design", false).unwrap();
+        assert_eq!(tags_on_disk(&vault, "Note"), vec!["Other"]);
+
+        let slugs = vec!["A".to_string(), "B".to_string()];
+        set_blocks_membership_inner(&conn, &vault, &slugs, "Design", true).unwrap();
+        assert_eq!(std::fs::read_to_string(vault.block_path("A")).unwrap(), by_folder);
+        set_blocks_membership_inner(&conn, &vault, &slugs, "Design", false).unwrap();
+        for slug in ["A", "B"] {
+            assert_eq!(tags_on_disk(&vault, slug), vec!["Other"], "{slug}");
+        }
+        assert!(index::get_all_tags(&conn).unwrap().is_empty());
     }
 
     /// К8: disconnecting takes off a link whose collection has no page.

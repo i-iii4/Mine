@@ -63,6 +63,45 @@ pub fn collection_ref_from_canonical_value(raw: &str) -> Option<String> {
     (!target.is_empty()).then_some(target)
 }
 
+/// Whether a `Mine Collections` link names the collection `collection_ref`
+/// whose page is the note `page_slug`: by the ref, or by the page's path
+/// (`[[Collections/Travel]]`, К4), as Obsidian opens both. The rule of the
+/// index's membership join; every write that takes a membership off or
+/// renames it matches links by it.
+#[must_use]
+pub fn link_names_collection(link: &str, collection_ref: &str, page_slug: Option<&str>) -> bool {
+    let link = normalize_collection_ref(link);
+    !link.is_empty()
+        && (link == normalize_collection_ref(collection_ref)
+            || page_slug.is_some_and(|page| link == normalize_collection_ref(page)))
+}
+
+/// The link a card keeps when its collection is renamed, in the form the
+/// card wrote it: the new ref for a link by ref, the page's new path for a
+/// link by path (К4). `None` for a link to another collection.
+#[must_use]
+pub fn renamed_collection_link(
+    link: &str,
+    old_ref: &str,
+    old_page_slug: Option<&str>,
+    new_ref: &str,
+    new_page_slug: Option<&str>,
+) -> Option<String> {
+    let link = normalize_collection_ref(link);
+    if link.is_empty() {
+        return None;
+    }
+    if link == normalize_collection_ref(old_ref) {
+        return Some(normalize_collection_ref(new_ref));
+    }
+    match (old_page_slug, new_page_slug) {
+        (Some(old_page), Some(new_page)) if link == normalize_collection_ref(old_page) => {
+            Some(normalize_collection_ref(new_page))
+        }
+        _ => None,
+    }
+}
+
 pub fn collection_wikilink_value(collection_ref: &str) -> String {
     format!("[[{}]]", normalize_collection_ref(collection_ref))
 }
@@ -99,17 +138,6 @@ pub struct CollectionCount {
 /// whose name has no page is in no list and no count. A space read without an
 /// index (the browser folder) lists the same collections the app does.
 pub fn list_collections(pages: &[CollectionPage], memberships: &[Vec<String>]) -> Vec<CollectionCount> {
-    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-    for card in memberships {
-        let refs: BTreeSet<String> = card
-            .iter()
-            .map(|raw| normalize_collection_ref(raw))
-            .filter(|collection_ref| !collection_ref.is_empty())
-            .collect();
-        for collection_ref in refs {
-            *counts.entry(collection_ref).or_insert(0) += 1;
-        }
-    }
     let page_slugs: BTreeSet<String> = pages.iter().map(|page| page.slug.clone()).collect();
     let mut listed: Vec<(i64, String)> = pages
         .iter()
@@ -120,6 +148,26 @@ pub fn list_collections(pages: &[CollectionPage], memberships: &[Vec<String>]) -
             )
         })
         .collect();
+    // A link names a page by its ref or by its path (К4), the rule of the
+    // index's membership join: `[[Collections/Travel]]` is `Travel`.
+    let mut page_of_link: BTreeMap<String, String> = pages
+        .iter()
+        .zip(&listed)
+        .map(|(page, (_, tag))| (normalize_collection_ref(&page.slug), tag.clone()))
+        .collect();
+    for (_, tag) in &listed {
+        page_of_link.insert(tag.clone(), tag.clone());
+    }
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for card in memberships {
+        let collections: BTreeSet<&String> = card
+            .iter()
+            .filter_map(|raw| page_of_link.get(&normalize_collection_ref(raw)))
+            .collect();
+        for tag in collections {
+            *counts.entry(tag.clone()).or_insert(0) += 1;
+        }
+    }
     listed.sort();
     let mut seen = BTreeSet::new();
     let mut out = Vec::with_capacity(listed.len());
@@ -566,6 +614,57 @@ mod tests {
         );
         // Cards alone make no collection.
         assert!(list_collections(&[], &memberships).is_empty());
+    }
+
+    /// К4 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): a link by the page's path,
+    /// `[[Collections/Travel]]`, names the page Obsidian opens for it, so the
+    /// card is in that collection, listed under the page's own name; a card
+    /// naming it both ways counts once.
+    #[test]
+    fn a_link_by_the_page_path_is_a_membership_under_the_page_name() {
+        let pages = vec![
+            CollectionPage { slug: "Collections/Travel".into(), position: Some(0) },
+            CollectionPage { slug: "A/Design".into(), position: Some(1) },
+            CollectionPage { slug: "B/Design".into(), position: Some(2) },
+        ];
+        let memberships = vec![
+            vec!["[[Collections/Travel]]".to_string()],
+            vec!["[[Travel]]".to_string(), "[[Collections/Travel|Trips]]".to_string()],
+            vec!["[[A/Design]]".to_string(), "[[Other/Travel]]".to_string()],
+        ];
+        assert_eq!(
+            list_collections(&pages, &memberships),
+            vec![
+                CollectionCount { tag: "Travel".into(), block_count: 2 },
+                CollectionCount { tag: "A/Design".into(), block_count: 1 },
+                CollectionCount { tag: "B/Design".into(), block_count: 0 },
+            ]
+        );
+    }
+
+    /// К4: the one rule that matches a `Mine Collections` link to a page, for
+    /// every write that takes a membership off or renames it.
+    #[test]
+    fn a_link_names_a_collection_by_its_ref_or_its_page_path() {
+        let page = Some("Collections/Travel");
+        assert!(link_names_collection("Travel", "Travel", page));
+        assert!(link_names_collection("[[Collections/Travel|Trips]]", "Travel", page));
+        assert!(!link_names_collection("Collections/Travel", "Travel", None));
+        assert!(!link_names_collection("Other/Travel", "Travel", page));
+        assert!(!link_names_collection("", "Travel", page));
+
+        let renamed = |link: &str| {
+            renamed_collection_link(link, "Travel", page, "Trips", Some("Collections/Trips"))
+        };
+        assert_eq!(renamed("Travel").as_deref(), Some("Trips"));
+        assert_eq!(renamed("Collections/Travel").as_deref(), Some("Collections/Trips"));
+        assert_eq!(renamed("Other"), None);
+        // Pages sharing a name: the ref is the path, and stays a ref.
+        assert_eq!(
+            renamed_collection_link("A/Design", "A/Design", Some("A/Design"), "A/Plan", Some("A/Plan"))
+                .as_deref(),
+            Some("A/Plan")
+        );
     }
 
     #[test]

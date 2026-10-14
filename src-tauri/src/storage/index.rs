@@ -57,7 +57,8 @@ pub use crate::storage::channel_index::{
 /// Raise it with every change to that parse: `backfill_media_index`
 /// re-derives only rows of an older version, and the reconcile pass never
 /// reads an unchanged note again. A test pins the parse to this version.
-const MEDIA_INDEX_VERSION: i64 = 8;
+/// Version 9: an embed starting with `../` resolves from the note's folder.
+const MEDIA_INDEX_VERSION: i64 = 9;
 /// The media index version at which a `#` inside a media file name stopped
 /// reading as a heading fragment. Cards indexed before it hold a text
 /// placeholder where their media preview belongs; the backfill discards it.
@@ -3367,6 +3368,64 @@ mod tests {
         assert_eq!(mirror(&conn), links);
     }
 
+    /// К4 (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md): `[[Collections/Collection]]`
+    /// names the page at that path, as Obsidian opens it, so the card is a
+    /// member of that page's collection in every read, under the page's name.
+    /// A card naming the page both ways is one membership. The link stays in
+    /// `block_tags` as the file has it.
+    #[test]
+    fn a_link_by_the_page_path_is_a_membership_under_the_page_name() {
+        let created = DateTime::new("2026-01-01T00:00:00Z").unwrap();
+        let member = CollectionReadings {
+            counted: true,
+            on_feed_row: true,
+            on_indexed_block: true,
+            on_listed_block: true,
+            in_hover_pairs: true,
+            feed_cards: 1,
+            route_count: 1,
+            tag_filter_hits: 1,
+            search_route_hits: 1,
+            previews: true,
+        };
+        for links in [
+            &["Collections/Collection"][..],
+            &["Collection", "Collections/Collection"][..],
+        ] {
+            let conn = test_conn();
+            upsert_channel_with_source(
+                &conn,
+                &Channel::new("Collection", created.clone()).unwrap(),
+                Some("Collections/Collection"),
+            )
+            .unwrap();
+            upsert_block(
+                &conn,
+                &make_block_full("card", "article", None, "2026-02-01T00:00:00Z", links, "Aristotle notes"),
+                None,
+            )
+            .unwrap();
+            sync_test_jpeg_thumb(&conn, "card");
+
+            assert_eq!(collection_readings(&conn, "Collection"), member, "{links:?}");
+            assert!(!collection_readings(&conn, "Collections/Collection").counted);
+            let card = get_block(&conn, "card").unwrap().unwrap();
+            assert_eq!(card.tags, vec!["Collection"], "{links:?}");
+            let light = list_blocks_light(&conn).unwrap();
+            assert_eq!(light[0].collections, vec!["Collection"], "{links:?}");
+            assert_eq!(
+                get_all_tags(&conn).unwrap(),
+                vec![TagCount { tag: "Collection".into(), count: 1 }]
+            );
+            assert_eq!(
+                crate::storage::block_queries::list_block_collections(&conn).unwrap(),
+                vec![(card.id, "Collection".to_string())]
+            );
+            assert_eq!(list_preview_blocks_by_tag(&conn, 10).unwrap()["Collection"].len(), 1);
+            assert_eq!(list_blocks_by_tag(&conn, "Collections/Collection").unwrap().len(), 1);
+        }
+    }
+
     // ── search_blocks ────────────────────────────────────────────────────
 
     #[test]
@@ -5208,7 +5267,7 @@ mod tests {
             "- item ![x](list.jpg)\n> quote ![[quoted.jpg]]",
             "",
         ];
-        const PINNED: (i64, &str) = (8, "e52322d685d067fe");
+        const PINNED: (i64, &str) = (9, "e52322d685d067fe");
         let fallback = DateTime::new("2026-04-22T00:00:00Z").unwrap();
         let mut outputs = String::new();
         for body in CORPUS {

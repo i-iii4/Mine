@@ -213,6 +213,9 @@ Resolution rules are syntax-specific:
   reference: same-directory match first, then basename lookup through the vault.
 - `![[folder/name.jpg]]` uses the explicit path. Mine checks it relative to the
   containing note and then as a vault-root-relative path.
+- `![[../folder/name.jpg]]` и любая вики-ссылка, начинающаяся с `../`, это путь
+  от папки заметки, как в относительных ссылках Obsidian: отвечает только этот
+  файл, путь выше корня пространства не разрешается (13.10.2026).
 - Service/hidden directories such as `.trash`, `.obsidian`, `.arena`, build
   caches, and dependency folders are excluded from basename lookup.
 - If multiple basename matches exist, the resolver picks the nearest candidate

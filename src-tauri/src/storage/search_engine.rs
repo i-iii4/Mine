@@ -43,7 +43,7 @@ const BODY_CHUNK_TARGET_CHARS: usize = 900;
 const BODY_CHUNK_OVERLAP_CHARS: usize = 120;
 
 /// The join that narrows a search to the members of the route's collection
-/// (`bt.tag = ?`): a link whose name has no collection page is no membership
+/// (`page.tag = ?`): a link whose name has no collection page is no membership
 /// (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К9).
 fn collection_route_join_sql() -> String {
     format!(
@@ -318,7 +318,7 @@ fn grid_search_sql(
 
     if let Some(tag) = tag {
         params.push(Value::Text(tag.to_string()));
-        sql.push_str(&format!(" AND bt.tag = ?{}", params.len()));
+        sql.push_str(&format!(" AND page.tag = ?{}", params.len()));
     }
 
     for group_query in plan.required_group_queries() {
@@ -824,7 +824,7 @@ fn semantic_candidates(
     ];
     if let Some(tag) = tag {
         params.push(Value::Text(tag.to_string()));
-        sql.push_str(&format!(" AND bt.tag = ?{}", params.len()));
+        sql.push_str(&format!(" AND page.tag = ?{}", params.len()));
     }
 
     let mut stmt = conn.prepare(&sql)?;
@@ -890,7 +890,7 @@ fn fuzzy_candidates(
     let mut params = Vec::<Value>::new();
     if let Some(tag) = tag {
         params.push(Value::Text(tag.to_string()));
-        sql.push_str(&format!(" AND bt.tag = ?{}", params.len()));
+        sql.push_str(&format!(" AND page.tag = ?{}", params.len()));
     }
 
     let mut stmt = conn.prepare(&sql)?;
@@ -964,7 +964,7 @@ fn metadata_candidates(
     let mut params = Vec::<Value>::new();
     if let Some(tag) = tag {
         params.push(Value::Text(tag.to_string()));
-        sql.push_str(&format!(" AND bt.tag = ?{}", params.len()));
+        sql.push_str(&format!(" AND page.tag = ?{}", params.len()));
     }
 
     let mut stmt = conn.prepare(&sql)?;

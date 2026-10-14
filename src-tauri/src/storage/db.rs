@@ -1069,9 +1069,8 @@ mod tests {
                 "collections" => {
                     // The page is a collection with its own order and colour,
                     // not a card. The card names it with its folder,
-                    // `[[Collections/Collection]]`, a form Mine does not take
-                    // for membership (a collection's name has no folder):
-                    // membership is not part of this case.
+                    // `[[Collections/Collection]]`, and is in it under the
+                    // page's name; the file keeps its link as written.
                     let collection: (String, i64, Option<String>) = conn
                         .query_row("SELECT tag, position, color FROM channels", [], |row| {
                             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
@@ -1081,16 +1080,25 @@ mod tests {
                     assert!(index::get_block(&conn, "Collections/Collection").unwrap().is_none_or(|page| {
                         page.card_kind == crate::domain::block::CardKind::Channel
                     }));
+                    assert_eq!(card("Cards/Card").tags, vec!["Collection"]);
+                    let counted: Vec<(String, usize)> = index::get_all_tags(&conn)
+                        .unwrap()
+                        .into_iter()
+                        .map(|tag| (tag.tag, tag.count))
+                        .collect();
+                    assert_eq!(counted, vec![("Collection".to_string(), 1)]);
                 }
                 "multiple-media" => {
-                    // Both pictures stay with the one card. Their wikilinks
-                    // start with `../`, which Mine's wikilink rules do not
-                    // resolve, so no picture of theirs is read here.
-                    let pictures = crate::domain::block::iter_file_references(&card(unicode).body)
+                    // Both pictures stay with the one card, each found from
+                    // the note's folder by its `../` path.
+                    let pictures: Vec<Option<String>> = resolved(unicode)
                         .into_iter()
-                        .filter(|reference| reference.target.ends_with(".svg"))
-                        .count();
-                    assert_eq!(pictures, 2);
+                        .filter(|path| path.as_ref().is_some_and(|path| path.ends_with(".svg")))
+                        .collect();
+                    assert_eq!(
+                        pictures,
+                        vec![Some("Media/one.svg".to_string()), Some("Media/two.svg".to_string())]
+                    );
                 }
                 "missing-attachment" => {
                     // The card stands; its missing picture resolves to nothing.

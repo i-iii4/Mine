@@ -583,11 +583,13 @@ pub fn card_body(vault: &VaultLayout, slug: &str) -> Result<String, MutationErro
 /// card already names it. Disconnecting takes the link off whether the page
 /// exists or not (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7 and К8). The new
 /// list is built from the card's text, so links to names without a page
-/// stay where they are (К2).
+/// stay where they are (К2). `page_slug` is where the index last saw the
+/// collection's page: a link by that path names the collection too (К4).
 pub fn set_collection_membership(
     vault: &VaultLayout,
     slug: &str,
     collection: &str,
+    page_slug: Option<&str>,
     connected: bool,
     dry_run: bool,
     collection_page: impl FnOnce(&str) -> Result<(), MutationError>,
@@ -602,7 +604,10 @@ pub fn set_collection_membership(
     }
     let parsed = read_as_app(slug, &content)?;
     let mut tags = parsed.block.frontmatter.tags.clone();
-    let had = tags.contains(&collection_ref);
+    let names = |link: &String| {
+        crate::domain::collection::link_names_collection(link, &collection_ref, page_slug)
+    };
+    let had = tags.iter().any(names);
     match (had, connected) {
         (true, true) => {
             return Ok(MutationOutcome {
@@ -617,7 +622,7 @@ pub fn set_collection_membership(
             })
         }
         (false, true) => tags.push(collection_ref.clone()),
-        (true, false) => tags.retain(|t| t != &collection_ref),
+        (true, false) => tags.retain(|link| !names(link)),
     }
     // The writer reads its result back and refuses properties it would break
     // or rewrite in another layout (SPEC_AUDIT_FIXES.md, Ф1, Г1.5).
@@ -747,7 +752,7 @@ mod tests {
         let (_dir, vault) = space_with_card(source);
 
         for name in ["Design", "Pageless"] {
-            let refused = set_collection_membership(&vault, "Note", name, true, false, no_page);
+            let refused = set_collection_membership(&vault, "Note", name, None, true, false, no_page);
             assert!(
                 matches!(&refused, Err(MutationError::CollectionNotFound { collection }) if collection == name),
                 "connect to {name} was not refused"
@@ -755,7 +760,7 @@ mod tests {
             assert_eq!(std::fs::read_to_string(vault.block_path("Note")).unwrap(), source);
         }
 
-        let removed = set_collection_membership(&vault, "Note", "Pageless", false, false, |_: &str| {
+        let removed = set_collection_membership(&vault, "Note", "Pageless", None, false, false, |_: &str| {
             panic!("disconnect asked for the page")
         });
         assert!(removed.is_ok());
@@ -770,7 +775,7 @@ mod tests {
         let (_dir, vault) =
             space_with_card("---\n{aliases: [A], saved_at: 2026-07-10}\n---\nBody\n");
 
-        assert!(set_collection_membership(&vault, "Note", "Design", true, false, page_exists).is_ok());
+        assert!(set_collection_membership(&vault, "Note", "Design", None, true, false, page_exists).is_ok());
 
         let written = std::fs::read_to_string(vault.block_path("Note")).unwrap();
         assert_eq!(
@@ -791,7 +796,7 @@ mod tests {
         let source = "---\n  aliases: [A]\n  saved_at: 2026-07-10\n---\nBody\n";
         let (_dir, vault) = space_with_card(source);
 
-        let refused = set_collection_membership(&vault, "Note", "Design", true, false, page_exists);
+        let refused = set_collection_membership(&vault, "Note", "Design", None, true, false, page_exists);
 
         assert!(matches!(refused, Err(MutationError::Refused(_))));
         assert_eq!(std::fs::read_to_string(vault.block_path("Note")).unwrap(), source);

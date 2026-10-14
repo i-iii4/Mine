@@ -829,12 +829,19 @@ fn cmd_membership(env: &CliEnv, flags: &Flags, connected: bool) -> Result<String
         ));
     };
     let vault = resolve_space(env, flags.space.as_deref())?;
+    // A link by the page's path names the collection too (К4): where the
+    // index last saw the page. Without an index only the name matches.
+    let page_slug = open_index(&vault).ok().and_then(|conn| {
+        let collection_ref = crate::domain::collection::normalize_collection_ref(collection);
+        crate::storage::index::channel_source_slug(&conn, &collection_ref).ok().flatten()
+    });
     // A connect needs the collection's page, found the way `collection
     // rename` and `delete` find it (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
     let outcome = cli_mutations::set_collection_membership(
         &vault,
         slug,
         collection,
+        page_slug.as_deref(),
         connected,
         flags.dry_run,
         |collection_ref| {
@@ -2575,6 +2582,24 @@ pub(crate) mod source_fidelity_tests {
         ok(&out);
         let value: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
         assert_eq!(value["collections"], json!([{ "name": "Wild", "count": 2 }]));
+    }
+
+    /// К4: `mine disconnect` (and MCP `disconnect`, which runs it) takes off a
+    /// link that names the collection with its page's folder; `connect` adds
+    /// no second link to such a card.
+    #[test]
+    fn disconnect_takes_off_a_link_with_the_page_folder() {
+        let (_dir, env, root) = fixture();
+        std::fs::write(
+            root.join("Cards/folder.md"),
+            "---\nsaved_at: 2026-01-03T00:00:00Z\nMine Collections:\n  - \"[[Collections/Nature]]\"\n---\nBody",
+        )
+        .unwrap();
+
+        ok(&run(&env, &args(&["connect", "Cards/folder", "Nature"])));
+        assert_eq!(parsed(&root, "Cards/folder").block.frontmatter.tags, vec!["Collections/Nature"]);
+        ok(&run(&env, &args(&["disconnect", "Cards/folder", "Nature"])));
+        assert!(parsed(&root, "Cards/folder").block.frontmatter.tags.is_empty());
     }
 
     // ── Е1.5: renaming a collection page renames the collection ─────────────

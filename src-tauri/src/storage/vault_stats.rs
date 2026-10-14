@@ -24,7 +24,7 @@ pub fn count_current_collection_cards(
                  FROM blocks b
                  JOIN block_tags bt ON bt.block_id = b.id
                  {membership}
-                 WHERE b.card_kind != 'channel' AND bt.tag = ?1"
+                 WHERE b.card_kind != 'channel' AND page.tag = ?1"
             ),
             params![collection_ref],
             |row| row.get(0),
