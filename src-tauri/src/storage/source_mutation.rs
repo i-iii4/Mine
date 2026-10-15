@@ -1913,6 +1913,33 @@ mod tests {
         assert!(hidden_leftovers(dir.path()).is_empty(), "{:?}", hidden_leftovers(dir.path()));
     }
 
+    /// PLAN.md 46.17: a file of iCloud the Trash refused with 513 is moved
+    /// into the iCloud Trash folder by Mine itself; the checked delete stands
+    /// on that place, and rollback brings the file back from it.
+    #[test]
+    fn delete_rollback_brings_back_a_file_the_icloud_trash_fallback_moved() {
+        let dir = tempfile::tempdir().unwrap();
+        let trash = dir.path().join(".Trash");
+        std::fs::create_dir_all(&trash).unwrap();
+        let path = dir.path().join("DOWN THE SPINAL LADDER.md");
+        let card = unique_bytes("icloud card");
+        std::fs::write(&path, &card).unwrap();
+        let staged = StagedSourceMutation::stage(vec![SourceFileWrite::delete_if_unchanged(
+            path.clone(),
+            card.clone(),
+        )])
+        .unwrap();
+        files::test_trash::hooks::refuse_next_in_icloud(&trash);
+
+        let committed = staged.commit().unwrap();
+        assert!(!path.exists());
+        assert_eq!(std::fs::read(trash.join("DOWN THE SPINAL LADDER.md")).unwrap(), card);
+        committed.rollback("injected database failure").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), card);
+        assert_eq!(std::fs::read_dir(&trash).unwrap().count(), 0);
+    }
+
     #[test]
     fn indexed_commit_failure_rolls_back_source_and_sql() {
         let dir = tempfile::tempdir().unwrap();

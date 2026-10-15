@@ -1168,11 +1168,11 @@ pub fn trash_user_file(path: &Path) -> Result<TrashedTo> {
     let _write = crate::storage::source_mutation::begin_write()?;
     #[cfg(test)]
     {
-        test_trash::move_one(path).map(TrashedTo::Path)
+        trash_through(&test_trash::System::for_next_file(), path)
     }
     #[cfg(all(not(test), target_os = "macos"))]
     {
-        file_manager_trash(path)
+        trash_through(&FileManagerTrash, path)
     }
     #[cfg(all(not(test), not(target_os = "macos"), not(target_os = "ios")))]
     {
@@ -1187,25 +1187,241 @@ pub fn trash_user_file(path: &Path) -> Result<TrashedTo> {
     }
 }
 
-/// The file manager's Trash for one file, with the place it put the file:
-/// the same call `system_trash` makes, which the crate makes without asking
-/// for that place.
-#[cfg(all(not(test), target_os = "macos"))]
-fn file_manager_trash(path: &Path) -> Result<TrashedTo> {
-    use objc2_foundation::{NSFileManager, NSURL};
-    let url = NSURL::from_file_path(path)
-        .with_context(|| format!("no file URL for {}", path.display()))?;
-    let mut resulting = None;
-    NSFileManager::defaultManager()
-        .trashItemAtURL_resultingItemURL_error(&url, Some(&mut resulting))
-        .map_err(|error| TrashRefused {
+/// `NSCocoaErrorDomain`: the domain of the file manager's own errors.
+#[cfg(any(test, target_os = "macos"))]
+const COCOA_ERROR_DOMAIN: &str = "NSCocoaErrorDomain";
+
+/// `NSFileWriteNoPermissionError`: what `fileproviderd` answers, without a
+/// reason, when it refuses to trash some files of iCloud Drive that a plain
+/// rename moves (PLAN.md, 46.17).
+#[cfg(any(test, target_os = "macos"))]
+const FILE_WRITE_NO_PERMISSION: isize = 513;
+
+/// The most names tried in a Trash folder for one file before giving up.
+#[cfg(any(test, target_os = "macos"))]
+const TRASH_NAME_ATTEMPTS: u32 = 100;
+
+/// The file manager refused to trash a file, in its own terms.
+#[cfg(any(test, target_os = "macos"))]
+#[derive(Debug)]
+struct FileManagerRefusal {
+    domain: String,
+    code: isize,
+    detail: String,
+}
+
+/// How asking the file manager to trash one file failed.
+#[cfg(any(test, target_os = "macos"))]
+#[derive(Debug)]
+enum TrashItemFailure {
+    /// The file manager answered with an error: nothing moved.
+    Refused(FileManagerRefusal),
+    /// The request could not be made.
+    Failed(anyhow::Error),
+}
+
+#[cfg(any(test, target_os = "macos"))]
+impl FileManagerRefusal {
+    fn into_refused(self, path: &Path) -> TrashRefused {
+        TrashRefused {
             path: path.to_path_buf(),
-            permission: is_permission_error(&error.domain().to_string(), error.code()),
-            detail: error.localizedDescription().to_string(),
+            permission: is_permission_error(&self.domain, self.code),
+            detail: self.detail,
+        }
+    }
+}
+
+#[cfg(any(test, target_os = "macos"))]
+impl TrashItemFailure {
+    fn into_error(self, path: &Path) -> anyhow::Error {
+        match self {
+            Self::Refused(refusal) => refusal.into_refused(path).into(),
+            Self::Failed(error) => error,
+        }
+    }
+}
+
+/// The system calls behind one request to the Trash, so that unit tests
+/// stand in for the Trash and for iCloud.
+#[cfg(any(test, target_os = "macos"))]
+trait TrashSystem {
+    /// Ask the file manager to move `path` to the Trash.
+    fn trash_item(&self, path: &Path) -> std::result::Result<TrashedTo, TrashItemFailure>;
+    /// Whether iCloud keeps the file at `path`.
+    fn is_icloud_item(&self, path: &Path) -> bool;
+    /// The Trash folder the system names for `path`; an error when it names
+    /// none or the folder does not exist.
+    fn trash_folder_for(&self, path: &Path) -> Result<PathBuf>;
+}
+
+/// Ask the Trash to take `path`. When it refuses a file of iCloud with
+/// `NSFileWriteNoPermissionError`, move the file into the Trash folder the
+/// system names for it and answer that place, as the Trash does
+/// (SPEC_STORAGE.md, «Поведение delete_block_files», PLAN.md 46.17). Any
+/// other answer, or a fallback that cannot be made, stays the refusal.
+#[cfg(any(test, target_os = "macos"))]
+fn trash_through(system: &impl TrashSystem, path: &Path) -> Result<TrashedTo> {
+    let refusal = match system.trash_item(path) {
+        Ok(trashed) => return Ok(trashed),
+        Err(TrashItemFailure::Refused(refusal)) => refusal,
+        Err(failure) => return Err(failure.into_error(path)),
+    };
+    if refusal.domain != COCOA_ERROR_DOMAIN
+        || refusal.code != FILE_WRITE_NO_PERMISSION
+        || !system.is_icloud_item(path)
+    {
+        return Err(refusal.into_refused(path).into());
+    }
+    let moved = system
+        .trash_folder_for(path)
+        .and_then(|folder| move_into_trash_folder(path, &folder));
+    match moved {
+        Ok(at) => {
+            log::warn!(
+                "trash fallback: the Trash refused {} ({} {}); moved it to {}",
+                path.display(),
+                refusal.domain,
+                refusal.code,
+                at.display()
+            );
+            Ok(TrashedTo::Path(at))
+        }
+        Err(error) => {
+            log::warn!("trash fallback failed for {}: {error:#}", path.display());
+            Err(refusal.into_refused(path).into())
+        }
+    }
+}
+
+/// The name the Trash gives the `attempt`-th try for a file called `name`
+/// at `at`: the name itself first, then the whole name with the local time
+/// of day and the extension again, as macOS names a second file of one name
+/// in its Trash (`Проба.md 19-33-38-545.md`, 15.10.2026), and a number when
+/// one millisecond saw two of them.
+#[cfg(any(test, target_os = "macos"))]
+fn trash_name(name: &std::ffi::OsStr, attempt: u32, at: std::time::SystemTime) -> std::ffi::OsString {
+    if attempt == 0 {
+        return name.to_os_string();
+    }
+    let since = at.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let seconds = i64::try_from(since.as_secs()).unwrap_or(i64::MAX);
+    let of_day = (seconds + crate::util::local_offset_seconds(seconds)).rem_euclid(86_400);
+    let mut named = name.to_os_string();
+    named.push(format!(
+        " {:02}-{:02}-{:02}-{:03}",
+        of_day / 3_600,
+        of_day / 60 % 60,
+        of_day % 60,
+        since.subsec_millis()
+    ));
+    if attempt > 1 {
+        named.push(format!(" {attempt}"));
+    }
+    if let Some(extension) = Path::new(name).extension() {
+        named.push(".");
+        named.push(extension);
+    }
+    named
+}
+
+/// Move `path` into the Trash folder `folder` by one exclusive rename on the
+/// same volume, under the name the Trash would give it: a name the folder
+/// holds is never replaced. Answers the file's place in the folder.
+#[cfg(any(test, target_os = "macos"))]
+fn move_into_trash_folder(path: &Path, folder: &Path) -> Result<PathBuf> {
+    let name = path
+        .file_name()
+        .with_context(|| format!("no file name: {}", path.display()))?;
+    let now = std::time::SystemTime::now();
+    for attempt in 0..TRASH_NAME_ATTEMPTS {
+        let target = folder.join(trash_name(name, attempt, now));
+        match crate::util::rename_exclusive(path, &target) {
+            Ok(()) => {
+                // The file has moved: a failed fsync is no reason to answer
+                // that it has not.
+                for moved in [path, target.as_path()] {
+                    if let Err(error) = sync_parent_directory(moved) {
+                        log::warn!("{error:#}");
+                    }
+                }
+                return Ok(target);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("move {} -> {}", path.display(), target.display()))
+            }
+        }
+    }
+    anyhow::bail!("no free name for {} in {}", path.display(), folder.display())
+}
+
+/// The file manager of macOS behind the Trash, with the place it put the
+/// file: the same call `system_trash` makes, which the crate makes without
+/// asking for that place.
+#[cfg(all(not(test), target_os = "macos"))]
+struct FileManagerTrash;
+
+#[cfg(all(not(test), target_os = "macos"))]
+impl TrashSystem for FileManagerTrash {
+    fn trash_item(&self, path: &Path) -> std::result::Result<TrashedTo, TrashItemFailure> {
+        use objc2_foundation::{NSFileManager, NSURL};
+        let url = NSURL::from_file_path(path).ok_or_else(|| {
+            TrashItemFailure::Failed(anyhow::anyhow!("no file URL for {}", path.display()))
         })?;
-    Ok(resulting
-        .and_then(|url| url.to_file_path())
-        .map_or(TrashedTo::Unreported, TrashedTo::Path))
+        let mut resulting = None;
+        NSFileManager::defaultManager()
+            .trashItemAtURL_resultingItemURL_error(&url, Some(&mut resulting))
+            .map_err(|error| {
+                TrashItemFailure::Refused(FileManagerRefusal {
+                    domain: error.domain().to_string(),
+                    code: error.code(),
+                    detail: error.localizedDescription().to_string(),
+                })
+            })?;
+        Ok(resulting
+            .and_then(|url| url.to_file_path())
+            .map_or(TrashedTo::Unreported, TrashedTo::Path))
+    }
+
+    fn is_icloud_item(&self, path: &Path) -> bool {
+        crate::storage::cloud_files::is_icloud_item(path)
+    }
+
+    /// `URLForDirectory:NSTrashDirectory appropriateForURL:` names the Trash
+    /// of the file's volume or provider: `~/Library/Mobile Documents/.Trash`
+    /// for iCloud Drive. The folder is never created: a folder the system
+    /// names but does not keep (`~/Desktop/.Trash`, 15.10.2026) is no Trash.
+    fn trash_folder_for(&self, path: &Path) -> Result<PathBuf> {
+        use objc2_foundation::{NSFileManager, NSSearchPathDirectory, NSSearchPathDomainMask, NSURL};
+        let url = NSURL::from_file_path(path)
+            .with_context(|| format!("no file URL for {}", path.display()))?;
+        let folder = NSFileManager::defaultManager()
+            .URLForDirectory_inDomain_appropriateForURL_create_error(
+                NSSearchPathDirectory::TrashDirectory,
+                NSSearchPathDomainMask::UserDomainMask,
+                Some(&url),
+                false,
+            )
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "no Trash folder for {}: {} {} {}",
+                    path.display(),
+                    error.domain(),
+                    error.code(),
+                    error.localizedDescription()
+                )
+            })?
+            .to_file_path()
+            .with_context(|| format!("the Trash folder for {} is no file path", path.display()))?;
+        anyhow::ensure!(
+            folder.is_dir(),
+            "the Trash folder {} for {} does not exist",
+            folder.display(),
+            path.display()
+        );
+        Ok(folder)
+    }
 }
 
 /// How Mine reaches the system Trash. On macOS the file manager moves the
@@ -1241,7 +1457,6 @@ fn system_trash() -> trash::TrashContext {
 ///   one always does, the worst case.
 #[cfg(test)]
 pub(crate) mod test_trash {
-    use std::ffi::OsString;
     use std::os::unix::fs::MetadataExt;
     use std::path::{Path, PathBuf};
 
@@ -1254,35 +1469,6 @@ pub(crate) mod test_trash {
             .join(std::process::id().to_string());
         std::fs::create_dir_all(&folder).with_context(|| format!("create {}", folder.display()))?;
         Ok(folder)
-    }
-
-    /// The name of the `attempt`-th try for a file called `name`: the name
-    /// itself first, then the whole name with the time of day and the
-    /// extension again, and a number when one millisecond saw two of them.
-    fn trash_name(name: &std::ffi::OsStr, attempt: u32) -> OsString {
-        if attempt == 0 {
-            return name.to_os_string();
-        }
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let of_day = now.as_secs() % 86_400;
-        let mut named = name.to_os_string();
-        named.push(format!(
-            " {:02}-{:02}-{:02}-{:03}",
-            of_day / 3_600,
-            of_day / 60 % 60,
-            of_day % 60,
-            now.subsec_millis()
-        ));
-        if attempt > 1 {
-            named.push(format!(" {attempt}"));
-        }
-        if let Some(extension) = Path::new(name).extension() {
-            named.push(".");
-            named.push(extension);
-        }
-        named
     }
 
     /// The name of the file at `path` that the Trash moves: another name of
@@ -1312,22 +1498,59 @@ pub(crate) mod test_trash {
         path.to_path_buf()
     }
 
-    /// Move the file at `path` to the test Trash and return where it went.
-    pub(super) fn move_one(path: &Path) -> Result<PathBuf> {
-        hooks::record_asked(path);
-        std::fs::symlink_metadata(path)
-            .with_context(|| format!("failed to move {} to the test trash", path.display()))?;
-        if let Some(permission) = hooks::take_refusal() {
-            return Err(super::TrashRefused {
-                path: path.to_path_buf(),
-                permission,
-                detail: format!(
-                    "“{}” couldn’t be moved to the trash because you don’t have permission to access it.",
-                    path.file_name().unwrap_or_default().to_string_lossy()
-                ),
+    /// The test Trash for one file, with what a test set up for it: the
+    /// file manager's refusal, and the Trash folder of iCloud the file
+    /// belongs to.
+    pub(crate) struct System {
+        refusal: Option<hooks::Refusal>,
+    }
+
+    impl System {
+        /// The test Trash for the next file, taking what the test set up.
+        pub(crate) fn for_next_file() -> Self {
+            Self {
+                refusal: hooks::take_refusal(),
             }
-            .into());
         }
+    }
+
+    impl super::TrashSystem for System {
+        fn trash_item(&self, path: &Path) -> std::result::Result<super::TrashedTo, super::TrashItemFailure> {
+            hooks::record_asked(path);
+            std::fs::symlink_metadata(path)
+                .with_context(|| format!("failed to move {} to the test trash", path.display()))
+                .map_err(super::TrashItemFailure::Failed)?;
+            if let Some(refusal) = &self.refusal {
+                return Err(super::TrashItemFailure::Refused(super::FileManagerRefusal {
+                    domain: super::COCOA_ERROR_DOMAIN.to_string(),
+                    code: refusal.code,
+                    detail: format!(
+                        "“{}” couldn’t be moved to the trash because you don’t have permission to access it.",
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    ),
+                }));
+            }
+            move_one(path)
+                .map(super::TrashedTo::Path)
+                .map_err(super::TrashItemFailure::Failed)
+        }
+
+        fn is_icloud_item(&self, _path: &Path) -> bool {
+            self.refusal
+                .as_ref()
+                .is_some_and(|refusal| refusal.icloud_trash.is_some())
+        }
+
+        fn trash_folder_for(&self, path: &Path) -> Result<PathBuf> {
+            self.refusal
+                .as_ref()
+                .and_then(|refusal| refusal.icloud_trash.clone())
+                .with_context(|| format!("no Trash folder for {}", path.display()))
+        }
+    }
+
+    /// Move the file at `path` to the test Trash and return where it went.
+    fn move_one(path: &Path) -> Result<PathBuf> {
         let taken = name_the_trash_takes(path);
         let name = taken
             .file_name()
@@ -1337,9 +1560,10 @@ pub(crate) mod test_trash {
         if hooks::take_leave_in_place() {
             return Ok(folder.join(name));
         }
+        let now = std::time::SystemTime::now();
         let mut attempt = 0;
         loop {
-            let target = folder.join(trash_name(&name, attempt));
+            let target = folder.join(super::trash_name(&name, attempt, now));
             attempt += 1;
             if std::fs::symlink_metadata(&target).is_ok() {
                 continue;
@@ -1365,13 +1589,13 @@ pub(crate) mod test_trash {
     /// Moments a test makes the Trash misbehave, on the test's own thread.
     pub(crate) mod hooks {
         use std::cell::{Cell, RefCell};
-        use std::path::Path;
+        use std::path::{Path, PathBuf};
 
         type Hook = Box<dyn FnOnce(&Path)>;
 
         thread_local! {
             static LEAVE_IN_PLACE: Cell<bool> = const { Cell::new(false) };
-            static REFUSE: Cell<Option<bool>> = const { Cell::new(None) };
+            static REFUSE: RefCell<Option<Refusal>> = const { RefCell::new(None) };
             static AFTER_MOVE: RefCell<Option<Hook>> = const { RefCell::new(None) };
             static ASKED: RefCell<Vec<std::path::PathBuf>> = const { RefCell::new(Vec::new()) };
         }
@@ -1396,14 +1620,43 @@ pub(crate) mod test_trash {
             LEAVE_IN_PLACE.with(|slot| slot.replace(false))
         }
 
-        /// The Trash refuses the next file it is asked to take, as macOS
-        /// does without access to it (`permission`) or for another reason.
-        pub(crate) fn refuse_next(permission: bool) {
-            REFUSE.with(|slot| slot.set(Some(permission)));
+        /// `NSFileWriteUnknownError`: a refusal that is not about access.
+        const FILE_WRITE_UNKNOWN: isize = 512;
+
+        /// The file manager's refusal a test set up for the next file.
+        pub(crate) struct Refusal {
+            /// The `NSCocoaErrorDomain` code of the refusal.
+            pub(super) code: isize,
+            /// The Trash folder of iCloud when the file is in iCloud.
+            pub(super) icloud_trash: Option<PathBuf>,
         }
 
-        pub(super) fn take_refusal() -> Option<bool> {
-            REFUSE.with(|slot| slot.replace(None))
+        /// The Trash refuses the next file it is asked to take, as macOS
+        /// does without access to it (`permission`) or for another reason.
+        /// The file is not in iCloud.
+        pub(crate) fn refuse_next(permission: bool) {
+            let code = if permission {
+                super::super::FILE_WRITE_NO_PERMISSION
+            } else {
+                FILE_WRITE_UNKNOWN
+            };
+            REFUSE.with(|slot| *slot.borrow_mut() = Some(Refusal { code, icloud_trash: None }));
+        }
+
+        /// The Trash refuses the next file as `fileproviderd` refuses some
+        /// files of iCloud Drive (PLAN.md, 46.17): the file is in iCloud, and
+        /// `trash` is the Trash folder the system names for it.
+        pub(crate) fn refuse_next_in_icloud(trash: &Path) {
+            REFUSE.with(|slot| {
+                *slot.borrow_mut() = Some(Refusal {
+                    code: super::super::FILE_WRITE_NO_PERMISSION,
+                    icloud_trash: Some(trash.to_path_buf()),
+                });
+            });
+        }
+
+        pub(super) fn take_refusal() -> Option<Refusal> {
+            REFUSE.with(|slot| slot.borrow_mut().take())
         }
 
         /// Run `hook` with the place in the Trash of the next file it takes,
@@ -1426,7 +1679,8 @@ pub(crate) mod test_trash {
                 .with_context(|| format!("failed to move {} to the test trash", path.display()))?;
         }
         for path in paths {
-            move_one(path)?;
+            super::TrashSystem::trash_item(&System::for_next_file(), path)
+                .map_err(|failure| failure.into_error(path))?;
         }
         Ok(())
     }
@@ -1717,6 +1971,195 @@ mod tests {
         assert!(page.exists());
         assert!(!other.exists());
         assert!(kept.file_name().unwrap().to_string_lossy().starts_with(".Page.md.second-name"));
+    }
+
+    /// A file manager that refuses every file with `domain` and `code`, for
+    /// a file that is in iCloud or not, with the Trash folder `folder`.
+    struct RefusingTrash {
+        domain: &'static str,
+        code: isize,
+        icloud: bool,
+        folder: Option<PathBuf>,
+    }
+
+    impl RefusingTrash {
+        fn icloud_513(folder: &Path) -> Self {
+            Self {
+                domain: COCOA_ERROR_DOMAIN,
+                code: FILE_WRITE_NO_PERMISSION,
+                icloud: true,
+                folder: Some(folder.to_path_buf()),
+            }
+        }
+    }
+
+    impl TrashSystem for RefusingTrash {
+        fn trash_item(&self, _path: &Path) -> std::result::Result<TrashedTo, TrashItemFailure> {
+            Err(TrashItemFailure::Refused(FileManagerRefusal {
+                domain: self.domain.to_string(),
+                code: self.code,
+                detail: "refused".to_string(),
+            }))
+        }
+
+        fn is_icloud_item(&self, _path: &Path) -> bool {
+            self.icloud
+        }
+
+        fn trash_folder_for(&self, path: &Path) -> Result<PathBuf> {
+            self.folder
+                .clone()
+                .with_context(|| format!("no Trash folder for {}", path.display()))
+        }
+    }
+
+    /// The files a folder holds, by name, with their bytes.
+    fn held(folder: &Path) -> Vec<(String, Vec<u8>)> {
+        let mut held: Vec<_> = std::fs::read_dir(folder)
+            .unwrap()
+            .flatten()
+            .map(|entry| {
+                (
+                    entry.file_name().to_string_lossy().into_owned(),
+                    std::fs::read(entry.path()).unwrap(),
+                )
+            })
+            .collect();
+        held.sort();
+        held
+    }
+
+    /// PLAN.md 46.17: the Trash refuses a file of iCloud with 513, and Mine
+    /// moves it into the Trash folder the system names for it, answers that
+    /// place as the Trash does and logs the fallback.
+    #[test]
+    fn an_icloud_file_the_trash_refused_with_513_moves_into_its_trash_folder() {
+        let capture = crate::test_log::capture();
+        let temp = tempfile::tempdir().unwrap();
+        let space = temp.path().join("space");
+        let trash = temp.path().join(".Trash");
+        std::fs::create_dir_all(&space).unwrap();
+        std::fs::create_dir_all(&trash).unwrap();
+        let note = space.join("DOWN THE SPINAL LADDER.md");
+        std::fs::write(&note, b"card").unwrap();
+
+        let trashed = trash_through(&RefusingTrash::icloud_513(&trash), &note).unwrap();
+
+        assert_eq!(trashed, TrashedTo::Path(trash.join("DOWN THE SPINAL LADDER.md")));
+        assert!(!note.exists());
+        assert_eq!(held(&trash), vec![("DOWN THE SPINAL LADDER.md".to_string(), b"card".to_vec())]);
+        let warnings = capture.warnings();
+        assert!(
+            warnings.iter().any(|line| line.starts_with("trash fallback: ")
+                && line.contains(&note.display().to_string())
+                && line.contains("NSCocoaErrorDomain 513")),
+            "{warnings:?}"
+        );
+    }
+
+    /// Any other refusal, a file outside iCloud, no Trash folder or a move
+    /// that fails stays the refusal: the file where it was, nothing moved.
+    #[test]
+    fn other_trash_refusals_stay_refusals_and_move_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let trash = temp.path().join(".Trash");
+        std::fs::create_dir_all(&trash).unwrap();
+        let note = temp.path().join("note.md");
+        std::fs::write(&note, b"note").unwrap();
+        let icloud = RefusingTrash::icloud_513(&trash);
+        let cases = [
+            ("write unknown", RefusingTrash { code: 512, ..RefusingTrash::icloud_513(&trash) }, false),
+            ("read no permission", RefusingTrash { code: 257, ..RefusingTrash::icloud_513(&trash) }, true),
+            (
+                "POSIX EPERM",
+                RefusingTrash { domain: "NSPOSIXErrorDomain", code: 1, ..RefusingTrash::icloud_513(&trash) },
+                true,
+            ),
+            ("outside iCloud", RefusingTrash { icloud: false, ..RefusingTrash::icloud_513(&trash) }, true),
+            ("no Trash folder", RefusingTrash { folder: None, ..RefusingTrash::icloud_513(&trash) }, true),
+            (
+                "missing Trash folder",
+                RefusingTrash { folder: Some(temp.path().join("gone")), ..icloud },
+                true,
+            ),
+        ];
+
+        for (case, system, permission) in cases {
+            let error = trash_through(&system, &note).unwrap_err();
+
+            let refused = error.downcast_ref::<TrashRefused>().unwrap_or_else(|| panic!("{case}: {error:#}"));
+            assert_eq!(refused.path, note, "{case}");
+            assert_eq!(refused.permission, permission, "{case}");
+            assert_eq!(std::fs::read(&note).unwrap(), b"note", "{case}");
+            assert!(held(&trash).is_empty(), "{case}");
+        }
+    }
+
+    /// The fallback never replaces a name the Trash folder holds: the file
+    /// takes the name macOS gives a second file of that name.
+    #[test]
+    fn the_trash_fallback_never_replaces_a_name_the_trash_folder_holds() {
+        let temp = tempfile::tempdir().unwrap();
+        let trash = temp.path().join(".Trash");
+        std::fs::create_dir_all(&trash).unwrap();
+        std::fs::write(trash.join("Проба.md"), b"older").unwrap();
+        let note = temp.path().join("Проба.md");
+        std::fs::write(&note, b"newer").unwrap();
+
+        let TrashedTo::Path(at) = trash_through(&RefusingTrash::icloud_513(&trash), &note).unwrap() else {
+            panic!("the fallback says where it put the file");
+        };
+
+        assert_eq!(std::fs::read(trash.join("Проба.md")).unwrap(), b"older");
+        assert_eq!(at.parent(), Some(trash.as_path()));
+        let name = at.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.starts_with("Проба.md ") && name.ends_with(".md"), "{name}");
+        assert_eq!(std::fs::read(&at).unwrap(), b"newer");
+        assert!(!note.exists());
+        assert_eq!(held(&trash).len(), 2);
+    }
+
+    /// The names macOS gives a second file of one name in its Trash
+    /// (`Проба.md 19-33-38-545.md`, 15.10.2026), by the local clock.
+    #[test]
+    fn trash_names_follow_the_macos_trash() {
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_millis(1_760_000_018_545);
+        let offset = crate::util::local_offset_seconds(1_760_000_018);
+        let of_day = (1_760_000_018 + offset).rem_euclid(86_400);
+        let time = format!("{:02}-{:02}-{:02}-545", of_day / 3_600, of_day / 60 % 60, of_day % 60);
+        let name = std::ffi::OsStr::new("Проба.md");
+
+        assert_eq!(trash_name(name, 0, at), "Проба.md");
+        assert_eq!(trash_name(name, 1, at), format!("Проба.md {time}.md").as_str());
+        assert_eq!(trash_name(name, 2, at), format!("Проба.md {time} 2.md").as_str());
+        assert_eq!(
+            trash_name(std::ffi::OsStr::new("noext"), 1, at),
+            format!("noext {time}").as_str()
+        );
+    }
+
+    /// A Trash folder that does not take the file: the file it holds stays,
+    /// the file stays where it was and the Trash's refusal stands.
+    #[test]
+    fn a_trash_folder_that_refuses_the_move_keeps_the_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let trash = temp.path().join(".Trash");
+        std::fs::create_dir_all(&trash).unwrap();
+        let note = temp.path().join("note");
+        std::fs::write(&note, b"note").unwrap();
+        std::fs::write(trash.join("note"), b"older").unwrap();
+        let mut readonly = std::fs::metadata(&trash).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut readonly, 0o500);
+        std::fs::set_permissions(&trash, readonly).unwrap();
+
+        let error = trash_through(&RefusingTrash::icloud_513(&trash), &note).unwrap_err();
+
+        let mut writable = std::fs::metadata(&trash).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut writable, 0o700);
+        std::fs::set_permissions(&trash, writable).unwrap();
+        assert!(error.downcast_ref::<TrashRefused>().is_some(), "{error:#}");
+        assert_eq!(std::fs::read(&note).unwrap(), b"note");
+        assert_eq!(held(&trash), vec![("note".to_string(), b"older".to_vec())]);
     }
 
     /// 06.10.2026: one entry is one file under one name, in any spelling the

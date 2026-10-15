@@ -130,7 +130,7 @@ pub fn local_timestamp(time: std::time::SystemTime) -> String {
 
 /// The local zone's offset from UTC at that instant, in seconds (DST included).
 #[cfg(unix)]
-fn local_offset_seconds(epoch_secs: i64) -> i64 {
+pub(crate) fn local_offset_seconds(epoch_secs: i64) -> i64 {
     let time: libc::time_t = epoch_secs as libc::time_t;
     // SAFETY: `localtime_r` only writes the provided `tm`, and is the
     // thread-safe form of `localtime`.
@@ -144,7 +144,7 @@ fn local_offset_seconds(epoch_secs: i64) -> i64 {
 }
 
 #[cfg(not(unix))]
-fn local_offset_seconds(_epoch_secs: i64) -> i64 {
+pub(crate) fn local_offset_seconds(_epoch_secs: i64) -> i64 {
     0
 }
 
