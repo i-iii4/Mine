@@ -2,8 +2,8 @@
 //
 // The clipper needs two installed runtime parts: an extension in a stable
 // Application Support directory and a native messaging host the browser may
-// launch. Both ship in the app bundle and are refreshed without touching a
-// user's vault.
+// launch from one path that every build keeps. Both ship in the app bundle
+// and are refreshed without touching a user's vault.
 //
 // See SPEC_ONBOARDING.md О5–О7.
 
@@ -400,6 +400,17 @@ fn flush_payload_tree(root: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The helper browsers launch, at one path for every build: `native-host` in
+/// the installation owner `parent`, with its `yt-dlp` beside it. macOS keeps
+/// the privacy permissions of a bare executable by its path and code
+/// requirement, so a path per package made every update a new program that
+/// asked for Desktop and iCloud Drive again, and the clipper waited for the
+/// answer (SPEC_ONBOARDING.md, О5, «Постоянный путь помощника»). Packages
+/// stay the verified sources this path is installed and rolled back from.
+fn registered_helper(parent: &Path) -> PathBuf {
+    parent.join("native-host")
+}
+
 /// The name of the immutable package that holds `manifest`'s runtime.
 fn runtime_package_id(manifest: &RuntimeBuildManifest) -> std::io::Result<String> {
     let bytes = serde_json::to_vec(manifest).map_err(std::io::Error::other)?;
@@ -502,13 +513,19 @@ fn apply_runtime_journal(
     // Replaying every step is deliberate: a process can stop after an atomic
     // resource replacement and before publishing the next journal stage.
     checkpoint(RuntimeInstallStage::Prepared)?;
-    let host = parent.join("native-host");
+    // The helper browsers launch keeps one path across builds: its file is
+    // replaced by one rename, and a process still running the old file keeps
+    // its inode (SPEC_ONBOARDING.md, О5, «Постоянный путь помощника»).
+    let host = registered_helper(parent);
     if !installed_binary_matches(&package.join("native-host"), &host) {
         install_binary(&package.join("native-host"), &host)?;
     }
     if let Some(expected) = journal.candidate.ytdlp.as_ref() {
         if !ytdlp_matches(&parent.join(YTDLP_DIRECTORY), expected) {
             install_ytdlp_directory(&package.join(YTDLP_DIRECTORY), parent)?;
+            // The helper runs this copy, beside itself: its slow first start
+            // is Mine's, not the clipper's.
+            warm_ytdlp(parent);
         }
     }
     journal.stage = RuntimeInstallStage::HostActivated;
@@ -521,7 +538,7 @@ fn apply_runtime_journal(
     write_runtime_json(&parent.join("install-journal.json"), journal)?;
     checkpoint(journal.stage)?;
     activate_legacy_extension(parent, journal, &mut checkpoint)?;
-    register(&package.join("native-host"))?;
+    register(&host)?;
     journal.stage = RuntimeInstallStage::Registered;
     write_runtime_json(&parent.join("install-journal.json"), journal)?;
     checkpoint(journal.stage)?;
@@ -615,9 +632,10 @@ fn install_runtime_from_sources_with_probe(
 /// under the installation lock, only after a verified installation whose
 /// journal names the runtime the marker does; anything else is left. The
 /// CLI's packages in the same folder (`cli-manifest.json`) and unknown
-/// folders stay. A helper the browser still runs from a removed package
-/// answers its next request with `host_replaced`: its file is gone, and the
-/// registrations name another package (SPEC_CLIPPER.md, К4).
+/// folders stay. Browsers launch the registered helper outside the packages;
+/// a helper one of them still runs from a package of an installation before
+/// 14.10.2026 answers its next request with `host_replaced`: the
+/// registrations name another file (SPEC_CLIPPER.md, К4).
 fn prune_runtime_packages(parent: &Path) {
     let current = match std::fs::read(parent.join("runtime-install.json"))
         .ok()
@@ -729,12 +747,11 @@ fn settle_unfinished_install(
     }
     let failed_record = parent.join(format!("failed-install-{}.json", journal.package_id));
     if let Some(previous) = verified_previous(parent, &journal, probe)? {
-        let previous_package = parent.join("packages").join(&previous.package_id);
         write_runtime_json(&failed_record, &journal)?;
         restore_legacy_extension(parent, &journal)?;
-        // Register the last verified immutable executor first;
-        // source documents and operation journals never roll back.
-        register(&previous_package.join("native-host"))?;
+        // The rollback puts the last verified helper back at the registered
+        // path before it renews the registrations; source documents and
+        // operation journals never roll back.
         let mut rollback = RuntimeInstallJournal {
             schema_version: RUNTIME_MANIFEST_SCHEMA_VERSION,
             legacy_extension_previous: journal
@@ -831,7 +848,7 @@ fn install_or_reuse_runtime(
                 "the newer immutable runtime package is unavailable and was not downgraded",
             ));
         }
-        probe(&package.join("native-host"), &installed.manifest)?;
+        probe(&registered_helper(parent), &installed.manifest)?;
         let legacy_extension_previous = plan_legacy_extension(parent, &installed.manifest)?;
         if legacy_extension_previous.is_some() {
             let mut journal = RuntimeInstallJournal {
@@ -845,7 +862,7 @@ fn install_or_reuse_runtime(
             write_runtime_json(&parent.join("install-journal.json"), &journal)?;
             apply_runtime_journal(parent, &mut journal, &mut *register, |_| Ok(()))?;
         } else {
-            register(&package.join("native-host"))?;
+            register(&registered_helper(parent))?;
         }
         return Ok(ActiveRuntime {
             package: package_id,
@@ -896,30 +913,25 @@ fn verify_candidate_launch(host: &Path, manifest: &RuntimeBuildManifest) -> std:
         &manifest.app_version,
         Some(expected),
         RUNTIME_PROBE_TIMEOUT,
-    )?;
-    if manifest.ytdlp.is_some() {
-        if let Some(package) = host.parent() {
-            warm_ytdlp(package);
-        }
-    }
-    Ok(())
+    )
+    .map(|_| ())
 }
 
 /// How long the first start of a freshly installed `yt-dlp` may take.
 const YTDLP_WARM_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
 
-/// Start the package's `yt-dlp` once, so its slow first start is Mine's, not
-/// the clipper's (SPEC_ONBOARDING.md, О8.1). Measured 07.10.2026: the first
+/// Start the `yt-dlp` in `parent` once, so its slow first start is Mine's,
+/// not the clipper's (SPEC_ONBOARDING.md, О8.1). Measured 07.10.2026: the first
 /// `--version` of a freshly written copy took 14 s, every later one 0.2 s,
 /// from any process; the first start writes nothing into the directory. The
 /// outcome is logged only: a tool that will not start is reported to the
 /// clipper by the helper's own check (SPEC_CLIPPER.md, 3d, В5), and the
 /// helper is installed either way.
-fn warm_ytdlp(package: &Path) {
+fn warm_ytdlp(parent: &Path) {
     let running = crate::tool_process::RunningTools::new();
     let started = std::time::Instant::now();
     match crate::tool_process::run_with_deadline(
-        std::process::Command::new(crate::tool_process::ytdlp_in(package)).arg("--version"),
+        std::process::Command::new(crate::tool_process::ytdlp_in(parent)).arg("--version"),
         YTDLP_WARM_DEADLINE,
         &running,
     ) {
@@ -950,7 +962,7 @@ pub struct DevelopmentRuntimeInputs {
 /// File installation evidence; live browser activation is a separate handshake.
 #[derive(Debug, Serialize)]
 pub struct DevelopmentRuntimeReport {
-    /// Managed helper path used in the new generation's registration.
+    /// The helper path browsers are registered with, the same for every build.
     pub host_path: PathBuf,
     /// Stable managed developer payload path.
     pub extension_path: PathBuf,
@@ -1021,15 +1033,7 @@ pub fn install_development_runtime(
         serde_json::from_slice(&std::fs::read(parent.join("runtime-install.json"))?)
             .map_err(std::io::Error::other)?;
     Ok(DevelopmentRuntimeReport {
-        host_path: parent
-            .join("packages")
-            .join(format!(
-                "{:x}",
-                Sha256::digest(
-                    serde_json::to_vec(&marker.manifest).map_err(std::io::Error::other)?
-                )
-            ))
-            .join("native-host"),
+        host_path: registered_helper(&parent),
         extension_path: parent.join("extension"),
         app_version: marker.manifest.app_version,
         activation_verified: false,
@@ -1543,29 +1547,14 @@ fn manifest_is_registered(path: &Path, destination: &Path) -> bool {
         .is_some_and(|value| value == host_manifest(destination))
 }
 
+/// The helper browsers are registered with ([`registered_helper`]).
 fn host_binary_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
     let dir = app
         .path()
         .app_data_dir()
         .map_err(|e| CommandError::Internal(format!("no app data dir: {e}")))?
         .join("clipper");
-    Ok(dir.join(MANAGED_RUNTIME_DIRECTORY).join("native-host"))
-}
-
-fn registered_host_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
-    let host = host_binary_path(app)?;
-    let Some(marker) = read_runtime_install_marker(app)? else {
-        return Ok(host);
-    };
-    let parent = host
-        .parent()
-        .ok_or_else(|| CommandError::Internal("clipper directory has no parent".into()))?;
-    let bytes = serde_json::to_vec(&marker.manifest)
-        .map_err(|error| CommandError::Internal(error.to_string()))?;
-    Ok(parent
-        .join("packages")
-        .join(format!("{:x}", Sha256::digest(bytes)))
-        .join("native-host"))
+    Ok(registered_helper(&dir.join(MANAGED_RUNTIME_DIRECTORY)))
 }
 
 fn installed_extension_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
@@ -1581,13 +1570,6 @@ fn runtime_build_manifest_path(app: &AppHandle) -> Option<PathBuf> {
         .ok()
         .map(|resources| resources.join("clipper-runtime-manifest.json"))
         .filter(|path| path.is_file())
-}
-
-fn runtime_install_marker_path(app: &AppHandle) -> Result<PathBuf, CommandError> {
-    Ok(host_binary_path(app)?
-        .parent()
-        .ok_or_else(|| CommandError::Internal("clipper directory has no parent".into()))?
-        .join("runtime-install.json"))
 }
 
 fn runtime_build_manifest(app: &AppHandle) -> Result<RuntimeBuildManifest, CommandError> {
@@ -1655,12 +1637,6 @@ fn runtime_build_manifest(app: &AppHandle) -> Result<RuntimeBuildManifest, Comma
         })?,
         ytdlp: bundled_ytdlp_path(&executable).and_then(|path| ytdlp_manifest(&path)),
     })
-}
-
-fn read_runtime_install_marker(
-    app: &AppHandle,
-) -> Result<Option<RuntimeInstallMarker>, CommandError> {
-    read_runtime_marker_file(&runtime_install_marker_path(app)?)
 }
 
 fn read_runtime_marker_file(path: &Path) -> Result<Option<RuntimeInstallMarker>, CommandError> {
@@ -1864,11 +1840,11 @@ fn maintain_runtime(
                 "another runtime installation is active or its lock is unavailable: {error}"
             ))
         })?;
-        // The marker names this build's manifest: its package is the one
-        // the browsers are registered with.
+        // The marker names this build's manifest, installed at the path the
+        // browsers are registered with.
         let package = runtime_package_id(manifest)
             .map_err(|error| CommandError::Internal(error.to_string()))?;
-        let registered = parent.join("packages").join(&package).join("native-host");
+        let registered = registered_helper(parent);
         match probe(&registered, manifest) {
             Ok(()) => {
                 register(&registered).map_err(|error| CommandError::Internal(error.to_string()))?;
@@ -1878,7 +1854,7 @@ fn maintain_runtime(
                     change: RuntimeChange::InPlace,
                 });
             }
-            // The registered helper no longer starts: its package is damaged.
+            // The registered helper no longer starts: it is damaged.
             // The verified installation below rebuilds it from the bundle
             // (SPEC_AUDIT_FIXES.md, Б3.6); the locks are released first.
             Err(error) => log::warn!("installed helper launch probe failed, repairing: {error}"),
@@ -1914,9 +1890,8 @@ fn install_runtime(
 struct RuntimeUpkeepPaths {
     bundled_host: PathBuf,
     bundled_extension: PathBuf,
+    /// The helper the browser manifests name ([`registered_helper`]).
     installed_host: PathBuf,
-    /// The helper the browser manifests name, inside its immutable package.
-    registered_host: PathBuf,
     /// Every extension copy browsers may load ([`upkeep_extension_copies`]).
     installed_extensions: Vec<PathBuf>,
     /// The bundle's unpacked `yt-dlp`, when this build carries one.
@@ -1932,16 +1907,15 @@ struct RuntimeUpkeepPaths {
 /// when its package is installed, not every 5 minutes (О8.1).
 fn runtime_matches_bundle(paths: &RuntimeUpkeepPaths) -> bool {
     installed_binary_matches(&paths.bundled_host, &paths.installed_host)
-        && installed_binary_matches(&paths.bundled_host, &paths.registered_host)
         && paths
             .installed_extensions
             .iter()
             .all(|copy| installed_extension_matches(&paths.bundled_extension, copy))
         && paths.bundled_ytdlp.as_ref().is_none_or(|bundled| {
             let installed = paths
-                .registered_host
+                .installed_host
                 .parent()
-                .map(|package| package.join(YTDLP_DIRECTORY));
+                .map(|parent| parent.join(YTDLP_DIRECTORY));
             installed.is_some_and(|installed| {
                 launcher_is_executable(&installed)
                     && tree_shape(bundled).is_some_and(|shape| tree_shape(&installed) == Some(shape))
@@ -1950,7 +1924,7 @@ fn runtime_matches_bundle(paths: &RuntimeUpkeepPaths) -> bool {
         && paths
             .browser_manifests
             .iter()
-            .all(|manifest| manifest_is_registered(manifest, &paths.registered_host))
+            .all(|manifest| manifest_is_registered(manifest, &paths.installed_host))
 }
 
 /// The extension copies the upkeep compares with the bundle, given the
@@ -1983,7 +1957,6 @@ fn runtime_upkeep_paths(app: &AppHandle) -> Result<Option<RuntimeUpkeepPaths>, C
         bundled_host,
         bundled_extension,
         installed_host: host_binary_path(app)?,
-        registered_host: registered_host_path(app)?,
         installed_extensions: upkeep_extension_copies(&installed_extension_path(app)?),
         bundled_ytdlp: std::env::current_exe()
             .ok()
@@ -2060,14 +2033,13 @@ mod tests {
         let paths = RuntimeUpkeepPaths {
             bundled_host: root.join("Mine.app/native-host"),
             bundled_extension: root.join("Mine.app/clipper-extension"),
-            installed_host: root.join("clipper/native-host"),
-            registered_host: root.join("clipper/packages/current/native-host"),
+            installed_host: root.join("clipper/managed-v1/native-host"),
             installed_extensions: vec![root.join("clipper/managed-v1/extension")],
             // A build without `yt-dlp`; the tool's own upkeep is tested below.
             bundled_ytdlp: None,
             browser_manifests: vec![root.join("Chrome/NativeMessagingHosts/com.mine.host.json")],
         };
-        for host in [&paths.bundled_host, &paths.installed_host, &paths.registered_host] {
+        for host in [&paths.bundled_host, &paths.installed_host] {
             executable(host, b"THIS BUILD");
         }
         extension_payload(&paths.bundled_extension, "current()");
@@ -2076,7 +2048,7 @@ mod tests {
         std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
         std::fs::write(
             manifest,
-            serde_json::to_vec_pretty(&host_manifest(&paths.registered_host)).unwrap(),
+            serde_json::to_vec_pretty(&host_manifest(&paths.installed_host)).unwrap(),
         )
         .unwrap();
         paths
@@ -2096,9 +2068,21 @@ mod tests {
         let paths = current_runtime(temp.path());
         executable(&paths.installed_host, b"ANOTHER BUILD");
         assert!(!runtime_matches_bundle(&paths));
+    }
 
+    /// 46.16: a registration of a helper inside a package, as installations
+    /// before 14.10.2026 wrote it, is repaired to the one stable path.
+    #[test]
+    fn upkeep_moves_a_registration_of_a_package_to_the_stable_helper() {
+        let temp = TempDir::new().unwrap();
         let paths = current_runtime(temp.path());
-        executable(&paths.registered_host, b"ANOTHER BUILD");
+        let package = temp.path().join("clipper/managed-v1/packages/old/native-host");
+        executable(&package, b"THIS BUILD");
+        std::fs::write(
+            &paths.browser_manifests[0],
+            serde_json::to_vec_pretty(&host_manifest(&package)).unwrap(),
+        )
+        .unwrap();
         assert!(!runtime_matches_bundle(&paths));
     }
 
@@ -2783,7 +2767,7 @@ mod tests {
             }
         );
         let package = parent.join("packages").join(&next_package);
-        assert_eq!(registered, vec![package.join("native-host")]);
+        assert_eq!(registered, vec![registered_helper(&parent)]);
         assert!(runtime_package_matches(&package, &next));
         let marker: RuntimeInstallMarker =
             serde_json::from_slice(&std::fs::read(parent.join("runtime-install.json")).unwrap()).unwrap();
@@ -3103,19 +3087,22 @@ mod tests {
                 })
                 .is_err()
             );
+            // Browsers launch one path throughout: the previous helper until
+            // the new one replaces it in one rename, never a partial file.
+            assert!(manifest_is_registered(&registration, &registered_helper(&parent)));
+            let at_path = std::fs::read(registered_helper(&parent)).unwrap();
+            if stopped_at == RuntimeInstallStage::Prepared {
+                assert_eq!(at_path, std::fs::read(old.join("native-host")).unwrap());
+            } else {
+                assert_eq!(at_path, std::fs::read(new.join("native-host")).unwrap());
+            }
             let mut recovered = read_runtime_journal(&parent).unwrap().unwrap();
             apply_runtime_journal(&parent, &mut recovered, register, |_| Ok(())).unwrap();
             assert!(runtime_package_matches(&parent, &candidate));
             assert_eq!(recovered.stage, RuntimeInstallStage::FilesVerified);
             assert_eq!(recovered.previous.as_ref().unwrap().manifest, old_manifest);
             assert_eq!(file_fingerprint(&source_file), original);
-            assert!(manifest_is_registered(
-                &registration,
-                &parent
-                    .join("packages")
-                    .join(&recovered.package_id)
-                    .join("native-host")
-            ));
+            assert!(manifest_is_registered(&registration, &registered_helper(&parent)));
             assert!(parent.join("packages").is_dir());
         }
     }
@@ -3217,25 +3204,33 @@ mod tests {
     }
 
     #[test]
-    fn explicit_development_install_replaces_same_version_and_preserves_running_package() {
+    fn explicit_development_install_replaces_same_version_at_the_one_registered_path() {
+        use std::io::Read as _;
+        use std::os::unix::fs::MetadataExt;
         let tmp = TempDir::new().unwrap();
         let parent = tmp.path().join("managed");
         let (old, mut old_manifest) = runtime_fixture(tmp.path(), "old-dev", "0.1.0");
         old_manifest.build_profile = "debug".into();
+        let mut registrations = Vec::new();
         install_runtime_from_sources(
             &parent,
             old_manifest.clone(),
             &old.join("native-host"),
             &old.join("extension"),
             Some(&old.join(YTDLP_DIRECTORY)),
-            |_| Ok(()),
+            |host| {
+                registrations.push(host.to_path_buf());
+                Ok(())
+            },
         )
         .unwrap();
         let old_package_id = read_runtime_journal(&parent).unwrap().unwrap().package_id;
         let old_package = parent.join("packages").join(old_package_id);
+        // A helper the browser started before the update holds its file.
+        let mut running = std::fs::File::open(registered_helper(&parent)).unwrap();
+        let running_inode = running.metadata().unwrap().ino();
         let (new, mut new_manifest) = runtime_fixture(tmp.path(), "new-dev", "0.1.0");
         new_manifest.build_profile = "debug".into();
-        let mut registration = PathBuf::new();
         install_runtime_from_sources(
             &parent,
             new_manifest.clone(),
@@ -3243,14 +3238,27 @@ mod tests {
             &new.join("extension"),
             Some(&new.join(YTDLP_DIRECTORY)),
             |host| {
-                registration = host.to_path_buf();
+                registrations.push(host.to_path_buf());
                 Ok(())
             },
         )
         .unwrap();
         assert!(runtime_package_matches(&parent, &new_manifest));
         assert!(runtime_package_matches(&old_package, &old_manifest));
-        assert_ne!(registration, parent.join("native-host"));
+        // Two builds, one path: macOS keeps the helper's permissions.
+        assert_eq!(registrations, vec![registered_helper(&parent); 2]);
+        assert_eq!(
+            std::fs::read(registered_helper(&parent)).unwrap(),
+            std::fs::read(new.join("native-host")).unwrap()
+        );
+        assert_ne!(
+            std::fs::metadata(registered_helper(&parent)).unwrap().ino(),
+            running_inode,
+            "the new helper must arrive as a new file, which the running one notices"
+        );
+        let mut still_running = String::new();
+        running.read_to_string(&mut still_running).unwrap();
+        assert_eq!(still_running, "host old-dev");
         assert_eq!(
             std::fs::read(old_package.join(YTDLP_DIRECTORY).join(YTDLP_EXECUTABLE)).unwrap(),
             b"video old-dev"
@@ -3273,16 +3281,64 @@ mod tests {
         .unwrap();
         let (dev, mut dev_manifest) = runtime_fixture(tmp.path(), "older-dev", "0.1.0");
         dev_manifest.build_profile = "debug".into();
+        let mut registered = Vec::new();
         install_runtime_from_sources(
             &parent,
             dev_manifest,
             &dev.join("native-host"),
             &dev.join("extension"),
             Some(&dev.join(YTDLP_DIRECTORY)),
-            |_| Ok(()),
+            |host| {
+                registered.push(host.to_path_buf());
+                Ok(())
+            },
         )
         .unwrap();
         assert!(runtime_package_matches(&parent, &published_manifest));
+        // The newer helper keeps the one path, and only it is registered there.
+        assert_eq!(registered, vec![registered_helper(&parent)]);
+        assert_eq!(
+            std::fs::read(registered_helper(&parent)).unwrap(),
+            std::fs::read(published.join("native-host")).unwrap()
+        );
+    }
+
+    /// 46.16: an installation before 14.10.2026 registered the helper inside
+    /// its package. The next pass of the same build, the fast one, registers
+    /// the helper at the one path; a helper a browser still runs from the
+    /// package learns that it was superseded and steps aside (К4); the old
+    /// package stays until the usual cleanup.
+    #[test]
+    fn a_registration_inside_a_package_moves_to_the_stable_helper() {
+        let tmp = TempDir::new().unwrap();
+        let library = tmp.path().join("Library");
+        let parent = tmp.path().join("app/clipper/managed-v1");
+        let chrome = crate::clipper_registration::manifest_path(&library, &BROWSERS[0]);
+        let register = |host: &Path| write_runtime_json(&chrome, &host_manifest(host));
+        let (bundle, manifest) = runtime_fixture(tmp.path(), "bundle", "1.0.0");
+        let site = RuntimeSite {
+            manifest: manifest.clone(),
+            bundled_host: bundle.join("native-host"),
+            bundled_extension: bundle.join("extension"),
+            bundled_ytdlp: Some(bundle.join(YTDLP_DIRECTORY)),
+            parent: parent.clone(),
+        };
+        install_runtime(&site, register, |_, _| Ok(())).unwrap();
+        let package_helper = parent
+            .join("packages")
+            .join(runtime_package_id(&manifest).unwrap())
+            .join("native-host");
+        // What an installation before 14.10.2026 left for the browser.
+        register(&package_helper).unwrap();
+        assert!(crate::clipper_registration::is_registered(&library, &package_helper));
+
+        let pass = maintain_runtime(&site, register, |_, _| Ok(())).unwrap();
+
+        assert_eq!(pass.change, RuntimeChange::InPlace);
+        assert!(manifest_is_registered(&chrome, &registered_helper(&parent)));
+        assert!(crate::clipper_registration::superseded(&library, &package_helper));
+        assert!(!crate::clipper_registration::superseded(&library, &registered_helper(&parent)));
+        assert!(package_helper.is_file());
     }
 
     #[test]
@@ -3377,10 +3433,8 @@ mod tests {
             .to_string()
             .contains("previous verified runtime was restored"));
         assert!(runtime_package_matches(&parent, &old_manifest));
-        assert!(manifest_is_registered(
-            &registration,
-            &parent.join("packages").join(old_id).join("native-host")
-        ));
+        assert!(runtime_package_matches(&parent.join("packages").join(old_id), &old_manifest));
+        assert!(manifest_is_registered(&registration, &registered_helper(&parent)));
         assert!(parent
             .join(format!("failed-install-{package_id}.json"))
             .is_file());
@@ -3453,7 +3507,7 @@ mod tests {
                 "{stopped_at:?}"
             );
             assert!(
-                manifest_is_registered(&registration, &package.join("native-host")),
+                manifest_is_registered(&registration, &registered_helper(&parent)),
                 "{stopped_at:?}"
             );
             let settled = read_runtime_journal(&parent).unwrap().unwrap();
@@ -3516,19 +3570,17 @@ mod tests {
         assert_eq!(settled.stage, RuntimeInstallStage::FilesVerified);
         assert_eq!(settled.candidate, manifest);
         assert!(runtime_package_matches(&parent, &manifest));
-        assert!(manifest_is_registered(
-            &registration,
-            &parent.join("packages").join(&settled.package_id).join("native-host")
-        ));
+        assert!(manifest_is_registered(&registration, &registered_helper(&parent)));
         assert!(!parent.join("packages").join(&old_id).exists());
         assert!(parent.join("quarantine").join(&old_id).join(YTDLP_DIRECTORY).join(YTDLP_EXECUTABLE).is_file());
         assert!(parent.join(format!("failed-install-{old_id}.json")).is_file());
     }
 
-    /// Б3.6: the installed package browsers launch is damaged, its bytes or
-    /// its executable bit. Installing the same build repairs it from the
-    /// bundle, the browsers keep launching it, and the damaged copy is set
-    /// aside.
+    /// Б3.6: the installed package, the source the registered helper is
+    /// installed and rolled back from, is damaged, its bytes or its
+    /// executable bit. Installing the same build repairs it from the bundle,
+    /// the browsers keep launching the helper at its one path, and the
+    /// damaged copy is set aside.
     #[test]
     fn a_damaged_installed_package_is_rebuilt_from_the_bundle() {
         use std::os::unix::fs::PermissionsExt;
@@ -3570,11 +3622,64 @@ mod tests {
             );
             assert!(runtime_package_matches(&parent, &manifest), "{damage}");
             assert!(
-                manifest_is_registered(&registration, &package.join("native-host")),
+                manifest_is_registered(&registration, &registered_helper(&parent)),
                 "{damage}"
             );
             assert!(
                 parent.join("quarantine").join(&package_id).join("native-host").is_file(),
+                "{damage}"
+            );
+        }
+    }
+
+    /// 46.16: the helper browsers launch is damaged, its bytes or its
+    /// executable bit. The installation of the same build puts the verified
+    /// helper back at the same path, and the registration keeps naming it.
+    #[test]
+    fn a_damaged_registered_helper_is_replaced_at_its_path() {
+        use std::os::unix::fs::PermissionsExt;
+        type Damage = fn(&Path);
+        let damages: [(&str, Damage); 2] = [
+            ("bytes", |host| std::fs::write(host, b"corrupted").unwrap()),
+            ("executable bit", |host| {
+                std::fs::set_permissions(host, std::fs::Permissions::from_mode(0o644)).unwrap();
+            }),
+        ];
+        for (damage, apply) in damages {
+            let tmp = TempDir::new().unwrap();
+            let parent = tmp.path().join("app/clipper/managed-v1");
+            let registration = tmp.path().join("browser/host.json");
+            let register = |host: &Path| write_runtime_json(&registration, &host_manifest(host));
+            let (bundle, manifest) = runtime_fixture(tmp.path(), "bundle", "1.0.0");
+            let site = RuntimeSite {
+                manifest: manifest.clone(),
+                bundled_host: bundle.join("native-host"),
+                bundled_extension: bundle.join("extension"),
+                bundled_ytdlp: Some(bundle.join(YTDLP_DIRECTORY)),
+                parent: parent.clone(),
+            };
+            install_runtime(&site, register, |_, _| Ok(())).unwrap();
+            apply(&registered_helper(&parent));
+
+            // The launch probe of the damaged helper fails; the pass repairs it.
+            let repaired = maintain_runtime(&site, register, |host, _| {
+                if executable_with_size(host, manifest.native_host.bytes)
+                    && file_manifest(host).as_ref() == Some(&manifest.native_host)
+                {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::other("the helper does not start"))
+                }
+            })
+            .unwrap_or_else(|error| panic!("{damage}: {error}"));
+
+            assert_eq!(repaired.change, RuntimeChange::Reverified, "{damage}");
+            assert!(
+                installed_binary_matches(&bundle.join("native-host"), &registered_helper(&parent)),
+                "{damage}"
+            );
+            assert!(
+                manifest_is_registered(&registration, &registered_helper(&parent)),
                 "{damage}"
             );
         }
@@ -3898,9 +4003,9 @@ mod tests {
         .unwrap();
         let package = parent.join("packages").join(id);
         std::fs::copy(source.join("native-host"), parent.join("native-host")).unwrap();
-        for host in [parent.join("native-host"), package.join("native-host")] {
-            std::fs::set_permissions(&host, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        std::fs::set_permissions(parent.join("native-host"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        install_ytdlp_directory(&package.join(YTDLP_DIRECTORY), &parent).unwrap();
         copy_payload_tree(&source.join("extension"), &parent.join("extension")).unwrap();
         let bundled_host = source.join("native-host");
         std::fs::set_permissions(&bundled_host, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -3908,14 +4013,13 @@ mod tests {
             bundled_host,
             bundled_extension: source.join("extension"),
             installed_host: parent.join("native-host"),
-            registered_host: package.join("native-host"),
             installed_extensions: vec![parent.join("extension")],
             bundled_ytdlp: Some(source.join(YTDLP_DIRECTORY)),
             browser_manifests: vec![],
         };
         assert!(runtime_matches_bundle(&paths));
 
-        let python = package.join(YTDLP_DIRECTORY).join("_internal/Python");
+        let python = parent.join(YTDLP_DIRECTORY).join("_internal/Python");
         std::fs::write(&python, b"cut").unwrap();
         assert!(!runtime_matches_bundle(&paths), "a file cut short went unnoticed");
         std::fs::remove_file(&python).unwrap();
@@ -3923,7 +4027,7 @@ mod tests {
         std::fs::copy(source.join(YTDLP_DIRECTORY).join("_internal/Python"), &python).unwrap();
         assert!(runtime_matches_bundle(&paths));
 
-        let launcher = package.join(YTDLP_DIRECTORY).join(YTDLP_EXECUTABLE);
+        let launcher = parent.join(YTDLP_DIRECTORY).join(YTDLP_EXECUTABLE);
         std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert!(!runtime_matches_bundle(&paths), "a launcher that cannot start went unnoticed");
     }

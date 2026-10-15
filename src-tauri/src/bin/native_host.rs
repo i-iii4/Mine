@@ -4235,8 +4235,10 @@ static STARTED_FROM: std::sync::OnceLock<Option<StartedFrom>> = std::sync::OnceL
 /// Whether a newer helper has replaced this process. The browser keeps one
 /// connection per session, so without this an old process would go on
 /// answering after an update (К4). Two ways to be replaced: a new file at
-/// this path, or registrations that now name another installed package. A
-/// missing file is not a replacement: nothing newer is there.
+/// this path, as every update installs one at the one registered path, or
+/// registrations that now name another file, as for a helper a browser
+/// started from a package before 14.10.2026. A missing file is not a
+/// replacement: nothing newer is there.
 fn replaced_by_newer_helper() -> bool {
     let Some(Some(started)) = STARTED_FROM.get() else {
         return false;

@@ -18,8 +18,9 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 /// The directory of the shipped `yt-dlp`, the vendor's unpacked build
-/// (SPEC_ONBOARDING.md, О8.1): in the bundle's `binaries/` resources and in
-/// the clipper's package. The same names are in `scripts/ytdlp-layout.mjs`.
+/// (SPEC_ONBOARDING.md, О8.1): in the bundle's `binaries/` resources, in
+/// the clipper's packages and beside its registered helper (О5). The same
+/// names are in `scripts/ytdlp-layout.mjs`.
 pub const YTDLP_DIRECTORY: &str = "yt-dlp-onedir";
 /// Its launcher, inside the directory.
 pub const YTDLP_EXECUTABLE: &str = "yt-dlp";

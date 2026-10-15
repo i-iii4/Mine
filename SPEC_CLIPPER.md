@@ -167,6 +167,12 @@ error 2)» и вечным «Loading collections…», затем не мог с
 без пояса помощник объявляет возможностью `local_saved_at_v1`; помощнику без
 неё попап не передаёт `saved_at`, и время ставит сам помощник.
 
+Изменено 14.10.2026: регистрация называет один постоянный путь помощника, а
+не каталог пакета (SPEC_ONBOARDING.md, О5, «Постоянный путь помощника»).
+Новая сборка встаёт на этот путь новым файлом, и старый процесс узнаёт
+замену по своему файлу. Правило «регистрация указывает на другой файл»
+остаётся для помощников, которых браузер запустил из пакета до перехода.
+
 Дополнено 29.09.2026: расширение обновляет себя само. Помощник сообщает в
 `get_status` сборку расширения, установленного на диске
 (`extension_build_id` из `dist/runtime-identity.json`). Если она отличается от
@@ -3169,11 +3175,13 @@ Pending upload хранит исходный payload, binding и свидете�
 
 | OS | Path |
 |---|---|
-| macOS | `~/Library/Application Support/com.mine.app/clipper/managed-v1/packages/<package-id>/native-host` |
+| macOS | `~/Library/Application Support/com.mine.app/clipper/managed-v1/native-host` |
 
-Новый исполнитель находится в неизменяемом пакете `managed-v1/packages`.
-Его собственный путь определяет также неизменяемую копию `yt-dlp` для уже
-запущенной операции. Прежние каталоги `clipper/native-host` и
+Путь один для всех сборок (с 14.10.2026): macOS хранит разрешения голого
+исполняемого файла по его пути и подписи (SPEC_ONBOARDING.md, О5,
+«Постоянный путь помощника»). Неизменяемые пакеты `managed-v1/packages`
+остаются источниками установки и отката, `yt-dlp` лежит рядом с
+постоянным помощником. Прежние каталоги `clipper/native-host` и
 `LocalArena/native-host` сохраняются для старой установки, но новая регистрация
 на них не ссылается.
 
@@ -3295,7 +3303,7 @@ Rust-алгоритму через явный режим разработки; J
 {
   "name": "com.mine.clipper.v1",
   "description": "Mine web clipper native messaging host",
-  "path": "/Users/user/Library/Application Support/com.mine.app/clipper/managed-v1/packages/<package-id>/native-host",
+  "path": "/Users/user/Library/Application Support/com.mine.app/clipper/managed-v1/native-host",
   "type": "stdio",
   "allowed_origins": [
     "chrome-extension://eioalidaccoahofcggkbinalibpajokh/"
