@@ -6,7 +6,7 @@ import { subscribeContextMenus } from "@/lib/openMenus";
 const ignoreAnswers = () => {};
 
 /** Why a surface is not answering the pointer right now (С7.8). */
-export type HoverIntentSuspension = "window" | "drag" | "menu" | "context-menu";
+export type HoverIntentSuspension = "drag" | "menu" | "context-menu";
 
 export interface HoverIntentHandle {
   /** Report the pointer over the surface above `target` (or a gap). */
@@ -21,9 +21,10 @@ export interface HoverIntentHandle {
 
 /**
  * One hover-intent engine for one surface, the feed or the sidebar
- * (SPEC_CARD_STATES.md, С7). `onChange` receives the calmed answers; the
- * window losing focus clears them and holds new ones until it returns, and
- * so does a context menu, wherever it opened, until it closes (С7.8).
+ * (SPEC_CARD_STATES.md, С7). `onChange` receives the calmed answers; a
+ * context menu, wherever it opened, clears them and holds new ones until it
+ * closes (С7.8). A window without focus keeps answering the pointer, as
+ * Safari does (PLAN 46.14, SPEC_TABS.md, В85).
  * Render `<HoverIntentDragWatch>` inside the surface to hold them during a
  * drag as well. A surface that reads only the pointer's speed (`isSlow`, for
  * a hover preview's resting pointer) passes no `onChange`.
@@ -48,17 +49,7 @@ export function useHoverIntent(onChange: (state: HoverIntentState) => void = ign
     engine().setSuspended(reasons.size > 0);
   }, [engine]);
 
-  useEffect(() => {
-    const onBlur = () => suspend("window", true);
-    const onFocus = () => suspend("window", false);
-    window.addEventListener("blur", onBlur);
-    window.addEventListener("focus", onFocus);
-    return () => {
-      window.removeEventListener("blur", onBlur);
-      window.removeEventListener("focus", onFocus);
-      engineRef.current?.dispose();
-    };
-  }, [suspend]);
+  useEffect(() => () => engineRef.current?.dispose(), []);
 
   useEffect(() => subscribeContextMenus((open) => suspend("context-menu", open)), [suspend]);
 

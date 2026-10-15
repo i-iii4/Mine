@@ -86,6 +86,78 @@ export function userTweetsResponse() {
   ] } } } } } };
 }
 
+// The feeds of the Bookmarks, Likes, Media and Replies pages. The operation
+// names were seen in live requests of X on 14.10.2026: `Bookmarks`, `Likes`
+// (its answer under `data.user.result.timeline.timeline`), `UserVideoTimeline`
+// (Media) and `UserRepliesTimeline` (Replies). The envelopes are the ones the
+// public clients of X's web API read (twitter-openapi `BookmarksResponseData` →
+// `bookmark_timeline_v2.timeline`, `UserTweetsResultV1` → `timeline.timeline`,
+// `UserTweetsResultV2` → `timeline_v2.timeline`; twikit reads the media grid of
+// the older `UserMedia` from `profile-grid-0` on the first page and from
+// `moduleItems` on the next). The answers of `UserVideoTimeline` and
+// `UserRepliesTimeline` were not captured (Е7.5): their entries here follow
+// `UserMedia` and `UserTweetsAndReplies`.
+
+/** A page of `Bookmarks`: posts as plain entries, with its bottom cursor. */
+export function bookmarksResponse() {
+  return { data: { bookmark_timeline_v2: { timeline: { instructions: [
+    { type: "TimelineAddEntries", entries: [
+      entry(quotePost(), 0), entry(videoPost(), 1),
+      { entryId: "cursor-bottom-1", content: { entryType: "TimelineTimelineCursor", __typename: "TimelineTimelineCursor", value: "next-bookmarks", cursorType: "Bottom" } },
+    ] },
+  ] } } } };
+}
+
+/** A user timeline under `timeline` (`UserTweetsResultV1`) or `timeline_v2` (`UserTweetsResultV2`). */
+function userTimeline(instructions: unknown[], key: "timeline" | "timeline_v2") {
+  return { data: { user: { result: { __typename: "User", [key]: { timeline: { instructions } } } } } };
+}
+
+/** A page of `Likes`: other people's posts, a reposted one among them, as plain entries. */
+export function likesResponse(key: "timeline" | "timeline_v2" = "timeline") {
+  return userTimeline([
+    { type: "TimelineAddEntries", entries: [entry(quotePost(), 0), entry(repost(), 1)] },
+  ], key);
+}
+
+const gridItem = (result: unknown, index: number) => ({ entryId: `profile-grid-0-tweet-${index}`,
+  item: { itemContent: { itemType: "TimelineTweet", __typename: "TimelineTweet", tweet_results: { result }, tweetDisplayType: "MediaGrid" } } });
+
+/** The first page of `UserVideoTimeline`: one grid module holds the posts. */
+export function userVideoResponse() {
+  return userTimeline([
+    { type: "TimelineClearCache" },
+    { type: "TimelineAddEntries", entries: [{ entryId: "profile-grid-0", content: {
+      entryType: "TimelineTimelineModule", __typename: "TimelineTimelineModule", displayType: "VerticalGrid",
+      items: [gridItem(videoPost(), 0)],
+    } }] },
+  ], "timeline");
+}
+
+/** A later page of `UserVideoTimeline`: the posts are added to the grid module of the first. */
+export function userVideoNextResponse() {
+  return userTimeline([
+    { type: "TimelineAddToModule", moduleEntryId: "profile-grid-0", prepend: false, moduleItems: [gridItem(quotePost(), 1)] },
+  ], "timeline");
+}
+
+export const REPLY_ID = "2108700000000000001";
+
+/** A page of `UserRepliesTimeline`: a post of its own and a conversation module ending with the user's reply. */
+export function userRepliesResponse() {
+  const reply = tweet(REPLY_ID, GASPR, "@artignatev reply", { in_reply_to_status_id_str: QUOTE_POST_ID });
+  return userTimeline([
+    { type: "TimelineAddEntries", entries: [
+      entry(videoPost(), 0),
+      { entryId: `profile-conversation-${REPLY_ID}`, content: {
+        entryType: "TimelineTimelineModule", __typename: "TimelineTimelineModule", displayType: "VerticalConversation",
+        items: [quotePost(), reply].map((result, index) => ({ entryId: `profile-conversation-${REPLY_ID}-tweet-${index}`,
+          item: { itemContent: { itemType: "TimelineTweet", __typename: "TimelineTweet", tweet_results: { result }, tweetDisplayType: "Tweet" } } })),
+      } },
+    ] },
+  ], "timeline");
+}
+
 // ── Feed markup ─────────────────────────────────────────────────────────────
 
 /** The look of X's action controls, as atomic classes and an inline colour. */

@@ -283,6 +283,10 @@ pub fn run() {
             // menu instead of WebKit's frame menu.
             frame_context_menu::install(app.handle());
 
+            // Pages show hover while their window is not key or Mine is
+            // not the active app (SPEC_TABS.md, В85): before any page exists.
+            tabs::native::hover_in_background();
+
 
             // Every build logs, to stdout and to a file with the time of each
             // line in the app's log folder: a failure that is not the person's

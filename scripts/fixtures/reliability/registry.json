@@ -1810,11 +1810,14 @@
     {
       "paths": [
         "src/lib/hoverPreviewTiming.ts",
-        "src/lib/hoverPreviewTiming.test.ts"
+        "src/lib/hoverPreviewTiming.test.ts",
+        "src/hooks/useHoverIntent.tsx",
+        "src/hooks/useHoverIntent.test.tsx"
       ],
       "requirement": "SPEC_CARD_STATES.md#### С7. Тишина при движении курсора",
       "tests": [
-        "src/lib/hoverPreviewTiming.test.ts"
+        "src/lib/hoverPreviewTiming.test.ts",
+        "src/hooks/useHoverIntent.test.tsx"
       ],
       "command": "test:frontend"
     },

@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import "./xThread.js";
 import {
-  listResponse, POST_VIDEO, QUOTE_POST_ID, QUOTED_ID, QUOTED_VIDEO, quotePost, REPOST_ID, REPOSTED_ID, userTweetsResponse, VIDEO_POST_ID,
+  bookmarksResponse, likesResponse, listResponse, POST_VIDEO, QUOTE_POST_ID, QUOTED_ID, QUOTED_VIDEO, quotePost, REPLY_ID, REPOST_ID,
+  REPOSTED_ID, userRepliesResponse, userTweetsResponse, userVideoNextResponse, userVideoResponse, VIDEO_POST_ID,
 } from "./xFeed.fixtures";
 
 const api = globalThis.MineXThread;
@@ -221,6 +222,16 @@ describe("posts of an X feed response", () => {
   });
   it("reads a pinned post and posts inside modules of a profile page", () => {
     expect(api.feed(userTweetsResponse()).map(p => p.id)).toEqual([VIDEO_POST_ID, QUOTE_POST_ID]);
+  });
+  // Е3.18: the feeds of the Bookmarks, Likes, Media and Replies pages.
+  it("reads the posts of Bookmarks, Likes, the Media grid and Replies", () => {
+    expect(api.feed(bookmarksResponse()).map(p => p.id)).toEqual([QUOTE_POST_ID, VIDEO_POST_ID]);
+    expect(api.feed(likesResponse()).map(p => p.id)).toEqual([QUOTE_POST_ID, REPOSTED_ID]);
+    expect(api.feed(likesResponse("timeline_v2")).map(p => p.id)).toEqual([QUOTE_POST_ID, REPOSTED_ID]);
+    expect(api.feed(userVideoResponse())).toMatchObject([{ id: VIDEO_POST_ID, hasVideo: true, media: [{ kind: "video", url: POST_VIDEO }] }]);
+    expect(api.feed(userVideoNextResponse())).toMatchObject([{ id: QUOTE_POST_ID, quote: { id: QUOTED_ID } }]);
+    expect(api.feed(userRepliesResponse())).toMatchObject([{ id: VIDEO_POST_ID }, { id: QUOTE_POST_ID },
+      { id: REPLY_ID, handle: "GasprArt", parentId: QUOTE_POST_ID, text: "@artignatev reply" }]);
   });
   it("keeps a promoted post a feed shows: its Mine button saves it", () => {
     const d = listResponse([quotePost()]);

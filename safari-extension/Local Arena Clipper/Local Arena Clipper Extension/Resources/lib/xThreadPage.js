@@ -22,7 +22,8 @@
   // each post (SPEC_CLIPPER.md, «Кнопка Mine в ленте X», rule 6).
   const MAX_KNOWN_POSTS = 500, KNOWN_POST_WAIT_MS = 500;
   const FEED_OPERATIONS = new Set(["ListLatestTweetsTimeline", "HomeTimeline", "HomeLatestTimeline",
-    "UserTweets", "UserOriginalsTimeline", "SearchTimeline"]);
+    "UserTweets", "UserOriginalsTimeline", "SearchTimeline",
+    "Bookmarks", "Likes", "UserVideoTimeline", "UserRepliesTimeline"]);
   /** @type {Map<string, XThreadPost>} */
   const knownPosts = new Map();
   /** @type {Set<Promise<unknown>>} */

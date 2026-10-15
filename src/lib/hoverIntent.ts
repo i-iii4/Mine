@@ -200,8 +200,8 @@ export class HoverIntent {
   }
 
   /**
-   * A drag, an open menu or an unfocused window: nothing answers meanwhile,
-   * and the current answer clears at once (С7.8).
+   * A drag or an open menu: nothing answers meanwhile, and the current
+   * answer clears at once (С7.8).
    */
   setSuspended(suspended: boolean): void {
     if (this.suspended === suspended) return;

@@ -577,12 +577,25 @@ Reveal молчал из-за вложенного `params.path`; помощни
 - **Е3.17. Content у клипа Save link.** Вкладка показывает страницу, на
   которой была ссылка, и для содержимого ссылки не читается; Content пишет
   `Mine can't read the linked page from here. Open the link and save it from its page.`
-- **Е3.18. Ленты вне кэша.** Список операций кэша (правило 6 раздела
-  «Кнопка Mine в ленте X») не расширен: живых ответов X с именами операций
-  закладок, отметок «нравится», медиа и ответов профиля нет, а выдумывать их
-  нельзя. Посты таких лент читаются запасным путём через syndication. Пост
-  с возрастным ограничением syndication не отдаёт, поэтому для таких лент
-  кэш нужен; операции добавляются по записи живых ответов X (Е7.5).
+- **Е3.18. Закладки, «нравится», медиа и ответы профиля в кэше.** Список
+  операций кэша (правило 6 раздела «Кнопка Mine в ленте X») дополнен 14.10.2026
+  операциями `Bookmarks` (x.com/i/history, вкладка закладок; прежний адрес
+  `/i/bookmarks` ведёт туда), `Likes` (x.com/i/history/likes),
+  `UserVideoTimeline` (вкладка профиля Media) и `UserRepliesTimeline`
+  (вкладка профиля Replies, `/<ник>/with_replies`, и колонка ответов
+  профиля в X Pro). До этого посты таких лент читались запасным путём
+  через syndication, а пост с возрастным ограничением syndication не отдаёт,
+  и кнопка давала отказ правила 7. Все четыре имени сверены с живыми
+  запросами X 14.10.2026; `UserMedia` и `UserTweetsAndReplies`, которые
+  называют открытые клиенты веб-API X, живьём не встретились. `Bookmarks` и
+  `Likes` подтверждены живыми запросами; `Likes` кладёт ленту в
+  `data.user.result.timeline.timeline` (снято вживую), `Bookmarks` по
+  открытым клиентам в `data.bookmark_timeline_v2.timeline`. Формы ответов `UserVideoTimeline` и
+  `UserRepliesTimeline` не сняты (Е7.5): образцы тестов повторяют сетку
+  медиа `UserMedia` (модуль `profile-grid-0`, следующие страницы через
+  `TimelineAddToModule`) и модули разговора `UserTweetsAndReplies`. Разбор
+  ответа общий и не менялся: он ищет все `instructions` под `data`. Папки
+  закладок (`BookmarkFolderTimeline`) в список не входят.
 - **Е3.19. Квота хранилища расширения.** `chrome.storage.local` без
   `unlimitedStorage` держит 10 МБ и отказывает
   `Resource::kQuotaBytes quota exceeded` (проверено в Chromium 148 без
@@ -1155,7 +1168,8 @@ timeline articles и не должны попадать в body.
 6. **Источник данных.** Сначала кэш страницы. `lib/xThreadPage.js` в MAIN
    world кроме ответов обсуждения разбирает ответы лент
    `ListLatestTweetsTimeline`, `HomeTimeline`, `HomeLatestTimeline`,
-   `UserTweets`, `UserOriginalsTimeline`, `SearchTimeline` (GET и POST на
+   `UserTweets`, `UserOriginalsTimeline`, `SearchTimeline`, `Bookmarks`,
+   `Likes`, `UserVideoTimeline`, `UserRepliesTimeline` (Е3.18; GET и POST на
    своём origin, путь `/i/api/graphql/<id>/<операция>`). Посты из всех
    `instructions` ответа (`TimelineAddEntries`, `TimelineAddToModule`,
    `TimelineReplaceEntry`, `TimelinePinEntry`) нормализует тот же
@@ -1229,7 +1243,9 @@ X Pro с абсолютной ссылкой; одна кнопка на пос�
 [xThread.test.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/lib/xThread.test.ts>)
 (посты ответа ленты, исходный пост репоста),
 [xThreadPage.test.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/lib/xThreadPage.test.ts>)
-(кэш из ответа `ListLatestTweetsTimeline` через fetch и XHR, предел кэша,
+(кэш из ответа `ListLatestTweetsTimeline` через fetch и XHR, ленты
+`Bookmarks`, `Likes`, `UserVideoTimeline`, `UserRepliesTimeline` на x.com и
+pro.x.com, предел кэша,
 второй запуск на странице не меняет ни кэш, ни перехват),
 [background.messaging.test.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/extension/background.messaging.test.ts>)
 (проверки отправителя `readXPost`; `readXSyndication`: запрос без куки по

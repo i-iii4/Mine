@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import { createContext, runInContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
-import { listResponse, QUOTE_POST_ID, REPOSTED_ID, VIDEO_POST_ID } from "./xFeed.fixtures";
+import {
+  bookmarksResponse, likesResponse, listResponse, QUOTE_POST_ID, REPLY_ID, REPOSTED_ID, userRepliesResponse, userVideoNextResponse,
+  VIDEO_POST_ID,
+} from "./xFeed.fixtures";
 
 // The MAIN world of an X page: the page's own fetch and XHR, observed by the
 // sources the manifest loads there (SPEC_CLIPPER.md, «Кнопка Mine в ленте X»).
@@ -66,6 +69,23 @@ describe("posts a feed of the page delivered", () => {
     expect(await pro.page.post(VIDEO_POST_ID)).not.toBeNull();
   });
 
+  // Е3.18: the feeds of the Bookmarks, Likes, Media and Replies pages, on
+  // x.com and in an X Pro column.
+  it.each(["https://x.com", "https://pro.x.com"])("reads Bookmarks, Likes, Media and Replies on %s", async (origin) => {
+    const feeds: Array<[string, unknown, string]> = [
+      ["Bookmarks", bookmarksResponse(), VIDEO_POST_ID],
+      ["Likes", likesResponse(), REPOSTED_ID],
+      ["UserVideoTimeline", userVideoNextResponse(), QUOTE_POST_ID],
+      ["UserRepliesTimeline", userRepliesResponse(), REPLY_ID],
+    ];
+    for (const [operation, response, id] of feeds) {
+      const { page, request, fetch } = xPage(origin);
+      fetch.mockResolvedValueOnce(new Response(JSON.stringify(response), { status: 200 }));
+      await request(`${origin}/i/api/graphql/Q1/${operation}?variables=%7B%22count%22%3A20%7D`);
+      expect((await page.post(id))?.id, operation).toBe(id);
+    }
+  });
+
   it("reads a feed answered over XHR", async () => {
     const { page, Xhr } = xPage();
     // The observer wraps the prototype the page's requests use.
@@ -79,7 +99,7 @@ describe("posts a feed of the page delivered", () => {
   it("ignores other origins, other operations and failed answers", async () => {
     const { page, request, fetch } = xPage();
     await request(`https://api.example.com${LIST}`);
-    await request("https://x.com/i/api/graphql/B1/Bookmarks?variables=%7B%7D");
+    await request("https://x.com/i/api/graphql/B1/UserByScreenName?variables=%7B%7D");
     fetch.mockResolvedValueOnce(new Response("{}", { status: 500 }));
     await request(`https://x.com${LIST}`);
     expect(await page.post(QUOTE_POST_ID)).toBeNull();

@@ -36,6 +36,159 @@ pub fn full_screen_presentation(proposed: usize) -> usize {
     }
 }
 
+/// `NSTrackingMouseMoved`.
+const TRACKING_MOUSE_MOVED: usize = 0x02;
+/// `NSTrackingActiveWhenFirstResponder`.
+const TRACKING_ACTIVE_WHEN_FIRST_RESPONDER: usize = 0x10;
+/// `NSTrackingActiveInKeyWindow`.
+const TRACKING_ACTIVE_IN_KEY_WINDOW: usize = 0x20;
+/// `NSTrackingActiveInActiveApp`.
+const TRACKING_ACTIVE_IN_ACTIVE_APP: usize = 0x40;
+/// `NSTrackingActiveAlways`.
+const TRACKING_ACTIVE_ALWAYS: usize = 0x80;
+/// The four options of which exactly one says when an area is active.
+const TRACKING_ACTIVE_ANY: usize = TRACKING_ACTIVE_WHEN_FIRST_RESPONDER
+    | TRACKING_ACTIVE_IN_KEY_WINDOW
+    | TRACKING_ACTIVE_IN_ACTIVE_APP
+    | TRACKING_ACTIVE_ALWAYS;
+
+/// The options a page's pointer tracking area takes instead of `options`
+/// (SPEC_TABS.md, В85), or `None` to keep them. WebKit tracks the pointer
+/// over a page with an area active only in the key window
+/// (`trackingAreaOptions()` in WebViewImpl.mm) unless the system shows
+/// scroll bars always, when it makes the same area active always itself
+/// (`PageClientImpl::recommendedScrollbarStyleDidChange`). Without the
+/// pointer's moves a window that is not key shows no hover. The same
+/// options with "always" give the pages of every window the hover that
+/// setting gives them; any other area passes unchanged.
+pub fn background_tracking_options(options: usize) -> Option<usize> {
+    if options & TRACKING_MOUSE_MOVED == 0 || options & TRACKING_ACTIVE_IN_KEY_WINDOW == 0 {
+        return None;
+    }
+    Some((options & !TRACKING_ACTIVE_ANY) | TRACKING_ACTIVE_ALWAYS)
+}
+
+#[cfg(target_os = "macos")]
+mod tracking {
+    use std::sync::OnceLock;
+
+    use objc2::rc::{Allocated, Retained};
+    use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
+    use objc2::sel;
+    use objc2_foundation::NSRect;
+
+    /// `-[NSView addTrackingArea:]` and `-[NSView removeTrackingArea:]`.
+    type TrackingAreaMethod = unsafe extern "C-unwind" fn(&AnyObject, Sel, *mut AnyObject);
+
+    /// The implementations Mine's stand in front of, taken from the class
+    /// before the hook went in: the class's own or the ones it inherits.
+    struct Originals {
+        class: usize,
+        add: Imp,
+        remove: Imp,
+    }
+
+    static ORIGINALS: OnceLock<Option<Originals>> = OnceLock::new();
+
+    /// The key of the area a view holds in place of the one it was given.
+    static SUBSTITUTE_KEY: u8 = 0;
+
+    fn originals() -> Option<&'static Originals> {
+        ORIGINALS.get().and_then(Option::as_ref)
+    }
+
+    /// An area like `area`, with the options of
+    /// [`super::background_tracking_options`], or `None` to keep `area`.
+    unsafe fn substitute_for(area: *mut AnyObject) -> Option<Retained<AnyObject>> {
+        let area = area.as_ref()?;
+        let options: usize = objc2::msg_send![area, options];
+        let options = super::background_tracking_options(options)?;
+        let rect: NSRect = objc2::msg_send![area, rect];
+        let owner: *mut AnyObject = objc2::msg_send![area, owner];
+        let user_info: *mut AnyObject = objc2::msg_send![area, userInfo];
+        let allocated: Allocated<AnyObject> = objc2::msg_send![objc2::class!(NSTrackingArea), alloc];
+        let substitute: Retained<AnyObject> = objc2::msg_send![
+            allocated,
+            initWithRect: rect,
+            options: options,
+            owner: owner,
+            userInfo: user_info
+        ];
+        Some(substitute)
+    }
+
+    /// Mine's `addTrackingArea:`: the area or its substitute, which the
+    /// given area keeps for its removal.
+    unsafe extern "C-unwind" fn add_tracking_area(this: &AnyObject, cmd: Sel, area: *mut AnyObject) {
+        let Some(originals) = originals() else { return };
+        // SAFETY: the implementation this one stands in front of, with the
+        // same signature, on the thread AppKit calls it on.
+        let add = std::mem::transmute::<Imp, TrackingAreaMethod>(originals.add);
+        match substitute_for(area) {
+            Some(substitute) => {
+                // SAFETY: `area` is a live tracking area; the association
+                // retains the substitute for as long as the area lives.
+                objc2::ffi::objc_setAssociatedObject(
+                    area,
+                    std::ptr::addr_of!(SUBSTITUTE_KEY).cast(),
+                    Retained::as_ptr(&substitute).cast_mut(),
+                    objc2::ffi::OBJC_ASSOCIATION_RETAIN_NONATOMIC,
+                );
+                add(this, cmd, Retained::as_ptr(&substitute).cast_mut());
+            }
+            None => add(this, cmd, area),
+        }
+    }
+
+    /// Mine's `removeTrackingArea:`: the substitute of the area when it has
+    /// one, since the view holds that and not the area.
+    unsafe extern "C-unwind" fn remove_tracking_area(this: &AnyObject, cmd: Sel, area: *mut AnyObject) {
+        let Some(originals) = originals() else { return };
+        // SAFETY: as in `add_tracking_area`.
+        let remove = std::mem::transmute::<Imp, TrackingAreaMethod>(originals.remove);
+        let substitute = if area.is_null() {
+            std::ptr::null()
+        } else {
+            objc2::ffi::objc_getAssociatedObject(area, std::ptr::addr_of!(SUBSTITUTE_KEY).cast())
+        };
+        if substitute.is_null() {
+            remove(this, cmd, area);
+        } else {
+            remove(this, cmd, substitute.cast_mut());
+        }
+    }
+
+    /// Put Mine's tracking area methods in front of `class`'s, once per
+    /// process. True when `class` has them, now or from before.
+    pub fn install(class: &AnyClass) -> bool {
+        let target = std::ptr::from_ref(class).cast_mut();
+        let mut first = false;
+        // The originals are saved before the hooks go in: a hook never runs
+        // without the implementation it calls.
+        let installed = ORIGINALS.get_or_init(|| {
+            first = true;
+            Some(Originals {
+                class: target as usize,
+                add: class.instance_method(sel!(addTrackingArea:))?.implementation(),
+                remove: class.instance_method(sel!(removeTrackingArea:))?.implementation(),
+            })
+        });
+        if first && installed.is_some() {
+            // SAFETY: the replacements have the selectors' signature,
+            // encoded "v@:@", and call the implementations saved above.
+            unsafe {
+                let add_hook = std::mem::transmute::<TrackingAreaMethod, Imp>(add_tracking_area);
+                let remove_hook = std::mem::transmute::<TrackingAreaMethod, Imp>(remove_tracking_area);
+                objc2::ffi::class_replaceMethod(target, sel!(addTrackingArea:), add_hook, c"v@:@".as_ptr());
+                objc2::ffi::class_replaceMethod(target, sel!(removeTrackingArea:), remove_hook, c"v@:@".as_ptr());
+            }
+        }
+        installed
+            .as_ref()
+            .is_some_and(|originals| originals.class == target as usize)
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod imp {
     use std::sync::OnceLock;
@@ -47,6 +200,22 @@ mod imp {
     use tauri::{Webview, Window};
 
     use crate::domain::windows::TitleBar;
+
+    /// Let every page show hover while its window is not key or Mine is
+    /// not the active app (В85). The hook goes on `WKWebView` before any
+    /// page exists, so it holds for the area WebKit makes with each page,
+    /// for the tab bars and the pages of every window, for a page moved
+    /// to another window, and for the area WebKit makes again when the
+    /// scroll bar setting changes.
+    pub fn hover_in_background() {
+        let Some(class) = AnyClass::get(c"WKWebView") else {
+            log::warn!("WKWebView is not loaded; pages show hover only in the key window");
+            return;
+        };
+        if !super::tracking::install(class) {
+            log::warn!("pointer tracking hook is on another class; pages show hover only in the key window");
+        }
+    }
 
     /// Put `lower` right under `upper` in their window: the page being shown
     /// draws its first frame under the one still visible (В5). Tauri has no
@@ -319,6 +488,13 @@ mod imp {
     pub fn set_window_background(_window: &Window, _rgb: (f64, f64, f64)) {}
     pub fn set_title_bar(_window: &Window, _title_bar: TitleBar) {}
     pub fn hide_toolbar_in_full_screen(_window: &Window) {}
+    pub fn hover_in_background() {}
+}
+
+/// Let the pages of every window answer the pointer when their window is
+/// not key or Mine is not the active app. Runs once, before any page.
+pub fn hover_in_background() {
+    imp::hover_in_background();
 }
 
 /// See the platform implementation.
@@ -358,7 +534,9 @@ pub fn set_window_background(window: &Window, hex: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        full_screen_presentation, parse_hex_color, PRESENTATION_AUTO_HIDE_TOOLBAR, PRESENTATION_FULL_SCREEN,
+        background_tracking_options, full_screen_presentation, parse_hex_color, PRESENTATION_AUTO_HIDE_TOOLBAR,
+        PRESENTATION_FULL_SCREEN, TRACKING_ACTIVE_ALWAYS, TRACKING_ACTIVE_ANY, TRACKING_ACTIVE_IN_ACTIVE_APP,
+        TRACKING_ACTIVE_IN_KEY_WINDOW, TRACKING_MOUSE_MOVED,
     };
 
     /// `NSApplicationPresentationAutoHideDock`.
@@ -388,6 +566,158 @@ mod tests {
     fn asking_twice_changes_nothing() {
         let once = full_screen_presentation(PRESENTATION_FULL_SCREEN | AUTO_HIDE_MENU_BAR);
         assert_eq!(full_screen_presentation(once), once);
+    }
+
+    /// WebKit's area over a page with overlay scroll bars
+    /// (`trackingAreaOptions()` in WebViewImpl.mm).
+    const WEBKIT_PAGE_AREA: usize = TRACKING_MOUSE_MOVED
+        | MOUSE_ENTERED_AND_EXITED
+        | CURSOR_UPDATE
+        | IN_VISIBLE_RECT
+        | TRACKING_ACTIVE_IN_KEY_WINDOW;
+    /// WebKit's area that watches the modifier keys.
+    const WEBKIT_FLAGS_AREA: usize = IN_VISIBLE_RECT | TRACKING_ACTIVE_IN_ACTIVE_APP | MOUSE_ENTERED_AND_EXITED;
+    /// `NSTrackingMouseEnteredAndExited`.
+    const MOUSE_ENTERED_AND_EXITED: usize = 0x01;
+    /// `NSTrackingCursorUpdate`.
+    const CURSOR_UPDATE: usize = 0x04;
+    /// `NSTrackingInVisibleRect`.
+    const IN_VISIBLE_RECT: usize = 0x200;
+
+    #[test]
+    fn the_page_area_tracks_the_pointer_always() {
+        let options = background_tracking_options(WEBKIT_PAGE_AREA).expect("the page area changes");
+        assert_eq!(
+            options,
+            TRACKING_MOUSE_MOVED | MOUSE_ENTERED_AND_EXITED | CURSOR_UPDATE | IN_VISIBLE_RECT | TRACKING_ACTIVE_ALWAYS
+        );
+        // Exactly one "active" option, as AppKit requires.
+        assert_eq!((options & TRACKING_ACTIVE_ANY).count_ones(), 1);
+    }
+
+    #[test]
+    fn other_areas_pass_unchanged() {
+        // The modifier keys area, active in the active app.
+        assert_eq!(background_tracking_options(WEBKIT_FLAGS_AREA), None);
+        // The page area as WebKit makes it when scroll bars always show.
+        let always = (WEBKIT_PAGE_AREA & !TRACKING_ACTIVE_IN_KEY_WINDOW) | TRACKING_ACTIVE_ALWAYS;
+        assert_eq!(background_tracking_options(always), None);
+        // A key window area that does not follow the pointer's moves.
+        let entered = MOUSE_ENTERED_AND_EXITED | TRACKING_ACTIVE_IN_KEY_WINDOW;
+        assert_eq!(background_tracking_options(entered), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    mod hook {
+        use std::sync::Mutex;
+
+        use objc2::rc::Retained;
+        use objc2::runtime::{AnyObject, NSObject};
+        use objc2::{define_class, msg_send, ClassType};
+        use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+        use super::{
+            TRACKING_ACTIVE_ALWAYS, TRACKING_ACTIVE_IN_KEY_WINDOW, WEBKIT_FLAGS_AREA, WEBKIT_PAGE_AREA,
+        };
+
+        /// What the base class received: added or not, the area, its options.
+        static RECEIVED: Mutex<Vec<(bool, usize, usize)>> = Mutex::new(Vec::new());
+
+        fn record(added: bool, area: &AnyObject) {
+            // SAFETY: a live NSTrackingArea.
+            let options: usize = unsafe { msg_send![area, options] };
+            RECEIVED
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((added, std::ptr::from_ref(area) as usize, options));
+        }
+
+        define_class!(
+            // SAFETY: NSObject has no subclassing requirements; the methods
+            // only record their argument.
+            #[unsafe(super(NSObject))]
+            #[name = "MineHoverTrackingBase"]
+            struct TrackingBase;
+
+            impl TrackingBase {
+                #[unsafe(method(addTrackingArea:))]
+                fn add_tracking_area(&self, area: &AnyObject) {
+                    record(true, area);
+                }
+
+                #[unsafe(method(removeTrackingArea:))]
+                fn remove_tracking_area(&self, area: &AnyObject) {
+                    record(false, area);
+                }
+            }
+        );
+
+        define_class!(
+            // SAFETY: as above; the view inherits both methods, as WKWebView
+            // inherits NSView's.
+            #[unsafe(super(TrackingBase, NSObject))]
+            #[name = "MineHoverTrackingView"]
+            struct TrackingView;
+        );
+
+        fn area(options: usize, owner: &NSObject) -> Retained<AnyObject> {
+            let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(10.0, 20.0));
+            // SAFETY: the designated initialiser of NSTrackingArea; a null
+            // userInfo is allowed.
+            unsafe {
+                let allocated: objc2::rc::Allocated<AnyObject> =
+                    msg_send![objc2::class!(NSTrackingArea), alloc];
+                msg_send![
+                    allocated,
+                    initWithRect: rect,
+                    options: options,
+                    owner: owner,
+                    userInfo: std::ptr::null::<AnyObject>()
+                ]
+            }
+        }
+
+        #[test]
+        fn the_view_holds_an_always_active_substitute_and_removes_it() {
+            assert!(crate::tabs::native::tracking::install(TrackingView::class()));
+            // A second install, on the same class or another, changes nothing.
+            assert!(crate::tabs::native::tracking::install(TrackingView::class()));
+            assert!(!crate::tabs::native::tracking::install(TrackingBase::class()));
+
+            let view: Retained<TrackingView> = unsafe { msg_send![TrackingView::class(), new] };
+            let owner = NSObject::new();
+            let page = area(WEBKIT_PAGE_AREA, &owner);
+            let flags = area(WEBKIT_FLAGS_AREA, &owner);
+            let page_ptr = Retained::as_ptr(&page) as usize;
+            let flags_ptr = Retained::as_ptr(&flags) as usize;
+            // SAFETY: the hooked methods with live areas.
+            unsafe {
+                let _: () = msg_send![&*view, addTrackingArea: &*page];
+                let _: () = msg_send![&*view, addTrackingArea: &*flags];
+                let _: () = msg_send![&*view, removeTrackingArea: &*page];
+                let _: () = msg_send![&*view, removeTrackingArea: &*flags];
+            }
+
+            let received = RECEIVED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+            assert_eq!(received.len(), 4);
+            let (added, substitute, options) = received[0];
+            assert!(added);
+            assert_ne!(substitute, page_ptr, "the page area is replaced");
+            assert_eq!(
+                options,
+                (WEBKIT_PAGE_AREA & !TRACKING_ACTIVE_IN_KEY_WINDOW) | TRACKING_ACTIVE_ALWAYS
+            );
+            // SAFETY: the substitute is alive: the page area retains it.
+            let substitute_area: &AnyObject = unsafe { &*(substitute as *const AnyObject) };
+            let substitute_owner: *const AnyObject = unsafe { msg_send![substitute_area, owner] };
+            assert_eq!(substitute_owner as usize, std::ptr::from_ref(&*owner) as usize);
+            let substitute_rect: NSRect = unsafe { msg_send![substitute_area, rect] };
+            assert_eq!(substitute_rect.size, NSSize::new(10.0, 20.0));
+            assert_eq!(received[1], (true, flags_ptr, WEBKIT_FLAGS_AREA), "other areas pass unchanged");
+            assert_eq!(received[2].1, substitute, "removing the page area removes its substitute");
+            assert!(!received[2].0);
+            assert_eq!(received[3], (false, flags_ptr, WEBKIT_FLAGS_AREA));
+        }
     }
 
     #[test]
