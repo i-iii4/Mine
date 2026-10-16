@@ -2160,7 +2160,7 @@ normal card interaction contract.
   Подробности: SPEC_SEARCH_OVERLAY.md, «Команды строки».
 - Подсветка — системный search mark (жёлтый текстовыделитель, см. «Search match
   mark»): различим на любом фоне строки, включая активную.
-- Превью справа (`w-80 border-l border-border p-4`, `flex flex-col gap-4`) —
+- Превью справа (ширина `SEARCH_OVERLAY_PREVIEW_WIDTH_PX` = 320 px, `border-l border-border p-4`, `flex flex-col gap-4`; не показывается, когда список рядом с ним уже 320 px, решение пользователя 16.10.2026, SPEC_SEARCH_OVERLAY.md, «Поверхность») —
   две выделенные зоны. Зона карточки: `ReadOnlyCardPreview` шириной 288 px
   без тени, та же карточка, что в ленте, в итоговом виде наведения и без
   активных элементов (с 06.10.2026, «Hover Preview Surfaces» ниже,

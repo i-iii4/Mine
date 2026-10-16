@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { GridSnapshot, LightBlock, SearchMatch, TabLocation } from "@/types";
 import { TOP_FADE_HEIGHT } from "@/lib/edgeFade";
 import {
   SearchOverlay,
   SEARCH_OVERLAY_MIN_QUERY_CHARS,
+  SEARCH_OVERLAY_PREVIEW_WIDTH_PX,
   SEARCH_OVERLAY_RECENT_LIMIT,
   SEARCH_OVERLAY_RESULT_LIMIT,
 } from "./SearchOverlay";
@@ -1219,5 +1220,156 @@ describe("SearchOverlay result row commands", () => {
     renderOverlay({ query: "abc" });
     fireEvent.keyDown(screen.getByRole("combobox"), { key: "k", metaKey: true });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+});
+
+// The preview column stands while the results list beside it keeps at least
+// the column's own width (16.10.2026): the overlay's body decides, as its
+// resize observer reports it, not the window.
+describe("SearchOverlay preview column", () => {
+  const PREVIEW = SEARCH_OVERLAY_PREVIEW_WIDTH_PX;
+  // The body as wide as two columns: the list exactly as wide as the preview.
+  const THRESHOLD = 2 * PREVIEW;
+
+  // The page's resize observers; `resizeBody` reports a new width of the
+  // overlay's body, as a frame of the page does after its layout.
+  const observers = new Set<FakeResizeObserver>();
+  class FakeResizeObserver {
+    readonly targets = new Set<Element>();
+    constructor(readonly callback: ResizeObserverCallback) {
+      observers.add(this);
+    }
+    observe(target: Element) {
+      this.targets.add(target);
+    }
+    unobserve(target: Element) {
+      this.targets.delete(target);
+    }
+    disconnect() {
+      this.targets.clear();
+      observers.delete(this);
+    }
+  }
+  const realResizeObserver = globalThis.ResizeObserver;
+  beforeEach(() => {
+    globalThis.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
+  });
+  afterEach(() => {
+    globalThis.ResizeObserver = realResizeObserver;
+    observers.clear();
+  });
+
+  function body(): HTMLElement {
+    return document.querySelector("[data-search-overlay-body]") as HTMLElement;
+  }
+
+  function resizeBody(width: number) {
+    const target = body();
+    act(() => {
+      for (const observer of [...observers]) {
+        if (!observer.targets.has(target)) continue;
+        const size = [{ inlineSize: width, blockSize: 0 }];
+        const entry: ResizeObserverEntry = {
+          target,
+          // The overlay reads the width alone.
+          contentRect: { width } as DOMRectReadOnly,
+          borderBoxSize: size,
+          contentBoxSize: size,
+          devicePixelContentBoxSize: size,
+        };
+        observer.callback([entry], observer as unknown as ResizeObserver);
+      }
+    });
+  }
+
+  function previewColumn(): HTMLElement | null {
+    return document.querySelector("[data-search-overlay-preview-column]");
+  }
+
+  async function renderResults(blocks: LightBlock[]) {
+    listGridBlocksMock.mockResolvedValue(snapshot(blocks));
+    const utils = renderOverlay({ query: "al" });
+    await waitFor(() => {
+      expect(screen.getAllByRole("option")).toHaveLength(blocks.length);
+    });
+    return utils;
+  }
+
+  it("keeps the preview while the list beside it is exactly as wide as the preview", async () => {
+    await renderResults([makeBlock(1, "alpha")]);
+    resizeBody(THRESHOLD);
+    expect(previewColumn()).not.toBeNull();
+    expect(previewColumn()).toHaveStyle({ width: `${PREVIEW}px` });
+    expect(screen.getByTestId("overlay-preview")).toHaveTextContent("alpha");
+  });
+
+  it("drops the preview one pixel narrower; the list takes the whole body", async () => {
+    await renderResults([makeBlock(1, "alpha")]);
+    resizeBody(THRESHOLD - 1);
+    expect(previewColumn()).toBeNull();
+    expect(screen.queryByTestId("overlay-preview")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-search-overlay-metadata]")).toBeNull();
+    // The list's column is all the body holds, `flex-1`: the whole width.
+    expect(body().children).toHaveLength(1);
+    expect(body().firstElementChild).toHaveClass("flex-1");
+    expect(body().firstElementChild).toContainElement(screen.getByRole("listbox"));
+  });
+
+  it("moves the active row and opens results with Enter and a click without the preview", async () => {
+    const blocks = [makeBlock(1, "alpha"), makeBlock(2, "beta")];
+    const { onOpenBlock } = await renderResults(blocks);
+    resizeBody(THRESHOLD - 1);
+    expect(previewColumn()).toBeNull();
+
+    const input = screen.getByRole("combobox");
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(screen.getAllByRole("option")[1]).toHaveAttribute("aria-selected", "true");
+    expect(input).toHaveAttribute("aria-activedescendant", "search-overlay-option-2");
+    expect(input).toHaveFocus();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onOpenBlock).toHaveBeenLastCalledWith(blocks[1]);
+
+    fireEvent.click(screen.getAllByRole("option")[0]!);
+    expect(onOpenBlock).toHaveBeenLastCalledWith(blocks[0]);
+  });
+
+  it("shows the recent sections and No results without the preview", async () => {
+    listGridBlocksMock.mockResolvedValue(
+      snapshot([makeBlock(1, "fresh", { saved_at: new Date().toISOString() })]),
+    );
+    const { rerender } = renderOverlay();
+    expect(await screen.findByText("Today")).toBeInTheDocument();
+    resizeBody(THRESHOLD - 1);
+    expect(previewColumn()).toBeNull();
+    expect(screen.getByText("fresh")).toBeInTheDocument();
+
+    listGridBlocksMock.mockResolvedValue(snapshot([]));
+    rerender(
+      <SearchOverlay
+        open
+        query="nothing"
+        vaultPath="/vault"
+        onQueryChange={vi.fn()}
+        onClose={vi.fn()}
+        onOpenBlock={vi.fn()}
+      />,
+    );
+    expect(await screen.findByText("No results")).toBeInTheDocument();
+    expect(previewColumn()).toBeNull();
+  });
+
+  it("switches live as the body is resized across the threshold, keeping the active row", async () => {
+    await renderResults([makeBlock(1, "alpha"), makeBlock(2, "beta")]);
+    resizeBody(1000);
+    expect(previewColumn()).not.toBeNull();
+
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+    resizeBody(THRESHOLD - 1);
+    expect(previewColumn()).toBeNull();
+    expect(screen.getAllByRole("option")[1]).toHaveAttribute("aria-selected", "true");
+
+    resizeBody(THRESHOLD);
+    expect(previewColumn()).not.toBeNull();
+    expect(screen.getByTestId("overlay-preview")).toHaveTextContent("beta");
   });
 });

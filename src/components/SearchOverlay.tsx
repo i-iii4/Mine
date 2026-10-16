@@ -2,7 +2,8 @@
 //
 // Modal navigation search: input header, one-line result rows (file name,
 // then the first-match text) on the left, a real read-only card preview of the active result on
-// the right. Reuses the existing hybrid-search backend contract
+// the right while the list beside it keeps at least the preview's width.
+// Reuses the existing hybrid-search backend contract
 // (`search_grid_blocks` + `search_match`) and the standalone card
 // renderer; owns no IPC beyond the debounced search request.
 
@@ -14,7 +15,9 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type RefCallback,
 } from "react";
+import { flushSync } from "react-dom";
 import { X } from "lucide-react";
 import { openLinkInBrowser } from "@/lib/systemActions";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -57,6 +60,20 @@ const SEARCH_OVERLAY_DEBOUNCE_MS = 100;
 
 /** One typed character is too noisy for vault-wide body/hybrid search. */
 export const SEARCH_OVERLAY_MIN_QUERY_CHARS = 2;
+
+/**
+ * The preview column's width, its left border and padding included
+ * (border-box). The one owner of the number: the column takes its width from
+ * it, and the overlay drops the column when the results list beside it would
+ * be narrower than the column itself (SPEC_SEARCH_OVERLAY.md, «Поверхность»).
+ */
+export const SEARCH_OVERLAY_PREVIEW_WIDTH_PX = 320;
+
+/** Whether the overlay's body, `bodyWidth` wide, holds the preview column:
+ *  the results list beside it keeps at least the column's own width. */
+function searchOverlayPreviewFits(bodyWidth: number): boolean {
+  return bodyWidth - SEARCH_OVERLAY_PREVIEW_WIDTH_PX >= SEARCH_OVERLAY_PREVIEW_WIDTH_PX;
+}
 
 function searchOverlayOptionDomId(blockId: number): string {
   return `search-overlay-option-${blockId}`;
@@ -128,6 +145,26 @@ export function SearchOverlay({
   const [menuSlug, setMenuSlug] = useState<string | null>(null);
   // ⌘K presses, answered by the active row's More menu.
   const [moreMenuRequestSequence, setMoreMenuRequestSequence] = useState(0);
+  // The preview column stands while the list beside it keeps at least the
+  // column's width. The overlay's own body decides, not the window; until
+  // the body is first measured the column stands.
+  const [previewShown, setPreviewShown] = useState(true);
+  const bodyRef = useCallback<RefCallback<HTMLDivElement>>((body) => {
+    if (!body) return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      if (!entry) return;
+      // The body has no border or padding: its content box is its width. The
+      // layout width ignores the panel's opening zoom, which a client rect
+      // would scale.
+      const fits = searchOverlayPreviewFits(entry.contentRect.width);
+      // The observer reports after layout and before paint: committing now
+      // paints the frame with the right columns, never one with a cramped list.
+      flushSync(() => setPreviewShown(fits));
+    });
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, []);
 
   const normalizedQuery = normalizeSurfaceSearchQuery(query);
   const normalizedQueryLength = Array.from(normalizedQuery).length;
@@ -613,7 +650,7 @@ export function SearchOverlay({
           )}
         </div>
 
-        <div className="flex min-h-0 flex-1">
+        <div ref={bodyRef} className="flex min-h-0 flex-1" data-search-overlay-body="">
           <div className="relative flex min-w-0 flex-1 flex-col">
           <div
             ref={resultsTopFade.ref}
@@ -672,64 +709,71 @@ export function SearchOverlay({
           {/* Two zones: the card, the feed's own card in its final hover
               state with nothing to press (SPEC_CARD_STATES.md, С10), and the
               metadata block, a bare MetadataRow list with no card chrome of
-              its own. */}
-          <div className="flex w-80 shrink-0 flex-col gap-4 overflow-y-auto border-l border-border p-4">
-            {activeBlock && (
-              <>
-                <div
-                  role="button"
-                  tabIndex={-1}
-                  aria-label="Open element"
-                  onClick={() => onOpenBlock(activeBlock)}
-                  data-search-overlay-preview
-                >
-                  <ReadOnlyCardPreview
-                    block={activeBlock}
-                    vaultPath={vaultPath}
-                    thumbsRootPath={thumbsRootPath}
-                    width={288}
-                    shadow="none"
-                  />
-                </div>
-                <div
-                  className="shrink-0"
-                  data-search-overlay-metadata
-                >
-                  <MetadataRow label="Date" spacing="compact">
-                    <span className={cn(METADATA_VALUE_BASE_CLASSES, "truncate")}>
-                      {new Date(activeBlock.saved_at).toLocaleDateString("ru-RU", {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </span>
-                  </MetadataRow>
-                  {activeBlock.url && isSafeUrl(activeBlock.url) && domainFromUrl(activeBlock.url) && (
-                    <MetadataRow label="Source" spacing="compact">
-                      <MetadataLinkValue
-                        value={domainFromUrl(activeBlock.url)}
-                        onClick={() => openLinkInBrowser(activeBlock.url!)}
-                      />
-                    </MetadataRow>
-                  )}
-                  {activeBlock.author && (
-                    <MetadataRow label="Author" spacing="compact">
+              its own. Gone while the list would be narrower than it: the
+              list then takes the whole body. */}
+          {previewShown && (
+            <div
+              className="flex shrink-0 flex-col gap-4 overflow-y-auto border-l border-border p-4"
+              style={{ width: SEARCH_OVERLAY_PREVIEW_WIDTH_PX }}
+              data-search-overlay-preview-column=""
+            >
+              {activeBlock && (
+                <>
+                  <div
+                    role="button"
+                    tabIndex={-1}
+                    aria-label="Open element"
+                    onClick={() => onOpenBlock(activeBlock)}
+                    data-search-overlay-preview
+                  >
+                    <ReadOnlyCardPreview
+                      block={activeBlock}
+                      vaultPath={vaultPath}
+                      thumbsRootPath={thumbsRootPath}
+                      width={288}
+                      shadow="none"
+                    />
+                  </div>
+                  <div
+                    className="shrink-0"
+                    data-search-overlay-metadata
+                  >
+                    <MetadataRow label="Date" spacing="compact">
                       <span className={cn(METADATA_VALUE_BASE_CLASSES, "truncate")}>
-                        {activeBlock.author}
+                        {new Date(activeBlock.saved_at).toLocaleDateString("ru-RU", {
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                        })}
                       </span>
                     </MetadataRow>
-                  )}
-                  {activeTags && activeTags.length > 0 && (
-                    <MetadataRow label="Collections" spacing="compact">
-                      <span className={cn(METADATA_VALUE_BASE_CLASSES, "whitespace-normal")}>
-                        {activeTags.join(", ")}
-                      </span>
-                    </MetadataRow>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
+                    {activeBlock.url && isSafeUrl(activeBlock.url) && domainFromUrl(activeBlock.url) && (
+                      <MetadataRow label="Source" spacing="compact">
+                        <MetadataLinkValue
+                          value={domainFromUrl(activeBlock.url)}
+                          onClick={() => openLinkInBrowser(activeBlock.url!)}
+                        />
+                      </MetadataRow>
+                    )}
+                    {activeBlock.author && (
+                      <MetadataRow label="Author" spacing="compact">
+                        <span className={cn(METADATA_VALUE_BASE_CLASSES, "truncate")}>
+                          {activeBlock.author}
+                        </span>
+                      </MetadataRow>
+                    )}
+                    {activeTags && activeTags.length > 0 && (
+                      <MetadataRow label="Collections" spacing="compact">
+                        <span className={cn(METADATA_VALUE_BASE_CLASSES, "whitespace-normal")}>
+                          {activeTags.join(", ")}
+                        </span>
+                      </MetadataRow>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
         </DropdownMenuPortalContainerProvider>
       </DialogContent>
