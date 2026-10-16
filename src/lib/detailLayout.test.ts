@@ -18,9 +18,10 @@ describe("detailLayout", () => {
   const pad = 32;
 
   it("stands the content beside the panel, centred, while both margins are at least the inset (Р2, Р3)", () => {
-    // 1400 = margin + 768 + margin + 320 + 32: each margin 140.
+    // 1400 = margin + 680 + margin + 320 + 32: each margin 184 (user's
+    // decision of 16.10.2026: the reading column 680 instead of 768).
     const layout = detailLayout(1400, pad, DETAIL_CONTENT_MAX_WIDTH_PX);
-    expect(layout).toEqual({ mode: "rail", sideMarginPx: 140 });
+    expect(layout).toEqual({ mode: "rail", sideMarginPx: 184 });
     // Centred between the left edge and the panel: the same space on both sides.
     const contentLeft = layout.sideMarginPx!;
     const contentRight = contentLeft + DETAIL_CONTENT_MAX_WIDTH_PX;
@@ -29,17 +30,17 @@ describe("detailLayout", () => {
   });
 
   it("narrows both margins equally and stacks once they would fall under the inset (Р3)", () => {
-    // 3 × 32 + 768 + 320 = 1184: both margins exactly the inset.
-    expect(detailLayout(1184, pad, 768)).toEqual({ mode: "rail", sideMarginPx: pad });
-    expect(detailLayout(1183, pad, 768)).toEqual({ mode: "stacked", sideMarginPx: null });
+    // 3 × 32 + 680 + 320 = 1096: both margins exactly the inset.
+    expect(detailLayout(1096, pad, 680)).toEqual({ mode: "rail", sideMarginPx: pad });
+    expect(detailLayout(1095, pad, 680)).toEqual({ mode: "stacked", sideMarginPx: null });
     // The margins follow the drawn content: a picture 544 wide stays beside
     // the panel down to 3 × 32 + 544 + 320 = 960.
-    expect(detailLayout(1183, pad, 544)).toEqual({ mode: "rail", sideMarginPx: 143.5 });
+    expect(detailLayout(1095, pad, 544)).toEqual({ mode: "rail", sideMarginPx: 99.5 });
     expect(detailLayout(960, pad, 544).mode).toBe("rail");
     expect(detailLayout(959, pad, 544).mode).toBe("stacked");
     // The inset follows the edge rhythm.
-    expect(detailLayout(3 * 16 + 768 + 320, 16, 768).mode).toBe("rail");
-    expect(detailLayout(3 * 16 + 768 + 319, 16, 768).mode).toBe("stacked");
+    expect(detailLayout(3 * 16 + 680 + 320, 16, 680).mode).toBe("rail");
+    expect(detailLayout(3 * 16 + 680 + 319, 16, 680).mode).toBe("stacked");
   });
 
   it("builds the rail columns as two equal flexible tracks round the content (Р2)", () => {

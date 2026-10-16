@@ -10,7 +10,7 @@ import {
   detailContentFullWidth,
   hoverPreviewBounds,
 } from "./Detail";
-import { detailLayout } from "@/lib/detailLayout";
+import { DETAIL_CONTENT_MAX_WIDTH_PX, detailLayout } from "@/lib/detailLayout";
 import type { CardAssociationGroup, CardAssociationKind, IndexedBlock, LightBlock, MediaAssetRef } from "@/types";
 import {
   DropdownMenu,
@@ -951,8 +951,8 @@ describe("Detail", () => {
   });
 
   it("uses one detail canvas grid for content spacer and fixed rail", () => {
-    // Wide enough for the 768px reading column, the 320px panel and three
-    // 32px insets (1184px).
+    // Wide enough for the 680px reading column, the 320px panel and three
+    // 32px insets (1096px).
     setViewportWidth(1400);
     const { container } = render(
       <Detail
@@ -975,27 +975,77 @@ describe("Detail", () => {
     );
 
     const rail = container.querySelector("[data-metadata-scroll]");
+    const panelColumn = container.querySelector("[data-detail-panel-column]");
     const articleColumn = container.querySelector("[data-detail-article-column]");
     expect(articleColumn).toHaveClass("col-start-2", "min-w-0");
     expect(articleColumn).not.toHaveClass("pl-2", "pl-4");
-    expect(rail).toHaveClass(
-      "col-start-4",
-      "min-w-0",
-      "overflow-y-auto",
-      "overflow-x-hidden",
-    );
+    expect(panelColumn).toHaveClass("col-start-4", "min-w-0");
+    expect(rail?.parentElement).toBe(panelColumn);
+    expect(rail).toHaveClass("min-h-0", "overflow-y-auto", "overflow-x-hidden");
     const spacer = container.querySelector("[data-detail-metadata-spacer]");
     expect(spacer).toHaveClass("col-start-4", "min-w-0");
     // The content's column is its full width; the panel never narrows it.
-    const columns = "minmax(var(--card-content-pad),1fr) 768px minmax(var(--card-content-pad),1fr) 320px var(--card-content-pad)";
-    for (const grid of [spacer?.parentElement, rail?.parentElement]) {
-      expect(grid).toHaveClass("w-full", "grid", "pt-[var(--card-content-pad)]");
+    const columns = "minmax(var(--card-content-pad),1fr) 680px minmax(var(--card-content-pad),1fr) 320px var(--card-content-pad)";
+    const scrollGrid = spacer?.parentElement;
+    const panelGrid = panelColumn?.parentElement;
+    for (const grid of [scrollGrid, panelGrid]) {
+      expect(grid).toHaveClass("w-full", "grid");
       expect((grid as HTMLElement).style.gridTemplateColumns).toBe(columns);
+    }
+    expect(scrollGrid).toHaveClass("pt-[var(--card-content-pad)]");
+    // One row as tall as the open card bounds the panel's own scroll (Р8).
+    expect(panelGrid).toHaveClass("h-full", "grid-rows-[minmax(0,1fr)]");
+  });
+
+  it("scrolls the panel beside the content on its own, with the content's band and bottom space (Р8)", async () => {
+    // The band is a dark-theme treatment; jsdom resolves to light by default.
+    document.documentElement.setAttribute("data-theme", "dark");
+    setViewportWidth(1400);
+    const { container, unmount } = render(
+      <Detail
+        block={block({ body: "Article body" })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+        scrollEdgeFade
+      />,
+    );
+    try {
+      const rail = container.querySelector("[data-metadata-scroll]") as HTMLElement;
+      // The same insets as the content's scroll, inside it.
+      expect(rail.firstElementChild).toHaveClass("pt-[var(--card-content-pad)]", "pb-20");
+      // Above the content's band: each band fades only its own surface.
+      expect(container.querySelector("[data-detail-fixed-metadata-layer]")).toHaveClass("z-10");
+      const scrim = container.querySelector('[data-top-fade-scrim="detail-panel"]') as HTMLElement;
+      // A sibling of the panel's scroll, never inside it.
+      expect(scrim.parentElement).toBe(rail.parentElement);
+      expect(rail.contains(scrim)).toBe(false);
+      expect(scrim.dataset.topFadeVisible).toBe("false");
+
+      rail.scrollTop = 120;
+      fireEvent.scroll(rail);
+
+      await waitFor(() => expect(scrim.dataset.topFadeVisible).toBe("true"));
+      expect(rail).toHaveAttribute("data-detail-panel-top-fade", "true");
+      // The content did not move: its band stays at rest.
+      expect(container.querySelector('[data-top-fade-scrim="detail"]')).toHaveAttribute("data-top-fade-visible", "false");
+    } finally {
+      // Unmounted first, so the theme's change reaches no mounted surface.
+      unmount();
+      document.documentElement.removeAttribute("data-theme");
     }
   });
 
   it("stacks at once when the full-width content, the panel and three insets do not fit", async () => {
-    setViewportWidth(1183);
+    setViewportWidth(1095);
 
     const { container } = render(
       <Detail
@@ -1030,24 +1080,57 @@ describe("Detail", () => {
       "pt-[var(--card-content-pad)]",
       "pb-20",
     );
-    // Content centred at its full width; the panel's cards under it span the
-    // whole width between the insets, whatever the content's width (Р4).
+    // Content centred at its full width; the panel's cards under it centred
+    // and no wider than the reading column, in a narrower window across the
+    // width between the insets (Р4).
     expect(articleColumn).toHaveClass("col-start-2", "mx-auto", "w-full");
-    expect((articleColumn as HTMLElement).style.maxWidth).toBe("768px");
+    expect((articleColumn as HTMLElement).style.maxWidth).toBe("680px");
     expect(stackedMetadataRow).toHaveClass(
       "col-start-2",
+      "mx-auto",
       "w-full",
       "mt-[var(--card-content-pad)]",
       "min-w-0",
     );
-    expect(stackedMetadataRow).not.toHaveClass("mx-auto");
-    expect((stackedMetadataRow as HTMLElement).style.maxWidth).toBe("");
+    expect((stackedMetadataRow as HTMLElement).style.maxWidth).toBe(`${DETAIL_CONTENT_MAX_WIDTH_PX}px`);
     expect(container.querySelector("[data-detail-fixed-metadata-layer]")).toBeNull();
     expect(container.querySelector("[data-detail-metadata-spacer]")).toBeNull();
   });
 
+  it("holds the stacked panel's cards to the reading column, not to a narrower picture (Р4)", async () => {
+    // A picture 880 × 1100 under the 85vh limit is narrower than the column,
+    // so it stacks below 3 × 32 + its width + 320.
+    setViewportWidth(900);
+    const { container } = render(
+      <Detail
+        block={block({ card_kind: "media", block_type: "image", media_file: "Media/p.jpg", url: null, width: 880, height: 1100 })}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-detail-layout-mode]")).toHaveAttribute("data-detail-layout-mode", "stacked");
+    });
+    const contentWidth = Number(container.querySelector("[data-detail-content-width]")?.getAttribute("data-detail-content-width"));
+    expect(contentWidth).toBeLessThan(DETAIL_CONTENT_MAX_WIDTH_PX);
+    const articleColumn = container.querySelector("[data-detail-article-column]") as HTMLElement;
+    const stackedMetadataRow = container.querySelector("[data-detail-stacked-metadata-row]") as HTMLElement;
+    expect(articleColumn.style.maxWidth).toBe(`${contentWidth}px`);
+    expect(stackedMetadataRow.style.maxWidth).toBe(`${DETAIL_CONTENT_MAX_WIDTH_PX}px`);
+  });
+
   it("keeps the content beside the panel up to the last pixel that fits", () => {
-    setViewportWidth(1184);
+    setViewportWidth(1096);
     const { container } = render(
       <Detail
         block={block({ body: "Article body" })}
@@ -1073,10 +1156,11 @@ describe("Detail", () => {
     expect(detailContentFullWidth({ ...picture, width: 600, height: 400 }, 1000)).toBe(600);
     // The 85vh limit: 0.85 × 800 × 880 / 1100 = 544.
     expect(detailContentFullWidth(picture, 800)).toBe(544);
-    // Never wider than the reading column.
-    expect(detailContentFullWidth({ ...picture, width: 4000, height: 1000 }, 1000)).toBe(768);
+    // Never wider than the reading column, 680 (user's decision of
+    // 16.10.2026: 680 instead of 768).
+    expect(detailContentFullWidth({ ...picture, width: 4000, height: 1000 }, 1000)).toBe(680);
     // Text keeps the reading column whatever its size.
-    expect(detailContentFullWidth(block({ body: "Article body" }), 400)).toBe(768);
+    expect(detailContentFullWidth(block({ body: "Article body" }), 400)).toBe(680);
     // The stacking rule: 3 × pad + content + 320.
     expect(detailLayout(3 * 16 + 544 + 320, 16, 544).mode).toBe("rail");
     expect(detailLayout(3 * 16 + 544 + 319, 16, 544).mode).toBe("stacked");
@@ -1099,11 +1183,11 @@ describe("Detail", () => {
     };
     expect(detailContentFullWidth(tiled, 800)).toBe(680);
     // Text under the video: the reading column.
-    expect(detailContentFullWidth({ ...clip, body: "A caption under the clip." }, 800)).toBe(768);
+    expect(detailContentFullWidth({ ...clip, body: "A caption under the clip." }, 800)).toBe(680);
     // Without a recorded size: the column, the frame learns the size inside it.
-    expect(detailContentFullWidth({ ...clip, width: null, height: null }, 800)).toBe(768);
+    expect(detailContentFullWidth({ ...clip, width: null, height: null }, 800)).toBe(680);
     // The YouTube player keeps its column.
-    expect(detailContentFullWidth(block({ card_kind: "media", block_type: "video", url: "https://www.youtube.com/watch?v=9KDDhAOyv9k", width: 1080, height: 1920 }), 800)).toBe(768);
+    expect(detailContentFullWidth(block({ card_kind: "media", block_type: "video", url: "https://www.youtube.com/watch?v=9KDDhAOyv9k", width: 1080, height: 1920 }), 800)).toBe(680);
   });
 
   it("keeps a related note's card preview inside the open card's area", () => {
@@ -1151,7 +1235,7 @@ describe("Detail", () => {
     const rail = container.querySelector("[data-metadata-scroll]");
     // Side columns and top offset follow the app-wide edge rhythm setting.
     expect(articleColumn?.parentElement).toHaveClass("pt-[var(--card-content-pad)]");
-    expect(rail?.parentElement).toHaveClass("pt-[var(--card-content-pad)]");
+    expect(rail?.firstElementChild).toHaveClass("pt-[var(--card-content-pad)]");
   });
 
   it("packs related notes into a card of the panel like the metadata card", async () => {

@@ -3,9 +3,11 @@
 // it, and a smaller window keeps the proportion (SPEC_CARD_MEDIA_GEOMETRY.md).
 // The layout (SPEC_FRONTEND.md, «Раскладка открытой карточки»): beside a
 // sidebar the content stands centred between it and the panel, the view
-// stacks when both margins reach the inset, the stacked panel cards span the
-// width, body media stand centred in the article's column, and a video's box
-// is its frame. Real layout, which the jsdom tests of Detail cannot measure.
+// stacks when both margins reach the inset, the stacked panel cards are no
+// wider than the reading column and centred, body media stand centred in the
+// article's column, a video's box is its frame, and a panel taller than the
+// window scrolls to its last card. Real layout, which the jsdom tests of
+// Detail cannot measure.
 // Starts and stops its own Vite.
 import assert from 'node:assert/strict';
 import {chromium} from 'playwright';
@@ -13,8 +15,10 @@ import {COLD_START_MS,startAuditVite} from './audit-vite.mjs';
 
 const entry='/detail-image-geometry-entry.js';
 // The sidebar beside the open card in the layout pages, and the window height
-// (85 % of it, 680, is the media height limit).
-const SIDEBAR=240,HEIGHT=800,LIMIT=0.85*HEIGHT;
+// (85 % of it, 680, is the media height limit). The reading column,
+// `DETAIL_CONTENT_MAX_WIDTH_PX` (user's decision of 16.10.2026: 680 instead
+// of 768). A window too short for the panel's cards.
+const SIDEBAR=240,HEIGHT=800,LIMIT=0.85*HEIGHT,COLUMN=680,SHORT=400;
 const vite=await startAuditVite([{
     name:'detail-image-geometry-audit',
     resolveId(id){if(id===entry)return `\0${entry}`;},
@@ -35,6 +39,7 @@ const vite=await startAuditVite([{
         article:{...base,card_kind:'article',block_type:'article',url:'https://example.com/a',body:text+'\\n\\n![[tall.mp4]]\\n\\n'+text+'\\n\\n![[small.png]]\\n\\n'+text,preview_manifest:JSON.stringify({kind:'image',primary_preview_path:'card.jpg',tiles:[{source_path:'Media/tall.mp4',preview_path:'card.preview-1.jpg',width:1080,height:1920,is_video:true,is_video_poster:true},{source_path:'Media/small.png',preview_path:'card.preview-2.jpg',width:600,height:300,is_video:false,is_video_poster:false}]})},
         image:{...base,media_file:'Media/photo.png',width:880,height:1100},
         video:{...base,block_type:'video',media_file:'Media/tall.mp4',width:1080,height:1920},
+        panel:{...base,card_kind:'article',block_type:'article',url:'https://example.com/p',author:'Author',body:text,related_notes:Array.from({length:16},(_,index)=>'Note '+(index+1))},
       };
       const block=card?cards[card]:{...base,slug:'image',title:'Image',display_title:'Image',fallback_label:'Image',media_file:'image.jpg',width:params.has('legacy')?null:width,height:params.has('legacy')?null:height};
       const noop=()=>{};
@@ -55,13 +60,14 @@ function near(actual,expected,message){assert(Math.abs(actual-expected)<=1,`${me
 /** The open card's geometry as the reader sees it. */
 async function measure(page){
   return page.evaluate(()=>{
-    const box=node=>{if(!node)return null;const r=node.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,width:r.width,height:r.height};};
+    const box=node=>{if(!node)return null;const r=node.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height};};
     const all=selector=>[...document.querySelectorAll(selector)].map(box);
     return {
       mode:document.querySelector('[data-detail-layout-mode]')?.getAttribute('data-detail-layout-mode'),
       pad:box(document.querySelector('[data-detail-pad-probe]')).width,
       main:box(document.querySelector('main')),
       column:box(document.querySelector('[data-detail-article-column]')),
+      scroll:box(document.querySelector('[data-detail-scroll]')),
       panel:box(document.querySelector('[data-metadata-scroll]')),
       panelCards:all('[data-detail-panel-card]'),
       image:box(document.querySelector('[data-detail-image]')),
@@ -81,15 +87,19 @@ function assertCentredBesidePanel(geometry,content,label){
   return left;
 }
 
-/** Stacked: the content centred, the panel cards across the whole width. */
+/** Stacked: the content centred; under it the panel cards centred, as wide
+ *  as the reading column, or across the width between the insets when that
+ *  is narrower (Р4). Whether the reading column held them. */
 function assertStacked(geometry,content,label){
   assert.equal(geometry.mode,'stacked',`${label}: stacked`);
   near(content.left-geometry.main.left,geometry.main.right-content.right,`${label}: content centred`);
   assert(geometry.panelCards.length>0,`${label}: panel cards under the content`);
+  const between=geometry.main.width-2*geometry.pad,held=between>COLUMN;
   for(const card of geometry.panelCards){
-    near(card.left,geometry.main.left+geometry.pad,`${label}: panel card from the left inset`);
-    near(card.width,geometry.main.width-2*geometry.pad,`${label}: panel card across the width`);
+    near(card.width,held?COLUMN:between,`${label}: panel card ${held?'as wide as the reading column':'across the width between the insets'}`);
+    near(card.left-geometry.main.left,geometry.main.right-card.right,`${label}: panel card centred`);
   }
+  return held;
 }
 
 /** A video's element is its frame, in its own proportion, under the limit. */
@@ -134,12 +144,12 @@ try{
   }
 
   // The layout. Each card at window widths round its threshold
-  // 3 × pad + W + 320 + sidebar (pad 32): the reading column 768 (1424),
+  // 3 × pad + W + 320 + sidebar (pad 32): the reading column 680 (1336),
   // a picture 880 × 1100 at 544 (1200), a portrait video 1080 × 1920 at 383
   // (1039).
   const images={'photo.png':[880,1100],'small.png':[600,300]};
-  async function openCard(card,width){
-    const page=await browser.newPage({viewport:{width,height:HEIGHT}});
+  async function openCard(card,width,height=HEIGHT){
+    const page=await browser.newPage({viewport:{width,height}});
     const errors=[];page.on('pageerror',error=>errors.push(error.message));
     await page.route('**/media/*',async route=>{
       const name=decodeURIComponent(new URL(route.request().url()).pathname.split('/').pop());
@@ -157,14 +167,15 @@ try{
 
   {
     const {page,errors,resize}=await openCard('article',1600);
-    for(const width of [1600,1424,1423,1000]){
+    for(const width of [1600,1336,1335,900]){
       const geometry=await resize(width);
       const label=`article at ${width}`;
-      if(width>=1424){
+      if(width>=1336){
         const margin=assertCentredBesidePanel(geometry,geometry.column,label);
-        if(width===1424)near(margin,geometry.pad,`${label}: margins at the inset on the last width beside the panel`);
+        if(width===1336)near(margin,geometry.pad,`${label}: margins at the inset on the last width beside the panel`);
       }else{
-        assertStacked(geometry,geometry.column,label);
+        // Stacked at 1335 the area is wider than the column, at 900 not.
+        assert.equal(assertStacked(geometry,geometry.column,label),width===1335,`${label}: panel cards held by the reading column`);
       }
       assert.equal(geometry.bodyMedia.length,2,`${label}: both body media`);
       for(const media of geometry.bodyMedia)near(media.left-geometry.column.left,geometry.column.right-media.right,`${label}: body media centred in the column`);
@@ -173,7 +184,7 @@ try{
       near(geometry.videos[0].frame.height,LIMIT,`${label}: portrait body video at the height limit`);
     }
     assert.deepEqual(errors,[]);
-    console.log('PASS article: centred beside the panel at 1600 and 1424, stacked at 1423 and 1000 with full-width panel cards, body media centred, body video box is its frame');
+    console.log('PASS article: centred beside the panel at 1600 and 1336, stacked at 1335 with panel cards 680 wide and centred and at 900 across the width between the insets, body media centred, body video box is its frame');
     await page.close();
   }
 
@@ -187,11 +198,11 @@ try{
         const margin=assertCentredBesidePanel(geometry,geometry.image,label);
         if(width===1200)near(margin,geometry.pad,`${label}: margins at the inset`);
       }else{
-        assertStacked(geometry,geometry.image,label);
+        assert(assertStacked(geometry,geometry.image,label),`${label}: panel cards held by the reading column`);
       }
     }
     assert.deepEqual(errors,[]);
-    console.log('PASS picture: centred beside the panel at 1600 and 1200, stacked at 1199');
+    console.log('PASS picture: centred beside the panel at 1600 and 1200, stacked at 1199 with panel cards 680 wide and centred');
     await page.close();
   }
 
@@ -207,11 +218,44 @@ try{
         const margin=assertCentredBesidePanel(geometry,video.frame,label);
         if(width===1039)near(margin,geometry.pad,`${label}: margins at the inset`);
       }else{
-        assertStacked(geometry,video.frame,label);
+        assert(assertStacked(geometry,video.frame,label),`${label}: panel cards held by the reading column`);
       }
     }
     assert.deepEqual(errors,[]);
-    console.log('PASS video: box is its frame, centred beside the panel at 1600 and 1039, stacked at 1038');
+    console.log('PASS video: box is its frame, centred beside the panel at 1600 and 1039, stacked at 1038 with panel cards 680 wide and centred');
+    await page.close();
+  }
+
+  // The panel's own scroll (Р8): in a window too short for its cards the
+  // column is as tall as the open card and scrolls under the pointer to its
+  // last card.
+  {
+    const {page,errors}=await openCard('panel',1600,SHORT);
+    await page.waitForFunction(()=>document.querySelectorAll('[data-related-note-item]').length===16,null,{timeout:COLD_START_MS});
+    const rest=await measure(page);
+    assert.equal(rest.mode,'rail','panel: beside the content');
+    near(rest.panel.top,rest.scroll.top,'panel: from the top of the open card');
+    near(rest.panel.bottom,rest.scroll.bottom,'panel: down to its bottom, no lower');
+    const [first]=rest.panelCards,last=rest.panelCards.at(-1);
+    assert(last.bottom>rest.panel.bottom,`panel: the last card under the bottom edge at rest (${last.bottom} against ${rest.panel.bottom})`);
+    await page.mouse.move(first.left+first.width/2,first.top+first.height/2);
+    for(let turn=0;turn<10;turn+=1){
+      await page.mouse.wheel(0,400);
+      if(await page.evaluate(()=>{const node=document.querySelector('[data-metadata-scroll]');return node.scrollTop+node.clientHeight>=node.scrollHeight-1;}))break;
+      await page.waitForTimeout(50);
+    }
+    await page.waitForFunction(()=>{const node=document.querySelector('[data-metadata-scroll]');return node.scrollTop>0&&node.scrollTop+node.clientHeight>=node.scrollHeight-1;},null,{timeout:5000});
+    // The last card may be taller than the window: its end is what must
+    // come into view, and the pointer must reach what shows of it.
+    const end=await measure(page),lastAtEnd=end.panelCards.at(-1);
+    assert(lastAtEnd.bottom>end.panel.top&&lastAtEnd.bottom<=end.panel.bottom,`panel: the end of the last card in view at the end (${lastAtEnd.bottom} in ${end.panel.top} to ${end.panel.bottom})`);
+    assert(await page.evaluate(()=>{
+      const last=[...document.querySelectorAll('[data-detail-panel-card]')].at(-1),box=last.getBoundingClientRect();
+      const top=Math.max(box.top,document.querySelector('[data-metadata-scroll]').getBoundingClientRect().top);
+      return last.contains(document.elementFromPoint(box.left+box.width/2,(top+box.bottom)/2));
+    }),'panel: the pointer reaches the last card');
+    assert.deepEqual(errors,[]);
+    console.log(`PASS panel: at 1600 × ${SHORT} the column is the open card's height and scrolls under the pointer to its last card`);
     await page.close();
   }
 }finally{await browser?.close();await vite.close();}

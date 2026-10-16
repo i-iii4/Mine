@@ -185,12 +185,18 @@ import { openLinkInBrowser, revealInFinder } from "@/lib/systemActions";
 // space from the content. The content stands at its full width centred
 // between the sidebar and the fixed 20rem panel while the equal margins on
 // either side of it are at least one inset; past that the view stacks at
-// once, content centred and the panel's cards under it across the whole
-// width. Scroll content and fixed metadata share one grid; insets and the
-// top offset follow the app-wide edge rhythm.
+// once, content centred and the panel's cards under it, centred and no wider
+// than the reading column. Scroll content and fixed metadata share one grid's
+// columns; insets and the top offset follow the app-wide edge rhythm.
 const DETAIL_RAIL_GRID_CLASSES = "grid w-full pt-[var(--card-content-pad)]";
+/// The fixed panel layer's grid: one row as tall as the open card, so the
+/// panel's column is bounded by it and scrolls its own cards (Р8). The top
+/// inset lives inside the panel's scroll, as the content's does.
+const DETAIL_PANEL_LAYER_GRID_CLASSES = "grid h-full w-full grid-rows-[minmax(0,1fr)]";
 const DETAIL_STACKED_LAYOUT_CLASSES =
   "grid w-full grid-cols-[var(--card-content-pad)_minmax(0,1fr)_var(--card-content-pad)] pt-[var(--card-content-pad)]";
+/// Stacked, the panel's cards are no wider than the reading column (Р4).
+const DETAIL_STACKED_PANEL_STYLE: CSSProperties = { maxWidth: DETAIL_CONTENT_MAX_WIDTH_PX };
 /// `--card-content-pad` until its probe is measured: the default edge rhythm.
 const DETAIL_CONTENT_PAD_FALLBACK_PX = 32;
 /// The height limit every media frame of the open card reads (Р7).
@@ -522,6 +528,7 @@ export function Detail({
 
   const panelRef = useRef<HTMLDivElement>(null);
   const topFade = useTopFadeMask(panelRef, scrollEdgeFade);
+  const panelTopFade = useTopFadeMask(undefined, scrollEdgeFade);
 
   // ESC closes Detail. Arrow keys remain native to the reading surface.
   useEffect(() => {
@@ -669,10 +676,12 @@ export function Detail({
               />
             </div>
             {isStackedLayout ? (
-              // The panel's cards span the whole width between the insets,
-              // whatever the content's width (Р4).
+              // The panel's cards under the content, centred and no wider
+              // than the reading column, whatever the content's width; in a
+              // narrower window across the width between the insets (Р4).
               <div
-                className="col-start-2 mt-[var(--card-content-pad)] w-full min-w-0"
+                className="col-start-2 mx-auto mt-[var(--card-content-pad)] w-full min-w-0"
+                style={DETAIL_STACKED_PANEL_STYLE}
                 data-detail-stacked-metadata-row
               >
                 <MetadataPanel
@@ -702,36 +711,48 @@ export function Detail({
         </div>
 
         {!isStackedLayout && (
-          /* Layer 2: Fixed metadata (same layout, doesn't scroll) */
+          /* Layer 2: the panel, fixed while the content scrolls, with its own
+             scroll when its cards are taller than the open card (Р8). Above
+             the content's band, so each band fades only its own surface. */
           <div
-            className="pointer-events-none absolute inset-0 overflow-hidden"
+            className="pointer-events-none absolute inset-0 z-10 overflow-hidden"
             data-detail-fixed-metadata-layer
           >
             <div
-              className={layoutClasses}
+              className={DETAIL_PANEL_LAYER_GRID_CLASSES}
               style={layoutStyle}
               data-detail-layout-grid="metadata"
             >
               <div className="col-start-2 min-w-0" />
-              <div
-                className="pointer-events-auto col-start-4 min-w-0 overflow-y-auto overflow-x-hidden"
-                data-metadata-scroll
-              >
-                <MetadataPanel
-                  block={block}
-                  fullBlock={fullBlock}
-                  formattedDate={formattedDate}
-                  vaultPath={vaultPath}
-                  thumbsRootPath={thumbsRootPath}
-                  tags={tags}
-                  currentTag={currentTag}
-                  onToggleTag={onToggleTag}
-                  onCreateAndAssign={onCreateAndAssign}
-                  onRequestRename={onRequestRename}
-                  onRequestDelete={onRequestDelete}
-                  onOpenRelatedNote={onOpenRelatedNote}
-                  onOpenAuthorFeed={onOpenAuthorFeed}
-                />
+              <div className="relative col-start-4 flex min-w-0 flex-col" data-detail-panel-column>
+                {/* As tall as its cards and insets, up to the open card's
+                    height; under a short panel the content scrolls as
+                    before. */}
+                <div
+                  ref={panelTopFade.ref}
+                  className="pointer-events-auto min-h-0 overflow-y-auto overflow-x-hidden"
+                  data-metadata-scroll
+                  data-detail-panel-top-fade={panelTopFade.scrolled ? "true" : undefined}
+                >
+                  <div className={cn("pt-[var(--card-content-pad)]", DETAIL_BOTTOM_SAFE_SPACE_CLASS)}>
+                    <MetadataPanel
+                      block={block}
+                      fullBlock={fullBlock}
+                      formattedDate={formattedDate}
+                      vaultPath={vaultPath}
+                      thumbsRootPath={thumbsRootPath}
+                      tags={tags}
+                      currentTag={currentTag}
+                      onToggleTag={onToggleTag}
+                      onCreateAndAssign={onCreateAndAssign}
+                      onRequestRename={onRequestRename}
+                      onRequestDelete={onRequestDelete}
+                      onOpenRelatedNote={onOpenRelatedNote}
+                      onOpenAuthorFeed={onOpenAuthorFeed}
+                    />
+                  </div>
+                </div>
+                <TopFadeScrim scrolled={panelTopFade.scrolled} surface="detail-panel" color="var(--background)" />
               </div>
             </div>
           </div>

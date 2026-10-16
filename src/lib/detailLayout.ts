@@ -4,9 +4,11 @@ import type { CSSProperties } from "react";
 // «Раскладка открытой карточки»; user's decisions of 07.10.2026 and
 // 16.10.2026). The component measures; these rules decide.
 
-/** The reading column, `48rem`: the content's full width, unless a lone
- *  picture or video is narrower (Р1). */
-export const DETAIL_CONTENT_MAX_WIDTH_PX = 768;
+/** The reading column, `680px` (user's decision of 16.10.2026: 680 instead
+ *  of 768, as Medium's; the article's type is unchanged): the content's full
+ *  width, unless a lone picture or video is narrower (Р1). The one owner of
+ *  the width: the stacking threshold and the stacked panel follow it. */
+export const DETAIL_CONTENT_MAX_WIDTH_PX = 680;
 
 /** The panel's column beside the content, `20rem`. */
 export const DETAIL_RAIL_WIDTH_PX = 320;
