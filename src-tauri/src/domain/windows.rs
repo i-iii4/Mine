@@ -140,8 +140,12 @@ pub const WINDOW_MIN_WIDTH_PX: u32 = 390;
 /// the smallest card and two side insets, 304).
 pub const APP_MAIN_MIN_WIDTH_PX: u32 = WINDOW_MIN_WIDTH_PX;
 // The narrowest window holds the narrowest sidebar over the feed with its
-// strip.
-const _: () = assert!(WINDOW_MIN_WIDTH_PX >= SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX);
+// strip, and is narrower than the threshold of the sidebar over the feed
+// (`S_min + F_min`, 704), so it always shows the sidebar over the feed.
+const _: () = assert!(
+    WINDOW_MIN_WIDTH_PX >= SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX
+        && WINDOW_MIN_WIDTH_PX < SIDEBAR_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX
+);
 /// Smallest content size of a tab window. Across: [`WINDOW_MIN_WIDTH_PX`].
 /// Down: the old main window's minimum and the tab bar above it.
 pub const WINDOW_MIN_WIDTH: f64 = WINDOW_MIN_WIDTH_PX as f64;
