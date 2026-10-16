@@ -1,7 +1,6 @@
 import { collectionRefLabel } from "@/lib/collections";
 import { SYSTEM_SANS_STACK } from "@/lib/fontChoice";
 import { parsePreviewManifest } from "@/lib/cardLayout";
-import { dimmedOpacityFromScrim } from "./hoverDim";
 import {
   graphFullThumbnailUrl,
   graphThumbLevelFor,
@@ -340,12 +339,6 @@ export function readGraphCanvasTheme(mode: "light" | "dark"): GraphCanvasTheme {
   // class's for the rest of the probe's life.
   probe.style.backgroundColor = "var(--background)";
   const canvasFill = resolvedCanvasColor(getComputedStyle(probe).backgroundColor, fallback.canvasFill);
-  // The dimmed share is the scrim's, the one way the interface pushes
-  // something back (SPEC_COLOR_RULES.md, 3.9.1): read from the token, not
-  // written here a second time.
-  probe.style.backgroundColor = "var(--scrim-color)";
-  const dimmedOpacity = dimmedOpacityFromScrim(getComputedStyle(probe).backgroundColor)
-    ?? fallback.dimmedOpacity;
   probe.remove();
 
   return {
@@ -359,13 +352,8 @@ export function readGraphCanvasTheme(mode: "light" | "dark"): GraphCanvasTheme {
     foregroundText,
     hoverOutline,
     canvasFill,
-    dimmedOpacity,
   };
 }
-
-// 1 minus the 32 % of `--scrim-color` (global.css), for the case the token
-// cannot be read.
-const DIMMED_OPACITY_FALLBACK = 0.68;
 
 function graphCanvasThemeFallback(mode: "light" | "dark"): GraphCanvasTheme {
   return mode === "dark"
@@ -378,7 +366,6 @@ function graphCanvasThemeFallback(mode: "light" | "dark"): GraphCanvasTheme {
         foregroundText: "#fafafa",
         hoverOutline: "#343434",
         canvasFill: "#090909",
-        dimmedOpacity: DIMMED_OPACITY_FALLBACK,
       }
     : {
         ...GRAPH_PALETTE.light,
@@ -389,7 +376,6 @@ function graphCanvasThemeFallback(mode: "light" | "dark"): GraphCanvasTheme {
         foregroundText: "#0a0a0a",
         hoverOutline: "#e7e7e7",
         canvasFill: "#ffffff",
-        dimmedOpacity: DIMMED_OPACITY_FALLBACK,
       };
 }
 

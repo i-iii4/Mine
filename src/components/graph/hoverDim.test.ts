@@ -3,11 +3,10 @@
 // decision of 16.10.2026).
 
 import { describe, expect, it } from "vitest";
+import { DEEMPHASIZED_OPACITY } from "@/lib/colorLaw";
 import {
   beginDimTransition,
   colorAtOpacity,
-  cssColorAlpha,
-  dimmedOpacityFromScrim,
   dimProgressAt,
   graphElementOpacity,
   graphHoverHighlight,
@@ -74,7 +73,10 @@ describe("graphHoverHighlight", () => {
 });
 
 describe("graphElementOpacity", () => {
-  const DIMMED = 0.68;
+  const DIMMED = DEEMPHASIZED_OPACITY;
+  // Half-way between lit and dimmed, and a quarter of the way back from there.
+  const HALF = (1 + DIMMED) / 2;
+  const THREE_QUARTERS = 1 - (1 - DIMMED) / 4;
 
   it("draws everything as it is while nothing is hovered", () => {
     const rest = restingDimTransition();
@@ -103,17 +105,17 @@ describe("graphElementOpacity", () => {
     );
     research.progress = 0.5;
     // b leaves the lit part, c joins it, a stays in both.
-    expect(graphElementOpacity(research, "node", "card:b", DIMMED)).toBeCloseTo(0.84);
-    expect(graphElementOpacity(research, "node", "card:c", DIMMED)).toBeCloseTo(0.84);
+    expect(graphElementOpacity(research, "node", "card:b", DIMMED)).toBeCloseTo(HALF);
+    expect(graphElementOpacity(research, "node", "card:c", DIMMED)).toBeCloseTo(HALF);
     expect(graphElementOpacity(research, "node", "card:a", DIMMED)).toBe(1);
 
     // Leaving half-way turns back from where b and c stand, not from where
     // the fade was heading.
     const leaving = beginDimTransition(research, null, 2_000, 100);
-    expect(graphElementOpacity(leaving, "node", "card:b", DIMMED)).toBeCloseTo(0.84);
-    expect(graphElementOpacity(leaving, "node", "card:c", DIMMED)).toBeCloseTo(0.84);
+    expect(graphElementOpacity(leaving, "node", "card:b", DIMMED)).toBeCloseTo(HALF);
+    expect(graphElementOpacity(leaving, "node", "card:c", DIMMED)).toBeCloseTo(HALF);
     leaving.progress = 0.5;
-    expect(graphElementOpacity(leaving, "node", "card:b", DIMMED)).toBeCloseTo(0.92);
+    expect(graphElementOpacity(leaving, "node", "card:b", DIMMED)).toBeCloseTo(THREE_QUARTERS);
     leaving.progress = 1;
     expect(graphElementOpacity(leaving, "node", "card:b", DIMMED)).toBe(1);
     expect(graphElementOpacity(leaving, "node", "card:c", DIMMED)).toBe(1);
@@ -145,30 +147,19 @@ describe("graphElementOpacity", () => {
 });
 
 describe("dimmed colours", () => {
-  it("reads the scrim's share from every form a browser resolves the token to", () => {
-    expect(dimmedOpacityFromScrim("oklch(1 0 0 / 0.32)")).toBeCloseTo(0.68);
-    expect(dimmedOpacityFromScrim("color(srgb 1 1 1 / 32%)")).toBeCloseTo(0.68);
-    expect(dimmedOpacityFromScrim("rgba(255, 255, 255, 0.32)")).toBeCloseTo(0.68);
-  });
-
-  it("refuses what is not a translucent colour, so the fallback holds", () => {
-    expect(dimmedOpacityFromScrim("var(--scrim-color)")).toBeNull();
-    expect(dimmedOpacityFromScrim("")).toBeNull();
-    expect(dimmedOpacityFromScrim("rgba(0, 0, 0, 0)")).toBeNull();
-    expect(dimmedOpacityFromScrim("oklch(1 0 0)")).toBeNull();
-    expect(cssColorAlpha("oklch(0.9394 0 0)")).toBe(1);
-  });
+  const DIMMED = DEEMPHASIZED_OPACITY;
+  const half = String(Number((DIMMED / 2).toFixed(4)));
 
   it("writes a line colour at the dimmed opacity in the form it came in", () => {
-    expect(colorAtOpacity("oklch(0.243 0 0)")(0.68)).toBe("oklch(0.243 0 0 / 0.68)");
-    expect(colorAtOpacity("rgb(238, 238, 238)")(0.68)).toBe("rgba(238, 238, 238, 0.68)");
-    expect(colorAtOpacity("rgba(238, 238, 238, 0.5)")(0.68)).toBe("rgba(238, 238, 238, 0.34)");
-    expect(colorAtOpacity("#eeeeee")(0.68)).toBe("rgba(238, 238, 238, 0.68)");
+    expect(colorAtOpacity("oklch(0.243 0 0)")(DIMMED)).toBe(`oklch(0.243 0 0 / ${DIMMED})`);
+    expect(colorAtOpacity("rgb(238, 238, 238)")(DIMMED)).toBe(`rgba(238, 238, 238, ${DIMMED})`);
+    expect(colorAtOpacity("rgba(238, 238, 238, 0.5)")(DIMMED)).toBe(`rgba(238, 238, 238, ${half})`);
+    expect(colorAtOpacity("#eeeeee")(DIMMED)).toBe(`rgba(238, 238, 238, ${DIMMED})`);
     expect(colorAtOpacity("color(srgb 0.9 0.9 0.9 / 50%)")(0.5)).toBe("color(srgb 0.9 0.9 0.9 / 0.25)");
   });
 
   it("leaves a lit line and a colour it cannot read as they are", () => {
     expect(colorAtOpacity("oklch(0.243 0 0)")(1)).toBe("oklch(0.243 0 0)");
-    expect(colorAtOpacity("var(--border)")(0.68)).toBe("var(--border)");
+    expect(colorAtOpacity("var(--border)")(DIMMED)).toBe("var(--border)");
   });
 });

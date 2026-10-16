@@ -14,6 +14,7 @@ import userEvent from "@testing-library/user-event";
 import { GraphView, type GraphViewHandle } from "./GraphView";
 import { GraphDisplayMenu } from "./GraphDisplayMenu";
 import { reloadGraphPreferences, useGraphPreferences } from "@/lib/graphPreferences";
+import { DEEMPHASIZED_OPACITY } from "@/lib/colorLaw";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { HOVER_PREVIEW_COLD_OPEN_DELAY_MS, HOVER_PREVIEW_WARM_WINDOW_MS } from "@/lib/hoverPreviewTiming";
 import { indexedBlock, lightBlock } from "@/test/blocks";
@@ -1354,7 +1355,7 @@ describe("GraphView", () => {
     expect(hovered[0]).not.toBe(rest[0]);
   });
 
-  it("dims all but a hovered collection, its cards and its membership lines; a card dims nothing (16.10.2026)", async () => {
+  it("dims all but the attended collection, its cards and its membership lines, by the hover intent engine; a card dims nothing (16.10.2026)", async () => {
     // SPEC_GRAPH_VIEW.md, «Приглушение при наведении на коллекцию». The theme
     // probe resolves the line as a browser would: jsdom leaves `var()` as it is.
     const realComputedStyle = window.getComputedStyle.bind(window);
@@ -1438,47 +1439,123 @@ describe("GraphView", () => {
         return alpha;
       };
       const ids = ["collection:Design", "collection:Research", "card:a", "card:b", "card:c"];
-      // Off a pill onto the empty canvas, which unhovers it.
       const canvas = () => screen.getByTestId("force-graph");
+      const node = (name: string) => screen.getByRole("button", { name });
+      // Off a node onto the empty canvas, which unhovers it.
+      const leaveForCanvas = (name: string) => fireEvent.mouseLeave(node(name), { relatedTarget: canvas() });
       const alphas = () => Object.fromEntries(ids.map((id) => [id, alphaOf(id)]));
       const colorOf = (id: string) => linkColorSpy.current?.(links.find((link) => link.id === id)!);
       const lit = colorOf("membership:Design:a");
+      // The layout's first reheat waits for a frame: let it pass before the
+      // count that dimming must leave alone.
+      await act(() => new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      }));
       const reheats = graphMethodMocks.d3ReheatSimulation.mock.calls.length;
       const atRest = alphas();
       expect(Object.values(atRest).every((alpha) => alpha === 1)).toBe(true);
 
-      fireEvent.mouseEnter(screen.getByRole("button", { name: "Design" }));
-      const dimmed = alphas();
-      expect(dimmed["collection:Design"]).toBe(1);
-      expect(dimmed["card:a"]).toBe(1);
-      expect(dimmed["card:b"]).toBe(1);
-      expect(dimmed["collection:Research"]).toBeLessThan(1);
-      expect(dimmed["collection:Research"]).toBeGreaterThan(0.5);
-      expect(dimmed["card:c"]).toBe(dimmed["collection:Research"]);
-      expect(colorOf("membership:Design:a")).toBe(lit);
-      expect(colorOf("membership:Design:b")).toBe(lit);
-      // Strict: neither the wikilink between two of its cards nor a member's
-      // line to another collection belongs to the hovered collection.
-      expect(colorOf("wikilink:a:b")).not.toBe(lit);
-      expect(colorOf("membership:Research:a")).not.toBe(lit);
-      expect(colorOf("membership:Research:c")).toBe(colorOf("wikilink:a:b"));
-      // Dimming is paint only: the layout is not woken.
-      expect(graphMethodMocks.d3ReheatSimulation.mock.calls.length).toBe(reheats);
+      const settle = async (ms: number) => {
+        await act(async () => {
+          vi.advanceTimersByTime(ms);
+          await Promise.resolve();
+        });
+      };
+      // The pointer moves along y = 10 over the graph, one step a frame.
+      let pointerX = 0;
+      const step = async (dx: number) => {
+        await settle(16);
+        pointerX += dx;
+        fireEvent.pointerMove(canvas(), { clientX: pointerX, clientY: 10 });
+      };
 
-      fireEvent.mouseLeave(screen.getByRole("button", { name: "Design" }), { relatedTarget: canvas() });
-      expect(alphas()).toEqual(atRest);
-      expect(colorOf("wikilink:a:b")).toBe(lit);
+      // The dimming answers the shared hover intent engine, not the raw hover
+      // (SPEC_CARD_STATES.md, С7; SPEC_GRAPH_VIEW.md, «Hover»).
+      vi.useFakeTimers({
+        toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "Date", "requestAnimationFrame", "cancelAnimationFrame"],
+      });
+      try {
+        // A sweep straight across Design dims nothing, on the way or after.
+        fireEvent.mouseEnter(node("Design"));
+        for (let elapsed = 0; elapsed < HOVER_INTENT.dwellMs * 2; elapsed += 16) {
+          await step(40);
+          expect(alphas()).toEqual(atRest);
+        }
+        leaveForCanvas("Design");
+        for (let elapsed = 0; elapsed < HOVER_INTENT.dwellMs; elapsed += 16) await step(40);
+        await settle(HOVER_INTENT.warmMs * 2);
+        expect(alphas()).toEqual(atRest);
 
-      // A selected card outside the hovered part dims like any other node.
-      fireEvent.click(screen.getByRole("button", { name: "Card C" }));
-      fireEvent.mouseEnter(screen.getByRole("button", { name: "Design" }));
-      expect(alphaOf("card:c")).toBe(dimmed["card:c"]);
-      fireEvent.mouseLeave(screen.getByRole("button", { name: "Design" }), { relatedTarget: canvas() });
+        // A pointer resting on Design dims the rest after the engine's dwell,
+        // not before.
+        fireEvent.mouseEnter(node("Design"));
+        await settle(HOVER_INTENT.dwellMs - 20);
+        expect(alphas()).toEqual(atRest);
+        await settle(40);
+        const dimmed = alphas();
+        expect(dimmed["collection:Design"]).toBe(1);
+        expect(dimmed["card:a"]).toBe(1);
+        expect(dimmed["card:b"]).toBe(1);
+        expect(dimmed["collection:Research"]).toBe(DEEMPHASIZED_OPACITY);
+        expect(dimmed["card:c"]).toBe(DEEMPHASIZED_OPACITY);
+        expect(colorOf("membership:Design:a")).toBe(lit);
+        expect(colorOf("membership:Design:b")).toBe(lit);
+        // Strict: neither the wikilink between two of its cards nor a member's
+        // line to another collection belongs to the hovered collection.
+        expect(colorOf("wikilink:a:b")).not.toBe(lit);
+        expect(colorOf("membership:Research:a")).not.toBe(lit);
+        expect(colorOf("membership:Research:c")).toBe(colorOf("wikilink:a:b"));
+        // Dimming is paint only: the layout is not woken.
+        expect(graphMethodMocks.d3ReheatSimulation.mock.calls.length).toBe(reheats);
 
-      fireEvent.mouseEnter(screen.getByRole("button", { name: "Card A" }));
-      expect(alphas()).toEqual(atRest);
-      expect(colorOf("wikilink:a:b")).toBe(lit);
-      expect(colorOf("membership:Research:c")).toBe(lit);
+        // Once Design has answered, its neighbour Research takes over at once,
+        // and so does Design again.
+        leaveForCanvas("Design");
+        fireEvent.mouseEnter(node("Research"));
+        await settle(0);
+        expect(alphaOf("collection:Research")).toBe(1);
+        expect(alphaOf("card:c")).toBe(1);
+        expect(alphaOf("card:b")).toBe(DEEMPHASIZED_OPACITY);
+        expect(alphaOf("collection:Design")).toBe(DEEMPHASIZED_OPACITY);
+        leaveForCanvas("Research");
+        fireEvent.mouseEnter(node("Design"));
+        await settle(0);
+        expect(alphas()).toEqual(dimmed);
+
+        // A dragged node answers nothing: the dimming clears at once and
+        // comes back after the dwell once the node is dropped (С7.8).
+        fireEvent.click(screen.getByTestId("graph-node-drag"));
+        await settle(0);
+        expect(alphas()).toEqual(atRest);
+        fireEvent.click(screen.getByTestId("graph-node-drag-end"));
+        await settle(HOVER_INTENT.dwellMs + 20);
+        expect(alphas()).toEqual(dimmed);
+
+        // Leaving for the empty canvas clears it after the leave grace.
+        leaveForCanvas("Design");
+        await settle(HOVER_INTENT.leaveGraceMs - 20);
+        expect(alphas()).toEqual(dimmed);
+        await settle(40);
+        expect(alphas()).toEqual(atRest);
+        expect(colorOf("wikilink:a:b")).toBe(lit);
+
+        // A selected card outside the hovered part dims like any other node.
+        fireEvent.click(node("Card C"));
+        fireEvent.mouseEnter(node("Design"));
+        await settle(HOVER_INTENT.dwellMs + 20);
+        expect(alphaOf("card:c")).toBe(DEEMPHASIZED_OPACITY);
+        leaveForCanvas("Design");
+        await settle(HOVER_INTENT.leaveGraceMs + 20);
+
+        // A card dims nothing, however long the pointer rests on it.
+        fireEvent.mouseEnter(node("Card A"));
+        await settle(HOVER_INTENT.dwellMs * 2);
+        expect(alphas()).toEqual(atRest);
+        expect(colorOf("wikilink:a:b")).toBe(lit);
+        expect(colorOf("membership:Research:c")).toBe(lit);
+      } finally {
+        vi.useRealTimers();
+      }
     } finally {
       computedStyle.mockRestore();
     }

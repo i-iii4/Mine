@@ -7,6 +7,7 @@ import {
   compositeLightness,
   contrastRatio,
   darkSignalDelta,
+  DEEMPHASIZED_OPACITY,
   FORM_RATIO,
   gamutChroma,
   greyFromOklch,
@@ -294,6 +295,21 @@ describe("tokens follow the colour rules", () => {
     expect(percent(soft["--destructive-fill-hover-alpha"])).toBeCloseTo(hover * 100, 1);
     const fill = over(ink, hover, greyFromOklch(SOFT + FLOATING_LEVEL * ZONE_STEP.light));
     expect(contrastRatio(rgbFromOklch(l!, c!, h!), fill)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("de-emphasizes to the platforms' secondary emphasis, one share in both themes (K13, 3.9.4, 16.10.2026)", () => {
+    // iOS secondaryLabel and Material's medium emphasis are 0.6; macOS
+    // secondaryLabelColor over labelColor is 0.498 / 0.847.
+    expect(DEEMPHASIZED_OPACITY).toBe(0.6);
+    expect(0.498 / 0.847).toBeCloseTo(DEEMPHASIZED_OPACITY, 1);
+    // Readable, not unavailable: above the tertiary step and Material's
+    // disabled 0.38.
+    expect(DEEMPHASIZED_OPACITY).toBeGreaterThan(Math.max(K8, 0.38));
+    // One owner: the graph takes the share from the law and reads no scrim.
+    expect(readFileSync("src/components/GraphView.tsx", "utf8")).toContain("DEEMPHASIZED_OPACITY");
+    for (const file of ["src/components/graph/canvas.ts", "src/components/graph/hoverDim.ts", "src/components/GraphView.tsx"]) {
+      expect(readFileSync(file, "utf8"), file).not.toContain("--scrim-color");
+    }
   });
 
   it("dims under the scrim by the canvas of each theme at 32 % (3.9.1, 16.10.2026)", () => {

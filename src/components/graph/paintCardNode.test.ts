@@ -2,6 +2,7 @@
 // thumbnail, the frame of a secondary button (DESIGN_SYSTEM.md, «Граф»).
 
 import { describe, expect, it } from "vitest";
+import { DEEMPHASIZED_OPACITY } from "@/lib/colorLaw";
 import { paintCardNode } from "./canvas";
 import type { GraphCanvasTheme, PositionedGraphCanvasNode } from "./contracts";
 
@@ -13,7 +14,6 @@ const THEME: GraphCanvasTheme = {
   foregroundText: "foreground",
   hoverOutline: "hover",
   canvasFill: "canvas",
-  dimmedOpacity: 0.68,
 };
 
 /** The fills and strokes a paint made, in order, with the alpha of each. */
@@ -108,12 +108,12 @@ describe("paintCardNode", () => {
   it("draws a dimmed card as itself under the canvas: the canvas first, then the card at the dimmed opacity", () => {
     // SPEC_GRAPH_VIEW.md, «Приглушение при наведении на коллекцию»: the
     // footprint is covered first so the lines beneath do not show through.
-    const picture = paintRecorded(card("image"), true, { opacity: 0.68 });
+    const picture = paintRecorded(card("image"), true, { opacity: DEEMPHASIZED_OPACITY });
     expect(picture.calls).toEqual(["fill canvas", "image", "stroke border"]);
-    expect(picture.alphas).toEqual([1, 0.68, 0.68]);
-    const text = paintRecorded(card("text"), true, { opacity: 0.68, selected: true });
+    expect(picture.alphas).toEqual([1, DEEMPHASIZED_OPACITY, DEEMPHASIZED_OPACITY]);
+    const text = paintRecorded(card("text"), true, { opacity: DEEMPHASIZED_OPACITY, selected: true });
     expect(text.calls).toEqual(["fill canvas", "fill chrome", "image", "stroke hover"]);
-    expect(text.alphas).toEqual([1, 0.68, 0.68, 0.68]);
+    expect(text.alphas).toEqual([1, DEEMPHASIZED_OPACITY, DEEMPHASIZED_OPACITY, DEEMPHASIZED_OPACITY]);
   });
 
   it("paints an undimmed card without the canvas underlay or any change of alpha", () => {

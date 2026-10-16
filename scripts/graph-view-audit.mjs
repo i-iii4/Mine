@@ -478,14 +478,32 @@ async function waitForStableCanvas(page) {
   }, undefined, { polling: 100, timeout: 5_000 });
 }
 
+// Waits until the canvas pixel at `point` is within `tolerance` of `wanted`
+// on every channel; false when it never gets there.
+async function waitForCanvasPixel(page, point, wanted, tolerance) {
+  try {
+    await page.waitForFunction(({ x, y, rgb, within }) => {
+      const canvas = document.querySelector("[data-graph-view] canvas");
+      const context = canvas?.getContext("2d");
+      if (!context) return false;
+      const pixel = context.getImageData(x, y, 1, 1).data;
+      return rgb.every((channel, index) => Math.abs(pixel[index] - channel) <= within);
+    }, { x: point.x, y: point.y, rgb: wanted, within: tolerance }, { polling: 50, timeout: 3_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function verifyCollectionHoverDimming(page) {
   // SPEC_GRAPH_VIEW.md, «Приглушение при наведении на коллекцию». The red
   // audit thumbnail is a Research card (GraphAuditRoute: card i is in
-  // collection i % 6 and draws audit-(i % 6).svg). Hovering Design must dim
-  // that pixel to the card seen through the scrim's share of the canvas;
-  // hovering Research must leave it as it was; leaving must bring it back.
-  // That card hover dims nothing is the zero-change check of
-  // verifyCardHoverOutline.
+  // collection i % 6 and draws audit-(i % 6).svg). Resting on Design must dim
+  // that pixel to the card drawn at the colour law's de-emphasis share
+  // (`DEEMPHASIZED_OPACITY`) over the canvas, once the hover intent engine
+  // has answered; moving on to Research must leave it as it was; leaving
+  // must bring it back. That card hover dims nothing is the zero-change check
+  // of verifyCardHoverOutline.
   const canvas = page.locator("[data-graph-view] canvas").first();
   const box = await canvas.boundingBox();
   if (!box) throw new Error("Graph canvas has no bounding box for collection hover");
@@ -498,11 +516,12 @@ async function verifyCollectionHoverDimming(page) {
   if (!design || !research) {
     throw new Error(`Collection pills were not painted: ${JSON.stringify(labels)}`);
   }
-  const expected = await page.evaluate(() => {
+  const expected = await page.evaluate(async () => {
+    // The share comes from the colour law itself, served by the dev server,
+    // not from what the graph happens to draw.
+    const { DEEMPHASIZED_OPACITY } = await import("/src/lib/colorLaw.ts");
     const probe = document.createElement("span");
     document.body.appendChild(probe);
-    probe.style.backgroundColor = "var(--scrim-color)";
-    const scrim = getComputedStyle(probe).backgroundColor;
     probe.style.backgroundColor = "var(--background)";
     const background = getComputedStyle(probe).backgroundColor;
     probe.remove();
@@ -510,22 +529,22 @@ async function verifyCollectionHoverDimming(page) {
     pixel.width = 1;
     pixel.height = 1;
     const context = pixel.getContext("2d", { willReadFrequently: true });
-    context.fillStyle = scrim;
-    context.fillRect(0, 0, 1, 1);
-    const scrimAlpha = context.getImageData(0, 0, 1, 1).data[3] / 255;
-    context.clearRect(0, 0, 1, 1);
     context.fillStyle = background;
     context.fillRect(0, 0, 1, 1);
-    return { opacity: 1 - scrimAlpha, canvas: [...context.getImageData(0, 0, 1, 1).data.slice(0, 3)] };
+    return { opacity: DEEMPHASIZED_OPACITY, canvas: [...context.getImageData(0, 0, 1, 1).data.slice(0, 3)] };
   });
   const original = pixelAt(before, target);
   const dimmedTarget = original.slice(0, 3)
     .map((channel, index) => expected.opacity * channel + (1 - expected.opacity) * expected.canvas[index]);
 
+  // The dimming waits for the engine's dwell (SPEC_CARD_STATES.md, С7.1),
+  // so each step first waits for the pixel to arrive, then for the fade to end.
   await page.mouse.move(box.x + design.x, box.y + design.y);
+  await waitForCanvasPixel(page, target, dimmedTarget, 4);
   await waitForStableCanvas(page);
   const dimmed = pixelAt(await canvasScreenshot(page), target);
   await page.mouse.move(box.x + research.x, box.y + research.y);
+  await waitForCanvasPixel(page, target, original.slice(0, 3), 2);
   await waitForStableCanvas(page);
   const lit = pixelAt(await canvasScreenshot(page), target);
   await page.mouse.move(box.x + 8, box.y + 8);
@@ -536,10 +555,10 @@ async function verifyCollectionHoverDimming(page) {
     .every((channel, index) => Math.abs(actual[index] - channel) <= tolerance);
   const report = { target, original, dimmed, dimmedTarget, lit, restored, opacity: expected.opacity };
   if (Math.abs(dimmed[0] - original[0]) < 20 || !near(dimmed, dimmedTarget, 4)) {
-    throw new Error(`Hovering Design must dim a Research card by the scrim's share: ${JSON.stringify(report)}`);
+    throw new Error(`Resting on Design must dim a Research card to DEEMPHASIZED_OPACITY: ${JSON.stringify(report)}`);
   }
   if (!near(lit, original.slice(0, 3), 2)) {
-    throw new Error(`Hovering Research must leave its own card as it was: ${JSON.stringify(report)}`);
+    throw new Error(`Moving on to Research must leave its own card as it was: ${JSON.stringify(report)}`);
   }
   if (!near(restored, original.slice(0, 3), 2)) {
     throw new Error(`Leaving the collection must bring the graph back: ${JSON.stringify(report)}`);

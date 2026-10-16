@@ -44,10 +44,6 @@ export type GraphCanvasTheme = GraphPalette & {
   /// `--background`, the canvas under the graph: a dimmed node covers its
   /// footprint with it first, so nothing beneath shows through.
   canvasFill: string;
-  /// How opaque a dimmed node or link is drawn: 1 minus the share of
-  /// `--scrim-color` (SPEC_GRAPH_VIEW.md, «Приглушение при наведении на
-  /// коллекцию»).
-  dimmedOpacity: number;
 };
 
 export interface GraphChargeForce {

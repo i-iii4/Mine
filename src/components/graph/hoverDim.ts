@@ -147,7 +147,8 @@ function transitionShare(
 
 /**
  * How opaque a node or a link is drawn on this frame: 1 when lit,
- * `dimmedOpacity` when dimmed, and between the two while a transition runs.
+ * `dimmedOpacity` when dimmed (`DEEMPHASIZED_OPACITY` of the colour law), and
+ * between the two while a transition runs.
  */
 export function graphElementOpacity(
   transition: GraphDimTransition,
@@ -208,22 +209,6 @@ function parseCssColor(color: string): ParsedColor | null {
     return { alpha, write: (next) => `${name}(${channels} / ${formatAlpha(next)})` };
   }
   return null;
-}
-
-/** The alpha of a resolved CSS colour, or null when it is not one. */
-export function cssColorAlpha(color: string): number | null {
-  return parseCssColor(color)?.alpha ?? null;
-}
-
-/**
- * How opaque a dimmed element is: what shows through the scrim, the canvas of
- * its theme at the share `--scrim-color` holds (SPEC_COLOR_RULES.md, 3.9.1).
- * Null when the token did not resolve to a translucent colour.
- */
-export function dimmedOpacityFromScrim(scrimColor: string): number | null {
-  const alpha = cssColorAlpha(scrimColor);
-  if (alpha === null || alpha <= 0 || alpha >= 1) return null;
-  return 1 - alpha;
 }
 
 const COLOR_CACHE_LIMIT = 16;

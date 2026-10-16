@@ -17,6 +17,7 @@ import { fallbackThumbsRoot } from "@/lib/assets";
 import { useHoverIntent } from "@/hooks/useHoverIntent";
 import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
 import type { GraphPreferences } from "@/lib/graphPreferences";
+import { DEEMPHASIZED_OPACITY } from "@/lib/colorLaw";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { ReadOnlyCardPreview } from "./Card";
 import { Button } from "./ui/button";
@@ -199,10 +200,21 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const imageVersionFrameRef = useRef<number | null>(null);
   const loadSequenceRef = useRef(0);
   const acceptedRevisionRef = useRef<ProjectionRevision | null>(null);
-  // The pointer's speed over the graph: a card's preview waits for it to
-  // rest, by the shared card preview rule (SPEC_CARD_STATES.md, С7.10).
-  const nodePointer = useHoverIntent();
+  // The collection the pointer attends to, by the shared hover intent rule of
+  // the feed and the sidebar (SPEC_CARD_STATES.md, С7): its dimming waits for
+  // the pointer to rest on it, a sweep across the graph dims nothing, and
+  // once one has answered a neighbouring collection takes over at once
+  // (SPEC_GRAPH_VIEW.md, «Hover»). The same engine gives a card's preview the
+  // pointer's speed, by the shared card preview rule (С7.10).
+  const [attendedCollectionId, setAttendedCollectionId] = useState<string | null>(null);
+  const nodePointer = useHoverIntent((state) => setAttendedCollectionId(state.chosen));
   const previewOpener = useHoverPreviewOpener(nodePointer.isSlow);
+  // The engine's target, the collection force-graph last reported under the
+  // pointer (a card or empty canvas is no target), and the pointer's last
+  // point on the graph, where a hover change is reported: the same point is
+  // no movement to the engine.
+  const collectionUnderPointerRef = useRef<string | null>(null);
+  const intentPointRef = useRef<GraphCardMenuPoint | null>(null);
   const lastPointerPointRef = useRef<GraphCardMenuPoint | null>(null);
   const graphScaleRef = useRef(1);
   // Read by the painters on every frame, so it lives outside React state: a
@@ -436,14 +448,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     [graphData.nodes, selectedNodeId],
   );
 
-  // What a hovered collection keeps lit, worked out when the hover or the
-  // snapshot changes and never per frame (SPEC_GRAPH_VIEW.md, «Приглушение
-  // при наведении на коллекцию»). A card dims nothing.
+  // What the attended collection keeps lit, worked out when the answer or
+  // the snapshot changes and never per frame (SPEC_GRAPH_VIEW.md,
+  // «Приглушение при наведении на коллекцию»). A card dims nothing.
   const hoverHighlight = useMemo(() => {
-    if (!hoveredCollectionId) return null;
-    const hovered = graphData.nodes.find((node) => node.id === hoveredCollectionId) ?? null;
+    if (!attendedCollectionId) return null;
+    const hovered = graphData.nodes.find((node) => node.id === attendedCollectionId) ?? null;
     return graphHoverHighlight(hovered, graphData.links);
-  }, [graphData, hoveredCollectionId]);
+  }, [attendedCollectionId, graphData]);
 
   // A layout effect, so the frame after the hover already starts the fade.
   // Dimming arrives at the hover's fade-in speed and leaves at its fade-out
@@ -869,16 +881,35 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     setPointerOverGraph(over);
   }, []);
 
+  /// Tells the hover intent engine which collection is under the pointer now,
+  /// at the pointer's last point: a node arriving under the pointer is not a
+  /// pointer step.
+  const reportCollectionUnderPointer = useCallback((collectionId: string | null) => {
+    if (collectionUnderPointerRef.current === collectionId) return;
+    collectionUnderPointerRef.current = collectionId;
+    const point = intentPointRef.current;
+    if (point) nodePointer.move(collectionId, point.x, point.y);
+  }, [nodePointer]);
+
+  // A node being dragged answers nothing, and the answer in place clears at
+  // once (SPEC_CARD_STATES.md, С7.8).
+  useEffect(() => {
+    nodePointer.suspend("drag", dragging);
+  }, [dragging, nodePointer]);
+
   // The pointer left the graph or an open card covers it: nothing on the
-  // graph is hovered any more, the card preview closes and a collection's
-  // dimming fades. An open card menu keeps both until it closes (`Hover`,
-  // freeze); its release lands here again.
+  // graph is hovered any more, the card preview closes, and to the hover
+  // intent engine the pointer has left, so a collection's dimming clears
+  // after its leave grace (С7.4). An open card menu keeps the hover until it
+  // closes (`Hover`, freeze); its release lands here again.
   useEffect(() => {
     if (graphAnswersPointer || hoverPreviewFrozen) return;
+    collectionUnderPointerRef.current = null;
+    nodePointer.leave();
     setHoveredCollectionId(null);
     setHoveredCardId(null);
     closePreview();
-  }, [closePreview, graphAnswersPointer, hoverPreviewFrozen]);
+  }, [closePreview, graphAnswersPointer, hoverPreviewFrozen, nodePointer]);
 
   const pointerIsInsidePreviewNode = useCallback((target: GraphPreviewTarget) => {
     const point = lastPointerPointRef.current;
@@ -1061,7 +1092,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
         dimTransitionRef.current,
         "node",
         node.id,
-        canvasTheme.dimmedOpacity,
+        DEEMPHASIZED_OPACITY,
       );
       ctx.save();
       if (node.kind === "collection") {
@@ -1135,11 +1166,11 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       dimTransitionRef.current,
       "link",
       link.id,
-      canvasTheme.dimmedOpacity,
+      DEEMPHASIZED_OPACITY,
     )),
     // The highlight is read from the ref; naming it here hands the canvas a
     // new accessor, and with it a redraw, when the hover changes.
-    [canvasTheme.dimmedOpacity, hoverHighlight, linkColorAt],
+    [hoverHighlight, linkColorAt],
   );
   const linkDash = useCallback(
     (link: GraphCanvasLink) => graphLinkLineDash(link, graphScaleRef.current),
@@ -1161,7 +1192,8 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       onPointerEnter={() => markPointerOverGraph(true)}
       onPointerMove={(event) => {
         markPointerOverGraph(true);
-        nodePointer.move(null, event.clientX, event.clientY);
+        intentPointRef.current = { x: event.clientX, y: event.clientY };
+        nodePointer.move(collectionUnderPointerRef.current, event.clientX, event.clientY);
       }}
       onPointerLeave={() => {
         nodePointer.leave();
@@ -1259,6 +1291,8 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
             onNodeHover={(node) => {
               if (hoverPreviewFrozen) return;
               if (!pointerOverGraphRef.current || detailOpen) return;
+              // The pill outlines at once; the dimming waits for the engine.
+              reportCollectionUnderPointer(node?.kind === "collection" ? node.id : null);
               if (!node) {
                 setHoveredCollectionId(null);
                 setHoveredCardId(null);
