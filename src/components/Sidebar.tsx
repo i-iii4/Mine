@@ -514,11 +514,14 @@ const SidebarCore = memo(function SidebarCore({
     : activePreviewRowKey);
   const hasSidebarRowFocusMode = editingRowKey !== null || dropOverRowKey !== null || sidebarRowFocusMode || activePreviewRowKey !== null;
 
+  // Set each render once the close path is known (below `requestPreviewClose`).
+  const previewTriggerGoneRef = useRef<(key: string) => void>(() => {});
   const setPreviewTriggerRef = useCallback((key: string, node: HTMLElement | null) => {
     if (node) {
       previewTriggerRefs.current.set(key, node);
     } else {
       previewTriggerRefs.current.delete(key);
+      previewTriggerGoneRef.current(key);
     }
   }, []);
 
@@ -686,6 +689,17 @@ const SidebarCore = memo(function SidebarCore({
     if (hoverPreviewFrozen) return;
     closePreview();
   }, [closePreview, hoverPreviewFrozen]);
+
+  // The open preview belongs to its thumbnail. A strip update (a card saved
+  // or removed, its thumbnail no longer confirmed, the row gone) can unmount
+  // that thumbnail under a still pointer, and a node gone from the page never
+  // reports the pointer leaving it: its unmount is that leave
+  // (SPEC_FRONTEND.md, «Миниатюра ушла из-под превью»; SPEC_CARD_STATES.md,
+  // С7.10). Whatever thumbnail now stands there opens its own preview when
+  // the pointer enters it, by the shared rule.
+  previewTriggerGoneRef.current = (key) => {
+    if (hoveredPreview?.key === key) requestPreviewClose();
+  };
 
   // Tear down an already-open preview the moment a drag begins.
   useEffect(() => {

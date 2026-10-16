@@ -1381,6 +1381,140 @@ describe("Sidebar", () => {
     ).not.toBeInTheDocument();
   });
 
+  // A strip update unmounts the thumbnail under a still pointer, and a node
+  // gone from the page never reports the pointer leaving it
+  // (SPEC_FRONTEND.md, «Миниатюра ушла из-под превью»; SPEC_CARD_STATES.md,
+  // С7.10).
+  describe("a strip update under the open preview", () => {
+    function thumb(slug: string, version = 0) {
+      return {
+        url: `asset://localhost/thumbs/${slug}.jpg${version > 0 ? `?v=${version}` : ""}`,
+        text: false,
+        hasThumb: true,
+        slug,
+      };
+    }
+
+    const stripProps = {
+      ...defaultProps,
+      width: 600,
+      vaultPath: "/vault",
+      thumbsRootPath: "/vault/.mine/cache/thumbs",
+      channelPreviews: new Map([["alpha", [thumb("alpha-a"), thumb("alpha-b")]]]),
+    };
+
+    const preview = () => document.querySelector("[data-sidebar-thumbnail-hover-preview]");
+    const thumbnails = () => document.querySelectorAll('[data-sidebar-preview-thumbnail="trigger"]');
+
+    async function settle() {
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    /** Opens the preview of the strip's first thumbnail, alpha-a. */
+    async function openFirstPreview(props: ComponentProps<typeof Sidebar> = stripProps) {
+      vi.useFakeTimers();
+      vi.mocked(invoke).mockImplementation(async (_command, args) => (
+        previewBlock((args as { slug: string }).slug)
+      ));
+      const view = renderSidebar(props);
+      fireEvent.pointerEnter(thumbnails()[0]!);
+      await act(async () => {
+        vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 1);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(preview()).toBeInTheDocument();
+      return view;
+    }
+
+    it.each([
+      ["a newer card takes its place", {
+        channelPreviews: new Map([["alpha", [thumb("alpha-new"), thumb("alpha-a"), thumb("alpha-b")]]]),
+      }],
+      ["its card leaves the strip", {
+        channelPreviews: new Map([["alpha", [thumb("alpha-b")]]]),
+      }],
+      ["its row leaves the list", { orderedTags: [tag("beta", 5)] }],
+    ])("closes when %s", async (_case, update) => {
+      const { rerender } = await openFirstPreview();
+
+      await act(async () => {
+        rerender(sidebarTree({ ...stripProps, ...update }));
+      });
+      await settle();
+
+      expect(preview()).not.toBeInTheDocument();
+      expect(document.querySelector("[data-sidebar-preview-active]")).toBeNull();
+    });
+
+    it("keeps the preview while its thumbnail stays in place", async () => {
+      const { rerender } = await openFirstPreview();
+
+      // The same card's thumbnail rebuilt (`thumb:updated`), another row's
+      // strip refreshed.
+      await act(async () => {
+        rerender(sidebarTree({
+          ...stripProps,
+          channelPreviews: new Map([
+            ["alpha", [thumb("alpha-a", 2), thumb("alpha-b")]],
+            ["beta", [thumb("beta-a")]],
+          ]),
+        }));
+      });
+      await settle();
+
+      expect(preview()).toBeInTheDocument();
+      expect(thumbnails()[0]).toHaveAttribute("data-sidebar-preview-active", "true");
+    });
+
+    it("lets the thumbnail now under the pointer open its own preview by the shared rule", async () => {
+      const { rerender } = await openFirstPreview();
+      await act(async () => {
+        rerender(sidebarTree({
+          ...stripProps,
+          channelPreviews: new Map([["alpha", [thumb("alpha-new"), thumb("alpha-a"), thumb("alpha-b")]]]),
+        }));
+      });
+      await settle();
+      expect(preview()).not.toBeInTheDocument();
+
+      // The closed preview left the screen just now: within the warm window
+      // the next thumbnail answers a resting pointer at once.
+      fireEvent.pointerEnter(thumbnails()[0]!);
+      await settle();
+
+      expect(preview()).toBeInTheDocument();
+      expect(thumbnails()[0]).toHaveAttribute("data-sidebar-preview-active", "true");
+      expect(invoke).toHaveBeenLastCalledWith("get_block", { slug: "alpha-new" });
+    });
+
+    it("holds a preview frozen by the card menu until the menu closes", async () => {
+      const { rerender } = await openFirstPreview();
+      const replaced = {
+        ...stripProps,
+        channelPreviews: new Map([["alpha", [thumb("alpha-b")]]]),
+      };
+
+      await act(async () => {
+        rerender(sidebarTree({ ...stripProps, hoverPreviewFrozen: true }));
+      });
+      await act(async () => {
+        rerender(sidebarTree({ ...replaced, hoverPreviewFrozen: true }));
+      });
+      await settle();
+      expect(preview()).toBeInTheDocument();
+
+      await act(async () => {
+        rerender(sidebarTree({ ...replaced, hoverPreviewFrozen: false }));
+      });
+      await settle();
+      expect(preview()).not.toBeInTheDocument();
+    });
+  });
+
   it("renders continuous sidebar guidelines and keeps the protected action area in row mode", () => {
     const previews = new Map([
       ["alpha", [{
