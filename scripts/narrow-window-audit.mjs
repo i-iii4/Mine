@@ -31,6 +31,7 @@ const vite = await startAuditVite([{
       import {ChromeRow, ChromeShell} from "/src/components/ChromeRow.tsx";
       import {Sidebar} from "/src/components/Sidebar.tsx";
       import {SidebarOverlay} from "/src/components/SidebarOverlay.tsx";
+      import {FadeScrollRow} from "/src/components/FadeScrollRow.tsx";
       import {TooltipProvider} from "/src/components/ui/tooltip.tsx";
       import {useSidebarOverlay} from "/src/hooks/useSidebarOverlay.ts";
       import {useSidebarResize} from "/src/hooks/useSidebarResize.ts";
@@ -53,24 +54,37 @@ const vite = await startAuditVite([{
         beside.current={collapsed:resize.collapsed,toggle:resize.toggleCollapsed};
         const location=useLocation();
         const shown=overlay.narrow?overlay.open:!resize.collapsed;
+        const besideMounted=resize.besideShown&&!overlay.open;
         const toggle=overlay.narrow?overlay.toggle:resize.toggleCollapsed;
         React.useEffect(()=>{ window.auditToggle=toggle; },[toggle]);
-        const list=h(Sidebar,{width:resize.width,collapsed:resize.collapsed,widthAnimating:false,orderedTags:tags,
+        const BAR="shrink-0 whitespace-nowrap px-2";
+        const barEntries=(narrow)=>[
+          h("button",{key:"toggle",type:"button",onClick:toggle,className:BAR,"data-audit-toggle":"","data-bar-entry":"toggle-sidebar"},shown?"⌃⌘S Hide Sidebar":"⌃⌘S Show Sidebar"),
+          h("button",{key:"command",type:"button",className:BAR,"data-bar-entry":"command"},"⌘K Command"),
+          h("button",{key:"close",type:"button",className:BAR,"data-bar-entry":"close"},"esc Close"),
+          narrow?null:h("div",{key:"spacer",className:"flex-1","data-bar-spacer":""}),
+          h("button",{key:"find",type:"button",className:BAR,"data-bar-entry":"find-elements"},"⌘F Find elements"),
+          h("button",{key:"settings",type:"button",className:BAR,"data-bar-entry":"settings"},"⌘, Settings"),
+        ];
+        const list=h(Sidebar,{width:resize.width,collapsed:resize.collapsed,widthAnimating:resize.widthAnimating,orderedTags:tags,
           channelPreviews:new Map(),totalBlocks:8,isDropDragging:false,isCreatingChannel:false,
           onSetCreatingChannel:noop,onDeleteTag:noop,onRenameTag:noop,onCreateChannel:noop,
           onNavClick:overlay.close,onScrollToTop:overlay.close});
         return h(ChromeShell,{topEdge:false,className:"relative",style:{minWidth:APP_MIN_WIDTH_PX},"data-audit-place":location.pathname},
           h(ChromeRow,{as:"header",separator:"bottom",className:"bg-chrome",inert:overlay.open},
-            overlay.narrow?null:h("div",{"data-app-top-sidebar-segment":"",className:"flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
+            !besideMounted?null:h("div",{"data-app-top-sidebar-segment":"",className:"flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border"+(resize.widthAnimating?" transition-[width] duration-200 ease-out motion-reduce:transition-none":""),
               style:resize.collapsed?undefined:{width:"var(--sidebar-width)"}},h(FilterRow)),
             h("div",{"data-audit-top-row":"",className:"flex h-full min-w-0 flex-1 items-center px-2"},"Inbox")),
           h("div",{className:"relative flex min-h-0 flex-1"},
-            overlay.narrow?null:list,
+            besideMounted?list:null,
             h("main",{"data-audit-feed":"",className:"relative isolate min-h-0 flex-1 overflow-hidden",
               style:{minWidth:APP_MAIN_MIN_WIDTH_PX},inert:overlay.open},
               h("button",{type:"button","data-audit-feed-button":""},"A card"))),
-          h(ChromeRow,{separator:"top","data-audit-bottom-bar":"",className:"bg-accent",inert:overlay.open},
-            h("button",{type:"button",onClick:toggle,"data-audit-toggle":""},shown?"Hide Sidebar":"Show Sidebar")),
+          h(ChromeRow,{separator:"top","data-audit-bottom-bar":"",className:"gap-2 bg-accent pl-4 pr-2",inert:overlay.open},
+            // The bar's commands as App.tsx lays them out (У13): left and
+            // right groups apart outside a narrow window, one scrolling row
+            // at the left inside it.
+            ...(overlay.narrow?[h(FadeScrollRow,{key:"row",className:"h-full flex-1 gap-2","data-bottom-bar-row":""},...barEntries(true))]:barEntries(false))),
           overlay.narrow?h(SidebarOverlay,{open:overlay.open,onClose:overlay.close,
             header:h(ChromeRow,{separator:"bottom",className:"bg-chrome"},
               h("div",{className:"flex h-full min-w-0 flex-1 items-center overflow-hidden border-r border-sidebar-border"},h(FilterRow)))},
@@ -264,8 +278,50 @@ try {
   await toggle();
   assert.equal((await page.evaluate(readLayout)).overlayState, "closed", "closing, still on screen");
   await page.waitForFunction(() => document.querySelector("[data-sidebar-overlay]") === null, null, { timeout: 2000 });
-  await page.emulateMedia({ reducedMotion: "reduce" });
   console.log("PASS 400: in and out over 200 ms");
+
+  // Across the threshold the sidebar beside the feed moves out of the row
+  // and back with the motion of a collapse and an opening (У7).
+  const asideMotion = () => page.evaluate(() => {
+    const aside = [...document.querySelectorAll("aside")].find((element) => !element.closest("[data-sidebar-overlay]"));
+    if (!aside) return null;
+    const style = getComputedStyle(aside);
+    return { width: aside.getBoundingClientRect().width, duration: style.transitionDuration, property: style.transitionProperty };
+  });
+  await resize(800);
+  await settle();
+  let motionNow = await asideMotion();
+  assert.equal(motionNow?.duration, "0.2s", "400 → 800: the sidebar moves into the row");
+  assert.equal(motionNow.property, "width", "400 → 800: its width moves");
+  assert.ok(motionNow.width < TARGET, "400 → 800: it starts narrower than its width");
+  await page.waitForFunction((target) => {
+    const aside = [...document.querySelectorAll("aside")].find((element) => !element.closest("[data-sidebar-overlay]"));
+    return aside && aside.getBoundingClientRect().width === target && getComputedStyle(aside).transitionDuration === "0s";
+  }, TARGET, { timeout: 2000 });
+  await resize(739);
+  await settle();
+  motionNow = await asideMotion();
+  assert.equal(motionNow?.duration, "0.2s", "800 → 739: the sidebar moves out of the row");
+  await page.waitForFunction(() => ![...document.querySelectorAll("aside")].some((element) => !element.closest("[data-sidebar-overlay]")), null, { timeout: 2000 });
+  // A resize that crosses nothing moves nothing.
+  await resize(1000);
+  await page.waitForFunction(() => document.querySelector("aside") && getComputedStyle(document.querySelector("aside")).transitionDuration === "0s", null, { timeout: 2000 });
+  await resize(900);
+  await settle();
+  assert.equal((await asideMotion())?.duration, "0s", "1000 → 900: no motion within the row");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await resize(739);
+  await settle();
+  assert.equal(await asideMotion(), null, "reduced motion, 900 → 739: gone at once");
+  await resize(800);
+  await settle();
+  motionNow = await asideMotion();
+  assert.equal(motionNow?.width, TARGET, "reduced motion, 739 → 800: at its width at once");
+  // global.css holds every transition to 0.01 ms with reduced motion.
+  assert.ok(Number.parseFloat(motionNow.duration) < 0.001, "reduced motion: no motion");
+  await resize(400);
+  await read();
+  console.log("PASS 400 ↔ 800 ↔ 739: across the threshold the sidebar moves out and in over 200 ms, at once with reduced motion");
 
   // Widened with the sidebar open over the feed, it stands beside the feed
   // (У7); narrowed again, it comes over the feed closed.
@@ -295,6 +351,55 @@ try {
   await settle();
   assert.equal(await page.evaluate(() => document.querySelector("[data-chrome-shell]").getBoundingClientRect().width), 390, "300: the page holds 390 px");
   console.log("PASS 300: the page no narrower than 390 px");
+
+  // The bottom bar (У13): outside a narrow window its two groups stand
+  // apart; inside it every command stands at the left in one row that
+  // scrolls sideways, its edges dissolving with the shared ramp.
+  const readBar = () => page.evaluate(() => {
+    const bar = document.querySelector("[data-audit-bottom-bar]").getBoundingClientRect();
+    const entries = [...document.querySelectorAll("[data-audit-bottom-bar] [data-bar-entry]")]
+      .map((entry) => ({ id: entry.dataset.barEntry, left: entry.getBoundingClientRect().left, right: entry.getBoundingClientRect().right }));
+    const row = document.querySelector("[data-bottom-bar-row]");
+    return {
+      bar: { left: bar.left, right: bar.right },
+      entries,
+      row: row ? {
+        scrollWidth: row.scrollWidth, clientWidth: row.clientWidth, scrollLeft: row.scrollLeft,
+        fadeLeft: row.dataset.fadeLeft ?? null, fadeRight: row.dataset.fadeRight ?? null,
+        mask: getComputedStyle(row).webkitMaskImage || getComputedStyle(row).maskImage,
+      } : null,
+    };
+  });
+  await resize(1200);
+  let bar = await (async () => { await settle(); return readBar(); })();
+  assert.equal(bar.row, null, "1200: no scrolling row");
+  const settings = bar.entries.find((entry) => entry.id === "settings");
+  const close = bar.entries.find((entry) => entry.id === "close");
+  const find = bar.entries.find((entry) => entry.id === "find-elements");
+  assert.ok(bar.bar.right - settings.right <= 8, "1200: Settings at the right edge");
+  assert.ok(find.left - close.right > 100, "1200: the two groups apart");
+  console.log("PASS 1200: the bottom bar's groups at both ends, as before");
+
+  await resize(390);
+  await settle();
+  bar = await readBar();
+  assert.ok(bar.row, "390: the commands in one row");
+  const order = bar.entries.map((entry) => entry.id);
+  assert.deepEqual(order, ["toggle-sidebar", "command", "close", "find-elements", "settings"], "390: in their order");
+  assert.ok(bar.entries[0].left - bar.bar.left <= 16, "390: the row starts at the left");
+  for (let index = 1; index < bar.entries.length; index += 1) {
+    assert.equal(bar.entries[index].left - bar.entries[index - 1].right, 8, `390: ${order[index]} right after ${order[index - 1]}`);
+  }
+  assert.ok(bar.row.scrollWidth > bar.row.clientWidth, "390: the row wider than the bar scrolls");
+  assert.equal(bar.row.fadeLeft, null, "390: nothing hidden at the left yet");
+  assert.equal(bar.row.fadeRight, "true", "390: the right edge dissolves");
+  assert.match(bar.row.mask, /linear-gradient/, "390: the shared ramp");
+  await page.evaluate(() => { document.querySelector("[data-bottom-bar-row]").scrollLeft = 60; });
+  await settle();
+  bar = await readBar();
+  assert.equal(bar.row.scrollLeft, 60, "390: the row scrolls");
+  assert.equal(bar.row.fadeLeft, "true", "390: after scrolling the left edge dissolves too");
+  console.log("PASS 390: the bottom bar's commands at the left in one row that scrolls, its edges dissolving");
 
   assert.deepEqual(errors, []);
 } finally {

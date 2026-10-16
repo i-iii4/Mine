@@ -178,3 +178,45 @@ export function topFadeStopCount(height: number): number {
 /// pixel is the smallest offset that can actually put content under the chrome.
 export const TOP_FADE_SCROLLED_THRESHOLD_PX = 1;
 
+// ─── Horizontal rows: masks both edges ──────────────────────────────────────
+
+/** Which edges of a horizontally scrolled row hide content: the tab bar's
+ *  strip and the bottom bar of a narrow window. The threshold is the one
+ *  every scroll fade uses: sub-pixel offsets do not count. */
+export function hiddenEdges(
+  scrollLeft: number,
+  clientWidth: number,
+  scrollWidth: number,
+): { left: boolean; right: boolean } {
+  return {
+    left: scrollLeft >= TOP_FADE_SCROLLED_THRESHOLD_PX,
+    right: scrollWidth - clientWidth - scrollLeft >= TOP_FADE_SCROLLED_THRESHOLD_PX,
+  };
+}
+
+function maskImage(style: CSSProperties): string {
+  return String(style.maskImage);
+}
+
+/// The shared edge ramp on both ends of the strip (SPEC_SCROLL_EDGE_FADE.md).
+const RIGHT_EDGE_MASK = maskImage(createRightFadeMaskStyle(EDGE_FADE_WIDTH, 0));
+const LEFT_EDGE_MASK = maskImage(createLeftFadeMaskStyle(EDGE_FADE_WIDTH));
+
+/** The mask that dissolves a row's edges where content is hidden past them;
+ *  `undefined` when nothing is hidden. Two layers intersect, so both edges
+ *  fade at once when the strip is scrolled into its middle. */
+export function stripFadeMaskStyle(edges: { left: boolean; right: boolean }): CSSProperties | undefined {
+  const layers = [edges.left ? LEFT_EDGE_MASK : null, edges.right ? RIGHT_EDGE_MASK : null].filter(
+    (layer): layer is string => layer !== null,
+  );
+  if (layers.length === 0) return undefined;
+  const image = layers.join(", ");
+  if (layers.length === 1) return { maskImage: image, WebkitMaskImage: image };
+  return {
+    maskImage: image,
+    WebkitMaskImage: image,
+    maskComposite: "intersect",
+    WebkitMaskComposite: "source-in",
+  };
+}
+

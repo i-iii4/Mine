@@ -197,13 +197,14 @@ vi.mock("@/lib/articleAudioDesktopGateway", () => ({
 }));
 
 vi.mock("@/hooks/useSidebarResize", () => ({
-  useSidebarResize: (windowSidebar: { width_px: number; collapsed: boolean } | null = null) => {
+  useSidebarResize: (windowSidebar: { width_px: number; collapsed: boolean } | null = null, overlaid = false) => {
     sidebarResizeState.windowSidebar = windowSidebar;
     return {
       width: sidebarResizeState.width,
       collapsed: sidebarResizeState.collapsed,
       isResizing: sidebarResizeState.isResizing,
       widthAnimating: sidebarResizeState.widthAnimating,
+      besideShown: !overlaid,
       startResize: vi.fn(),
       updateResize: vi.fn(),
       endResize: vi.fn(),
@@ -5269,6 +5270,21 @@ describe("AppWithVault", () => {
         expect(sidebarResizeState.toggleCollapsed).toHaveBeenCalledTimes(1);
         expect(commandMocks.reportSidebarOverlay).toHaveBeenLastCalledWith("beside");
         expect(document.querySelector("[data-app-top-sidebar-segment]")).not.toBeNull();
+      });
+
+      it("puts every command of the bottom bar at the left in one scrolling row, and back on widening (У13)", async () => {
+        renderTab();
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        const row = () => document.querySelector("[data-bottom-action-bar] [data-bottom-bar-row]");
+        const spacer = () => document.querySelector("[data-bottom-action-bar] [data-bar-spacer]");
+        expect(row()).not.toBeNull();
+        expect(spacer()).toBeNull();
+        expect(row()?.querySelector("[data-bar-entry='toggle-sidebar']")).not.toBeNull();
+        expect(row()?.querySelector("[data-bar-entry='settings']")).not.toBeNull();
+
+        resizeWindow(1200);
+        expect(row()).toBeNull();
+        expect(spacer()).not.toBeNull();
       });
 
       it("leaves a collapsed sidebar collapsed when the window widens with it closed (У7)", async () => {

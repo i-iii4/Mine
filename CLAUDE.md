@@ -281,6 +281,7 @@ local-arena/
 │   │   ├── DeleteWindowParts.tsx # Общее у окон удаления: описание, превью медиа, уведомление Media kept
 │   │   ├── SidebarResizeHandle.tsx # Линия между меню и лентой как ручка ширины (вид рельса shadcn SidebarRail)
 │   │   ├── SidebarOverlay.tsx  # Меню поверх ленты в узком окне: подложка с полосой 40 px, панель-диалог, Escape, фокус, движение (SPEC_NARROW_WINDOW.md, У4 по У7)
+│   │   ├── FadeScrollRow.tsx   # Ряд с горизонтальной прокруткой и растворением скрытых краёв маской полосы вкладок: нижняя панель узкого окна (SPEC_NARROW_WINDOW.md, У13)
 │   │   ├── NotificationCard.tsx # Единый вид уведомления: правый нижний угол, bg-popover
 │   │   ├── FirstCardMarker.tsx # Одноразовая пометка первой карточки (О19)
 │   │   ├── CloudRecommendation.tsx # Рекомендация Keep Downloaded по журналу ожиданий

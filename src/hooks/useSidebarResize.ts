@@ -39,6 +39,10 @@ function initialLayout(windowSidebar: SidebarLayout | null): { width: number; co
   };
 }
 
+/** The sidebar beside the feed leaving the row or coming back into it as the
+ *  window crosses the threshold of the sidebar over the feed. */
+type SidebarCrossing = "leave" | "enter";
+
 function writeCssVar(value: string): void {
   document.documentElement.style.setProperty(CSS_VAR, value);
 }
@@ -60,9 +64,15 @@ export interface UseSidebarResizeReturn {
   collapsed: boolean;
   /** Whether a drag-resize is in progress */
   isResizing: boolean;
-  /** Whether the sidebar's width is moving to a collapse or an opening: the
-   *  only time it animates. A window's resize or a drag moves it at once. */
+  /** Whether the sidebar's width is moving to a collapse or an opening, or
+   *  out of the row and back as the window crosses the threshold of the
+   *  sidebar over the feed: the only times it animates. A window's resize or
+   *  a drag moves it at once. */
   widthAnimating: boolean;
+  /** The sidebar beside the feed is on the page: always while the window
+   *  holds it, and for the motion of its leaving when the window narrows past
+   *  the threshold (SPEC_NARROW_WINDOW.md, У7). */
+  besideShown: boolean;
   /** Begin a resize drag from the width shown now (called by handle component) */
   startResize: (startX: number, startWidth: number) => void;
   /** Update width during drag (called on every pointermove) */
@@ -135,13 +145,39 @@ export function useSidebarResize(
   // the panel and its columns follow the cursor at full refresh rate.
   const width = isResizing ? dragWidth : collapsed ? 0 : storedWidth;
 
+  // The window crosses the threshold of the sidebar over the feed
+  // (SPEC_NARROW_WINDOW.md, У7): the sidebar beside the feed leaves the row
+  // and comes back with the motion of a collapse and an opening, while the
+  // resize itself still moves nothing. Decided in the render that sees the
+  // crossing, so a leaving sidebar stays on the page for its motion.
+  const [crossing, setCrossing] = useState<SidebarCrossing | null>(null);
+  const [lastOverlaid, setLastOverlaid] = useState(overlaid);
+  if (overlaid !== lastOverlaid) {
+    setLastOverlaid(overlaid);
+    const moves = !collapsed && motionDuration(SIDEBAR_WIDTH_MOTION_MS) > 0;
+    setCrossing(moves ? (overlaid ? "leave" : "enter") : null);
+  }
+  useEffect(() => {
+    if (crossing === null) return undefined;
+    const timer = setTimeout(() => setCrossing(null), SIDEBAR_WIDTH_MOTION_MS);
+    return () => clearTimeout(timer);
+  }, [crossing]);
+
   // Mount + sync: seed / update CSS variable before paint. At rest the
   // variable is the squeeze expression; the drag writes plain pixels. Over
-  // the feed the sidebar takes none of the row.
+  // the feed the sidebar takes none of the row. Coming back into the row it
+  // starts from none for a frame, so its width moves in.
   useLayoutEffect(() => {
-    if (isResizing) return;
-    writeCssVar(collapsed || overlaid ? "0px" : sidebarWidthCss(storedWidth));
-  }, [collapsed, overlaid, storedWidth, isResizing]);
+    if (isResizing) return undefined;
+    const target = collapsed || overlaid ? "0px" : sidebarWidthCss(storedWidth);
+    if (crossing === "enter") {
+      writeCssVar("0px");
+      const frame = requestAnimationFrame(() => writeCssVar(target));
+      return () => cancelAnimationFrame(frame);
+    }
+    writeCssVar(target);
+    return undefined;
+  }, [collapsed, crossing, overlaid, storedWidth, isResizing]);
 
   // The window's layout changed: another tab, the tab bar's button, the View
   // menu or the two-finger swipe (В56). A drag in progress here keeps the
@@ -237,7 +273,8 @@ export function useSidebarResize(
     width,
     collapsed,
     isResizing,
-    widthAnimating,
+    widthAnimating: widthAnimating || crossing !== null,
+    besideShown: !overlaid || crossing === "leave",
     startResize,
     updateResize,
     endResize,

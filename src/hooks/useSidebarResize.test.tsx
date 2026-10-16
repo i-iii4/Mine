@@ -193,6 +193,47 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
     }
   });
 
+  it("moves the sidebar out of the row and back as the window crosses the threshold (У7)", () => {
+    vi.useFakeTimers();
+    const cssWidth = () => document.documentElement.style.getPropertyValue("--sidebar-width");
+    try {
+      const { result, rerender } = renderHook(
+        ({ overlaid, collapsed }: { overlaid: boolean; collapsed: boolean }) =>
+          useSidebarResize({ width_px: 480, collapsed }, overlaid),
+        { initialProps: { overlaid: false, collapsed: false } },
+      );
+      expect(result.current.besideShown).toBe(true);
+
+      // Narrowing past it: the sidebar stays for the motion of its leaving.
+      rerender({ overlaid: true, collapsed: false });
+      expect(result.current.besideShown).toBe(true);
+      expect(result.current.widthAnimating).toBe(true);
+      expect(cssWidth()).toBe("0px");
+      act(() => vi.advanceTimersByTime(SIDEBAR_WIDTH_MOTION_MS));
+      expect(result.current.besideShown).toBe(false);
+      expect(result.current.widthAnimating).toBe(false);
+
+      // Widening past it: in from none, then to its width, moving.
+      rerender({ overlaid: false, collapsed: false });
+      expect(result.current.besideShown).toBe(true);
+      expect(result.current.widthAnimating).toBe(true);
+      expect(cssWidth()).toBe("0px");
+      act(() => vi.advanceTimersToNextFrame());
+      expect(cssWidth()).toBe("min(480px, 100vw - 390px)");
+      act(() => vi.advanceTimersByTime(SIDEBAR_WIDTH_MOTION_MS));
+      expect(result.current.widthAnimating).toBe(false);
+
+      // A collapsed sidebar has nothing to move.
+      rerender({ overlaid: false, collapsed: true });
+      act(() => vi.advanceTimersByTime(SIDEBAR_WIDTH_MOTION_MS));
+      rerender({ overlaid: true, collapsed: true });
+      expect(result.current.widthAnimating).toBe(false);
+      expect(result.current.besideShown).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not animate the width with Reduce motion", () => {
     const matchMedia = window.matchMedia;
     window.matchMedia = vi.fn((query: string) => ({
@@ -210,12 +251,21 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
       act(() => result.current.toggleCollapsed());
       expect(result.current.collapsed).toBe(true);
       expect(result.current.widthAnimating).toBe(false);
+
+      // Nor across the threshold: the sidebar leaves the row at once.
+      const crossing = renderHook(
+        ({ overlaid }: { overlaid: boolean }) => useSidebarResize({ width_px: 480, collapsed: false }, overlaid),
+        { initialProps: { overlaid: false } },
+      );
+      crossing.rerender({ overlaid: true });
+      expect(crossing.result.current.besideShown).toBe(false);
+      expect(crossing.result.current.widthAnimating).toBe(false);
     } finally {
       window.matchMedia = matchMedia;
     }
   });
 
-  it("takes none of the row while the sidebar lies over the feed, and keeps its target (47.3c)", () => {
+  it("takes none of the row while the sidebar lies over the feed, and keeps its target (47.3c)", async () => {
     const cssWidth = () => document.documentElement.style.getPropertyValue("--sidebar-width");
     const { result, rerender } = renderHook(
       ({ overlaid }: { overlaid: boolean }) => useSidebarResize({ width_px: 480, collapsed: false }, overlaid),
@@ -224,8 +274,12 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
     expect(cssWidth()).toBe("0px");
     expect(result.current.collapsed).toBe(false);
 
-    // Wide again: back beside the feed at the target, nothing stored.
+    // Wide again: back beside the feed at the target, from none a frame
+    // before (У7), nothing stored.
     rerender({ overlaid: false });
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
     expect(cssWidth()).toBe("min(480px, 100vw - 390px)");
     expect(commands.setWindowSidebar).not.toHaveBeenCalled();
   });

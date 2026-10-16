@@ -375,6 +375,7 @@ import { PreviewsPendingContext } from "@/lib/cardPreviewState";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
 import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
+import { FadeScrollRow } from "@/components/FadeScrollRow";
 import { SidebarOverlay } from "@/components/SidebarOverlay";
 import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
 import { VaultConflictsNotice } from "@/components/VaultConflictsNotice";
@@ -1031,6 +1032,9 @@ export function AppWithVault({
   // has to model padding, gaps, the spacer and every fixed child correctly, and
   // one wrong term leaves entries hanging off the edge of the window — which is
   // exactly what happened. `scrollWidth > clientWidth` asks the layout itself.
+  // In a narrow window the bar hides nothing: its row scrolls instead
+  // (SPEC_NARROW_WINDOW.md, У13).
+  const bottomBarScrollsRef = useRef(false);
   const remeasureBottomBar = useCallback(() => {
     const bar = bottomBarRef.current;
     if (!bar) return;
@@ -1041,6 +1045,10 @@ export function AppWithVault({
 
     // Show everything first, so a window that grew gets its entries back.
     for (const slot of slots) slot.style.display = "";
+    if (bottomBarScrollsRef.current) {
+      setHiddenBarEntries((current) => (current.size === 0 ? current : new Set()));
+      return;
+    }
     const byPriority = [...slots].sort((a, b) => (
       (BAR_HIDE_PRIORITIES[a.dataset.barEntry ?? ""] ?? Number.MAX_SAFE_INTEGER)
       - (BAR_HIDE_PRIORITIES[b.dataset.barEntry ?? ""] ?? Number.MAX_SAFE_INTEGER)
@@ -1516,6 +1524,12 @@ export function AppWithVault({
   });
   const sidebarNarrow = sidebarOverlay.narrow;
   const closeSidebarOverlay = sidebarOverlay.close;
+  bottomBarScrollsRef.current = sidebarNarrow;
+  // Into a narrow window or out of it: the bar shows everything in its
+  // scrolling row, or hides entries by priority again (У13).
+  useLayoutEffect(() => {
+    remeasureBottomBar();
+  }, [remeasureBottomBar, sidebarNarrow]);
 
   // ── Sidebar resize ──────────────────────────────────────────────────────
   const {
@@ -1523,6 +1537,7 @@ export function AppWithVault({
     collapsed: sidebarCollapsed,
     isResizing: sidebarResizing,
     widthAnimating: sidebarWidthAnimating,
+    besideShown: sidebarBesideShown,
     startResize,
     updateResize,
     endResize,
@@ -1530,6 +1545,11 @@ export function AppWithVault({
     toggleCollapsed,
   } = useSidebarResize(windowSidebar, sidebarNarrow);
   besideSidebarRef.current = { collapsed: sidebarCollapsed, toggle: toggleCollapsed };
+  // The sidebar beside the feed and its filter row in the top row are on the
+  // page while the window holds them, and for the motion of their leaving
+  // when it narrows past the threshold (SPEC_NARROW_WINDOW.md, У7). One
+  // sidebar is mounted at a time: the one over the feed takes over at once.
+  const sidebarBesideMounted = sidebarBesideShown && !sidebarOverlay.open;
   // The sidebar is on screen: beside the feed unless collapsed, over the
   // feed when open.
   const sidebarShown = sidebarNarrow ? sidebarOverlay.open : !sidebarCollapsed;
@@ -4658,6 +4678,159 @@ export function AppWithVault({
     />
   );
 
+  // The bottom bar's commands: in the bar itself outside a narrow window,
+  // in one row that scrolls sideways inside it in a narrow one (У13).
+  const bottomBarEntries = (
+    <>
+      {/* Same command as the View menu item and the two-finger swipe. It
+          leads because it changes the shape of the window itself. */}
+      <span
+        data-bar-entry="toggle-sidebar"
+        className="inline-flex shrink-0 items-center"
+        style={hiddenBarEntries.has("toggle-sidebar") ? { display: "none" } : undefined}
+      >
+        <ActionButton chrome hotkey={commandById("toggle-sidebar").combo} onClick={toggleSidebar}>
+          {sidebarShown ? "Hide Sidebar" : "Show Sidebar"}
+        </ActionButton>
+      </span>
+      {/* The new collection is named in the sidebar list: with the sidebar
+          hidden there is nowhere to name it, so the command leaves the bar. */}
+      {sidebarShown && (
+        <span
+          data-bar-entry="new-collection"
+          className="inline-flex shrink-0 items-center"
+          style={hiddenBarEntries.has("new-collection") ? { display: "none" } : undefined}
+        >
+          <ActionButton chrome hotkey={commandById("new-collection").combo} onClick={beginCreateCollection}>
+            {commandById("new-collection").name}
+          </ActionButton>
+        </span>
+      )}
+      {/* A command appears only while it can be used, and contextual
+          entries only append at the end of the group — what the user has
+          already seen never shifts. During a selection the bar narrows to
+          the selection's own commands: navigation and Focus leave, esc
+          arrives. */}
+      {orderedTags.length > 0 && sidebarShown && !hasSelection && (
+        <span
+          data-bar-entry="switch-collection"
+          className="inline-flex shrink-0 items-center"
+          style={hiddenBarEntries.has("switch-collection") ? { display: "none" } : undefined}
+        >
+          <ActionButton chrome hotkey={commandById("switch-collection").combo} readOnly>
+            {commandById("switch-collection").name}
+          </ActionButton>
+        </span>
+      )}
+      {activeBlocks.length > 0 && renderedDetailBlock === null && !hasSelection && (
+        <span
+          data-bar-entry="navigate"
+          className="inline-flex shrink-0 items-center"
+          style={hiddenBarEntries.has("navigate") ? { display: "none" } : undefined}
+        >
+          <ActionButton chrome hotkey={commandById("navigate").combo} readOnly>
+            {commandById("navigate").name}
+          </ActionButton>
+        </span>
+      )}
+      {hasFocusedItem && !hasSelection && (
+        <span
+          data-bar-entry="open-focused"
+          className="inline-flex shrink-0 items-center"
+          style={hiddenBarEntries.has("open-focused") ? { display: "none" } : undefined}
+        >
+          <ActionButton
+            chrome
+            hotkey={commandById("open-focused").combo}
+            onClick={() => activateFocusedRef.current?.()}
+          >
+            {commandById("open-focused").name}
+          </ActionButton>
+        </span>
+      )}
+      {/* Pressable: the menu opens at the focused element — in the feed at
+          its card, over an open element in its top menu. The chord shown
+          is the one that opens this menu here: each surface's command
+          has its own binding (Ф11). */}
+      {(renderedDetailBlock !== null || feedCardMenuAvailable) && (
+        <span
+          data-bar-entry="element-menu"
+          className="inline-flex shrink-0 items-center"
+          style={hiddenBarEntries.has("element-menu") ? { display: "none" } : undefined}
+        >
+          <ActionButton
+            chrome
+            hotkey={barMenuCommand.combo}
+            onClick={() => {
+              if (renderedDetailBlock) {
+                setDetailMenuOpenRequestSequence((current) => current + 1);
+                return;
+              }
+              cardMenuActivateRef.current?.();
+            }}
+          >
+            {barMenuCommand.name}
+          </ActionButton>
+        </span>
+      )}
+      {renderedDetailBlock !== null && (
+        <span
+          data-bar-entry="close-element"
+          className="inline-flex shrink-0 items-center"
+          style={hiddenBarEntries.has("close-element") ? { display: "none" } : undefined}
+        >
+          <ActionButton
+            chrome
+            hotkey={commandById("close-element").combo}
+            onClick={handleDetailClose}
+          >
+            {commandById("close-element").name}
+          </ActionButton>
+        </span>
+      )}
+      {hasSelection && renderedDetailBlock === null && (
+        <span
+          data-bar-entry="clear-selection"
+          className="inline-flex shrink-0 items-center"
+          style={hiddenBarEntries.has("clear-selection") ? { display: "none" } : undefined}
+        >
+          <ActionButton
+            chrome
+            hotkey={commandById("clear-selection").combo}
+            onClick={() => selectionClearRef.current?.()}
+          >
+            {commandById("clear-selection").name}
+          </ActionButton>
+        </span>
+      )}
+      {!sidebarNarrow && <div className="flex-1" data-bar-spacer="" />}
+      <span
+        data-bar-entry="find-elements"
+        className="inline-flex shrink-0 items-center"
+        style={hiddenBarEntries.has("find-elements") ? { display: "none" } : undefined}
+      >
+        <ActionButton
+          chrome
+          hotkey={commandById("find-elements").combo}
+          onClick={toggleSearchOverlay}
+        >
+          {commandById("find-elements").name}
+        </ActionButton>
+      </span>
+      {/* Settings sits at the far edge: the rarest command must not spend
+          the bar's best real estate. */}
+      <span
+        data-bar-entry="settings"
+        className="inline-flex shrink-0 items-center"
+        style={hiddenBarEntries.has("settings") ? { display: "none" } : undefined}
+      >
+        <ActionButton chrome hotkey={commandById("settings").combo} onClick={() => handleOpenSettings()}>
+          {commandById("settings").name}
+        </ActionButton>
+      </span>
+    </>
+  );
+
   return (
     // Cards tell a preview still being built from a lost file (SPEC_CARD_MEDIA_GEOMETRY.md).
     <PreviewsPendingContext.Provider value={previewsPending}>
@@ -4694,7 +4867,7 @@ export function AppWithVault({
         {/* The sidebar's filter row stands here beside the feed; over the
             feed it lives in the sidebar's panel alone, with the space
             switcher (SPEC_NARROW_WINDOW.md, У12). */}
-        {!sidebarNarrow && (
+        {sidebarBesideMounted && (
           <div
             data-tauri-drag-region
             data-app-top-sidebar-segment=""
@@ -4760,7 +4933,7 @@ export function AppWithVault({
       {/* Body: sidebar + main. Positioned for the resize handle's catch, which
           takes the body's height and so stops above the bottom bar. */}
       <div className="relative flex min-h-0 flex-1">
-      {!sidebarNarrow && sidebarList}
+      {sidebarBesideMounted && sidebarList}
 
       {/* A collapsed panel has no line to grab: the sidebar button opens it.
           Over the feed the panel has no edge to drag either (У4). */}
@@ -5090,152 +5263,15 @@ export function AppWithVault({
           // Under the scrim while the sidebar lies over the feed (У6).
           inert={sidebarOverlay.open}
         >
-          {/* Same command as the View menu item and the two-finger swipe. It
-              leads because it changes the shape of the window itself. */}
-          <span
-            data-bar-entry="toggle-sidebar"
-            className="inline-flex shrink-0 items-center"
-            style={hiddenBarEntries.has("toggle-sidebar") ? { display: "none" } : undefined}
-          >
-            <ActionButton chrome hotkey={commandById("toggle-sidebar").combo} onClick={toggleSidebar}>
-              {sidebarShown ? "Hide Sidebar" : "Show Sidebar"}
-            </ActionButton>
-          </span>
-          {/* The new collection is named in the sidebar list: with the sidebar
-              hidden there is nowhere to name it, so the command leaves the bar. */}
-          {sidebarShown && (
-            <span
-              data-bar-entry="new-collection"
-              className="inline-flex shrink-0 items-center"
-              style={hiddenBarEntries.has("new-collection") ? { display: "none" } : undefined}
-            >
-              <ActionButton chrome hotkey={commandById("new-collection").combo} onClick={beginCreateCollection}>
-                {commandById("new-collection").name}
-              </ActionButton>
-            </span>
-          )}
-          {/* A command appears only while it can be used, and contextual
-              entries only append at the end of the group — what the user has
-              already seen never shifts. During a selection the bar narrows to
-              the selection's own commands: navigation and Focus leave, esc
-              arrives. */}
-          {orderedTags.length > 0 && sidebarShown && !hasSelection && (
-            <span
-              data-bar-entry="switch-collection"
-              className="inline-flex shrink-0 items-center"
-              style={hiddenBarEntries.has("switch-collection") ? { display: "none" } : undefined}
-            >
-              <ActionButton chrome hotkey={commandById("switch-collection").combo} readOnly>
-                {commandById("switch-collection").name}
-              </ActionButton>
-            </span>
-          )}
-          {activeBlocks.length > 0 && renderedDetailBlock === null && !hasSelection && (
-            <span
-              data-bar-entry="navigate"
-              className="inline-flex shrink-0 items-center"
-              style={hiddenBarEntries.has("navigate") ? { display: "none" } : undefined}
-            >
-              <ActionButton chrome hotkey={commandById("navigate").combo} readOnly>
-                {commandById("navigate").name}
-              </ActionButton>
-            </span>
-          )}
-          {hasFocusedItem && !hasSelection && (
-            <span
-              data-bar-entry="open-focused"
-              className="inline-flex shrink-0 items-center"
-              style={hiddenBarEntries.has("open-focused") ? { display: "none" } : undefined}
-            >
-              <ActionButton
-                chrome
-                hotkey={commandById("open-focused").combo}
-                onClick={() => activateFocusedRef.current?.()}
-              >
-                {commandById("open-focused").name}
-              </ActionButton>
-            </span>
-          )}
-          {/* Pressable: the menu opens at the focused element — in the feed at
-              its card, over an open element in its top menu. The chord shown
-              is the one that opens this menu here: each surface's command
-              has its own binding (Ф11). */}
-          {(renderedDetailBlock !== null || feedCardMenuAvailable) && (
-            <span
-              data-bar-entry="element-menu"
-              className="inline-flex shrink-0 items-center"
-              style={hiddenBarEntries.has("element-menu") ? { display: "none" } : undefined}
-            >
-              <ActionButton
-                chrome
-                hotkey={barMenuCommand.combo}
-                onClick={() => {
-                  if (renderedDetailBlock) {
-                    setDetailMenuOpenRequestSequence((current) => current + 1);
-                    return;
-                  }
-                  cardMenuActivateRef.current?.();
-                }}
-              >
-                {barMenuCommand.name}
-              </ActionButton>
-            </span>
-          )}
-          {renderedDetailBlock !== null && (
-            <span
-              data-bar-entry="close-element"
-              className="inline-flex shrink-0 items-center"
-              style={hiddenBarEntries.has("close-element") ? { display: "none" } : undefined}
-            >
-              <ActionButton
-                chrome
-                hotkey={commandById("close-element").combo}
-                onClick={handleDetailClose}
-              >
-                {commandById("close-element").name}
-              </ActionButton>
-            </span>
-          )}
-          {hasSelection && renderedDetailBlock === null && (
-            <span
-              data-bar-entry="clear-selection"
-              className="inline-flex shrink-0 items-center"
-              style={hiddenBarEntries.has("clear-selection") ? { display: "none" } : undefined}
-            >
-              <ActionButton
-                chrome
-                hotkey={commandById("clear-selection").combo}
-                onClick={() => selectionClearRef.current?.()}
-              >
-                {commandById("clear-selection").name}
-              </ActionButton>
-            </span>
-          )}
-          <div className="flex-1" data-bar-spacer="" />
-          <span
-            data-bar-entry="find-elements"
-            className="inline-flex shrink-0 items-center"
-            style={hiddenBarEntries.has("find-elements") ? { display: "none" } : undefined}
-          >
-            <ActionButton
-              chrome
-              hotkey={commandById("find-elements").combo}
-              onClick={toggleSearchOverlay}
-            >
-              {commandById("find-elements").name}
-            </ActionButton>
-          </span>
-          {/* Settings sits at the far edge: the rarest command must not spend
-              the bar's best real estate. */}
-          <span
-            data-bar-entry="settings"
-            className="inline-flex shrink-0 items-center"
-            style={hiddenBarEntries.has("settings") ? { display: "none" } : undefined}
-          >
-            <ActionButton chrome hotkey={commandById("settings").combo} onClick={() => handleOpenSettings()}>
-              {commandById("settings").name}
-            </ActionButton>
-          </span>
+          {/* In a narrow window every command stands at the left in one row,
+              which scrolls sideways when it does not fit, its edges
+              dissolving; outside it the bar is as it was, the rarest
+              entries hidden first (SPEC_NARROW_WINDOW.md, У13). */}
+          {sidebarNarrow ? (
+            <FadeScrollRow className="h-full flex-1 gap-2" data-bottom-bar-row="">
+              {bottomBarEntries}
+            </FadeScrollRow>
+          ) : bottomBarEntries}
         </ChromeRow>
       )}
 

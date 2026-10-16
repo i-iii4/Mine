@@ -1,14 +1,12 @@
 // How wide the tabs are and what the strip shows (SPEC_TABS.md, В48). Pure:
 // the bar measures, these decide.
 
-import type { CSSProperties } from "react";
-import {
-  EDGE_FADE_WIDTH,
-  TOP_FADE_SCROLLED_THRESHOLD_PX,
-  createLeftFadeMaskStyle,
-  createRightFadeMaskStyle,
-} from "@/lib/edgeFade";
+import { hiddenEdges, stripFadeMaskStyle } from "@/lib/edgeFade";
 import { TAB_MAX_WIDTH_PX, TAB_MIN_WIDTH_PX } from "./constants";
+
+// The strip's edges dissolve by the rule every horizontally scrolled row
+// shares (src/lib/edgeFade.ts); the bottom bar of a narrow window uses it too.
+export { hiddenEdges, stripFadeMaskStyle };
 
 /** Tab widths held after a close by the pointer, until it leaves the bar. */
 export interface FrozenTabWidth {
@@ -94,41 +92,3 @@ export function wheelScrollLeft({
   return Math.min(Math.max(0, scrollLeft + deltaX), limit);
 }
 
-/** Which edges of a horizontally scrolled strip hide tabs. The threshold is
- *  the one every scroll fade uses: sub-pixel offsets do not count. */
-export function hiddenEdges(
-  scrollLeft: number,
-  clientWidth: number,
-  scrollWidth: number,
-): { left: boolean; right: boolean } {
-  return {
-    left: scrollLeft >= TOP_FADE_SCROLLED_THRESHOLD_PX,
-    right: scrollWidth - clientWidth - scrollLeft >= TOP_FADE_SCROLLED_THRESHOLD_PX,
-  };
-}
-
-function maskImage(style: CSSProperties): string {
-  return String(style.maskImage);
-}
-
-/// The shared edge ramp on both ends of the strip (SPEC_SCROLL_EDGE_FADE.md).
-const RIGHT_EDGE_MASK = maskImage(createRightFadeMaskStyle(EDGE_FADE_WIDTH, 0));
-const LEFT_EDGE_MASK = maskImage(createLeftFadeMaskStyle(EDGE_FADE_WIDTH));
-
-/** The mask that dissolves the strip's edges where tabs are hidden past them;
- *  `undefined` when nothing is hidden. Two layers intersect, so both edges
- *  fade at once when the strip is scrolled into its middle. */
-export function stripFadeMaskStyle(edges: { left: boolean; right: boolean }): CSSProperties | undefined {
-  const layers = [edges.left ? LEFT_EDGE_MASK : null, edges.right ? RIGHT_EDGE_MASK : null].filter(
-    (layer): layer is string => layer !== null,
-  );
-  if (layers.length === 0) return undefined;
-  const image = layers.join(", ");
-  if (layers.length === 1) return { maskImage: image, WebkitMaskImage: image };
-  return {
-    maskImage: image,
-    WebkitMaskImage: image,
-    maskComposite: "intersect",
-    WebkitMaskComposite: "source-in",
-  };
-}

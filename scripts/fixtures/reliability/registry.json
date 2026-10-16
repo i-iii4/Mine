@@ -3771,13 +3771,16 @@
         "src/hooks/useSidebarOverlay.ts",
         "src/hooks/useSidebarOverlay.test.tsx",
         "src/lib/keyboardTargets.ts",
-        "src/lib/keyboardTargets.test.ts"
+        "src/lib/keyboardTargets.test.ts",
+        "src/components/FadeScrollRow.tsx",
+        "src/components/FadeScrollRow.test.tsx"
       ],
       "requirement": "SPEC_NARROW_WINDOW.md### Правила",
       "tests": [
         "src/components/SidebarOverlay.test.tsx",
         "src/hooks/useSidebarOverlay.test.tsx",
-        "src/lib/keyboardTargets.test.ts"
+        "src/lib/keyboardTargets.test.ts",
+        "src/components/FadeScrollRow.test.tsx"
       ],
       "command": "test:frontend"
     },
@@ -3785,7 +3788,8 @@
       "paths": [
         "scripts/narrow-window-audit.mjs",
         "src/components/SidebarOverlay.tsx",
-        "src/hooks/useSidebarOverlay.ts"
+        "src/hooks/useSidebarOverlay.ts",
+        "src/components/FadeScrollRow.tsx"
       ],
       "requirement": "SPEC_NARROW_WINDOW.md### Правила",
       "tests": [
