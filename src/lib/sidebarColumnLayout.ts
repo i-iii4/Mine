@@ -96,13 +96,14 @@ function shownColumns(layout: SidebarColumnLayout): SidebarColumn[] {
 
 /** The width of `column`'s zone in a row laid out as `layout`, as a term of a
  *  `calc()`: the name's and the meta zone's their own; the previews (or, with
- *  them hidden, the name) take what the others and the guidelines leave. */
+ *  them hidden, the name; alone, the meta zone) take what the others and the
+ *  guidelines leave. */
 function zoneWidth(column: SidebarColumn, layout: SidebarColumnLayout): string {
   const shown = shownColumns(layout);
-  const flexible: SidebarColumn = shown.includes("previews") ? "previews" : "name";
+  const flexible = (["previews", "name", "meta"] as const).find((candidate) => shown.includes(candidate));
   const own = (candidate: SidebarColumn) => (candidate === "meta" ? META_ZONE : NAME_ZONE);
   if (column !== flexible) return own(column);
-  const taken = shown.filter((candidate) => candidate !== column).map(own);
+  const taken: string[] = shown.filter((candidate) => candidate !== column).map(own);
   const guides = shown.length - 1;
   if (guides > 0) taken.push(`${guides * GUIDE_PX}px`);
   return taken.length === 0 ? "100%" : `(100% - ${taken.join(" - ")})`;

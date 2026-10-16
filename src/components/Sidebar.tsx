@@ -109,6 +109,10 @@ const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 /// divider gap in the dark one, where they dissolve before it (global.css,
 /// «Previews' right edge»; user's decision of 07.10.2026).
 const SIDEBAR_PREVIEW_EDGE_GAP = `var(--preview-edge-gap, ${SIDEBAR_PREVIEW_DIVIDER_GAP}px)`;
+/// The previews' inset after the guideline before them, with that
+/// guideline's pixel, which their cell owns: none when a trial order puts them
+/// first (`--sidebar-previews-lead`, sidebarColumnLayout.ts, PLAN 47.6).
+const SIDEBAR_PREVIEW_LEAD_GAP = `calc(var(--sidebar-previews-lead, 1px) + ${SIDEBAR_PREVIEW_DIVIDER_GAP}px)`;
 /** A row's `Connected` that only reports. It is the bottom bar's reference
  *  key, built the same way (ActionButton with `readOnly`): the `reference`
  *  body, mono regular type, muted colour, no hover. Only its height follows
@@ -142,9 +146,18 @@ const ROW_INTENT_SHOWS = cn(
 /** Two labels stacked in one cell, so swapping them never moves the button's text. */
 const ROW_INTENT_LABEL_STACK = "grid place-items-center [&>*]:[grid-area:1/1]";
 const SIDEBAR_ROW_ACTION_BUTTON_CLASS = CONNECT_ACTION_BUTTON_CLASS;
+/// The names' optical shift: a name stands a pixel further in than the row's
+/// inset (DESIGN_SYSTEM.md, «оптический сдвиг»), as the bottom bar's first
+/// plate under it expects.
+const SIDEBAR_NAME_OPTICAL_SHIFT_PX = 1;
+/// The clear air between a name's dissolve and the guideline after it: the
+/// divider gap, less the optical shift the name's text already took. The cell
+/// ends on the guideline (the next column owns its pixel), so the tail stays
+/// inside the name's own zone wherever the column stands.
+const SIDEBAR_NAME_CLEAR_TAIL = SIDEBAR_PREVIEW_DIVIDER_GAP - SIDEBAR_NAME_OPTICAL_SHIFT_PX;
 const SIDEBAR_ROW_TEXT_MASK_STYLE = createRightFadeMaskStyle(
   SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH,
-  SIDEBAR_PREVIEW_DIVIDER_GAP,
+  SIDEBAR_NAME_CLEAR_TAIL,
 );
 
 /// The previews' dissolve toward their own cell's end, with no tail: the cell
@@ -1147,6 +1160,12 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
   );
 });
 
+/// The name's cell: the name's whole zone, the row's inset included, and,
+/// after another column, the guideline's pixel before it (`--sidebar-name-lead`,
+/// sidebarColumnLayout.ts, PLAN 47.6; none by default, where the name comes
+/// first). The inset belongs to the name's zone, not to the row
+/// (DESIGN_SYSTEM.md, «Строка боковой панели: три зоны»), so a trial order
+/// keeps it, and the dissolve ends inside the zone wherever it stands.
 function SidebarRowTitleCell({
   children,
   className,
@@ -1159,23 +1178,26 @@ function SidebarRowTitleCell({
       data-sidebar-row-text=""
       data-sidebar-name-cell=""
       data-sidebar-title-fade-width={String(SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH)}
-      data-sidebar-title-protected-width={String(SIDEBAR_PREVIEW_DIVIDER_GAP)}
+      data-sidebar-title-protected-width={String(SIDEBAR_NAME_CLEAR_TAIL)}
       className={cn(
-        "w-[var(--sidebar-name-col)] shrink-0 translate-x-px overflow-hidden whitespace-nowrap",
+        "w-[calc(var(--sidebar-name-lead,0px)+var(--sidebar-row-pad-x)+var(--sidebar-name-col))] shrink-0 overflow-hidden whitespace-nowrap",
         className,
       )}
-      style={SIDEBAR_ROW_TEXT_MASK_STYLE}
+      style={{
+        ...SIDEBAR_ROW_TEXT_MASK_STYLE,
+        paddingLeft: `calc(var(--sidebar-name-lead, 0px) + var(--sidebar-row-pad-x) + ${SIDEBAR_NAME_OPTICAL_SHIFT_PX}px)`,
+      }}
     >
       {children}
     </span>
   );
 }
 
-/// The previews' cell: from the left guideline to the right one, its own
-/// edges and nothing past them. The next cell stands in the row's flow
-/// (`SidebarMetaCell`), so this one ends where the right guideline begins
-/// instead of running under the count and Connect and being masked off there
-/// (user's decision of 07.10.2026).
+/// The previews' cell: from the guideline before it to the one after it (or
+/// the row's edge), its own edges and nothing past them. The next cell stands
+/// in the row's flow (`SidebarMetaCell`), so this one ends where the next
+/// guideline begins instead of running under the count and Connect and being
+/// masked off there (user's decision of 07.10.2026).
 function SidebarPreviewRail({ children }: { children: ReactNode }) {
   return (
     <>
@@ -1184,13 +1206,14 @@ function SidebarPreviewRail({ children }: { children: ReactNode }) {
         // drop below it whatever width the panel is dragged to.
         className="relative min-w-[var(--sidebar-col-floor)] flex-1"
         data-sidebar-preview-rail
-        // Measured from the far edge of the left guideline, which owns its
-        // pixel. Before the right guideline the theme decides: the light
-        // theme's previews run to it and are cut by the cell's edge, the dark
-        // theme's keep the gap of air they dissolve in (global.css,
-        // --preview-edge-gap).
+        // Measured from the far edge of the guideline before the previews,
+        // whose pixel the cell owns (`--sidebar-previews-lead`, none when a
+        // trial order puts them first). Before the next guideline the theme
+        // decides: the light theme's previews run to it and are cut by the
+        // cell's edge, the dark theme's keep the gap of air they dissolve in
+        // (global.css, --preview-edge-gap).
         style={{
-          paddingLeft: `${SIDEBAR_PREVIEW_DIVIDER_GAP + 1}px`,
+          paddingLeft: SIDEBAR_PREVIEW_LEAD_GAP,
           paddingRight: SIDEBAR_PREVIEW_EDGE_GAP,
         }}
       >
@@ -1201,15 +1224,16 @@ function SidebarPreviewRail({ children }: { children: ReactNode }) {
   );
 }
 
-/// The row's last cell, the count and Connect, with the right guideline's
-/// pixel. It holds nothing in the flow (the count and the buttons are placed
-/// over it); it is here so the previews' cell ends on the guideline.
+/// The meta zone's cell, the count and Connect, with the guideline's pixel
+/// before it (`--sidebar-meta-lead`, none when a trial order puts it first).
+/// It holds nothing in the flow (the count and the buttons are placed over
+/// it); it is here so the previews' cell ends on the guideline.
 function SidebarMetaCell() {
   return (
     <span
       aria-hidden="true"
       data-sidebar-meta-cell=""
-      className="w-[calc(var(--sidebar-zone)+1px)] shrink-0 self-stretch"
+      className="w-[calc(var(--sidebar-meta-lead,1px)+var(--sidebar-zone))] shrink-0 self-stretch"
     />
   );
 }
@@ -1310,12 +1334,12 @@ function SidebarRowBody({
         draggable="false"
         onClick={handleNavLinkClick}
         onDoubleClick={handleNavLinkDoubleClick}
+        // The row's 16px of inner padding belongs to its columns, not to the
+        // row: the name's cell starts with it, the count stands it in from
+        // the meta zone's edge, so a trial order of the columns keeps both.
         className={cn(
           SIDEBAR_ROW_BOX_CLASS,
           "font-sans text-base text-muted-foreground",
-          // 16px of inner padding: text and count do not touch the divider
-          // and the screen edge.
-          "pl-[var(--sidebar-row-pad-x)]",
         )}
       >
         <SidebarRowTitleCell>
@@ -2302,7 +2326,8 @@ export function SidebarTagRowDragPreview({
       className="flex h-full w-full items-center rounded-1 border border-border bg-sidebar shadow-md"
       data-sidebar-tag-drag-preview=""
     >
-      <div className="relative flex w-full min-w-0 items-center py-1 pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground">
+      {/* The row's inset is the name cell's own, as in the resting row. */}
+      <div className="relative flex w-full min-w-0 items-center py-1 font-sans text-base text-muted-foreground">
         <SidebarRowTitleCell>{label}</SidebarRowTitleCell>
         <SidebarPreviewRail>
           <SidebarPreviewStrip

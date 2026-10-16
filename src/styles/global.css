@@ -1449,10 +1449,12 @@ body {
 
 /* TRIAL (PLAN 47.6, 16.10.2026): the sidebar rows' columns in the order and
    visibility the Display panel sets (src/lib/sidebarColumnLayout.ts). The
-   module writes the order, the guidelines' places and the meta zone's offset
-   on the root only when they differ from today; unset, every rule below
-   leaves the rows as they were. Goes or becomes lasting once the user
-   decides. */
+   module writes the order, each column's lead (the guideline's pixel before
+   it, `--sidebar-*-lead`, read by the cells in Sidebar.tsx), the guidelines'
+   places and the meta zone's offset on the root only when they differ from
+   today; unset, every rule below leaves the rows as they were. Each column
+   keeps its own insets in any order: the row's inset is the name cell's.
+   Goes or becomes lasting once the user decides. */
 [data-sidebar-name-cell] {
   order: var(--sidebar-name-order, 0);
 }

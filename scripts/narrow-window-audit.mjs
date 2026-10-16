@@ -405,65 +405,145 @@ try {
 
   // TRIAL (PLAN 47.6): the sidebar rows' columns in another order or hidden.
   // The rows follow at once; the shown columns share the row, nothing is cut,
-  // a guideline stands between each two of them and the count keeps its zone.
+  // a guideline stands between each two of them, and every column keeps the
+  // insets it has in the default order wherever it stands: the row's inset
+  // is the name's own (DESIGN_SYSTEM.md, «Строка боковой панели: три зоны»).
+  // A zone runs from the row's edge or a guideline's far edge to the next
+  // guideline or the row's other edge; each inset is measured in its zone.
   await resize(1200);
   await settle();
   const readColumns = () => page.evaluate(() => {
     const aside = [...document.querySelectorAll("aside")].find((element) => !element.closest("[data-sidebar-overlay]"));
-    const row = aside.querySelector("[data-sidebar-row-key='tag:Inbox'] a") ?? aside.querySelector("[data-sidebar-rows] a");
+    const nav = aside.querySelector("[data-sidebar-scroll]");
+    // Twenty placeholder tiles: more than any zone holds, so the strip is cut.
+    const frame = aside.querySelector("[data-sidebar-row-key='tag:Collection 20']");
+    const row = frame.querySelector("a");
+    // Rendered: neither it nor a parent hidden (a hidden column hides its cells).
+    const shown = (element) => !!element && element.checkVisibility();
     const box = (element) => {
-      if (!element || getComputedStyle(element).display === "none") return null;
+      if (!shown(element)) return null;
       const r = element.getBoundingClientRect();
       return { left: Math.round(r.left), right: Math.round(r.right) };
     };
-    const rowBox = row.getBoundingClientRect();
+    const rowBox = box(row);
     const guides = [...aside.querySelectorAll("[data-sidebar-guideline]")]
-      .filter((guide) => getComputedStyle(guide).display !== "none")
-      .map((guide) => Math.round(guide.getBoundingClientRect().left));
+      .filter(shown)
+      .map((guide) => Math.round(guide.getBoundingClientRect().left))
+      .sort((a, b) => a - b);
+    // The zones between the row's edges and the guidelines, left to right.
+    const edges = [rowBox.left, ...guides.flatMap((guide) => [guide, guide + 1]), rowBox.right];
+    const zones = [];
+    for (let index = 0; index < edges.length; index += 2) zones.push({ left: edges[index], right: edges[index + 1] });
+    const zoneOf = (part) => zones.find((zone) => part.left >= zone.left && part.right <= zone.right) ?? null;
+    const nameCell = row.querySelector("[data-sidebar-name-cell]");
+    const name = box(nameCell);
+    let nameText = null;
+    if (name) {
+      const range = document.createRange();
+      range.selectNodeContents(nameCell);
+      nameText = Math.round(range.getBoundingClientRect().left);
+    }
+    const strip = box(row.querySelector("[data-sidebar-thumbnail-strip]"));
+    // What each tile shows: the strip's own edge cuts it.
+    const tiles = strip
+      ? [...row.querySelectorAll("[data-sidebar-thumbnail-strip] > *")].map((tile) => {
+        const r = tile.getBoundingClientRect();
+        return { left: Math.max(Math.round(r.left), strip.left), right: Math.min(Math.round(r.right), strip.right) };
+      }).filter((tile) => tile.right > tile.left)
+      : [];
+    const count = box(row.querySelector("[data-sidebar-meta-count]"));
+    const pill = shown(row.querySelector("[data-sidebar-meta-cell]"))
+      ? box(frame.querySelector("[data-sidebar-row-connected-pill]"))
+      : null;
+    // The cell owns the guideline's pixel before it; its text is in the zone.
+    const nameZone = name && zoneOf({ left: nameText, right: name.right });
+    const stripZone = strip && zoneOf(strip);
+    const metaZone = count && zoneOf(count);
     return {
-      row: { left: Math.round(rowBox.left), right: Math.round(rowBox.right) },
-      name: box(row.querySelector("[data-sidebar-name-cell]")),
-      previews: box(row.querySelector("[data-sidebar-preview-rail]")),
-      meta: box(row.querySelector("[data-sidebar-meta-cell]")),
-      count: box(row.querySelector("[data-sidebar-meta-count]")),
+      row: rowBox,
       guides,
+      zones: zones.length,
+      // Inside the name's zone: where its text starts, where its cell (and so
+      // its dissolve, measured from the cell's end) stops.
+      name: name && nameZone ? { text: nameText - nameZone.left, end: nameZone.right - name.right } : name && "outside its zone",
+      // Inside the previews' zone: the strip's air at both ends.
+      previews: strip && stripZone ? { start: strip.left - stripZone.left, end: stripZone.right - strip.right } : strip && "outside its zone",
+      tilesOnGuides: tiles.filter((tile) => guides.some((guide) => tile.left <= guide && tile.right > guide)).length,
+      tilesOutside: tiles.filter((tile) => !zoneOf(tile) || zoneOf(tile) !== stripZone).length,
+      // Inside the meta zone: the count from its end, Connected's fields.
+      meta: count && metaZone ? {
+        count: metaZone.right - count.right,
+        pill: pill ? { start: pill.left - metaZone.left, end: metaZone.right - pill.right, width: pill.right - pill.left } : null,
+      } : count && "outside its zone",
+      order: [["name", name], ["previews", strip], ["meta", count]]
+        .filter(([, part]) => part).sort(([, a], [, b]) => a.left - b.left).map(([column]) => column),
+      overflow: nav.scrollWidth - nav.clientWidth,
     };
   });
+  const setColumns = (order, hidden = []) => page.evaluate(([columnOrder, hiddenColumns]) => {
+    window.auditColumns.order(columnOrder);
+    for (const column of ["name", "previews", "meta"]) window.auditColumns.shown(column, true);
+    for (const column of hiddenColumns) window.auditColumns.shown(column, false);
+  }, [order, hidden]);
   const columnsBefore = await readColumns();
   assert.equal(columnsBefore.guides.length, 2, "default: two guidelines");
-  assert.ok(columnsBefore.name.right <= columnsBefore.previews.left + 1, "default: the name first");
-  assert.ok(columnsBefore.previews.right <= columnsBefore.meta.left + 1, "default: the previews before the count");
-  assert.ok(columnsBefore.count.left >= columnsBefore.meta.left, "default: the count in its zone");
+  assert.deepEqual(columnsBefore.order, ["name", "previews", "meta"], "default: the name, the previews, the count");
+  assert.equal(columnsBefore.name.text, 17, "default: the name 17 px into its zone (the row's inset and the optical pixel)");
+  assert.equal(columnsBefore.previews.start, 4, "default: the previews 4 px after their guideline");
+  assert.equal(columnsBefore.meta.count, 17, "default: the count 17 px before the row's end");
+  assert.equal(columnsBefore.meta.pill.start, 8, "default: Connected 8 px after the guideline");
+  assert.equal(columnsBefore.meta.pill.end, 8, "default: Connected 8 px before the row's end");
+  assert.equal(columnsBefore.tilesOnGuides, 0, "default: no thumbnail on a guideline");
+  assert.equal(columnsBefore.overflow, 0, "default: nothing wider than the list");
 
-  await page.evaluate(() => window.auditColumns.order(["meta", "name", "previews"]));
-  await settle();
-  let columns = await readColumns();
-  assert.equal(columns.meta.left, columns.row.left + 16, "count first: its zone after the row's inset");
-  assert.ok(columns.count.left >= columns.meta.left && columns.count.right <= columns.meta.right, "count first: the count in its zone");
-  assert.ok(columns.meta.right <= columns.name.left + 1 && columns.name.right <= columns.previews.left + 1, "count first: then the name and the previews");
-  assert.equal(columns.previews.right, columns.row.right, "count first: the previews to the row's end");
-  assert.equal(columns.guides.length, 2, "count first: two guidelines");
-  assert.ok(Math.abs(columns.guides[0] - columns.meta.right) <= 1, "count first: a guideline after the count's zone");
+  const ORDERS = [
+    ["name", "previews", "meta"], ["name", "meta", "previews"], ["previews", "name", "meta"],
+    ["previews", "meta", "name"], ["meta", "name", "previews"], ["meta", "previews", "name"],
+  ];
+  const HIDDEN = [["name"], ["previews"], ["meta"], ["name", "previews"], ["name", "meta"], ["previews", "meta"]];
+  for (const order of ORDERS) {
+    for (const hidden of [[], ...HIDDEN]) {
+      await setColumns(order, hidden);
+      await settle();
+      const columns = await readColumns();
+      const label = `${order.join(", ")}${hidden.length ? ` without ${hidden.join(", ")}` : ""}`;
+      const expected = order.filter((column) => !hidden.includes(column));
+      assert.deepEqual(columns.order, expected, `${label}: the columns in their order`);
+      assert.equal(columns.guides.length, expected.length - 1, `${label}: a guideline between each two columns`);
+      assert.equal(columns.zones, expected.length, `${label}: a zone per column`);
+      if (expected.includes("name")) {
+        assert.equal(typeof columns.name, "object", `${label}: the name in its zone`);
+        assert.equal(columns.name.text, columnsBefore.name.text, `${label}: the name's text as far from its guideline or edge as in the default`);
+        assert.equal(columns.name.end, columnsBefore.name.end, `${label}: the name's dissolve as far from the next guideline or edge as in the default`);
+      }
+      if (expected.includes("previews")) {
+        assert.equal(typeof columns.previews, "object", `${label}: the previews in their zone`);
+        assert.deepEqual(columns.previews, columnsBefore.previews, `${label}: the previews' air at both ends as in the default`);
+        assert.equal(columns.tilesOnGuides, 0, `${label}: no thumbnail on a guideline`);
+        assert.equal(columns.tilesOutside, 0, `${label}: every thumbnail inside the previews' zone`);
+      }
+      if (expected.includes("meta")) {
+        assert.equal(typeof columns.meta, "object", `${label}: the count in its zone`);
+        if (expected.length > 1) {
+          assert.deepEqual(columns.meta, columnsBefore.meta, `${label}: the count and Connected where they stand in the default zone`);
+        } else {
+          // Alone, the meta zone is the whole row (the shown columns share
+          // it): the count and Connected stand at its end as in the default,
+          // Connected as wide as ever.
+          assert.equal(columns.meta.count, columnsBefore.meta.count, `${label}: the count at the row's end`);
+          assert.equal(columns.meta.pill.end, columnsBefore.meta.pill.end, `${label}: Connected at the row's end`);
+          assert.equal(columns.meta.pill.width, columnsBefore.meta.pill.width, `${label}: Connected as wide as in the default`);
+        }
+      }
+      assert.equal(columns.overflow, 0, `${label}: nothing wider than the list`);
+    }
+  }
 
-  await page.evaluate(() => { window.auditColumns.order(["name", "previews", "meta"]); window.auditColumns.shown("previews", false); });
+  await setColumns(["name", "previews", "meta"]);
   await settle();
-  columns = await readColumns();
-  assert.equal(columns.previews, null, "without previews: none");
-  assert.ok(Math.abs(columns.name.right - columns.meta.left) <= 1, "without previews: the name takes their room");
-  assert.equal(columns.guides.length, 1, "without previews: one guideline");
-
-  await page.evaluate(() => { window.auditColumns.shown("previews", true); window.auditColumns.shown("meta", false); });
-  await settle();
-  columns = await readColumns();
-  assert.equal(columns.count, null, "without the count: none");
-  assert.equal(columns.previews.right, columns.row.right, "without the count: the previews to the row's end");
-  assert.equal(columns.guides.length, 1, "without the count: one guideline");
-
-  await page.evaluate(() => window.auditColumns.shown("meta", true));
-  await settle();
-  columns = await readColumns();
+  const columns = await readColumns();
   assert.deepEqual(columns, columnsBefore, "back to the default: the rows as they were");
-  console.log("PASS 1200: the sidebar rows follow a trial order and hidden columns, and come back as they were");
+  console.log("PASS 1200: the sidebar rows follow the six orders and hidden columns, every column keeping its insets, and come back as they were");
 
   assert.deepEqual(errors, []);
 } finally {

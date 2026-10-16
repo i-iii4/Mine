@@ -606,7 +606,9 @@ describe("Sidebar", () => {
 
     const everythingLink = screen.getByRole("link", { name: /Everything/ });
     expect(everythingLink).not.toHaveClass("px-3");
-    expect(screen.getByText("Everything")).toHaveClass("translate-x-px");
+    // The name's optical pixel is part of its cell's inset (a cell that ends
+    // on the guideline in any order of the columns, PLAN 47.6).
+    expect(screen.getByText("Everything").style.paddingLeft).toBe("calc(var(--sidebar-name-lead, 0px) + var(--sidebar-row-pad-x) + 1px)");
     expect(screen.getByText("17")).toHaveClass("font-mono");
     expect(screen.getByText("17")).toHaveClass("-translate-x-px");
     expect(screen.getByText("10")).toHaveClass("font-mono");
@@ -1407,12 +1409,22 @@ describe("Sidebar", () => {
     // (PLAN 47.6).
     expect(leftDivider.style.left).toBe("var(--sidebar-guide-1-left, calc(var(--sidebar-row-pad-x) + var(--sidebar-name-col)))");
     expect(title).toHaveAttribute("data-sidebar-title-fade-width", "24");
-    expect(title).toHaveAttribute("data-sidebar-title-protected-width", "4");
-    expect(title).toHaveClass("w-[var(--sidebar-name-col)]");
+    // The cell is the name's whole zone and ends on the guideline, whose
+    // pixel is the next column's: three clear pixels before it, as the cell
+    // nudged a pixel right with four kept before.
+    expect(title).toHaveAttribute("data-sidebar-title-protected-width", "3");
+    // The row's inset is the name's own (DESIGN_SYSTEM.md, «три зоны»), so a
+    // trial order of the columns keeps it (PLAN 47.6); the text 17 px in,
+    // the inset and the optical pixel.
+    expect(title).toHaveClass("w-[calc(var(--sidebar-name-lead,0px)+var(--sidebar-row-pad-x)+var(--sidebar-name-col))]");
+    expect(title.style.paddingLeft).toBe("calc(var(--sidebar-name-lead, 0px) + var(--sidebar-row-pad-x) + 1px)");
+    expect(title).not.toHaveClass("translate-x-px");
+    expect(row.querySelector("a")).not.toHaveClass("pl-[var(--sidebar-row-pad-x)]");
     expect(title).toHaveClass("shrink-0");
     expect(title).not.toHaveClass("truncate");
-    // Four clear pixels after the guideline, which owns the pixel before them.
-    expect(rail).toHaveStyle({ paddingLeft: "5px" });
+    // Four clear pixels after the guideline, which owns the pixel before them
+    // (none when a trial order puts the previews first).
+    expect(rail.style.paddingLeft).toBe("calc(var(--sidebar-previews-lead, 1px) + 4px)");
     expect(rightDivider).toHaveClass("bg-sidebar-border");
     // The column that holds the Connect button follows the row's own inset:
     // the button is placed from it, and a guideline measured from the panel
@@ -1432,7 +1444,7 @@ describe("Sidebar", () => {
     // dark one (global.css). Nothing of the next cell's width enters the mask.
     const meta = row.querySelector("[data-sidebar-meta-cell]") as HTMLSpanElement;
     expect(rail.nextElementSibling).toBe(meta);
-    expect(meta).toHaveClass("w-[calc(var(--sidebar-zone)+1px)]", "shrink-0");
+    expect(meta).toHaveClass("w-[calc(var(--sidebar-meta-lead,1px)+var(--sidebar-zone))]", "shrink-0");
     expect(rail.style.paddingRight).toBe("var(--preview-edge-gap, 4px)");
     // The dissolve is published for the theme to apply (only the dark one
     // does): the strip carries no mask of its own, and nothing is drawn over
