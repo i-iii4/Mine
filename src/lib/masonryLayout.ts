@@ -15,10 +15,23 @@ export interface MasonryLayout {
   positions: MasonryPosition[];
 }
 
+/**
+ * The feed never has fewer columns than this (SPEC_GRID.md, «Число колонок»,
+ * user decision 16.10.2026). A feed too narrow for two columns of
+ * `minColumnWidth` keeps two narrower ones instead of one wide column.
+ */
+export const MASONRY_MIN_COLUMN_COUNT = 2;
+
 function clampPositive(value: number): number {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+/**
+ * As many columns of at least `minColumnWidth` as the width holds, and never
+ * fewer than `MASONRY_MIN_COLUMN_COUNT`: `minColumnWidth` decides when a
+ * column is added, not how narrow a column may get. Any width, 0 or not
+ * finite included, gives a count.
+ */
 export function getMasonryColumnCount(
   containerWidth: number,
   minColumnWidth: number,
@@ -27,9 +40,19 @@ export function getMasonryColumnCount(
   const width = clampPositive(containerWidth);
   const minWidth = Math.max(1, minColumnWidth);
   const safeGap = clampPositive(gap);
-  return Math.max(1, Math.floor((width + safeGap) / (minWidth + safeGap)));
+  return Math.max(
+    MASONRY_MIN_COLUMN_COUNT,
+    Math.floor((width + safeGap) / (minWidth + safeGap)),
+  );
 }
 
+/**
+ * The whole-pixel width of each column, never below 1 px. Columns narrow
+ * below `minColumnWidth` only at the two-column minimum. Under `gap + 2` px
+ * two columns of 1 px and their gap do not fit: they stay 1 px wide and the
+ * second one starts past the right edge. The app's feed is never that narrow
+ * (SPEC_GRID.md, «Число колонок»).
+ */
 export function getMasonryColumnWidth(
   containerWidth: number,
   minColumnWidth: number,

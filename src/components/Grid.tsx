@@ -1077,10 +1077,13 @@ export function Grid({
   // are never fed back into layout because that feedback loop is what caused
   // scroll jumps and blank/skeleton windows during fast scroll.
   const layout = useMemo((): MasonryLayout => {
+    // Nothing to place, or no width yet (before the first measure): no
+    // positions, and the column geometry the rule gives this width, so the
+    // reported count is never below the two-column minimum.
     if (parentWidth <= 0 || blocks.length === 0) {
       return {
-        columnCount: 1,
-        columnWidth: 0,
+        columnCount,
+        columnWidth,
         totalHeight: 0,
         positions: [],
       };
@@ -1096,7 +1099,7 @@ export function Grid({
     const fresh = buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show, columnOf ?? undefined);
     layoutCache.set(generationKey, fresh);
     return fresh;
-  }, [allCurrentGenerationDeterministic, blocks, columnOf, generationKey, layoutGap, parentWidth, show, wordWidthsMap]);
+  }, [allCurrentGenerationDeterministic, blocks, columnCount, columnOf, columnWidth, generationKey, layoutGap, parentWidth, show, wordWidthsMap]);
   // A layout of the same view moves the mounted cards that shifted over
   // 200ms, each from where it stood; a new view stands at once (К3). Only
   // those cards are touched: switching a transition on for the whole feed
@@ -1320,9 +1323,9 @@ export function Grid({
       Math.abs(previous.parentWidth - parentWidth) <= 0.5 &&
       viewportHeight > 0 &&
       // At the very top of the feed, do not anchor: a head insert must reveal the
-      // new cards. Anchoring the old first card here (single-column, or a batch
-      // insert of >= columnCount cards) fixes it in place and hides the fresh
-      // rows above the viewport. Away from the top this guard is inactive and
+      // new cards. Anchoring the old first card here (a batch insert of
+      // >= columnCount cards) fixes it in place and hides the fresh rows above
+      // the viewport. Away from the top this guard is inactive and
       // anchoring keeps the first visible card fixed when content above it moves.
       latestScrollTopRef.current > TOP_OF_FEED_SCROLL_EPSILON_PX &&
       // The layout object changes identity only when positions actually change

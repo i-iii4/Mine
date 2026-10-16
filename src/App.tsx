@@ -91,6 +91,7 @@ import {
 import { NOTIFICATION_BOTTOM_VAR, publishNotificationBottom } from "@/lib/notificationPlacement";
 import { reconcileBlocks } from "@/lib/blockIdentity";
 import { refreshPageLimit } from "@/lib/gridPaging";
+import { MASONRY_MIN_COLUMN_COUNT } from "@/lib/masonryLayout";
 import { createPreviewRowQueue } from "@/lib/previewRowQueue";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX, SIDEBAR_PREVIEW_SLOTS } from "@/lib/appLayout";
 import { topRowShowsPlace } from "@/lib/topRowPath";
@@ -1188,7 +1189,7 @@ export function AppWithVault({
   const sidebarSearchChromeDragGesture = useChromeDragGesture();
   const [detailMenuOpenRequestSequence, setDetailMenuOpenRequestSequence] = useState(0);
   const [detailChromeEntered, setDetailChromeEntered] = useState(false);
-  const gridColumnCountRef = useRef(1);
+  const gridColumnCountRef = useRef(MASONRY_MIN_COLUMN_COUNT);
   const suppressRedirectRef = useRef(false);
   const vaultPathRef = useRef(vaultPath);
   vaultPathRef.current = vaultPath;

@@ -6,6 +6,7 @@ import {
   getVisibleMasonryItems,
   createVisibilityIndex,
   getVisibleItemsFromIndex,
+  MASONRY_MIN_COLUMN_COUNT,
 } from "./masonryLayout";
 
 const MIN_COL = 220;
@@ -14,7 +15,49 @@ const GAP = 32;
 describe("masonryLayout", () => {
   it("computes the number of columns from the container width", () => {
     expect(getMasonryColumnCount(1200, 220, 32)).toBe(4);
-    expect(getMasonryColumnCount(300, 220, 32)).toBe(1);
+    expect(getMasonryColumnCount(723, 220, 32)).toBe(2);
+    expect(getMasonryColumnCount(724, 220, 32)).toBe(3);
+  });
+
+  // SPEC_GRID.md, «Число колонок» (user decision 16.10.2026): a feed too
+  // narrow for two columns of the minimum width keeps two narrower columns.
+  it("keeps two columns in a feed too narrow for two of the minimum width", () => {
+    expect(MASONRY_MIN_COLUMN_COUNT).toBe(2);
+    for (const width of [471, 326, 300, 120]) {
+      expect(getMasonryColumnCount(width, MIN_COL, GAP)).toBe(2);
+    }
+
+    // The narrowest feed of the app: 390 px less the 32-px insets.
+    const layout = computeMasonryLayout([100, 100, 100], 326, MIN_COL, GAP);
+    expect(layout.columnCount).toBe(2);
+    expect(layout.columnWidth).toBe(147);
+    expect(layout.columnWidth).toBeLessThan(MIN_COL);
+    const [first, second, third] = layout.positions;
+    expect(first).toMatchObject({ column: 0, left: 0, width: 147, top: 0 });
+    expect(second).toMatchObject({ column: 1, left: 147 + GAP, width: 147, top: 0 });
+    expect(second!.left + second!.width).toBe(326);
+    expect(third).toMatchObject({ column: 0, top: 100 + GAP });
+  });
+
+  it("never gives a column a width below one pixel, whatever the feed width", () => {
+    for (const width of [0, 1, GAP, GAP + 2, -50, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(getMasonryColumnCount(width, MIN_COL, GAP)).toBe(2);
+      expect(getMasonryColumnWidth(width, MIN_COL, GAP)).toBe(1);
+
+      const layout = computeMasonryLayout([100, 100], width, MIN_COL, GAP);
+      expect(layout.columnCount).toBe(2);
+      expect(layout.columnWidth).toBe(1);
+      for (const position of layout.positions) {
+        expect(position.width).toBe(1);
+        expect(Number.isFinite(position.left)).toBe(true);
+        expect(position.left).toBeGreaterThanOrEqual(0);
+      }
+      expect(layout.positions.map((position) => position.column)).toEqual([0, 1]);
+    }
+    // From gap + 2 px on, the two columns and their gap fit inside the feed.
+    const fitting = computeMasonryLayout([100, 100], GAP + 2, MIN_COL, GAP);
+    expect(fitting.positions[1]!.left + fitting.positions[1]!.width).toBe(GAP + 2);
+    expect(getMasonryColumnWidth(GAP + 4, MIN_COL, GAP)).toBe(2);
   });
 
   it("places cards into the shortest column", () => {
@@ -69,12 +112,13 @@ describe("masonryLayout", () => {
     expect(layout.columnWidth).toBe(226);
     expect(layout.positions[1]?.left).toBe(layout.columnWidth + GAP);
 
-    const singleColumn = computeMasonryLayout([100], 471, MIN_COL, GAP);
-    expect(singleColumn.columnCount).toBe(1);
-    expect(singleColumn.columnWidth).toBe(471);
+    // Two columns grow up to the width at which a third one fits.
+    const twoColumns = computeMasonryLayout([100, 100], 723, MIN_COL, GAP);
+    expect(twoColumns.columnCount).toBe(2);
+    expect(twoColumns.columnWidth).toBe(345);
 
-    const nextThreshold = computeMasonryLayout([100, 100], 472, MIN_COL, GAP);
-    expect(nextThreshold.columnCount).toBe(2);
+    const nextThreshold = computeMasonryLayout([100, 100, 100], 724, MIN_COL, GAP);
+    expect(nextThreshold.columnCount).toBe(3);
     expect(nextThreshold.columnWidth).toBe(MIN_COL);
   });
 

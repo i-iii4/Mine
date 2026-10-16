@@ -79,8 +79,9 @@ const TEXT_MAX_LINES_UNDER_MEDIA_NARROW = 2;
 /**
  * The narrowest column the feed lays out by: the masonry fits as many
  * columns of at least this width as it can. A column narrower than it comes
- * only from a feed that keeps more columns than fit, and a card that narrow
- * keeps less text under its media (SPEC_NARROW_WINDOW.md, У14).
+ * only from the feed's two-column minimum (`MASONRY_MIN_COLUMN_COUNT`), and a
+ * card that narrow keeps less text under its media (SPEC_NARROW_WINDOW.md,
+ * У14).
  */
 export const FEED_COLUMN_MIN_WIDTH_PX = 220;
 

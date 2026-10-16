@@ -20,7 +20,11 @@ import {
   type HeavyPlaybackCandidate,
 } from "./Grid";
 import { TOP_FADE_HEIGHT } from "@/lib/edgeFade";
-import { computeMasonryLayout } from "@/lib/masonryLayout";
+import {
+  computeMasonryLayout,
+  getMasonryColumnWidth,
+  type MasonryLayout,
+} from "@/lib/masonryLayout";
 import { computeCardHeight } from "@/lib/cardHeight";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { commandById, setCommandOverrides } from "@/lib/commandRegistry";
@@ -41,6 +45,12 @@ import { lightBlock } from "@/test/blocks";
 // a fresh buildLayout, the values must match.
 const TEST_COLUMN_MIN_WIDTH = 220;
 const TEST_GAP = 32;
+// The feed's top inset follows the same spacing token as the gap.
+const TEST_TOP_INSET = TEST_GAP;
+// Two columns as wide as a 280-px feed once had in its single column: the
+// feed never has fewer than two (SPEC_GRID.md, «Число колонок»), so a row of
+// two cards here stands where one card stood there.
+const TWO_COLUMNS_OF_280 = 2 * 280 + TEST_GAP;
 
 // ─── Test fixtures ──────────────────────────────────────────────────────────
 
@@ -225,17 +235,21 @@ function resolveBlockHeight(id: number, columnWidth?: number): number {
 }
 
 function testColumnWidth(parentWidth: number): number {
-  const provisionalColumnCount = Math.max(
-    1,
-    Math.floor((parentWidth + TEST_GAP) / (TEST_COLUMN_MIN_WIDTH + TEST_GAP)),
-  );
-  return Math.max(
-    1,
-    Math.floor(
-      (Math.max(0, parentWidth - TEST_GAP * (provisionalColumnCount - 1))) /
-        provisionalColumnCount,
-    ),
-  );
+  return getMasonryColumnWidth(parentWidth, TEST_COLUMN_MIN_WIDTH, TEST_GAP);
+}
+
+/** The layout a fresh computation gives the blocks at this feed width. */
+function freshLayout(blocks: LightBlock[], parentWidth: number): MasonryLayout {
+  const columnWidth = testColumnWidth(parentWidth);
+  const heights = blocks.map((block) => computeCardHeight(block, columnWidth, null));
+  return computeMasonryLayout(heights, parentWidth, TEST_COLUMN_MIN_WIDTH, TEST_GAP);
+}
+
+/** The slugs of the cards that carry the feed's keyboard focus. */
+function focusedSlugs(): string[] {
+  return Array.from(
+    document.querySelectorAll("[data-feed-grid-item-focused='true']"),
+  ).map((element) => element.getAttribute("data-feed-grid-item-slug") ?? "?");
 }
 
 // ─── Environment mocks ─────────────────────────────────────────────────────
@@ -538,6 +552,45 @@ describe("Grid — no collapse after add / revisit", () => {
     assertPositionsMatchFreshLayout(initialBlocks, positions, 1200);
   });
 
+  // SPEC_GRID.md, «Число колонок» (user decision 16.10.2026): a feed too
+  // narrow for two columns of 220 px keeps two narrower ones, and counts two
+  // before its first measure as well.
+  it("keeps two narrower columns in a narrow feed and never reports fewer", async () => {
+    vi.useFakeTimers();
+    const reported: number[] = [];
+    const blocks = [makeImageBlock(9501), makeImageBlock(9502), makeImageBlock(9503)];
+    mockViewport = { width: 0, height: 400 };
+
+    render(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks}
+        currentTag="two-columns"
+        onColumnCountChange={(count) => reported.push(count)}
+      />,
+    );
+    await flushAsync();
+    expect(readRenderedPositions()).toEqual([]);
+    expect(reported).toEqual([2]);
+
+    act(() => {
+      triggerResize(280, 400);
+    });
+    await flushAsync();
+
+    const columnWidth = testColumnWidth(280);
+    expect(columnWidth).toBeLessThan(TEST_COLUMN_MIN_WIDTH);
+    const at = new Map(readRenderedPositions().map((position) => [position.slug, position]));
+    expect(at.get("block-9501")).toMatchObject({ left: 0, top: 0 });
+    expect(at.get("block-9502")).toMatchObject({ left: columnWidth + TEST_GAP, top: 0 });
+    expect(at.get("block-9503")!.left).toBe(0);
+    expect(at.get("block-9503")!.top).toBeGreaterThan(0);
+    for (const block of blocks) {
+      expect(gridItemForSlug(block.slug)?.style.width).toBe(`${columnWidth}px`);
+    }
+    expect(reported).toEqual([2]);
+  });
+
   it("preloads media through a wider readiness window without mounting preload-only GridItems", async () => {
     vi.useFakeTimers();
 
@@ -606,6 +659,10 @@ describe("Grid — no collapse after add / revisit", () => {
         return makeImageBlock(id);
       });
       const target = blocks[targetIndex]!;
+      // Where the target stands, whatever the column count at this width:
+      // many viewports down the feed.
+      const targetTop = freshLayout(blocks, parentWidth).positions[targetIndex]!.top;
+      expect(targetTop).toBeGreaterThan(10 * 400);
 
       render(<Grid {...BASE_PROPS} blocks={blocks} currentTag={routeKey} />);
 
@@ -619,7 +676,7 @@ describe("Grid — no collapse after add / revisit", () => {
 
       act(() => {
         if (!scrollEl) return;
-        scrollEl.scrollTop = targetIndex * (280 + TEST_GAP);
+        scrollEl.scrollTop = targetTop;
         scrollEl.dispatchEvent(new Event("scroll"));
         vi.advanceTimersByTime(20);
       });
@@ -1101,16 +1158,11 @@ describe("Grid — no collapse after add / revisit", () => {
   it("resynchronizes arrow-key navigation to the current viewport after manual scroll", async () => {
     vi.useFakeTimers();
 
-    const blocks = [
-      makeBlock(9401),
-      makeBlock(9402),
-      makeBlock(9403),
-      makeBlock(9404),
-    ];
-    setBlockHeight(9401, 200);
-    setBlockHeight(9402, 200);
-    setBlockHeight(9403, 200);
-    setBlockHeight(9404, 200);
+    // Cards of one height stand in rows of `columnCount`.
+    const blocks = Array.from({ length: 8 }, (_, index) => makeBlock(9401 + index));
+    for (const block of blocks) {
+      setBlockHeight(block.id, 200);
+    }
 
     render(<Grid {...BASE_PROPS} blocks={blocks} />);
 
@@ -1124,17 +1176,23 @@ describe("Grid — no collapse after add / revisit", () => {
       await Promise.resolve();
     });
 
-    expect(gridItemForSlug("block-9401")).toHaveAttribute(
-      "data-feed-grid-item-focused",
-      "true",
-    );
+    expect(focusedSlugs()).toEqual(["block-9401"]);
+
+    // The first card of the third row: two rows below the focused card, past
+    // the card under it, where the next arrow would go from a focus on screen.
+    const layout = freshLayout(blocks, 280);
+    const thirdRow = layout.positions[2 * layout.columnCount]!;
+    const target = blocks[thirdRow.index]!;
+    expect(thirdRow.column).toBe(0);
 
     const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
     expect(scrollEl).toBeTruthy();
 
+    // The third row at the top: the focused card and the one under it are
+    // out of the viewport.
     act(() => {
       if (scrollEl) {
-        scrollEl.scrollTop = 560;
+        scrollEl.scrollTop = TEST_TOP_INSET + thirdRow.top;
         scrollEl.dispatchEvent(new Event("scroll"));
       }
     });
@@ -1145,16 +1203,7 @@ describe("Grid — no collapse after add / revisit", () => {
       await Promise.resolve();
     });
 
-    expect(gridItemForSlug("block-9401")).not.toHaveAttribute(
-      "data-feed-grid-item-focused",
-    );
-    expect(gridItemForSlug("block-9402")).not.toHaveAttribute(
-      "data-feed-grid-item-focused",
-    );
-    expect(gridItemForSlug("block-9403")).toHaveAttribute(
-      "data-feed-grid-item-focused",
-      "true",
-    );
+    expect(focusedSlugs()).toEqual([target.slug]);
   });
 
   // SPEC_GRID_LAYOUT_READINESS.md, К1, К3: a card that grows within the same
@@ -1296,7 +1345,7 @@ describe("Grid — no collapse after add / revisit", () => {
   it("keeps the viewport at the top when a batch of cards is inserted at the head", async () => {
     vi.useFakeTimers();
 
-    // Single column at 280px, a deep feed so there is room to scroll. The
+    // Two columns at 280px, a deep feed so there is room to scroll. The
     // viewport starts at the very top (scrollTop 0).
     const blocks = Array.from({ length: 10 }, (_, index) => makeBlock(9700 + index));
     for (const block of blocks) {
@@ -1341,17 +1390,20 @@ describe("Grid — no collapse after add / revisit", () => {
   it("does not let stale keyboard focus override delete scroll anchoring", async () => {
     vi.useFakeTimers();
 
-    const blocks = [
-      makeBlock(9611),
-      makeBlock(9612),
-      makeBlock(9613),
-      makeBlock(9614),
-      makeBlock(9615),
-      makeBlock(9616),
-    ];
+    // Cards of one height stand in rows of `columnCount`.
+    const blocks = Array.from({ length: 12 }, (_, index) => makeBlock(9611 + index));
     for (const block of blocks) {
       setBlockHeight(block.id, 200);
     }
+    // The first card of the third row is the one in view; the first card of
+    // the second row, above the viewport and not the focused one, is deleted,
+    // so the card in view moves up a row.
+    const layout = freshLayout(blocks, 280);
+    const thirdRow = layout.positions[2 * layout.columnCount]!;
+    const inView = blocks[thirdRow.index]!;
+    const deleted = blocks[layout.columnCount]!;
+    expect(thirdRow.column).toBe(0);
+    const scrollTopBefore = TEST_TOP_INSET + thirdRow.top;
 
     const { rerender } = render(
       <Grid {...BASE_PROPS} blocks={blocks} currentTag="delete-keyboard-anchor" />,
@@ -1375,7 +1427,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(scrollEl).toBeTruthy();
     act(() => {
       if (scrollEl) {
-        scrollEl.scrollTop = 760;
+        scrollEl.scrollTop = scrollTopBefore;
         scrollEl.dispatchEvent(new Event("scroll"));
       }
     });
@@ -1383,21 +1435,21 @@ describe("Grid — no collapse after add / revisit", () => {
 
     const scrollToMock = vi.mocked(Element.prototype.scrollTo);
     scrollToMock.mockClear();
-    const anchorTopBefore = renderedTopOf("block-9614");
+    const anchorTopBefore = renderedTopOf(inView.slug);
 
     rerender(
       <Grid
         {...BASE_PROPS}
-        blocks={blocks.filter((block) => block.id !== 9612)}
+        blocks={blocks.filter((block) => block.slug !== deleted.slug)}
         currentTag="delete-keyboard-anchor"
       />,
     );
     await flushAsync();
 
     // The viewport follows the card in view, not the stale focus above it.
-    const anchorShift = anchorTopBefore - renderedTopOf("block-9614");
+    const anchorShift = anchorTopBefore - renderedTopOf(inView.slug);
     expect(anchorShift).toBeGreaterThan(0);
-    expect(scrollEl?.scrollTop).toBe(760 - anchorShift);
+    expect(scrollEl?.scrollTop).toBe(scrollTopBefore - anchorShift);
     expect(scrollToMock).not.toHaveBeenCalled();
   });
 
@@ -3089,27 +3141,29 @@ describe("Grid — no collapse after add / revisit", () => {
   it("autoplays all sufficiently visible standard feed videos", async () => {
     vi.useFakeTimers();
 
-    const blocks = [
-      makeVideoBlock(1001),
-      makeVideoBlock(1002),
-      makeVideoBlock(1003),
-    ];
-    setBlockHeight(1001, 300);
-    setBlockHeight(1002, 300);
-    setBlockHeight(1003, 300);
+    // Three rows of two videos, each row where one video of the former
+    // single 280-px column stood.
+    const ids = [1001, 1002, 1003, 1004, 1005, 1006];
+    const blocks = ids.map((id) => makeVideoBlock(id));
+    for (const id of ids) {
+      setBlockHeight(id, 300);
+    }
+    const surfaceOf = (id: number) => document.querySelector(
+      `[data-block-slug='block-${id}'] [data-feed-video-surface='true']`,
+    );
 
     render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="video-feed" />);
 
     act(() => {
-      triggerResize(280, 800);
+      triggerResize(TWO_COLUMNS_OF_280, 800);
     });
 
     await flushAsync();
 
-    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(3);
-    expect(document.querySelector("[data-block-slug='block-1001'] [data-feed-video-surface='true']")).toBeTruthy();
-    expect(document.querySelector("[data-block-slug='block-1002'] [data-feed-video-surface='true']")).toBeTruthy();
-    expect(document.querySelector("[data-block-slug='block-1003'] [data-feed-video-surface='true']")).toBeTruthy();
+    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(6);
+    for (const id of ids) {
+      expect(surfaceOf(id)).toBeTruthy();
+    }
 
     const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
     expect(scrollEl).toBeTruthy();
@@ -3123,56 +3177,57 @@ describe("Grid — no collapse after add / revisit", () => {
 
     await flushAsync();
 
-    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(2);
-    expect(document.querySelector("[data-block-slug='block-1001'] [data-feed-video-surface='true']")).toBeFalsy();
-    expect(document.querySelector("[data-block-slug='block-1002'] [data-feed-video-surface='true']")).toBeTruthy();
-    expect(document.querySelector("[data-block-slug='block-1003'] [data-feed-video-surface='true']")).toBeTruthy();
+    // The first row left the autoplay window; the rows below keep playing.
+    expect(document.querySelectorAll("[data-feed-video-surface='true']")).toHaveLength(4);
+    expect(surfaceOf(1001)).toBeFalsy();
+    expect(surfaceOf(1002)).toBeFalsy();
+    for (const id of ids.slice(2)) {
+      expect(surfaceOf(id)).toBeTruthy();
+    }
   });
 
   it("prewarms standard feed video before the card enters the visible viewport", async () => {
     vi.useFakeTimers();
 
-    const blocks = [
-      makeBlock(1400, {
-        block_type: "image",
-        card_kind: "media",
-        body: "",
-        media_file: "tall-prewarm-spacer.jpg",
+    // One tall spacer per column pushes the video card past the viewport.
+    const spacer = (id: number) => makeBlock(id, {
+      block_type: "image",
+      card_kind: "media",
+      body: "",
+      media_file: "tall-prewarm-spacer.jpg",
+      width: 100,
+      height: 136,
+      // Its artifact sits at the tall end of the allowed range, so the
+      // height is reserved without relying on an out-of-range shape.
+      preview_manifest: JSON.stringify({
+        kind: "image",
+        primary_preview_path: "tall-prewarm-spacer.jpg",
         width: 100,
-        height: 136,
-        // A tall spacer that pushes the video card past the viewport. Its
-        // artifact sits at the tall end of the allowed range, so the height is
-        // reserved without relying on an out-of-range shape.
-        preview_manifest: JSON.stringify({
-          kind: "image",
-          primary_preview_path: "tall-prewarm-spacer.jpg",
-          width: 100,
-          height: 155,
-          preview_width: 100,
-          preview_height: 155,
-          tiles: [
-            {
-              source_path: "tall-prewarm-spacer.jpg",
-              preview_path: "tall-prewarm-spacer.jpg",
-              width: 100,
-              height: 155,
-              preview_width: 100,
-              preview_height: 155,
-              is_video: false,
-              is_video_poster: false,
-            },
-          ],
-          overflow_count: 0,
-        }),
+        height: 155,
+        preview_width: 100,
+        preview_height: 155,
+        tiles: [
+          {
+            source_path: "tall-prewarm-spacer.jpg",
+            preview_path: "tall-prewarm-spacer.jpg",
+            width: 100,
+            height: 155,
+            preview_width: 100,
+            preview_height: 155,
+            is_video: false,
+            is_video_poster: false,
+          },
+        ],
+        overflow_count: 0,
       }),
-      makeVideoBlock(1401),
-    ];
+    });
+    const blocks = [spacer(1400), spacer(1402), makeVideoBlock(1401)];
     setBlockHeight(1401, 300);
 
     render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="video-prewarm" />);
 
     act(() => {
-      triggerResize(280, 400);
+      triggerResize(TWO_COLUMNS_OF_280, 400);
     });
 
     await flushAsync();
