@@ -1,13 +1,13 @@
 // The sidebar over the feed in a narrow window (SPEC_NARROW_WINDOW.md, У4 по
 // У7; PLAN 47.3c).
 //
-// A layer over the top row and the body, under the menus, dialogs,
-// notifications and the drop zone: a scrim over the whole of it, the feed and
-// the 40 px strip at the right, and the sidebar's panel at the left. The
-// panel has the height and the place of the sidebar beside the feed, its
-// filter row in the top row and its list under it (user's decision of
-// 15.10.2026): only its width, the window less the strip, and the fact that
-// it lies over the feed change. It does not cover the bottom bar.
+// A layer over the whole page, under the menus, dialogs, notifications and
+// the drop zone: a scrim over all of it, the feed, the bottom bar and the
+// 40 px strip at the right, and the sidebar's panel at the left. The panel
+// starts where the sidebar beside the feed starts, its filter row in the top
+// row's place and its list under it, and runs down to the window's bottom,
+// over the bottom bar (user's decision of 16.10.2026, instead of the height
+// of the sidebar beside the feed). Its width is the window less the strip.
 //
 // The scrim blurs and dims what lies under it by `backdrop-filter` alone
 // (global.css, `.sidebar-overlay-scrim`). Its values are provisional: the dim,

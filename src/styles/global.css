@@ -1266,17 +1266,19 @@ body {
     var(--sidebar-name-floor),
     calc(
       var(--sidebar-name-floor)
-      + (var(--sidebar-width) - var(--sidebar-min-width)) / 2
+      + (var(--sidebar-width) - var(--sidebar-equal-zones-width)) / 2
     ),
     150px
   );
   /* The frozen "three equal columns" layout width. At/below it the columns stop
      reflowing: the nav holds this width and the narrowing panel (overflow-hidden)
      slides its right edge over it like a curtain. = reserved + 2×88. MUST equal
-     sidebarMinWidth() in appLayout.ts: JS clamps the drag and lifts stored
-     widths to it, CSS freezes the nav — one side moving alone leaves the nav
-     wider than the panel and the curtain clips the meta column. */
-  --sidebar-min-width: 314px;
+     sidebarEqualZonesWidth() in appLayout.ts, and the narrowest sidebar
+     (SIDEBAR_MIN_WIDTH_PX, 350 since 16.10.2026) must be no narrower: JS clamps
+     the drag and lifts stored widths to that, CSS freezes the nav here: a nav
+     wider than the narrowest panel would leave the curtain clipping the meta
+     column at rest. */
+  --sidebar-equal-zones-width: 314px;
   /* Top chrome switchers (space, collection): the trigger's padding puts its
      pill on the chrome inset, as every chrome button's plate stands. */
   --top-collection-pad-x: var(--chrome-edge-pad);

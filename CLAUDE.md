@@ -480,7 +480,7 @@ bun run test:sidebar-reorder   # Browser sidebar collection reorder gesture acce
 bun run test:selection-menu    # Меню Connect поиска и меню выделения Detail в Chromium без окна (свой Vite)
 bun run test:sidebar-actions   # Кнопка Connect строки бокового меню: поля 8px и ширина во всех состояниях (свой Vite)
 bun run test:top-row           # Действия выделения во втором ряду только при нехватке места, карточка, лента и граф всегда в одном ряду, сжатие меню (свой Vite)
-bun run test:narrow-window     # Узкое окно: меню рядом с лентой и поверх неё на ширинах 1200, 750, 749, 704, 703, 400, 390, закрытие, движение, переходы через порог (свой Vite)
+bun run test:narrow-window     # Узкое окно: меню рядом с лентой и поверх неё на ширинах 1200, 750, 749, 740, 739, 400, 390, низ панели у низа окна, закрытие, движение, переходы через порог (свой Vite)
 bun run test:detail-image-geometry # Рамка изображения Detail: подмена превью оригиналом, contain, resize (свой Vite)
 bun run test:x-thread          # Сборка расширения и цепочка автора X во временном Chromium, сеть перехвачена
 bun run test:browser           # Сам поднимает Vite и запускает все browser gates

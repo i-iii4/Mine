@@ -5,7 +5,7 @@ import {
   APP_MIN_WIDTH_PX,
   SIDEBAR_MIN_WIDTH_PX,
   SIDEBAR_OVERLAY_STRIP_PX,
-  sidebarMinWidth,
+  sidebarEqualZonesWidth,
 } from "./appLayout";
 
 /** The value of `pub const <name>: u32 = <value>;` in the Rust source. */
@@ -23,8 +23,15 @@ describe("window widths", () => {
   const css = readFileSync("src/styles/global.css", "utf8");
 
   it("match the Rust constants in domain/windows.rs", () => {
-    expect(SIDEBAR_MIN_WIDTH_PX).toBe(rustConstant(rust, "SIDEBAR_MIN_WIDTH_PX"));
     expect(SIDEBAR_OVERLAY_STRIP_PX).toBe(rustConstant(rust, "SIDEBAR_OVERLAY_STRIP_PX"));
+  });
+
+  it("make the narrowest sidebar the narrowest window less the strip, one derivation (16.10.2026)", () => {
+    expect(rust).toContain(
+      "pub const SIDEBAR_MIN_WIDTH_PX: u32 = WINDOW_MIN_WIDTH_PX - SIDEBAR_OVERLAY_STRIP_PX;",
+    );
+    expect(SIDEBAR_MIN_WIDTH_PX).toBe(APP_MIN_WIDTH_PX - SIDEBAR_OVERLAY_STRIP_PX);
+    expect(SIDEBAR_MIN_WIDTH_PX).toBe(350);
   });
 
   it("make the window's minimum a phone's width, which holds the sidebar over the feed (16.10.2026)", () => {
@@ -39,8 +46,11 @@ describe("window widths", () => {
     expect(APP_MAIN_MIN_WIDTH_PX).toBe(APP_MIN_WIDTH_PX);
   });
 
-  it("take the narrowest sidebar from its three equal zones, in CSS too", () => {
-    expect(sidebarMinWidth()).toBe(SIDEBAR_MIN_WIDTH_PX);
-    expect(css).toContain(`--sidebar-min-width: ${SIDEBAR_MIN_WIDTH_PX}px;`);
+  it("keep the rows' three equal zones within the narrowest sidebar, in CSS too", () => {
+    // The zones' own layout is unchanged; the narrowest panel holds it with
+    // room to spare, so the curtain never clips a row at rest.
+    expect(sidebarEqualZonesWidth()).toBe(314);
+    expect(sidebarEqualZonesWidth()).toBeLessThanOrEqual(SIDEBAR_MIN_WIDTH_PX);
+    expect(css).toContain(`--sidebar-equal-zones-width: ${sidebarEqualZonesWidth()}px;`);
   });
 });

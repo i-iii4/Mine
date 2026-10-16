@@ -108,7 +108,7 @@ try {
   // the graph's and an open card with a long name stay in one row at any
   // width, the name ending in an ellipsis.
   const LONG_NAME = "пытаюсь использовать топологический анализ данных для поиска структуры в эмбеддингах";
-  for (const width of [1200, 704]) {
+  for (const width of [1200, 740]) {
     await page.setViewportSize({ width, height: 700 });
     for (const [label, setup] of [
       ["feed", () => { window.auditOpenCard(null); window.auditView("grid"); }],
@@ -121,12 +121,12 @@ try {
       assert.equal(state.barInHeader, true, `${width} ${label}: the half stays in the row`);
       assert.equal(state.mainTop, state.headerBottom + 1, `${width} ${label}: the feed under the row's line`);
     }
-    if (width === 704) {
+    if (width === 740) {
       const nameCut = await page.evaluate(() => {
         const name = document.querySelector("[data-secondary-detail-card-name]");
         return name.scrollWidth > name.clientWidth;
       });
-      assert.equal(nameCut, true, "704 open card: the long name ends in an ellipsis");
+      assert.equal(nameCut, true, "740 open card: the long name ends in an ellipsis");
     }
     console.log(`PASS ${width}: feed, graph and an open card with a long name keep one row`);
   }
@@ -150,7 +150,7 @@ try {
   // Narrower: the commands no longer fit and take a second row. At 760 the
   // second row holds them whole; below about 350 px of feed even it is too
   // narrow and they scroll, as they did in one row.
-  for (const width of [760, 750, 720, 704]) {
+  for (const width of [760, 750, 745, 740]) {
     await page.setViewportSize({ width, height: 700 });
     row = await read();
     assert.equal(row.fit, "two", `${width}: two rows`);
@@ -173,16 +173,16 @@ try {
   assert.equal(row.bar.bottom - row.bar.top, 40, "760 tall: the second row and its line make 40");
   assert.equal(row.mainTop, row.bar.bottom, "760 tall: the feed moves down by the second row");
   await page.evaluate(() => { delete document.documentElement.dataset.chromeHeight; });
-  await page.setViewportSize({ width: 704, height: 700 });
+  await page.setViewportSize({ width: 740, height: 700 });
   console.log("PASS 760 tall: the second row steps 40");
 
   // The selection ends: the view's controls fit in one row again.
   await page.evaluate(() => window.auditSelect(0));
   row = await read();
-  assert.equal(row.fit, "one", "704 without a selection: one row");
-  assert.equal(row.mainTop, row.headerBottom + 1, "704 without a selection: the feed back under the row");
-  assert.deepEqual(row.cut, [], "704 without a selection: nothing cut");
-  console.log("PASS 704 without a selection: back to one row");
+  assert.equal(row.fit, "one", "740 without a selection: one row");
+  assert.equal(row.mainTop, row.headerBottom + 1, "740 without a selection: the feed back under the row");
+  assert.deepEqual(row.cut, [], "740 without a selection: nothing cut");
+  console.log("PASS 740 without a selection: back to one row");
 
   // Wide again with the selection: back to one row.
   await page.evaluate(() => window.auditSelect(12));

@@ -63,7 +63,7 @@ describe("useSidebarOverlay: the sidebar over the feed (SPEC_NARROW_WINDOW.md, Ð
     setTabVisible(true);
   });
 
-  it("is narrow below 704 px and starts closed, never stored", () => {
+  it("is narrow below 740 px and starts closed, never stored", () => {
     const { result } = renderOverlay();
     expect(result.current.narrow).toBe(true);
     expect(result.current.open).toBe(false);
@@ -120,14 +120,14 @@ describe("useSidebarOverlay: the sidebar over the feed (SPEC_NARROW_WINDOW.md, Ð
     expect(commands.reportSidebarOverlay).toHaveBeenLastCalledWith("beside");
 
     // Narrowing again, it comes over the feed closed.
-    resizeTo(703);
+    resizeTo(739);
     expect(result.current.narrow).toBe(true);
     expect(result.current.open).toBe(false);
   });
 
   it("does not show the sidebar beside the feed when the window widens with it closed (Ð£7)", () => {
     const { options } = renderOverlay();
-    resizeTo(704);
+    resizeTo(740);
     expect(options.onWidenWhileOpen).not.toHaveBeenCalled();
   });
 

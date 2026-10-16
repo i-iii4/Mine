@@ -4679,10 +4679,10 @@ export function AppWithVault({
       ref={topRowWrap.hostRef}
       data-top-row={topRowWrap.fit}
       data-sidebar-width-animating={sidebarWidthAnimating ? "" : undefined}
+      // The sidebar over the feed lies over the whole page, from the top row
+      // to the window's bottom (SPEC_NARROW_WINDOW.md, У4).
+      className="relative"
     >
-      {/* The top row and the body: the sidebar over the feed lies over both
-          and stops above the bottom bar (SPEC_NARROW_WINDOW.md, У4). */}
-      <div className="relative flex min-h-0 flex-1 flex-col" data-sidebar-overlay-host="">
       {/* Top toolbar */}
       <ChromeRow as="header" separator="bottom"
         ref={setTopRowHost}
@@ -5074,23 +5074,6 @@ export function AppWithVault({
       ) : null}
     </div>{/* end body */}
 
-      {sidebarNarrow && (
-        <SidebarOverlay
-          open={sidebarOverlay.open}
-          onClose={closeSidebarOverlay}
-          header={(
-            <ChromeRow separator="bottom" className={topChromeSurfaceClass}>
-              {/* Over the feed the space switcher lives here alone (У12). */}
-              <div className="flex h-full min-w-0 flex-1 items-center overflow-hidden border-r border-sidebar-border">
-                {renderSidebarFilterRow(false)}
-              </div>
-            </ChromeRow>
-          )}
-        >
-          {sidebarList}
-        </SidebarOverlay>
-      )}
-      </div>{/* end of the top row and the body */}
 
       {!bottomActionBarHidden && (
         <ChromeRow separator="top"
@@ -5104,6 +5087,8 @@ export function AppWithVault({
           ref={attachBottomBar}
           className="gap-2 bg-accent pl-[var(--sidebar-label-inset)] pr-[var(--chrome-edge-pad)]"
           data-bottom-action-bar=""
+          // Under the scrim while the sidebar lies over the feed (У6).
+          inert={sidebarOverlay.open}
         >
           {/* Same command as the View menu item and the two-finger swipe. It
               leads because it changes the shape of the window itself. */}
@@ -5272,6 +5257,22 @@ export function AppWithVault({
             }}
           />
         </Suspense>
+      )}
+      {sidebarNarrow && (
+        <SidebarOverlay
+          open={sidebarOverlay.open}
+          onClose={closeSidebarOverlay}
+          header={(
+            <ChromeRow separator="bottom" className={topChromeSurfaceClass}>
+              {/* Over the feed the space switcher lives here alone (У12). */}
+              <div className="flex h-full min-w-0 flex-1 items-center overflow-hidden border-r border-sidebar-border">
+                {renderSidebarFilterRow(false)}
+              </div>
+            </ChromeRow>
+          )}
+        >
+          {sidebarList}
+        </SidebarOverlay>
       )}
       <ImagePreviewOverlay
         preview={imagePreview}

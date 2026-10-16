@@ -4,7 +4,7 @@ import {
   SIDEBAR_COLUMN_MIN_PX,
   SIDEBAR_ROW_ACTION_BUTTON_PX,
   SIDEBAR_ROW_ACTION_GAP_PX,
-  sidebarMinWidth,
+  sidebarEqualZonesWidth,
   sidebarNameFloor,
   sidebarReserved,
   sidebarZoneWidth,
@@ -30,7 +30,7 @@ describe("sidebar zone contract", () => {
   it("makes the three zones equal at the frozen minimum", () => {
     // Three zones plus the two guidelines between them; the table sits flush
     // to the panel's edges.
-    expect(sidebarMinWidth()).toBe(sidebarZoneWidth() * 3 + 2);
+    expect(sidebarEqualZonesWidth()).toBe(sidebarZoneWidth() * 3 + 2);
   });
 
   it("never lets a zone fall below what it holds", () => {
@@ -45,11 +45,11 @@ describe("sidebar zone contract", () => {
 
   it("keeps CSS and JS on the same numbers", () => {
     // Two sides of one contract: JS clamps the drag and lifts stored widths to
-    // sidebarMinWidth(), CSS freezes the nav at --sidebar-min-width. One side
+    // sidebarEqualZonesWidth(), CSS freezes the nav at --sidebar-equal-zones-width. One side
     // moving alone leaves the nav wider than the panel, and the curtain
     // permanently clips the meta column — which is how the count digits got
     // cut off once.
-    expect(css).toContain(`--sidebar-min-width: ${sidebarMinWidth()}px;`);
+    expect(css).toContain(`--sidebar-equal-zones-width: ${sidebarEqualZonesWidth()}px;`);
     expect(css).toContain(`--sidebar-zone: ${sidebarZoneWidth()}px;`);
     expect(css).toContain(`--sidebar-row-pad-x: ${rowPad}px;`);
     expect(css).toContain(
@@ -61,6 +61,6 @@ describe("sidebar zone contract", () => {
   });
 
   it("splits every extra pixel of width evenly between name and previews", () => {
-    expect(css).toContain("(var(--sidebar-width) - var(--sidebar-min-width)) / 2");
+    expect(css).toContain("(var(--sidebar-width) - var(--sidebar-equal-zones-width)) / 2");
   });
 });

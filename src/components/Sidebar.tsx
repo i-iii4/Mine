@@ -808,7 +808,7 @@ const SidebarCore = memo(function SidebarCore({
     <aside
       className={cn(
         // overflow-hidden is always on: below the minimum width the panel keeps
-        // narrowing while the nav holds --sidebar-min-width, so the right edge
+        // narrowing while the nav holds --sidebar-equal-zones-width, so the right edge
         // clips the frozen menu like a curtain.
         // bg-sidebar also re-bases --surface for the zone, so every fill and
         // hover inside the panel lifts from the sidebar surface, not the page.
@@ -825,13 +825,13 @@ const SidebarCore = memo(function SidebarCore({
       {/* Matches the nav's frozen min-width: the band is sized by this wrapper,
           and a narrower wrapper would leave the right edge of the rows
           uncovered as the panel is resized down. */}
-      <div className="relative flex min-h-0 min-w-[var(--sidebar-min-width)] flex-1 flex-col">
+      <div className="relative flex min-h-0 min-w-[var(--sidebar-equal-zones-width)] flex-1 flex-col">
       <nav
         ref={topFade.ref}
         className={cn(
           // min-width freezes the menu at the three-equal-columns layout: below
           // it the nav keeps this width and the panel's overflow-hidden clips it.
-          "relative min-w-[var(--sidebar-min-width)] flex-1 overflow-y-auto",
+          "relative min-w-[var(--sidebar-equal-zones-width)] flex-1 overflow-y-auto",
           "pb-8",
           // The table sits flush to the divider and edges; rows carry the
           // inner padding.

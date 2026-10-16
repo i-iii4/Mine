@@ -1,7 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SidebarLayout } from "@/types";
-import { SIDEBAR_MAX_WIDTH_PX, sidebarMinWidth } from "@/lib/appLayout";
+import { SIDEBAR_MAX_WIDTH_PX, SIDEBAR_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { SIDEBAR_WIDTH_MOTION_MS, useSidebarResize } from "./useSidebarResize";
 
 const commands = vi.hoisted(() => ({
@@ -13,7 +13,7 @@ vi.mock("@/lib/commands", () => ({
 }));
 
 describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", () => {
-  const min = () => sidebarMinWidth();
+  const min = () => SIDEBAR_MIN_WIDTH_PX;
 
   const wideWindow = window.innerWidth;
 

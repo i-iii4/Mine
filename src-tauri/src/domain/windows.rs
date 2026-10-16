@@ -123,10 +123,6 @@ pub const TAB_DETACH_THRESHOLD_PX: u32 = 24;
 /// How much of the tab bar must stay on some screen, across, for a saved
 /// window to come back where it was.
 pub const WINDOW_GRAB_MIN_VISIBLE_PX: f64 = 100.0;
-/// Narrowest the sidebar gets beside the feed: three equal zones and the two
-/// lines between them (SPEC_NARROW_WINDOW.md, `S_min`; `sidebarMinWidth()` in
-/// src/lib/appLayout.ts). It does not follow the font.
-pub const SIDEBAR_MIN_WIDTH_PX: u32 = 314;
 /// The strip the sidebar leaves at the right when it lies over the feed in a
 /// narrow window (`STRIP`, SPEC_NARROW_WINDOW.md, У4).
 pub const SIDEBAR_OVERLAY_STRIP_PX: u32 = 40;
@@ -139,9 +135,16 @@ pub const WINDOW_MIN_WIDTH_PX: u32 = 390;
 /// narrowest, one value for both (user's decision of 16.10.2026, instead of
 /// the smallest card and two side insets, 304).
 pub const APP_MAIN_MIN_WIDTH_PX: u32 = WINDOW_MIN_WIDTH_PX;
+/// Narrowest the sidebar gets (`S_min`): the narrowest window less the strip,
+/// so the sidebar over the feed of the narrowest window is exactly this wide
+/// (user's decision of 16.10.2026, instead of the three equal zones, 314;
+/// SPEC_NARROW_WINDOW.md, «Величины»). The rows' three equal zones stay a
+/// layout of their own, never wider than this (`sidebarEqualZonesWidth()` in
+/// src/lib/appLayout.ts). It does not follow the font.
+pub const SIDEBAR_MIN_WIDTH_PX: u32 = WINDOW_MIN_WIDTH_PX - SIDEBAR_OVERLAY_STRIP_PX;
 // The narrowest window holds the narrowest sidebar over the feed with its
 // strip, and is narrower than the threshold of the sidebar over the feed
-// (`S_min + F_min`, 704), so it always shows the sidebar over the feed.
+// (`S_min + F_min`, 740), so it always shows the sidebar over the feed.
 const _: () = assert!(
     WINDOW_MIN_WIDTH_PX >= SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX
         && WINDOW_MIN_WIDTH_PX < SIDEBAR_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX

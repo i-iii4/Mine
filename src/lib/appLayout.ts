@@ -15,14 +15,17 @@ export const APP_MIN_WIDTH_PX = 390;
  *  narrowest, one value for both (user's decision of 16.10.2026;
  *  domain/windows.rs `APP_MAIN_MIN_WIDTH_PX`). */
 export const APP_MAIN_MIN_WIDTH_PX = APP_MIN_WIDTH_PX;
-/** Narrowest the sidebar gets beside the feed (`S_min`): the three equal
- *  zones of `sidebarMinWidth()` (domain/windows.rs `SIDEBAR_MIN_WIDTH_PX`). */
-export const SIDEBAR_MIN_WIDTH_PX = 314;
-/** Widest a drag takes the sidebar (`S_max`). */
-export const SIDEBAR_MAX_WIDTH_PX = 600;
 /** The strip the sidebar leaves at the right when it lies over the feed
  *  (`STRIP`, domain/windows.rs `SIDEBAR_OVERLAY_STRIP_PX`). */
 export const SIDEBAR_OVERLAY_STRIP_PX = 40;
+/** Narrowest the sidebar gets (`S_min`): the narrowest window less the strip,
+ *  so the sidebar over the feed of the narrowest window is exactly this wide
+ *  (user's decision of 16.10.2026; domain/windows.rs `SIDEBAR_MIN_WIDTH_PX`).
+ *  The rows' three equal zones (`sidebarEqualZonesWidth()`) are a layout of
+ *  their own, never wider than this. */
+export const SIDEBAR_MIN_WIDTH_PX = APP_MIN_WIDTH_PX - SIDEBAR_OVERLAY_STRIP_PX;
+/** Widest a drag takes the sidebar (`S_max`). */
+export const SIDEBAR_MAX_WIDTH_PX = 600;
 
 // ── Sidebar column model ─────────────────────────────────────────────────────
 // One keystone width unifies three things at the minimum: 2.5 preview icons
@@ -107,8 +110,12 @@ export function sidebarReserved(): number {
   return sidebarZoneWidth() + 2 + SIDEBAR_ROW_PAD_PX;
 }
 
-/** Minimum panel width: the point where the three visual zones are equal. */
-export function sidebarMinWidth(): number {
+/** The width at which the three visual zones of a row are equal: the rows'
+ *  columns stop reflowing there, the nav holds it and a narrower panel clips
+ *  it (`--sidebar-equal-zones-width`). The panel itself is never narrower than
+ *  `SIDEBAR_MIN_WIDTH_PX`, which is at least this (16.10.2026), so the zones
+ *  only meet the curtain in a panel's resize motion. */
+export function sidebarEqualZonesWidth(): number {
   // Three zones, the two guidelines between them, and the nav's own insets.
   return sidebarZoneWidth() * 3 + 2 + SIDEBAR_NAV_PAD_PX * 2;
 }

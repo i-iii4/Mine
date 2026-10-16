@@ -5403,11 +5403,7 @@ describe("AppWithVault", () => {
         await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
         expect(document.querySelector("[data-chrome-frame-edge=top]")).toBeNull();
         expect(document.querySelector("[data-chrome-frame-edge=bottom]")).not.toBeNull();
-        // The top row leads the page, inside the host the sidebar over the
-        // feed lies over (SPEC_NARROW_WINDOW.md, У4).
-        const host = document.querySelector("[data-chrome-shell]")?.firstElementChild;
-        expect(host).toHaveAttribute("data-sidebar-overlay-host");
-        expect(host?.firstElementChild?.tagName).toBe("HEADER");
+        expect(document.querySelector("[data-chrome-shell]")?.firstElementChild?.tagName).toBe("HEADER");
         unmount();
 
         commandMocks.getTabBootstrap.mockResolvedValue(null);

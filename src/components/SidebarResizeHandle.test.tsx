@@ -13,7 +13,7 @@ describe("SidebarResizeHandle", () => {
   const props = () => ({
     isResizing: false,
     topRowHost: topRow,
-    // jsdom's window is 1024 wide: the bounds are 314 and 600.
+    // jsdom's window is 1024 wide: the bounds are 350 and 600.
     width: 400,
     disabled: false,
     onResizeStart: vi.fn(),
@@ -77,7 +77,7 @@ describe("SidebarResizeHandle", () => {
   });
 
   it("points the cursor back at a bound", () => {
-    const { container, rerender } = render(<SidebarResizeHandle {...props()} width={314} />);
+    const { container, rerender } = render(<SidebarResizeHandle {...props()} width={350} />);
     const { top, body } = parts(container);
     for (const element of [top, body]) expect(element).toHaveClass("cursor-e-resize");
     rerender(<SidebarResizeHandle {...props()} width={600} />);
@@ -123,7 +123,7 @@ describe("SidebarResizeHandle", () => {
     fireEvent.keyDown(line, { key: "ArrowRight" });
     fireEvent.keyDown(line, { key: "Home" });
     fireEvent.keyDown(line, { key: "End" });
-    expect(p.onResizeTo.mock.calls).toEqual([[384], [416], [314], [600]]);
+    expect(p.onResizeTo.mock.calls).toEqual([[384], [416], [350], [600]]);
     expect(parentKey).not.toHaveBeenCalled();
     document.body.removeEventListener("keydown", parentKey);
   });

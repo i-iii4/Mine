@@ -2,10 +2,10 @@
 // У7, У12; PLAN 47.3c): the production sidebar (Sidebar, useSidebarResize,
 // useSidebarOverlay, SidebarOverlay, the styles) in the page's frame, at the
 // widths of the plan. Beside the feed the sidebar keeps its target until the
-// feed reaches its narrowest, then squeezes to its own; below 704 px it
+// feed reaches its narrowest, then squeezes to its own; below 740 px it
 // leaves the row, the feed takes the window, and the sidebar lies over the
-// feed when opened: the window less the 40 px strip wide, as tall as beside
-// the feed, the space switcher in it and not in the top row, the feed under a
+// feed when opened: the window less the 40 px strip wide, from the sidebar's top to
+// the window's bottom, the space switcher in it and not in the top row, the feed under a
 // blurred scrim and inert. The strip, Escape and a collection close it; the
 // window widened with it open puts it beside the feed. Starts and stops its
 // own Vite.
@@ -59,23 +59,22 @@ const vite = await startAuditVite([{
           channelPreviews:new Map(),totalBlocks:8,isDropDragging:false,isCreatingChannel:false,
           onSetCreatingChannel:noop,onDeleteTag:noop,onRenameTag:noop,onCreateChannel:noop,
           onNavClick:overlay.close,onScrollToTop:overlay.close});
-        return h(ChromeShell,{topEdge:false,style:{minWidth:APP_MIN_WIDTH_PX},"data-audit-place":location.pathname},
-          h("div",{className:"relative flex min-h-0 flex-1 flex-col","data-sidebar-overlay-host":""},
-            h(ChromeRow,{as:"header",separator:"bottom",className:"bg-chrome",inert:overlay.open},
-              overlay.narrow?null:h("div",{"data-app-top-sidebar-segment":"",className:"flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
-                style:resize.collapsed?undefined:{width:"var(--sidebar-width)"}},h(FilterRow)),
-              h("div",{"data-audit-top-row":"",className:"flex h-full min-w-0 flex-1 items-center px-2"},"Inbox")),
-            h("div",{className:"relative flex min-h-0 flex-1"},
-              overlay.narrow?null:list,
-              h("main",{"data-audit-feed":"",className:"relative isolate min-h-0 flex-1 overflow-hidden",
-                style:{minWidth:APP_MAIN_MIN_WIDTH_PX},inert:overlay.open},
-                h("button",{type:"button","data-audit-feed-button":""},"A card"))),
-            overlay.narrow?h(SidebarOverlay,{open:overlay.open,onClose:overlay.close,
-              header:h(ChromeRow,{separator:"bottom",className:"bg-chrome"},
-                h("div",{className:"flex h-full min-w-0 flex-1 items-center overflow-hidden border-r border-sidebar-border"},h(FilterRow)))},
-              list):null),
-          h(ChromeRow,{separator:"top","data-audit-bottom-bar":"",className:"bg-accent"},
-            h("button",{type:"button",onClick:toggle,"data-audit-toggle":""},shown?"Hide Sidebar":"Show Sidebar")));
+        return h(ChromeShell,{topEdge:false,className:"relative",style:{minWidth:APP_MIN_WIDTH_PX},"data-audit-place":location.pathname},
+          h(ChromeRow,{as:"header",separator:"bottom",className:"bg-chrome",inert:overlay.open},
+            overlay.narrow?null:h("div",{"data-app-top-sidebar-segment":"",className:"flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
+              style:resize.collapsed?undefined:{width:"var(--sidebar-width)"}},h(FilterRow)),
+            h("div",{"data-audit-top-row":"",className:"flex h-full min-w-0 flex-1 items-center px-2"},"Inbox")),
+          h("div",{className:"relative flex min-h-0 flex-1"},
+            overlay.narrow?null:list,
+            h("main",{"data-audit-feed":"",className:"relative isolate min-h-0 flex-1 overflow-hidden",
+              style:{minWidth:APP_MAIN_MIN_WIDTH_PX},inert:overlay.open},
+              h("button",{type:"button","data-audit-feed-button":""},"A card"))),
+          h(ChromeRow,{separator:"top","data-audit-bottom-bar":"",className:"bg-accent",inert:overlay.open},
+            h("button",{type:"button",onClick:toggle,"data-audit-toggle":""},shown?"Hide Sidebar":"Show Sidebar")),
+          overlay.narrow?h(SidebarOverlay,{open:overlay.open,onClose:overlay.close,
+            header:h(ChromeRow,{separator:"bottom",className:"bg-chrome"},
+              h("div",{className:"flex h-full min-w-0 flex-1 items-center overflow-hidden border-r border-sidebar-border"},h(FilterRow)))},
+            list):null);
       }
       // The app's sensors: a press is a click until the pointer travels.
       function Root(){
@@ -123,6 +122,7 @@ function readLayout() {
     feedInert: document.querySelector("[data-audit-feed]").inert,
     headerInert: document.querySelector("header").inert,
     bottomBar: box("[data-audit-bottom-bar]"),
+    bottomBarInert: document.querySelector("[data-audit-bottom-bar]").inert,
     overlay: box("[data-sidebar-overlay]"),
     overlayState: document.querySelector("[data-sidebar-overlay]")?.getAttribute("data-state") ?? null,
     panel: panel ? { ...box("[data-sidebar-overlay-panel]"), role: panel.getAttribute("role"), transform: getComputedStyle(panel).transform,
@@ -150,19 +150,21 @@ try {
   }));
   const read = async () => { await settle(); return page.evaluate(readLayout); };
   const resize = (width) => page.setViewportSize({ width, height: HEIGHT });
-  const toggle = () => page.locator("[data-audit-toggle]").click();
+  // The tab bar's button stands outside the page, never under the scrim: the
+  // page's own toggle stands in for it.
+  const toggle = async () => { await settle(); await page.evaluate(() => window.auditToggle()); };
 
   // Beside the feed (У1): the target until the feed reaches its narrowest,
   // then the sidebar squeezes to its own; the space switcher in the top row.
   // Where the sidebar beside the feed ends: the sidebar over the feed ends
   // there too (user's decision of 15.10.2026).
   let besideBottom = null;
-  for (const [width, sidebar] of [[1200, 360], [750, 360], [749, 359], [704, 314]]) {
+  for (const [width, sidebar] of [[1200, 360], [750, 360], [749, 359], [740, 350]]) {
     await resize(width);
     const layout = await read();
     besideBottom ??= layout.aside?.bottom ?? null;
     assert.equal(layout.aside?.bottom, besideBottom, `${width}: the sidebar ends where it ended`);
-    assert.ok(layout.aside.bottom <= layout.bottomBar.top, `${width}: the sidebar above the bottom bar`);
+    assert.ok(layout.aside.bottom <= layout.bottomBar.top, `${width}: the sidebar beside the feed above the bottom bar`);
     assert.equal(layout.aside?.width, sidebar, `${width}: the sidebar ${sidebar} px beside the feed`);
     assert.equal(layout.feed.left, sidebar, `${width}: the feed starts at the sidebar`);
     assert.equal(layout.feed.width, width - sidebar, `${width}: the feed takes the rest`);
@@ -174,7 +176,7 @@ try {
   }
 
   // Over the feed (У1, У4, У12): closed at first, the feed the whole window.
-  for (const width of [703, 400, 390]) {
+  for (const width of [739, 400, 390]) {
     await resize(width);
     let layout = await read();
     assert.equal(layout.aside, null, `${width}: no sidebar beside the feed`);
@@ -194,12 +196,16 @@ try {
     assert.equal(layout.panel.width, panelWidth, `${width}: the panel ${panelWidth} px`);
     assert.equal(layout.panel.transform, "none", `${width}: the panel in place`);
     assert.equal(layout.panel.top, layout.header.top, `${width}: the panel from the top row's top`);
-    assert.equal(layout.panel.bottom, layout.feed.bottom, `${width}: the panel down to the feed's bottom`);
-    assert.ok(layout.panel.bottom <= layout.bottomBar.top, `${width}: the bottom bar uncovered`);
-    // What the panel holds ends with it, where the sidebar beside the feed
-    // ends, and its list scrolls inside it.
-    assert.equal(layout.panelAside?.bottom, besideBottom, `${width}: the list ends where the sidebar beside the feed ends`);
-    assert.equal(layout.panelList.bottom, besideBottom, `${width}: the list's scroller ends there too`);
+    // Down to the window's bottom, over the bottom bar (user's decision of
+    // 16.10.2026); what the panel holds ends with it, and its list scrolls
+    // inside it.
+    assert.equal(layout.panel.bottom, HEIGHT, `${width}: the panel down to the window's bottom`);
+    assert.ok(layout.panel.bottom >= layout.bottomBar.bottom, `${width}: the panel over the bottom bar`);
+    assert.equal(layout.scrim.bottom, HEIGHT, `${width}: the scrim down to the window's bottom`);
+    assert.equal(layout.bottomBarInert, true, `${width}: the bottom bar inert`);
+    assert.equal(layout.panelAside?.bottom, HEIGHT, `${width}: the list ends with the panel`);
+    assert.equal(layout.panelList.bottom, HEIGHT, `${width}: the list's scroller ends there too`);
+    assert.ok(layout.panelList.bottom > besideBottom, `${width}: lower than the sidebar beside the feed`);
     assert.ok(layout.panelList.scrollHeight > layout.panelList.clientHeight, `${width}: the long list overflows its scroller`);
     await page.mouse.move(panelWidth / 2, (layout.panel.top + layout.panel.bottom) / 2);
     await page.mouse.wheel(0, 400);
@@ -229,7 +235,7 @@ try {
     layout = await read();
     assert.equal(layout.overlay, null, `${width}: the strip closes`);
     assert.equal(layout.feedInert, false, `${width}: the feed back`);
-    console.log(`PASS ${width}: the feed the whole window; the sidebar ${panelWidth} px over it, ending where it ends beside the feed, its list scrolling; the strip closes`);
+    console.log(`PASS ${width}: the feed the whole window; the sidebar ${panelWidth} px over it, down to the window's bottom over the bottom bar, its list scrolling; the strip closes`);
   }
 
   // Escape closes; a collection goes and closes (У6).
@@ -268,9 +274,9 @@ try {
   layout = await read();
   assert.equal(layout.overlay, null, "800: nothing over the feed");
   assert.equal(layout.aside?.width, TARGET, "800: the sidebar beside the feed at its target");
-  await resize(703);
-  assert.equal((await read()).overlay, null, "703: closed after narrowing");
-  console.log("PASS 703 → 800 → 703: open over the feed becomes beside it, then over it closed");
+  await resize(739);
+  assert.equal((await read()).overlay, null, "739: closed after narrowing");
+  console.log("PASS 739 → 800 → 739: open over the feed becomes beside it, then over it closed");
 
   // A sidebar collapsed beside the feed stays collapsed across the narrow
   // window (У7).
