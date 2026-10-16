@@ -35,7 +35,6 @@ const IMAGE_PREVIEW_MAX_SCALE = 4;
 const IMAGE_PREVIEW_WHEEL_SCALE_STEP = 0.0024;
 const IMAGE_PREVIEW_BUTTON_SCALE_STEP = 0.2;
 const IMAGE_PREVIEW_TOGGLE_SCALE = 1.5;
-const IMAGE_PREVIEW_CONTROLS_HIDE_MS = 3000;
 const IMAGE_PREVIEW_DRAG_THRESHOLD_PX = 3;
 const IMAGE_PREVIEW_MIN_VISIBLE_EDGE_PX = 48;
 const IMAGE_PREVIEW_ANIMATION_MS = 160;
@@ -129,9 +128,6 @@ export function ImagePreviewOverlay({
   const frameRef = useRef<number | null>(null);
   const activeDragRef = useRef<ImagePreviewDrag | null>(null);
   const suppressNextClickRef = useRef(false);
-  const controlsHoverRef = useRef(false);
-  const controlsHideTimerRef = useRef<number | null>(null);
-  const [controlsVisible, setControlsVisible] = useState(true);
   const [zoomLabel, setZoomLabel] = useState("100%");
   const [copyError, setCopyError] = useState<string | null>(null);
   // Which image of the card is on screen. The request names the one that was
@@ -166,28 +162,6 @@ export function ImagePreviewOverlay({
     const next = gallery[(index + direction + gallery.length) % gallery.length];
     if (next) setShownMediaRef(next.mediaRef);
   }, [gallery, shown]);
-
-  const clearControlsHideTimer = useCallback(() => {
-    if (controlsHideTimerRef.current !== null) {
-      window.clearTimeout(controlsHideTimerRef.current);
-      controlsHideTimerRef.current = null;
-    }
-  }, []);
-
-  const scheduleControlsHide = useCallback(() => {
-    clearControlsHideTimer();
-    controlsHideTimerRef.current = window.setTimeout(() => {
-      if (!controlsHoverRef.current) {
-        setControlsVisible(false);
-      }
-      controlsHideTimerRef.current = null;
-    }, IMAGE_PREVIEW_CONTROLS_HIDE_MS);
-  }, [clearControlsHideTimer]);
-
-  const showControls = useCallback(() => {
-    setControlsVisible(true);
-    scheduleControlsHide();
-  }, [scheduleControlsHide]);
 
   /// An animated zoom is commanded but its frame has not written it yet.
   const animationPendingRef = useRef(false);
@@ -316,20 +290,16 @@ export function ImagePreviewOverlay({
     activeDragRef.current = null;
     suppressNextClickRef.current = false;
     setZoomLabel("100%");
-    setControlsVisible(true);
     setCopyError(null);
-    controlsHoverRef.current = false;
     applyTransform({ scale: 1, x: 0, y: 0 });
-    scheduleControlsHide();
     overlayRef.current?.focus({ preventScroll: true });
     return () => {
-      clearControlsHideTimer();
       if (frameRef.current !== null) {
         window.cancelAnimationFrame(frameRef.current);
         frameRef.current = null;
       }
     };
-  }, [applyTransform, clearControlsHideTimer, preview, scheduleControlsHide, shown?.mediaRef]);
+  }, [applyTransform, preview, shown?.mediaRef]);
 
   useEffect(() => {
     if (!preview) {
@@ -367,8 +337,7 @@ export function ImagePreviewOverlay({
       transformRef.current.scale + direction * IMAGE_PREVIEW_BUTTON_SCALE_STEP,
       true,
     );
-    showControls();
-  }, [applyScaleAtStageCenter, showControls]);
+  }, [applyScaleAtStageCenter]);
 
   const toggleImageScale = useCallback((clientX: number, clientY: number) => {
     applyScaleAtPoint(
@@ -377,8 +346,7 @@ export function ImagePreviewOverlay({
       clientY,
       true,
     );
-    showControls();
-  }, [applyScaleAtPoint, showControls]);
+  }, [applyScaleAtPoint]);
 
   const handleWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -386,8 +354,7 @@ export function ImagePreviewOverlay({
     settleRunningAnimation();
     const nextScale = transformRef.current.scale * Math.exp(-event.deltaY * IMAGE_PREVIEW_WHEEL_SCALE_STEP);
     applyScaleAtPoint(nextScale, event.clientX, event.clientY);
-    showControls();
-  }, [applyScaleAtPoint, settleRunningAnimation, showControls]);
+  }, [applyScaleAtPoint, settleRunningAnimation]);
 
   const handleImageClick = useCallback((event: ReactMouseEvent<HTMLImageElement>) => {
     event.stopPropagation();
@@ -404,7 +371,6 @@ export function ImagePreviewOverlay({
     }
     event.stopPropagation();
     settleRunningAnimation();
-    showControls();
     activeDragRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -414,7 +380,7 @@ export function ImagePreviewOverlay({
       moved: false,
     };
     event.currentTarget.setPointerCapture?.(event.pointerId);
-  }, [settleRunningAnimation, showControls]);
+  }, [settleRunningAnimation]);
 
   const handleImagePointerMove = useCallback((event: ReactPointerEvent<HTMLImageElement>) => {
     const drag = activeDragRef.current;
@@ -423,7 +389,6 @@ export function ImagePreviewOverlay({
     }
     event.preventDefault();
     event.stopPropagation();
-    showControls();
     const dx = event.clientX - drag.lastX;
     const dy = event.clientY - drag.lastY;
     const movedDistance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
@@ -437,7 +402,7 @@ export function ImagePreviewOverlay({
     }
     const current = transformRef.current;
     applyTransform({ ...current, x: current.x + dx, y: current.y + dy });
-  }, [applyTransform, showControls]);
+  }, [applyTransform]);
 
   const finishImageDrag = useCallback((event: ReactPointerEvent<HTMLImageElement>) => {
     const drag = activeDragRef.current;
@@ -457,12 +422,11 @@ export function ImagePreviewOverlay({
       return;
     }
     setCopyError(null);
-    showControls();
     // Copies what is on screen, which after an arrow press is no longer the
     // image the viewer was opened with.
     void copyMediaAssetToClipboard(shown.mediaRef)
       .catch((error) => setCopyError(error instanceof Error ? error.message : String(error)));
-  }, [shown, showControls]);
+  }, [shown]);
 
   if (!preview || !shown) {
     return null;
@@ -472,13 +436,12 @@ export function ImagePreviewOverlay({
     <div
       ref={overlayRef}
       tabIndex={-1}
-      className="image-preview-secondary-plane fixed inset-x-0 bottom-0 top-8 z-[70] overflow-hidden text-black"
+      className="modal-scrim image-preview-secondary-plane fixed inset-0 z-[70] overflow-hidden text-black"
       role="dialog"
       aria-modal="false"
       aria-label="Image preview"
       data-image-preview-overlay
       onClick={onClose}
-      onPointerMove={showControls}
       onWheel={handleWheel}
     >
       <div
@@ -510,27 +473,19 @@ export function ImagePreviewOverlay({
       </div>
       <div
         className={cn(
-          "absolute bottom-6 left-1/2 z-20 flex h-8 -translate-x-1/2 items-center gap-1 rounded-1 border border-border bg-accent/90 px-1 backdrop-blur-sm backdrop-saturate-150 transition-opacity",
-          // The app's answer-to-the-pointer timing: in over the fade-in token,
-          // out over the shorter fade-out token, both zero under reduced
-          // motion (global.css; SPEC_AUDIT_FIXES.md, Г5.5).
-          controlsVisible
-            ? "opacity-100 duration-[var(--hover-intent-fade-in)]"
-            : "pointer-events-none opacity-0 duration-[var(--hover-intent-fade-out)]",
+          // A floating layer like every menu (DESIGN_SYSTEM.md, «Оверлеи»):
+          // its own surface and line, so it reads on the shared scrim in either
+          // theme. No shadow on the island or the image (user decision
+          // 16.10.2026). A translucent
+          // `bg-accent/90` made for the old always dark plane all but vanished
+          // on the light scrim (16.10.2026). Always on screen: the controls
+          // never hide, the pointer need not wake them (user decision
+          // 16.10.2026; until then they left after 3 s without movement).
+          "absolute bottom-6 left-1/2 z-20 flex h-8 -translate-x-1/2 items-center gap-1 rounded-1 border border-border bg-popover px-1 text-popover-foreground",
         )}
         data-image-preview-controls
-        data-visible={controlsVisible ? "true" : "false"}
         onClick={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
-        onPointerEnter={() => {
-          controlsHoverRef.current = true;
-          setControlsVisible(true);
-          clearControlsHideTimer();
-        }}
-        onPointerLeave={() => {
-          controlsHoverRef.current = false;
-          scheduleControlsHide();
-        }}
       >
         <Button
           type="button"

@@ -598,17 +598,58 @@ SPEC_NARROW_WINDOW.md, У4 по У8, У11, У12; PLAN 47.3b и 47.3c (15.10.2026
   `cubic-bezier(0.22, 1, 0.36, 1)`; при «Уменьшить движение» сразу
   (`motionDuration`, `prefers-reduced-motion` в `global.css`). Закрываясь,
   слой остаётся смонтированным до конца движения.
-- **Размытие, затемнение, тень** временные, подбираются вживую с
-  пользователем на шаге 47.3d и пока не значения дизайн-системы: подложка
-  начинается с `--glass-bg` (SPEC_COLOR_RULES.md, 3.9.1) и
-  `backdrop-filter: blur(var(--sidebar-overlay-blur))` с пробным
-  `--sidebar-overlay-blur: 8px`, тень панели ступень К11 `shadow-lg`.
+- **Размытие, затемнение, тень** заданы по эталонам (решение пользователя 16.10.2026, эталоны Apple systemThinMaterial и Material 3 scrim 32%):
+  подложка общая с окнами и просмотром изображения, `.modal-scrim`
+  (SPEC_COLOR_RULES.md, 3.9.1): `--scrim-blur: 20px`,
+  `--scrim-saturate: 150%`, `--scrim-color` = `--background` с
+  непрозрачностью 32 %; тень панели ступень К11 `shadow-lg`.
 - Меню монтируется заново при переходе через `740px`: прокрутка списка и
   незаконченное переименование теряются (риск плана).
 - Браузерная проверка `bun run test:narrow-window`
   (`scripts/narrow-window-audit.mjs`, свой Vite): ширины 1200, 750, 749, 740,
   739, 400 и 390, полоса, Escape, коллекция, движение, переходы через порог,
   наименьшая ширина.
+
+### Временная настройка столбцов меню
+
+Проба по просьбе пользователя 16.10.2026 (PLAN 47.6): после его решения
+настройка удаляется или становится постоянной со своей спецификацией. В панели
+Display (лента и граф, `DisplayMenu.tsx`) раздел «Sidebar columns»
+(`SidebarColumnsMenu.tsx`) перечисляет столбцы строк бокового меню: Name
+(название), Previews (превью), Count (зона счётчика, над ней Connect и
+Connected). Порядок меняется перетаскиванием (`@dnd-kit/sortable`), у каждого
+столбца переключатель показа; последний показанный скрыть нельзя. Хранение
+отдельным ключом `mine.sidebar.columns` в `localStorage` с try/catch, другие
+вкладки и окна узнают по `settings-changed`. `src/lib/sidebarColumnLayout.ts`
+пишет на корень документа порядок столбцов (CSS `order`), места направляющих
+между показанными столбцами и сдвиг зоны счётчика от правого края строки
+(`--sidebar-meta-right`, от него стоят счётчик, Connect и Connected), а
+скрытые столбцы атрибутами `data-sidebar-hide-*` (правила в `global.css`);
+строки, направляющие и поднятая строка перетаскивания следуют сразу, без
+пропсов. По умолчанию (нынешний порядок, всё показано) на корень не пишется
+ничего, и строки те же, что прежде. Показанные столбцы делят ширину строки:
+без превью название забирает их место; наименьшая ширина меню 350 px и три
+равные зоны (`sidebarEqualZonesWidth()`) не меняются. Проверки:
+`sidebarColumnLayout.test.ts`, `SidebarColumnsMenu.test.tsx`, в
+`test:narrow-window` перестановка и скрытие в Chromium.
+
+### Временный переключатель фона светлой темы
+
+Проба по просьбе пользователя 16.10.2026 (PLAN 47.7): белый холст ленты
+светится слишком ярко. В той же панели Display группа «Light canvas»
+(`LightCanvasMenu.tsx`): White (L 1, К1, по умолчанию) и Soft (L 0.975).
+`src/lib/lightLadder.ts` выводит по закону цвета (SPEC_COLOR_RULES.md) все
+светлые токены, которые следуют за холстом: зоны, текстовые доли, тихие
+сигналы, линии, кольца фокуса, разрушительную кнопку и стекло зоны броска;
+при холсте 1 вывод совпадает с нынешним светлым блоком `global.css`, это
+проверяет `colorLaw.test.ts`, он же проверяет вывод для 0.975.
+`src/lib/lightCanvas.ts` ставит выведенные значения на корень документа только
+пока на экране светлая тема (явная или системная) и снимает их, как только тема
+становится тёмной; заливки, подложка `--scrim-color` и карта высот выводятся в
+CSS из этих токенов сами. Тёмная тема не меняется. Хранение ключом
+`mine.lightCanvas`, страницы вкладок, полоса вкладок и окно настроек узнают о
+смене по `settings-changed`. После решения пользователя проба удаляется или
+выбранный холст становится К1.
 
 ### Sidebar
 
@@ -1222,14 +1263,26 @@ Image media expansion:
 
 - local images expose a top-right `Expand` icon button; left click on the image
   surface is inert and reserved for drag/pan behavior;
-- expanded image preview is an app-level overlay below the top bar. It covers
-  the main body and bottom action bar, but leaves the top app bar available;
-- the secondary plane uses a solid/minimal scrim:
-  `background: rgb(0 0 0 / 0.56)` plus `backdrop-filter: saturate(0.55)`.
-  It intentionally avoids blur;
-- the foreground image is the primary plane and uses
-  `box-shadow: 0 24px 96px rgb(0 0 0 / 0.45)` plus
-  `outline: 1px solid rgb(255 255 255 / 0.08)`;
+- expanded image preview is an app-level overlay over the whole page of the
+  tab (`fixed inset-0`), the top row included; the tab bar above is a page of
+  its own (with the shared modal scrim, решение пользователя 16.10.2026; before it the overlay left the
+  top 32 px uncovered);
+- the secondary plane is the shared scrim `.modal-scrim` (global.css), the
+  same as the dialogs' and the narrow window's sidebar's:
+  `backdrop-filter: blur(var(--scrim-blur)) saturate(var(--scrim-saturate))`
+  (20px, 150%) over `--scrim-color`, the palette's canvas at 32 %
+  (SPEC_COLOR_RULES.md, 3.9.1; user's decision of 16.10.2026 from Apple's
+  systemThinMaterial and Material 3's 32 % scrim);
+- the foreground image is the primary plane: no frame line and no shadow
+  (решение пользователя 16.10.2026: без теней; before it briefly the K11 step
+  `shadow-lg`, and for the old always dark plane a dark line and
+  `shadow-2xl` that drew a black frame and a heavy shadow on the light scrim);
+- the control island is a floating layer like a menu: `bg-popover`, `border
+  border-border`, no shadow (решение пользователя 16.10.2026: без теней;
+  before it briefly `shadow-lg`; the translucent `bg-accent/90` with its own
+  backdrop blur all but vanished on the light scrim); it is
+  always on screen and never hides (user decision 16.10.2026; until then it
+  left after 3 s without pointer movement);
 - the bottom floating control island contains zoom out, current zoom, zoom in,
   Copy Media, and `Collapse image preview` (`Minimize2`, inward arrows). There
   is no top-right X close button.

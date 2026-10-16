@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   CARD_HOVER_ACTION_MIN_HEIGHT,
+  FEED_COLUMN_MIN_WIDTH_PX,
+  cardTextMaxLines,
   computeCardHeight,
   computeFeedPlaybackSurfaceEnvelope,
 } from "./cardHeight";
@@ -869,5 +871,48 @@ describe("post card geometry (SPEC_FEED_DISPLAY.md, Д20, Д25)", () => {
     expect(computeCardHeight(text, COLUMN, widths, "cards")).toBe(
       CARD_BORDER + TOP_TITLE + 16 + TITLE_TO_TEXT + 20 * 3 + BOTTOM_TEXT,
     );
+  });
+});
+
+describe("text under media on a narrow column (SPEC_NARROW_WINDOW.md, У14)", () => {
+  /// Ten words of 120px: never two on a line at these columns.
+  const TEN_LINES: WordWidths = {
+    title: [],
+    preview: Array.from({ length: 10 }, () => 120),
+    titleSpace: 4,
+    previewSpace: 4,
+    titleNoSpaceBefore: [],
+    previewNoSpaceBefore: Array.from({ length: 10 }, () => false),
+  };
+  const post = (manifest: string | null) => makeBlock({
+    block_type: "article",
+    url: "https://x.com/a/status/3",
+    body: "Ten long words",
+    preview_text: "Ten long words",
+    preview_manifest: manifest,
+  });
+  /// 14px to the letters of a text line (box 10).
+  const TOP_TEXT = 10;
+
+  it("keeps three lines under media from the feed's column minimum up, two below it", () => {
+    expect(FEED_COLUMN_MIN_WIDTH_PX).toBe(220);
+    expect(cardTextMaxLines(true, 219)).toBe(2);
+    expect(cardTextMaxLines(true, 219.5)).toBe(2);
+    expect(cardTextMaxLines(true, 220)).toBe(3);
+    expect(cardTextMaxLines(true, 320)).toBe(3);
+    expect(cardTextMaxLines(false, 120)).toBe(8);
+    expect(cardTextMaxLines(false, 320)).toBe(8);
+  });
+
+  it("reserves two text lines under a square picture at 219px and three at 220px", () => {
+    const square = post(artifactManifest(1000, 1000));
+    expect(computeCardHeight(square, 219, TEN_LINES)).toBe(CARD_BORDER + 217 + TOP_TEXT + 2 * 20 + BOTTOM_TEXT);
+    expect(computeCardHeight(square, 220, TEN_LINES)).toBe(CARD_BORDER + 218 + TOP_TEXT + 3 * 20 + BOTTOM_TEXT);
+  });
+
+  it("reserves the narrow clamp while metrics load, and leaves text without media at eight lines", () => {
+    const square = post(artifactManifest(1000, 1000));
+    expect(computeCardHeight(square, 219, null)).toBe(CARD_BORDER + 217 + TOP_TEXT + 2 * 20 + BOTTOM_TEXT);
+    expect(computeCardHeight(post(null), 219, TEN_LINES)).toBe(CARD_BORDER + TOP_TEXT + 8 * 20 + BOTTOM_TEXT);
   });
 });

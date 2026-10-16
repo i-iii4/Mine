@@ -831,11 +831,11 @@ describe("Sidebar", () => {
     expect(alphaAction).toHaveTextContent("Connected");
     // All states fill the same cell minus two equal 8px fields.
     expect(alphaAction).toHaveStyle({ width: "calc(var(--sidebar-zone) - 16px)" });
-    expect(betaAction).toHaveStyle({ width: "calc(var(--sidebar-zone) - 16px)", right: "8px" });
+    expect(betaAction).toHaveStyle({ width: "calc(var(--sidebar-zone) - 16px)" });
+    // 8px from the meta zone, which a trial order may move (PLAN 47.6).
+    expect(betaAction.style.right).toBe("calc(var(--sidebar-meta-right, 0px) + 8px)");
     expect(alphaAction).toHaveClass("absolute");
-    expect(alphaAction).toHaveStyle({
-      right: "8px",
-    });
+    expect(alphaAction.style.right).toBe("calc(var(--sidebar-meta-right, 0px) + 8px)");
     expect(alphaAction.closest("a")).toBeNull();
     expect(screen.getByText("5")).not.toHaveClass("opacity-0");
     expect(betaAction).toHaveClass("opacity-0");
@@ -1403,7 +1403,9 @@ describe("Sidebar", () => {
     const rightDivider = rows.querySelector('[data-sidebar-guideline="right"]') as HTMLSpanElement;
 
     expect(leftDivider).toHaveClass("bg-sidebar-border");
-    expect(leftDivider).toHaveStyle({ left: "calc(var(--sidebar-row-pad-x) + var(--sidebar-name-col))" });
+    // Where it always stood unless a trial order of the columns moves it
+    // (PLAN 47.6).
+    expect(leftDivider.style.left).toBe("var(--sidebar-guide-1-left, calc(var(--sidebar-row-pad-x) + var(--sidebar-name-col)))");
     expect(title).toHaveAttribute("data-sidebar-title-fade-width", "24");
     expect(title).toHaveAttribute("data-sidebar-title-protected-width", "4");
     expect(title).toHaveClass("w-[var(--sidebar-name-col)]");
@@ -1421,7 +1423,7 @@ describe("Sidebar", () => {
     // The right guideline stands on the zone boundary, not on the button's
     // own field: zones are what the eye compares, and the button lives inside
     // the meta zone with its fields around it.
-    expect(rightDivider).toHaveStyle({ right: "var(--sidebar-zone)" });
+    expect(rightDivider.style.right).toBe("var(--sidebar-guide-2-right, var(--sidebar-zone))");
     expect(strip).toHaveAttribute("data-sidebar-preview-fade-width", "24");
     // The previews' cell is its own (07.10.2026): the next cell, with the
     // right guideline's pixel, stands in the row's flow, so the previews'

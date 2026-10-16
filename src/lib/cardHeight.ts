@@ -72,6 +72,30 @@ const TITLE_MAX_LINES = 2;
  *  (`line-clamp-8`), SPEC_CARD_UNIFIED.md, Е5. */
 const TEXT_MAX_LINES_UNDER_MEDIA = 3;
 const TEXT_MAX_LINES_ALONE = 8;
+/** Text under media on a card narrower than the feed's column minimum: two
+ *  lines (SPEC_NARROW_WINDOW.md, У14). */
+const TEXT_MAX_LINES_UNDER_MEDIA_NARROW = 2;
+
+/**
+ * The narrowest column the feed lays out by: the masonry fits as many
+ * columns of at least this width as it can. A column narrower than it comes
+ * only from a feed that keeps more columns than fit, and a card that narrow
+ * keeps less text under its media (SPEC_NARROW_WINDOW.md, У14).
+ */
+export const FEED_COLUMN_MIN_WIDTH_PX = 220;
+
+/**
+ * Lines the text under a card's title may take (SPEC_CARD_UNIFIED.md, Е5;
+ * SPEC_NARROW_WINDOW.md, У14): eight without media; under media three, two
+ * on a card narrower than `FEED_COLUMN_MIN_WIDTH_PX`. The render clamps by
+ * it and the height reserves by it, so both read the same card width.
+ */
+export function cardTextMaxLines(underMedia: boolean, columnWidth: number): number {
+  if (!underMedia) return TEXT_MAX_LINES_ALONE;
+  return columnWidth < FEED_COLUMN_MIN_WIDTH_PX
+    ? TEXT_MAX_LINES_UNDER_MEDIA_NARROW
+    : TEXT_MAX_LINES_UNDER_MEDIA;
+}
 
 /**
  * Height of a media slot across the frame's inner width at the shape the
@@ -96,13 +120,13 @@ function textWidth(iw: number): number {
  */
 function textPartLines(
   descriptor: CardLayoutDescriptor,
-  iw: number,
+  columnWidth: number,
   wordWidths: WordWidths | null,
 ): Array<{ line: CardTextLine; height: number }> {
   if (descriptor.textShown !== "always") return [];
   const { title, text, author } = descriptor.text;
-  const width = textWidth(iw);
-  const textMax = descriptor.media ? TEXT_MAX_LINES_UNDER_MEDIA : TEXT_MAX_LINES_ALONE;
+  const width = textWidth(innerWidth(columnWidth));
+  const textMax = cardTextMaxLines(descriptor.media !== null, columnWidth);
   const titleLines = !title
     ? 0
     : wordWidths
@@ -182,7 +206,7 @@ export function computeCardHeight(
   const descriptor = deriveCardLayoutDescriptor(block, show);
   const iw = innerWidth(columnWidth);
   const media = descriptor.media ? mediaHeight(iw, descriptor.media) : 0;
-  const lines = textPartLines(descriptor, iw, wordWidths);
+  const lines = textPartLines(descriptor, columnWidth, wordWidths);
   const first = lines[0];
   const last = lines[lines.length - 1];
   const text = first && last

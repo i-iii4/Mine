@@ -98,6 +98,10 @@ const SIDEBAR_ROW_ACTION_BUTTON_GAP = SIDEBAR_ROW_ACTION_GAP_PX;
 ///
 /// The plate belongs to the cell, not to the count's text alignment.
 const SIDEBAR_ROW_ACTION_BUTTON_INSET = SIDEBAR_ROW_ACTION_BUTTON_GAP;
+/// Where Connect and Connected stand from the row's right edge: the inset
+/// from the meta zone's edge, the zone moved by a trial order of the columns
+/// (`--sidebar-meta-right`, sidebarColumnLayout.ts, PLAN 47.6; 0 by default).
+const SIDEBAR_ROW_META_ACTION_RIGHT = `calc(var(--sidebar-meta-right, 0px) + ${SIDEBAR_ROW_ACTION_BUTTON_INSET}px)`;
 const SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 /// The air between the previews and the right guideline, set by the theme:
@@ -862,13 +866,22 @@ const SidebarCore = memo(function SidebarCore({
               aria-hidden="true"
               data-sidebar-guideline="left"
               className="absolute inset-y-0 w-px bg-sidebar-border"
-              style={{ left: "calc(var(--sidebar-row-pad-x) + var(--sidebar-name-col))" }}
+              // A trial may reorder or hide the columns (sidebarColumnLayout.ts,
+              // PLAN 47.6); without it the guideline stands where it always did.
+              style={{
+                left: "var(--sidebar-guide-1-left, calc(var(--sidebar-row-pad-x) + var(--sidebar-name-col)))",
+                display: "var(--sidebar-guide-1-display, block)",
+              }}
             />
             <span
               aria-hidden="true"
               data-sidebar-guideline="right"
               className="absolute inset-y-0 w-px bg-sidebar-border"
-              style={{ right: "var(--sidebar-zone)" }}
+              style={{
+                left: "var(--sidebar-guide-2-left, auto)",
+                right: "var(--sidebar-guide-2-right, var(--sidebar-zone))",
+                display: "var(--sidebar-guide-2-display, block)",
+              }}
             />
           </div>
 
@@ -1144,6 +1157,7 @@ function SidebarRowTitleCell({
   return (
     <span
       data-sidebar-row-text=""
+      data-sidebar-name-cell=""
       data-sidebar-title-fade-width={String(SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH)}
       data-sidebar-title-protected-width={String(SIDEBAR_PREVIEW_DIVIDER_GAP)}
       className={cn(
@@ -1326,7 +1340,7 @@ function SidebarRowBody({
         </SidebarPreviewRail>
         <span
           className={cn(
-            "absolute inset-y-0 right-[var(--sidebar-row-pad-x)] flex w-8 items-center justify-end text-right text-sm font-mono text-muted-foreground",
+            "absolute inset-y-0 right-[calc(var(--sidebar-meta-right,0px)+var(--sidebar-row-pad-x))] flex w-8 items-center justify-end text-right text-sm font-mono text-muted-foreground",
             "-translate-x-px",
             isLinkEditor
               ? cn(
@@ -1338,6 +1352,7 @@ function SidebarRowBody({
               : cn(ROW_INTENT_FADE, showConnectedPill ? cn("opacity-0", ANSWER_ON) : cn("opacity-100", ANSWER_OFF)),
           )}
           data-sidebar-row-text=""
+          data-sidebar-meta-count=""
         >
           {count || ""}
         </span>
@@ -1352,7 +1367,7 @@ function SidebarRowBody({
           showConnectedPill ? cn("opacity-100", ANSWER_ON) : cn("opacity-0", ANSWER_OFF),
         )}
         style={{
-          right: SIDEBAR_ROW_ACTION_BUTTON_INSET,
+          right: SIDEBAR_ROW_META_ACTION_RIGHT,
           width: SIDEBAR_ROW_ACTION_BUTTON_WIDTH,
         }}
         aria-hidden={showConnectedPill ? undefined : true}
@@ -1389,7 +1404,7 @@ function SidebarRowBody({
                 ),
           )}
           style={{
-            right: SIDEBAR_ROW_ACTION_BUTTON_INSET,
+            right: SIDEBAR_ROW_META_ACTION_RIGHT,
             width: SIDEBAR_ROW_ACTION_BUTTON_WIDTH,
           }}
           aria-label={`${linkEditor.checked ? "Disconnect" : "Connect"} ${label}`}
@@ -2304,8 +2319,9 @@ export function SidebarTagRowDragPreview({
           />
         </SidebarPreviewRail>
         <span
-          className="absolute inset-y-0 right-[var(--sidebar-row-pad-x)] flex w-8 -translate-x-px items-center justify-end text-right font-mono text-sm"
+          className="absolute inset-y-0 right-[calc(var(--sidebar-meta-right,0px)+var(--sidebar-row-pad-x))] flex w-8 -translate-x-px items-center justify-end text-right font-mono text-sm"
           data-sidebar-row-text=""
+          data-sidebar-meta-count=""
         >
           {count || ""}
         </span>

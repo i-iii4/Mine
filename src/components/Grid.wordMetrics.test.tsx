@@ -110,6 +110,41 @@ function installFiringResizeObserver(width = 400, height = 800): { restore: () =
   };
 }
 
+// A ResizeObserver that fires on observe and again at every `resize`: the
+// feed's width moves while the Grid stays mounted.
+function installResizableObserver(width: number, height = 800): {
+  resize: (next: number) => void;
+  restore: () => void;
+} {
+  const previous = globalThis.ResizeObserver;
+  const observed: Array<{ cb: ResizeObserverCallback; el: Element; self: ResizeObserver }> = [];
+  const fire = (target: { cb: ResizeObserverCallback; el: Element; self: ResizeObserver }, w: number) => {
+    const contentRect = {
+      width: w, height, top: 0, left: 0, right: w, bottom: height, x: 0, y: 0, toJSON: () => ({}),
+    } as DOMRectReadOnly;
+    target.cb([{ target: target.el, contentRect } as unknown as ResizeObserverEntry], target.self);
+  };
+  class ResizableObserver {
+    constructor(private cb: ResizeObserverCallback) {}
+    observe(el: Element): void {
+      const entry = { cb: this.cb, el, self: this as unknown as ResizeObserver };
+      observed.push(entry);
+      fire(entry, width);
+    }
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+  globalThis.ResizeObserver = ResizableObserver as unknown as typeof ResizeObserver;
+  return {
+    resize: (next) => {
+      for (const entry of observed) fire(entry, next);
+    },
+    restore: () => {
+      globalThis.ResizeObserver = previous;
+    },
+  };
+}
+
 async function flush(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
@@ -350,6 +385,106 @@ describe("Grid incremental word metrics", () => {
       window.localStorage.clear();
       reloadFeedDisplay();
       firing.restore();
+    }
+  });
+
+  it("starts a mounted feed where it stands, and moves to the top only for a new place or the signal («Возврат из графа»)", async () => {
+    const firing = installFiringResizeObserver(FEED_WIDTH);
+    try {
+      const scrollToMock = vi.mocked(Element.prototype.scrollTo);
+      scrollToMock.mockClear();
+      const { rerender } = render(<Grid {...BASE_PROPS} blocks={[makeBlock(80)]} currentTag="place-a" />);
+      await flush();
+      // A feed just mounted may already have scrolled back to its card.
+      expect(scrollToMock).not.toHaveBeenCalled();
+
+      rerender(<Grid {...BASE_PROPS} blocks={[makeBlock(80)]} currentTag="place-b" />);
+      await flush();
+      expect(scrollToMock).toHaveBeenCalledTimes(1);
+      expect(scrollToMock).toHaveBeenLastCalledWith(0, 0);
+
+      rerender(<Grid {...BASE_PROPS} blocks={[makeBlock(80)]} currentTag="place-b" scrollToTop={1} />);
+      await flush();
+      expect(scrollToMock).toHaveBeenCalledTimes(2);
+
+      rerender(<Grid {...BASE_PROPS} blocks={[makeBlock(81)]} currentTag="place-b" scrollToTop={1} />);
+      await flush();
+      expect(scrollToMock).toHaveBeenCalledTimes(2);
+    } finally {
+      firing.restore();
+    }
+  });
+
+  it("lays a card out again with two text lines under its media when its column narrows past 220px (У14)", async () => {
+    // 500px holds columns of at least 220px; 200px holds none, whatever the
+    // column count, so its column is narrower than the minimum.
+    const WIDE = 500;
+    const NARROW = 200;
+    const resizable = installResizableObserver(WIDE);
+    setFeedShow("cards");
+    try {
+      const post = makeBlock(70, {
+        title: null,
+        url: "https://x.com/someone/status/70",
+        body: "Ten long words\n\n![](photo.jpg)",
+        preview_text: "Ten long words",
+        media_urls: "[\"photo.jpg\"]",
+        preview_manifest: JSON.stringify({
+          kind: "image", primary_preview_path: "photo.jpg", width: 1000, height: 1000,
+          preview_width: 1000, preview_height: 1000,
+          tiles: [{ source_path: "photo.jpg", preview_path: "photo.jpg", width: 1000, height: 1000,
+            preview_width: 1000, preview_height: 1000, is_video: false, is_video_poster: false }],
+          overflow_count: 0,
+        }),
+      });
+      // Ten 120px words: one per line at any column here.
+      const tenLines: WordWidths = {
+        title: [],
+        preview: Array.from({ length: 10 }, () => 120),
+        titleSpace: 4,
+        previewSpace: 4,
+        titleNoSpaceBefore: [],
+        previewNoSpaceBefore: Array.from({ length: 10 }, () => false),
+      };
+      fetchWordWidthsMock.mockImplementation(async () => new Map([[70, tenLines]]));
+      const wideColumn = getMasonryColumnWidth(WIDE, COLUMN_MIN_WIDTH, DEFAULT_GAP);
+      const narrowColumn = getMasonryColumnWidth(NARROW, COLUMN_MIN_WIDTH, DEFAULT_GAP);
+      expect(wideColumn).toBeGreaterThanOrEqual(COLUMN_MIN_WIDTH);
+      expect(narrowColumn).toBeLessThan(COLUMN_MIN_WIDTH);
+
+      render(<Grid {...BASE_PROPS} blocks={[post]} currentTag="narrow-text" />);
+      await flush();
+
+      const item = () =>
+        document.querySelector<HTMLElement>('[data-feed-grid-item-slug="block-70"]');
+      const textClamp = () =>
+        Array.from(item()?.querySelectorAll("p") ?? [])
+          .find((p) => p.textContent === "Ten long words")
+          ?.className.match(/line-clamp-\d+/)?.[0];
+      expect(item()?.style.height).toBe(`${computeCardHeight(post, wideColumn, tenLines, "cards")}px`);
+      expect(textClamp()).toBe("line-clamp-3");
+
+      await act(async () => {
+        resizable.resize(NARROW);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await flush();
+      expect(item()?.style.height).toBe(`${computeCardHeight(post, narrowColumn, tenLines, "cards")}px`);
+      expect(textClamp()).toBe("line-clamp-2");
+
+      await act(async () => {
+        resizable.resize(WIDE);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await flush();
+      expect(item()?.style.height).toBe(`${computeCardHeight(post, wideColumn, tenLines, "cards")}px`);
+      expect(textClamp()).toBe("line-clamp-3");
+    } finally {
+      window.localStorage.clear();
+      reloadFeedDisplay();
+      resizable.restore();
     }
   });
 });

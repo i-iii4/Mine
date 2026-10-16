@@ -80,7 +80,8 @@ describe("The graph's Display panel (SPEC_GRAPH_VIEW.md, «Панель граф
 
   it("offers one Links group with Wikilinks and Related notes, both on by default, and no switch for collections", async () => {
     await openMenu();
-    const groups = screen.getAllByRole("group");
+    // The trial groups follow (PLAN 47.6, 47.7).
+    const groups = screen.getAllByRole("group").filter((group) => !group.hasAttribute("data-display-trial"));
     expect(groups.map((group) =>
       document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent,
     )).toEqual(["Links"]);
@@ -88,7 +89,8 @@ describe("The graph's Display panel (SPEC_GRAPH_VIEW.md, «Панель граф
       .toEqual(["Wikilinks", "Related notes"]);
     expect(switchedOn()).toEqual(["Wikilinks", "Related notes"]);
     expect(screen.queryByText("Collections")).not.toBeInTheDocument();
-    expect(screen.queryByRole("menuitemradio")).not.toBeInTheDocument();
+    // No feed choices here (the trial «Light canvas» is, PLAN 47.7).
+    expect(screen.queryByRole("menuitemradio", { name: "Newest first" })).not.toBeInTheDocument();
   });
 
   it("keeps every row on the menu's text column, the check in the leading icon slot", async () => {

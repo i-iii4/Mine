@@ -91,3 +91,10 @@ export function useFeedDisplay(): FeedDisplay {
 /// current presentation itself (`StaticCard` in Card.tsx), so it is the same
 /// card as in the feed (SPEC_CARD_STATES.md, С10).
 export const FeedShowContext = createContext<FeedShow>("cards");
+
+/// The width of the column a card stands in: how much text a card keeps under
+/// its media depends on it (SPEC_NARROW_WINDOW.md, У14). The feed provides its
+/// column width, a card drawn outside the feed (`StaticCard`) its own width,
+/// and the reserved height reads the same number. Null outside both: the card
+/// keeps the text of a column at least the feed's minimum wide.
+export const CardColumnWidthContext = createContext<number | null>(null);

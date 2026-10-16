@@ -14,7 +14,7 @@ import {
   type CardLayoutMediaItem,
   type CardLayoutText,
 } from "@/lib/cardLayout";
-import { FeedShowContext, useFeedDisplay } from "@/lib/feedDisplay";
+import { CardColumnWidthContext, FeedShowContext, useFeedDisplay } from "@/lib/feedDisplay";
 import { provisionalMediaAspect } from "@/lib/cardAspect";
 import {
   PreviewsPendingContext,
@@ -34,7 +34,7 @@ import {
   edgeTextTop,
   type CardTextLine,
 } from "@/lib/cardTypography";
-import { CARD_HOVER_ACTION_MIN_HEIGHT, computeCardHeight } from "@/lib/cardHeight";
+import { CARD_HOVER_ACTION_MIN_HEIGHT, cardTextMaxLines, computeCardHeight } from "@/lib/cardHeight";
 import { buildFeedVideoPosterCandidates } from "@/lib/feedVideoPoster";
 import { getNavigationLabel } from "@/lib/displayTitle";
 import { renderSearchHighlightedText, searchExcerptText } from "@/lib/searchHighlight";
@@ -714,6 +714,7 @@ function StaticCard({
 
   return (
     <FeedShowContext.Provider value={show}>
+      <CardColumnWidthContext.Provider value={width}>
       <CardFrame
         data-card-preview=""
         data-card-preview-unfolded={unfolded ? "" : undefined}
@@ -737,6 +738,7 @@ function StaticCard({
           </>
         ) : content}
       </CardFrame>
+      </CardColumnWidthContext.Provider>
     </FeedShowContext.Provider>
   );
 }
@@ -1054,6 +1056,14 @@ interface CardMediaProps {
   measurementMode: boolean;
 }
 
+/// The clamp of the text under a card's title, by the lines `cardTextMaxLines`
+/// gives: each class spelled out whole so Tailwind finds it.
+const CARD_TEXT_CLAMP_CLASS: Readonly<Record<number, string>> = {
+  2: "line-clamp-2",
+  3: "line-clamp-3",
+  8: "line-clamp-8",
+};
+
 /// The body of every card (SPEC_CARD_UNIFIED.md, Е5, Е8): the shown media on
 /// top, across the frame's inner width, and the text part under it. Either
 /// part may be absent: media with no text part under it fills the card, text
@@ -1065,8 +1075,12 @@ const CardBody = memo(function CardBody({
   ...mediaProps
 }: CardMediaProps & { descriptor: CardLayoutDescriptor }) {
   const { block } = mediaProps;
+  // The column the card stands in decides how much text it keeps under its
+  // media; the reserved height reads the same width (SPEC_NARROW_WINDOW.md, У14).
+  const columnWidth = useContext(CardColumnWidthContext);
   if (descriptor.mode === "empty") return null;
   const { media } = descriptor;
+  const textMaxLines = cardTextMaxLines(media !== null, columnWidth ?? Number.POSITIVE_INFINITY);
   const text = descriptor.textShown === "always" ? descriptor.text : null;
   const titleSearchMatch = block.search_match?.field === "title" ? block.search_match : null;
   const textSearchMatch =
@@ -1107,7 +1121,7 @@ const CardBody = memo(function CardBody({
           )}
           {shownText && (
             <p
-              className={cn("text-sm text-muted-foreground", media ? "line-clamp-3" : "line-clamp-8")}
+              className={cn("text-sm text-muted-foreground", CARD_TEXT_CLAMP_CLASS[textMaxLines])}
               style={{ ...contentCardPreviewTextStyle, marginTop: gapBefore("preview") }}
             >
               {renderSearchHighlightedText(shownText, textSearchMatch)}

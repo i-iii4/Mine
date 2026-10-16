@@ -32,6 +32,8 @@ const vite = await startAuditVite([{
       import {Sidebar} from "/src/components/Sidebar.tsx";
       import {SidebarOverlay} from "/src/components/SidebarOverlay.tsx";
       import {FadeScrollRow} from "/src/components/FadeScrollRow.tsx";
+      import {setSidebarColumnOrder, setSidebarColumnShown} from "/src/lib/sidebarColumnLayout.ts";
+      window.auditColumns={order:setSidebarColumnOrder,shown:setSidebarColumnShown};
       import {TooltipProvider} from "/src/components/ui/tooltip.tsx";
       import {useSidebarOverlay} from "/src/hooks/useSidebarOverlay.ts";
       import {useSidebarResize} from "/src/hooks/useSidebarResize.ts";
@@ -400,6 +402,68 @@ try {
   assert.equal(bar.row.scrollLeft, 60, "390: the row scrolls");
   assert.equal(bar.row.fadeLeft, "true", "390: after scrolling the left edge dissolves too");
   console.log("PASS 390: the bottom bar's commands at the left in one row that scrolls, its edges dissolving");
+
+  // TRIAL (PLAN 47.6): the sidebar rows' columns in another order or hidden.
+  // The rows follow at once; the shown columns share the row, nothing is cut,
+  // a guideline stands between each two of them and the count keeps its zone.
+  await resize(1200);
+  await settle();
+  const readColumns = () => page.evaluate(() => {
+    const aside = [...document.querySelectorAll("aside")].find((element) => !element.closest("[data-sidebar-overlay]"));
+    const row = aside.querySelector("[data-sidebar-row-key='tag:Inbox'] a") ?? aside.querySelector("[data-sidebar-rows] a");
+    const box = (element) => {
+      if (!element || getComputedStyle(element).display === "none") return null;
+      const r = element.getBoundingClientRect();
+      return { left: Math.round(r.left), right: Math.round(r.right) };
+    };
+    const rowBox = row.getBoundingClientRect();
+    const guides = [...aside.querySelectorAll("[data-sidebar-guideline]")]
+      .filter((guide) => getComputedStyle(guide).display !== "none")
+      .map((guide) => Math.round(guide.getBoundingClientRect().left));
+    return {
+      row: { left: Math.round(rowBox.left), right: Math.round(rowBox.right) },
+      name: box(row.querySelector("[data-sidebar-name-cell]")),
+      previews: box(row.querySelector("[data-sidebar-preview-rail]")),
+      meta: box(row.querySelector("[data-sidebar-meta-cell]")),
+      count: box(row.querySelector("[data-sidebar-meta-count]")),
+      guides,
+    };
+  });
+  const columnsBefore = await readColumns();
+  assert.equal(columnsBefore.guides.length, 2, "default: two guidelines");
+  assert.ok(columnsBefore.name.right <= columnsBefore.previews.left + 1, "default: the name first");
+  assert.ok(columnsBefore.previews.right <= columnsBefore.meta.left + 1, "default: the previews before the count");
+  assert.ok(columnsBefore.count.left >= columnsBefore.meta.left, "default: the count in its zone");
+
+  await page.evaluate(() => window.auditColumns.order(["meta", "name", "previews"]));
+  await settle();
+  let columns = await readColumns();
+  assert.equal(columns.meta.left, columns.row.left + 16, "count first: its zone after the row's inset");
+  assert.ok(columns.count.left >= columns.meta.left && columns.count.right <= columns.meta.right, "count first: the count in its zone");
+  assert.ok(columns.meta.right <= columns.name.left + 1 && columns.name.right <= columns.previews.left + 1, "count first: then the name and the previews");
+  assert.equal(columns.previews.right, columns.row.right, "count first: the previews to the row's end");
+  assert.equal(columns.guides.length, 2, "count first: two guidelines");
+  assert.ok(Math.abs(columns.guides[0] - columns.meta.right) <= 1, "count first: a guideline after the count's zone");
+
+  await page.evaluate(() => { window.auditColumns.order(["name", "previews", "meta"]); window.auditColumns.shown("previews", false); });
+  await settle();
+  columns = await readColumns();
+  assert.equal(columns.previews, null, "without previews: none");
+  assert.ok(Math.abs(columns.name.right - columns.meta.left) <= 1, "without previews: the name takes their room");
+  assert.equal(columns.guides.length, 1, "without previews: one guideline");
+
+  await page.evaluate(() => { window.auditColumns.shown("previews", true); window.auditColumns.shown("meta", false); });
+  await settle();
+  columns = await readColumns();
+  assert.equal(columns.count, null, "without the count: none");
+  assert.equal(columns.previews.right, columns.row.right, "without the count: the previews to the row's end");
+  assert.equal(columns.guides.length, 1, "without the count: one guideline");
+
+  await page.evaluate(() => window.auditColumns.shown("meta", true));
+  await settle();
+  columns = await readColumns();
+  assert.deepEqual(columns, columnsBefore, "back to the default: the rows as they were");
+  console.log("PASS 1200: the sidebar rows follow a trial order and hidden columns, and come back as they were");
 
   assert.deepEqual(errors, []);
 } finally {

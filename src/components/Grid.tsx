@@ -25,7 +25,7 @@ import { placeKey } from "@/lib/tabPage";
 import { useTabVisible } from "@/lib/tabVisibility";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useDensity } from "@/lib/density";
-import { FeedShowContext, useFeedDisplay, type FeedShow } from "@/lib/feedDisplay";
+import { CardColumnWidthContext, FeedShowContext, useFeedDisplay, type FeedShow } from "@/lib/feedDisplay";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { Card, CardSkeleton } from "./Card";
 import { EmptySpaceOnboarding } from "./EmptySpaceOnboarding";
@@ -52,7 +52,7 @@ import {
   type MasonryPosition,
   type MasonryLayout,
 } from "@/lib/masonryLayout";
-import { computeCardHeight } from "@/lib/cardHeight";
+import { FEED_COLUMN_MIN_WIDTH_PX, computeCardHeight } from "@/lib/cardHeight";
 import { computeFeedPlaybackSurfaceEnvelope } from "@/lib/cardHeight";
 import { LayoutCache } from "@/lib/layoutCache";
 import { createFontMetricsCacheIdentity, fetchWordWidths, measureTopFirst } from "@/lib/fontMetrics";
@@ -137,7 +137,8 @@ declare global {
 
 // ─── Layout constants ───────────────────────────────────────────────────────
 
-const COLUMN_MIN_WIDTH = 220;
+// One number with the card's narrow text (SPEC_NARROW_WINDOW.md, У14).
+const COLUMN_MIN_WIDTH = FEED_COLUMN_MIN_WIDTH_PX;
 const EMPTY_WORD_WIDTHS: ReadonlyMap<number, WordWidths> = new Map();
 // Card gap and container insets both follow the app-wide spacing setting; they
 // used to be design-variant constants baked into the alt design. See
@@ -729,8 +730,15 @@ export function Grid({
     };
   }, []);
 
-  // Scroll to top on explicit signal or channel change.
+  // Scroll to top on explicit signal or channel change. A feed just mounted
+  // already stands at its top, so mounting is neither: only a signal or a
+  // place that changed since moves it, and nothing at mount can undo a return
+  // to a remembered card (SPEC_GRAPH_VIEW.md, «Возврат из графа»).
+  const scrollToTopSeenRef = useRef({ scrollToTop, routeKey });
   useEffect(() => {
+    const seen = scrollToTopSeenRef.current;
+    if (seen.scrollToTop === scrollToTop && seen.routeKey === routeKey) return;
+    scrollToTopSeenRef.current = { scrollToTop, routeKey };
     parentRef.current?.scrollTo(0, 0);
   }, [scrollToTop, routeKey]);
 
@@ -2503,6 +2511,7 @@ export function Grid({
     // The band is a sibling of the scrollport, not a child: inside it, it would
     // inherit the scrollport's padding and add layout work to the scrolled tree.
     <FeedShowContext.Provider value={show}>
+    <CardColumnWidthContext.Provider value={columnWidth}>
     <CardCollectionsContext.Provider value={cardCollections}>
     <div className="relative h-full">
     {/* An open right-click menu holds the pointer's answers like the card's
@@ -2648,6 +2657,7 @@ export function Grid({
       <TopFadeScrim scrolled={topFade.scrolled} surface="feed" color="var(--background)" />
     </div>
     </CardCollectionsContext.Provider>
+    </CardColumnWidthContext.Provider>
     </FeedShowContext.Provider>
   );
 }

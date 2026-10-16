@@ -334,6 +334,8 @@ import {
 } from "@/lib/textSelectionDrag";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useSidebarOverlay } from "@/hooks/useSidebarOverlay";
+import { SIDEBAR_COLUMNS_STORAGE_KEY, reloadSidebarColumnLayout } from "@/lib/sidebarColumnLayout";
+import { LIGHT_CANVAS_STORAGE_KEY, reloadLightCanvas } from "@/lib/lightCanvas";
 import { useTopRowWrap } from "@/hooks/useTopRowWrap";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
 import { useChannelPreviewsEvents } from "@/hooks/useChannelPreviewsEvents";
@@ -2557,9 +2559,10 @@ export function AppWithVault({
 
   // The scroll comes back once its card is in the feed: pages are read on
   // until it is, and a card that is gone leaves the feed at its top (В18).
-  // Another place or Graph before that drops it.
+  // Another place before that drops it; Graph on the same place keeps it
+  // until the feed comes back (SPEC_GRAPH_VIEW.md, «Возврат из графа»).
   const [pendingScroll, setPendingScroll] = useState<{ anchor: ScrollAnchor; routeKey: string } | null>(() => (
-    restoreView?.scroll_anchor && restoreView.mode === "grid"
+    restoreView?.scroll_anchor
       ? {
           anchor: restoreView.scroll_anchor,
           routeKey: placeKey(restoreView.location),
@@ -2578,10 +2581,13 @@ export function AppWithVault({
   ), [blocks, pendingScroll]);
   useEffect(() => {
     if (!pendingScroll || !initialLoadsDone) return;
-    if (feedViewMode !== "grid" || currentPlaceKey !== pendingScroll.routeKey || gridLoadError !== null) {
+    if (currentPlaceKey !== pendingScroll.routeKey || gridLoadError !== null) {
       setPendingScroll(null);
       return;
     }
+    // Graph shows the place without its feed: no page is read for a scroll
+    // until the feed is back.
+    if (feedViewMode !== "grid") return;
     if (!gridRouteSnapshotReady || scrollRestoreAnchor || loadingMoreBlocks) return;
     if (hasMoreBlocks && scrollRestorePagesRef.current < SCROLL_RESTORE_PAGE_LIMIT) {
       scrollRestorePagesRef.current += 1;
@@ -2611,8 +2617,8 @@ export function AppWithVault({
     readScrollPositionRef.current = read;
     reporterRef.current?.schedule();
   }, []);
-  const tabViewInputRef = useRef({ currentLocation, mainViewMode, selectedBlock, sidebarSearchQuery });
-  tabViewInputRef.current = { currentLocation, mainViewMode, selectedBlock, sidebarSearchQuery };
+  const tabViewInputRef = useRef({ currentLocation, feedViewMode, mainViewMode, selectedBlock, sidebarSearchQuery });
+  tabViewInputRef.current = { currentLocation, feedViewMode, mainViewMode, selectedBlock, sidebarSearchQuery };
   const readTabView = useCallback((): TabView => {
     const input = tabViewInputRef.current;
     return {
@@ -2626,8 +2632,12 @@ export function AppWithVault({
           title: getNavigationLabel(input.selectedBlock),
         }
         : null,
-      // A scroll still on its way back is what the tab remembers.
-      scroll_anchor: pendingScrollRef.current?.anchor ?? readScrollPositionRef.current?.() ?? null,
+      // A scroll still on its way back is what the tab remembers. Graph takes
+      // the feed off the page, and the reader it left still answers for the
+      // place it stood on: only the waiting anchor stands for the feed there
+      // (SPEC_GRAPH_VIEW.md, «Возврат из графа»).
+      scroll_anchor: pendingScrollRef.current?.anchor
+        ?? (input.feedViewMode === "grid" ? readScrollPositionRef.current?.() ?? null : null),
       collection_filter: input.sidebarSearchQuery,
     };
   }, []);
@@ -3011,7 +3021,26 @@ export function AppWithVault({
     });
   }, []);
 
+  // Graph takes the feed off the page; the feed's card at its top waits as
+  // the scroll to come back to, the same anchor a restored tab returns to
+  // (SPEC_GRAPH_VIEW.md, «Возврат из графа»). An author's feed has no graph
+  // and stays on the page.
+  const feedViewModeRef = useRef(feedViewMode);
+  feedViewModeRef.current = feedViewMode;
   const handleMainViewModeChange = useCallback((next: MainViewMode) => {
+    if (
+      feedViewModeRef.current === "grid"
+      && next === "graph"
+      && currentLocationRef.current.kind !== "author"
+      && !pendingScrollRef.current
+    ) {
+      const anchor = readScrollPositionRef.current?.() ?? null;
+      if (anchor) {
+        // Each return gets its own bound of pages to find the card in.
+        scrollRestorePagesRef.current = 0;
+        setPendingScroll({ anchor, routeKey: currentPlaceKeyRef.current });
+      }
+    }
     setMainViewMode(next);
   }, []);
 
@@ -3038,6 +3067,12 @@ export function AppWithVault({
       } else if (key === FEED_SORT_STORAGE_KEY || key === FEED_SHOW_STORAGE_KEY) {
         // Sort and Show chosen in another tab (SPEC_DEEP_AUDIT.md, Е6.7).
         reloadFeedDisplay();
+      } else if (key === LIGHT_CANVAS_STORAGE_KEY) {
+        // TRIAL (PLAN 47.7): the light canvas chosen in another tab.
+        reloadLightCanvas();
+      } else if (key === SIDEBAR_COLUMNS_STORAGE_KEY) {
+        // TRIAL (PLAN 47.6): the sidebar rows' columns set in another tab.
+        reloadSidebarColumnLayout();
       } else if (key === CONTENT_FONT_STORAGE_KEY) {
         applyContentFont(getStoredContentFont());
       } else if (key === INTERFACE_FONT_STORAGE_KEY) {

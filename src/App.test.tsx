@@ -1518,7 +1518,8 @@ describe("AppWithVault", () => {
       let menu = await openDisplayPanel();
       expect(menu).toHaveAttribute("data-display-panel", "feed");
       expect(within(menu).getByRole("group", { name: "Sort" })).toBeInTheDocument();
-      expect(within(menu).queryByRole("menuitemcheckbox")).not.toBeInTheDocument();
+      // The graph's switches are not here (the trial «Sidebar columns» is, PLAN 47.6).
+      expect(within(menu).queryByRole("menuitemcheckbox", { name: "Wikilinks" })).not.toBeInTheDocument();
       await closeDisplayPanel(menu);
 
       switchView("Graph");

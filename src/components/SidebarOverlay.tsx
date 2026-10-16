@@ -135,7 +135,7 @@ export function SidebarOverlay({ open, onClose, header, children }: SidebarOverl
     >
       <div
         aria-hidden="true"
-        className="sidebar-overlay-scrim absolute inset-0"
+        className="modal-scrim sidebar-overlay-scrim absolute inset-0"
         data-sidebar-overlay-scrim=""
         onClick={onClose}
       />

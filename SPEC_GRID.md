@@ -471,6 +471,7 @@ export function Grid({ blocks, parentWidth, ... }: GridProps) {
 - Inline стиль: `transform: translate3d(${x}px, ${y}px, 0)` (force 3d для GPU layer)
 - Фиксация line-height и font-size на `cardHeight.ts` константы (20px для display title, 18px для preview, 14px base)
 - Контейнеры с текстом получают `line-clamp-N` с фиксированным N соответствующим `computeCardHeight` максимальным значениям
+- Число строк текста под медиа зависит от ширины колонки: до 3, в колонке уже `FEED_COLUMN_MIN_WIDTH_PX` (220 px) до 2 (SPEC_NARROW_WINDOW.md, У14, решение пользователя 16.10.2026). Его даёт одна функция `cardTextMaxLines` в `cardHeight.ts` и для `line-clamp-N`, и для `computeCardHeight`; лента передаёт ширину колонки карточкам через `CardColumnWidthContext`, `MeasurementPass` лежит под тем же контекстом. Ширина колонки входит в `LayoutGenerationKey`, поэтому переход через 220 px пересчитывает высоты
 
 ---
 

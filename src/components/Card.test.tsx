@@ -4,12 +4,13 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Card, DragCardStackPreview, ReadOnlyCardPreview } from "./Card";
-import { FeedShowContext, setFeedShow, type FeedShow } from "@/lib/feedDisplay";
+import { CardColumnWidthContext, FeedShowContext, setFeedShow, type FeedShow } from "@/lib/feedDisplay";
 import { publishCollectionOrder } from "@/lib/cardCollections";
-import { CARD_HOVER_ACTION_MIN_HEIGHT, computeCardHeight } from "@/lib/cardHeight";
+import { CARD_HOVER_ACTION_MIN_HEIGHT, FEED_COLUMN_MIN_WIDTH_PX, computeCardHeight } from "@/lib/cardHeight";
 import { PROVISIONAL_MEDIA_ASPECT, clampCardAspect } from "@/lib/cardAspect";
 import { PreviewsPendingContext } from "@/lib/cardPreviewState";
 import {
+  CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX,
   EDGE_TEXT_SIDE_PX,
   EDGE_VISUAL_GAP_PX,
   cardTextGap,
@@ -1984,8 +1985,9 @@ function layOutBox(
   return height;
 }
 
-/// A feed card in a presentation, laid out at a column. With `measure`, its
-/// paragraphs wrap at the width they get.
+/// A feed card in a presentation, laid out at a column, which the card reads
+/// as the feed hands it (У14). With `measure`, its paragraphs wrap at the
+/// width they get.
 function paintCard(
   value: LightBlock,
   show: FeedShow,
@@ -1994,7 +1996,9 @@ function paintCard(
 ) {
   const markup = renderToStaticMarkup(
     <FeedShowContext.Provider value={show}>
-      <Card block={value} vaultPath={VAULT} onClick={vi.fn()} />
+      <CardColumnWidthContext.Provider value={column}>
+        <Card block={value} vaultPath={VAULT} onClick={vi.fn()} />
+      </CardColumnWidthContext.Provider>
     </FeedShowContext.Provider>,
   );
   const frame = new DOMParser().parseFromString(markup, "text/html")
@@ -2274,6 +2278,48 @@ describe("Media edge to edge (SPEC_FEED_DISPLAY.md, Д20 to Д25)", () => {
         expect(paragraph.height).toBe(lineHeight * lines);
         expect(computeCardHeight(make(text), COLUMN, widths(text), "cards")).toBe(painted.height);
       }
+    });
+  });
+
+  describe("text under media on a column narrower than the feed's minimum (SPEC_NARROW_WINDOW.md, У14)", () => {
+    /// Every character 6px wide, a space 3px: two 120px words never share a
+    /// line of the text column at these widths, so ten words take ten lines.
+    const MEASURE: TextMeasure = { wordWidth: (word) => word.length * 6, spaceWidth: 3 };
+    const WORDS = Array.from({ length: 10 }, () => "W".repeat(20));
+    const LONG = WORDS.join(" ");
+    const LONG_WIDTHS: WordWidths = {
+      title: [],
+      preview: WORDS.map(MEASURE.wordWidth),
+      titleSpace: MEASURE.spaceWidth,
+      previewSpace: MEASURE.spaceWidth,
+      titleNoSpaceBefore: [],
+      previewNoSpaceBefore: WORDS.map(() => false),
+    };
+    const withMedia = () => ({
+      ...xPost(imageManifest(800, 1000)),
+      preview_text: LONG,
+      body: `${LONG}\n\n![](photo.jpg)`,
+    });
+    const textAlone = () => ({
+      ...xPost(imageManifest(800, 1000)),
+      preview_text: LONG,
+      body: LONG,
+      media_urls: null,
+      preview_manifest: null,
+    });
+    const NARROW = FEED_COLUMN_MIN_WIDTH_PX - 1;
+
+    it.each([
+      ["under media, narrower than the minimum", withMedia, NARROW, 2],
+      ["under media, at the minimum", withMedia, FEED_COLUMN_MIN_WIDTH_PX, 3],
+      ["under media, wider", withMedia, COLUMN, 3],
+      ["without media, narrower than the minimum", textAlone, NARROW, 8],
+    ] as const)("clamps the text %s and reserves exactly what it paints", (_name, make, column, lines) => {
+      const painted = paintCard(make(), "cards", column, MEASURE);
+      const paragraph = painted.text.find((box) => box.element.textContent === LONG)!;
+      expect(paragraph.element.classList.contains(`line-clamp-${lines}`)).toBe(true);
+      expect(paragraph.height).toBe(CONTENT_CARD_PREVIEW_LINE_HEIGHT_PX * lines);
+      expect(computeCardHeight(make(), column, LONG_WIDTHS, "cards")).toBe(painted.height);
     });
   });
 

@@ -240,7 +240,9 @@ describe("Display options (SPEC_FEED_DISPLAY.md, Д1, Д4; SPEC_GRAPH_VIEW.md, �
     expect(screen.getByRole("menu")).toHaveAttribute("data-display-panel", "feed");
     expect(screen.getByRole("group", { name: "Sort" })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Links" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("menuitemcheckbox")).not.toBeInTheDocument();
+    // The graph's switches are not here; the trial «Sidebar columns» is in
+    // both panels (PLAN 47.6).
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Wikilinks" })).not.toBeInTheDocument();
   });
 
   it("open the graph's panel in Graph, in place of the feed's, and its switches apply at once", async () => {
@@ -251,7 +253,8 @@ describe("Display options (SPEC_FEED_DISPLAY.md, Д1, Д4; SPEC_GRAPH_VIEW.md, �
     expect(screen.getByRole("menu")).toHaveAttribute("data-display-panel", "graph");
     expect(screen.getByRole("group", { name: "Links" })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Sort" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("menuitemradio")).not.toBeInTheDocument();
+    // The feed's choices are not here (the trial «Light canvas» is, PLAN 47.7).
+    expect(screen.queryByRole("menuitemradio", { name: "Newest first" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("menuitemcheckbox", { name: "Related notes" }));
     expect(getGraphPreferences()).toEqual({ include_wikilinks: true, include_related_notes: false });

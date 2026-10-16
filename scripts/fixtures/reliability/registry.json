@@ -3789,13 +3789,101 @@
         "scripts/narrow-window-audit.mjs",
         "src/components/SidebarOverlay.tsx",
         "src/hooks/useSidebarOverlay.ts",
-        "src/components/FadeScrollRow.tsx"
+        "src/components/FadeScrollRow.tsx",
+        "src/lib/sidebarColumnLayout.ts"
       ],
       "requirement": "SPEC_NARROW_WINDOW.md### Правила",
       "tests": [
         "scripts/narrow-window-audit.mjs"
       ],
       "command": "test:narrow-window"
+    },
+    {
+      "paths": [
+        "src/components/SidebarOverlay.tsx",
+        "src/components/SidebarOverlay.test.tsx",
+        "src/hooks/useSidebarOverlay.ts",
+        "src/hooks/useSidebarOverlay.test.tsx",
+        "src/lib/keyboardTargets.ts",
+        "src/lib/keyboardTargets.test.ts"
+      ],
+      "requirement": "SPEC_NARROW_WINDOW.md### Правила",
+      "tests": [
+        "src/components/SidebarOverlay.test.tsx",
+        "src/hooks/useSidebarOverlay.test.tsx",
+        "src/lib/keyboardTargets.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/narrow-window-audit.mjs",
+        "src/components/SidebarOverlay.tsx",
+        "src/hooks/useSidebarOverlay.ts"
+      ],
+      "requirement": "SPEC_NARROW_WINDOW.md### Правила",
+      "tests": [
+        "scripts/narrow-window-audit.mjs"
+      ],
+      "command": "test:narrow-window"
+    },
+    {
+      "paths": [
+        "src/components/ui/modal-scrim.test.tsx",
+        "src/components/ImagePreviewOverlay.tsx"
+      ],
+      "requirement": "SPEC_COLOR_RULES.md## Правила цвета Mine",
+      "tests": [
+        "src/components/ui/modal-scrim.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/sidebarColumnLayout.ts",
+        "src/lib/sidebarColumnLayout.test.ts",
+        "src/components/SidebarColumnsMenu.tsx",
+        "src/components/SidebarColumnsMenu.test.tsx",
+        "src/components/DisplayMenu.tsx",
+        "src/components/FeedDisplayMenu.test.tsx"
+      ],
+      "requirement": "SPEC_NARROW_WINDOW.md### Правила",
+      "tests": [
+        "src/lib/sidebarColumnLayout.test.ts",
+        "src/components/SidebarColumnsMenu.test.tsx",
+        "src/components/FeedDisplayMenu.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/lightLadder.ts",
+        "src/lib/lightCanvas.ts",
+        "src/lib/lightCanvas.test.ts",
+        "src/components/LightCanvasMenu.tsx",
+        "src/components/LightCanvasMenu.test.tsx"
+      ],
+      "requirement": "SPEC_COLOR_RULES.md## Правила цвета Mine",
+      "tests": [
+        "src/lib/lightCanvas.test.ts",
+        "src/components/LightCanvasMenu.test.tsx",
+        "src/styles/colorLaw.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/App.tsx",
+        "src/App.graphScroll.test.tsx",
+        "src/components/Grid.tsx",
+        "src/components/Grid.wordMetrics.test.tsx"
+      ],
+      "requirement": "SPEC_GRAPH_VIEW.md#### Возврат из графа",
+      "tests": [
+        "src/App.graphScroll.test.tsx",
+        "src/components/Grid.wordMetrics.test.tsx"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

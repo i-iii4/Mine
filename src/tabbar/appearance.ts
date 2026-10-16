@@ -16,6 +16,7 @@ import {
 } from "@/lib/settingsChanged";
 import { applyTheme, getStoredTheme, THEME_STORAGE_KEY } from "@/lib/themeMode";
 import { applyBarButtonStyle } from "@/lib/buttonStyle";
+import { LIGHT_CANVAS_STORAGE_KEY, reloadLightCanvas } from "@/lib/lightCanvas";
 import { listenHere } from "./useTabBarState";
 
 /** Apply the stored theme and interface font to this page. */
@@ -34,6 +35,8 @@ export function useAppearanceSync(): void {
         adoptSettingsChange(payload);
         if (payload.key === THEME_STORAGE_KEY) applyTheme(getStoredTheme());
         else if (payload.key === INTERFACE_FONT_STORAGE_KEY) applyInterfaceFont(getStoredInterfaceFont());
+        // TRIAL (PLAN 47.7): the light canvas chosen in a tab.
+        else if (payload.key === LIGHT_CANVAS_STORAGE_KEY) reloadLightCanvas();
       }),
     [],
   );

@@ -15,6 +15,7 @@ import {
   rgbFromOklch,
   type Rgb,
 } from "@/lib/colorLaw";
+import { deriveLightLadder } from "@/lib/lightLadder";
 
 // The colour rules (SPEC_COLOR_RULES.md): every theme token of global.css
 // is derived here from the constants of section 2 by the laws of section 3,
@@ -259,5 +260,50 @@ describe("tokens follow the colour rules", () => {
   it("dims to the tertiary step", () => {
     expect(percent(LIGHT["--glass-bg"])).toBeCloseTo((1 - K8) * 100, 1);
     expect(percent(DARK["--glass-bg"])).toBeCloseTo((1 - darkAlpha(K8)) * 100, 1);
+  });
+
+  it("derives the light tokens that follow the canvas: the block of today from 1, the Soft trial from 0.975 (PLAN 47.7)", () => {
+    const numberOf = (value: string | undefined) => Number(/(?:oklch\(|\s)([\d.]+)(?=\s0 0|%)/.exec(value ?? "")?.[1]);
+    const white = deriveLightLadder(CANVAS.light);
+    // The derivation is the law: at the canvas of 1 it gives the light block.
+    for (const [name, value] of Object.entries(white)) {
+      if (value.includes("%")) expect(percent(value), name).toBeCloseTo(percent(LIGHT[name]), 1);
+      else expect(lightness(value), name).toBeCloseTo(lightness(LIGHT[name]), 2);
+    }
+    // At 0.975 every step keeps today's relations to its canvas.
+    const SOFT = 0.975;
+    const soft = deriveLightLadder(SOFT);
+    expect(lightness(soft["--background"])).toBe(SOFT);
+    for (const [name, level] of Object.entries(ZONE_LEVELS)) {
+      expect(lightness(soft[`--${name}`]), name).toBeCloseTo(SOFT + level * ZONE_STEP.light, 4);
+    }
+    expect(lightness(soft["--popover"])).toBeCloseTo(SOFT + FLOATING_LEVEL * ZONE_STEP.light, 4);
+    expect(lightness(soft["--border"])).toBeCloseTo(SOFT + 2 * ZONE_STEP.light - QUIET, 4);
+    const softMuted = alphaForContrast(FG.light, SOFT, 4.5);
+    expect(percent(soft["--muted-alpha"])).toBeCloseTo(softMuted * 100, 1);
+    expect(percent(soft["--active-alpha"])).toBeCloseTo(alphaForDelta(FG.light, SOFT, QUIET) * 100, 1);
+    expect(lightness(soft["--ring"])).toBeCloseTo(compositeLightness(FG.light, softMuted, SOFT), 3);
+    expect(lightness(soft["--border-accent"])).toBeCloseTo(greyForContrast(SOFT, 3), 3);
+    expect(lightness(soft["--primary-foreground"])).toBe(SOFT);
+    expect(percent(soft["--glass-bg"])).toBe(74);
+    expect(numberOf(soft["--glass-bg"])).toBe(SOFT);
+    // The destructive text still reaches K5 on its hover fill over level 1.
+    const [l, c, h] = /oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)/.exec(soft["--destructive-foreground"] ?? "")?.slice(1).map(Number) ?? [];
+    const ink = rgbFromOklch(0.596, 0.232, 28.7);
+    const hover = alphaOverForDelta(ink, SOFT, 3 * QUIET);
+    expect(percent(soft["--destructive-fill-hover-alpha"])).toBeCloseTo(hover * 100, 1);
+    const fill = over(ink, hover, greyFromOklch(SOFT + FLOATING_LEVEL * ZONE_STEP.light));
+    expect(contrastRatio(rgbFromOklch(l!, c!, h!), fill)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("dims under the scrim by the canvas of each theme at 32 % (3.9.1, 16.10.2026)", () => {
+    // One value from the palette: the canvas, whatever the theme, at the
+    // share of Material 3's scrim; no theme writes a scrim colour of its own.
+    const css = readFileSync("src/styles/global.css", "utf8");
+    const written = css.match(/--scrim-color:[^;]*;/g) ?? [];
+    expect(written).toEqual(["--scrim-color: color-mix(in oklch, var(--background) 32%, transparent);"]);
+    for (const theme of [LIGHT, LIGHT_THEME, DARK_SCHEME, DARK]) {
+      expect(theme["--scrim-color"]).toBeUndefined();
+    }
   });
 });

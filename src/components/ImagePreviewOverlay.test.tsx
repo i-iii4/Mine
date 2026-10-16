@@ -49,7 +49,7 @@ describe("ImagePreviewOverlay", () => {
     copyMediaAssetToClipboardMock.mockResolvedValue(undefined);
   });
 
-  it("fades the viewer controls over the app's hover-intent tokens, not a slow fade of its own (Г5.5)", () => {
+  it("keeps the viewer controls on screen without pointer movement (user decision 16.10.2026)", () => {
     vi.useFakeTimers();
     try {
       const { container } = render(
@@ -59,17 +59,12 @@ describe("ImagePreviewOverlay", () => {
         />,
       );
       const controls = container.querySelector("[data-image-preview-controls]")!;
-      expect(controls).toHaveAttribute("data-visible", "true");
-      expect(controls).toHaveClass("transition-opacity", "duration-[var(--hover-intent-fade-in)]");
-      expect(controls.className).not.toMatch(/\bduration-\d+\b/);
-
-      // Idle: the controls leave over the shorter fade-out token.
       act(() => {
-        vi.advanceTimersByTime(3_001);
+        vi.advanceTimersByTime(60_000);
       });
-      expect(controls).toHaveAttribute("data-visible", "false");
-      expect(controls).toHaveClass("duration-[var(--hover-intent-fade-out)]");
-      expect(controls.className).not.toMatch(/\bduration-\d+\b/);
+      expect(controls).not.toHaveClass("opacity-0");
+      expect(controls).not.toHaveClass("pointer-events-none");
+      expect(controls).not.toHaveAttribute("data-visible");
     } finally {
       vi.useRealTimers();
     }
@@ -86,19 +81,23 @@ describe("ImagePreviewOverlay", () => {
     );
 
     const overlay = screen.getByRole("dialog", { name: "Image preview" });
+    // The shared modal scrim over the whole page of the tab (16.10.2026).
     expect(overlay).toHaveClass(
+      "modal-scrim",
       "image-preview-secondary-plane",
       "fixed",
-      "top-8",
-      "bottom-0",
+      "inset-0",
       "z-[70]",
     );
     expect(overlay).not.toHaveClass("bg-white");
     expect(overlay).toHaveAttribute("aria-modal", "false");
 
     const controls = container.querySelector("[data-image-preview-controls]");
-    expect(controls).toHaveClass("bottom-6", "bg-accent/90");
-    expect(controls).toHaveAttribute("data-visible", "true");
+    // A floating layer that reads on the shared scrim in either theme,
+    // without a shadow (user decision 16.10.2026).
+    expect(controls).toHaveClass("bottom-6", "bg-popover", "border-border");
+    expect(controls!.className).not.toMatch(/(^|\s)shadow-/);
+    expect(controls).not.toHaveClass("bg-accent/90");
     expect(screen.getByText("100%")).toBeInTheDocument();
 
     const stage = container.querySelector("[data-image-preview-stage]");
@@ -112,6 +111,8 @@ describe("ImagePreviewOverlay", () => {
     });
     expect(image).toHaveAttribute("src", "asset://localhost/photo.jpg");
     expect(image).toHaveClass("image-preview-primary-media");
+    // No shadow at all on the previewed image (user decision 16.10.2026).
+    expect(image!.className).not.toMatch(/(^|\s)shadow-/);
     expect(image).toHaveStyle({ transform: "translate3d(0px, 0px, 0) scale(1)" });
     expect(image).not.toHaveClass("cursor-ns-resize", "active:cursor-ns-resize");
 

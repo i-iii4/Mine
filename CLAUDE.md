@@ -282,6 +282,8 @@ local-arena/
 │   │   ├── SidebarResizeHandle.tsx # Линия между меню и лентой как ручка ширины (вид рельса shadcn SidebarRail)
 │   │   ├── SidebarOverlay.tsx  # Меню поверх ленты в узком окне: подложка с полосой 40 px, панель-диалог, Escape, фокус, движение (SPEC_NARROW_WINDOW.md, У4 по У7)
 │   │   ├── FadeScrollRow.tsx   # Ряд с горизонтальной прокруткой и растворением скрытых краёв маской полосы вкладок: нижняя панель узкого окна (SPEC_NARROW_WINDOW.md, У13)
+│   │   ├── SidebarColumnsMenu.tsx # Проба (PLAN 47.6): раздел «Sidebar columns» панели Display, порядок и показ столбцов строк меню; состояние в src/lib/sidebarColumnLayout.ts
+│   │   ├── LightCanvasMenu.tsx # Проба (PLAN 47.7): группа «Light canvas» панели Display, холст светлой темы White или Soft; вывод в src/lib/lightLadder.ts, состояние в src/lib/lightCanvas.ts
 │   │   ├── NotificationCard.tsx # Единый вид уведомления: правый нижний угол, bg-popover
 │   │   ├── FirstCardMarker.tsx # Одноразовая пометка первой карточки (О19)
 │   │   ├── CloudRecommendation.tsx # Рекомендация Keep Downloaded по журналу ожиданий

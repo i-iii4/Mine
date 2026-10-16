@@ -751,20 +751,26 @@ body {
   transform: scaleX(1);
 }
 
-/* The image preview is always dark (SPEC_COLOR_RULES.md, 3.9 and 4.6): what
-   lies under it dims to the dark tertiary step with the dark canvas, the
-   image is framed by the dark line and its shadow is the K11 step
-   `shadow-2xl`. */
-.image-preview-secondary-plane {
-  background: oklch(0.14 0 0 / 72.08%);
-  -webkit-backdrop-filter: saturate(0.55);
-  backdrop-filter: saturate(0.55);
+/* The scrim under a layer over the page (SPEC_COLOR_RULES.md, 3.9.1; user's
+   decisions of 16.10.2026): one surface and one set of values for the windows
+   on the dialog's scrim (components/ui/modal-window.ts, `MODAL_OVERLAY_CLASS`),
+   the image preview and the sidebar over the feed (SidebarOverlay.tsx), over
+   the whole page of the tab (the tab bar is a page of its own). The values
+   come from benchmarks, not from a live pick: the blur of Apple's thin
+   material (systemThinMaterial, of the order of 20 px) with the colour behind
+   the glass lifted moderately, as Apple's materials do, and the dim of
+   Material 3's scrim, 32 %, in the palette's canvas of each theme. */
+:root {
+  --scrim-blur: 20px;
+  --scrim-saturate: 150%;
+  --scrim-color: color-mix(in oklch, var(--background) 32%, transparent);
+}
+.modal-scrim {
+  background-color: var(--scrim-color);
+  -webkit-backdrop-filter: blur(var(--scrim-blur)) saturate(var(--scrim-saturate));
+  backdrop-filter: blur(var(--scrim-blur)) saturate(var(--scrim-saturate));
 }
 
-.image-preview-primary-media {
-  box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25);
-  outline: 1px solid oklch(0.243 0 0);
-}
 
 /* Progress without a known length (components/ui/progress.tsx): a pill
    segment crosses the track from outside to outside, easing in and out, so
@@ -1438,21 +1444,39 @@ body {
   height: var(--chrome-row-content-height);
 }
 
-/* The sidebar over the feed in a narrow window (SPEC_NARROW_WINDOW.md, У4,
-   У5; SidebarOverlay.tsx). The scrim dims and blurs the feed and the strip
-   by `backdrop-filter` alone; the panel slides in from the left. The dim
-   starts at the modal layer's glass (SPEC_COLOR_RULES.md, 3.9.1), the
-   panel's shadow at the K11 step `shadow-lg`, and the blur radius below is
-   a first try: all three are chosen live with the user (PLAN 47.3d) and are
-   not values of the design system yet. 200 ms on the project's ease-out,
-   none with reduced motion. */
-:root {
-  --sidebar-overlay-blur: 8px;
+/* TRIAL (PLAN 47.6, 16.10.2026): the sidebar rows' columns in the order and
+   visibility the Display panel sets (src/lib/sidebarColumnLayout.ts). The
+   module writes the order, the guidelines' places and the meta zone's offset
+   on the root only when they differ from today; unset, every rule below
+   leaves the rows as they were. Goes or becomes lasting once the user
+   decides. */
+[data-sidebar-name-cell] {
+  order: var(--sidebar-name-order, 0);
 }
+[data-sidebar-preview-rail] {
+  order: var(--sidebar-previews-order, 1);
+}
+[data-sidebar-meta-cell] {
+  order: var(--sidebar-meta-order, 2);
+}
+:root[data-sidebar-hide-name] [data-sidebar-name-cell],
+:root[data-sidebar-hide-previews] [data-sidebar-preview-rail],
+:root[data-sidebar-hide-meta] [data-sidebar-meta-cell],
+:root[data-sidebar-hide-meta] [data-sidebar-meta-count] {
+  display: none;
+}
+/* Without the previews the name takes what they left. */
+:root[data-sidebar-hide-previews] [data-sidebar-name-cell] {
+  flex: 1 1 0%;
+  width: auto;
+}
+
+/* The sidebar over the feed in a narrow window (SPEC_NARROW_WINDOW.md, У4,
+   У5; SidebarOverlay.tsx). Its scrim is the shared one (`.modal-scrim`
+   above) over the feed and the strip; here it only fades in and out while
+   the panel slides in from the left, and the panel's shadow is the K11 step
+   `shadow-lg`. 200 ms on the project's ease-out, none with reduced motion. */
 .sidebar-overlay-scrim {
-  background-color: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--sidebar-overlay-blur));
-  backdrop-filter: blur(var(--sidebar-overlay-blur));
   opacity: 0;
   transition: opacity 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }

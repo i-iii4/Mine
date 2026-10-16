@@ -2,10 +2,12 @@
 // `Dialog` and `AlertDialog` so the two cannot drift apart again: one
 // dimming, one surface, two widths by role, one header, one footer.
 
-/** The dimming under a window lowers what it covers to the tertiary step:
- *  the canvas at 1 minus the tertiary share (SPEC_COLOR_RULES.md, 3.9). */
+/** The scrim under a window: the one scrim every layer over the page shares
+ *  (global.css, `.modal-scrim`; SPEC_COLOR_RULES.md, 3.9.1; user's decisions
+ *  of 16.10.2026), the whole page of the tab blurred and dimmed by the
+ *  canvas at 32 %. */
 export const MODAL_OVERLAY_CLASS =
-  "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-glass"
+  "modal-scrim data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50"
 
 /** A floating layer on `--popover`, held by its line and shadow
  *  (SPEC_COLOR_RULES.md, 3.3; K11), 16px off each edge of a narrow app

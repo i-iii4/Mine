@@ -10,9 +10,12 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
+import { LightCanvasMenu } from "./LightCanvasMenu";
+import { SidebarColumnsMenu } from "./SidebarColumnsMenu";
 
 /** Which view's options the panel holds. */
 export type DisplayPanel = "feed" | "graph";
@@ -50,6 +53,12 @@ export function DisplayMenu({
         data-display-panel={panel}
       >
         {children}
+        {/* TRIALS (PLAN 47.6, 47.7): the sidebar rows' columns and the light
+            canvas, in both panels. */}
+        <DropdownMenuSeparator />
+        <SidebarColumnsMenu />
+        <DropdownMenuSeparator />
+        <LightCanvasMenu />
       </DropdownMenuContent>
     </DropdownMenu>
   );

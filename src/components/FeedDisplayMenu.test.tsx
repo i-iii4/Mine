@@ -46,7 +46,10 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
 
   it("offers Sort, Show and Spacing as radio groups, each marking the current choice", async () => {
     await openMenu();
-    const groups = screen.getAllByRole("group");
+    // The trial section of the sidebar's columns follows the feed's groups
+    // (PLAN 47.6, SidebarColumnsMenu.test.tsx).
+    const groups = screen.getAllByRole("group").filter((group) => !group.hasAttribute("data-display-trial"));
+    expect(screen.getAllByRole("group").at(-1)).toHaveAttribute("data-display-trial");
     // Each group is named by the caption above it, in this order (Д2); media
     // placement is no longer a choice (Д19).
     expect(groups.map((group) =>
@@ -60,7 +63,8 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     expect(checkedIn("Sort")).toEqual(["Newest first"]);
     expect(checkedIn("Show")).toEqual(["Cards"]);
     expect(checkedIn("Spacing")).toEqual(["32"]);
-    expect(screen.getAllByRole("separator")).toHaveLength(2);
+    // Two between the feed's groups and one before each trial group.
+    expect(screen.getAllByRole("separator")).toHaveLength(4);
   });
 
   it("marks the stored presentation when it opens (Д18)", async () => {
