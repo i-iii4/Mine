@@ -1123,8 +1123,9 @@ lifecycle contract. Он отражает режим просмотра/линк
 но не перезапускает enter motion левой плашки.
 
 Открытая карточка в пути названа именем своего файла (`DetailCardFileName` в
-MainSecondaryChrome.tsx) и с 05.10.2026 не перетаскивается: двойной клик
-переименовывает файл прямо в пути через `onRenameFile` (`handleRenameBlock`,
+MainSecondaryChrome.tsx) и с 05.10.2026 не перетаскивается: щелчок (с
+16.10.2026, прежде двойной клик) открывает поле имени, и файл
+переименовывается прямо в пути через `onRenameFile` (`handleRenameBlock`,
 команда `rename_block_file`). Пока имя набирается, команда `check_block_rename`
 отвечает теми же правилами и той же проверкой занятого имени, ничего не
 записывая (`requested_rename_slug`, `refuse_taken_name`), и причина отказа

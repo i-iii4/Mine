@@ -216,15 +216,21 @@ function refusalMessage(raw: unknown): string {
 type FileNameCheck = (block: LightBlock | IndexedBlock, newStem: string) => Promise<RenameBlockError | null>;
 
 /// The open card in the path is named by its file and renamed right there
-/// (user's decisions of 05.10.2026). A double click turns the name into a
-/// field; leaving the field or Enter saves, Escape keeps the old name. While
-/// the typed name would be refused (a character Obsidian cannot link, a name
-/// already taken) the reason stands right under it. A refused save shakes the
-/// field once: after Enter the field stays, with the cursor and the typed
-/// name; after leaving the field the old name returns and the reason stays a
-/// moment (`useNameEdit`, shared with the sidebar's collection names). The
-/// name is not dragged. In the path the name is a pill like the space and the
-/// collection before it: the same inner padding and hover plate.
+/// (user's decisions of 05.10.2026). A click turns the name into a field
+/// (16.10.2026; a double click before); the rest of a double click does
+/// nothing more in the new field. Leaving the field or Enter saves, Escape
+/// keeps the old name. While the typed name would be refused (a character
+/// Obsidian cannot link, a name already taken) the reason stands right under
+/// it. A refused save shakes the field once: after Enter the field stays,
+/// with the cursor and the typed name; after leaving the field the old name
+/// returns and the reason stays a moment (`useNameEdit`, shared with the
+/// sidebar's collection names, which keep the double click: a click opens a
+/// collection). The name is not dragged. In the path the name keeps the inner
+/// padding of the space and the collection before it, but no hover plate
+/// (16.10.2026): under the pointer its text brightens and the cursor is a
+/// text cursor, as over a field. A click that only makes an inactive window
+/// key never reaches the page (`acceptsFirstMouse` is off, SPEC_TABS.md,
+/// В85), so it opens nothing.
 function DetailCardFileName({
   block,
   onRename,
@@ -237,6 +243,9 @@ function DetailCardFileName({
   const fileName = getFileName(block);
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // The field opened under a click: the rest of a double or triple click
+  // lands on the field and would select a word or the whole name there.
+  const openingClick = useRef(false);
   const edit = useNameEdit({
     current: fileName,
     check: (typed) => onCheck(block, typed).then((problem) => (
@@ -261,6 +270,7 @@ function DetailCardFileName({
   }, [editing]);
 
   const startEditing = () => {
+    openingClick.current = true;
     edit.begin(fileName);
     setEditing(true);
   };
@@ -288,6 +298,14 @@ function DetailCardFileName({
               data-name-refused={edit.refused ? "" : undefined}
               style={{ animationDuration: `${NAME_REFUSED_SHAKE_MS}ms` }}
               onPointerDown={(event) => event.stopPropagation()}
+              onMouseDown={(event) => {
+                // A first press starts a new click count: from then on the
+                // field selects as any field does. Before it, a second or
+                // third press is the rest of the click that opened the field
+                // and leaves the cursor at the end of the name.
+                if (event.detail <= 1) openingClick.current = false;
+                else if (openingClick.current) event.preventDefault();
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
@@ -304,8 +322,8 @@ function DetailCardFileName({
             />
           ) : (
             <div
-              onDoubleClick={startEditing}
-              className="h-6 min-w-0 select-none truncate rounded-1 px-2 font-mono text-sm leading-6 text-muted-foreground hover:state-active hover:text-foreground"
+              onClick={startEditing}
+              className="h-6 min-w-0 cursor-text select-none truncate rounded-1 px-2 font-mono text-sm leading-6 text-muted-foreground hover:text-foreground"
               title={fileName}
               data-secondary-detail-card-name=""
             >

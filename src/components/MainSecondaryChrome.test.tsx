@@ -128,7 +128,7 @@ describe("MainSecondaryTopBar", () => {
 
     const name = screen.getByTitle("Nogal House");
     expect(name).toHaveTextContent("Nogal House");
-    fireEvent.doubleClick(name);
+    fireEvent.click(name);
     const input = screen.getByRole("textbox", { name: "Rename file" });
     expect(input).toHaveValue("Nogal House");
     expect(input).toHaveFocus();
@@ -139,7 +139,7 @@ describe("MainSecondaryTopBar", () => {
     expect(screen.queryByRole("textbox", { name: "Rename file" })).toBeNull();
     expect(onRenameFile).not.toHaveBeenCalled();
 
-    fireEvent.doubleClick(screen.getByTitle("Nogal House"));
+    fireEvent.click(screen.getByTitle("Nogal House"));
     const field = screen.getByRole("textbox", { name: "Rename file" });
     fireEvent.change(field, { target: { value: "Casa Nogal" } });
     await act(async () => {
@@ -150,6 +150,55 @@ describe("MainSecondaryTopBar", () => {
     expect(screen.queryByRole("textbox", { name: "Rename file" })).toBeNull();
   });
 
+  // The card's name opens by a single click and shows no hover plate: under
+  // the pointer only its text brightens, with a text cursor (16.10.2026).
+  it("opens the name's field with a single click, the name under the pointer brighter with a text cursor and no plate", () => {
+    renderBar({ ...BLOCK, slug: "Cards/Nogal House" });
+
+    const name = screen.getByTitle("Nogal House");
+    expect(name).toHaveClass("cursor-text", "text-muted-foreground", "hover:text-foreground");
+    expect(name).not.toHaveClass("hover:state-active");
+    expect(name.className).not.toMatch(/state-active/);
+
+    fireEvent.click(name);
+    const field = screen.getByRole("textbox", { name: "Rename file" });
+    expect(field).toHaveValue("Nogal House");
+    expect(field).toHaveFocus();
+    expect(field).toHaveProperty("selectionStart", "Nogal House".length);
+    expect(field).toHaveProperty("selectionEnd", "Nogal House".length);
+    // The field keeps its look: the plate shows its extent.
+    expect(field).toHaveClass("state-active");
+  });
+
+  it("does nothing more on the rest of a double click than open the field", () => {
+    const onRenameFile = vi.fn<(block: LightBlock | IndexedBlock, newStem: string) => Promise<void>>();
+    renderBar({ ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
+
+    const name = screen.getByTitle("Nogal House");
+    fireEvent.mouseDown(name, { detail: 1 });
+    fireEvent.mouseUp(name, { detail: 1 });
+    fireEvent.click(name, { detail: 1 });
+    const field = screen.getByRole("textbox", { name: "Rename file" });
+
+    // The second and third presses land on the new field: they select no
+    // word and no line there, the cursor stays at the end of the name.
+    expect(fireEvent.mouseDown(field, { detail: 2 })).toBe(false);
+    fireEvent.mouseUp(field, { detail: 2 });
+    fireEvent.click(field, { detail: 2 });
+    fireEvent.doubleClick(field, { detail: 2 });
+    expect(fireEvent.mouseDown(field, { detail: 3 })).toBe(false);
+    expect(screen.getByRole("textbox", { name: "Rename file" })).toBe(field);
+    expect(field).toHaveValue("Nogal House");
+    expect(field).toHaveFocus();
+    expect(field).toHaveProperty("selectionStart", "Nogal House".length);
+    expect(field).toHaveProperty("selectionEnd", "Nogal House".length);
+    expect(onRenameFile).not.toHaveBeenCalled();
+
+    // A double click of its own in the open field selects as in any field.
+    expect(fireEvent.mouseDown(field, { detail: 1 })).toBe(true);
+    expect(fireEvent.mouseDown(field, { detail: 2 })).toBe(true);
+  });
+
   it("says under the name why a typed name would be refused", async () => {
     const onCheckFileName = vi.fn((_block: LightBlock | IndexedBlock, stem: string) => Promise.resolve<RenameBlockError | null>(
       stem.includes("#")
@@ -157,7 +206,7 @@ describe("MainSecondaryTopBar", () => {
         : null,
     ));
     renderBar({ ...BLOCK, slug: "Cards/Nogal House" }, "grid", vi.fn(), onCheckFileName);
-    fireEvent.doubleClick(screen.getByTitle("Nogal House"));
+    fireEvent.click(screen.getByTitle("Nogal House"));
     const field = screen.getByRole("textbox", { name: "Rename file" });
 
     await act(async () => {
@@ -177,7 +226,7 @@ describe("MainSecondaryTopBar", () => {
     const onRenameFile = vi.fn<(block: LightBlock | IndexedBlock, newStem: string) => Promise<void>>()
       .mockRejectedValue({ kind: "name_taken", requested: "Cards/Taken" });
     renderBar({ ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
-    fireEvent.doubleClick(screen.getByTitle("Nogal House"));
+    fireEvent.click(screen.getByTitle("Nogal House"));
     const field = screen.getByRole("textbox", { name: "Rename file" });
     fireEvent.change(field, { target: { value: "Taken" } });
     await act(async () => {
@@ -198,7 +247,7 @@ describe("MainSecondaryTopBar", () => {
     const onRenameFile = vi.fn<(block: LightBlock | IndexedBlock, newStem: string) => Promise<void>>()
       .mockRejectedValue({ kind: "name_taken", requested: "Cards/Taken" });
     renderBar({ ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
-    fireEvent.doubleClick(screen.getByTitle("Nogal House"));
+    fireEvent.click(screen.getByTitle("Nogal House"));
     const field = screen.getByRole("textbox", { name: "Rename file" });
     fireEvent.change(field, { target: { value: "Taken" } });
     await act(async () => {
@@ -215,7 +264,7 @@ describe("MainSecondaryTopBar", () => {
   it("ends the edit when another card takes the path, saving nothing", () => {
     const onRenameFile = vi.fn<(block: LightBlock | IndexedBlock, newStem: string) => Promise<void>>();
     const { rerender } = renderBar({ ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
-    fireEvent.doubleClick(screen.getByTitle("Nogal House"));
+    fireEvent.click(screen.getByTitle("Nogal House"));
     fireEvent.change(screen.getByRole("textbox", { name: "Rename file" }), { target: { value: "Casa" } });
 
     rerender(bar({ ...BLOCK, slug: "Cards/Casa Blanca" }, "grid", onRenameFile));
