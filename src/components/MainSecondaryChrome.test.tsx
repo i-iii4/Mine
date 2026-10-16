@@ -43,11 +43,13 @@ function bar(
   onRenameFile: (block: LightBlock | IndexedBlock, newStem: string) => Promise<void> = vi.fn(),
   onCheckFileName: (block: LightBlock | IndexedBlock, newStem: string) => Promise<RenameBlockError | null> =
     vi.fn(() => Promise.resolve(null)),
+  placeBefore = true,
 ) {
   return (
     <MainSecondaryTopBar
       detailBlock={detailBlock}
       detailEntered
+      placeBefore={placeBefore}
       viewMode={viewMode}
       onViewModeChange={vi.fn()}
       vaultPath="/vault"
@@ -100,6 +102,23 @@ describe("MainSecondaryTopBar", () => {
     rerender(bar(null));
     expect(segment).not.toHaveAttribute("data-path-card-line");
     expect(segment).not.toHaveClass("border-l");
+  });
+
+  // In a narrow window the open card's name starts the row: no place stands
+  // before it, so there is nothing to part (SPEC_NARROW_WINDOW.md, У15).
+  it("draws no path's line before an open card's name when nothing stands before the half", () => {
+    renderBar(BLOCK, "grid", undefined, undefined, false);
+    const segment = document.querySelector("[data-main-secondary-top-bar-content-segment]") as HTMLElement;
+    expect(segment).not.toHaveAttribute("data-path-card-line");
+    expect(segment).not.toHaveClass("border-l");
+    expect(segment).not.toHaveClass("ml-[var(--top-collection-pad-x)]");
+    expect(document.querySelectorAll(".border-sidebar-border")).toHaveLength(0);
+    // The name's layer spans the half, its pill on the outer padding from
+    // the window's edge, the name ending in an ellipsis, ⋯ and × at the end.
+    const layer = document.querySelector("[data-secondary-detail-top-menu]") as HTMLElement;
+    expect(layer).toHaveClass("absolute", "inset-0", "pl-[var(--top-collection-pad-x)]");
+    expect(screen.getByTitle("nogal-house")).toHaveClass("truncate", "min-w-0");
+    expect(within(layer).getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
   it("renames the card's file in place: leaving the field saves, Escape keeps the name", async () => {

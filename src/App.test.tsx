@@ -5288,6 +5288,48 @@ describe("AppWithVault", () => {
         expect(spacer()).not.toBeNull();
       });
 
+      it("gives an open card's name the whole top row, and the place back with no card or in a wide window (У15)", async () => {
+        renderTab();
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        const place = () => document.querySelector("[data-top-collection-switcher]");
+        const contentSegment = () =>
+          document.querySelector("[data-main-secondary-top-bar-content-segment]") as HTMLElement;
+        const detailLayer = () => document.querySelector("[data-secondary-detail-top-menu]") as HTMLElement | null;
+        // No card: the place stands in the row.
+        expect(place()).not.toBeNull();
+        expect(contentSegment().previousElementSibling).toBe(place());
+
+        fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+        await waitFor(() => expect(detailLayer()).toHaveAttribute("data-entered", "true"));
+        // The card's name with its menu and close button take the row:
+        // nothing stands before them, so no path's line either.
+        expect(place()).toBeNull();
+        expect(contentSegment().previousElementSibling).toBeNull();
+        expect(contentSegment()).toHaveClass("flex-1");
+        expect(contentSegment()).not.toHaveAttribute("data-path-card-line");
+        expect(contentSegment()).not.toHaveClass("border-l");
+        const name = document.querySelector("[data-secondary-detail-card-name]");
+        expect(name).toHaveTextContent("alpha-block");
+        // A name that does not fit ends in an ellipsis, as before.
+        expect(name).toHaveClass("truncate");
+        expect(within(detailLayer() as HTMLElement).getByRole("button", { name: "Close" })).toBeInTheDocument();
+
+        // A wide window: the place stands before the name, past its line.
+        resizeWindow(1200);
+        expect(place()).not.toBeNull();
+        expect(contentSegment()).toHaveAttribute("data-path-card-line", "");
+
+        // Narrow again, the card closes: the place comes back once the name
+        // has left the row.
+        resizeWindow(500);
+        expect(place()).toBeNull();
+        fireEvent.click(within(detailLayer() as HTMLElement).getByRole("button", { name: "Close" }));
+        await waitFor(() => expect(detailLayer()).toBeNull());
+        expect(place()).not.toBeNull();
+        expect(contentSegment().previousElementSibling).toBe(place());
+        expect(contentSegment()).not.toHaveAttribute("data-path-card-line");
+      });
+
       it("leaves a collapsed sidebar collapsed when the window widens with it closed (У7)", async () => {
         sidebarResizeState.collapsed = true;
         renderTab();

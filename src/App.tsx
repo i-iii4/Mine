@@ -93,6 +93,7 @@ import { reconcileBlocks } from "@/lib/blockIdentity";
 import { refreshPageLimit } from "@/lib/gridPaging";
 import { createPreviewRowQueue } from "@/lib/previewRowQueue";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX, SIDEBAR_PREVIEW_SLOTS } from "@/lib/appLayout";
+import { topRowShowsPlace } from "@/lib/topRowPath";
 import { cn } from "@/lib/utils";
 import { commandById } from "@/lib/commandRegistry";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
@@ -1526,6 +1527,10 @@ export function AppWithVault({
   });
   const sidebarNarrow = sidebarOverlay.narrow;
   const closeSidebarOverlay = sidebarOverlay.close;
+  // In a narrow window an open card's name takes the whole top row: the
+  // place's switcher leaves it while the name stands there, through the
+  // name's exit (SPEC_NARROW_WINDOW.md, У15).
+  const topRowPlaceShown = topRowShowsPlace(sidebarNarrow, renderedDetailBlock !== null);
   bottomBarScrollsRef.current = sidebarNarrow;
   // Into a narrow window or out of it: the bar shows everything in its
   // scrolling row, or hides entries by priority again (У13).
@@ -4926,19 +4931,24 @@ export function AppWithVault({
           </div>
         )}
         <div ref={topRowWrap.rowRef} data-tauri-drag-region className="flex h-full min-w-0 flex-1 items-center">
-          <TopCollectionSwitcher
-            currentTag={currentTag}
-            currentAuthor={currentLocation.kind === "author" ? currentLocation.author : undefined}
-            orderedTags={orderedTags}
-            onNavigate={handleTopCollectionNavigate}
-            onCreateCollection={handleWindowCreateCollection}
-            onCheckCollectionName={checkNewCollectionName}
-            joinsNext
-          />
+          {/* In a narrow window an open card's name takes the place's room
+              (SPEC_NARROW_WINDOW.md, У15). */}
+          {topRowPlaceShown && (
+            <TopCollectionSwitcher
+              currentTag={currentTag}
+              currentAuthor={currentLocation.kind === "author" ? currentLocation.author : undefined}
+              orderedTags={orderedTags}
+              onNavigate={handleTopCollectionNavigate}
+              onCreateCollection={handleWindowCreateCollection}
+              onCheckCollectionName={checkNewCollectionName}
+              joinsNext
+            />
+          )}
           {/* No third row: what it held over the feed joins this row after
               the collection switcher; a line parts each step of the path, the
               sidebar open or collapsed (DESIGN_SYSTEM.md, «Верхние ряды»). */}
           <MainSecondaryTopBar
+            placeBefore={topRowPlaceShown}
             detailBlock={renderedDetailBlock}
             detailEntered={detailChromeEntered}
             viewMode={feedViewMode}

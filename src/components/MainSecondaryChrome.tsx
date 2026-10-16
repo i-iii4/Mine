@@ -79,6 +79,7 @@ export function MainSecondaryTopBar({
   detailMenuOpenRequestSequence,
   selectionActive = false,
   selectionHostRef,
+  placeBefore = true,
 }: {
   detailBlock?: LightBlock | IndexedBlock | null;
   detailEntered?: boolean;
@@ -105,6 +106,12 @@ export function MainSecondaryTopBar({
   selectionActive?: boolean;
   /// Where the feed portals the selection's commands into.
   selectionHostRef?: (element: HTMLDivElement | null) => void;
+  /// The place's switcher stands before this half in the row, and an open
+  /// card's name stands past the path's line. Without it (an open card in a
+  /// narrow window, SPEC_NARROW_WINDOW.md, У15; topRowPath.ts) the half
+  /// starts the row: no line, the name keeps only its outer padding from the
+  /// window's edge, as the switcher would.
+  placeBefore?: boolean;
 }) {
   const detailLayerEntered = Boolean(detailBlock && detailEntered);
   // The selection's commands belong over the feed they act on.
@@ -117,7 +124,8 @@ export function MainSecondaryTopBar({
   // keeps its box when a card opens or closes. It lives as long as the name
   // does, through the name's exit: the name fades where it stood, the line
   // leaves with it. A structural line, it does not ride the layer's motion.
-  const pathCardLine = Boolean(detailBlock);
+  // With nothing before the half there is nothing to part (У15).
+  const pathCardLine = Boolean(detailBlock) && placeBefore;
   return (
     <div
       data-tauri-drag-region

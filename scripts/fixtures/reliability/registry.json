@@ -3884,6 +3884,36 @@
         "src/components/Grid.wordMetrics.test.tsx"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/topRowPath.ts",
+        "src/lib/topRowPath.test.ts",
+        "src/App.tsx",
+        "src/App.test.tsx",
+        "src/components/MainSecondaryChrome.tsx",
+        "src/components/MainSecondaryChrome.test.tsx"
+      ],
+      "requirement": "SPEC_NARROW_WINDOW.md### Правила",
+      "tests": [
+        "src/lib/topRowPath.test.ts",
+        "src/App.test.tsx",
+        "src/components/MainSecondaryChrome.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/top-row-wrap-audit.mjs",
+        "src/lib/topRowPath.ts",
+        "src/components/MainSecondaryChrome.tsx",
+        "src/hooks/useSidebarOverlay.ts"
+      ],
+      "requirement": "SPEC_NARROW_WINDOW.md### Правила",
+      "tests": [
+        "scripts/top-row-wrap-audit.mjs"
+      ],
+      "command": "test:top-row"
     }
   ],
   "release": null
