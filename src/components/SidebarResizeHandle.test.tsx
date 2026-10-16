@@ -131,26 +131,26 @@ describe("SidebarResizeHandle", () => {
   it("starts from the squeezed width a narrow window shows, and keeps to its bounds (SPEC_NARROW_WINDOW.md, У1, У2)", () => {
     const wide = window.innerWidth;
     try {
-      // 700 leaves 396 beside the narrowest feed: a panel given 480 shows 396.
-      window.innerWidth = 700;
+      // 800 leaves 410 beside the narrowest feed: a panel given 480 shows 410.
+      window.innerWidth = 800;
       const p = { ...props(), width: 480 };
       const { container } = render(<SidebarResizeHandle {...p} />);
       const { top, body: line } = parts(container);
-      expect(line).toHaveAttribute("aria-valuenow", "396");
-      expect(line).toHaveAttribute("aria-valuemax", "396");
+      expect(line).toHaveAttribute("aria-valuenow", "410");
+      expect(line).toHaveAttribute("aria-valuemax", "410");
       for (const element of [top, line]) expect(element).toHaveClass("cursor-w-resize");
 
       line.setPointerCapture = vi.fn();
       line.releasePointerCapture = vi.fn();
       line.hasPointerCapture = vi.fn(() => true);
-      fireEvent.pointerDown(line, { pointerId: 1, button: 0, clientX: 396 });
+      fireEvent.pointerDown(line, { pointerId: 1, button: 0, clientX: 410 });
       fireEvent.pointerMove(line, { pointerId: 1, clientX: 380 });
       fireEvent.pointerUp(line, { pointerId: 1, clientX: 380 });
-      expect(p.onResizeStart).toHaveBeenCalledWith(396, 396);
+      expect(p.onResizeStart).toHaveBeenCalledWith(410, 410);
 
       fireEvent.keyDown(line, { key: "ArrowLeft" });
       fireEvent.keyDown(line, { key: "End" });
-      expect(p.onResizeTo.mock.calls).toEqual([[380], [396]]);
+      expect(p.onResizeTo.mock.calls).toEqual([[394], [410]]);
 
       // The window widens: the handle follows it without a new width.
       act(() => {

@@ -1,13 +1,20 @@
 // The widths a window is laid out by (SPEC_NARROW_WINDOW.md, «Величины»).
 // The backend owns the ones it needs itself: SIDEBAR_MIN_WIDTH_PX,
-// APP_MAIN_MIN_WIDTH_PX and SIDEBAR_OVERLAY_STRIP_PX live in
+// WINDOW_MIN_WIDTH_PX (and APP_MAIN_MIN_WIDTH_PX, the same value) and
+// SIDEBAR_OVERLAY_STRIP_PX live in
 // src-tauri/src/domain/windows.rs, which sets the window's minimum from them.
 // They are restated here once, and appLayout.test.ts reads the Rust source to
 // keep the two equal.
 
-/** Narrowest the feed gets beside the sidebar (`F_min`): the smallest card
- *  and two side insets (domain/windows.rs `APP_MAIN_MIN_WIDTH_PX`). */
-export const APP_MAIN_MIN_WIDTH_PX = 304;
+/** Narrowest the page gets: the window's minimum, a common phone's layout
+ *  (user's decision of 16.10.2026; SPEC_NARROW_WINDOW.md, У3;
+ *  domain/windows.rs `WINDOW_MIN_WIDTH_PX`). The sidebar lies over the feed
+ *  there. */
+export const APP_MIN_WIDTH_PX = 390;
+/** Narrowest the feed gets beside the sidebar (`F_min`): always the window's
+ *  narrowest, one value for both (user's decision of 16.10.2026;
+ *  domain/windows.rs `APP_MAIN_MIN_WIDTH_PX`). */
+export const APP_MAIN_MIN_WIDTH_PX = APP_MIN_WIDTH_PX;
 /** Narrowest the sidebar gets beside the feed (`S_min`): the three equal
  *  zones of `sidebarMinWidth()` (domain/windows.rs `SIDEBAR_MIN_WIDTH_PX`). */
 export const SIDEBAR_MIN_WIDTH_PX = 314;
@@ -16,10 +23,6 @@ export const SIDEBAR_MAX_WIDTH_PX = 600;
 /** The strip the sidebar leaves at the right when it lies over the feed
  *  (`STRIP`, domain/windows.rs `SIDEBAR_OVERLAY_STRIP_PX`). */
 export const SIDEBAR_OVERLAY_STRIP_PX = 40;
-/** Narrowest the page gets: the narrowest sidebar over the feed and the strip
- *  it leaves at the right (SPEC_NARROW_WINDOW.md, У3, У11; domain/windows.rs
- *  `WINDOW_MIN_WIDTH`). */
-export const APP_MIN_WIDTH_PX = SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX;
 
 // ── Sidebar column model ─────────────────────────────────────────────────────
 // One keystone width unifies three things at the minimum: 2.5 preview icons

@@ -24,16 +24,19 @@ describe("window widths", () => {
 
   it("match the Rust constants in domain/windows.rs", () => {
     expect(SIDEBAR_MIN_WIDTH_PX).toBe(rustConstant(rust, "SIDEBAR_MIN_WIDTH_PX"));
-    expect(APP_MAIN_MIN_WIDTH_PX).toBe(rustConstant(rust, "APP_MAIN_MIN_WIDTH_PX"));
     expect(SIDEBAR_OVERLAY_STRIP_PX).toBe(rustConstant(rust, "SIDEBAR_OVERLAY_STRIP_PX"));
   });
 
-  it("make the window's minimum the narrowest sidebar and the strip it leaves over the feed (47.3c)", () => {
-    expect(rust).toContain(
-      "pub const WINDOW_MIN_WIDTH: f64 = (SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX) as f64;",
-    );
-    expect(APP_MIN_WIDTH_PX).toBe(SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX);
-    expect(APP_MIN_WIDTH_PX).toBe(354);
+  it("make the window's minimum a phone's width, which holds the sidebar over the feed (16.10.2026)", () => {
+    expect(APP_MIN_WIDTH_PX).toBe(rustConstant(rust, "WINDOW_MIN_WIDTH_PX"));
+    expect(rust).toContain("pub const WINDOW_MIN_WIDTH: f64 = WINDOW_MIN_WIDTH_PX as f64;");
+    expect(APP_MIN_WIDTH_PX).toBe(390);
+    expect(APP_MIN_WIDTH_PX).toBeGreaterThanOrEqual(SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX);
+  });
+
+  it("make the feed's minimum the window's, one value for both (16.10.2026)", () => {
+    expect(rust).toContain("pub const APP_MAIN_MIN_WIDTH_PX: u32 = WINDOW_MIN_WIDTH_PX;");
+    expect(APP_MAIN_MIN_WIDTH_PX).toBe(APP_MIN_WIDTH_PX);
   });
 
   it("take the narrowest sidebar from its three equal zones, in CSS too", () => {

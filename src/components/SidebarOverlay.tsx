@@ -145,12 +145,19 @@ export function SidebarOverlay({ open, onClose, header, children }: SidebarOverl
         aria-modal="true"
         aria-label={SIDEBAR_OVERLAY_LABEL}
         tabIndex={-1}
-        className="sidebar-overlay-panel absolute inset-y-0 left-0 flex flex-col bg-sidebar shadow-lg outline-none"
+        className="sidebar-overlay-panel absolute inset-y-0 left-0 flex flex-col overflow-hidden bg-sidebar shadow-lg outline-none"
         style={panelStyle}
         data-sidebar-overlay-panel=""
       >
         {header}
-        {children}
+        {/* A row, as the page's body is beside the feed: the sidebar's own
+            box keeps its width and does not shrink, so in the panel's column
+            it would take the height of its whole list, run past the panel
+            over the bottom bar and never scroll. In a row it stretches to
+            the height left under the filter row, and its list scrolls. */}
+        <div className="flex min-h-0 flex-1" data-sidebar-overlay-body="">
+          {children}
+        </div>
       </div>
     </div>
   );

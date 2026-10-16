@@ -125,7 +125,7 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
   it("lets CSS squeeze the panel in a narrow window and keeps the dragged width (SPEC_NARROW_WINDOW.md, У1, У2)", () => {
     const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
     const cssWidth = () => document.documentElement.style.getPropertyValue("--sidebar-width");
-    expect(cssWidth()).toBe("min(480px, 100vw - 304px)");
+    expect(cssWidth()).toBe("min(480px, 100vw - 390px)");
 
     // A window's resize renders nothing and stores nothing.
     act(() => {
@@ -133,23 +133,23 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
       window.dispatchEvent(new Event("resize"));
     });
     expect(result.current.width).toBe(480);
-    expect(cssWidth()).toBe("min(480px, 100vw - 304px)");
+    expect(cssWidth()).toBe("min(480px, 100vw - 390px)");
     expect(commands.setWindowSidebar).not.toHaveBeenCalled();
     act(() => result.current.toggleCollapsed());
     expect(cssWidth()).toBe("0px");
     act(() => result.current.toggleCollapsed());
-    expect(cssWidth()).toBe("min(480px, 100vw - 304px)");
+    expect(cssWidth()).toBe("min(480px, 100vw - 390px)");
   });
 
   it("drags from the width shown in a narrow window, up to what the window holds beside the feed", () => {
-    window.innerWidth = 700;
+    window.innerWidth = 800;
     const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
 
-    // 700 leaves 396 beside the narrowest feed.
-    act(() => result.current.startResize(396, 480));
-    expect(result.current.width).toBe(396);
-    act(() => result.current.updateResize(396 + 300));
-    expect(document.documentElement.style.getPropertyValue("--sidebar-width")).toBe("396px");
+    // 800 leaves 410 beside the narrowest feed.
+    act(() => result.current.startResize(410, 480));
+    expect(result.current.width).toBe(410);
+    act(() => result.current.updateResize(410 + 300));
+    expect(document.documentElement.style.getPropertyValue("--sidebar-width")).toBe("410px");
     act(() => result.current.updateResize(360));
     act(() => result.current.endResize());
 
@@ -157,7 +157,7 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
     expect(result.current.width).toBe(360);
     expect(commands.setWindowSidebar).toHaveBeenLastCalledWith({ width_px: 360, collapsed: false });
     act(() => result.current.resizeTo(5000));
-    expect(result.current.width).toBe(396);
+    expect(result.current.width).toBe(410);
   });
 
   it("animates the width only for a collapse or an opening", () => {
@@ -226,7 +226,7 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
 
     // Wide again: back beside the feed at the target, nothing stored.
     rerender({ overlaid: false });
-    expect(cssWidth()).toBe("min(480px, 100vw - 304px)");
+    expect(cssWidth()).toBe("min(480px, 100vw - 390px)");
     expect(commands.setWindowSidebar).not.toHaveBeenCalled();
   });
 

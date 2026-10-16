@@ -127,17 +127,24 @@ pub const WINDOW_GRAB_MIN_VISIBLE_PX: f64 = 100.0;
 /// lines between them (SPEC_NARROW_WINDOW.md, `S_min`; `sidebarMinWidth()` in
 /// src/lib/appLayout.ts). It does not follow the font.
 pub const SIDEBAR_MIN_WIDTH_PX: u32 = 314;
-/// Narrowest the feed gets beside the sidebar (`F_min`): the smallest card and
-/// two side insets.
-pub const APP_MAIN_MIN_WIDTH_PX: u32 = 304;
 /// The strip the sidebar leaves at the right when it lies over the feed in a
 /// narrow window (`STRIP`, SPEC_NARROW_WINDOW.md, У4).
 pub const SIDEBAR_OVERLAY_STRIP_PX: u32 = 40;
-/// Smallest content size of a tab window. Across: the narrowest sidebar and
-/// the strip it leaves at the right when it lies over the feed
-/// (SPEC_NARROW_WINDOW.md, У3, У11). Down: the old main window's minimum and
-/// the tab bar above it.
-pub const WINDOW_MIN_WIDTH: f64 = (SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX) as f64;
+/// Narrowest a tab window gets: the width of a common phone's layout (user's
+/// decision of 16.10.2026, instead of the narrowest sidebar and its strip,
+/// 354; SPEC_NARROW_WINDOW.md, У3). The sidebar lies over the feed there,
+/// `min(W − STRIP, S_max)` wide.
+pub const WINDOW_MIN_WIDTH_PX: u32 = 390;
+/// Narrowest the feed gets beside the sidebar (`F_min`): always the window's
+/// narrowest, one value for both (user's decision of 16.10.2026, instead of
+/// the smallest card and two side insets, 304).
+pub const APP_MAIN_MIN_WIDTH_PX: u32 = WINDOW_MIN_WIDTH_PX;
+// The narrowest window holds the narrowest sidebar over the feed with its
+// strip.
+const _: () = assert!(WINDOW_MIN_WIDTH_PX >= SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX);
+/// Smallest content size of a tab window. Across: [`WINDOW_MIN_WIDTH_PX`].
+/// Down: the old main window's minimum and the tab bar above it.
+pub const WINDOW_MIN_WIDTH: f64 = WINDOW_MIN_WIDTH_PX as f64;
 pub const WINDOW_MIN_HEIGHT: f64 = 600.0 + TAB_BAR_HEIGHT_PX as f64;
 /// Size of a window with nothing to restore.
 pub const WINDOW_DEFAULT_WIDTH: f64 = 1200.0;
@@ -1351,12 +1358,13 @@ mod tests {
         assert_eq!(restored.windows[1].frame.x, 1728.0 - 150.0);
     }
 
-    /// 47.3c: the window is no narrower than the narrowest sidebar and the
-    /// strip it leaves over the feed, 354 px (У3, У11).
+    /// The window is no narrower than a common phone's layout, 390 px (user's
+    /// decision of 16.10.2026, У3), and still holds the narrowest sidebar
+    /// over the feed with its strip.
     #[test]
-    fn the_narrowest_window_holds_the_narrowest_sidebar_and_its_strip() {
-        assert_eq!(WINDOW_MIN_WIDTH, 354.0);
-        assert_eq!(f64::from(SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX), WINDOW_MIN_WIDTH);
+    fn the_narrowest_window_is_a_phone_wide_and_holds_the_sidebar_over_the_feed() {
+        assert_eq!(WINDOW_MIN_WIDTH_PX, 390);
+        assert_eq!(WINDOW_MIN_WIDTH, 390.0);
     }
 
     /// A saved window narrower than the minimum comes back at the minimum; one
@@ -1364,7 +1372,7 @@ mod tests {
     #[test]
     fn a_restored_window_is_held_to_the_minimum_width() {
         let mut narrow = window("w1", vec![tab("t1", "x")], "t1");
-        narrow.frame.width = 300.0;
+        narrow.frame.width = 200.0;
         let mut between = window("w2", vec![tab("t2", "x")], "t2");
         between.frame.width = 400.0;
         let restored = normalize(saved(vec![narrow, between]), &known, &screen(), &mut ids());

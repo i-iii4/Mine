@@ -2,7 +2,7 @@
 // У7, У12; PLAN 47.3c): the production sidebar (Sidebar, useSidebarResize,
 // useSidebarOverlay, SidebarOverlay, the styles) in the page's frame, at the
 // widths of the plan. Beside the feed the sidebar keeps its target until the
-// feed reaches its narrowest, then squeezes to its own; below 618 px it
+// feed reaches its narrowest, then squeezes to its own; below 704 px it
 // leaves the row, the feed takes the window, and the sidebar lies over the
 // feed when opened: the window less the 40 px strip wide, as tall as beside
 // the feed, the space switcher in it and not in the top row, the feed under a
@@ -37,7 +37,9 @@ const vite = await startAuditVite([{
       import {APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX} from "/src/lib/appLayout.ts";
       import "/src/styles/global.css";
       const h=React.createElement, noop=()=>{};
-      const tags=[{tag:"Inbox",count:3},{tag:"Posters",count:5}];
+      // Long enough to scroll in the window's height, beside the feed and over it.
+      const tags=[{tag:"Inbox",count:3},{tag:"Posters",count:5},
+        ...Array.from({length:38},(_,index)=>({tag:"Collection "+String(index+1).padStart(2,"0"),count:index+1}))];
       function FilterRow(){
         return h("div",{"data-top-chrome-space-search-group":"",className:"flex h-full min-w-0 flex-1 items-center px-2"},
           h("span",{"data-audit-space-name":""},"Audit space"));
@@ -108,7 +110,12 @@ function readLayout() {
     width: window.innerWidth,
     scrollWidth: document.documentElement.scrollWidth,
     sidebarWidthVar: document.documentElement.style.getPropertyValue("--sidebar-width"),
-    aside: asideBox ? { left: asideBox.left, right: asideBox.right, width: asideBox.width } : null,
+    aside: asideBox ? { left: asideBox.left, right: asideBox.right, width: asideBox.width, bottom: asideBox.bottom } : null,
+    panelAside: box("[data-sidebar-overlay] aside"),
+    panelList: (() => {
+      const list = document.querySelector("[data-sidebar-overlay] [data-sidebar-scroll]");
+      return list ? { scrollTop: list.scrollTop, scrollHeight: list.scrollHeight, clientHeight: list.clientHeight, bottom: list.getBoundingClientRect().bottom } : null;
+    })(),
     segment: box("[data-app-top-sidebar-segment]"),
     topSpaceName: document.querySelector("header [data-audit-space-name]") !== null,
     header: box("header"),
@@ -147,9 +154,15 @@ try {
 
   // Beside the feed (У1): the target until the feed reaches its narrowest,
   // then the sidebar squeezes to its own; the space switcher in the top row.
-  for (const [width, sidebar] of [[1200, 360], [664, 360], [640, 336], [618, 314]]) {
+  // Where the sidebar beside the feed ends: the sidebar over the feed ends
+  // there too (user's decision of 15.10.2026).
+  let besideBottom = null;
+  for (const [width, sidebar] of [[1200, 360], [750, 360], [749, 359], [704, 314]]) {
     await resize(width);
     const layout = await read();
+    besideBottom ??= layout.aside?.bottom ?? null;
+    assert.equal(layout.aside?.bottom, besideBottom, `${width}: the sidebar ends where it ended`);
+    assert.ok(layout.aside.bottom <= layout.bottomBar.top, `${width}: the sidebar above the bottom bar`);
     assert.equal(layout.aside?.width, sidebar, `${width}: the sidebar ${sidebar} px beside the feed`);
     assert.equal(layout.feed.left, sidebar, `${width}: the feed starts at the sidebar`);
     assert.equal(layout.feed.width, width - sidebar, `${width}: the feed takes the rest`);
@@ -161,7 +174,7 @@ try {
   }
 
   // Over the feed (У1, У4, У12): closed at first, the feed the whole window.
-  for (const width of [617, 400, 354]) {
+  for (const width of [703, 400, 390]) {
     await resize(width);
     let layout = await read();
     assert.equal(layout.aside, null, `${width}: no sidebar beside the feed`);
@@ -183,12 +196,27 @@ try {
     assert.equal(layout.panel.top, layout.header.top, `${width}: the panel from the top row's top`);
     assert.equal(layout.panel.bottom, layout.feed.bottom, `${width}: the panel down to the feed's bottom`);
     assert.ok(layout.panel.bottom <= layout.bottomBar.top, `${width}: the bottom bar uncovered`);
+    // What the panel holds ends with it, where the sidebar beside the feed
+    // ends, and its list scrolls inside it.
+    assert.equal(layout.panelAside?.bottom, besideBottom, `${width}: the list ends where the sidebar beside the feed ends`);
+    assert.equal(layout.panelList.bottom, besideBottom, `${width}: the list's scroller ends there too`);
+    assert.ok(layout.panelList.scrollHeight > layout.panelList.clientHeight, `${width}: the long list overflows its scroller`);
+    await page.mouse.move(panelWidth / 2, (layout.panel.top + layout.panel.bottom) / 2);
+    await page.mouse.wheel(0, 400);
+    await page.waitForFunction(
+      () => document.querySelector("[data-sidebar-overlay] [data-sidebar-scroll]").scrollTop > 0,
+      null,
+      { timeout: 2000 },
+    );
+    assert.ok((await read()).panel, `${width}: the wheel leaves the panel open`);
     assert.equal(layout.panel.spaceName, true, `${width}: the space switcher in the panel (У12)`);
     assert.equal(layout.panel.list, true, `${width}: the collections in the panel`);
     assert.notEqual(layout.panel.shadow, "none", `${width}: the panel's shadow`);
     assert.equal(layout.scrim.left, 0, `${width}: the scrim over everything`);
     assert.equal(layout.scrim.right, width, `${width}: the scrim to the window's edge, the strip included`);
-    assert.equal(width - layout.panel.right, STRIP, `${width}: the 40 px strip`);
+    // The strip: 40 px, more where the panel stops at its widest (600).
+    assert.equal(width - layout.panel.right, width - panelWidth, `${width}: the strip ${width - panelWidth} px`);
+    assert.ok(width - layout.panel.right >= STRIP, `${width}: the strip at least 40 px`);
     assert.match(layout.scrim.backdrop, /blur\(/, `${width}: the feed blurred`);
     assert.equal(layout.scrim.opacity, "1", `${width}: the scrim shown`);
     assert.equal(layout.feedInert, true, `${width}: the feed inert`);
@@ -201,7 +229,7 @@ try {
     layout = await read();
     assert.equal(layout.overlay, null, `${width}: the strip closes`);
     assert.equal(layout.feedInert, false, `${width}: the feed back`);
-    console.log(`PASS ${width}: the feed the whole window; the sidebar ${panelWidth} px over it, the strip closes`);
+    console.log(`PASS ${width}: the feed the whole window; the sidebar ${panelWidth} px over it, ending where it ends beside the feed, its list scrolling; the strip closes`);
   }
 
   // Escape closes; a collection goes and closes (У6).
@@ -236,13 +264,13 @@ try {
   // Widened with the sidebar open over the feed, it stands beside the feed
   // (У7); narrowed again, it comes over the feed closed.
   await toggle();
-  await resize(700);
+  await resize(800);
   layout = await read();
-  assert.equal(layout.overlay, null, "700: nothing over the feed");
-  assert.equal(layout.aside?.width, TARGET, "700: the sidebar beside the feed at its target");
-  await resize(617);
-  assert.equal((await read()).overlay, null, "617: closed after narrowing");
-  console.log("PASS 617 → 700 → 617: open over the feed becomes beside it, then over it closed");
+  assert.equal(layout.overlay, null, "800: nothing over the feed");
+  assert.equal(layout.aside?.width, TARGET, "800: the sidebar beside the feed at its target");
+  await resize(703);
+  assert.equal((await read()).overlay, null, "703: closed after narrowing");
+  console.log("PASS 703 → 800 → 703: open over the feed becomes beside it, then over it closed");
 
   // A sidebar collapsed beside the feed stays collapsed across the narrow
   // window (У7).
@@ -256,11 +284,11 @@ try {
   assert.equal((await read()).aside?.width, 1, "1200: still collapsed");
   console.log("PASS 1200 → 400 → 1200: a collapsed sidebar stays collapsed");
 
-  // The page holds the window's minimum: nothing narrower than 354 px.
+  // The page holds the window's minimum, a phone's width (16.10.2026).
   await resize(300);
   await settle();
-  assert.equal(await page.evaluate(() => document.querySelector("[data-chrome-shell]").getBoundingClientRect().width), 354, "300: the page holds 354 px");
-  console.log("PASS 300: the page no narrower than 354 px");
+  assert.equal(await page.evaluate(() => document.querySelector("[data-chrome-shell]").getBoundingClientRect().width), 390, "300: the page holds 390 px");
+  console.log("PASS 300: the page no narrower than 390 px");
 
   assert.deepEqual(errors, []);
 } finally {
