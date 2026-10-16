@@ -8,9 +8,9 @@ import {
   computeHoverPreviewPosition,
   deleteMediaFileDescription,
   detailContentFullWidth,
-  detailLayoutIsStacked,
   hoverPreviewBounds,
 } from "./Detail";
+import { detailLayout } from "@/lib/detailLayout";
 import type { CardAssociationGroup, CardAssociationKind, IndexedBlock, LightBlock, MediaAssetRef } from "@/types";
 import {
   DropdownMenu,
@@ -48,24 +48,30 @@ vi.mock("./ArticleAudioControls", () => ({
 vi.mock("./VideoFromBlob", () => ({
   VideoFromBlob: ({
     src,
+    className,
     controls,
     autoPlay,
     muted,
     loop,
+    onLoadedMetadata,
   }: {
     src: string;
+    className?: string;
     controls?: boolean;
     autoPlay?: boolean;
     muted?: boolean;
     loop?: boolean;
+    onLoadedMetadata?: (video: HTMLVideoElement) => void;
   }) => (
     <video
+      className={className}
       data-src={src}
       data-controls={controls ? "true" : "false"}
       data-autoplay={autoPlay ? "true" : "false"}
       data-muted={muted ? "true" : "false"}
       data-loop={loop ? "true" : "false"}
       data-testid="video-from-blob"
+      onLoadedMetadata={(event) => onLoadedMetadata?.(event.currentTarget)}
     />
   ),
 }));
@@ -1024,18 +1030,18 @@ describe("Detail", () => {
       "pt-[var(--card-content-pad)]",
       "pb-20",
     );
-    // Content centred at its full width, the panel's sections under it at
-    // the same width.
+    // Content centred at its full width; the panel's cards under it span the
+    // whole width between the insets, whatever the content's width (Р4).
     expect(articleColumn).toHaveClass("col-start-2", "mx-auto", "w-full");
     expect((articleColumn as HTMLElement).style.maxWidth).toBe("768px");
     expect(stackedMetadataRow).toHaveClass(
       "col-start-2",
-      "mx-auto",
       "w-full",
       "mt-[var(--card-content-pad)]",
       "min-w-0",
     );
-    expect((stackedMetadataRow as HTMLElement).style.maxWidth).toBe("768px");
+    expect(stackedMetadataRow).not.toHaveClass("mx-auto");
+    expect((stackedMetadataRow as HTMLElement).style.maxWidth).toBe("");
     expect(container.querySelector("[data-detail-fixed-metadata-layer]")).toBeNull();
     expect(container.querySelector("[data-detail-metadata-spacer]")).toBeNull();
   });
@@ -1072,8 +1078,32 @@ describe("Detail", () => {
     // Text keeps the reading column whatever its size.
     expect(detailContentFullWidth(block({ body: "Article body" }), 400)).toBe(768);
     // The stacking rule: 3 × pad + content + 320.
-    expect(detailLayoutIsStacked(3 * 16 + 544 + 320, 16, 544)).toBe(false);
-    expect(detailLayoutIsStacked(3 * 16 + 544 + 319, 16, 544)).toBe(true);
+    expect(detailLayout(3 * 16 + 544 + 320, 16, 544).mode).toBe("rail");
+    expect(detailLayout(3 * 16 + 544 + 319, 16, 544).mode).toBe("stacked");
+  });
+
+  it("takes a lone video's frame width as the content's full width, and keeps the column for a video with text", () => {
+    const clip = block({ card_kind: "media", block_type: "video", url: null, media_file: "Media/clip.mp4", width: 1080, height: 1920 });
+    // Portrait at the height limit: 0.85 × 800 × 1080 / 1920 = 382.5.
+    expect(detailContentFullWidth(clip, 800)).toBe(383);
+    // Its tile in the manifest is the video's size.
+    const tiled = {
+      ...clip,
+      width: null,
+      height: null,
+      preview_manifest: JSON.stringify({
+        kind: "video_poster",
+        primary_preview_path: "Cards/clip.jpg",
+        tiles: [{ source_path: "Media/clip.mp4", preview_path: "Cards/clip.jpg", width: 720, height: 720, is_video: true, is_video_poster: true }],
+      }),
+    };
+    expect(detailContentFullWidth(tiled, 800)).toBe(680);
+    // Text under the video: the reading column.
+    expect(detailContentFullWidth({ ...clip, body: "A caption under the clip." }, 800)).toBe(768);
+    // Without a recorded size: the column, the frame learns the size inside it.
+    expect(detailContentFullWidth({ ...clip, width: null, height: null }, 800)).toBe(768);
+    // The YouTube player keeps its column.
+    expect(detailContentFullWidth(block({ card_kind: "media", block_type: "video", url: "https://www.youtube.com/watch?v=9KDDhAOyv9k", width: 1080, height: 1920 }), 800)).toBe(768);
   });
 
   it("keeps a related note's card preview inside the open card's area", () => {
@@ -3504,5 +3534,88 @@ describe("an open card whose text could not be read", () => {
     expect(screen.getByText("The file is in iCloud and could not be read.")).toBeInTheDocument();
     vi.mocked(getBlock).mockReset();
     clearActionFailures();
+  });
+});
+
+// One media frame for pictures and videos and one height limit
+// (SPEC_FRONTEND.md, «Раскладка открытой карточки», Р5 to Р7).
+describe("an open card's media frame", () => {
+  function renderCard(b: IndexedBlock) {
+    return render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault" thumbsRootPath="/tmp/thumbs" tags={[]}
+        onClose={vi.fn()} onNavigate={vi.fn()} onToggleTag={vi.fn()} onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()} onRequestRename={vi.fn()} onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
+      />,
+    );
+  }
+
+  const videoTile = (width: number, height: number) => JSON.stringify({
+    kind: "image",
+    primary_preview_path: "Cards/test-block.jpg",
+    tiles: [{ source_path: "Media/clip.mp4", preview_path: "Cards/test-block.preview-1.jpg", width, height, is_video: true, is_video_poster: true }],
+  });
+
+  it("carries the one height limit from the root to every media frame", () => {
+    const { container } = renderCard(block({ body: "![[clip.mp4]]\n\n![[photo.jpg]]" }));
+    const root = container.querySelector<HTMLElement>("[data-detail-root]")!;
+    expect(root.style.getPropertyValue("--detail-media-max-height")).toBe("85vh");
+    const frames = container.querySelectorAll("[data-detail-media-action-frame]");
+    expect(frames).toHaveLength(2);
+    for (const frame of frames) {
+      expect(frame).toHaveClass("max-h-[var(--detail-media-max-height)]");
+    }
+    // No element keeps a limit of its own.
+    expect(container.querySelectorAll('[class*="85vh"]')).toHaveLength(0);
+  });
+
+  it("draws a body video in the frame of its recorded size, the video filling it", () => {
+    const { container } = renderCard(block({ body: "Text before.\n\n![[clip.mp4]]", preview_manifest: videoTile(1080, 1920) }));
+    const frame = container.querySelector<HTMLElement>("[data-article-media-stack] [data-detail-video]")!;
+    expect(frame.style.aspectRatio).toBe("1080 / 1920");
+    expect(frame.style.maxWidth).toBe("100%");
+    expect(frame.querySelector("video")).toHaveClass("absolute", "inset-0", "size-full", "object-contain");
+  });
+
+  it("frames a body video without a recorded size by the size its metadata reports", () => {
+    const { container } = renderCard(block({ body: "![[clip.mp4]]" }));
+    const frame = container.querySelector<HTMLElement>("[data-detail-video]")!;
+    const video = frame.querySelector("video")!;
+    expect(frame.style.aspectRatio).toBe("");
+    expect(video).toHaveClass("h-auto", "max-h-[var(--detail-media-max-height)]");
+    Object.defineProperties(video, { videoWidth: { value: 720 }, videoHeight: { value: 1280 } });
+    fireEvent.loadedMetadata(video);
+    expect(frame.style.aspectRatio).toBe("720 / 1280");
+    expect(video).toHaveClass("absolute", "inset-0", "size-full");
+  });
+
+  it("keeps the recorded frame while the video's proportion matches, and takes the video's when it is turned", () => {
+    const clip = block({ card_kind: "media", block_type: "video", url: null, media_file: "Media/clip.mp4", width: 1920, height: 1080 });
+    const { container } = renderCard(clip);
+    const frame = container.querySelector<HTMLElement>("[data-detail-video]")!;
+    const video = frame.querySelector("video")!;
+    expect(frame.style.aspectRatio).toBe("1920 / 1080");
+    Object.defineProperties(video, { videoWidth: { value: 960, configurable: true }, videoHeight: { value: 540, configurable: true } });
+    fireEvent.loadedMetadata(video);
+    expect(frame.style.aspectRatio).toBe("1920 / 1080");
+    Object.defineProperties(video, { videoWidth: { value: 1080 }, videoHeight: { value: 1920 } });
+    fireEvent.loadedMetadata(video);
+    expect(frame.style.aspectRatio).toBe("1080 / 1920");
+  });
+
+  it("centres the article's lead video, its space under it outside the frame", () => {
+    const { container } = renderCard(block({
+      url: "https://www.youtube.com/watch?v=9KDDhAOyv9k",
+      media_file: "Media/film.mp4",
+      width: 1280,
+      height: 720,
+      body: "Transcript.",
+    }));
+    const lead = container.querySelector<HTMLElement>("[data-detail-lead-video]")!;
+    expect(lead).toHaveClass("mb-6", "flex", "justify-center");
+    const frame = lead.querySelector<HTMLElement>("[data-detail-video]")!;
+    expect(frame.style.aspectRatio).toBe("1280 / 720");
+    expect(frame.querySelector("video")).not.toHaveClass("mb-6");
   });
 });

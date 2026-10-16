@@ -3549,6 +3549,28 @@
     },
     {
       "paths": [
+        "src/lib/detailLayout.ts",
+        "src/lib/detailLayout.test.ts"
+      ],
+      "requirement": "SPEC_FRONTEND.md##### Раскладка открытой карточки",
+      "tests": [
+        "src/lib/detailLayout.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/detail-image-geometry-audit.mjs",
+        "scripts/audit-vite.mjs"
+      ],
+      "requirement": "SPEC_FRONTEND.md##### Раскладка открытой карточки",
+      "tests": [
+        "scripts/detail-image-geometry-audit.mjs"
+      ],
+      "command": "test:detail-image-geometry"
+    },
+    {
+      "paths": [
         "tsconfig.json",
         "tsconfig.base.json",
         "tsconfig.app.json",

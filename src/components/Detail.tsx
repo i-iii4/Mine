@@ -122,7 +122,18 @@ import {
   findPreviewTileForSource,
   normalizeDetailPreviewManifest,
 } from "@/lib/feedPreview";
-import { deriveCardContent } from "@/lib/cardLayout";
+import { deriveCardContent, type CardContent } from "@/lib/cardLayout";
+import {
+  DETAIL_CONTENT_MAX_WIDTH_PX,
+  detailLayout,
+  detailMediaFrameStyle,
+  detailMediaFrameWidth,
+  detailMediaMaxHeightStyle,
+  detailMediaSize,
+  detailRailGridTemplate,
+  sameMediaProportion,
+  type DetailMediaSize,
+} from "@/lib/detailLayout";
 import { parseYoutubeSource } from "@/lib/youtubeSource";
 import { YoutubeSourcePlayer } from "@/components/YoutubeSourcePlayer";
 import {
@@ -169,24 +180,23 @@ import {
 } from "@/lib/actionFailures";
 import { openLinkInBrowser, revealInFinder } from "@/lib/systemActions";
 
-// The open card's layout (SPEC_FRONTEND.md, Detail; user's decision of
-// 07.10.2026): the side panel never takes space from the content. The content
-// stands at its full width beside the fixed 20rem panel while three insets,
-// that width and the panel fit; past that the view stacks at once, content
-// centred and the panel's sections under it at the same width. Scroll content
-// and fixed metadata share one grid; insets and the top offset follow the
-// app-wide edge rhythm.
+// The open card's layout (SPEC_FRONTEND.md, «Раскладка открытой карточки»;
+// user's decisions of 07.10.2026 and 16.10.2026): the side panel never takes
+// space from the content. The content stands at its full width centred
+// between the sidebar and the fixed 20rem panel while the equal margins on
+// either side of it are at least one inset; past that the view stacks at
+// once, content centred and the panel's cards under it across the whole
+// width. Scroll content and fixed metadata share one grid; insets and the
+// top offset follow the app-wide edge rhythm.
 const DETAIL_RAIL_GRID_CLASSES = "grid w-full pt-[var(--card-content-pad)]";
 const DETAIL_STACKED_LAYOUT_CLASSES =
   "grid w-full grid-cols-[var(--card-content-pad)_minmax(0,1fr)_var(--card-content-pad)] pt-[var(--card-content-pad)]";
-/// The reading column, `48rem`: the content's full width, unless a lone
-/// picture's own size is smaller.
-const DETAIL_CONTENT_MAX_WIDTH_PX = 768;
-const DETAIL_RAIL_WIDTH_PX = 320;
 /// `--card-content-pad` until its probe is measured: the default edge rhythm.
 const DETAIL_CONTENT_PAD_FALLBACK_PX = 32;
-/// A picture in the open card is at most `85vh` tall (DetailImage).
-const DETAIL_MEDIA_MAX_VIEWPORT_HEIGHT_SHARE = 0.85;
+/// The height limit every media frame of the open card reads (Р7).
+const DETAIL_ROOT_STYLE = detailMediaMaxHeightStyle();
+/// A medium whose frame knows its size fills the frame exactly (Р6).
+const DETAIL_MEDIA_FILL_CLASSES = "absolute inset-0 size-full object-contain";
 const DETAIL_METADATA_CARD_MIN_WIDTH_PX = 240;
 const DETAIL_BOTTOM_SAFE_SPACE_CLASS = "pb-20";
 const HOVER_CARD_WIDTH = 240;
@@ -311,33 +321,36 @@ function getElementLayoutWidth(node: HTMLElement): number {
 }
 
 /**
- * The content's full width in the open card (SPEC_FRONTEND.md, Detail): the
- * reading column, or a lone picture's own size when it is smaller (its
- * natural width, or the width it takes at `85vh`, as DetailImage draws it).
- * One rule for every card: what decides is the content, not a kind.
+ * The content's full width in the open card (SPEC_FRONTEND.md, «Раскладка
+ * открытой карточки», Р1): the reading column, or the frame width of a lone
+ * picture or a lone video when it is narrower (its own width, or the width
+ * it takes at the height limit, as its media frame draws it). One rule for
+ * every card: what decides is the content, not a kind.
  */
 export function detailContentFullWidth(
   block: LightBlock | IndexedBlock,
   viewportHeight: number,
 ): number {
-  if (deriveCardContent(block).source !== "image") return DETAIL_CONTENT_MAX_WIDTH_PX;
-  const manifest = normalizeDetailPreviewManifest(block.preview_manifest);
-  const width = block.width ?? manifest?.width ?? null;
-  const height = block.height ?? manifest?.height ?? null;
-  if (!width || !height || width <= 0 || height <= 0 || viewportHeight <= 0) {
-    return DETAIL_CONTENT_MAX_WIDTH_PX;
-  }
-  const atHeightLimit = (DETAIL_MEDIA_MAX_VIEWPORT_HEIGHT_SHARE * viewportHeight * width) / height;
-  return Math.max(1, Math.round(Math.min(DETAIL_CONTENT_MAX_WIDTH_PX, width, atHeightLimit)));
+  const size = loneMediaSize(block);
+  if (!size || viewportHeight <= 0) return DETAIL_CONTENT_MAX_WIDTH_PX;
+  const frameWidth = detailMediaFrameWidth(size, viewportHeight);
+  return Math.max(1, Math.round(Math.min(DETAIL_CONTENT_MAX_WIDTH_PX, frameWidth)));
 }
 
-/** Whether the content at full width, the panel and three insets do not fit. */
-export function detailLayoutIsStacked(
-  containerWidth: number,
-  contentPadPx: number,
-  contentWidth: number,
-): boolean {
-  return containerWidth < 3 * contentPadPx + contentWidth + DETAIL_RAIL_WIDTH_PX;
+/** The recorded size of the one picture or the one video the card's content
+ *  is; `null` when the content is anything else (text, a video with text
+ *  under it, the YouTube player) or the record has no size. */
+function loneMediaSize(block: LightBlock | IndexedBlock): DetailMediaSize | null {
+  const content = deriveCardContent(block);
+  const manifest = normalizeDetailPreviewManifest(block.preview_manifest);
+  if (content.source === "image") {
+    return detailMediaSize(block.width ?? manifest?.width, block.height ?? manifest?.height);
+  }
+  if (content.source !== "video") return null;
+  const bodyVideoReferences = localBodyVideoReferences(block.body, manifest);
+  if (playsYoutubeSource(block, bodyVideoReferences)) return null;
+  const lead = videoCardLead(block, content, block.body, manifest, bodyVideoReferences);
+  return lead.sourcePath && !lead.showBody ? lead.size : null;
 }
 
 /** The open card's container width, `--card-content-pad` and the window's
@@ -423,22 +436,22 @@ export function Detail({
     padProbeRef: detailPadProbeRef,
     metrics: detailLayoutMetrics,
   } = useDetailLayoutMetrics();
-  const contentWidth = detailContentFullWidth(
-    displayBlock,
-    detailLayoutMetrics?.viewportHeight ?? window.innerHeight,
+  const viewportHeight = detailLayoutMetrics?.viewportHeight ?? window.innerHeight;
+  const contentWidth = useMemo(
+    () => detailContentFullWidth(displayBlock, viewportHeight),
+    [displayBlock, viewportHeight],
   );
   const isStackedLayout = detailLayoutMetrics !== null
-    && detailLayoutIsStacked(detailLayoutMetrics.width, detailLayoutMetrics.pad, contentWidth);
+    && detailLayout(detailLayoutMetrics.width, detailLayoutMetrics.pad, contentWidth).mode === "stacked";
   const layoutClasses = isStackedLayout
     ? DETAIL_STACKED_LAYOUT_CLASSES
     : DETAIL_RAIL_GRID_CLASSES;
   // Beside the panel the content's column is exactly its full width; the
-  // spare room goes to the two flexible tracks around it.
+  // spare room goes in equal parts to the two flexible tracks around it, so
+  // the content stands centred between the sidebar and the panel.
   const layoutStyle: CSSProperties | undefined = isStackedLayout
     ? undefined
-    : {
-        gridTemplateColumns: `minmax(var(--card-content-pad),1fr) ${contentWidth}px minmax(var(--card-content-pad),1fr) ${DETAIL_RAIL_WIDTH_PX}px var(--card-content-pad)`,
-      };
+    : { gridTemplateColumns: detailRailGridTemplate(contentWidth) };
   const articleColumnClasses = isStackedLayout
     ? "col-start-2 min-w-0 mx-auto w-full"
     : "col-start-2 min-w-0";
@@ -558,6 +571,7 @@ export function Detail({
         isClosing ? "pointer-events-none bg-transparent" : "bg-background",
         "flex flex-col",
       )}
+      style={DETAIL_ROOT_STYLE}
       role="dialog"
       aria-modal="false"
       aria-label={filename}
@@ -655,9 +669,10 @@ export function Detail({
               />
             </div>
             {isStackedLayout ? (
+              // The panel's cards span the whole width between the insets,
+              // whatever the content's width (Р4).
               <div
-                className="col-start-2 mx-auto mt-[var(--card-content-pad)] w-full min-w-0"
-                style={stackedColumnStyle}
+                className="col-start-2 mt-[var(--card-content-pad)] w-full min-w-0"
                 data-detail-stacked-metadata-row
               >
                 <MetadataPanel
@@ -1619,6 +1634,72 @@ function bodyHasMoreThanEmbed(
   return more;
 }
 
+/** The card's own file when it is a local video. */
+function primaryLocalVideoRef(block: LightBlock | IndexedBlock): string | null {
+  return block.media_file
+    && !isSafeUrl(block.media_file)
+    && /\.(?:mp4|webm|m4v|mov)$/i.test(block.media_file)
+    ? block.media_file
+    : null;
+}
+
+/** Whether the open card plays its YouTube source in the player: the card
+ *  has neither a local video file nor a video in its body. */
+function playsYoutubeSource(
+  block: LightBlock | IndexedBlock,
+  bodyVideoReferences: string[],
+): boolean {
+  return parseYoutubeSource(block.url) !== null
+    && primaryLocalVideoRef(block) === null
+    && bodyVideoReferences.length === 0;
+}
+
+/** What a media card whose content is a video leads with. */
+interface VideoCardLead {
+  /** Its file, or the body's first video embed. */
+  sourcePath: string | null;
+  /** The lead when it is the body's embed, which the body then leaves out. */
+  omittedEmbed: { source: string } | null;
+  /** Whether the body has more to show under the video. */
+  showBody: boolean;
+  /** The video's size as the record knows it (Р6). */
+  size: DetailMediaSize | null;
+}
+
+function videoCardLead(
+  block: LightBlock | IndexedBlock,
+  content: CardContent,
+  body: string,
+  manifest: ReturnType<typeof normalizeDetailPreviewManifest>,
+  bodyVideoReferences: string[],
+): VideoCardLead {
+  const sourcePath = content.media?.items.find((item) => item.isVideo)?.sourcePath
+    ?? block.media_file;
+  const leadIsBodyEmbed = !!sourcePath
+    && sourcePath !== block.media_file
+    && bodyVideoReferences.includes(sourcePath);
+  const omittedEmbed = leadIsBodyEmbed && sourcePath ? { source: sourcePath } : null;
+  return {
+    sourcePath,
+    omittedEmbed,
+    showBody: !!body && (!omittedEmbed || bodyHasMoreThanEmbed(body, manifest, omittedEmbed.source)),
+    size: recordedVideoSize(block, manifest, sourcePath),
+  };
+}
+
+/** A video's size as the record knows it (Р6): its tile in the preview
+ *  manifest, else the card's own size when it is the card's file. */
+function recordedVideoSize(
+  block: LightBlock | IndexedBlock,
+  manifest: ReturnType<typeof normalizeDetailPreviewManifest>,
+  sourcePath: string | null,
+): DetailMediaSize | null {
+  if (!sourcePath) return null;
+  const tile = findPreviewTileForSource(manifest, sourcePath);
+  return detailMediaSize(tile?.width, tile?.height)
+    ?? (sourcePath === block.media_file ? detailMediaSize(block.width, block.height) : null);
+}
+
 /** Where the lead video's own image starts in `processedBody`: the first image
  * whose source resolves to `source`, the one `bodyHasMoreThanEmbed` sets aside
  * and the body under the player leaves out. `null` when the body has none.
@@ -1756,12 +1837,8 @@ function BlockContent({
   const mainVideoIsInBody = !!block.media_file && bodyVideoReferences.some((source) => (
     source === block.media_file || (!source.includes("/") && block.media_file?.endsWith(`/${source}`))
   ));
-  const primaryLocalVideo = block.media_file
-    && !isSafeUrl(block.media_file)
-    && /\.(?:mp4|webm|m4v|mov)$/i.test(block.media_file)
-    ? resolveDetailMediaReference(vaultPath, block.media_file)
-    : null;
-  const sourcePlayer = sourceVideo && !primaryLocalVideo && bodyVideoReferences.length === 0 ? (
+  const primaryLocalVideo = resolveDetailMediaReference(vaultPath, primaryLocalVideoRef(block));
+  const sourcePlayer = sourceVideo && playsYoutubeSource(block, bodyVideoReferences) ? (
     <YoutubeSourcePlayer
       key={sourceVideo.videoId}
       source={sourceVideo}
@@ -1780,21 +1857,30 @@ function BlockContent({
       return (
         <div>
           {primaryLocalVideo && sourceVideo && !mainVideoIsInBody ? (
-            <MediaAssetActionFrame
-              asset={mediaAssetFromPrimary(block, "video")}
-              vaultPath={vaultPath}
-              tags={tags}
-              currentTag={currentTag}
-              canDrag={false}
-              onCreateMediaAssetCard={onCreateMediaAssetCard}
-              onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
-              onRenameMediaAsset={onRenameMediaAsset}
-              onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
-              onDeleteMediaAsset={onDeleteMediaAsset}
-              onOpenRelatedNote={onOpenRelatedNote}
-            >
-              <VideoFromBlob key={primaryLocalVideo} src={primaryLocalVideo} controls className="mb-6 block max-h-[85vh] max-w-full" />
-            </MediaAssetActionFrame>
+            // Centred over the text like the body's media (Р5); the space
+            // under it lies outside the frame, which holds the picture only.
+            <div className="mb-6 flex justify-center" data-detail-lead-video>
+              <MediaAssetActionFrame
+                asset={mediaAssetFromPrimary(block, "video")}
+                vaultPath={vaultPath}
+                tags={tags}
+                currentTag={currentTag}
+                canDrag={false}
+                onCreateMediaAssetCard={onCreateMediaAssetCard}
+                onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
+                onRenameMediaAsset={onRenameMediaAsset}
+                onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+                onDeleteMediaAsset={onDeleteMediaAsset}
+                onOpenRelatedNote={onOpenRelatedNote}
+              >
+                <DetailVideo
+                  key={primaryLocalVideo}
+                  src={primaryLocalVideo}
+                  recordedSize={recordedVideoSize(block, previewManifest, block.media_file)}
+                  controls
+                />
+              </MediaAssetActionFrame>
+            </div>
           ) : sourcePlayer}
           <ArticleBody
             body={body}
@@ -1952,7 +2038,7 @@ function BlockContent({
                 contentInCloud={isContentInCloud(block)}
                 mediaRef={block.media_file}
                 alt={navigationLabel}
-                className="block max-h-[85vh] max-w-full object-contain"
+                className="block max-h-[var(--detail-media-max-height)] max-w-full object-contain"
               />
             </MediaAssetActionFrame>
           </div>
@@ -1996,19 +2082,15 @@ function BlockContent({
       }
 
       if (content.source === "video") {
-        const videoSourcePath =
-          content.media?.items.find((item) => item.isVideo)?.sourcePath
-          ?? block.media_file;
-        const localSrc = resolveDetailMediaReference(vaultPath, videoSourcePath);
         // The lead video is either the primary file or the body's first video
         // embed. In the second case the body below must not show it again.
-        const leadIsBodyEmbed = !!videoSourcePath
-          && videoSourcePath !== block.media_file
-          && bodyVideoReferences.includes(videoSourcePath);
-        const omittedEmbed = leadIsBodyEmbed && videoSourcePath
-          ? { source: videoSourcePath }
-          : null;
-        const showBody = !!body && (!omittedEmbed || bodyHasMoreThanEmbed(body, previewManifest, omittedEmbed.source));
+        const {
+          sourcePath: videoSourcePath,
+          omittedEmbed,
+          showBody,
+          size: videoSize,
+        } = videoCardLead(block, content, body, previewManifest, bodyVideoReferences);
+        const localSrc = resolveDetailMediaReference(vaultPath, videoSourcePath);
         return (
           <div className="flex min-h-full flex-col">
             <div className="flex flex-1 items-center justify-center">
@@ -2032,7 +2114,7 @@ function BlockContent({
               ) : localSrc ? (
                 <MediaAssetActionFrame
                   asset={videoSourcePath
-                    ? leadIsBodyEmbed
+                    ? omittedEmbed
                       ? mediaAssetFromMediaRef(
                         block.slug,
                         videoSourcePath,
@@ -2055,14 +2137,14 @@ function BlockContent({
                 >
                   {/* Plays on its own, muted and looping, like a video inside
                       an article and like the feed. */}
-                  <VideoFromBlob
+                  <DetailVideo
                     key={localSrc}
                     src={localSrc}
+                    recordedSize={videoSize}
                     controls
                     autoPlay
                     muted
                     loop
-                    className="block h-auto max-h-[85vh] max-w-full"
                   />
                 </MediaAssetActionFrame>
               ) : (
@@ -2200,7 +2282,7 @@ function MediaAssetActionFrame({
     return (
       <div
         className={cn(
-          "not-prose relative inline-flex max-h-[85vh] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block",
+          "not-prose relative inline-flex max-h-[var(--detail-media-max-height)] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block",
           className,
         )}
         data-detail-media-action-frame
@@ -2231,7 +2313,7 @@ function MediaAssetActionFrame({
             {...(canDrag ? dragAttributes : {})}
             {...(canDrag ? dragListeners : {})}
             className={cn(
-              "not-prose group/detail-media relative inline-flex max-h-[85vh] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block",
+              "not-prose group/detail-media relative inline-flex max-h-[var(--detail-media-max-height)] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block",
               // No resting cursor of its own: the pointer stays default until a drag
               // actually starts, and only then becomes grabbing.
               canDrag && "select-none active:cursor-grabbing",
@@ -3489,16 +3571,14 @@ function ArticleBody({
               onDeleteMediaAsset={onDeleteMediaAsset}
               onOpenRelatedNote={onOpenRelatedNote}
             >
-              <VideoFromBlob
+              <DetailVideo
+                key={originalSrc}
                 src={originalSrc}
+                recordedSize={detailMediaSize(previewTile?.width, previewTile?.height)}
                 controls
                 autoPlay
                 muted
                 loop
-                // Height must follow the shrunken width, or the element keeps
-                // its intrinsic height and letterboxes the frame — dark bars
-                // that read as extra spacing under the video.
-                className="h-auto max-w-full rounded-0"
               />
             </MediaAssetActionFrame>
           );
@@ -3926,19 +4006,10 @@ function DetailImage({
   const [attempt, setAttempt] = useState(0);
   // Source geometry owns layout; loading changes pixels, never the box.
   // Legacy records without dimensions lock the first usable image geometry.
-  const [size, setSize] = useState<{ width: number; height: number } | null>(() =>
-    sourceWidth && sourceHeight && sourceWidth > 0 && sourceHeight > 0
-      && Number.isFinite(sourceWidth) && Number.isFinite(sourceHeight)
-      ? { width: sourceWidth, height: sourceHeight } : null);
-  const frameStyle: CSSProperties | undefined = size ? {
-    width: `min(${size.width}px, ${85 * size.width / size.height}vh)`,
-    maxWidth: "100%",
-    aspectRatio: `${size.width} / ${size.height}`,
-  } : undefined;
+  const [size, setSize] = useState<DetailMediaSize | null>(() => detailMediaSize(sourceWidth, sourceHeight));
   const rememberSize = (image: HTMLImageElement) => {
-    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
-      setSize(previous => previous ?? { width: image.naturalWidth, height: image.naturalHeight });
-    }
+    const natural = detailMediaSize(image.naturalWidth, image.naturalHeight);
+    if (natural) setSize(previous => previous ?? natural);
   };
   // Late like the card badge: a file that arrives quickly must not flash a
   // notice about waiting. See SPEC_CLOUD_STORAGE.md Х6, Х9.
@@ -3989,12 +4060,12 @@ function DetailImage({
   }, [showDownloading, mediaRef, attempt]);
 
   return (
-    <div className="relative max-w-full overflow-hidden leading-none" style={frameStyle} data-detail-image="">
+    <DetailMediaFrame size={size} data-detail-image="">
       {previewSrc && !originalReady && (
         <DetailPreviewBacking
           src={previewSrc}
           slug={previewSlug}
-          className={cn("block max-w-full rounded-0", className, size && "absolute inset-0 size-full object-contain")}
+          className={cn("block max-w-full rounded-0", className, size && DETAIL_MEDIA_FILL_CLASSES)}
           onLoad={rememberSize}
         />
       )}
@@ -4006,7 +4077,7 @@ function DetailImage({
           "block max-w-full rounded-0",
           className,
           previewSrc && !originalReady && "absolute inset-0",
-          size && "absolute inset-0 size-full object-contain",
+          size && DETAIL_MEDIA_FILL_CLASSES,
         )}
         loading="lazy"
         draggable={false}
@@ -4069,7 +4140,73 @@ function DetailImage({
           </div>
         </div>
       )}
-    </div>
+    </DetailMediaFrame>
+  );
+}
+
+/**
+ * The open card's one frame for a picture or a video (SPEC_FRONTEND.md,
+ * «Раскладка открытой карточки», Р6). Once the medium's size is known the
+ * frame takes its width and proportion (`detailMediaFrameStyle`) and the
+ * medium fills it (`DETAIL_MEDIA_FILL_CLASSES`), so the element's box is the
+ * drawn picture: no bars, and a video's own controls no wider than it.
+ */
+function DetailMediaFrame({
+  size,
+  className,
+  ...props
+}: { size: DetailMediaSize | null } & Omit<HTMLAttributes<HTMLDivElement>, "style">) {
+  return (
+    <div
+      className={cn("relative max-w-full overflow-hidden leading-none", className)}
+      style={size ? detailMediaFrameStyle(size) : undefined}
+      {...props}
+    />
+  );
+}
+
+/**
+ * A video of the open card in the one media frame. The record's size draws
+ * the frame from the start; without one, or when the video's own proportion
+ * differs from the record's (a phone video turned by its rotation), the frame
+ * takes the size the video reports with its metadata (Р6). A new source is a
+ * new element: callers key it by `src`.
+ */
+function DetailVideo({
+  src,
+  recordedSize,
+  controls = false,
+  autoPlay = false,
+  muted = false,
+  loop = false,
+}: {
+  src: string;
+  recordedSize: DetailMediaSize | null;
+  controls?: boolean;
+  autoPlay?: boolean;
+  muted?: boolean;
+  loop?: boolean;
+}) {
+  const [size, setSize] = useState<DetailMediaSize | null>(recordedSize);
+  return (
+    <DetailMediaFrame size={size} data-detail-video="">
+      <VideoFromBlob
+        src={src}
+        controls={controls}
+        autoPlay={autoPlay}
+        muted={muted}
+        loop={loop}
+        className={cn(
+          "block max-w-full rounded-0",
+          size ? DETAIL_MEDIA_FILL_CLASSES : "h-auto max-h-[var(--detail-media-max-height)]",
+        )}
+        onLoadedMetadata={(video) => {
+          const own = detailMediaSize(video.videoWidth, video.videoHeight);
+          if (!own) return;
+          setSize((current) => (current && sameMediaProportion(current, own) ? current : own));
+        }}
+      />
+    </DetailMediaFrame>
   );
 }
 

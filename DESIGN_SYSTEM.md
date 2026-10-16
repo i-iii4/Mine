@@ -2662,14 +2662,19 @@ Article media-only paragraphs:
 - A paragraph whose meaningful children are only image/video embeds renders as
   `data-article-media-stack`.
 - Stack children are direct `data-detail-media-action-frame` blocks with
-  `display: flex`, `width: fit-content` and `1rem` vertical spacing except the
-  last item.
+  `display: flex`, `width: fit-content`, `margin-inline: auto` and `1rem`
+  vertical spacing except the last item. Картинки и видео стоят по центру
+  колонки статьи, а не у её левого края (решение пользователя 16.10.2026,
+  SPEC_FRONTEND.md, «Раскладка открытой карточки», Р5); так же по центру
+  стоит первое видео статьи над текстом.
 - This prevents several Obsidian embeds on one physical markdown line from
   behaving as inline media and wrapping into accidental rows.
-- Inline `<video>` carries `h-auto max-w-full`, exactly like inline `<img>`.
-  Without it the element keeps its intrinsic height while the flex frame
-  shrinks its width, and `object-fit: contain` letterboxes the frame — dark
-  bars that read as extra space under the video, not as a video border.
+- Видео в теле стоит в той же рамке медиа, что картинка (`DetailMediaFrame`,
+  Р6): рамка берёт `min(w px, предел × w / h)` и пропорцию видео, видео
+  заполняет её целиком, поэтому коробка элемента равна кадру. Тёмных полос
+  над видео, под ним и по бокам нет, родные кнопки видео не шире кадра.
+  Предел высоты один на открытую карточку: переменная
+  `--detail-media-max-height` (Р7).
 - The article body zeroes the trailing margin of its last block
   (`[&>:last-child]:mb-0`). The distance from the end of the body to whatever
   follows it belongs to the surrounding layout token, not to the last
@@ -4020,19 +4025,24 @@ mr-2"`, 8 px от правого края колонки, поэтому при 
 Если включён Compact Detail top menu, эта link-editor surface не рендерится.
 
 Открытая карточка: панель сведений не отнимает место у содержимого
-(решение пользователя 07.10.2026, SPEC_FRONTEND.md, Detail). Содержимое
-всегда стоит в полном размере `W`: колонка чтения `48rem` или, если
-содержимое одна картинка, её собственный размер, когда он меньше
+(решение пользователя 07.10.2026), а содержимое всегда стоит по центру
+свободного места между боковым меню и панелью (решение пользователя
+16.10.2026); правила Р1 по Р7 в SPEC_FRONTEND.md, «Раскладка открытой
+карточки». Содержимое всегда стоит в полном размере `W`: колонка чтения
+`48rem` или, если содержимое одна картинка или одно видео без текста,
+ширина его рамки медиа, когда она меньше
 (`min(768, w, 0.85 × высота окна × w / h)`). Рядом с панелью сетка
 `minmax(pad,1fr) | W | minmax(pad,1fr) | 20rem | pad` (`pad` это
-`--card-content-pad`): лишнее место уходит в гибкие колонки, панель `20rem`
-стоит с отступом `pad` от правого края. Тело карточки не добавляет
-локальный `pl-*` guard; дистанцию между содержимым и панелью задаёт сетка.
+`--card-content-pad`): лишнее место поровну уходит в гибкие колонки по
+бокам содержимого, панель `20rem` стоит с отступом `pad` от правого края.
+Тело карточки не добавляет локальный `pl-*` guard; дистанцию между
+содержимым и панелью задаёт сетка.
 
-Как только контейнер уже `3 × pad + W + 320`, то есть зазор между
-содержимым и панелью дошёл до минимума `pad`, вид сразу становится
-мобильным: содержимое по центру шириной `W`, под ним сведения, кнопки и
-Related notes той же ширины, по центру, с отступом `--card-content-pad`;
+Как только поля по бокам содержимого дошли до `pad` (контейнер уже
+`3 × pad + W + 320`), вид сразу становится мобильным: содержимое по центру
+шириной `W`, под ним с отступом `--card-content-pad` карточки панели
+(сведения с кнопками, Related notes, блоки связей) на всю ширину между
+боковыми отступами `--card-content-pad`, независимо от ширины содержимого;
 прокрутка вертикальная.
 
 Metadata card keeps `min-width: 240px`, so the bottom `Source` / `Connect`

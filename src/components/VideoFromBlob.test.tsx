@@ -33,6 +33,18 @@ describe("VideoFromBlob", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  // The open card's media frame learns a video's own size from its metadata
+  // (SPEC_FRONTEND.md, «Раскладка открытой карточки», Р6).
+  it("hands the video element over when its metadata arrives", () => {
+    const onLoadedMetadata = vi.fn();
+    const { container } = render(
+      <VideoFromBlob src="asset://localhost//vault/demo.mp4" onLoadedMetadata={onLoadedMetadata} />,
+    );
+    const video = container.querySelector("video")!;
+    fireEvent.loadedMetadata(video);
+    expect(onLoadedMetadata).toHaveBeenCalledWith(video);
+  });
+
   it("falls back to blob fetch when the direct video path errors", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

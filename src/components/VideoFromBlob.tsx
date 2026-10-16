@@ -7,6 +7,8 @@ interface VideoFromBlobProps {
   autoPlay?: boolean;
   loop?: boolean;
   muted?: boolean;
+  /** The video's metadata arrived: its own size is known. */
+  onLoadedMetadata?: (video: HTMLVideoElement) => void;
 }
 
 const DIRECT_VIDEO_FALLBACK_MS = 2500;
@@ -94,6 +96,7 @@ export function VideoFromBlob({
   autoPlay = false,
   loop = false,
   muted = false,
+  onLoadedMetadata,
 }: VideoFromBlobProps) {
   const [mode, setMode] = useState<"direct" | "blob">("direct");
   // A file too large for memory keeps the direct source for good.
@@ -171,6 +174,7 @@ export function VideoFromBlob({
         draggable={false}
         playsInline
         preload={preload}
+        onLoadedMetadata={(event) => onLoadedMetadata?.(event.currentTarget)}
         onLoadedData={() => {
           setDirectReady(true);
           setError(null);
@@ -201,6 +205,7 @@ export function VideoFromBlob({
       draggable={false}
       playsInline
       preload={preload}
+      onLoadedMetadata={(event) => onLoadedMetadata?.(event.currentTarget)}
     />
   );
 }

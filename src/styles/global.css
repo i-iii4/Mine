@@ -107,9 +107,12 @@ select,
   user-select: none;
 }
 
+/* Each picture or video of a media-only paragraph on its own row, centred in
+   the article's column (SPEC_FRONTEND.md, «Раскладка открытой карточки», Р5). */
 [data-article-media-stack] > [data-detail-media-action-frame] {
   display: flex;
   width: fit-content;
+  margin-inline: auto;
   margin-block-end: 16px;
 }
 
