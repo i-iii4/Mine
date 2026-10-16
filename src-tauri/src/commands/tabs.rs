@@ -4,7 +4,7 @@
 use tauri::{AppHandle, Manager, Webview};
 
 use super::state::CommandError;
-use crate::domain::windows::{ChromeRows, SidebarLayout, TabId, TabSpace, TabView};
+use crate::domain::windows::{ChromeRows, SidebarLayout, SidebarOverlay, TabId, TabSpace, TabView};
 use crate::tabs::{self, TabBarState, TabBootstrap};
 
 /// What the calling tab page needs to start.
@@ -130,6 +130,23 @@ pub fn move_tab(app: AppHandle, tab_id: TabId, index: usize) {
 #[tauri::command]
 pub fn set_window_sidebar(app: AppHandle, webview: Webview, sidebar: SidebarLayout) {
     tabs::set_sidebar_of_label(&app, webview.label(), sidebar);
+}
+
+/// Show or hide the sidebar of the calling tab bar's visible tab (В56): the
+/// backend chooses whether to store it beside the feed or hand it to the
+/// page over the feed (SPEC_NARROW_WINDOW.md, У4).
+#[tauri::command]
+pub fn toggle_window_sidebar(app: AppHandle, webview: Webview) {
+    if let Some(window) = tabs::window_of_label(&app, webview.label()) {
+        tabs::toggle_sidebar(&app, &window);
+    }
+}
+
+/// The calling tab's page says how its sidebar stands over the feed: a
+/// mirror in memory for the tab bar's button and the View menu (У4, У8).
+#[tauri::command]
+pub fn report_sidebar_overlay(app: AppHandle, webview: Webview, overlay: SidebarOverlay) {
+    tabs::report_sidebar_overlay(&app, webview.label(), overlay);
 }
 
 /// Start dragging the calling page's window by its chrome (В23).

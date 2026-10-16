@@ -333,6 +333,7 @@ import {
   type MineTextSelectionDragPayload,
 } from "@/lib/textSelectionDrag";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
+import { useSidebarOverlay } from "@/hooks/useSidebarOverlay";
 import { useTopRowWrap } from "@/hooks/useTopRowWrap";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
 import { useChannelPreviewsEvents } from "@/hooks/useChannelPreviewsEvents";
@@ -374,6 +375,7 @@ import { PreviewsPendingContext } from "@/lib/cardPreviewState";
 import { VaultSwitcher } from "@/components/VaultSwitcher";
 import { TopCollectionSwitcher } from "@/components/TopCollectionSwitcher";
 import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
+import { SidebarOverlay } from "@/components/SidebarOverlay";
 import { SidebarResizeHandle } from "@/components/SidebarResizeHandle";
 import { VaultConflictsNotice } from "@/components/VaultConflictsNotice";
 import { Grid } from "@/components/Grid";
@@ -1493,6 +1495,28 @@ export function AppWithVault({
   // cannot hold it (SPEC_NARROW_WINDOW.md, У10).
   const topRowWrap = useTopRowWrap();
 
+  // ── Sidebar over the feed ──────────────────────────────────────────────
+  // A window too narrow for the sidebar beside the feed lays it over the
+  // feed (SPEC_NARROW_WINDOW.md, У1, У4 по У8). The sidebar beside the feed
+  // answers the two callbacks: it is shown when the window widens with the
+  // sidebar open over the feed (У7), and takes an intent that reached the
+  // page after the window widened.
+  const besideSidebarRef = useRef<{ collapsed: boolean; toggle: () => void } | null>(null);
+  const sidebarOverlay = useSidebarOverlay({
+    tab: tabPage,
+    onWidenWhileOpen: () => {
+      const beside = besideSidebarRef.current;
+      if (beside?.collapsed) beside.toggle();
+    },
+    onBesideIntent: (intent) => {
+      const beside = besideSidebarRef.current;
+      if (!beside) return;
+      if (intent.kind === "toggle" || beside.collapsed === intent.open) beside.toggle();
+    },
+  });
+  const sidebarNarrow = sidebarOverlay.narrow;
+  const closeSidebarOverlay = sidebarOverlay.close;
+
   // ── Sidebar resize ──────────────────────────────────────────────────────
   const {
     width: sidebarWidth,
@@ -1504,7 +1528,14 @@ export function AppWithVault({
     endResize,
     resizeTo: resizeSidebarTo,
     toggleCollapsed,
-  } = useSidebarResize(windowSidebar);
+  } = useSidebarResize(windowSidebar, sidebarNarrow);
+  besideSidebarRef.current = { collapsed: sidebarCollapsed, toggle: toggleCollapsed };
+  // The sidebar is on screen: beside the feed unless collapsed, over the
+  // feed when open.
+  const sidebarShown = sidebarNarrow ? sidebarOverlay.open : !sidebarCollapsed;
+  // The bottom bar's button and ⌃⌘S outside the app shell act on the
+  // sidebar where it stands; in the app the backend routes them (У4).
+  const toggleSidebar = sidebarNarrow ? sidebarOverlay.toggle : toggleCollapsed;
 
   // The filter row over the sidebar's table narrows the space name so the
   // field keeps its minimum (useSidebarRowFit.ts).
@@ -1513,6 +1544,8 @@ export function AppWithVault({
     [
       vaultPath,
       sidebarCollapsed,
+      sidebarNarrow,
+      sidebarShown,
       renderedDetailBlock !== null,
       sidebarSearchHasValue,
       isSyncing,
@@ -2857,22 +2890,27 @@ export function AppWithVault({
     openDetailBlock(block);
   }, [openDetailBlock]);
 
+  // ⇧⌘F shows the sidebar first: beside the feed it opens a collapsed one,
+  // over the feed it brings the sidebar over (SPEC_NARROW_WINDOW.md, У11).
+  const openSidebarOverlay = sidebarOverlay.openOverlay;
   const focusSidebarSearch = useCallback(() => {
-    if (sidebarCollapsed) {
+    if (sidebarNarrow) {
+      openSidebarOverlay();
+    } else if (sidebarCollapsed) {
       toggleCollapsed();
     }
     setSidebarSearchFocusSequence((sequence) => sequence + 1);
-  }, [sidebarCollapsed, toggleCollapsed]);
+  }, [openSidebarOverlay, sidebarCollapsed, sidebarNarrow, toggleCollapsed]);
 
   useLayoutEffect(() => {
-    if (sidebarCollapsed) return;
+    if (!sidebarShown) return;
     if (sidebarSearchFocusSequence <= lastSidebarSearchFocusSequenceRef.current) return;
     const input = sidebarSearchInputRef.current;
     if (!input) return;
     lastSidebarSearchFocusSequenceRef.current = sidebarSearchFocusSequence;
     input.focus({ preventScroll: true });
     input.select();
-  }, [sidebarCollapsed, sidebarSearchFocusSequence]);
+  }, [sidebarShown, sidebarSearchFocusSequence]);
 
   const handleSidebarSearchChange = useCallback((query: string) => {
     setSidebarSearchQuery(query);
@@ -3011,7 +3049,7 @@ export function AppWithVault({
         // WKWebView handle the same keydown would toggle the sidebar twice.
         if (isTauri()) return;
         e.preventDefault();
-        toggleCollapsed();
+        toggleSidebar();
         return;
       }
       const searchSurface = commandPressed("find-collections", e)
@@ -3065,7 +3103,7 @@ export function AppWithVault({
     navigate,
     renderedDetailBlock,
     selectedBlock,
-    toggleCollapsed,
+    toggleSidebar,
     vaultPath,
   ]);
 
@@ -3348,7 +3386,7 @@ export function AppWithVault({
   // can see moves the feed with no way to tell where it landed in the order.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (sidebarCollapsed) return;
+      if (!sidebarShown) return;
       if (!(e.metaKey && e.altKey)) return;
       if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
       if (
@@ -3399,7 +3437,7 @@ export function AppWithVault({
     orderedTags,
     navigate,
     selectedBlock,
-    sidebarCollapsed,
+    sidebarShown,
     handleDetailClose,
   ]);
 
@@ -3568,12 +3606,12 @@ export function AppWithVault({
   /// do nothing at all.
   const beginCreateCollection = useCallback(() => {
     setPendingCreateChannelDrop(null);
-    if (sidebarCollapsed) {
+    if (!sidebarShown) {
       setIsNamingCollection(true);
       return;
     }
     setIsCreatingChannel(true);
-  }, [sidebarCollapsed]);
+  }, [sidebarShown]);
 
   const sidebarSearchNavigationRows = useMemo(() => (
     buildSidebarSearchNavigationRows(orderedTags, sidebarSearchQuery)
@@ -3619,7 +3657,26 @@ export function AppWithVault({
     const route = sidebarRowKeyToRoute(rowKey);
     if (!route) return;
     navigate(route);
-  }, [navigate]);
+    // Enter in the filter goes to the collection like a click on its row:
+    // the sidebar over the feed closes after the move (У6, У11).
+    closeSidebarOverlay();
+  }, [closeSidebarOverlay, navigate]);
+
+  // A row or a card opened from the sidebar over the feed closes it after
+  // the move (SPEC_NARROW_WINDOW.md, У6); beside the feed closing is a no-op.
+  // ⌘-click, the row's menu, renaming and a new collection never reach here.
+  const handleSidebarNavClick = useCallback(() => {
+    handleDetailClose();
+    closeSidebarOverlay();
+  }, [closeSidebarOverlay, handleDetailClose]);
+  const handleSidebarSameClick = useCallback(() => {
+    handleScrollToTop();
+    closeSidebarOverlay();
+  }, [closeSidebarOverlay, handleScrollToTop]);
+  const handleSidebarOpenBlock = useCallback((block: IndexedBlock) => {
+    openDetailBlock(block);
+    closeSidebarOverlay();
+  }, [closeSidebarOverlay, openDetailBlock]);
 
   const handleSidebarSearchKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape") {
@@ -4445,6 +4502,162 @@ export function AppWithVault({
     || showFirstCardMarker
     || showIndexingNotice;
 
+  // The sidebar's filter row: the space switcher, the collections' filter
+  // and New Collection. It stands in the top row beside the feed and at the
+  // top of the sidebar's panel over the feed (SPEC_NARROW_WINDOW.md, У12);
+  // one of the two is mounted at a time. `collapsedHere`: the sidebar beside
+  // the feed is collapsed and the row shows the space switcher alone.
+  const renderSidebarFilterRow = (collapsedHere: boolean) => (
+    <div
+      ref={sidebarRowRef}
+      className={cn(
+        "flex h-full min-w-0",
+        collapsedHere ? "flex-none" : "flex-1",
+      )}
+      data-top-chrome-space-search-group=""
+      data-row-fit={collapsedHere ? undefined : sidebarRowFit}
+    >
+      <VaultSwitcher
+        currentPath={vaultPath}
+        onVaultSelected={(path) => {
+          navigate("/", { replace: true });
+          onVaultSelected(path);
+        }}
+        onOpenInNewTab={tabPage ? openSpaceInNewTab : undefined}
+        surface="topChrome"
+        topChromeCollapsed={collapsedHere}
+      />
+      {!collapsedHere && (
+        <>
+          <div
+            aria-hidden="true"
+            className="h-full w-px shrink-0 bg-border"
+            data-top-chrome-search-separator=""
+          />
+          <div
+            {...sidebarSearchChromeDragGesture}
+            className={[
+              // Empty, the field is chrome like the rest of the row; a
+              // query gives it the table's surface (05.10.2026).
+              "flex h-full min-w-0 flex-1 items-center",
+              sidebarSearchHasValue ? "bg-sidebar" : "bg-chrome",
+            ].filter(Boolean).join(" ")}
+            data-sidebar-top-search-surface=""
+          >
+            <Input
+              ref={sidebarSearchInputRef}
+              {...SEARCH_INPUT_SUPPRESSION_PROPS}
+              aria-label="Find or create collection"
+              aria-activedescendant={
+                sidebarSearchKeyboardNavigationFocus
+                  ? sidebarRowDomId(sidebarSearchKeyboardNavigationFocus.rowKey)
+                  : undefined
+              }
+              placeholder="Find or create..."
+              // Overflowing text at the field's right edge dissolves, it
+              // is not cut: a narrow panel used to slice the placeholder
+              // through the middle of a letter. The field alone takes the
+              // fade, so the clear button beside it stays whole. Same
+              // curve the sidebar rows use (DESIGN_SYSTEM.md, «Растворение
+              // кромок»).
+              style={SIDEBAR_SEARCH_MASK_STYLE}
+              variant="ghost"
+              value={sidebarSearchQuery}
+              onChange={(event) => handleSidebarSearchChange(event.target.value)}
+              onKeyDown={handleSidebarSearchKeyDown}
+              className="h-full min-w-0 flex-1 rounded-0 bg-transparent px-3 py-0 font-mono text-sm text-muted-foreground placeholder:text-muted-foreground"
+              data-sidebar-top-search=""
+            />
+            {sidebarSearchHasValue && (
+              // A chrome icon button like its neighbours: the plate on
+              // hover (05.10.2026, instead of the glyph-only exception).
+              <Button
+                type="button"
+                variant="chrome"
+                size="chrome-icon"
+                aria-label="Clear collection search"
+                // The filter's actions follow it.
+                className="mr-1"
+                onClick={handleClearSidebarSearch}
+                data-sidebar-top-search-clear=""
+              >
+                <X aria-hidden="true" />
+              </Button>
+            )}
+            {/* The sidebar column has no third row (03.10.2026): what lived
+                over the table lives here, at the filter's right. Icon
+                buttons 4px apart, 8px from the column's line. */}
+            <div className="mr-2 flex shrink-0 items-center gap-1" data-sidebar-top-search-actions="">
+              <Button
+                type="button"
+                variant="chrome"
+                size="chrome-icon"
+                plate="raised"
+                aria-label="New Collection"
+                shortcut={commandById("new-collection").combo}
+                onClick={beginCreateCollection}
+                data-sidebar-new-collection=""
+              >
+                <Plus />
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  // The sidebar's list: beside the feed, or in the panel over it; one of
+  // the two is mounted at a time (SPEC_NARROW_WINDOW.md, У4).
+  const sidebarList = (
+    <Sidebar
+      onOpenElsewhere={tabPage ? handleOpenRouteElsewhere : undefined}
+      width={sidebarWidth}
+      previewsPending={previewsPending}
+      collapsed={sidebarCollapsed}
+      widthAnimating={sidebarWidthAnimating}
+      vaultPath={vaultPath}
+      thumbsRootPath={thumbsRootPath ?? undefined}
+      tags={orderedTags}
+      currentTag={currentTag}
+      orderedTags={orderedTags}
+      channelPreviews={channelPreviews}
+      totalBlocks={totalBlocks}
+      isDropDragging={
+        blockDragActive
+        || activeDragMediaAsset !== null
+        || activeDragTextSelection !== null
+      }
+      isTagDragging={activeDragTag !== null}
+      isCreatingChannel={isCreatingChannel}
+      onSetCreatingChannel={handleSetCreatingChannel}
+      onDeleteTag={handleDeleteTagFromAll}
+      onRenameTag={handleRenameTag}
+      onCreateChannel={handleSidebarCreateCollection}
+      onCheckCollectionName={checkCollectionName}
+      onOpenBlock={handleSidebarOpenBlock}
+      onOpenCardMenu={openCardActionsMenu}
+      hoverPreviewFrozen={cardActionsMenuTarget !== null}
+      onToggleTag={handleToggleTag}
+      onCreateAndAssign={handleCreateTagFromMenu}
+      onRequestRename={setRenamingBlock}
+      onRequestDelete={requestDeleteBlock}
+      onNavClick={handleSidebarNavClick}
+      onScrollToTop={handleSidebarSameClick}
+      keyboardNavigationFocus={
+        sidebarSearchKeyboardNavigationFocus ?? sidebarKeyboardNavigationFocus
+      }
+      keyboardNavigationFocusPersistent={sidebarSearchKeyboardNavigationFocus !== null}
+      searchQuery={sidebarSearchQuery}
+      linkedBlockSlug={renderedLinkedBlockSlug}
+      linkedTags={renderedLinkedTags}
+      onToggleLinkedTag={handleToggleTag}
+      onBatchSetTag={handleBatchSetTag}
+      detailChromeClosing={detailChromeClosing}
+      scrollEdgeFade={scrollEdgeFade}
+    />
+  );
+
   return (
     // Cards tell a preview still being built from a lost file (SPEC_CARD_MEDIA_GEOMETRY.md).
     <PreviewsPendingContext.Provider value={previewsPending}>
@@ -4467,129 +4680,43 @@ export function AppWithVault({
       data-top-row={topRowWrap.fit}
       data-sidebar-width-animating={sidebarWidthAnimating ? "" : undefined}
     >
+      {/* The top row and the body: the sidebar over the feed lies over both
+          and stops above the bottom bar (SPEC_NARROW_WINDOW.md, У4). */}
+      <div className="relative flex min-h-0 flex-1 flex-col" data-sidebar-overlay-host="">
       {/* Top toolbar */}
       <ChromeRow as="header" separator="bottom"
         ref={setTopRowHost}
         data-tauri-drag-region
         className={topChromeSurfaceClass}
+        // Under the scrim while the sidebar lies over the feed (У6).
+        inert={sidebarOverlay.open}
       >
-        <div
-          data-tauri-drag-region
-          data-app-top-sidebar-segment=""
-          className={cn(
-            // Its line parts space and collection with the sidebar open or
-            // collapsed (11.10.2026). Collapsed, the space switcher alone sets
-            // the width and keeps its own cap: a cap here would take the
-            // line's pixel out of the switcher's padding.
-            "flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
-            sidebarCollapsed && "w-auto",
-            // The width animates only for a collapse or an opening: a window's
-            // resize squeezes it at once (SPEC_NARROW_WINDOW.md, У1).
-            sidebarWidthAnimating && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
-          )}
-          style={sidebarCollapsed ? undefined : { width: "var(--sidebar-width)" }}
-        >
-          {/* The row starts with the space switcher: the traffic lights and
-              the sidebar button live in the window's tab bar above this page
-              (SPEC_TABS.md, В43, РП6). */}
+        {/* The sidebar's filter row stands here beside the feed; over the
+            feed it lives in the sidebar's panel alone, with the space
+            switcher (SPEC_NARROW_WINDOW.md, У12). */}
+        {!sidebarNarrow && (
           <div
-            ref={sidebarRowRef}
+            data-tauri-drag-region
+            data-app-top-sidebar-segment=""
             className={cn(
-              "flex h-full min-w-0",
-              sidebarCollapsed ? "flex-none" : "flex-1",
+              // Its line parts space and collection with the sidebar open or
+              // collapsed (11.10.2026). Collapsed, the space switcher alone sets
+              // the width and keeps its own cap: a cap here would take the
+              // line's pixel out of the switcher's padding.
+              "flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
+              sidebarCollapsed && "w-auto",
+              // The width animates only for a collapse or an opening: a window's
+              // resize squeezes it at once (SPEC_NARROW_WINDOW.md, У1).
+              sidebarWidthAnimating && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
             )}
-            data-top-chrome-space-search-group=""
-            data-row-fit={sidebarCollapsed ? undefined : sidebarRowFit}
+            style={sidebarCollapsed ? undefined : { width: "var(--sidebar-width)" }}
           >
-            <VaultSwitcher
-              currentPath={vaultPath}
-              onVaultSelected={(path) => {
-                navigate("/", { replace: true });
-                onVaultSelected(path);
-              }}
-              onOpenInNewTab={tabPage ? openSpaceInNewTab : undefined}
-              surface="topChrome"
-              topChromeCollapsed={sidebarCollapsed}
-            />
-            {!sidebarCollapsed && (
-              <>
-                <div
-                  aria-hidden="true"
-                  className="h-full w-px shrink-0 bg-border"
-                  data-top-chrome-search-separator=""
-                />
-                <div
-                  {...sidebarSearchChromeDragGesture}
-                  className={[
-                    // Empty, the field is chrome like the rest of the row; a
-                    // query gives it the table's surface (05.10.2026).
-                    "flex h-full min-w-0 flex-1 items-center",
-                    sidebarSearchHasValue ? "bg-sidebar" : "bg-chrome",
-                  ].filter(Boolean).join(" ")}
-                  data-sidebar-top-search-surface=""
-                >
-                  <Input
-                    ref={sidebarSearchInputRef}
-                    {...SEARCH_INPUT_SUPPRESSION_PROPS}
-                    aria-label="Find or create collection"
-                    aria-activedescendant={
-                      sidebarSearchKeyboardNavigationFocus
-                        ? sidebarRowDomId(sidebarSearchKeyboardNavigationFocus.rowKey)
-                        : undefined
-                    }
-                    placeholder="Find or create..."
-                    // Overflowing text at the field's right edge dissolves, it
-                    // is not cut: a narrow panel used to slice the placeholder
-                    // through the middle of a letter. The field alone takes the
-                    // fade, so the clear button beside it stays whole. Same
-                    // curve the sidebar rows use (DESIGN_SYSTEM.md, «Растворение
-                    // кромок»).
-                    style={SIDEBAR_SEARCH_MASK_STYLE}
-                    variant="ghost"
-                    value={sidebarSearchQuery}
-                    onChange={(event) => handleSidebarSearchChange(event.target.value)}
-                    onKeyDown={handleSidebarSearchKeyDown}
-                    className="h-full min-w-0 flex-1 rounded-0 bg-transparent px-3 py-0 font-mono text-sm text-muted-foreground placeholder:text-muted-foreground"
-                    data-sidebar-top-search=""
-                  />
-                  {sidebarSearchHasValue && (
-                    // A chrome icon button like its neighbours: the plate on
-                    // hover (05.10.2026, instead of the glyph-only exception).
-                    <Button
-                      type="button"
-                      variant="chrome"
-                      size="chrome-icon"
-                      aria-label="Clear collection search"
-                      // The filter's actions follow it.
-                      className="mr-1"
-                      onClick={handleClearSidebarSearch}
-                      data-sidebar-top-search-clear=""
-                    >
-                      <X aria-hidden="true" />
-                    </Button>
-                  )}
-                  {/* The sidebar column has no third row (03.10.2026): what lived
-                      over the table lives here, at the filter's right. Icon
-                      buttons 4px apart, 8px from the column's line. */}
-                  <div className="mr-2 flex shrink-0 items-center gap-1" data-sidebar-top-search-actions="">
-                    <Button
-                      type="button"
-                      variant="chrome"
-                      size="chrome-icon"
-                      plate="raised"
-                      aria-label="New Collection"
-                      shortcut={commandById("new-collection").combo}
-                      onClick={beginCreateCollection}
-                      data-sidebar-new-collection=""
-                    >
-                      <Plus />
-                    </Button>
-                  </div>
-                </div>
-              </>
-            )}
+            {/* The row starts with the space switcher: the traffic lights and
+                the sidebar button live in the window's tab bar above this page
+                (SPEC_TABS.md, В43, РП6). */}
+            {renderSidebarFilterRow(sidebarCollapsed)}
           </div>
-        </div>
+        )}
         <div ref={topRowWrap.rowRef} data-tauri-drag-region className="flex h-full min-w-0 flex-1 items-center">
           <TopCollectionSwitcher
             currentTag={currentTag}
@@ -4633,55 +4760,11 @@ export function AppWithVault({
       {/* Body: sidebar + main. Positioned for the resize handle's catch, which
           takes the body's height and so stops above the bottom bar. */}
       <div className="relative flex min-h-0 flex-1">
-      <Sidebar
-        onOpenElsewhere={tabPage ? handleOpenRouteElsewhere : undefined}
-        width={sidebarWidth}
-        previewsPending={previewsPending}
-        collapsed={sidebarCollapsed}
-        widthAnimating={sidebarWidthAnimating}
-        vaultPath={vaultPath}
-        thumbsRootPath={thumbsRootPath ?? undefined}
-        tags={orderedTags}
-        currentTag={currentTag}
-        orderedTags={orderedTags}
-        channelPreviews={channelPreviews}
-        totalBlocks={totalBlocks}
-        isDropDragging={
-          blockDragActive
-          || activeDragMediaAsset !== null
-          || activeDragTextSelection !== null
-        }
-        isTagDragging={activeDragTag !== null}
-        isCreatingChannel={isCreatingChannel}
-        onSetCreatingChannel={handleSetCreatingChannel}
-        onDeleteTag={handleDeleteTagFromAll}
-        onRenameTag={handleRenameTag}
-        onCreateChannel={handleSidebarCreateCollection}
-        onCheckCollectionName={checkCollectionName}
-        onOpenBlock={openDetailBlock}
-        onOpenCardMenu={openCardActionsMenu}
-        hoverPreviewFrozen={cardActionsMenuTarget !== null}
-        onToggleTag={handleToggleTag}
-        onCreateAndAssign={handleCreateTagFromMenu}
-        onRequestRename={setRenamingBlock}
-        onRequestDelete={requestDeleteBlock}
-        onNavClick={handleDetailClose}
-        onScrollToTop={handleScrollToTop}
-        keyboardNavigationFocus={
-          sidebarSearchKeyboardNavigationFocus ?? sidebarKeyboardNavigationFocus
-        }
-        keyboardNavigationFocusPersistent={sidebarSearchKeyboardNavigationFocus !== null}
-        searchQuery={sidebarSearchQuery}
-        linkedBlockSlug={renderedLinkedBlockSlug}
-        linkedTags={renderedLinkedTags}
-        onToggleLinkedTag={handleToggleTag}
-        onBatchSetTag={handleBatchSetTag}
-        detailChromeClosing={detailChromeClosing}
-        scrollEdgeFade={scrollEdgeFade}
-      />
+      {!sidebarNarrow && sidebarList}
 
-      {/* A collapsed panel has no line to grab: the sidebar button opens it. */}
-      {!sidebarCollapsed && (
+      {/* A collapsed panel has no line to grab: the sidebar button opens it.
+          Over the feed the panel has no edge to drag either (У4). */}
+      {!sidebarNarrow && !sidebarCollapsed && (
         <SidebarResizeHandle
           isResizing={sidebarResizing}
           topRowHost={topRowHost}
@@ -4705,6 +4788,8 @@ export function AppWithVault({
         style={{ minWidth: APP_MAIN_MIN_WIDTH_PX }}
         // Below the top row's second row when there is one (У10).
         data-below-top-row=""
+        // Under the scrim while the sidebar lies over the feed (У6).
+        inert={sidebarOverlay.open}
       >
         {blockingError !== null && (
           <div className="flex h-full items-center justify-center p-8" data-feed-error-block="">
@@ -4989,6 +5074,24 @@ export function AppWithVault({
       ) : null}
     </div>{/* end body */}
 
+      {sidebarNarrow && (
+        <SidebarOverlay
+          open={sidebarOverlay.open}
+          onClose={closeSidebarOverlay}
+          header={(
+            <ChromeRow separator="bottom" className={topChromeSurfaceClass}>
+              {/* Over the feed the space switcher lives here alone (У12). */}
+              <div className="flex h-full min-w-0 flex-1 items-center overflow-hidden border-r border-sidebar-border">
+                {renderSidebarFilterRow(false)}
+              </div>
+            </ChromeRow>
+          )}
+        >
+          {sidebarList}
+        </SidebarOverlay>
+      )}
+      </div>{/* end of the top row and the body */}
+
       {!bottomActionBarHidden && (
         <ChromeRow separator="top"
           // The left end stands under the sidebar column: the first button's
@@ -5009,13 +5112,13 @@ export function AppWithVault({
             className="inline-flex shrink-0 items-center"
             style={hiddenBarEntries.has("toggle-sidebar") ? { display: "none" } : undefined}
           >
-            <ActionButton chrome hotkey={commandById("toggle-sidebar").combo} onClick={toggleCollapsed}>
-              {sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
+            <ActionButton chrome hotkey={commandById("toggle-sidebar").combo} onClick={toggleSidebar}>
+              {sidebarShown ? "Hide Sidebar" : "Show Sidebar"}
             </ActionButton>
           </span>
           {/* The new collection is named in the sidebar list: with the sidebar
               hidden there is nowhere to name it, so the command leaves the bar. */}
-          {!sidebarCollapsed && (
+          {sidebarShown && (
             <span
               data-bar-entry="new-collection"
               className="inline-flex shrink-0 items-center"
@@ -5031,7 +5134,7 @@ export function AppWithVault({
               already seen never shifts. During a selection the bar narrows to
               the selection's own commands: navigation and Focus leave, esc
               arrives. */}
-          {orderedTags.length > 0 && !sidebarCollapsed && !hasSelection && (
+          {orderedTags.length > 0 && sidebarShown && !hasSelection && (
             <span
               data-bar-entry="switch-collection"
               className="inline-flex shrink-0 items-center"

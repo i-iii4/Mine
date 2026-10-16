@@ -16,10 +16,10 @@ export const SIDEBAR_MAX_WIDTH_PX = 600;
 /** The strip the sidebar leaves at the right when it lies over the feed
  *  (`STRIP`, domain/windows.rs `SIDEBAR_OVERLAY_STRIP_PX`). */
 export const SIDEBAR_OVERLAY_STRIP_PX = 40;
-/** Narrowest the page gets: the narrowest sidebar beside the narrowest feed,
- *  the window's minimum until the sidebar can lie over the feed (PLAN.md,
- *  47.2b; domain/windows.rs `WINDOW_MIN_WIDTH`). */
-export const APP_MIN_WIDTH_PX = SIDEBAR_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX;
+/** Narrowest the page gets: the narrowest sidebar over the feed and the strip
+ *  it leaves at the right (SPEC_NARROW_WINDOW.md, У3, У11; domain/windows.rs
+ *  `WINDOW_MIN_WIDTH`). */
+export const APP_MIN_WIDTH_PX = SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX;
 
 // ── Sidebar column model ─────────────────────────────────────────────────────
 // One keystone width unifies three things at the minimum: 2.5 preview icons

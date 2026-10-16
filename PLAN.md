@@ -2748,8 +2748,8 @@ Text остаётся без окна подтверждения (решение
 | 47.2a | Постоянные и чистая функция ширины | DONE 15.10.2026 | `sidebarPlacement.ts` по У1 и У2, постоянные в `domain/windows.rs` со сверкой TS и CSS (`appLayout.test.ts`) |
 | 47.2b | Меню сжимается рядом с лентой | DONE 15.10.2026 | У1, У2: сжатие CSS-выражением, ширина возврата только от перетаскивания, окно не уже 618 px до шага 47.3c; ширина анимируется только при сворачивании |
 | 47.3a | Жест над полосой вкладок | DONE 15.10.2026 | У9: решение в начале жеста в `swipe_gesture.rs` (`begins_over_tab_bar`, высота полосы из `tabs::bar_height_of_native_window`); над рядом прокручивает WebKit, с кнопок и пустого места прокрутку передаёт ряду `wheelScrollLeft` в `tabLayout.ts` |
-| 47.3b | Маршрут переключателей | TODO | бэкенд выбирает путь, открытость поверх ленты у страницы, зеркало для кнопки и View, `toggle_window_sidebar`, `report_sidebar_overlay`, `sidebar-overlay-command` |
-| 47.3c | Меню поверх ленты | TODO | У4 по У7: `SidebarOverlay.tsx`, подложка с полосой 40 px и размытием, закрытие, Escape, фокус, движение; окно до 354 px; `test:narrow-window` |
+| 47.3b | Маршрут переключателей | DONE 15.10.2026 | бэкенд выбирает путь (`route_sidebar_intent` в `domain/windows.rs`), открытость поверх ленты у страницы (`useSidebarOverlay.ts`), зеркало в памяти для кнопки и View, `toggle_window_sidebar`, `report_sidebar_overlay`, `sidebar-overlay-command`; полоса получает `sidebar_shown` в `tabbar-state` и не слушает `window-sidebar-changed` |
+| 47.3c | Меню поверх ленты | DONE 15.10.2026 | У4 по У7, У11, У12: `SidebarOverlay.tsx`, подложка с полосой 40 px и размытием (значения пробные до 47.3d), панель той же высоты, что рядом с лентой, переключатель пространства только в ней, закрытие, Escape, `inert`, фокус, движение 200 мс; окно до 354 px; `test:narrow-window` |
 | 47.3d | Живой подбор и приёмка | TODO | затемнение, размытие и тень вместе с пользователем, приёмка по SPEC_NARROW_WINDOW |
 
 ### Backlog

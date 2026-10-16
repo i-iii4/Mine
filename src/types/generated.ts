@@ -705,9 +705,45 @@ export type SelectionStamp = { generation: number; sequence: number }
 export type ShortcutBinding = { key: string; meta?: boolean; shift?: boolean; alt?: boolean; ctrl?: boolean }
 
 /**
+ * What asks to show or hide the sidebar of a window's visible tab: sent on
+ * to the page as `sidebar-overlay-command` when the sidebar lies over the
+ * feed (SPEC_NARROW_WINDOW.md, У4, У6).
+ */
+export type SidebarIntent =
+/**
+ * The tab bar's button, View → Hide or Show Sidebar, ⌃⌘S.
+ */
+{ kind: "toggle" } |
+/**
+ * A two-finger swipe: right opens, left closes (У11).
+ */
+{ kind: "swipe"; open: boolean }
+
+/**
  * The sidebar of one tab (РП5, В56: changed 03.10.2026 from one per window).
  */
 export type SidebarLayout = { width_px: number; collapsed: boolean }
+
+/**
+ * The sidebar of a tab's page as it stands over the feed
+ * (SPEC_NARROW_WINDOW.md, У1, У4). The page owns it and reports it
+ * (`report_sidebar_overlay`); the backend keeps it in memory only, for the
+ * tab bar's button and the View menu, and never saves it (У8).
+ */
+export type SidebarOverlay =
+/**
+ * The window holds the sidebar beside the feed: its `collapsed` decides.
+ */
+"beside" |
+/**
+ * The window is too narrow for it: the sidebar lies over the feed when
+ * open, and is closed now.
+ */
+"closed" |
+/**
+ * The sidebar lies over the feed.
+ */
+"open"
 
 /**
  * One space in the list, with whether it can be opened right now.
@@ -756,7 +792,12 @@ element_count: number | null }
 /**
  * What one window's tab bar shows (`tabbar-state`).
  */
-export type TabBarState = { window_id: WindowId; tabs: TabBarTab[]; active_tab: TabId; sidebar: SidebarLayout; fullscreen: boolean;
+export type TabBarState = { window_id: WindowId; tabs: TabBarTab[]; active_tab: TabId;
+/**
+ * The visible tab's sidebar is on screen, beside the feed or over it:
+ * what the bar's button shows (В56; SPEC_NARROW_WINDOW.md, У4).
+ */
+sidebar_shown: boolean; fullscreen: boolean;
 /**
  * The heights of the chrome rows' content (В83).
  */

@@ -9,6 +9,7 @@ import {
 import type {
   ChromeRows,
   SidebarLayout,
+  SidebarOverlay,
   TabBarState,
   TabBootstrap,
   TabId,
@@ -832,6 +833,16 @@ export const beginTabDrag = (tabId: TabId, grabX: number, grabY: number) =>
 /** Store and spread the sidebar of this page's window (В56). */
 export const setWindowSidebar = (sidebar: SidebarLayout) =>
   invoke<void>("set_window_sidebar", { sidebar });
+
+/** Show or hide the sidebar of this tab bar's visible tab: the backend
+ *  stores it beside the feed or hands it to the page over the feed (В56;
+ *  SPEC_NARROW_WINDOW.md, У4). */
+export const toggleWindowSidebar = () => invoke<void>("toggle_window_sidebar");
+
+/** Tell the backend how this tab's sidebar stands over the feed, for the tab
+ *  bar's button and the View menu (SPEC_NARROW_WINDOW.md, У4, У8). */
+export const reportSidebarOverlay = (overlay: SidebarOverlay) =>
+  invoke<void>("report_sidebar_overlay", { overlay });
 
 /** Start dragging this page's window by its chrome (В23). */
 export const startWindowDrag = () => invoke<void>("start_window_drag");

@@ -202,7 +202,7 @@ function tabBarState(spaceName: string | null): TabBarState {
       history: { back: false, forward: false },
     }],
     active_tab: "0".repeat(32),
-    sidebar: { width_px: SIDEBAR_WIDTH, collapsed: false },
+    sidebar_shown: true,
     fullscreen: false,
     chrome_rows: { tab_bar: TALL_CHROME_ROW_HEIGHT, page: TALL_CHROME_ROW_HEIGHT },
   };

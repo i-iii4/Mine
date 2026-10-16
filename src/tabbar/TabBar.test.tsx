@@ -25,7 +25,7 @@ const commands = vi.hoisted(() => ({
   newTab: vi.fn(async () => undefined),
   openSettingsWindow: vi.fn(async () => undefined),
   reportDropSlot: vi.fn(async () => undefined),
-  setWindowSidebar: vi.fn(async () => undefined),
+  toggleWindowSidebar: vi.fn(async () => undefined),
   startWindowDrag: vi.fn(async () => undefined),
   stepTabHistory: vi.fn(async () => undefined),
   openTabSearch: vi.fn(async () => undefined),
@@ -98,7 +98,7 @@ function barState(tabs: TabBarTab[], overrides: Partial<TabBarState> = {}): TabB
     window_id: "w1",
     tabs,
     active_tab: tabs[0]?.id ?? "",
-    sidebar: { width_px: 240, collapsed: false },
+    sidebar_shown: true,
     fullscreen: false,
     chrome_rows: { tab_bar: 30, page: 30 },
     ...overrides,
@@ -207,15 +207,19 @@ describe("tab bar row (В43)", () => {
     expect(toggle.closest("div.pl-\\[var\\(--chrome-edge-pad\\)\\]")).not.toBeNull();
   });
 
-  it("toggles the window's sidebar through the backend (В56)", () => {
+  it("toggles the window's sidebar through the backend, which decides where it goes (В56, 47.3b)", () => {
     const { update } = renderBar(barState([tab("a")]));
 
     fireEvent.click(screen.getByRole("button", { name: "Hide Sidebar" }));
-    expect(commands.setWindowSidebar).toHaveBeenCalledWith({ width_px: 240, collapsed: true });
+    expect(commands.toggleWindowSidebar).toHaveBeenCalledTimes(1);
 
-    update(barState([tab("a")], { sidebar: { width_px: 240, collapsed: true } }));
-    fireEvent.click(screen.getByRole("button", { name: "Show Sidebar" }));
-    expect(commands.setWindowSidebar).toHaveBeenLastCalledWith({ width_px: 240, collapsed: false });
+    // Hidden beside the feed or closed over it: the bar knows only that it
+    // is not on screen (SPEC_NARROW_WINDOW.md, У4).
+    update(barState([tab("a")], { sidebar_shown: false }));
+    const show = screen.getByRole("button", { name: "Show Sidebar" });
+    expect(show).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(show);
+    expect(commands.toggleWindowSidebar).toHaveBeenCalledTimes(2);
   });
 
   it("ends with the logo, whose native menu opens the settings at a section", async () => {

@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { listen } from "@tauri-apps/api/event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DropHover, SidebarLayout, TabBarState, TabBarTab } from "@/types";
+import type { DropHover, TabBarState, TabBarTab } from "@/types";
 import { TabBarApp } from "./TabBarApp";
 
 const webview = vi.hoisted(() => {
@@ -24,7 +24,7 @@ vi.mock("@tauri-apps/api/webview", () => ({
 const commands = vi.hoisted(() => ({
   getTabbarBootstrap: vi.fn<() => Promise<TabBarState | null>>(),
   reportDropSlot: vi.fn(async () => undefined),
-  setWindowSidebar: vi.fn(async () => undefined),
+  toggleWindowSidebar: vi.fn(async () => undefined),
   startWindowDrag: vi.fn(async () => undefined),
   activateAdjacentTab: vi.fn(async () => undefined),
   activateTab: vi.fn(async () => undefined),
@@ -54,7 +54,7 @@ function barState(overrides: Partial<TabBarState> = {}): TabBarState {
     window_id: "w1",
     tabs: [tab("a", "Mine", null, true)],
     active_tab: "a",
-    sidebar: { width_px: 240, collapsed: false },
+    sidebar_shown: true,
     fullscreen: false,
     chrome_rows: { tab_bar: 30, page: 30 },
     ...overrides,
@@ -99,8 +99,10 @@ describe("tab bar page", () => {
 
     const events = webview.listen.mock.calls.map(([event]) => event);
     expect(events).toEqual(
-      expect.arrayContaining(["tabbar-state", "window-sidebar-changed", "tabbar-drop-hover", "settings-changed"]),
+      expect.arrayContaining(["tabbar-state", "tabbar-drop-hover", "settings-changed"]),
     );
+    // Whether the sidebar is shown comes in the bar's state (47.3b).
+    expect(events).not.toContain("window-sidebar-changed");
     expect(listen).not.toHaveBeenCalled();
   });
 
@@ -131,24 +133,15 @@ describe("tab bar page", () => {
     expect(screen.queryByRole("tab", { name: /Mine/ })).toBeNull();
   });
 
-  it("follows the window's sidebar (В56)", async () => {
+  it("follows whether the visible tab's sidebar is shown, beside the feed or over it (В56, 47.3b)", async () => {
     render(<TabBarApp />);
     await screen.findByRole("button", { name: "Hide Sidebar" });
 
-    const collapsed: SidebarLayout = { width_px: 240, collapsed: true };
-    emitToPage("window-sidebar-changed", collapsed);
-
+    emitToPage("tabbar-state", barState({ sidebar_shown: false }));
     expect(screen.getByRole("button", { name: "Show Sidebar" })).toHaveAttribute("aria-pressed", "false");
-  });
 
-  it("applies a sidebar change that came before the start answer", async () => {
-    const answer = deferredBootstrap();
-    render(<TabBarApp />);
-
-    emitToPage("window-sidebar-changed", { width_px: 300, collapsed: true });
-    await answer(barState());
-
-    expect(screen.getByRole("button", { name: "Show Sidebar" })).toBeInTheDocument();
+    emitToPage("tabbar-state", barState({ sidebar_shown: true }));
+    expect(screen.getByRole("button", { name: "Hide Sidebar" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("reports where a tab from another window would land (В63)", async () => {

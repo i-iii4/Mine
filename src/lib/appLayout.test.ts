@@ -28,12 +28,12 @@ describe("window widths", () => {
     expect(SIDEBAR_OVERLAY_STRIP_PX).toBe(rustConstant(rust, "SIDEBAR_OVERLAY_STRIP_PX"));
   });
 
-  it("make the window's minimum the narrowest sidebar beside the narrowest feed (47.2b)", () => {
+  it("make the window's minimum the narrowest sidebar and the strip it leaves over the feed (47.3c)", () => {
     expect(rust).toContain(
-      "pub const WINDOW_MIN_WIDTH: f64 = (SIDEBAR_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX) as f64;",
+      "pub const WINDOW_MIN_WIDTH: f64 = (SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX) as f64;",
     );
-    expect(APP_MIN_WIDTH_PX).toBe(SIDEBAR_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX);
-    expect(APP_MIN_WIDTH_PX).toBe(618);
+    expect(APP_MIN_WIDTH_PX).toBe(SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX);
+    expect(APP_MIN_WIDTH_PX).toBe(354);
   });
 
   it("take the narrowest sidebar from its three equal zones, in CSS too", () => {

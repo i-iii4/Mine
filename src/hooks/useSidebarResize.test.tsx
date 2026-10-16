@@ -215,6 +215,21 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
     }
   });
 
+  it("takes none of the row while the sidebar lies over the feed, and keeps its target (47.3c)", () => {
+    const cssWidth = () => document.documentElement.style.getPropertyValue("--sidebar-width");
+    const { result, rerender } = renderHook(
+      ({ overlaid }: { overlaid: boolean }) => useSidebarResize({ width_px: 480, collapsed: false }, overlaid),
+      { initialProps: { overlaid: true } },
+    );
+    expect(cssWidth()).toBe("0px");
+    expect(result.current.collapsed).toBe(false);
+
+    // Wide again: back beside the feed at the target, nothing stored.
+    rerender({ overlaid: false });
+    expect(cssWidth()).toBe("min(480px, 100vw - 304px)");
+    expect(commands.setWindowSidebar).not.toHaveBeenCalled();
+  });
+
   it("keeps the layout in memory on a page that is not a tab, and nothing in localStorage", () => {
     const { result } = renderHook(() => useSidebarResize(null));
     // The first-run width is the window's; without a window, the minimum.

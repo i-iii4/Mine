@@ -17,6 +17,7 @@ import {
   APP_MAIN_MIN_WIDTH_PX,
   SIDEBAR_MAX_WIDTH_PX,
   SIDEBAR_MIN_WIDTH_PX,
+  SIDEBAR_OVERLAY_STRIP_PX,
 } from "./appLayout";
 
 /** The sidebar beside the feed, or over it. */
@@ -41,6 +42,13 @@ export function clampSidebarTarget(width: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH_PX, Math.max(SIDEBAR_MIN_WIDTH_PX, width));
 }
 
+/** Whether a window `windowWidth` wide is too narrow for the narrowest
+ *  sidebar beside the narrowest feed: the sidebar lies over the feed then
+ *  (У1). It does not depend on the target. */
+export function sidebarOverlaid(windowWidth: number): boolean {
+  return windowWidth < SIDEBAR_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX;
+}
+
 /** Where the sidebar stands in a window `windowWidth` wide, for a sidebar
  *  last dragged to `target` (У1). */
 export function sidebarPlacement({
@@ -51,7 +59,7 @@ export function sidebarPlacement({
   target: number;
 }): SidebarPlacement {
   const wanted = clampSidebarTarget(target);
-  if (windowWidth < SIDEBAR_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX) {
+  if (sidebarOverlaid(windowWidth)) {
     return { kind: "overlay", feedWidth: windowWidth };
   }
   const sidebarWidth = Math.min(wanted, windowWidth - APP_MAIN_MIN_WIDTH_PX);
@@ -76,4 +84,17 @@ export function sidebarDragBounds(windowWidth: number): { min: number; max: numb
  *  window's resize squeezes the sidebar without a render. */
 export function sidebarWidthCss(target: number): string {
   return `min(${clampSidebarTarget(target)}px, 100vw - ${APP_MAIN_MIN_WIDTH_PX}px)`;
+}
+
+/** The width of the sidebar over the feed in a window `windowWidth` wide:
+ *  the window less the strip at its right, never past `S_max` (У4). No drag
+ *  sets it. */
+export function sidebarOverlayWidth(windowWidth: number): number {
+  return Math.min(SIDEBAR_MAX_WIDTH_PX, windowWidth - SIDEBAR_OVERLAY_STRIP_PX);
+}
+
+/** The same width as a CSS value, so a window's resize follows it without a
+ *  render. */
+export function sidebarOverlayWidthCss(): string {
+  return `min(${SIDEBAR_MAX_WIDTH_PX}px, 100vw - ${SIDEBAR_OVERLAY_STRIP_PX}px)`;
 }

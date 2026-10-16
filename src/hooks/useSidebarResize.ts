@@ -79,9 +79,14 @@ export interface UseSidebarResizeReturn {
  * The sidebar's width and collapsed state, and the drag that resizes it.
  * `windowSidebar` is the layout of this tab's window as the backend last sent
  * it (bootstrap, then `window-sidebar-changed`); null for a page that is not
- * a tab.
+ * a tab. `overlaid`: the window is too narrow for the sidebar beside the
+ * feed (SPEC_NARROW_WINDOW.md, У1); the sidebar takes none of the row then,
+ * and lies over the feed when open with a width of its own (SidebarOverlay).
  */
-export function useSidebarResize(windowSidebar: SidebarLayout | null = null): UseSidebarResizeReturn {
+export function useSidebarResize(
+  windowSidebar: SidebarLayout | null = null,
+  overlaid = false,
+): UseSidebarResizeReturn {
   const [storedWidth, setStoredWidth] = useState(() => initialLayout(windowSidebar).width);
   const [collapsed, setCollapsed] = useState(() => initialLayout(windowSidebar).collapsed);
   const [isResizing, setIsResizing] = useState(false);
@@ -131,11 +136,12 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
   const width = isResizing ? dragWidth : collapsed ? 0 : storedWidth;
 
   // Mount + sync: seed / update CSS variable before paint. At rest the
-  // variable is the squeeze expression; the drag writes plain pixels.
+  // variable is the squeeze expression; the drag writes plain pixels. Over
+  // the feed the sidebar takes none of the row.
   useLayoutEffect(() => {
     if (isResizing) return;
-    writeCssVar(collapsed ? "0px" : sidebarWidthCss(storedWidth));
-  }, [collapsed, storedWidth, isResizing]);
+    writeCssVar(collapsed || overlaid ? "0px" : sidebarWidthCss(storedWidth));
+  }, [collapsed, overlaid, storedWidth, isResizing]);
 
   // The window's layout changed: another tab, the tab bar's button, the View
   // menu or the two-finger swipe (В56). A drag in progress here keeps the

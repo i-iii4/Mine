@@ -25,8 +25,9 @@ use tauri::{
 use crate::commands::space_events;
 use crate::commands::state::AppState;
 use crate::domain::windows::{
-    cascaded_frame, centered_frame, normalize, RestoreStep, ScreenArea, SavedTab, SavedWindow, SavedWindows,
-    SidebarLayout, ChromeRows, TabId, TabSpace, TabView, WindowFrame, WindowId,
+    cascaded_frame, centered_frame, normalize, route_sidebar_intent, sidebar_shown, RestoreStep, ScreenArea,
+    SavedTab, SavedWindow, SavedWindows, SidebarIntent, SidebarLayout, SidebarOverlay, SidebarRoute, ChromeRows,
+    TabId, TabSpace, TabView, WindowFrame, WindowId,
     WINDOW_DEFAULT_HEIGHT, WINDOW_DEFAULT_WIDTH, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH,
 };
 use crate::storage::window_store::{load, Loaded, WindowStore};
@@ -111,13 +112,20 @@ pub const TAB_HISTORY_GO_EVENT: &str = "tab-history-go";
 /// search overlay, `"sidebar"` the collections' filter field.
 pub const SURFACE_SEARCH_EVENT: &str = "surface-search-shortcut";
 
+/// The event that hands a tab page an intent for its sidebar while the
+/// sidebar lies over the feed (SPEC_NARROW_WINDOW.md, У4): the page owns
+/// whether it is open.
+pub const SIDEBAR_OVERLAY_COMMAND_EVENT: &str = "sidebar-overlay-command";
+
 /// What one window's tab bar shows (`tabbar-state`).
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct TabBarState {
     pub window_id: WindowId,
     pub tabs: Vec<TabBarTab>,
     pub active_tab: TabId,
-    pub sidebar: SidebarLayout,
+    /// The visible tab's sidebar is on screen, beside the feed or over it:
+    /// what the bar's button shows (В56; SPEC_NARROW_WINDOW.md, У4).
+    pub sidebar_shown: bool,
     pub fullscreen: bool,
     /// The heights of the chrome rows' content (В83).
     pub chrome_rows: ChromeRows,
@@ -186,6 +194,10 @@ struct Live {
     shown: BTreeMap<WindowId, TabId>,
     /// Where each page can step through its places (В81).
     history: BTreeMap<TabId, TabHistory>,
+    /// How each page's sidebar stands over the feed, as the page last said
+    /// (SPEC_NARROW_WINDOW.md, У4, У8): a mirror for the bar's button and the
+    /// View menu, never saved. A page that said nothing stands beside.
+    sidebar_overlay: BTreeMap<TabId, SidebarOverlay>,
     /// While the saved windows come back, the last window keeps the focus:
     /// focus that another restored window takes meanwhile changes nothing
     /// (Е2.7). Ends at the deadline.
@@ -1035,6 +1047,15 @@ fn record_current_space(app: &AppHandle, vault_id: &str) {
 /// Record whether `tab`'s page is shown and tell it (В41); its space's lead
 /// may change with it (В19).
 fn set_tab_visible(app: &AppHandle, tab: &TabId, visible: bool) {
+    if !visible {
+        // The page closes its sidebar over the feed when hidden (У8); the
+        // mirror does not wait for its report.
+        let shell = shell(app);
+        let mut live = lock(&shell.live);
+        if live.sidebar_overlay.get(tab) == Some(&SidebarOverlay::Open) {
+            live.sidebar_overlay.insert(tab.clone(), SidebarOverlay::Closed);
+        }
+    }
     let state = app.state::<AppState>();
     let label = tab.label();
     state.tabs.set_visible(&label, visible);
@@ -1092,7 +1113,7 @@ pub fn bar_state(app: &AppHandle, window_id: &WindowId) -> Option<TabBarState> {
         tabs,
         active_tab: window.active_tab.clone(),
         // The bar's sidebar button acts on the visible tab's sidebar (В56).
-        sidebar: window.active_sidebar(),
+        sidebar_shown: tab_sidebar_shown(app, window, &window.active_tab),
         fullscreen: window.fullscreen,
         chrome_rows: window.chrome_rows,
     })
@@ -1156,7 +1177,7 @@ pub fn activate(app: &AppHandle, tab: &TabId) {
     shell.change(|model| model.activate(tab));
     // The View menu names the visible tab's sidebar action (В56).
     if let Some(saved) = shell.snapshot().window(&window_id) {
-        crate::commands::window_chrome::reflect_sidebar(app, saved.active_sidebar().collapsed);
+        crate::commands::window_chrome::reflect_sidebar(app, tab_sidebar_shown(app, saved, &saved.active_tab));
     }
     let page = match create_page(app, &window, tab) {
         Ok(page) => page,
@@ -1261,6 +1282,7 @@ fn close_page(app: &AppHandle, tab: &TabId) {
         live.pages.retain(|candidate| candidate != tab);
         live.shown.retain(|_, shown| shown != tab);
         live.history.remove(tab);
+        live.sidebar_overlay.remove(tab);
     }
     let label = tab.label();
     crate::frame_context_menu::unregister_page(&label);
@@ -1553,24 +1575,10 @@ pub fn space_renamed(app: &AppHandle, vault_id: &str) {
 }
 
 /// A two-finger swipe opens (right) or closes (left) the sidebar of the
-/// visible tab of the window in front (В56).
+/// visible tab of the window in front (В56; SPEC_NARROW_WINDOW.md, У11).
 pub fn swipe_sidebar(app: &AppHandle, open: bool) {
-    let Some(window) = focused_tab_window(app).or_else(|| last_window(app)) else {
-        return;
-    };
-    let Some(saved) = shell(app).snapshot().window(&window).cloned() else {
-        return;
-    };
-    let current = saved.active_sidebar();
-    if current.collapsed == open {
-        set_tab_sidebar(
-            app,
-            &saved.active_tab,
-            SidebarLayout {
-                collapsed: !open,
-                ..current
-            },
-        );
+    if let Some(window) = focused_tab_window(app).or_else(|| last_window(app)) {
+        sidebar_intent(app, &window, SidebarIntent::Swipe { open });
     }
 }
 
@@ -1678,22 +1686,63 @@ pub fn space_forgotten(app: &AppHandle, vault_id: &str) {
     }
 }
 
+/// How the sidebar of `tab` stands over the feed, as its page last said.
+fn sidebar_overlay_of(app: &AppHandle, tab: &TabId) -> SidebarOverlay {
+    lock(&shell(app).live).sidebar_overlay.get(tab).copied().unwrap_or_default()
+}
+
+/// Whether the sidebar of `tab` in `window` is on screen (У4).
+fn tab_sidebar_shown(app: &AppHandle, window: &SavedWindow, tab: &TabId) -> bool {
+    sidebar_shown(window.tab_sidebar(tab), sidebar_overlay_of(app, tab))
+}
+
+/// The bar of the window holding `tab` and the View menu follow its sidebar
+/// when it is the visible tab (В56).
+fn reflect_tab_sidebar(app: &AppHandle, tab: &TabId) {
+    let Some(window) = shell(app).snapshot().window_of(tab).cloned() else {
+        return;
+    };
+    if &window.active_tab != tab {
+        return;
+    }
+    emit_bar_state(app, &window.id);
+    crate::commands::window_chrome::reflect_sidebar(app, tab_sidebar_shown(app, &window, tab));
+}
+
 /// Store and spread the sidebar of `tab` (В56): to the tab's page, and to
 /// its window's bar and the View menu when the tab is the visible one.
 pub fn set_tab_sidebar(app: &AppHandle, tab: &TabId, sidebar: SidebarLayout) {
-    let shell = shell(app);
-    if !shell.change(|model| model.set_tab_sidebar(tab, sidebar)) {
+    if !shell(app).change(|model| model.set_tab_sidebar(tab, sidebar)) {
         return;
     }
-    let mut labels = vec![tab.label()];
-    let window = shell.snapshot().window_of(tab).cloned();
-    let visible = window.as_ref().is_some_and(|window| &window.active_tab == tab);
-    if let (Some(window), true) = (&window, visible) {
-        labels.push(window.id.bar_label());
+    space_events::emit_to_labels(app, [tab.label()], "window-sidebar-changed", sidebar);
+    reflect_tab_sidebar(app, tab);
+}
+
+/// The page `label` says how its sidebar stands over the feed (У4, У8).
+pub fn report_sidebar_overlay(app: &AppHandle, label: &str, overlay: SidebarOverlay) {
+    let Some(tab) = TabId::from_label(label) else {
+        return;
+    };
+    let previous = lock(&shell(app).live).sidebar_overlay.insert(tab.clone(), overlay);
+    if previous.unwrap_or_default() != overlay {
+        reflect_tab_sidebar(app, &tab);
     }
-    space_events::emit_to_labels(app, labels, "window-sidebar-changed", sidebar);
-    if visible {
-        crate::commands::window_chrome::reflect_sidebar(app, sidebar.collapsed);
+}
+
+/// Show or hide the sidebar of the visible tab of `window_id` (В56): beside
+/// the feed the backend stores it, over the feed the page decides (У4).
+pub fn sidebar_intent(app: &AppHandle, window_id: &WindowId, intent: SidebarIntent) {
+    let Some(window) = shell(app).snapshot().window(window_id).cloned() else {
+        return;
+    };
+    let tab = window.active_tab.clone();
+    match route_sidebar_intent(window.active_sidebar(), sidebar_overlay_of(app, &tab), intent) {
+        SidebarRoute::Store(sidebar) => set_tab_sidebar(app, &tab, sidebar),
+        SidebarRoute::Forward(intent) => {
+            space_events::emit_to_labels(app, [tab.label()], SIDEBAR_OVERLAY_COMMAND_EVENT, intent);
+        }
+        SidebarRoute::Nothing => {}
     }
 }
 
@@ -1709,20 +1758,10 @@ pub fn set_sidebar_of_label(app: &AppHandle, label: &str, sidebar: SidebarLayout
     }
 }
 
-/// Toggle the sidebar of the visible tab of `window_id` (menu, В56).
+/// Toggle the sidebar of the visible tab of `window_id`: the bar's button,
+/// the View menu and ⌃⌘S (В56).
 pub fn toggle_sidebar(app: &AppHandle, window_id: &WindowId) {
-    let Some(window) = shell(app).snapshot().window(window_id).cloned() else {
-        return;
-    };
-    let current = window.active_sidebar();
-    set_tab_sidebar(
-        app,
-        &window.active_tab,
-        SidebarLayout {
-            collapsed: !current.collapsed,
-            ..current
-        },
-    );
+    sidebar_intent(app, window_id, SidebarIntent::Toggle);
 }
 
 /// Store the chrome colour and paint every window with it (В25).

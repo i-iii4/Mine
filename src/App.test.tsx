@@ -16,7 +16,7 @@ import { act, render, screen, waitFor, fireEvent, within } from "@testing-librar
 import { MemoryRouter } from "react-router";
 import { isTauri } from "@tauri-apps/api/core";
 
-import type { ChannelDto, CollectionDeleted, DeleteBlockMedia, DeleteBlockOutcome, DeleteBlockPlan, DeleteBlocksOutcome, DeleteBlocksPlan, GridSnapshot, IndexedBlock, LightBlock, SidebarLayout, TabBootstrap, TabLocation, TabView, TaxonomySnapshot, VaultOpenResult } from "@/types";
+import type { ChannelDto, CollectionDeleted, DeleteBlockMedia, DeleteBlockOutcome, DeleteBlockPlan, DeleteBlocksOutcome, DeleteBlocksPlan, GridSnapshot, IndexedBlock, LightBlock, SidebarLayout, SidebarOverlay, TabBootstrap, TabLocation, TabView, TaxonomySnapshot, VaultOpenResult } from "@/types";
 import { App, AppWithVault } from "./App";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { SEARCH_OVERLAY_RECENT_LIMIT, SEARCH_OVERLAY_RESULT_LIMIT } from "@/components/SearchOverlay";
@@ -92,6 +92,7 @@ const commandMocks = vi.hoisted(() => ({
   reportTabHistory: vi.fn<(back: boolean, forward: boolean) => Promise<void>>(async () => {}),
   tabPainted: vi.fn<() => Promise<void>>(async () => {}),
   setWindowSidebar: vi.fn<(sidebar: SidebarLayout) => Promise<void>>(async () => {}),
+  reportSidebarOverlay: vi.fn<(overlay: SidebarOverlay) => Promise<void>>(async () => {}),
   startWindowDrag: vi.fn<() => Promise<void>>(async () => {}),
   reportWindowSurface: vi.fn<(color: string) => Promise<void>>(async () => {}),
   newTab: vi.fn<(vaultId?: string) => Promise<void>>(async () => {}),
@@ -177,6 +178,7 @@ vi.mock("@/lib/commands", () => ({
   reportTabHistory: commandMocks.reportTabHistory,
   tabPainted: commandMocks.tabPainted,
   setWindowSidebar: commandMocks.setWindowSidebar,
+  reportSidebarOverlay: commandMocks.reportSidebarOverlay,
   startWindowDrag: commandMocks.startWindowDrag,
   reportWindowSurface: commandMocks.reportWindowSurface,
   newTab: commandMocks.newTab,
@@ -555,6 +557,7 @@ vi.mock("@/components/Sidebar", async () => {
       isDropDragging = false,
       onDeleteTag,
       onCreateChannel,
+      onNavClick,
     }: {
       orderedTags: Array<{ tag: string; count: number }>;
       totalBlocks: number;
@@ -563,6 +566,7 @@ vi.mock("@/components/Sidebar", async () => {
       isDropDragging?: boolean;
       onDeleteTag?: (tag: string) => void | Promise<void>;
       onCreateChannel?: (tag: string) => void | Promise<void>;
+      onNavClick?: () => void;
     }) => {
       const normalizedSearchQuery = searchQuery.trim().toLowerCase();
       const showEverything = !normalizedSearchQuery
@@ -581,12 +585,12 @@ vi.mock("@/components/Sidebar", async () => {
           >
             Create collection gamma
           </button>
-          {showEverything && <Link to="/">Everything {totalBlocks}</Link>}
+          {showEverything && <Link to="/" onClick={onNavClick}>Everything {totalBlocks}</Link>}
           {orderedTags
             .filter((tag) => !normalizedSearchQuery || tag.tag.toLowerCase().includes(normalizedSearchQuery))
             .map((tag) => (
               <MockCollectionRow key={tag.tag} tag={tag.tag}>
-                <Link to={`/channel/${encodeURIComponent(tag.tag)}`}>
+                <Link to={`/channel/${encodeURIComponent(tag.tag)}`} onClick={onNavClick}>
                   {tag.tag}
                 </Link>
                 {sidebarMockState.thumbnails
@@ -5176,6 +5180,106 @@ describe("AppWithVault", () => {
       expect(screen.queryByRole("button", { name: "Open other space in a new tab" })).toBeNull();
     });
 
+    describe("in a narrow window (SPEC_NARROW_WINDOW.md, У4 по У7, У12)", () => {
+      const wideWindow = window.innerWidth;
+      const resizeWindow = (width: number) => act(() => {
+        window.innerWidth = width;
+        window.dispatchEvent(new Event("resize"));
+      });
+      const panel = () => screen.queryByRole("dialog", { name: "Sidebar" });
+      const feed = () => document.querySelector("main[data-below-top-row]");
+
+      beforeEach(() => {
+        window.innerWidth = 500;
+        commandMocks.reportSidebarOverlay.mockClear();
+        sidebarResizeState.toggleCollapsed.mockClear();
+      });
+
+      afterEach(() => {
+        window.innerWidth = wideWindow;
+        sidebarResizeState.collapsed = false;
+      });
+
+      it("lays the sidebar over the feed only when opened, the space switcher with it (У4, У12)", async () => {
+        renderTab();
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        // Closed: neither the sidebar nor its filter row in the page.
+        expect(document.querySelector("[data-app-top-sidebar-segment]")).toBeNull();
+        expect(document.querySelector("[data-sidebar-mock]")).toBeNull();
+        expect(screen.queryByRole("textbox", { name: "Find or create collection" })).toBeNull();
+        expect(commandMocks.reportSidebarOverlay).toHaveBeenLastCalledWith("closed");
+
+        // The backend hands the toggle to the page (47.3b).
+        act(() => send("sidebar-overlay-command", { kind: "toggle" }));
+        const opened = panel();
+        expect(opened).not.toBeNull();
+        expect(opened?.querySelector("[data-sidebar-mock]")).not.toBeNull();
+        expect(opened?.querySelector("[data-top-chrome-space-search-group]")).not.toBeNull();
+        expect(feed()).toHaveAttribute("inert");
+        expect(document.querySelector("header")).toHaveAttribute("inert");
+        expect(commandMocks.reportSidebarOverlay).toHaveBeenLastCalledWith("open");
+        // The toggle beside the feed is not touched over it.
+        expect(sidebarResizeState.toggleCollapsed).not.toHaveBeenCalled();
+
+        // A collection goes, then the sidebar closes (У6).
+        fireEvent.click(within(opened as HTMLElement).getByRole("link", { name: "alpha" }));
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+        expect(commandMocks.reportSidebarOverlay).toHaveBeenLastCalledWith("closed");
+        expect(feed()).not.toHaveAttribute("inert");
+        await waitFor(() => expect(panel()).toBeNull());
+      });
+
+      it("opens on the bottom bar's button and on a swipe, and closes on a swipe back (У4, У11)", async () => {
+        renderTab();
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        const barToggle = () => document.querySelector("[data-bar-entry='toggle-sidebar'] button");
+        expect(barToggle()).toHaveTextContent("Show Sidebar");
+        fireEvent.click(barToggle() as HTMLElement);
+        expect(panel()).not.toBeNull();
+        expect(barToggle()).toHaveTextContent("Hide Sidebar");
+
+        act(() => send("sidebar-overlay-command", { kind: "swipe", open: false }));
+        expect(commandMocks.reportSidebarOverlay).toHaveBeenLastCalledWith("closed");
+        act(() => send("sidebar-overlay-command", { kind: "swipe", open: true }));
+        expect(commandMocks.reportSidebarOverlay).toHaveBeenLastCalledWith("open");
+      });
+
+      it("opens on ⇧⌘F with the cursor in the collections' filter, and Enter there closes it (У11)", async () => {
+        renderTab();
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        act(() => send("surface-search-shortcut", "sidebar"));
+        const filter = screen.getByRole("textbox", { name: "Find or create collection" });
+        expect(panel()).toContainElement(filter);
+        expect(filter).toHaveFocus();
+
+        fireEvent.change(filter, { target: { value: "alpha" } });
+        fireEvent.keyDown(filter, { key: "Enter" });
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+        expect(commandMocks.reportSidebarOverlay).toHaveBeenLastCalledWith("closed");
+      });
+
+      it("stands beside the feed, shown, when the window widens with it open (У7)", async () => {
+        sidebarResizeState.collapsed = true;
+        renderTab();
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        act(() => send("sidebar-overlay-command", { kind: "toggle" }));
+        expect(panel()).not.toBeNull();
+
+        resizeWindow(1200);
+        expect(sidebarResizeState.toggleCollapsed).toHaveBeenCalledTimes(1);
+        expect(commandMocks.reportSidebarOverlay).toHaveBeenLastCalledWith("beside");
+        expect(document.querySelector("[data-app-top-sidebar-segment]")).not.toBeNull();
+      });
+
+      it("leaves a collapsed sidebar collapsed when the window widens with it closed (У7)", async () => {
+        sidebarResizeState.collapsed = true;
+        renderTab();
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        resizeWindow(1200);
+        expect(sidebarResizeState.toggleCollapsed).not.toHaveBeenCalled();
+      });
+    });
+
     describe("the page shell", () => {
       beforeEach(() => {
         vi.mocked(isTauri).mockReturnValue(true);
@@ -5299,7 +5403,11 @@ describe("AppWithVault", () => {
         await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
         expect(document.querySelector("[data-chrome-frame-edge=top]")).toBeNull();
         expect(document.querySelector("[data-chrome-frame-edge=bottom]")).not.toBeNull();
-        expect(document.querySelector("[data-chrome-shell]")?.firstElementChild?.tagName).toBe("HEADER");
+        // The top row leads the page, inside the host the sidebar over the
+        // feed lies over (SPEC_NARROW_WINDOW.md, У4).
+        const host = document.querySelector("[data-chrome-shell]")?.firstElementChild;
+        expect(host).toHaveAttribute("data-sidebar-overlay-host");
+        expect(host?.firstElementChild?.tagName).toBe("HEADER");
         unmount();
 
         commandMocks.getTabBootstrap.mockResolvedValue(null);

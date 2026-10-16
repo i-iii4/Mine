@@ -12,23 +12,24 @@ use crate::commands::state::CommandError;
 pub const MENU_ID_VIEW: &str = "view-menu";
 pub const MENU_ID_TOGGLE_SIDEBAR: &str = "view-toggle-sidebar";
 
-fn sidebar_menu_title(collapsed: bool) -> &'static str {
-    if collapsed {
-        "Show Sidebar"
-    } else {
+fn sidebar_menu_title(shown: bool) -> &'static str {
+    if shown {
         "Hide Sidebar"
+    } else {
+        "Show Sidebar"
     }
 }
 
 /// Name the View menu's sidebar item after the next action on a sidebar
-/// that is `collapsed` or not.
-pub fn reflect_sidebar(app: &AppHandle, collapsed: bool) {
-    if let Err(error) = set_sidebar_menu_title(app, collapsed) {
+/// that is `shown` on screen or not, beside the feed or over it
+/// (SPEC_NARROW_WINDOW.md, У4).
+pub fn reflect_sidebar(app: &AppHandle, shown: bool) {
+    if let Err(error) = set_sidebar_menu_title(app, shown) {
         log::warn!("{error}");
     }
 }
 
-fn set_sidebar_menu_title(app: &AppHandle, collapsed: bool) -> Result<(), CommandError> {
+fn set_sidebar_menu_title(app: &AppHandle, shown: bool) -> Result<(), CommandError> {
     let menu = app
         .menu()
         .ok_or_else(|| CommandError::Internal("native application menu is unavailable".into()))?;
@@ -46,7 +47,7 @@ fn set_sidebar_menu_title(app: &AppHandle, collapsed: bool) -> Result<(), Comman
     })?;
 
     toggle_item
-        .set_text(sidebar_menu_title(collapsed))
+        .set_text(sidebar_menu_title(shown))
         .map_err(|error| CommandError::Internal(error.to_string()))
 }
 
@@ -56,7 +57,7 @@ mod tests {
 
     #[test]
     fn sidebar_title_describes_the_next_action() {
-        assert_eq!(sidebar_menu_title(false), "Hide Sidebar");
-        assert_eq!(sidebar_menu_title(true), "Show Sidebar");
+        assert_eq!(sidebar_menu_title(true), "Hide Sidebar");
+        assert_eq!(sidebar_menu_title(false), "Show Sidebar");
     }
 }

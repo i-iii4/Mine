@@ -133,11 +133,11 @@ pub const APP_MAIN_MIN_WIDTH_PX: u32 = 304;
 /// The strip the sidebar leaves at the right when it lies over the feed in a
 /// narrow window (`STRIP`, SPEC_NARROW_WINDOW.md, У4).
 pub const SIDEBAR_OVERLAY_STRIP_PX: u32 = 40;
-/// Smallest content size of a tab window. Across: the narrowest sidebar beside
-/// the narrowest feed, until the sidebar can lie over the feed (PLAN.md, 47.2b;
-/// SPEC_NARROW_WINDOW.md, У3). Down: the old main window's minimum and the tab
-/// bar above it.
-pub const WINDOW_MIN_WIDTH: f64 = (SIDEBAR_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX) as f64;
+/// Smallest content size of a tab window. Across: the narrowest sidebar and
+/// the strip it leaves at the right when it lies over the feed
+/// (SPEC_NARROW_WINDOW.md, У3, У11). Down: the old main window's minimum and
+/// the tab bar above it.
+pub const WINDOW_MIN_WIDTH: f64 = (SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX) as f64;
 pub const WINDOW_MIN_HEIGHT: f64 = 600.0 + TAB_BAR_HEIGHT_PX as f64;
 /// Size of a window with nothing to restore.
 pub const WINDOW_DEFAULT_WIDTH: f64 = 1200.0;
@@ -256,6 +256,76 @@ impl Default for SidebarLayout {
             width_px: SIDEBAR_DEFAULT_WIDTH_PX,
             collapsed: false,
         }
+    }
+}
+
+/// The sidebar of a tab's page as it stands over the feed
+/// (SPEC_NARROW_WINDOW.md, У1, У4). The page owns it and reports it
+/// (`report_sidebar_overlay`); the backend keeps it in memory only, for the
+/// tab bar's button and the View menu, and never saves it (У8).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarOverlay {
+    /// The window holds the sidebar beside the feed: its `collapsed` decides.
+    #[default]
+    Beside,
+    /// The window is too narrow for it: the sidebar lies over the feed when
+    /// open, and is closed now.
+    Closed,
+    /// The sidebar lies over the feed.
+    Open,
+}
+
+/// What asks to show or hide the sidebar of a window's visible tab: sent on
+/// to the page as `sidebar-overlay-command` when the sidebar lies over the
+/// feed (SPEC_NARROW_WINDOW.md, У4, У6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SidebarIntent {
+    /// The tab bar's button, View → Hide or Show Sidebar, ⌃⌘S.
+    Toggle,
+    /// A two-finger swipe: right opens, left closes (У11).
+    Swipe { open: bool },
+}
+
+/// Where an intent goes: the decision table of SPEC_NARROW_WINDOW.md, У4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarRoute {
+    /// The sidebar stands beside the feed: store this layout, as before (В56).
+    Store(SidebarLayout),
+    /// The sidebar lies over the feed: the page opens or closes it.
+    Forward(SidebarIntent),
+    /// Nothing to change.
+    Nothing,
+}
+
+/// Where `intent` goes for a tab whose sidebar is `sidebar` and stands as
+/// `overlay`. Beside the feed the toggle flips `collapsed` and a swipe sets
+/// it, a swipe to the state it has changing nothing. Over the feed the page
+/// owns whether the sidebar is open, so every intent goes to it: the mirror
+/// here may lag the page by a report, and the page settles a repeat itself.
+pub fn route_sidebar_intent(sidebar: SidebarLayout, overlay: SidebarOverlay, intent: SidebarIntent) -> SidebarRoute {
+    if overlay != SidebarOverlay::Beside {
+        return SidebarRoute::Forward(intent);
+    }
+    let collapsed = match intent {
+        SidebarIntent::Toggle => !sidebar.collapsed,
+        SidebarIntent::Swipe { open } => !open,
+    };
+    if collapsed == sidebar.collapsed {
+        SidebarRoute::Nothing
+    } else {
+        SidebarRoute::Store(SidebarLayout { collapsed, ..sidebar })
+    }
+}
+
+/// Whether the sidebar is on screen: beside the feed unless collapsed, over
+/// it only when open. The tab bar's button and the View menu name it.
+pub fn sidebar_shown(sidebar: SidebarLayout, overlay: SidebarOverlay) -> bool {
+    match overlay {
+        SidebarOverlay::Beside => !sidebar.collapsed,
+        SidebarOverlay::Closed => false,
+        SidebarOverlay::Open => true,
     }
 }
 
@@ -1281,25 +1351,89 @@ mod tests {
         assert_eq!(restored.windows[1].frame.x, 1728.0 - 150.0);
     }
 
-    /// 47.2b: the window is no narrower than the narrowest sidebar beside the
-    /// narrowest feed, 618 px, until the sidebar can lie over the feed.
+    /// 47.3c: the window is no narrower than the narrowest sidebar and the
+    /// strip it leaves over the feed, 354 px (У3, У11).
     #[test]
-    fn the_narrowest_window_holds_the_narrowest_sidebar_and_feed() {
-        assert_eq!(WINDOW_MIN_WIDTH, 618.0);
-        assert_eq!(f64::from(SIDEBAR_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX), WINDOW_MIN_WIDTH);
+    fn the_narrowest_window_holds_the_narrowest_sidebar_and_its_strip() {
+        assert_eq!(WINDOW_MIN_WIDTH, 354.0);
+        assert_eq!(f64::from(SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX), WINDOW_MIN_WIDTH);
     }
 
     /// A saved window narrower than the minimum comes back at the minimum; one
-    /// between the old 904 and the new minimum keeps its width.
+    /// between the minimum and the old 618 keeps its width.
     #[test]
     fn a_restored_window_is_held_to_the_minimum_width() {
         let mut narrow = window("w1", vec![tab("t1", "x")], "t1");
-        narrow.frame.width = 400.0;
+        narrow.frame.width = 300.0;
         let mut between = window("w2", vec![tab("t2", "x")], "t2");
-        between.frame.width = 700.0;
+        between.frame.width = 400.0;
         let restored = normalize(saved(vec![narrow, between]), &known, &screen(), &mut ids());
         assert_eq!(restored.windows[0].frame.width, WINDOW_MIN_WIDTH);
-        assert_eq!(restored.windows[1].frame.width, 700.0);
+        assert_eq!(restored.windows[1].frame.width, 400.0);
+    }
+
+    /// The decision table of the sidebar's toggles (SPEC_NARROW_WINDOW.md,
+    /// У4, PLAN 47.3b): beside the feed the backend stores `collapsed`, over
+    /// it the page decides.
+    #[test]
+    fn a_sidebar_intent_is_stored_beside_the_feed_and_forwarded_over_it() {
+        let open = SidebarLayout { width_px: 420, collapsed: false };
+        let closed = SidebarLayout { width_px: 420, collapsed: true };
+        let toggle = SidebarIntent::Toggle;
+        let right = SidebarIntent::Swipe { open: true };
+        let left = SidebarIntent::Swipe { open: false };
+
+        // Beside: the toggle flips, a swipe sets, a swipe to the state the
+        // sidebar has changes nothing; the width stays.
+        assert_eq!(route_sidebar_intent(open, SidebarOverlay::Beside, toggle), SidebarRoute::Store(closed));
+        assert_eq!(route_sidebar_intent(closed, SidebarOverlay::Beside, toggle), SidebarRoute::Store(open));
+        assert_eq!(route_sidebar_intent(closed, SidebarOverlay::Beside, right), SidebarRoute::Store(open));
+        assert_eq!(route_sidebar_intent(open, SidebarOverlay::Beside, left), SidebarRoute::Store(closed));
+        assert_eq!(route_sidebar_intent(open, SidebarOverlay::Beside, right), SidebarRoute::Nothing);
+        assert_eq!(route_sidebar_intent(closed, SidebarOverlay::Beside, left), SidebarRoute::Nothing);
+
+        // Over the feed: every intent goes to the page, whatever the stored
+        // layout and the mirror say; `collapsed` is never touched there.
+        for overlay in [SidebarOverlay::Closed, SidebarOverlay::Open] {
+            for sidebar in [open, closed] {
+                for intent in [toggle, right, left] {
+                    assert_eq!(
+                        route_sidebar_intent(sidebar, overlay, intent),
+                        SidebarRoute::Forward(intent),
+                        "{overlay:?} {sidebar:?} {intent:?}",
+                    );
+                }
+            }
+        }
+    }
+
+    /// The tab bar's button and the View menu name what is on screen.
+    #[test]
+    fn the_sidebar_is_shown_beside_unless_collapsed_and_over_the_feed_when_open() {
+        let open = SidebarLayout { width_px: 360, collapsed: false };
+        let closed = SidebarLayout { width_px: 360, collapsed: true };
+        assert!(sidebar_shown(open, SidebarOverlay::Beside));
+        assert!(!sidebar_shown(closed, SidebarOverlay::Beside));
+        for sidebar in [open, closed] {
+            assert!(!sidebar_shown(sidebar, SidebarOverlay::Closed));
+            assert!(sidebar_shown(sidebar, SidebarOverlay::Open));
+        }
+        assert_eq!(SidebarOverlay::default(), SidebarOverlay::Beside);
+    }
+
+    /// The page reports the overlay and hears the intents in these shapes
+    /// (the bindings, `useSidebarOverlay.ts`).
+    #[test]
+    fn the_overlay_and_the_intents_cross_to_the_page_as_tagged_values() {
+        assert_eq!(serde_json::to_value(SidebarOverlay::Closed).ok(), Some(serde_json::json!("closed")));
+        assert_eq!(
+            serde_json::to_value(SidebarIntent::Swipe { open: true }).ok(),
+            Some(serde_json::json!({ "kind": "swipe", "open": true })),
+        );
+        assert_eq!(
+            serde_json::to_value(SidebarIntent::Toggle).ok(),
+            Some(serde_json::json!({ "kind": "toggle" })),
+        );
     }
 
     #[test]

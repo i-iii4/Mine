@@ -41,8 +41,8 @@ import {
   openTabSearch,
   reportDropSlot,
   setChromeRows,
-  setWindowSidebar,
   stepTabHistory,
+  toggleWindowSidebar,
 } from "@/lib/commands";
 import { motionDuration } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -152,7 +152,7 @@ interface TabBarProps {
 
 /** The tab bar row with the window's tabs. */
 export function TabBar({ bar, dropHover }: TabBarProps) {
-  const { tabs: sourceTabs, active_tab: activeTab, sidebar, fullscreen } = bar;
+  const { tabs: sourceTabs, active_tab: activeTab, sidebar_shown: sidebarShown, fullscreen } = bar;
   const [localOrder, setLocalOrder] = useState<LocalOrder | null>(null);
   const tabs = useMemo(() => orderedTabs(sourceTabs, localOrder), [sourceTabs, localOrder]);
   const count = tabs.length;
@@ -587,9 +587,11 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
         )}
       >
         <SidebarToggleButton
-          collapsed={sidebar.collapsed}
+          collapsed={!sidebarShown}
           onToggle={() =>
-            run(setWindowSidebar({ ...sidebar, collapsed: !sidebar.collapsed }), "show or hide the sidebar")}
+            // The backend decides: beside the feed it stores the sidebar, over
+            // the feed the page opens or closes it (SPEC_NARROW_WINDOW.md, У4).
+            run(toggleWindowSidebar(), "show or hide the sidebar")}
         />
         {/* Back and forward through the visible tab's places (В81). */}
         <Button

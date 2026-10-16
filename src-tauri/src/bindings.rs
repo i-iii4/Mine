@@ -32,7 +32,7 @@ use crate::commands::spaces::SelectionStamp;
 use crate::commands::state::CommandError;
 use crate::commands::vault::SpaceMovedPayload;
 use crate::domain::windows::{
-    ChromeRows, MainViewMode, OpenCard, ScrollAnchor, SidebarLayout, TabId,
+    ChromeRows, MainViewMode, OpenCard, ScrollAnchor, SidebarIntent, SidebarLayout, SidebarOverlay, TabId,
     TabLocation, TabSpace, TabView, WindowId,
 };
 use crate::tabs::drag::DropHover;
@@ -81,6 +81,8 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<OpenCard>()
         .register::<ScrollAnchor>()
         .register::<SidebarLayout>()
+        .register::<SidebarOverlay>()
+        .register::<SidebarIntent>()
         .register::<ChromeRows>()
         .register::<SelectionStamp>()
         .register::<TabBarState>()

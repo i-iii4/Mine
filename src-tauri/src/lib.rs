@@ -132,6 +132,8 @@ pub fn run() {
             commands::tabs::close_other_tabs,
             commands::tabs::move_tab,
             commands::tabs::set_window_sidebar,
+            commands::tabs::toggle_window_sidebar,
+            commands::tabs::report_sidebar_overlay,
             commands::tabs::start_window_drag,
             commands::tabs::report_window_surface,
             commands::tabs::show_space,

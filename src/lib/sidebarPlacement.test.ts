@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   clampSidebarTarget,
   sidebarDragBounds,
+  sidebarOverlaid,
+  sidebarOverlayWidth,
+  sidebarOverlayWidthCss,
   sidebarPlacement,
   sidebarWidthCss,
 } from "./sidebarPlacement";
@@ -63,5 +66,24 @@ describe("sidebarWidthCss: the squeeze as one CSS value (47.2b)", () => {
   it("takes the target and the feed's minimum, clamped", () => {
     expect(sidebarWidthCss(360)).toBe("min(360px, 100vw - 304px)");
     expect(sidebarWidthCss(5000)).toBe("min(600px, 100vw - 304px)");
+  });
+});
+
+describe("the sidebar over the feed (У1, У4)", () => {
+  it("comes over the feed exactly below S_min + F_min, whatever the target", () => {
+    expect(sidebarOverlaid(618)).toBe(false);
+    expect(sidebarOverlaid(617)).toBe(true);
+    expect(sidebarOverlaid(354)).toBe(true);
+    for (const target of [314, 360, 600]) {
+      expect(sidebarPlacement({ windowWidth: 617, target }).kind).toBe("overlay");
+    }
+  });
+
+  it("is the window less the 40 px strip, never past S_max", () => {
+    expect(sidebarOverlayWidth(617)).toBe(577);
+    expect(sidebarOverlayWidth(400)).toBe(360);
+    expect(sidebarOverlayWidth(354)).toBe(314);
+    expect(sidebarOverlayWidth(2000)).toBe(600);
+    expect(sidebarOverlayWidthCss()).toBe("min(600px, 100vw - 40px)");
   });
 });

@@ -280,6 +280,7 @@ local-arena/
 │   │   ├── DeleteBlockDialog.tsx, DeleteSelectedCardsDialog.tsx # Окна Delete element? и Delete selected elements? (одно у Grid)
 │   │   ├── DeleteWindowParts.tsx # Общее у окон удаления: описание, превью медиа, уведомление Media kept
 │   │   ├── SidebarResizeHandle.tsx # Линия между меню и лентой как ручка ширины (вид рельса shadcn SidebarRail)
+│   │   ├── SidebarOverlay.tsx  # Меню поверх ленты в узком окне: подложка с полосой 40 px, панель-диалог, Escape, фокус, движение (SPEC_NARROW_WINDOW.md, У4 по У7)
 │   │   ├── NotificationCard.tsx # Единый вид уведомления: правый нижний угол, bg-popover
 │   │   ├── FirstCardMarker.tsx # Одноразовая пометка первой карточки (О19)
 │   │   ├── CloudRecommendation.tsx # Рекомендация Keep Downloaded по журналу ожиданий
@@ -293,7 +294,7 @@ local-arena/
 │   │   ├── ScreenState.tsx     # Общая раскладка полноэкранных состояний: колонка, заголовок, текст, кнопки
 │   │   ├── EmptySpaceOnboarding.tsx # Два пути наполнения пустого пространства
 │   │   └── EdgeStatesSection.tsx # Витрина краевых состояний (гейт test:edge-states)
-│   ├── hooks/                  # useSidebarResize (ширина последнего перетаскивания, сжатие окном в CSS), useTopRowWrap (действия выделения во втором ряду, когда верхний ряд их не вмещает, SPEC_NARROW_WINDOW.md, У10), useGridScroll, useChannelPreviewsEvents, useProjectionRevisionOwner, useThumbnailUpgrade, usePreviewFileRetry (нет файла превью: заливка вместо битой картинки, повтор по thumb:updated) и др.
+│   ├── hooks/                  # useSidebarResize (ширина последнего перетаскивания, сжатие окном в CSS), useSidebarOverlay (открытость меню поверх ленты у страницы, команды бэкенда, зеркало для полосы и View, SPEC_NARROW_WINDOW.md, У4 по У8), useTopRowWrap (действия выделения во втором ряду, когда верхний ряд их не вмещает, SPEC_NARROW_WINDOW.md, У10), useGridScroll, useChannelPreviewsEvents, useProjectionRevisionOwner, useThumbnailUpgrade, usePreviewFileRetry (нет файла превью: заливка вместо битой картинки, повтор по thumb:updated) и др.
 │   ├── types/                  # generated.ts from Rust/Specta + frontend-owned index.ts
 │   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()), pageEvents.ts (события своей страницы), tabPage.ts (память вкладки), tabVisibility.ts (показ и пауза медиа), chromeHeight.ts (высота хрома окна), controlCharGuard.ts, floatingLayer.ts (ширина меню, зазор от плашки кнопки), deleteFailure.ts (уведомления о сбое удаления), actionFailures.ts (уведомления о сбоях действий вкладки), createElements.ts (очередь новых элементов из броска и ⌘V), systemActions.ts (ссылка в браузер, файл в Finder), tabBarFailure.ts (сбой полосы вкладок видимой вкладке), errorMessage.ts (слова ошибки), sidebarPlacement.ts (меню рядом с лентой, сжатое или поверх неё по ширине окна, пределы перетаскивания), topRowFit.ts (обрезает ли верхний ряд действия выделения) и др.
 │   ├── workers/                # fontMetrics.worker.ts (Canvas measureText), thumbWorker.ts
@@ -308,7 +309,7 @@ local-arena/
 │   ├── cold-space-browser-audit.mjs # First/settled/deep cold Grid acceptance
 │   ├── edge-states-audit.mjs   # Витрина краевых состояний: варианты, контексты, обрезка, невидимый текст
 │   ├── audit-vite.mjs          # Свой Vite браузерной проверки: свободный порт, кэш зависимостей во временной папке
-│   ├── selection-menu-audit.mjs, sidebar-action-audit.mjs, detail-image-geometry-audit.mjs, top-row-wrap-audit.mjs # Самостоятельные браузерные проверки на audit-vite.mjs
+│   ├── selection-menu-audit.mjs, sidebar-action-audit.mjs, detail-image-geometry-audit.mjs, top-row-wrap-audit.mjs, narrow-window-audit.mjs # Самостоятельные браузерные проверки на audit-vite.mjs
 │   ├── x-thread-smoke.mjs      # Собранное расширение: цепочка автора X во временном Chromium, сеть перехвачена
 │   ├── fetch-ytdlp.mjs         # Загрузка распакованной сборки yt-dlp (onedir, сумма SHA-256) в ресурсы бандла
 │   ├── disposable-app-home.mjs # Свой HOME в папке прогона для скриптов, которые запускают помощника
@@ -479,6 +480,7 @@ bun run test:sidebar-reorder   # Browser sidebar collection reorder gesture acce
 bun run test:selection-menu    # Меню Connect поиска и меню выделения Detail в Chromium без окна (свой Vite)
 bun run test:sidebar-actions   # Кнопка Connect строки бокового меню: поля 8px и ширина во всех состояниях (свой Vite)
 bun run test:top-row           # Действия выделения во втором ряду только при нехватке места, карточка, лента и граф всегда в одном ряду, сжатие меню (свой Vite)
+bun run test:narrow-window     # Узкое окно: меню рядом с лентой и поверх неё на ширинах 1200, 664, 640, 618, 617, 400, 354, закрытие, движение, переходы через порог (свой Vite)
 bun run test:detail-image-geometry # Рамка изображения Detail: подмена превью оригиналом, contain, resize (свой Vite)
 bun run test:x-thread          # Сборка расширения и цепочка автора X во временном Chromium, сеть перехвачена
 bun run test:browser           # Сам поднимает Vite и запускает все browser gates
