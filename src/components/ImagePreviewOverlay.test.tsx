@@ -350,6 +350,23 @@ describe("ImagePreviewOverlay", () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
+  // SPEC_MEDIA_ASSET_ACTIONS.md, «Картинка страницы у ссылки».
+  it("shows a picture that is no media asset without Copy Media, its zoom and close kept", () => {
+    const onClose = vi.fn();
+    const { container } = render(
+      <ImagePreviewOverlay
+        preview={{ src: "asset://localhost//thumbs/link.jpg", mediaRef: null }}
+        onClose={onClose}
+      />,
+    );
+    expect(container.querySelector("[data-image-preview-image]")).toHaveAttribute("src", "asset://localhost//thumbs/link.jpg");
+    expect(screen.queryByLabelText("Copy media")).toBeNull();
+    expect(screen.getByLabelText("Zoom in")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Collapse image preview"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(copyMediaAssetToClipboardMock).not.toHaveBeenCalled();
+  });
+
   // SPEC_DEEP_AUDIT.md, Е6.8.
   it("shows no broken-image icon for a picture whose file will not load", () => {
     const { container } = render(

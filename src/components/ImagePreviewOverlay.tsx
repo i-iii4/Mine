@@ -18,7 +18,10 @@ import { prefersReducedMotion } from "@/lib/motion";
 
 export type ImagePreviewRequest = {
   src: string;
-  mediaRef: string;
+  /// The local media asset on screen, the file Copy Media copies
+  /// (SPEC_MEDIA_ASSET_ACTIONS.md). `null` for a picture that is no media
+  /// asset, a link's page picture: the viewer shows it without Copy Media.
+  mediaRef: string | null;
   /// Every image of the card the request came from, in reading order, so the
   /// viewer can step through them. Omitted when the caller has no such set;
   /// the viewer then shows the single image and the arrow keys do nothing.
@@ -28,6 +31,13 @@ export type ImagePreviewRequest = {
 export type ImagePreviewSibling = {
   src: string;
   mediaRef: string;
+};
+
+/** The picture the viewer shows: a sibling, or the requested picture, which
+ *  may be no media asset. */
+type ImagePreviewShown = {
+  src: string;
+  mediaRef: string | null;
 };
 
 const IMAGE_PREVIEW_MIN_SCALE = 0.5;
@@ -134,7 +144,7 @@ export function ImagePreviewOverlay({
   // clicked; the arrow keys move within its card without reopening the viewer.
   const [shownMediaRef, setShownMediaRef] = useState<string | null>(null);
 
-  const gallery = useMemo<ImagePreviewSibling[]>(() => {
+  const gallery = useMemo<ImagePreviewShown[]>(() => {
     if (!preview) return [];
     const siblings = preview.siblings ?? [];
     return siblings.some((item) => item.mediaRef === preview.mediaRef)
@@ -142,7 +152,7 @@ export function ImagePreviewOverlay({
       : [{ src: preview.src, mediaRef: preview.mediaRef }];
   }, [preview]);
 
-  const shown = useMemo<ImagePreviewSibling | null>(() => {
+  const shown = useMemo<ImagePreviewShown | null>(() => {
     if (!preview) return null;
     return (
       gallery.find((item) => item.mediaRef === shownMediaRef)
@@ -417,16 +427,17 @@ export function ImagePreviewOverlay({
     event.currentTarget.releasePointerCapture?.(event.pointerId);
   }, []);
 
+  const shownMediaAsset = shown?.mediaRef ?? null;
   const copyImage = useCallback(() => {
-    if (!shown) {
+    if (shownMediaAsset === null) {
       return;
     }
     setCopyError(null);
     // Copies what is on screen, which after an arrow press is no longer the
     // image the viewer was opened with.
-    void copyMediaAssetToClipboard(shown.mediaRef)
+    void copyMediaAssetToClipboard(shownMediaAsset)
       .catch((error) => setCopyError(error instanceof Error ? error.message : String(error)));
-  }, [shown]);
+  }, [shownMediaAsset]);
 
   if (!preview || !shown) {
     return null;
@@ -516,18 +527,25 @@ export function ImagePreviewOverlay({
           <Plus className="size-[13px]" />
         </Button>
         <div className="h-6 w-px bg-border" />
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-label="Copy media"
-          data-image-preview-copy
-          onClick={copyImage}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <Copy className="size-[13px]" />
-        </Button>
-        <div className="h-6 w-px bg-border" />
+        {/* Copy Media copies a media file; a picture that is no media asset
+            names none (SPEC_MEDIA_ASSET_ACTIONS.md, «Картинка страницы у
+            ссылки»). */}
+        {shownMediaAsset !== null && (
+          <>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Copy media"
+              data-image-preview-copy
+              onClick={copyImage}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <Copy className="size-[13px]" />
+            </Button>
+            <div className="h-6 w-px bg-border" />
+          </>
+        )}
         <Button
           type="button"
           variant="ghost"

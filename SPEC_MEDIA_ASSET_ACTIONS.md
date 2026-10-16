@@ -108,7 +108,10 @@ Excluded surfaces:
   one exact source asset;
 - Related Notes hover preview chrome, except for media rendered inside the
   opened preview if that preview later becomes interactive;
-- remote images and iframes that do not resolve to a local vault file.
+- remote images and iframes that do not resolve to a local vault file;
+- картинка страницы у ссылки в открытой карточке: превью из кеша, а не
+  медиафайл; у неё только ⤢ и открытие по щелчку, см. «Картинка страницы у
+  ссылки».
 
 If a renderer cannot produce a valid `MediaAssetRef`, it must not show
 media-asset controls.
@@ -224,6 +227,10 @@ Image click contract:
   floating chrome as the opened-card floating top bar;
 - the bottom island contains zoom out, current zoom label, zoom in, Copy Media,
   and Close controls;
+  - исключение: картинка, которая не медиафайл (картинка страницы у ссылки),
+    открывается без Copy Media, потому что копировать нечего: Copy Media
+    копирует файл по `mediaRef`, а у такой картинки его нет
+    (`ImagePreviewRequest.mediaRef = null`);
 - clicking outside the sharp foreground image closes the preview, while clicking
   the image toggles zoom between 100% and 150%;
 - plus/minus buttons adjust preview scale in `0.2` increments; wheel/trackpad
@@ -248,6 +255,34 @@ Image click contract:
   Delete dialogs (decision of the user, 27.09.2026);
 - the left click part of this contract does not apply to video, because video
   left clicks belong to playback controls; the right click context menu does.
+
+## Картинка страницы у ссылки
+
+Решение пользователя 16.10.2026. Картинка страницы над заголовком ссылки в
+открытой карточке стоит в той же рамке, что картинка карточки
+([SPEC_FRONTEND.md](SPEC_FRONTEND.md), «Раскладка открытой карточки», Р9),
+но медиафайлом не является:
+
+- у карточки ссылки нет ни `frontmatter.file`, ни медиа в тексте: иначе
+  `derive_card_kind` дал бы ей вид `media` или `article`. Её
+  `block.media_file` всегда пуст. Карточка медиа, которая показывает
+  ссылку, тоже без `file:`: с ним она показала бы свой файл;
+- рисуется превью из кеша: `primary_preview_path` манифеста превью, которое
+  генератор сделал из `thumbnail` (`detailPreviewImageSource`), и только без
+  него сам `thumbnail`;
+- `thumbnail` не источник `MediaAssetRef`: в Definitions источники только
+  `frontmatter.file` и вставки в тексте, `MediaAssetReferenceKind` знает
+  только `frontmatter_file` и `body_embed`, а превью и плитки прямо названы
+  не медиафайлами.
+
+Поэтому по правилу «If a renderer cannot produce a valid `MediaAssetRef`, it
+must not show media-asset controls» у картинки нет меню ⋯, меню правого
+щелчка и перетаскивания (Create Element перетаскиванием), а значит нет
+Create Element, Reveal in Finder, Copy Path, Copy Media, Rename Media,
+Remove from Element и Delete. По решению пользователя у неё есть ⤢ в правом
+верхнем углу и открытие по щелчку в просмотре изображения поверх окна, как
+у картинки медиафайла. Просмотр показывает ту же картинку без Copy Media,
+масштаб, сдвиг и закрытие прежние; стрелкам листать нечего, картинка одна.
 
 ## Меню видео источника
 

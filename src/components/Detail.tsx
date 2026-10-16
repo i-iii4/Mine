@@ -331,26 +331,42 @@ function getElementLayoutWidth(node: HTMLElement): number {
  * открытой карточки», Р1): the reading column, or the frame width of a lone
  * picture or a lone video when it is narrower (its own width, or the width
  * it takes at the height limit, as its media frame draws it). One rule for
- * every card: what decides is the content, not a kind.
+ * every card: what decides is the content, not a kind. `pictureOwnSize` is
+ * the lone picture's own size once it has corrected a recorded size of
+ * another proportion (Р6): the width follows the frame the reader sees.
  */
 export function detailContentFullWidth(
   block: LightBlock | IndexedBlock,
   viewportHeight: number,
+  pictureOwnSize: DetailMediaSize | null = null,
 ): number {
-  const size = loneMediaSize(block);
+  const size = loneMediaSize(block, pictureOwnSize);
   if (!size || viewportHeight <= 0) return DETAIL_CONTENT_MAX_WIDTH_PX;
   const frameWidth = detailMediaFrameWidth(size, viewportHeight);
   return Math.max(1, Math.round(Math.min(DETAIL_CONTENT_MAX_WIDTH_PX, frameWidth)));
 }
 
-/** The recorded size of the one picture or the one video the card's content
- *  is; `null` when the content is anything else (text, a video with text
- *  under it, the YouTube player) or the record has no size. */
-function loneMediaSize(block: LightBlock | IndexedBlock): DetailMediaSize | null {
+/** A lone picture's own size, reported when it corrected its record's size
+ *  (Р6), with the card and the file it belongs to. */
+interface LonePictureOwnSize {
+  slug: string;
+  mediaRef: string | null;
+  size: DetailMediaSize;
+}
+
+/** The size of the one picture or the one video the card's content is: the
+ *  record's, or a lone picture's own once it corrected the record's;
+ *  `null` when the content is anything else (text, a video with text under
+ *  it, the YouTube player) or the record has no size. */
+function loneMediaSize(
+  block: LightBlock | IndexedBlock,
+  pictureOwnSize: DetailMediaSize | null,
+): DetailMediaSize | null {
   const content = deriveCardContent(block);
   const manifest = normalizeDetailPreviewManifest(block.preview_manifest);
   if (content.source === "image") {
-    return detailMediaSize(block.width ?? manifest?.width, block.height ?? manifest?.height);
+    const recorded = detailMediaSize(block.width ?? manifest?.width, block.height ?? manifest?.height);
+    return recorded && (pictureOwnSize ?? recorded);
   }
   if (content.source !== "video") return null;
   const bodyVideoReferences = localBodyVideoReferences(block.body, manifest);
@@ -443,9 +459,18 @@ export function Detail({
     metrics: detailLayoutMetrics,
   } = useDetailLayoutMetrics();
   const viewportHeight = detailLayoutMetrics?.viewportHeight ?? window.innerHeight;
+  // A lone picture whose record has a wrong size corrects its frame when the
+  // original loads (Р6); the content's width follows (Р1), for that picture
+  // of that card only.
+  const [lonePictureOwnSize, setLonePictureOwnSize] = useState<LonePictureOwnSize | null>(null);
+  const pictureOwnSize = lonePictureOwnSize
+    && lonePictureOwnSize.slug === displayBlock.slug
+    && lonePictureOwnSize.mediaRef === displayBlock.media_file
+    ? lonePictureOwnSize.size
+    : null;
   const contentWidth = useMemo(
-    () => detailContentFullWidth(displayBlock, viewportHeight),
-    [displayBlock, viewportHeight],
+    () => detailContentFullWidth(displayBlock, viewportHeight, pictureOwnSize),
+    [displayBlock, viewportHeight, pictureOwnSize],
   );
   const isStackedLayout = detailLayoutMetrics !== null
     && detailLayout(detailLayoutMetrics.width, detailLayoutMetrics.pad, contentWidth).mode === "stacked";
@@ -471,6 +496,8 @@ export function Detail({
 
   useEffect(() => {
     currentBlockSlugRef.current = block.slug;
+    // Another card: its picture reports its own size when its original loads.
+    setLonePictureOwnSize(null);
   }, [block.slug]);
 
   const [chromeEntered, setChromeEntered] = useState(false);
@@ -673,6 +700,7 @@ export function Detail({
                 onTextSelectionDrop={onTextSelectionDrop}
                 onCreateChannelAndTextSelectionCard={onCreateChannelAndTextSelectionCard}
                 onTextSelectionDelete={onTextSelectionDelete}
+                onLonePictureOwnSize={setLonePictureOwnSize}
               />
             </div>
             {isStackedLayout ? (
@@ -1811,6 +1839,7 @@ function BlockContent({
   onTextSelectionDrop,
   onCreateChannelAndTextSelectionCard,
   onTextSelectionDelete,
+  onLonePictureOwnSize,
 }: {
   block: LightBlock | IndexedBlock;
   fullBlock: IndexedBlock | null;
@@ -1834,6 +1863,8 @@ function BlockContent({
     tag: string,
   ) => Promise<void>;
   onTextSelectionDelete?: (payload: MineTextSelectionDragPayload) => void | Promise<void>;
+  /** The lone picture corrected its record's size (Р6). */
+  onLonePictureOwnSize: (own: LonePictureOwnSize) => void;
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const previewManifest = useMemo(
@@ -1967,55 +1998,17 @@ function BlockContent({
 
     case "link": {
       if (sourcePlayer) return <div>{sourcePlayer}</div>;
-      if (content.source === "link" && previewManifest?.kind !== "text") {
-        const src = detailPreviewImageSource({
-          block,
-          previewManifest,
-          vaultPath,
-          thumbsRootPath: resolvedThumbsRoot,
-        });
-        return (
-          <div>
-            <div className="aspect-video bg-accent">
-              <img
-                src={src}
-                alt=""
-                className="h-full w-full object-contain"
-                draggable={false}
-                onError={(event) => {
-                  event.currentTarget.style.display = "none";
-                }}
-              />
-            </div>
-            <div className="py-4">
-              {displayTitle && (
-                <h2 className="text-lg font-semibold text-foreground">
-                  {displayTitle}
-                </h2>
-              )}
-              {description && (
-                <p className="mt-2 text-base text-muted-foreground">
-                  {description}
-                </p>
-              )}
-            </div>
-          </div>
-        );
-      }
-
       return (
-        <div className="py-4">
-          {displayTitle && (
-            <h2 className="text-lg font-semibold text-foreground">
-              {displayTitle}
-            </h2>
-          )}
-          {description && (
-            <p className="mt-2 text-base text-muted-foreground">
-              {description}
-            </p>
-          )}
-        </div>
+        <DetailLinkPage
+          block={block}
+          previewManifest={previewManifest}
+          vaultPath={vaultPath}
+          thumbsRootPath={resolvedThumbsRoot}
+          showPicture={content.source === "link" && previewManifest?.kind !== "text"}
+          title={displayTitle}
+          description={description}
+          onOpenImagePreview={onOpenImagePreview}
+        />
       );
     }
 
@@ -2060,6 +2053,7 @@ function BlockContent({
                 mediaRef={block.media_file}
                 alt={navigationLabel}
                 className="block max-h-[var(--detail-media-max-height)] max-w-full object-contain"
+                onOwnSize={(size) => onLonePictureOwnSize({ slug: block.slug, mediaRef: block.media_file, size })}
               />
             </MediaAssetActionFrame>
           </div>
@@ -2067,38 +2061,17 @@ function BlockContent({
       }
 
       if (content.source === "link") {
-        const src = detailPreviewImageSource({
-          block,
-          previewManifest,
-          vaultPath,
-          thumbsRootPath: resolvedThumbsRoot,
-        });
         return (
-          <div>
-            <div className="aspect-video bg-accent">
-              <img
-                src={src}
-                alt=""
-                className="h-full w-full object-contain"
-                draggable={false}
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                }}
-              />
-            </div>
-            <div className="py-4">
-              {displayTitle && (
-                <h2 className="text-lg font-semibold text-foreground">
-                  {displayTitle}
-                </h2>
-              )}
-              {description && (
-                <p className="mt-2 text-base text-muted-foreground">
-                  {description}
-                </p>
-              )}
-            </div>
-          </div>
+          <DetailLinkPage
+            block={block}
+            previewManifest={previewManifest}
+            vaultPath={vaultPath}
+            thumbsRootPath={resolvedThumbsRoot}
+            showPicture
+            title={displayTitle}
+            description={description}
+            onOpenImagePreview={onOpenImagePreview}
+          />
         );
       }
 
@@ -2220,6 +2193,97 @@ function BlockContent({
   }
 }
 
+/**
+ * A saved page in the open card: its page picture, when it has one, then its
+ * title and description. One path for the link card and for a media card
+ * that shows a link (SPEC_FRONTEND.md, «Раскладка открытой карточки», Р9).
+ */
+function DetailLinkPage({
+  block,
+  previewManifest,
+  vaultPath,
+  thumbsRootPath,
+  showPicture,
+  title,
+  description,
+  onOpenImagePreview,
+}: {
+  block: LightBlock | IndexedBlock;
+  previewManifest: ReturnType<typeof normalizeDetailPreviewManifest>;
+  vaultPath: string;
+  thumbsRootPath: string;
+  showPicture: boolean;
+  title: string | null;
+  description: string | null;
+  onOpenImagePreview: (preview: ImagePreviewRequest) => void;
+}) {
+  const src = showPicture
+    ? detailPreviewImageSource({ block, previewManifest, vaultPath, thumbsRootPath })
+    : null;
+  return (
+    <div>
+      {src && (
+        <DetailLinkPicture
+          key={src}
+          src={src}
+          sourceWidth={block.width ?? previewManifest?.width}
+          sourceHeight={block.height ?? previewManifest?.height}
+          onOpenImagePreview={onOpenImagePreview}
+        />
+      )}
+      <div className="py-4">
+        {title && (
+          <h2 className="text-lg font-semibold text-foreground">
+            {title}
+          </h2>
+        )}
+        {description && (
+          <p className="mt-2 text-base text-muted-foreground">
+            {description}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A link's page picture in the one media frame (Р6, Р9): its own proportion,
+ * the size the card's picture takes (the record's, else the preview
+ * manifest's, else the first loaded version's), centred in the column. It is
+ * no media asset, so ⤢ and a click are its only controls. A picture that will
+ * not load leaves with its frame and its controls. Callers key it by `src`.
+ */
+function DetailLinkPicture({
+  src,
+  sourceWidth,
+  sourceHeight,
+  onOpenImagePreview,
+}: {
+  src: string;
+  sourceWidth?: number | null;
+  sourceHeight?: number | null;
+  onOpenImagePreview: (preview: ImagePreviewRequest) => void;
+}) {
+  const [unavailable, setUnavailable] = useState(false);
+  if (unavailable) return null;
+  return (
+    <div className="flex justify-center" data-detail-link-picture>
+      <ExpandableImageFrame src={src} onOpenImagePreview={onOpenImagePreview}>
+        <DetailImage
+          src={src}
+          sourceWidth={sourceWidth}
+          sourceHeight={sourceHeight}
+          previewSrc={null}
+          alt=""
+          className="block max-h-[var(--detail-media-max-height)] max-w-full object-contain"
+          onUnavailable={() => setUnavailable(true)}
+        />
+      </ExpandableImageFrame>
+    </div>
+  );
+}
+
 function MediaAssetActionFrame({
   asset,
   vaultPath,
@@ -2302,10 +2366,7 @@ function MediaAssetActionFrame({
   if (!asset) {
     return (
       <div
-        className={cn(
-          "not-prose relative inline-flex max-h-[var(--detail-media-max-height)] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block",
-          className,
-        )}
+        className={cn(DETAIL_MEDIA_ACTION_FRAME_CLASSES, className)}
         data-detail-media-action-frame
       >
         {children}
@@ -2334,7 +2395,8 @@ function MediaAssetActionFrame({
             {...(canDrag ? dragAttributes : {})}
             {...(canDrag ? dragListeners : {})}
             className={cn(
-              "not-prose group/detail-media relative inline-flex max-h-[var(--detail-media-max-height)] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block",
+              DETAIL_MEDIA_ACTION_FRAME_CLASSES,
+              "group/detail-media",
               // No resting cursor of its own: the pointer stays default until a drag
               // actually starts, and only then becomes grabbing.
               canDrag && "select-none active:cursor-grabbing",
@@ -2394,34 +2456,22 @@ function MediaAssetActionFrame({
                 ellipsis covered them; its menu opens only on right click. */}
             {asset.media_kind !== "video" && (
               <div
-                className={cn(
-                  "absolute right-2 top-2 z-10 flex gap-1 transition-opacity duration-[160ms]",
-                  controlsVisible
-                    ? "opacity-100"
-                    : "pointer-events-none opacity-0 group-hover/detail-media:pointer-events-auto group-hover/detail-media:opacity-100 group-focus-within/detail-media:pointer-events-auto group-focus-within/detail-media:opacity-100",
-                )}
+                className={detailMediaControlsClasses(controlsVisible)}
                 data-detail-media-action-menu
                 onClick={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
                 onContextMenu={(event) => event.stopPropagation()}
               >
                 {canOpenImagePreview && fullSizeImageSrc && (
-                  <Button
-                    type="button"
-                    variant="default"
-                    size="icon"
-                    aria-label="Expand image"
-                    data-detail-media-expand-button
-                    onClick={(event) => {
+                  <ExpandImageButton
+                    onExpand={(origin) => {
                       onOpenImagePreview({
                         src: fullSizeImageSrc,
                         mediaRef: asset.media_ref,
-                        siblings: collectCardImages(event.currentTarget),
+                        siblings: collectCardImages(origin),
                       });
                     }}
-                  >
-                    <Expand className="size-[13px]" />
-                  </Button>
+                  />
                 )}
                 <MediaAssetMoreMenu
                   itemProps={menuItemProps}
@@ -2461,6 +2511,76 @@ function MediaAssetActionFrame({
         }}
       />
     </>
+  );
+}
+
+/** The box round a picture or a video of the open card that its controls
+ *  stand in: no wider than its column, no taller than the height limit (Р7),
+ *  shrunk to the medium's frame, so the controls sit at the picture's corner. */
+const DETAIL_MEDIA_ACTION_FRAME_CLASSES =
+  "not-prose relative inline-flex max-h-[var(--detail-media-max-height)] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block";
+
+/** The media controls in the picture's top right corner: shown while the
+ *  picture is hovered or focused, or while `visible` (its menu is open). */
+function detailMediaControlsClasses(visible: boolean): string {
+  return cn(
+    "absolute right-2 top-2 z-10 flex gap-1 transition-opacity duration-[160ms]",
+    visible
+      ? "opacity-100"
+      : "pointer-events-none opacity-0 group-hover/detail-media:pointer-events-auto group-hover/detail-media:opacity-100 group-focus-within/detail-media:pointer-events-auto group-focus-within/detail-media:opacity-100",
+  );
+}
+
+/** ⤢: opens the picture in the viewer over the window. */
+function ExpandImageButton({ onExpand }: { onExpand: (origin: HTMLElement) => void }) {
+  return (
+    <Button
+      type="button"
+      variant="default"
+      size="icon"
+      aria-label="Expand image"
+      data-detail-media-expand-button
+      onClick={(event) => onExpand(event.currentTarget)}
+    >
+      <Expand className="size-[13px]" />
+    </Button>
+  );
+}
+
+/**
+ * A picture of the open card that is no media asset: a link's page picture,
+ * the preview the cache made of the page's image (SPEC_MEDIA_ASSET_ACTIONS.md,
+ * «Картинка страницы у ссылки»). It stands in the same box as a media asset's
+ * picture and opens in the viewer by ⤢ or a click, without Copy Media there.
+ * It has no media menu, no right click menu and no drag: those act on a local
+ * media file, and this picture names none.
+ */
+function ExpandableImageFrame({
+  src,
+  onOpenImagePreview,
+  children,
+}: {
+  src: string;
+  onOpenImagePreview: (preview: ImagePreviewRequest) => void;
+  children: ReactNode;
+}) {
+  const open = () => onOpenImagePreview({ src, mediaRef: null });
+  return (
+    <div
+      className={cn(DETAIL_MEDIA_ACTION_FRAME_CLASSES, "group/detail-media")}
+      data-detail-media-action-frame
+      onClick={open}
+    >
+      {children}
+      <div
+        className={detailMediaControlsClasses(false)}
+        data-detail-media-action-menu
+        onClick={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <ExpandImageButton onExpand={open} />
+      </div>
+    </div>
   );
 }
 
@@ -4007,6 +4127,8 @@ function DetailImage({
   mediaRef = null,
   alt,
   className,
+  onOwnSize,
+  onUnavailable,
   ...imgProps
 }: {
   src: string;
@@ -4021,16 +4143,38 @@ function DetailImage({
   /// The card's media reference, for asking the system about its download.
   mediaRef?: string | null;
   alt: string;
+  /// Called with the picture's own size when it replaces a recorded size of
+  /// another proportion (Р6), so the content's width can follow the frame.
+  onOwnSize?: (size: DetailMediaSize) => void;
+  /// Called when the picture will not load and nothing stands in for it (no
+  /// preview behind it, not held in iCloud): a caller that must not leave an
+  /// empty frame removes it.
+  onUnavailable?: () => void;
 } & React.ImgHTMLAttributes<HTMLImageElement>) {
   const [originalReady, setOriginalReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   // Source geometry owns layout; loading changes pixels, never the box.
   // Legacy records without dimensions lock the first usable image geometry.
-  const [size, setSize] = useState<DetailMediaSize | null>(() => detailMediaSize(sourceWidth, sourceHeight));
-  const rememberSize = (image: HTMLImageElement) => {
+  // The one exception is a wrong size: when the original's own proportion
+  // differs from the frame's, the frame takes the original's size (Р6, as a
+  // video's frame does).
+  const [recordedSize] = useState<DetailMediaSize | null>(() => detailMediaSize(sourceWidth, sourceHeight));
+  const [size, setSize] = useState<DetailMediaSize | null>(recordedSize);
+  // Two versions may load before the next render: the size they compare
+  // with is the latest one set, not the one rendered.
+  const sizeRef = useRef(size);
+  const rememberSize = (image: HTMLImageElement, isOriginal: boolean) => {
     const natural = detailMediaSize(image.naturalWidth, image.naturalHeight);
-    if (natural) setSize(previous => previous ?? natural);
+    if (!natural) return;
+    const current = sizeRef.current;
+    // Only the original corrects a size: a preview's sides are rounded, and
+    // a thin one would read as another proportion.
+    if (current && (!isOriginal || sameMediaProportion(current, natural))) return;
+    sizeRef.current = natural;
+    setSize(natural);
+    // Past the check above a recorded size is always one being corrected.
+    if (recordedSize) onOwnSize?.(natural);
   };
   // Late like the card badge: a file that arrives quickly must not flash a
   // notice about waiting. See SPEC_CLOUD_STORAGE.md Х6, Х9.
@@ -4087,7 +4231,7 @@ function DetailImage({
           src={previewSrc}
           slug={previewSlug}
           className={cn("block max-w-full rounded-0", className, size && DETAIL_MEDIA_FILL_CLASSES)}
-          onLoad={rememberSize}
+          onLoad={(image) => rememberSize(image, false)}
         />
       )}
       <img
@@ -4110,7 +4254,7 @@ function DetailImage({
             catch { setFailed(true); return; }
             if (!image.isConnected) return;
           }
-          rememberSize(image);
+          rememberSize(image, true);
           setOriginalReady(true);
           setFailed(false);
         }}
@@ -4123,6 +4267,7 @@ function DetailImage({
           }
           if (!previewSrc) {
             (e.target as HTMLImageElement).style.display = "none";
+            onUnavailable?.();
           }
         }}
         style={previewSrc && !originalReady ? { opacity: 0 } : undefined}

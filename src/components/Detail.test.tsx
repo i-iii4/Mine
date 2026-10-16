@@ -3703,3 +3703,197 @@ describe("an open card's media frame", () => {
     expect(frame.querySelector("video")).not.toHaveClass("mb-6");
   });
 });
+
+// A link's page picture in the one media frame, one path for the link card
+// and a media card that shows a link (SPEC_FRONTEND.md, «Раскладка открытой
+// карточки», Р9; user's decision of 16.10.2026). It is no media asset, so ⤢
+// and a click are its only controls (SPEC_MEDIA_ASSET_ACTIONS.md,
+// «Картинка страницы у ссылки»).
+describe("an open link card's page picture", () => {
+  const PREVIEW_SRC = "asset://localhost//tmp/thumbs/test-block.jpg";
+
+  beforeEach(() => {
+    getBlockMock.mockReset();
+    getBlockMock.mockResolvedValue(null);
+  });
+
+  function pagePictureManifest(size: { width: number; height: number } | null) {
+    return JSON.stringify({
+      kind: "image",
+      primary_preview_path: "test-block.jpg",
+      width: size?.width ?? null,
+      height: size?.height ?? null,
+      tiles: [{ source_path: "Media/og.png", width: size?.width ?? null, height: size?.height ?? null, is_video: false, is_video_poster: false }],
+      overflow_count: 0,
+    });
+  }
+
+  function linkBlock(cardKind: "link" | "media", size: { width: number; height: number } | null) {
+    return block({
+      card_kind: cardKind,
+      block_type: "link",
+      title: "Page Title",
+      description: "The page's description.",
+      url: "https://example.com/page",
+      media_file: null,
+      thumbnail: "Media/og.png",
+      body: "",
+      preview_manifest: pagePictureManifest(size),
+    });
+  }
+
+  function renderLink(b: IndexedBlock, onOpenImagePreview = vi.fn()) {
+    return render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault" thumbsRootPath="/tmp/thumbs" tags={[]}
+        onClose={vi.fn()} onNavigate={vi.fn()} onToggleTag={vi.fn()} onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()} onRequestRename={vi.fn()} onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
+        onOpenImagePreview={onOpenImagePreview}
+      />,
+    );
+  }
+
+  it.each(["link", "media"] as const)("draws a 3:1 page picture in a frame of its own proportion, without the grey 16:9 box (%s card)", (cardKind) => {
+    const { container } = renderLink(linkBlock(cardKind, { width: 1200, height: 400 }));
+    const column = container.querySelector("[data-detail-article-column]")!;
+    expect(column.querySelector(".aspect-video")).toBeNull();
+    expect(column.querySelector(".bg-accent")).toBeNull();
+    const picture = column.querySelector<HTMLElement>("[data-detail-link-picture]")!;
+    expect(picture).toHaveClass("flex", "justify-center");
+    const frame = picture.querySelector<HTMLElement>("[data-detail-image]")!;
+    expect(frame.style.aspectRatio).toBe("1200 / 400");
+    expect(frame.style.width).toBe("min(1200px, calc(var(--detail-media-max-height) * 1200 / 400))");
+    expect(frame.style.maxWidth).toBe("100%");
+    const image = frame.querySelector("img")!;
+    expect(image).toHaveAttribute("src", PREVIEW_SRC);
+    expect(image).toHaveClass("absolute", "inset-0", "size-full", "object-contain");
+    // The title and the description stay under the picture.
+    expect(within(column as HTMLElement).getByRole("heading", { name: "Page Title" })).toBeInTheDocument();
+    expect(within(column as HTMLElement).getByText("The page's description.")).toBeInTheDocument();
+    expect(picture.compareDocumentPosition(within(column as HTMLElement).getByRole("heading", { name: "Page Title" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // A link holds the reading column (Р1).
+    expect(container.querySelector("[data-detail-layout-mode]")).toHaveAttribute("data-detail-content-width", String(DETAIL_CONTENT_MAX_WIDTH_PX));
+  });
+
+  it("frames a page picture without a recorded size by the size it loads with", () => {
+    const { container } = renderLink(linkBlock("link", null));
+    const frame = container.querySelector<HTMLElement>("[data-detail-link-picture] [data-detail-image]")!;
+    expect(frame.style.aspectRatio).toBe("");
+    const image = frame.querySelector("img")!;
+    Object.defineProperties(image, { naturalWidth: { value: 600 }, naturalHeight: { value: 800 } });
+    fireEvent.load(image);
+    expect(frame.style.aspectRatio).toBe("600 / 800");
+    expect(image).toHaveClass("absolute", "inset-0", "size-full");
+  });
+
+  it("gives the page picture ⤢ and a click into the viewer, without the media menu", async () => {
+    const onOpenImagePreview = vi.fn();
+    const { container } = renderLink(linkBlock("link", { width: 1200, height: 400 }), onOpenImagePreview);
+    const picture = container.querySelector<HTMLElement>("[data-detail-link-picture]")!;
+    const controls = picture.querySelector("[data-detail-media-action-menu]")!;
+    expect(controls).toHaveClass("right-2", "top-2", "opacity-0", "group-hover/detail-media:opacity-100");
+    expect(controls.parentElement).toHaveAttribute("data-detail-media-action-frame");
+    expect(controls.parentElement).toHaveClass("group/detail-media", "inline-flex", "max-h-[var(--detail-media-max-height)]");
+    expect(picture.querySelector("[data-detail-media-more-button]")).toBeNull();
+    expect(picture.querySelector("[data-media-asset-ref]")).toBeNull();
+
+    fireEvent.click(picture.querySelector("[data-detail-image] img")!);
+    expect(onOpenImagePreview).toHaveBeenCalledTimes(1);
+    expect(onOpenImagePreview).toHaveBeenLastCalledWith({ src: PREVIEW_SRC, mediaRef: null });
+
+    const expand = controls.querySelector("[data-detail-media-expand-button]")!;
+    expect(expand).toHaveAttribute("aria-label", "Expand image");
+    fireEvent.click(expand);
+    expect(onOpenImagePreview).toHaveBeenCalledTimes(2);
+    expect(onOpenImagePreview).toHaveBeenLastCalledWith({ src: PREVIEW_SRC, mediaRef: null });
+
+    fireEvent.contextMenu(picture.querySelector("[data-detail-image] img")!, { clientX: 120, clientY: 80 });
+    await act(async () => {});
+    expect(screen.queryByText("Rename Media...")).toBeNull();
+    expect(screen.queryByText("Create Element")).toBeNull();
+  });
+
+  it("removes the page picture with its frame and controls when it will not load", () => {
+    const { container } = renderLink(linkBlock("link", { width: 1200, height: 400 }));
+    fireEvent.error(container.querySelector("[data-detail-link-picture] [data-detail-image] img")!);
+    expect(container.querySelector("[data-detail-link-picture]")).toBeNull();
+    expect(container.querySelector("[data-detail-media-expand-button]")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Page Title" })).toBeInTheDocument();
+  });
+});
+
+// A recorded size of another proportion than the picture's own is wrong: the
+// frame takes the original's size once it loads, as a video's frame does
+// (SPEC_FRONTEND.md, «Раскладка открытой карточки», Р6; user's decision of
+// 16.10.2026).
+describe("an open card's picture whose record has a wrong size", () => {
+  beforeEach(() => {
+    getBlockMock.mockReset();
+    getBlockMock.mockResolvedValue(null);
+  });
+
+  function pictureBlock(width: number, height: number) {
+    return block({ card_kind: "media", block_type: "image", url: null, media_file: "Media/wide.jpg", width, height });
+  }
+
+  function renderPicture(b: IndexedBlock) {
+    const view = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault" thumbsRootPath="/tmp/thumbs" tags={[]}
+        onClose={vi.fn()} onNavigate={vi.fn()} onToggleTag={vi.fn()} onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()} onRequestRename={vi.fn()} onRequestDelete={vi.fn()} onOpenRelatedNote={vi.fn()}
+      />,
+    );
+    const frame = view.container.querySelector<HTMLElement>("[data-detail-image]")!;
+    return {
+      ...view,
+      frame,
+      preview: frame.querySelector<HTMLImageElement>("[data-detail-preview-backing]")!,
+      original: frame.querySelector<HTMLImageElement>("img:not([data-detail-preview-backing])")!,
+      contentWidth: () => view.container.querySelector("[data-detail-layout-mode]")!.getAttribute("data-detail-content-width"),
+    };
+  }
+
+  function loadAt(image: HTMLImageElement, width: number, height: number) {
+    Object.defineProperties(image, { naturalWidth: { value: width }, naturalHeight: { value: height } });
+    fireEvent.load(image);
+  }
+
+  it("takes a 16:9 original's proportion over a stored 1077 × 1500, the controls at the picture's corner", () => {
+    const stored = pictureBlock(1077, 1500);
+    const { frame, preview, original, container, contentWidth } = renderPicture(stored);
+    expect(frame.style.aspectRatio).toBe("1077 / 1500");
+    expect(contentWidth()).toBe(String(detailContentFullWidth(stored, window.innerHeight)));
+    // The preview's sides are rounded: it never corrects the frame.
+    loadAt(preview, 640, 360);
+    expect(frame.style.aspectRatio).toBe("1077 / 1500");
+
+    loadAt(original, 1920, 1080);
+    expect(frame.style.aspectRatio).toBe("1920 / 1080");
+    expect(frame.style.width).toBe("min(1920px, calc(var(--detail-media-max-height) * 1920 / 1080))");
+    expect(original).toHaveClass("absolute", "inset-0", "size-full", "object-contain");
+    // The content's width follows the corrected frame (Р1): the reading
+    // column, which a 16:9 picture under the height limit fills.
+    expect(contentWidth()).toBe(String(DETAIL_CONTENT_MAX_WIDTH_PX));
+    // The controls stand in the box that shrinks to the frame, so at the
+    // corner of the picture, not over the empty space of a portrait frame.
+    const controls = container.querySelector("[data-detail-media-action-menu]")!;
+    expect(controls).toHaveClass("absolute", "right-2", "top-2");
+    expect(controls.parentElement).toBe(frame.parentElement);
+    expect(frame.parentElement).toHaveClass("inline-flex", "max-w-full");
+  });
+
+  it("keeps the recorded frame when the original's proportion is within the tolerance", () => {
+    const stored = pictureBlock(1600, 1200);
+    const { frame, original, contentWidth } = renderPicture(stored);
+    const geometry = frame.getAttribute("style");
+    const width = contentWidth();
+    // 1601 × 1200 against 1600 × 1200: 0.06 %, under the 1 % tolerance.
+    loadAt(original, 1601, 1200);
+    expect(frame.getAttribute("style")).toBe(geometry);
+    expect(frame.style.aspectRatio).toBe("1600 / 1200");
+    expect(contentWidth()).toBe(width);
+  });
+});

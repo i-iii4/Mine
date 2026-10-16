@@ -5,9 +5,11 @@
 // sidebar the content stands centred between it and the panel, the view
 // stacks when both margins reach the inset, the stacked panel cards are no
 // wider than the reading column and centred, body media stand centred in the
-// article's column, a video's box is its frame, and a panel taller than the
-// window scrolls to its last card. Real layout, which the jsdom tests of
-// Detail cannot measure.
+// article's column, a video's box is its frame, a panel taller than the
+// window scrolls to its last card, a link's page picture stands in the one
+// media frame by its own proportion, and a picture whose record has a wrong
+// size takes its own. Real layout, which the jsdom tests of Detail cannot
+// measure.
 // Starts and stops its own Vite.
 import assert from 'node:assert/strict';
 import {chromium} from 'playwright';
@@ -40,6 +42,8 @@ const vite=await startAuditVite([{
         image:{...base,media_file:'Media/photo.png',width:880,height:1100},
         video:{...base,block_type:'video',media_file:'Media/tall.mp4',width:1080,height:1920},
         panel:{...base,card_kind:'article',block_type:'article',url:'https://example.com/p',author:'Author',body:text,related_notes:Array.from({length:16},(_,index)=>'Note '+(index+1))},
+        link:{...base,card_kind:'link',block_type:'link',url:'https://example.com/l',title:'Page',display_title:'Page',description:'The page description.',thumbnail:'Media/og.png',preview_manifest:JSON.stringify({kind:'image',primary_preview_path:'link.jpg',tiles:[{source_path:'Media/og.png',is_video:false,is_video_poster:false}]})},
+        wrong:{...base,media_file:'Media/wide.png',width:1077,height:1500},
       };
       const block=card?cards[card]:{...base,slug:'image',title:'Image',display_title:'Image',fallback_label:'Image',media_file:'image.jpg',width:params.has('legacy')?null:width,height:params.has('legacy')?null:height};
       const noop=()=>{};
@@ -147,7 +151,7 @@ try{
   // 3 × pad + W + 320 + sidebar (pad 32): the reading column 680 (1336),
   // a picture 880 × 1100 at 544 (1200), a portrait video 1080 × 1920 at 383
   // (1039).
-  const images={'photo.png':[880,1100],'small.png':[600,300]};
+  const images={'photo.png':[880,1100],'small.png':[600,300],'link.jpg':[400,300],'wide.png':[1920,1080]};
   async function openCard(card,width,height=HEIGHT){
     const page=await browser.newPage({viewport:{width,height}});
     const errors=[];page.on('pageerror',error=>errors.push(error.message));
@@ -223,6 +227,59 @@ try{
     }
     assert.deepEqual(errors,[]);
     console.log('PASS video: box is its frame, centred beside the panel at 1600 and 1039, stacked at 1038 with panel cards 680 wide and centred');
+    await page.close();
+  }
+
+  // A link's page picture (Р9): a 4:3 picture without a recorded size in the
+  // one media frame at its own size, centred in the reading column, the
+  // title under it, ⤢ at its corner; no 16:9 box.
+  {
+    const {page,errors}=await openCard('link',1600);
+    await page.waitForFunction(()=>document.querySelector('[data-detail-link-picture] [data-detail-image]')?.style.aspectRatio==='400 / 300',null,{timeout:COLD_START_MS});
+    await page.waitForTimeout(100);
+    const geometry=await page.evaluate(()=>{
+      const box=node=>{const r=node.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height};};
+      const frame=document.querySelector('[data-detail-link-picture] [data-detail-image]');
+      return {
+        column:box(document.querySelector('[data-detail-article-column]')),
+        frame:box(frame),
+        image:box(frame.querySelector('img')),
+        controls:box(document.querySelector('[data-detail-link-picture] [data-detail-media-action-menu]')),
+        heading:box(document.querySelector('[data-detail-article-column] h2')),
+        boxes:document.querySelectorAll('[data-detail-article-column] .aspect-video').length,
+      };
+    });
+    assert.equal(geometry.boxes,0,'link: no 16:9 box');
+    near(geometry.column.width,COLUMN,'link: holds the reading column');
+    near(geometry.frame.width,400,'link: frame at the picture\'s own width');
+    near(geometry.frame.height,300,'link: frame in the picture\'s own proportion');
+    for(const side of ['left','top','width','height'])near(geometry.image[side],geometry.frame[side],`link: picture ${side} equals its frame`);
+    near(geometry.frame.left-geometry.column.left,geometry.column.right-geometry.frame.right,'link: picture centred in the column');
+    near(geometry.controls.right,geometry.frame.right-8,'link: ⤢ at the picture\'s right edge');
+    near(geometry.controls.top,geometry.frame.top+8,'link: ⤢ at the picture\'s top edge');
+    assert(geometry.heading.top>=geometry.frame.bottom-0.5,'link: the title under the picture');
+    assert.deepEqual(errors,[]);
+    console.log('PASS link: page picture 400 × 300 in its own frame, centred in the 680 column, ⤢ at its corner, title under it, no 16:9 box');
+    await page.close();
+  }
+
+  // A record of 1077 × 1500 whose file is 1920 × 1080 (Р6): once the original
+  // loads, the frame is 16:9, the content's width follows it (680 at the
+  // height limit of a 800 tall window) and the controls stand at the
+  // picture's corner, not over empty space.
+  {
+    const {page,errors}=await openCard('wrong',1600);
+    await page.waitForFunction(()=>document.querySelector('[data-detail-image]')?.style.aspectRatio==='1920 / 1080',null,{timeout:COLD_START_MS});
+    await page.waitForTimeout(150);
+    const geometry=await measure(page);
+    const controls=await page.evaluate(()=>{const r=document.querySelector('[data-detail-media-action-menu]').getBoundingClientRect();return {right:r.right,top:r.top};});
+    near(geometry.image.width,COLUMN,'wrong size: frame as wide as the corrected content');
+    assert(Math.abs(geometry.image.width/geometry.image.height-1920/1080)<0.01,'wrong size: frame in the picture\'s own proportion');
+    assertCentredBesidePanel(geometry,geometry.image,'wrong size at 1600');
+    near(controls.right,geometry.image.right-8,'wrong size: controls at the picture\'s right edge');
+    near(controls.top,geometry.image.top+8,'wrong size: controls at the picture\'s top edge');
+    assert.deepEqual(errors,[]);
+    console.log('PASS wrong size: stored 1077 × 1500, loaded 1920 × 1080: frame 16:9 at 680, centred beside the panel, controls at the picture\'s corner');
     await page.close();
   }
 
