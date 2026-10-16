@@ -499,8 +499,8 @@ async function verifyCollectionHoverDimming(page) {
   // SPEC_GRAPH_VIEW.md, «Приглушение при наведении на коллекцию». The red
   // audit thumbnail is a Research card (GraphAuditRoute: card i is in
   // collection i % 6 and draws audit-(i % 6).svg). Resting on Design must dim
-  // that pixel to the card drawn at the colour law's de-emphasis share
-  // (`DEEMPHASIZED_OPACITY`) over the canvas, once the hover intent engine
+  // that pixel to the card drawn at the colour law's graph context share
+  // (`GRAPH_CONTEXT_OPACITY`) over the canvas, once the hover intent engine
   // has answered; moving on to Research must leave it as it was; leaving
   // must bring it back. That card hover dims nothing is the zero-change check
   // of verifyCardHoverOutline.
@@ -519,7 +519,7 @@ async function verifyCollectionHoverDimming(page) {
   const expected = await page.evaluate(async () => {
     // The share comes from the colour law itself, served by the dev server,
     // not from what the graph happens to draw.
-    const { DEEMPHASIZED_OPACITY } = await import("/src/lib/colorLaw.ts");
+    const { GRAPH_CONTEXT_OPACITY } = await import("/src/lib/colorLaw.ts");
     const probe = document.createElement("span");
     document.body.appendChild(probe);
     probe.style.backgroundColor = "var(--background)";
@@ -531,7 +531,7 @@ async function verifyCollectionHoverDimming(page) {
     const context = pixel.getContext("2d", { willReadFrequently: true });
     context.fillStyle = background;
     context.fillRect(0, 0, 1, 1);
-    return { opacity: DEEMPHASIZED_OPACITY, canvas: [...context.getImageData(0, 0, 1, 1).data.slice(0, 3)] };
+    return { opacity: GRAPH_CONTEXT_OPACITY, canvas: [...context.getImageData(0, 0, 1, 1).data.slice(0, 3)] };
   });
   const original = pixelAt(before, target);
   const dimmedTarget = original.slice(0, 3)
@@ -555,7 +555,7 @@ async function verifyCollectionHoverDimming(page) {
     .every((channel, index) => Math.abs(actual[index] - channel) <= tolerance);
   const report = { target, original, dimmed, dimmedTarget, lit, restored, opacity: expected.opacity };
   if (Math.abs(dimmed[0] - original[0]) < 20 || !near(dimmed, dimmedTarget, 4)) {
-    throw new Error(`Resting on Design must dim a Research card to DEEMPHASIZED_OPACITY: ${JSON.stringify(report)}`);
+    throw new Error(`Resting on Design must dim a Research card to GRAPH_CONTEXT_OPACITY: ${JSON.stringify(report)}`);
   }
   if (!near(lit, original.slice(0, 3), 2)) {
     throw new Error(`Moving on to Research must leave its own card as it was: ${JSON.stringify(report)}`);

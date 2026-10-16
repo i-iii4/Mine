@@ -3,7 +3,7 @@
 // decision of 16.10.2026).
 
 import { describe, expect, it } from "vitest";
-import { DEEMPHASIZED_OPACITY } from "@/lib/colorLaw";
+import { GRAPH_CONTEXT_OPACITY } from "@/lib/colorLaw";
 import {
   beginDimTransition,
   colorAtOpacity,
@@ -73,7 +73,7 @@ describe("graphHoverHighlight", () => {
 });
 
 describe("graphElementOpacity", () => {
-  const DIMMED = DEEMPHASIZED_OPACITY;
+  const DIMMED = GRAPH_CONTEXT_OPACITY;
   // Half-way between lit and dimmed, and a quarter of the way back from there.
   const HALF = (1 + DIMMED) / 2;
   const THREE_QUARTERS = 1 - (1 - DIMMED) / 4;
@@ -147,7 +147,7 @@ describe("graphElementOpacity", () => {
 });
 
 describe("dimmed colours", () => {
-  const DIMMED = DEEMPHASIZED_OPACITY;
+  const DIMMED = GRAPH_CONTEXT_OPACITY;
   const half = String(Number((DIMMED / 2).toFixed(4)));
 
   it("writes a line colour at the dimmed opacity in the form it came in", () => {

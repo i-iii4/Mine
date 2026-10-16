@@ -7,7 +7,7 @@ import {
   compositeLightness,
   contrastRatio,
   darkSignalDelta,
-  DEEMPHASIZED_OPACITY,
+  GRAPH_CONTEXT_OPACITY,
   FORM_RATIO,
   gamutChroma,
   greyFromOklch,
@@ -297,16 +297,14 @@ describe("tokens follow the colour rules", () => {
     expect(contrastRatio(rgbFromOklch(l!, c!, h!), fill)).toBeGreaterThanOrEqual(4.5);
   });
 
-  it("de-emphasizes to the platforms' secondary emphasis, one share in both themes (K13, 3.9.4, 16.10.2026)", () => {
-    // iOS secondaryLabel and Material's medium emphasis are 0.6; macOS
-    // secondaryLabelColor over labelColor is 0.498 / 0.847.
-    expect(DEEMPHASIZED_OPACITY).toBe(0.6);
-    expect(0.498 / 0.847).toBeCloseTo(DEEMPHASIZED_OPACITY, 1);
-    // Readable, not unavailable: above the tertiary step and Material's
-    // disabled 0.38.
-    expect(DEEMPHASIZED_OPACITY).toBeGreaterThan(Math.max(K8, 0.38));
-    // One owner: the graph takes the share from the law and reads no scrim.
-    expect(readFileSync("src/components/GraphView.tsx", "utf8")).toContain("DEEMPHASIZED_OPACITY");
+  it("fades the graph's context to the tertiary tier, collections excepted (K13, 3.9.4, 16.10.2026)", () => {
+    // macOS tertiaryLabelColor 0.26 (K8); Cytoscape.js and AntV G6 fade to 0.25.
+    expect(GRAPH_CONTEXT_OPACITY).toBe(0.25);
+    expect(GRAPH_CONTEXT_OPACITY).toBeCloseTo(K8, 1);
+    // One owner: the graph takes its share from the law and reads no scrim.
+    const graph = readFileSync("src/components/GraphView.tsx", "utf8");
+    expect(graph).toContain("GRAPH_CONTEXT_OPACITY");
+    expect(graph).toMatch(/node\.kind === "collection"\s*\?\s*1/);
     for (const file of ["src/components/graph/canvas.ts", "src/components/graph/hoverDim.ts", "src/components/GraphView.tsx"]) {
       expect(readFileSync(file, "utf8"), file).not.toContain("--scrim-color");
     }

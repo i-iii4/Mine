@@ -147,7 +147,7 @@ function transitionShare(
 
 /**
  * How opaque a node or a link is drawn on this frame: 1 when lit,
- * `dimmedOpacity` when dimmed (`DEEMPHASIZED_OPACITY` of the colour law), and
+ * `dimmedOpacity` when dimmed (`GRAPH_CONTEXT_OPACITY` of the colour law), and
  * between the two while a transition runs.
  */
 export function graphElementOpacity(

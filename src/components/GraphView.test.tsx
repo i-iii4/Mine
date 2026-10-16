@@ -14,7 +14,7 @@ import userEvent from "@testing-library/user-event";
 import { GraphView, type GraphViewHandle } from "./GraphView";
 import { GraphDisplayMenu } from "./GraphDisplayMenu";
 import { reloadGraphPreferences, useGraphPreferences } from "@/lib/graphPreferences";
-import { DEEMPHASIZED_OPACITY } from "@/lib/colorLaw";
+import { GRAPH_CONTEXT_OPACITY } from "@/lib/colorLaw";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { HOVER_PREVIEW_COLD_OPEN_DELAY_MS, HOVER_PREVIEW_WARM_WINDOW_MS } from "@/lib/hoverPreviewTiming";
 import { indexedBlock, lightBlock } from "@/test/blocks";
@@ -1496,8 +1496,9 @@ describe("GraphView", () => {
         expect(dimmed["collection:Design"]).toBe(1);
         expect(dimmed["card:a"]).toBe(1);
         expect(dimmed["card:b"]).toBe(1);
-        expect(dimmed["collection:Research"]).toBe(DEEMPHASIZED_OPACITY);
-        expect(dimmed["card:c"]).toBe(DEEMPHASIZED_OPACITY);
+        // Collections never dim (16.10.2026).
+        expect(dimmed["collection:Research"]).toBe(1);
+        expect(dimmed["card:c"]).toBe(GRAPH_CONTEXT_OPACITY);
         expect(colorOf("membership:Design:a")).toBe(lit);
         expect(colorOf("membership:Design:b")).toBe(lit);
         // Strict: neither the wikilink between two of its cards nor a member's
@@ -1515,8 +1516,8 @@ describe("GraphView", () => {
         await settle(0);
         expect(alphaOf("collection:Research")).toBe(1);
         expect(alphaOf("card:c")).toBe(1);
-        expect(alphaOf("card:b")).toBe(DEEMPHASIZED_OPACITY);
-        expect(alphaOf("collection:Design")).toBe(DEEMPHASIZED_OPACITY);
+        expect(alphaOf("card:b")).toBe(GRAPH_CONTEXT_OPACITY);
+        expect(alphaOf("collection:Design")).toBe(1);
         leaveForCanvas("Research");
         fireEvent.mouseEnter(node("Design"));
         await settle(0);
@@ -1543,7 +1544,7 @@ describe("GraphView", () => {
         fireEvent.click(node("Card C"));
         fireEvent.mouseEnter(node("Design"));
         await settle(HOVER_INTENT.dwellMs + 20);
-        expect(alphaOf("card:c")).toBe(DEEMPHASIZED_OPACITY);
+        expect(alphaOf("card:c")).toBe(GRAPH_CONTEXT_OPACITY);
         leaveForCanvas("Design");
         await settle(HOVER_INTENT.leaveGraceMs + 20);
 

@@ -17,7 +17,7 @@ import { fallbackThumbsRoot } from "@/lib/assets";
 import { useHoverIntent } from "@/hooks/useHoverIntent";
 import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
 import type { GraphPreferences } from "@/lib/graphPreferences";
-import { DEEMPHASIZED_OPACITY } from "@/lib/colorLaw";
+import { GRAPH_CONTEXT_OPACITY } from "@/lib/colorLaw";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { ReadOnlyCardPreview } from "./Card";
 import { Button } from "./ui/button";
@@ -1088,12 +1088,16 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       // Hover alone decides it: a selected card or the opened collection
       // outside the hovered collection's part dims like any other node, and
       // keeps its outline.
-      const opacity = graphElementOpacity(
-        dimTransitionRef.current,
-        "node",
-        node.id,
-        DEEMPHASIZED_OPACITY,
-      );
+      // Collections never dim (user's decision of 16.10.2026): only the
+      // cards outside the hovered collection's part fade.
+      const opacity = node.kind === "collection"
+        ? 1
+        : graphElementOpacity(
+          dimTransitionRef.current,
+          "node",
+          node.id,
+          GRAPH_CONTEXT_OPACITY,
+        );
       ctx.save();
       if (node.kind === "collection") {
         paintCollectionNode(ctx, node, {
@@ -1166,7 +1170,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       dimTransitionRef.current,
       "link",
       link.id,
-      DEEMPHASIZED_OPACITY,
+      GRAPH_CONTEXT_OPACITY,
     )),
     // The highlight is read from the ref; naming it here hands the canvas a
     // new accessor, and with it a redraw, when the hover changes.

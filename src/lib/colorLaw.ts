@@ -16,16 +16,15 @@ export const FORM_RATIO = { line: 0.7, area: 0.51 } as const;
 export type SignalForm = keyof typeof FORM_RATIO;
 
 /**
- * How opaque content is drawn while it is pushed back but stays readable and
- * pressable: the graph around an attended collection. The platforms'
- * secondary emphasis: iOS `secondaryLabel` 0.6, macOS
- * `secondaryLabelColor` over `labelColor` 0.498 / 0.847 = 0.59, Material's
- * medium emphasis 0.6; one share in both themes, as iOS and Material keep it
- * (K13 of SPEC_COLOR_RULES.md, user's decision of 16.10.2026). Not the
- * disabled tier (Apple's tertiary 0.26 to 0.3, Material's 0.38): a dimmed
- * node is still pressed and dragged.
+ * How opaque the cards and links outside a hovered collection's part are
+ * drawn in the graph (K13 of SPEC_COLOR_RULES.md, user's decision of
+ * 16.10.2026). Pictures keep their own contrast, so the secondary share 0.6
+ * left them nearly unchanged; the tertiary tier dims them for real: macOS
+ * `tertiaryLabelColor` 0.26, the graph libraries' faded share 0.25
+ * (Cytoscape.js, AntV G6). One share in both themes. Collections are never
+ * dimmed.
  */
-export const DEEMPHASIZED_OPACITY = 0.6;
+export const GRAPH_CONTEXT_OPACITY = 0.25;
 
 /** An opaque sRGB colour, gamma-encoded channels 0..1. */
 export interface Rgb {
