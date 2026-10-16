@@ -1,6 +1,6 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_X_THREADS.md](SPEC_X_THREADS.md) | [SPEC_AUDIT_FIXES.md](SPEC_AUDIT_FIXES.md) | [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md) | [SPEC_TABS.md](SPEC_TABS.md) | [SPEC_CLIPPER_DRAFTS_REMOVAL.md](SPEC_CLIPPER_DRAFTS_REMOVAL.md) | [SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md) | [SPEC_CARD_UNIFIED.md](SPEC_CARD_UNIFIED.md) | [SPEC_CARD_ASSOCIATIONS.md](SPEC_CARD_ASSOCIATIONS.md) | [SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md) | [SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md) | [SPEC_NARROW_WINDOW.md](SPEC_NARROW_WINDOW.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_X_THREADS.md](SPEC_X_THREADS.md) | [SPEC_AUDIT_FIXES.md](SPEC_AUDIT_FIXES.md) | [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md) | [SPEC_TABS.md](SPEC_TABS.md) | [SPEC_CLIPPER_DRAFTS_REMOVAL.md](SPEC_CLIPPER_DRAFTS_REMOVAL.md) | [SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md) | [SPEC_CARD_UNIFIED.md](SPEC_CARD_UNIFIED.md) | [SPEC_CARD_ASSOCIATIONS.md](SPEC_CARD_ASSOCIATIONS.md) | [SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md) | [SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md) | [SPEC_NARROW_WINDOW.md](SPEC_NARROW_WINDOW.md) | [SPEC_KEYBOARD.md](SPEC_KEYBOARD.md)
 
 ## Context
 
@@ -2623,3 +2623,118 @@ iCloud и реализация 11.10.2026 в Phase 45 ([PLAN.md](PLAN.md), эт�
 | Копия раскладки в производном хранилище со штампом файла | Принято: читается без сети, штамп показывает изменение на другом Маке |
 | Раскладка по умолчанию, пока файл в iCloud | Не выбрано для записи: новый файл молча лёг бы в корень (SPEC_VAULT_LIFECYCLE.md, П2); оставлено для того, что файлов не создаёт |
 | Отпускать `build.lock` во время чтения каждой заметки | Не выбрано: проход сверяет инвентарь целиком под замком; скачивание до замка проще и даёт тот же результат |
+
+### 058: Место бокового меню вычисляется из ширины окна и не хранится
+
+Решения пользователя 15.10.2026 и 16.10.2026. Контракт:
+[SPEC_NARROW_WINDOW.md](SPEC_NARROW_WINDOW.md), У1 по У15; Phase 47 в
+[PLAN.md](PLAN.md). Код: `src/lib/sidebarPlacement.ts` (чистая функция места),
+`src/lib/appLayout.ts` (пределы), `src/components/SidebarOverlay.tsx` и
+`src/hooks/useSidebarOverlay.ts` (меню поверх ленты), постоянная
+`WINDOW_MIN_WIDTH_PX` в `src-tauri/src/domain/windows.rs`.
+
+1. **Три состояния из четырёх чисел.** Ширина окна `W`, наименьшая ширина
+   меню `S_min` (350 px), наименьшая ширина ленты `F_min` (390 px) и ширина
+   последнего перетаскивания `S_target` дают место меню: рядом с лентой,
+   рядом и сжато, поверх ленты при `W < S_min + F_min` (740 px). Место не
+   хранится и не зависит от истории изменения окна.
+2. **Ширину меню меняет только перетаскивание.** Узкое окно сжимает меню,
+   но `S_target` не трогает: при расширении меню возвращается ровно к нему.
+3. **Один владелец наименьшей ширины.** Бэкенд держит `WINDOW_MIN_WIDTH_PX`
+   (390 px), из неё выводятся `S_min`, `F_min` и `min_inner_size` окна;
+   проверка при сборке держит её между `S_min + 40` и `S_min + F_min`, тест
+   сверяет копию в TS с Rust.
+4. **В ленте не меньше двух колонок** (`MASONRY_MIN_COLUMN_COUNT = 2`,
+   [SPEC_GRID.md](SPEC_GRID.md), «Число колонок»): 220 px решают, когда
+   добавить колонку, но не делают ленту одноколоночной; узкая колонка
+   ограничивает текст под медиа двумя строками (`cardTextMaxLines`, У14).
+
+| Вариант | Результат выбора |
+|---|---|
+| Место как функция ширины окна | Принято: одно состояние на ширину, переход через порог анимируется, ширина меню не теряется |
+| Хранить свёрнутость от узкого окна в настройках | Не выбрано: расширенное окно показало бы меню свёрнутым без причины |
+| Одна колонка в узкой ленте | Не выбрано решением пользователя 16.10.2026: проба двух колонок стала правилом |
+
+### 059: Раскладку открытой карточки решает одна чистая функция
+
+Решения пользователя 16.10.2026. Контракт:
+[SPEC_FRONTEND.md](SPEC_FRONTEND.md), «Раскладка открытой карточки», Р1 по
+Р8; Phase 48 в [PLAN.md](PLAN.md). Код: `src/lib/detailLayout.ts`, рамка
+`DetailMediaFrame` и `DetailVideo` в `src/components/Detail.tsx`.
+
+1. **Компонент измеряет, правила решают.** Ширина содержимого, его место и
+   переход в компактный вид вычисляются в `detailLayout.ts` из ширины
+   окна, отступа `pad` и размера медиа; `Detail.tsx` только передаёт
+   замеры.
+2. **Одна ширина колонки.** `DETAIL_CONTENT_MAX_WIDTH_PX = 680`; за ней
+   следуют рамка единственной картинки или видео, порог компактного вида
+   `3·pad + W + 320` (1096 px при `pad` 32) и ширина панелей в компактном
+   виде. Содержимое стоит по центру между боковым меню и колонкой панелей,
+   картинки и видео в теле статьи по центру колонки.
+3. **Одна рамка медиа и один предел высоты.** Картинка и видео рисуются в
+   одной рамке `DetailMediaFrame`, поэтому контролы видео не шире кадра.
+   Предел 85 % высоты окна задан одной постоянной
+   `DETAIL_MEDIA_MAX_HEIGHT_VH` и доходит до рамок через
+   `--detail-media-max-height`.
+4. **Колонка панелей прокручивается сама** в пределах высоты открытой
+   карточки (Р8), потому что сетка неподвижного слоя ограничена по высоте.
+
+| Вариант | Результат выбора |
+|---|---|
+| Одна функция раскладки и одна рамка медиа | Принято: ширина и выравнивание не зависят от того, каким путём медиа попало в карточку |
+| Свои правила ширины для каждого вида содержимого (как было) | Не выбрано: картинки в одних случаях стояли по центру, в других слева, панель бывала уже картинки |
+| Выравнивание статьи влево | Не выбрано: Medium и Substack ставят колонку чтения по центру |
+
+### 060: Приглушение графа считается при смене наведения, кадр только читает
+
+Решения пользователя 16.10.2026. Контракт:
+[SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md), «Приглушение при наведении на
+коллекцию», ПН1 по ПН9, ГП4, ГП9; К13 в
+[SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md). Код:
+`src/components/graph/hoverDim.ts`, `src/components/GraphView.tsx`,
+`GRAPH_CONTEXT_OPACITY` в `src/lib/colorLaw.ts`.
+
+1. **Часть графа считается один раз.** `graphHoverHighlight` строит
+   множества узлов и рёбер наведённой коллекции при смене наведения или
+   снимка; кадр задаёт каждому элементу одну проверку множества.
+2. **Коллекции не приглушаются.** Карточки и рёбра вне части рисуются с
+   непрозрачностью 0.25 поверх холста; карточка сначала заливает контур
+   холстом, чтобы линии под ней не проступали. Физика, раскладка, камера и
+   области попадания не меняются.
+3. **Наведение идёт через общий движок намерения** (`HoverIntent`, как у
+   ленты и бокового меню): задержка 300 мс, тёплое окно 400 мс, уход 150
+   мс. Переход от прежней непрозрачности к новой прерывается без скачка.
+4. **Переключатели связей не трогают раскладку.** Новые линии над теми же
+   узлами уходят в холст без разогрева симуляции; камера и силы зависят
+   только от состава узлов, линии сравниваются по идентичности.
+5. **Без указателя нет наведения.** force-graph каждый кадр наводит узел под
+   последней точкой курсора; уход указателя и открытая карточка выключают
+   `enablePointerInteraction`, поэтому превью не застревает.
+
+| Вариант | Результат выбора |
+|---|---|
+| Множества при смене наведения, непрозрачность в рисовании | Принято: кадр в покое стоит одну проверку на элемент |
+| Доля подложки модальных окон 0.68 | Не выбрано: подложка значит другой слой над страницей |
+| Вторичная доля 0.6 | Не выбрано решением пользователя 16.10.2026: на миниатюрах приглушение не было видно |
+
+### 061: Одна подложка для всего, что встаёт над страницей
+
+Решение пользователя 16.10.2026. Контракт: закон 3.9.1 в
+[SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md),
+[SPEC_NARROW_WINDOW.md](SPEC_NARROW_WINDOW.md), У5. Код: `.modal-scrim` в
+`src/styles/global.css`.
+
+1. **Один класс.** Окна `Dialog` и `AlertDialog`, поиск, просмотр
+   изображения и меню поверх ленты берут `.modal-scrim`: размытие
+   `--scrim-blur: 20px`, насыщенность `--scrim-saturate: 150%`, затемнение
+   холстом своей темы 32 % (`--scrim-color`). Эталоны: Apple
+   systemThinMaterial, Material 3 scrim.
+2. **Подложка накрывает страницу вкладки.** Полоса вкладок отдельная
+   страница, её подложка не накрывает.
+3. **У просмотра изображения нет ни обводки, ни теней**, панель кнопок видна
+   всегда.
+
+| Вариант | Результат выбора |
+|---|---|
+| Одна подложка по эталонам | Принято: одно значение на обе темы, проверяется `colorLaw.test.ts` |
+| Своё затемнение у каждого слоя (как было: у поиска `bg-black/50`, у просмотра всегда тёмное) | Не выбрано: слои над страницей выглядели по-разному |
