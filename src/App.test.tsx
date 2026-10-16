@@ -102,6 +102,7 @@ const sidebarResizeState = vi.hoisted(() => ({
   width: 300,
   collapsed: false,
   isResizing: false,
+  widthAnimating: false,
   toggleCollapsed: vi.fn(),
   // The window's sidebar the app handed the hook last (SPEC_TABS.md, В56).
   windowSidebar: undefined as { width_px: number; collapsed: boolean } | null | undefined,
@@ -200,6 +201,7 @@ vi.mock("@/hooks/useSidebarResize", () => ({
       width: sidebarResizeState.width,
       collapsed: sidebarResizeState.collapsed,
       isResizing: sidebarResizeState.isResizing,
+      widthAnimating: sidebarResizeState.widthAnimating,
       startResize: vi.fn(),
       updateResize: vi.fn(),
       endResize: vi.fn(),
@@ -693,6 +695,7 @@ describe("AppWithVault", () => {
     sidebarResizeState.width = 300;
     sidebarResizeState.collapsed = false;
     sidebarResizeState.isResizing = false;
+    sidebarResizeState.widthAnimating = false;
     sidebarResizeState.windowSidebar = undefined;
     clipboardWriteText.mockResolvedValue(undefined);
     webClipboardWriteText.mockResolvedValue(undefined);
@@ -2482,6 +2485,27 @@ describe("AppWithVault", () => {
     }
   });
 
+  it("animates the sidebar's segment and the second row only while the sidebar collapses or opens (SPEC_NARROW_WINDOW.md, У1, У10)", async () => {
+    sidebarResizeState.widthAnimating = true;
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    const shell = document.querySelector("[data-chrome-shell]");
+    expect(shell).toHaveAttribute("data-sidebar-width-animating", "");
+    // One row until the row is measured to cut something.
+    expect(shell).toHaveAttribute("data-top-row", "one");
+    expect(document.querySelector("[data-app-top-sidebar-segment]")).toHaveClass("transition-[width]", "duration-200", "ease-out");
+    expect(document.querySelector("main")).toHaveAttribute("data-below-top-row", "");
+    expect(shell?.querySelector("header [data-top-row-bar]")).not.toBeNull();
+  });
+
   it("keeps space and collection controls while hiding channel search when the sidebar is collapsed", async () => {
     sidebarResizeState.width = 0;
     sidebarResizeState.collapsed = true;
@@ -2501,7 +2525,9 @@ describe("AppWithVault", () => {
     expect(topSidebarSegment).toHaveClass("w-auto", "border-r", "border-sidebar-border");
     expect(topSidebarSegment).not.toHaveClass("max-w-[240px]");
     expect(topSidebarSegment).not.toHaveStyle({ width: "var(--sidebar-width)" });
-    expect(topSidebarSegment).toHaveClass("transition-[width]", "duration-200", "ease-out");
+    // Its width animates only while the sidebar collapses or opens: a
+    // window's resize squeezes it at once (SPEC_NARROW_WINDOW.md, У1).
+    expect(topSidebarSegment).not.toHaveClass("transition-[width]");
     const spaceSwitcher = topSidebarSegment?.querySelector("[data-vault-switcher]") as HTMLElement | null;
     expect(spaceSwitcher).toHaveAttribute("data-vault-switcher-surface", "topChrome");
     expect(spaceSwitcher).toHaveAttribute("data-vault-switcher-top-chrome-collapsed", "true");

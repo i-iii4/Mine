@@ -6,6 +6,7 @@ import {
   hiddenEdges,
   revealScrollLeft,
   stripFadeMaskStyle,
+  wheelScrollLeft,
   tabsOverflow,
   tabWidth,
 } from "./tabLayout";
@@ -119,5 +120,27 @@ describe("strip edges", () => {
     expect(style.maskImage?.match(/linear-gradient\(/g)).toHaveLength(2);
     expect(style.maskComposite).toBe("intersect");
     expect(style.WebkitMaskComposite).toBe("source-in");
+  });
+});
+
+describe("a wheel turn over the bar outside the strip (SPEC_NARROW_WINDOW.md, У9)", () => {
+  const overflowing = { scrollLeft: 100, viewport: 300, content: 500 };
+
+  it("moves the strip by the horizontal turn within the offsets it can take", () => {
+    expect(wheelScrollLeft({ deltaX: 30, deltaY: 4, ...overflowing })).toBe(130);
+    expect(wheelScrollLeft({ deltaX: -30, deltaY: 0, ...overflowing })).toBe(70);
+    expect(wheelScrollLeft({ deltaX: 500, deltaY: 0, ...overflowing })).toBe(200);
+    expect(wheelScrollLeft({ deltaX: -500, deltaY: 0, ...overflowing })).toBe(0);
+  });
+
+  it("leaves a turn that is not mostly horizontal alone", () => {
+    expect(wheelScrollLeft({ deltaX: 10, deltaY: 30, ...overflowing })).toBeNull();
+    expect(wheelScrollLeft({ deltaX: 20, deltaY: -20, ...overflowing })).toBeNull();
+    expect(wheelScrollLeft({ deltaX: 0, deltaY: 0, ...overflowing })).toBeNull();
+  });
+
+  it("moves nothing when the tabs fit", () => {
+    expect(wheelScrollLeft({ deltaX: 40, deltaY: 0, scrollLeft: 0, viewport: 300, content: 300 })).toBeNull();
+    expect(wheelScrollLeft({ deltaX: 40, deltaY: 0, scrollLeft: 0, viewport: 300, content: 200 })).toBeNull();
   });
 });

@@ -333,6 +333,7 @@ import {
   type MineTextSelectionDragPayload,
 } from "@/lib/textSelectionDrag";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
+import { useTopRowWrap } from "@/hooks/useTopRowWrap";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
 import { useChannelPreviewsEvents } from "@/hooks/useChannelPreviewsEvents";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
@@ -1488,13 +1489,16 @@ export function AppWithVault({
     setGridFocusRestore(null);
   }, [location.pathname, cancelPendingDetailClose]);
 
+  // The half of the top row over the feed takes a second row when the row
+  // cannot hold it (SPEC_NARROW_WINDOW.md, У10).
+  const topRowWrap = useTopRowWrap();
+
   // ── Sidebar resize ──────────────────────────────────────────────────────
   const {
     width: sidebarWidth,
     collapsed: sidebarCollapsed,
     isResizing: sidebarResizing,
-    minWidth: sidebarMinWidthPx,
-    maxWidth: sidebarMaxWidthPx,
+    widthAnimating: sidebarWidthAnimating,
     startResize,
     updateResize,
     endResize,
@@ -4459,6 +4463,9 @@ export function AppWithVault({
       // Under the tab bar, whose own separator is this page's top line (В43).
       topEdge={!tabPage}
       style={{ minWidth: APP_MIN_WIDTH_PX }}
+      ref={topRowWrap.hostRef}
+      data-top-row={topRowWrap.fit}
+      data-sidebar-width-animating={sidebarWidthAnimating ? "" : undefined}
     >
       {/* Top toolbar */}
       <ChromeRow as="header" separator="bottom"
@@ -4476,7 +4483,9 @@ export function AppWithVault({
             // line's pixel out of the switcher's padding.
             "flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
             sidebarCollapsed && "w-auto",
-            !sidebarResizing && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
+            // The width animates only for a collapse or an opening: a window's
+            // resize squeezes it at once (SPEC_NARROW_WINDOW.md, У1).
+            sidebarWidthAnimating && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
           )}
           style={sidebarCollapsed ? undefined : { width: "var(--sidebar-width)" }}
         >
@@ -4581,7 +4590,7 @@ export function AppWithVault({
             )}
           </div>
         </div>
-        <div data-tauri-drag-region className="flex h-full min-w-0 flex-1 items-center">
+        <div ref={topRowWrap.rowRef} data-tauri-drag-region className="flex h-full min-w-0 flex-1 items-center">
           <TopCollectionSwitcher
             currentTag={currentTag}
             currentAuthor={currentLocation.kind === "author" ? currentLocation.author : undefined}
@@ -4629,7 +4638,7 @@ export function AppWithVault({
         width={sidebarWidth}
         previewsPending={previewsPending}
         collapsed={sidebarCollapsed}
-        isResizing={sidebarResizing}
+        widthAnimating={sidebarWidthAnimating}
         vaultPath={vaultPath}
         thumbsRootPath={thumbsRootPath ?? undefined}
         tags={orderedTags}
@@ -4677,8 +4686,6 @@ export function AppWithVault({
           isResizing={sidebarResizing}
           topRowHost={topRowHost}
           width={sidebarWidth}
-          minWidth={sidebarMinWidthPx}
-          maxWidth={sidebarMaxWidthPx}
           disabled={
             blockDragActive
             || activeDragMediaAsset !== null
@@ -4696,6 +4703,8 @@ export function AppWithVault({
         ref={mainRef}
         className="relative isolate min-h-0 flex-1 overflow-hidden"
         style={{ minWidth: APP_MAIN_MIN_WIDTH_PX }}
+        // Below the top row's second row when there is one (У10).
+        data-below-top-row=""
       >
         {blockingError !== null && (
           <div className="flex h-full items-center justify-center p-8" data-feed-error-block="">

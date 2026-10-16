@@ -26,7 +26,7 @@ const vite = await startAuditVite([{
         const [linked,setLinked]=React.useState(true);
         return React.createElement(MemoryRouter,null,React.createElement(TooltipProvider,null,
           React.createElement(DndContext,null,React.createElement(Sidebar,{
-            width:600,collapsed:false,isResizing:false,orderedTags:[{tag:"alpha",count:18}],
+            width:600,collapsed:false,widthAnimating:false,orderedTags:[{tag:"alpha",count:18}],
             channelPreviews:new Map(),totalBlocks:18,isDropDragging:false,isCreatingChannel:false,
             onSetCreatingChannel:noop,onDeleteTag:noop,onRenameTag:noop,onCreateChannel:noop,
             linkedBlockSlug:"audit",linkedTags:linked?["alpha"]:[],onToggleLinkedTag:()=>setLinked(!linked)

@@ -70,12 +70,17 @@ export function GroupSelectionCommands({
           at the right in ChromeActions, which owns the right edge inset as in
           every chrome row (DESIGN_SYSTEM.md, «Иконочные кнопки хрома»). When
           the row narrows, the count truncates (`w-0` keeps its text out of the
-          row's min-content) while the commands keep their size; the row
-          scrolls only once the commands alone outgrow it. The pads live on
+          row's min-content) while the commands keep their size; commands the
+          top row cannot hold send this half to a second row
+          (SPEC_NARROW_WINDOW.md, У10), and where even that row is too narrow
+          they scroll. A truncated count alone moves nothing. The pads live on
           the scrolled content, not the scrollport: a scroll container's end
           padding never renders past its content. */}
       <div className="h-full max-w-full overflow-x-auto overflow-y-hidden">
-        <div className="flex h-full w-full min-w-min items-center gap-1 pl-[var(--main-secondary-pad-x,0.5rem)]">
+        <div
+          className="flex h-full w-full min-w-min items-center gap-1 pl-[var(--main-secondary-pad-x,0.5rem)]"
+          data-top-row-part="whole"
+        >
           <div
             className="w-0 min-w-0 flex-1 truncate px-2 font-mono text-sm text-muted-foreground"
             data-feed-selection-count=""

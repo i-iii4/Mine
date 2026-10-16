@@ -93,7 +93,7 @@ function SidebarReorderAuditScene() {
         <Sidebar
           width={340}
           collapsed={false}
-          isResizing={false}
+          widthAnimating={false}
           vaultPath="/tmp/mine-sidebar-reorder-audit"
           orderedTags={tags}
           channelPreviews={AUDIT_PREVIEWS}

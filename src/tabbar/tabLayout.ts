@@ -70,6 +70,30 @@ export function revealScrollLeft({
   return current;
 }
 
+/** Where a wheel turn over the bar outside the strip (a button, +, empty
+ *  space) moves the strip: the bar is one scroll surface for the tabs
+ *  (SPEC_NARROW_WINDOW.md, У9, У11). `null` when the turn is not mostly
+ *  horizontal or the tabs fit, so nothing moves. The answer stays within the
+ *  offsets the strip can take. */
+export function wheelScrollLeft({
+  deltaX,
+  deltaY,
+  scrollLeft,
+  viewport,
+  content,
+}: {
+  deltaX: number;
+  deltaY: number;
+  scrollLeft: number;
+  viewport: number;
+  content: number;
+}): number | null {
+  if (Math.abs(deltaX) <= Math.abs(deltaY)) return null;
+  const limit = Math.max(0, content - Math.max(0, viewport));
+  if (limit === 0) return null;
+  return Math.min(Math.max(0, scrollLeft + deltaX), limit);
+}
+
 /** Which edges of a horizontally scrolled strip hide tabs. The threshold is
  *  the one every scroll fade uses: sub-pixel offsets do not count. */
 export function hiddenEdges(

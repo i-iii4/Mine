@@ -82,7 +82,7 @@ function tag(name: string, count = 3): TagCount {
 const defaultProps = {
   width: 300,
   collapsed: false,
-  isResizing: false,
+  widthAnimating: false,
   orderedTags: [tag("alpha", 10), tag("beta", 5)],
   channelPreviews: new Map(),
   totalBlocks: 17,

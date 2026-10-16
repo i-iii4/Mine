@@ -60,9 +60,12 @@ const TRACKING_ACTIVE_ANY: usize = TRACKING_ACTIVE_WHEN_FIRST_RESPONDER
 /// (`PageClientImpl::recommendedScrollbarStyleDidChange`). Without the
 /// pointer's moves a window that is not key shows no hover. The same
 /// options with "always" give the pages of every window the hover that
-/// setting gives them; any other area passes unchanged.
+/// setting gives them. An area WebKit already made "always" keeps its
+/// options and is still replaced, for the owner of the substitute, which
+/// lets every exit reach the page. Any other area passes unchanged.
 pub fn background_tracking_options(options: usize) -> Option<usize> {
-    if options & TRACKING_MOUSE_MOVED == 0 || options & TRACKING_ACTIVE_IN_KEY_WINDOW == 0 {
+    let followed = options & (TRACKING_ACTIVE_IN_KEY_WINDOW | TRACKING_ACTIVE_ALWAYS) != 0;
+    if options & TRACKING_MOUSE_MOVED == 0 || !followed {
         return None;
     }
     Some((options & !TRACKING_ACTIVE_ANY) | TRACKING_ACTIVE_ALWAYS)
@@ -72,9 +75,9 @@ pub fn background_tracking_options(options: usize) -> Option<usize> {
 mod tracking {
     use std::sync::OnceLock;
 
-    use objc2::rc::{Allocated, Retained};
-    use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
-    use objc2::sel;
+    use objc2::rc::{Allocated, Retained, Weak};
+    use objc2::runtime::{AnyClass, AnyObject, Imp, NSObject, Sel};
+    use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass};
     use objc2_foundation::NSRect;
 
     /// `-[NSView addTrackingArea:]` and `-[NSView removeTrackingArea:]`.
@@ -92,28 +95,113 @@ mod tracking {
 
     /// The key of the area a view holds in place of the one it was given.
     static SUBSTITUTE_KEY: u8 = 0;
+    /// The key of the owner a substitute area answers to: an area does not
+    /// retain its owner, so the substitute keeps it.
+    static OWNER_KEY: u8 = 0;
+
+    /// What the owner of a substitute area reaches: WebKit's own owner of
+    /// the area (`WKMouseTrackingObserver`) and the page the area is on.
+    pub struct OwnerIvars {
+        webkit_owner: Weak<AnyObject>,
+        page: Weak<AnyObject>,
+    }
+
+    define_class!(
+        // SAFETY: NSObject has no subclassing requirements; the methods only
+        // pass the event on, and `Drop` is not implemented.
+        #[unsafe(super(NSObject))]
+        #[name = "MinePageTrackingOwner"]
+        #[ivars = OwnerIvars]
+        pub struct PageTrackingOwner;
+
+        impl PageTrackingOwner {
+            #[unsafe(method(mouseMoved:))]
+            fn mouse_moved(&self, event: *mut AnyObject) {
+                if let Some(owner) = self.ivars().webkit_owner.load() {
+                    // SAFETY: WebKit's owner answers mouseMoved:.
+                    unsafe { msg_send![&*owner, mouseMoved: event] }
+                }
+            }
+
+            #[unsafe(method(mouseEntered:))]
+            fn mouse_entered(&self, event: *mut AnyObject) {
+                if let Some(owner) = self.ivars().webkit_owner.load() {
+                    // SAFETY: WebKit's owner answers mouseEntered:.
+                    unsafe { msg_send![&*owner, mouseEntered: event] }
+                }
+            }
+
+            /// The pointer left the page: the page hears it, whatever the
+            /// last move WebKit's owner saw (SPEC_TABS.md, В85). WebKit's
+            /// owner passes an exit on only when its last move or entry
+            /// found the page topmost under the pointer
+            /// (`_viewIsTopmostAtLastMouseLocation`, WebKit 67fc22ee): a
+            /// move it receives at a point where another page of the window
+            /// is topmost makes it drop the next exit, and the page keeps
+            /// its hover. `_simulateMouseExit:` (WKWebViewPrivate.h, macOS 14)
+            /// is the same `WebViewImpl::mouseExited` without that check.
+            #[unsafe(method(mouseExited:))]
+            fn mouse_exited(&self, event: *mut AnyObject) {
+                if let Some(page) = self.ivars().page.load() {
+                    // SAFETY: asking a live view about a selector.
+                    let direct: bool = unsafe { msg_send![&*page, respondsToSelector: sel!(_simulateMouseExit:)] };
+                    if direct {
+                        // SAFETY: the page answers it, checked above.
+                        unsafe { msg_send![&*page, _simulateMouseExit: event] }
+                        return;
+                    }
+                }
+                if let Some(owner) = self.ivars().webkit_owner.load() {
+                    // SAFETY: WebKit's owner answers mouseExited:.
+                    unsafe { msg_send![&*owner, mouseExited: event] }
+                }
+            }
+        }
+    );
+
+    impl PageTrackingOwner {
+        fn new(webkit_owner: &AnyObject, page: &AnyObject) -> Retained<Self> {
+            let this = Self::alloc().set_ivars(OwnerIvars {
+                webkit_owner: Weak::new(webkit_owner),
+                page: Weak::new(page),
+            });
+            // SAFETY: NSObject's designated initialiser.
+            unsafe { msg_send![super(this), init] }
+        }
+    }
 
     fn originals() -> Option<&'static Originals> {
         ORIGINALS.get().and_then(Option::as_ref)
     }
 
-    /// An area like `area`, with the options of
-    /// [`super::background_tracking_options`], or `None` to keep `area`.
-    unsafe fn substitute_for(area: *mut AnyObject) -> Option<Retained<AnyObject>> {
+    /// An area like `area` on `page`, with the options of
+    /// [`super::background_tracking_options`] and an owner that passes its
+    /// events to `area`'s owner and its exits to `page`, or `None` to keep
+    /// `area`.
+    unsafe fn substitute_for(page: &AnyObject, area: *mut AnyObject) -> Option<Retained<AnyObject>> {
         let area = area.as_ref()?;
-        let options: usize = objc2::msg_send![area, options];
+        let options: usize = msg_send![area, options];
         let options = super::background_tracking_options(options)?;
-        let rect: NSRect = objc2::msg_send![area, rect];
-        let owner: *mut AnyObject = objc2::msg_send![area, owner];
-        let user_info: *mut AnyObject = objc2::msg_send![area, userInfo];
-        let allocated: Allocated<AnyObject> = objc2::msg_send![objc2::class!(NSTrackingArea), alloc];
-        let substitute: Retained<AnyObject> = objc2::msg_send![
+        let rect: NSRect = msg_send![area, rect];
+        let webkit_owner: *mut AnyObject = msg_send![area, owner];
+        let owner = PageTrackingOwner::new(webkit_owner.as_ref()?, page);
+        let user_info: *mut AnyObject = msg_send![area, userInfo];
+        let allocated: Allocated<AnyObject> = msg_send![objc2::class!(NSTrackingArea), alloc];
+        let substitute: Retained<AnyObject> = msg_send![
             allocated,
             initWithRect: rect,
             options: options,
-            owner: owner,
+            owner: &*owner,
             userInfo: user_info
         ];
+        // SAFETY: a live area; the association retains the owner for as long
+        // as the substitute lives.
+        objc2::ffi::objc_setAssociatedObject(
+            Retained::as_ptr(&substitute).cast_mut(),
+            std::ptr::addr_of!(OWNER_KEY).cast(),
+            Retained::as_ptr(&owner).cast::<AnyObject>().cast_mut(),
+            objc2::ffi::OBJC_ASSOCIATION_RETAIN_NONATOMIC,
+        );
         Some(substitute)
     }
 
@@ -124,7 +212,7 @@ mod tracking {
         // SAFETY: the implementation this one stands in front of, with the
         // same signature, on the thread AppKit calls it on.
         let add = std::mem::transmute::<Imp, TrackingAreaMethod>(originals.add);
-        match substitute_for(area) {
+        match substitute_for(this, area) {
             Some(substitute) => {
                 // SAFETY: `area` is a live tracking area; the association
                 // retains the substitute for as long as the area lives.
@@ -596,12 +684,17 @@ mod tests {
     }
 
     #[test]
+    fn the_page_area_webkit_made_always_keeps_its_options() {
+        // The page area as WebKit makes it when scroll bars always show: it
+        // is replaced for its owner, with the same options.
+        let always = (WEBKIT_PAGE_AREA & !TRACKING_ACTIVE_IN_KEY_WINDOW) | TRACKING_ACTIVE_ALWAYS;
+        assert_eq!(background_tracking_options(always), Some(always));
+    }
+
+    #[test]
     fn other_areas_pass_unchanged() {
         // The modifier keys area, active in the active app.
         assert_eq!(background_tracking_options(WEBKIT_FLAGS_AREA), None);
-        // The page area as WebKit makes it when scroll bars always show.
-        let always = (WEBKIT_PAGE_AREA & !TRACKING_ACTIVE_IN_KEY_WINDOW) | TRACKING_ACTIVE_ALWAYS;
-        assert_eq!(background_tracking_options(always), None);
         // A key window area that does not follow the pointer's moves.
         let entered = MOUSE_ENTERED_AND_EXITED | TRACKING_ACTIVE_IN_KEY_WINDOW;
         assert_eq!(background_tracking_options(entered), None);
@@ -622,6 +715,8 @@ mod tests {
 
         /// What the base class received: added or not, the area, its options.
         static RECEIVED: Mutex<Vec<(bool, usize, usize)>> = Mutex::new(Vec::new());
+        /// Which event reached whom: WebKit's owner or the page itself.
+        static EVENTS: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
         fn record(added: bool, area: &AnyObject) {
             // SAFETY: a live NSTrackingArea.
@@ -630,6 +725,14 @@ mod tests {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push((added, std::ptr::from_ref(area) as usize, options));
+        }
+
+        fn heard(event: &'static str) {
+            EVENTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(event);
+        }
+
+        fn take_events() -> Vec<&'static str> {
+            std::mem::take(&mut *EVENTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
         }
 
         define_class!(
@@ -660,7 +763,45 @@ mod tests {
             struct TrackingView;
         );
 
-        fn area(options: usize, owner: &NSObject) -> Retained<AnyObject> {
+        define_class!(
+            // SAFETY: as above; a page that answers WebKit's direct exit.
+            #[unsafe(super(TrackingView, TrackingBase, NSObject))]
+            #[name = "MineHoverTrackingPage"]
+            struct TrackingPage;
+
+            impl TrackingPage {
+                #[unsafe(method(_simulateMouseExit:))]
+                fn simulate_mouse_exit(&self, _event: &AnyObject) {
+                    heard("page exited");
+                }
+            }
+        );
+
+        define_class!(
+            // SAFETY: as above; stands for `WKMouseTrackingObserver`.
+            #[unsafe(super(NSObject))]
+            #[name = "MineHoverTrackingWebKitOwner"]
+            struct WebKitOwner;
+
+            impl WebKitOwner {
+                #[unsafe(method(mouseMoved:))]
+                fn mouse_moved(&self, _event: &AnyObject) {
+                    heard("owner moved");
+                }
+
+                #[unsafe(method(mouseEntered:))]
+                fn mouse_entered(&self, _event: &AnyObject) {
+                    heard("owner entered");
+                }
+
+                #[unsafe(method(mouseExited:))]
+                fn mouse_exited(&self, _event: &AnyObject) {
+                    heard("owner exited");
+                }
+            }
+        );
+
+        fn area(options: usize, owner: &AnyObject) -> Retained<AnyObject> {
             let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(10.0, 20.0));
             // SAFETY: the designated initialiser of NSTrackingArea; a null
             // userInfo is allowed.
@@ -677,6 +818,34 @@ mod tests {
             }
         }
 
+        /// The substitute `view` holds for `area`, from what the base class
+        /// received.
+        fn substitute_on(view: &AnyObject, area: &AnyObject) -> usize {
+            RECEIVED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+            // SAFETY: the hooked method with a live area.
+            unsafe {
+                let _: () = msg_send![view, addTrackingArea: area];
+            }
+            let received = RECEIVED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+            assert_eq!(received.len(), 1);
+            received[0].1
+        }
+
+        /// Send the three pointer events to the owner of `substitute`.
+        fn pointer_events(substitute: usize) {
+            // SAFETY: the substitute is alive (its area retains it), and so
+            // is its owner (the substitute retains it).
+            unsafe {
+                let substitute: &AnyObject = &*(substitute as *const AnyObject);
+                let owner: *const AnyObject = msg_send![substitute, owner];
+                let owner: &AnyObject = &*owner;
+                let event = NSObject::new();
+                let _: () = msg_send![owner, mouseEntered: &*event];
+                let _: () = msg_send![owner, mouseMoved: &*event];
+                let _: () = msg_send![owner, mouseExited: &*event];
+            }
+        }
+
         #[test]
         fn the_view_holds_an_always_active_substitute_and_removes_it() {
             assert!(crate::tabs::native::tracking::install(TrackingView::class()));
@@ -685,11 +854,12 @@ mod tests {
             assert!(!crate::tabs::native::tracking::install(TrackingBase::class()));
 
             let view: Retained<TrackingView> = unsafe { msg_send![TrackingView::class(), new] };
-            let owner = NSObject::new();
+            let owner: Retained<WebKitOwner> = unsafe { msg_send![WebKitOwner::class(), new] };
             let page = area(WEBKIT_PAGE_AREA, &owner);
             let flags = area(WEBKIT_FLAGS_AREA, &owner);
             let page_ptr = Retained::as_ptr(&page) as usize;
             let flags_ptr = Retained::as_ptr(&flags) as usize;
+            RECEIVED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
             // SAFETY: the hooked methods with live areas.
             unsafe {
                 let _: () = msg_send![&*view, addTrackingArea: &*page];
@@ -710,13 +880,33 @@ mod tests {
             // SAFETY: the substitute is alive: the page area retains it.
             let substitute_area: &AnyObject = unsafe { &*(substitute as *const AnyObject) };
             let substitute_owner: *const AnyObject = unsafe { msg_send![substitute_area, owner] };
-            assert_eq!(substitute_owner as usize, std::ptr::from_ref(&*owner) as usize);
+            assert_ne!(
+                substitute_owner as usize,
+                Retained::as_ptr(&owner) as usize,
+                "the substitute answers to Mine's owner"
+            );
             let substitute_rect: NSRect = unsafe { msg_send![substitute_area, rect] };
             assert_eq!(substitute_rect.size, NSSize::new(10.0, 20.0));
             assert_eq!(received[1], (true, flags_ptr, WEBKIT_FLAGS_AREA), "other areas pass unchanged");
             assert_eq!(received[2].1, substitute, "removing the page area removes its substitute");
             assert!(!received[2].0);
             assert_eq!(received[3], (false, flags_ptr, WEBKIT_FLAGS_AREA));
+            let flags_owner: *const AnyObject = unsafe { msg_send![&*flags, owner] };
+            assert_eq!(flags_owner as usize, Retained::as_ptr(&owner) as usize);
+
+            // A page that answers the direct exit: moves and entries reach
+            // WebKit's owner, the exit reaches the page whatever the owner
+            // last saw.
+            let web_page: Retained<TrackingPage> = unsafe { msg_send![TrackingPage::class(), new] };
+            let on_page = area(WEBKIT_PAGE_AREA, &owner);
+            take_events();
+            pointer_events(substitute_on(&web_page, &on_page));
+            assert_eq!(take_events(), ["owner entered", "owner moved", "page exited"]);
+
+            // A view without it: the exit goes to WebKit's owner as before.
+            let on_view = area(WEBKIT_PAGE_AREA, &owner);
+            pointer_events(substitute_on(&view, &on_view));
+            assert_eq!(take_events(), ["owner entered", "owner moved", "owner exited"]);
         }
     }
 

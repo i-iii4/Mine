@@ -43,7 +43,7 @@ export function ChromeShell({
   className,
   children,
   ...props
-}: HTMLAttributes<HTMLDivElement> & { topEdge?: boolean }) {
+}: ComponentProps<"div"> & { topEdge?: boolean }) {
   return (
     <div {...props} data-chrome-shell="" className={cn("flex h-screen w-screen flex-col bg-background text-foreground", className)}>
       {topEdge && <Separator data-chrome-frame-edge="top" />}

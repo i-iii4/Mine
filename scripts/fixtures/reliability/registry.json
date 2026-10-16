@@ -3721,6 +3721,48 @@
         "src/components/NotificationCard.test.tsx"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/hooks/useTopRowWrap.ts",
+        "src/hooks/useTopRowWrap.test.tsx",
+        "src/lib/topRowFit.ts",
+        "src/lib/topRowFit.test.ts"
+      ],
+      "requirement": "SPEC_NARROW_WINDOW.md### Правила",
+      "tests": [
+        "src/hooks/useTopRowWrap.test.tsx",
+        "src/lib/topRowFit.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/top-row-wrap-audit.mjs",
+        "src/hooks/useTopRowWrap.ts",
+        "src/lib/sidebarPlacement.ts"
+      ],
+      "requirement": "SPEC_NARROW_WINDOW.md### Правила",
+      "tests": [
+        "scripts/top-row-wrap-audit.mjs"
+      ],
+      "command": "test:top-row"
+    },
+    {
+      "paths": [
+        "src/lib/sidebarPlacement.ts",
+        "src/lib/sidebarPlacement.test.ts",
+        "src/lib/appLayout.test.ts",
+        "src/dev/SidebarReorderAuditRoute.tsx",
+        "src/dev/SidebarReorderAuditRoute.test.tsx"
+      ],
+      "requirement": "SPEC_NARROW_WINDOW.md### Правила",
+      "tests": [
+        "src/lib/sidebarPlacement.test.ts",
+        "src/lib/appLayout.test.ts",
+        "src/dev/SidebarReorderAuditRoute.test.tsx"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

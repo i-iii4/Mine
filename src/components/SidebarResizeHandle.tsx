@@ -1,13 +1,22 @@
-import { useRef, useCallback, useState, type KeyboardEvent, type PointerEvent } from "react";
+import {
+  useRef,
+  useCallback,
+  useState,
+  useSyncExternalStore,
+  type KeyboardEvent,
+  type PointerEvent,
+} from "react";
 import { createPortal } from "react-dom";
+import { sidebarDragBounds } from "@/lib/sidebarPlacement";
 import { cn } from "@/lib/utils";
 
 // The divider between the sidebar and the feed is the handle itself, built as
 // the source design system's sidebar rail is (shadcn `SidebarRail`; user's
 // decision of 07.10.2026): a 16px catch on the sidebar's 1px line and a 2px
 // line drawn over it. The rail only toggles; this one resizes the panel
-// between its minimum and maximum width and never collapses it, which the
-// sidebar button and its hotkey do.
+// between its minimum and the widest the window holds beside the narrowest
+// feed (SPEC_NARROW_WINDOW.md, У2) and never collapses it, which the sidebar
+// button and its hotkey do.
 //
 // The line runs through two boxes, the top row and the body, so the catch is
 // laid in each of them and takes its height from the box: whatever height the
@@ -33,15 +42,14 @@ interface SidebarResizeHandleProps {
   /** The top row the line runs through above the body. The body's part is
    *  rendered in place, so its parent must be the positioned body. */
   topRowHost: HTMLElement | null;
-  /** The panel's width now and its bounds, for the separator's value. */
+  /** The width the person gave the panel, or the drag's while one runs. A
+   *  narrow window shows less of it; the handle reads the window itself. */
   width: number;
-  minWidth: number;
-  maxWidth: number;
   disabled: boolean;
   onResizeStart: (startX: number, startWidth: number) => void;
   onResizeUpdate: (clientX: number) => void;
   onResizeEnd: () => void;
-  /** Set the width from the keyboard; the hook clamps it. */
+  /** Set the width from the keyboard; the hook clamps it to the window. */
   onResizeTo: (width: number) => void;
 }
 
@@ -49,18 +57,32 @@ function clearNativeSelection(): void {
   document.getSelection()?.removeAllRanges();
 }
 
+function subscribeToWindowWidth(onChange: () => void): () => void {
+  window.addEventListener("resize", onChange);
+  return () => window.removeEventListener("resize", onChange);
+}
+
+function readWindowWidth(): number {
+  return window.innerWidth;
+}
+
 export function SidebarResizeHandle({
   isResizing,
   topRowHost,
-  width,
-  minWidth,
-  maxWidth,
+  width: targetWidth,
   disabled,
   onResizeStart,
   onResizeUpdate,
   onResizeEnd,
   onResizeTo,
 }: SidebarResizeHandleProps) {
+  // The bounds and the width on screen follow the window: a narrow one
+  // squeezes the panel below the width it was given (SPEC_NARROW_WINDOW.md,
+  // У1), and a drag, the keys and the separator's value start from what is
+  // shown. Only this handle answers the window; the panel squeezes in CSS.
+  const windowWidth = useSyncExternalStore(subscribeToWindowWidth, readWindowWidth, readWindowWidth);
+  const { min: minWidth, max: maxWidth } = sidebarDragBounds(windowWidth);
+  const width = Math.min(maxWidth, Math.max(minWidth, targetWidth));
   const startXRef = useRef(0);
   const startWidthRef = useRef(0);
   const didDragRef = useRef(false);

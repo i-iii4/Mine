@@ -402,6 +402,31 @@ describe("tab widths (В48)", () => {
     expect(strip()).toHaveAttribute("data-fade-right", "true");
   });
 
+  it("scrolls the strip by a horizontal turn over a button when the tabs overflow (SPEC_NARROW_WINDOW.md, У9)", () => {
+    renderBar(barState(letters(16)));
+    expect(strip().scrollLeft).toBe(0);
+    fireEvent.wheel(screen.getByRole("button", { name: NEW_TAB_LABEL }), { deltaX: 60, deltaY: 2 });
+    expect(strip().scrollLeft).toBe(60);
+    expect(strip()).toHaveAttribute("data-fade-left", "true");
+    fireEvent.wheel(screen.getByRole("button", { name: BACK_LABEL }), { deltaX: -1000, deltaY: 0 });
+    expect(strip().scrollLeft).toBe(0);
+    // A vertical turn is not the strip's.
+    fireEvent.wheel(screen.getByRole("button", { name: NEW_TAB_LABEL }), { deltaX: 5, deltaY: 40 });
+    expect(strip().scrollLeft).toBe(0);
+  });
+
+  it("moves nothing by a turn over a button when the tabs fit", () => {
+    renderBar(barState(letters(3)));
+    fireEvent.wheel(screen.getByRole("button", { name: NEW_TAB_LABEL }), { deltaX: 60, deltaY: 0 });
+    expect(strip().scrollLeft).toBe(0);
+  });
+
+  it("leaves a turn over the strip to WebKit's own scrolling", () => {
+    renderBar(barState(letters(16)));
+    fireEvent.wheel(tabById("t3"), { deltaX: 60, deltaY: 0 });
+    expect(strip().scrollLeft).toBe(0);
+  });
+
   it("holds the widths after a close by its button while the pointer stays over the bar", () => {
     const tabs = letters(6);
     const { container, update } = renderBar(barState(tabs));

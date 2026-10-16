@@ -122,6 +122,12 @@ export function MainSecondaryTopBar({
     <div
       data-tauri-drag-region
       data-main-secondary-top-bar-content-segment=""
+      // When the row cannot hold the selection's commands, this half moves
+      // into a second row right under it (SPEC_NARROW_WINDOW.md, У10;
+      // useTopRowWrap.ts): global.css places it by the shell's
+      // `data-top-row`. Nothing else of the half ever does: an open card's
+      // name ends in an ellipsis as before.
+      data-top-row-bar=""
       data-path-card-line={pathCardLine ? "" : undefined}
       className={cn(
         "relative flex h-full min-w-0 flex-1 items-center overflow-hidden",
@@ -139,6 +145,7 @@ export function MainSecondaryTopBar({
         )}
         data-entered={selectionActive ? "true" : "false"}
         data-secondary-selection-bar=""
+        data-top-row-wraps=""
       >
         <div ref={selectionHostRef} className="h-full w-full" />
       </div>

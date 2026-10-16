@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SidebarLayout } from "@/types";
 import { SIDEBAR_MAX_WIDTH_PX, sidebarMinWidth } from "@/lib/appLayout";
-import { useSidebarResize } from "./useSidebarResize";
+import { SIDEBAR_WIDTH_MOTION_MS, useSidebarResize } from "./useSidebarResize";
 
 const commands = vi.hoisted(() => ({
   setWindowSidebar: vi.fn(async (_sidebar: { width_px: number; collapsed: boolean }) => {}),
@@ -15,9 +15,12 @@ vi.mock("@/lib/commands", () => ({
 describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", () => {
   const min = () => sidebarMinWidth();
 
+  const wideWindow = window.innerWidth;
+
   beforeEach(() => {
     commands.setWindowSidebar.mockClear();
     localStorage.clear();
+    window.innerWidth = wideWindow;
   });
 
   it("starts from the window's layout, clamped to what the panel can show", () => {
@@ -94,8 +97,6 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
     act(() => result.current.updateResize(480 + 5000));
     act(() => result.current.endResize());
     expect(result.current.width).toBe(SIDEBAR_MAX_WIDTH_PX);
-    expect(result.current.maxWidth).toBe(SIDEBAR_MAX_WIDTH_PX);
-    expect(result.current.minWidth).toBe(min());
   });
 
   it("sets the width from the keyboard within the bounds, and stores it", () => {
@@ -119,6 +120,99 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
     expect(result.current.collapsed).toBe(false);
     act(() => result.current.endResize());
     expect(commands.setWindowSidebar).toHaveBeenLastCalledWith({ width_px: 560, collapsed: false });
+  });
+
+  it("lets CSS squeeze the panel in a narrow window and keeps the dragged width (SPEC_NARROW_WINDOW.md, У1, У2)", () => {
+    const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
+    const cssWidth = () => document.documentElement.style.getPropertyValue("--sidebar-width");
+    expect(cssWidth()).toBe("min(480px, 100vw - 304px)");
+
+    // A window's resize renders nothing and stores nothing.
+    act(() => {
+      window.innerWidth = 700;
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(result.current.width).toBe(480);
+    expect(cssWidth()).toBe("min(480px, 100vw - 304px)");
+    expect(commands.setWindowSidebar).not.toHaveBeenCalled();
+    act(() => result.current.toggleCollapsed());
+    expect(cssWidth()).toBe("0px");
+    act(() => result.current.toggleCollapsed());
+    expect(cssWidth()).toBe("min(480px, 100vw - 304px)");
+  });
+
+  it("drags from the width shown in a narrow window, up to what the window holds beside the feed", () => {
+    window.innerWidth = 700;
+    const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
+
+    // 700 leaves 396 beside the narrowest feed.
+    act(() => result.current.startResize(396, 480));
+    expect(result.current.width).toBe(396);
+    act(() => result.current.updateResize(396 + 300));
+    expect(document.documentElement.style.getPropertyValue("--sidebar-width")).toBe("396px");
+    act(() => result.current.updateResize(360));
+    act(() => result.current.endResize());
+
+    // The drag's end is the width the panel returns to.
+    expect(result.current.width).toBe(360);
+    expect(commands.setWindowSidebar).toHaveBeenLastCalledWith({ width_px: 360, collapsed: false });
+    act(() => result.current.resizeTo(5000));
+    expect(result.current.width).toBe(396);
+  });
+
+  it("animates the width only for a collapse or an opening", () => {
+    vi.useFakeTimers();
+    try {
+      const { result, rerender } = renderHook(
+        ({ layout }: { layout: SidebarLayout }) => useSidebarResize(layout),
+        { initialProps: { layout: { width_px: 480, collapsed: false } } },
+      );
+      expect(result.current.widthAnimating).toBe(false);
+
+      act(() => result.current.toggleCollapsed());
+      expect(result.current.widthAnimating).toBe(true);
+      act(() => vi.advanceTimersByTime(SIDEBAR_WIDTH_MOTION_MS));
+      expect(result.current.widthAnimating).toBe(false);
+
+      // The window's echo of that toggle moves nothing again.
+      rerender({ layout: { width_px: 480, collapsed: true } });
+      expect(result.current.widthAnimating).toBe(false);
+      // The window opens it: the tab bar's button, the View menu.
+      rerender({ layout: { width_px: 480, collapsed: false } });
+      expect(result.current.widthAnimating).toBe(true);
+      act(() => vi.advanceTimersByTime(SIDEBAR_WIDTH_MOTION_MS));
+
+      // Neither a drag nor another width from the window animates.
+      act(() => result.current.startResize(480, 480));
+      act(() => result.current.updateResize(520));
+      act(() => result.current.endResize());
+      rerender({ layout: { width_px: 400, collapsed: false } });
+      expect(result.current.widthAnimating).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not animate the width with Reduce motion", () => {
+    const matchMedia = window.matchMedia;
+    window.matchMedia = vi.fn((query: string) => ({
+      matches: query === "(prefers-reduced-motion: reduce)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(() => false),
+    }));
+    try {
+      const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
+      act(() => result.current.toggleCollapsed());
+      expect(result.current.collapsed).toBe(true);
+      expect(result.current.widthAnimating).toBe(false);
+    } finally {
+      window.matchMedia = matchMedia;
+    }
   });
 
   it("keeps the layout in memory on a page that is not a tab, and nothing in localStorage", () => {

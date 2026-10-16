@@ -19,6 +19,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
 } from "react";
 import { ChevronLeft, ChevronRight, Plus, Search, X } from "lucide-react";
 import { ChromeActions, ChromeRow } from "@/components/ChromeRow";
@@ -67,6 +68,7 @@ import {
   hiddenEdges,
   revealScrollLeft,
   stripFadeMaskStyle,
+  wheelScrollLeft,
   type FrozenTabWidth,
 } from "./tabLayout";
 import { createSettingsMenu, type SettingsMenu } from "./settingsMenu";
@@ -206,6 +208,27 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
     }
     syncEdges();
   }, [activeIndex, count, stripWidth, syncEdges, width]);
+
+  // Over the strip WebKit scrolls it; over the rest of the bar the horizontal
+  // turn is passed to it, so the whole bar scrolls the tabs (SPEC_NARROW_WINDOW.md,
+  // У9, У11). The backend leaves the sidebar alone for such a gesture.
+  const handleBarWheel = useCallback(
+    (event: ReactWheelEvent<HTMLElement>) => {
+      const strip = stripRef.current;
+      if (!strip || (event.target instanceof Node && strip.contains(event.target))) return;
+      const next = wheelScrollLeft({
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+        scrollLeft: strip.scrollLeft,
+        viewport: stripWidth,
+        content: count * width,
+      });
+      if (next === null || next === strip.scrollLeft) return;
+      strip.scrollLeft = next;
+      syncEdges();
+    },
+    [count, stripWidth, syncEdges, width],
+  );
 
   // ── Dev button styles (src/lib/buttonStyle.ts) ───────────────────────────
   // The bar owns its window's button style: each tab page gets it whenever
@@ -540,6 +563,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
       data-fullscreen={fullscreen ? "true" : undefined}
       className="bg-accent"
       onPointerLeave={() => setFrozen(null)}
+      onWheel={handleBarWheel}
     >
       {/* The traffic lights sit over this spot. */}
       {trafficLightReserve && (

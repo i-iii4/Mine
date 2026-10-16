@@ -1,4 +1,4 @@
-import { fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { SidebarResizeHandle } from "./SidebarResizeHandle";
 
@@ -13,9 +13,8 @@ describe("SidebarResizeHandle", () => {
   const props = () => ({
     isResizing: false,
     topRowHost: topRow,
+    // jsdom's window is 1024 wide: the bounds are 314 and 600.
     width: 400,
-    minWidth: 314,
-    maxWidth: 600,
     disabled: false,
     onResizeStart: vi.fn(),
     onResizeUpdate: vi.fn(),
@@ -127,6 +126,42 @@ describe("SidebarResizeHandle", () => {
     expect(p.onResizeTo.mock.calls).toEqual([[384], [416], [314], [600]]);
     expect(parentKey).not.toHaveBeenCalled();
     document.body.removeEventListener("keydown", parentKey);
+  });
+
+  it("starts from the squeezed width a narrow window shows, and keeps to its bounds (SPEC_NARROW_WINDOW.md, У1, У2)", () => {
+    const wide = window.innerWidth;
+    try {
+      // 700 leaves 396 beside the narrowest feed: a panel given 480 shows 396.
+      window.innerWidth = 700;
+      const p = { ...props(), width: 480 };
+      const { container } = render(<SidebarResizeHandle {...p} />);
+      const { top, body: line } = parts(container);
+      expect(line).toHaveAttribute("aria-valuenow", "396");
+      expect(line).toHaveAttribute("aria-valuemax", "396");
+      for (const element of [top, line]) expect(element).toHaveClass("cursor-w-resize");
+
+      line.setPointerCapture = vi.fn();
+      line.releasePointerCapture = vi.fn();
+      line.hasPointerCapture = vi.fn(() => true);
+      fireEvent.pointerDown(line, { pointerId: 1, button: 0, clientX: 396 });
+      fireEvent.pointerMove(line, { pointerId: 1, clientX: 380 });
+      fireEvent.pointerUp(line, { pointerId: 1, clientX: 380 });
+      expect(p.onResizeStart).toHaveBeenCalledWith(396, 396);
+
+      fireEvent.keyDown(line, { key: "ArrowLeft" });
+      fireEvent.keyDown(line, { key: "End" });
+      expect(p.onResizeTo.mock.calls).toEqual([[380], [396]]);
+
+      // The window widens: the handle follows it without a new width.
+      act(() => {
+        window.innerWidth = 1200;
+        window.dispatchEvent(new Event("resize"));
+      });
+      expect(line).toHaveAttribute("aria-valuenow", "480");
+      expect(line).toHaveAttribute("aria-valuemax", "600");
+    } finally {
+      window.innerWidth = wide;
+    }
   });
 
   it("lets nothing through while a card or a collection is dragged", () => {

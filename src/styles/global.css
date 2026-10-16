@@ -1435,6 +1435,42 @@ body {
   position: relative;
   height: var(--chrome-row-content-height);
 }
+
+/* The selection's commands in a second row (SPEC_NARROW_WINDOW.md, У10;
+   useTopRowWrap.ts). At the shell's `data-top-row="two"` the half over the
+   feed, showing only them, stands right under the row and its line, across
+   the feed, closed by a line of its own; the feed moves down by that row. No
+   path's line stands before it there. A try of one row (`data-top-row-try`)
+   brings the half back for one layout and leaves the feed where it is. */
+:root {
+  /* The second row and its line: the step of a chrome row closed by a line
+     below it, as the top row is. */
+  --top-second-row-height: calc(var(--chrome-row-content-height) + 1px);
+}
+:root[data-chrome-height="40"] {
+  --top-second-row-height: var(--sidebar-row-height);
+}
+[data-top-row="two"]:not([data-top-row-try]) [data-top-row-bar] {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 1px);
+  /* The feed's left edge: the sidebar's width, 0 while it is collapsed. */
+  left: var(--sidebar-width);
+  right: 0;
+  height: var(--top-second-row-height);
+  margin-left: 0;
+  border-left-width: 0;
+  border-bottom: 1px solid var(--border);
+  background-color: var(--chrome);
+}
+[data-top-row="two"] [data-below-top-row] {
+  margin-top: var(--top-second-row-height);
+}
+/* The second row's left edge follows the sidebar's as it collapses or
+   opens, with the sidebar's own motion (useSidebarResize.ts). */
+[data-sidebar-width-animating] [data-top-row-bar] {
+  transition: left 200ms ease;
+}
 .chrome-control {
   height: var(--chrome-row-content-height);
 }

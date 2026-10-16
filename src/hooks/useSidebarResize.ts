@@ -1,19 +1,18 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, startTransition } from "react";
-import {
-  SIDEBAR_MAX_WIDTH_PX,
-  sidebarMinWidth,
-} from "@/lib/appLayout";
 import { setWindowSidebar } from "@/lib/commands";
+import { motionDuration } from "@/lib/motion";
+import {
+  clampSidebarTarget,
+  sidebarDragBounds,
+  sidebarWidthCss,
+} from "@/lib/sidebarPlacement";
 import type { SidebarLayout } from "@/types";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const MAX_WIDTH = SIDEBAR_MAX_WIDTH_PX;
-/// The three equal columns; see appLayout. A drag keeps the panel between it
-/// and MAX_WIDTH: it never collapses the panel, which the sidebar button and
-/// its hotkey do (user's decision of 07.10.2026).
-const MIN_WIDTH = sidebarMinWidth();
 const CSS_VAR = "--sidebar-width";
+/** How long the sidebar takes to collapse or open by its button. */
+export const SIDEBAR_WIDTH_MOTION_MS = 200;
 
 // ─── Ownership ──────────────────────────────────────────────────────────────
 //
@@ -24,42 +23,53 @@ const CSS_VAR = "--sidebar-width";
 // shows the change at once; the echo that follows says the same. A page that
 // is not a tab (a dev browser route) keeps the layout in memory, starting at
 // the minimum.
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
+//
+// The stored width is the one the person last dragged the edge to (`S_target`,
+// SPEC_NARROW_WINDOW.md, У2). A narrow window squeezes the sidebar below it
+// (У1): `--sidebar-width` holds a CSS `min()` of the target and what the
+// window leaves beside the narrowest feed, so a window's resize squeezes the
+// sidebar without a render and never changes the target. Widening, the
+// sidebar grows back to exactly the target.
 
 function initialLayout(windowSidebar: SidebarLayout | null): { width: number; collapsed: boolean } {
-  if (!windowSidebar) return { width: MIN_WIDTH, collapsed: false };
+  if (!windowSidebar) return { width: clampSidebarTarget(0), collapsed: false };
   return {
-    width: clamp(windowSidebar.width_px, MIN_WIDTH, MAX_WIDTH),
+    width: clampSidebarTarget(windowSidebar.width_px),
     collapsed: windowSidebar.collapsed,
   };
 }
 
-function writeCssVar(width: number): void {
-  document.documentElement.style.setProperty(CSS_VAR, `${width}px`);
+function writeCssVar(value: string): void {
+  document.documentElement.style.setProperty(CSS_VAR, value);
+}
+
+/** The width a drag or a key may give the sidebar in the window as it is now. */
+function clampToWindow(width: number): number {
+  const { min, max } = sidebarDragBounds(window.innerWidth);
+  return Math.min(max, Math.max(min, width));
 }
 
 // ─── Hook ───────────────────────────────────────────────────────────────────
 
 export interface UseSidebarResizeReturn {
-  /** Width used for layout logic (Grid reflow). RAF-throttled during drag. */
+  /** The width the person gave the sidebar, the drag's width while a drag
+   *  runs (RAF-throttled), 0 collapsed. A narrow window shows less of it
+   *  (`sidebarPlacement`). */
   width: number;
   /** Whether the sidebar is collapsed */
   collapsed: boolean;
   /** Whether a drag-resize is in progress */
   isResizing: boolean;
-  /** The bounds a drag and the keyboard keep the panel in. */
-  minWidth: number;
-  maxWidth: number;
-  /** Begin a resize drag (called by handle component) */
+  /** Whether the sidebar's width is moving to a collapse or an opening: the
+   *  only time it animates. A window's resize or a drag moves it at once. */
+  widthAnimating: boolean;
+  /** Begin a resize drag from the width shown now (called by handle component) */
   startResize: (startX: number, startWidth: number) => void;
   /** Update width during drag (called on every pointermove) */
   updateResize: (clientX: number) => void;
   /** Finish the resize drag */
   endResize: () => void;
-  /** Set the width at once (the handle's keyboard), clamped to the bounds */
+  /** Set the width at once (the handle's keyboard), within the window's bounds */
   resizeTo: (width: number) => void;
   /** Toggle collapsed/expanded */
   toggleCollapsed: () => void;
@@ -79,6 +89,7 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
     const { width, collapsed: c } = initialLayout(windowSidebar);
     return c ? 0 : width;
   });
+  const [widthAnimating, setWidthAnimating] = useState(false);
 
   // The window owns the layout: a change made here goes to the backend, which
   // tells every tab of the window and its tab bar.
@@ -91,25 +102,40 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
     });
   }, []);
 
+  // A collapse or an opening animates the width; the transition is on only
+  // for its run, so a window's resize does not trail the sidebar behind the
+  // window. Reduced motion keeps it off.
+  const animationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const animateWidth = useCallback(() => {
+    const duration = motionDuration(SIDEBAR_WIDTH_MOTION_MS);
+    if (duration === 0) return;
+    if (animationTimerRef.current !== null) clearTimeout(animationTimerRef.current);
+    setWidthAnimating(true);
+    animationTimerRef.current = setTimeout(() => {
+      animationTimerRef.current = null;
+      setWidthAnimating(false);
+    }, duration);
+  }, []);
+
   const startRef = useRef({ startX: 0, startWidth: 0 });
   const rafIdRef = useRef<number | null>(null);
   const pendingWidthRef = useRef(0);
 
   // Keep refs in sync so the stable callbacks read fresh values at fire time.
-  const storedWidthRef = useRef(storedWidth);
-  useEffect(() => { storedWidthRef.current = storedWidth; }, [storedWidth]);
   const collapsedRef = useRef(collapsed);
   collapsedRef.current = collapsed;
 
-  // Display width drives React-side consumers (Grid reflow). The actual sidebar
+  // Display width drives React-side consumers (the handle). The actual sidebar
   // layout uses var(--sidebar-width), updated synchronously in updateResize so
   // the panel and its columns follow the cursor at full refresh rate.
   const width = isResizing ? dragWidth : collapsed ? 0 : storedWidth;
 
-  // Mount + sync: seed / update CSS variable before paint.
+  // Mount + sync: seed / update CSS variable before paint. At rest the
+  // variable is the squeeze expression; the drag writes plain pixels.
   useLayoutEffect(() => {
-    if (!isResizing) writeCssVar(width);
-  }, [width, isResizing]);
+    if (isResizing) return;
+    writeCssVar(collapsed ? "0px" : sidebarWidthCss(storedWidth));
+  }, [collapsed, storedWidth, isResizing]);
 
   // The window's layout changed: another tab, the tab bar's button, the View
   // menu or the two-finger swipe (В56). A drag in progress here keeps the
@@ -120,23 +146,32 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
   const windowCollapsed = windowSidebar?.collapsed;
   useEffect(() => {
     if (windowWidth === undefined || windowCollapsed === undefined || isResizingRef.current) return;
-    setStoredWidth(clamp(windowWidth, MIN_WIDTH, MAX_WIDTH));
+    setStoredWidth(clampSidebarTarget(windowWidth));
+    if (windowCollapsed !== collapsedRef.current) {
+      collapsedRef.current = windowCollapsed;
+      animateWidth();
+    }
     setCollapsed(windowCollapsed);
-  }, [windowCollapsed, windowWidth]);
+  }, [animateWidth, windowCollapsed, windowWidth]);
 
   const startResize = useCallback((startX: number, startWidth: number) => {
-    startRef.current = { startX, startWidth };
-    pendingWidthRef.current = startWidth;
-    setDragWidth(startWidth);
+    // The drag starts from the width on screen, the squeezed one in a narrow
+    // window, so the edge does not jump to the target under the pointer.
+    const start = clampToWindow(startWidth);
+    startRef.current = { startX, startWidth: start };
+    pendingWidthRef.current = start;
+    setDragWidth(start);
     setIsResizing(true);
     document.body.classList.add("sidebar-resizing");
   }, []);
 
-  // The line follows the cursor 1:1 between the bounds and stops at them.
+  // The line follows the cursor 1:1 between the bounds and stops at them: the
+  // narrowest sidebar, and the widest the window holds beside the narrowest
+  // feed (У2).
   const updateResize = useCallback((clientX: number) => {
     const { startX, startWidth } = startRef.current;
-    const next = clamp(startWidth + (clientX - startX), MIN_WIDTH, MAX_WIDTH);
-    writeCssVar(next);
+    const next = clampToWindow(startWidth + (clientX - startX));
+    writeCssVar(`${next}px`);
     pendingWidthRef.current = next;
 
     if (rafIdRef.current === null) {
@@ -150,6 +185,7 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
     }
   }, []);
 
+  // The drag's end is the new target (У2).
   const endResize = useCallback(() => {
     if (rafIdRef.current !== null) {
       cancelAnimationFrame(rafIdRef.current);
@@ -157,30 +193,36 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
     }
     setIsResizing(false);
     document.body.classList.remove("sidebar-resizing");
-    const finalWidth = clamp(pendingWidthRef.current, MIN_WIDTH, MAX_WIDTH);
+    const finalWidth = clampToWindow(pendingWidthRef.current);
     setStoredWidth(finalWidth);
     setDragWidth(finalWidth);
     commit(finalWidth, false);
   }, [commit]);
 
   const resizeTo = useCallback((nextWidth: number) => {
-    const next = clamp(nextWidth, MIN_WIDTH, MAX_WIDTH);
+    const next = clampToWindow(nextWidth);
     setStoredWidth(next);
     commit(next, collapsedRef.current);
   }, [commit]);
 
+  const storedWidthRef = useRef(storedWidth);
+  storedWidthRef.current = storedWidth;
   const toggleCollapsed = useCallback(() => {
     const next = !collapsedRef.current;
     collapsedRef.current = next;
+    animateWidth();
     setCollapsed(next);
     commit(storedWidthRef.current, next);
-  }, [commit]);
+  }, [animateWidth, commit]);
 
-  // Cleanup pending RAF on unmount
+  // Cleanup pending RAF and the animation's timer on unmount
   useEffect(() => {
     return () => {
       if (rafIdRef.current !== null) {
         cancelAnimationFrame(rafIdRef.current);
+      }
+      if (animationTimerRef.current !== null) {
+        clearTimeout(animationTimerRef.current);
       }
     };
   }, []);
@@ -189,8 +231,7 @@ export function useSidebarResize(windowSidebar: SidebarLayout | null = null): Us
     width,
     collapsed,
     isResizing,
-    minWidth: MIN_WIDTH,
-    maxWidth: MAX_WIDTH,
+    widthAnimating,
     startResize,
     updateResize,
     endResize,

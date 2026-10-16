@@ -630,6 +630,18 @@ fn bar_height(app: &AppHandle, window_id: &WindowId) -> f64 {
     f64::from(crate::domain::windows::tab_bar_height(chrome_rows_of(app, window_id).tab_bar))
 }
 
+/// The tab bar's height in the tab window whose native window is
+/// `ns_window`; `None` for any other window, the settings among them
+/// (`SPEC_NARROW_WINDOW.md`, У9). Main thread only, where `AppKit` hands it.
+#[cfg(target_os = "macos")]
+pub fn bar_height_of_native_window(app: &AppHandle, ns_window: *const std::ffi::c_void) -> Option<f64> {
+    app.windows()
+        .into_values()
+        .find(|window| window.ns_window().is_ok_and(|ptr| ptr.cast_const() == ns_window))
+        .and_then(|window| WindowId::from_label(window.label()))
+        .map(|window_id| bar_height(app, &window_id))
+}
+
 /// Set the chrome rows of the window whose bar is `bar_label` (В83): store
 /// them, lay the window out again, move its traffic lights to the bar's row
 /// and tell its bar and its tab pages. Other windows keep theirs, so two can

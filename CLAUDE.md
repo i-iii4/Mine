@@ -293,9 +293,9 @@ local-arena/
 │   │   ├── ScreenState.tsx     # Общая раскладка полноэкранных состояний: колонка, заголовок, текст, кнопки
 │   │   ├── EmptySpaceOnboarding.tsx # Два пути наполнения пустого пространства
 │   │   └── EdgeStatesSection.tsx # Витрина краевых состояний (гейт test:edge-states)
-│   ├── hooks/                  # useSidebarResize, useGridScroll, useChannelPreviewsEvents, useProjectionRevisionOwner, useThumbnailUpgrade, usePreviewFileRetry (нет файла превью: заливка вместо битой картинки, повтор по thumb:updated) и др.
+│   ├── hooks/                  # useSidebarResize (ширина последнего перетаскивания, сжатие окном в CSS), useTopRowWrap (действия выделения во втором ряду, когда верхний ряд их не вмещает, SPEC_NARROW_WINDOW.md, У10), useGridScroll, useChannelPreviewsEvents, useProjectionRevisionOwner, useThumbnailUpgrade, usePreviewFileRetry (нет файла превью: заливка вместо битой картинки, повтор по thumb:updated) и др.
 │   ├── types/                  # generated.ts from Rust/Specta + frontend-owned index.ts
-│   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()), pageEvents.ts (события своей страницы), tabPage.ts (память вкладки), tabVisibility.ts (показ и пауза медиа), chromeHeight.ts (высота хрома окна), controlCharGuard.ts, floatingLayer.ts (ширина меню, зазор от плашки кнопки), deleteFailure.ts (уведомления о сбое удаления), actionFailures.ts (уведомления о сбоях действий вкладки), createElements.ts (очередь новых элементов из броска и ⌘V), systemActions.ts (ссылка в браузер, файл в Finder), tabBarFailure.ts (сбой полосы вкладок видимой вкладке), errorMessage.ts (слова ошибки) и др.
+│   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()), pageEvents.ts (события своей страницы), tabPage.ts (память вкладки), tabVisibility.ts (показ и пауза медиа), chromeHeight.ts (высота хрома окна), controlCharGuard.ts, floatingLayer.ts (ширина меню, зазор от плашки кнопки), deleteFailure.ts (уведомления о сбое удаления), actionFailures.ts (уведомления о сбоях действий вкладки), createElements.ts (очередь новых элементов из броска и ⌘V), systemActions.ts (ссылка в браузер, файл в Finder), tabBarFailure.ts (сбой полосы вкладок видимой вкладке), errorMessage.ts (слова ошибки), sidebarPlacement.ts (меню рядом с лентой, сжатое или поверх неё по ширине окна, пределы перетаскивания), topRowFit.ts (обрезает ли верхний ряд действия выделения) и др.
 │   ├── workers/                # fontMetrics.worker.ts (Canvas measureText), thumbWorker.ts
 │   ├── dev/                    # Dev-only Feed, Graph, ColdSpace and SidebarReorder acceptance routes; страницы сравнения на dev-сервере: /__buttons (кнопки shadcn), /__cloud-open (первое открытие пространства из облака), /__onboarding (онбординг по экранам), /__popups (модальные окна приложения по кнопкам)
 │   ├── test/                   # Vitest setup
@@ -308,7 +308,7 @@ local-arena/
 │   ├── cold-space-browser-audit.mjs # First/settled/deep cold Grid acceptance
 │   ├── edge-states-audit.mjs   # Витрина краевых состояний: варианты, контексты, обрезка, невидимый текст
 │   ├── audit-vite.mjs          # Свой Vite браузерной проверки: свободный порт, кэш зависимостей во временной папке
-│   ├── selection-menu-audit.mjs, sidebar-action-audit.mjs, detail-image-geometry-audit.mjs # Самостоятельные браузерные проверки на audit-vite.mjs
+│   ├── selection-menu-audit.mjs, sidebar-action-audit.mjs, detail-image-geometry-audit.mjs, top-row-wrap-audit.mjs # Самостоятельные браузерные проверки на audit-vite.mjs
 │   ├── x-thread-smoke.mjs      # Собранное расширение: цепочка автора X во временном Chromium, сеть перехвачена
 │   ├── fetch-ytdlp.mjs         # Загрузка распакованной сборки yt-dlp (onedir, сумма SHA-256) в ресурсы бандла
 │   ├── disposable-app-home.mjs # Свой HOME в папке прогона для скриптов, которые запускают помощника
@@ -478,6 +478,7 @@ bun run test:edge-states       # Browser edge-states showcase acceptance (requir
 bun run test:sidebar-reorder   # Browser sidebar collection reorder gesture acceptance (requires running dev server)
 bun run test:selection-menu    # Меню Connect поиска и меню выделения Detail в Chromium без окна (свой Vite)
 bun run test:sidebar-actions   # Кнопка Connect строки бокового меню: поля 8px и ширина во всех состояниях (свой Vite)
+bun run test:top-row           # Действия выделения во втором ряду только при нехватке места, карточка, лента и граф всегда в одном ряду, сжатие меню (свой Vite)
 bun run test:detail-image-geometry # Рамка изображения Detail: подмена превью оригиналом, contain, resize (свой Vite)
 bun run test:x-thread          # Сборка расширения и цепочка автора X во временном Chromium, сеть перехвачена
 bun run test:browser           # Сам поднимает Vite и запускает все browser gates

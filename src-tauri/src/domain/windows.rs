@@ -123,9 +123,21 @@ pub const TAB_DETACH_THRESHOLD_PX: u32 = 24;
 /// How much of the tab bar must stay on some screen, across, for a saved
 /// window to come back where it was.
 pub const WINDOW_GRAB_MIN_VISIBLE_PX: f64 = 100.0;
-/// Smallest content size of a tab window: the old main window's minimum and
-/// the tab bar above it.
-pub const WINDOW_MIN_WIDTH: f64 = 904.0;
+/// Narrowest the sidebar gets beside the feed: three equal zones and the two
+/// lines between them (SPEC_NARROW_WINDOW.md, `S_min`; `sidebarMinWidth()` in
+/// src/lib/appLayout.ts). It does not follow the font.
+pub const SIDEBAR_MIN_WIDTH_PX: u32 = 314;
+/// Narrowest the feed gets beside the sidebar (`F_min`): the smallest card and
+/// two side insets.
+pub const APP_MAIN_MIN_WIDTH_PX: u32 = 304;
+/// The strip the sidebar leaves at the right when it lies over the feed in a
+/// narrow window (`STRIP`, SPEC_NARROW_WINDOW.md, У4).
+pub const SIDEBAR_OVERLAY_STRIP_PX: u32 = 40;
+/// Smallest content size of a tab window. Across: the narrowest sidebar beside
+/// the narrowest feed, until the sidebar can lie over the feed (PLAN.md, 47.2b;
+/// SPEC_NARROW_WINDOW.md, У3). Down: the old main window's minimum and the tab
+/// bar above it.
+pub const WINDOW_MIN_WIDTH: f64 = (SIDEBAR_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX) as f64;
 pub const WINDOW_MIN_HEIGHT: f64 = 600.0 + TAB_BAR_HEIGHT_PX as f64;
 /// Size of a window with nothing to restore.
 pub const WINDOW_DEFAULT_WIDTH: f64 = 1200.0;
@@ -1267,6 +1279,27 @@ mod tests {
         assert_eq!(restored.windows[0].frame.x, (1728.0 - 1200.0) / 2.0);
         // 150 points of its bar stay on screen: enough to grab, it stays.
         assert_eq!(restored.windows[1].frame.x, 1728.0 - 150.0);
+    }
+
+    /// 47.2b: the window is no narrower than the narrowest sidebar beside the
+    /// narrowest feed, 618 px, until the sidebar can lie over the feed.
+    #[test]
+    fn the_narrowest_window_holds_the_narrowest_sidebar_and_feed() {
+        assert_eq!(WINDOW_MIN_WIDTH, 618.0);
+        assert_eq!(f64::from(SIDEBAR_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX), WINDOW_MIN_WIDTH);
+    }
+
+    /// A saved window narrower than the minimum comes back at the minimum; one
+    /// between the old 904 and the new minimum keeps its width.
+    #[test]
+    fn a_restored_window_is_held_to_the_minimum_width() {
+        let mut narrow = window("w1", vec![tab("t1", "x")], "t1");
+        narrow.frame.width = 400.0;
+        let mut between = window("w2", vec![tab("t2", "x")], "t2");
+        between.frame.width = 700.0;
+        let restored = normalize(saved(vec![narrow, between]), &known, &screen(), &mut ids());
+        assert_eq!(restored.windows[0].frame.width, WINDOW_MIN_WIDTH);
+        assert_eq!(restored.windows[1].frame.width, 700.0);
     }
 
     #[test]

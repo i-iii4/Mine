@@ -17,6 +17,7 @@
     "test:edge-states": "node scripts/edge-states-audit.mjs",
     "test:selection-menu": "node scripts/selection-menu-audit.mjs",
     "test:sidebar-actions": "node scripts/sidebar-action-audit.mjs",
+    "test:top-row": "node scripts/top-row-wrap-audit.mjs",
     "test:detail-image-geometry": "node scripts/detail-image-geometry-audit.mjs",
     "test:native-shell": "node scripts/native-shell-smoke.mjs",
     "test:native-capture": "node scripts/native-capture-smoke.mjs",

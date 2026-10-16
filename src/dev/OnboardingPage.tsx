@@ -338,7 +338,7 @@ function SpacePage({ path, blocks, totalBlocks, previews, indexing, previewsPend
               <Sidebar
                 width={SIDEBAR_WIDTH}
                 collapsed={false}
-                isResizing={false}
+                widthAnimating={false}
                 vaultPath={path}
                 previewsPending={previewsPending}
                 tags={[]}

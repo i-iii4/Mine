@@ -1,6 +1,25 @@
+// The widths a window is laid out by (SPEC_NARROW_WINDOW.md, «Величины»).
+// The backend owns the ones it needs itself: SIDEBAR_MIN_WIDTH_PX,
+// APP_MAIN_MIN_WIDTH_PX and SIDEBAR_OVERLAY_STRIP_PX live in
+// src-tauri/src/domain/windows.rs, which sets the window's minimum from them.
+// They are restated here once, and appLayout.test.ts reads the Rust source to
+// keep the two equal.
+
+/** Narrowest the feed gets beside the sidebar (`F_min`): the smallest card
+ *  and two side insets (domain/windows.rs `APP_MAIN_MIN_WIDTH_PX`). */
 export const APP_MAIN_MIN_WIDTH_PX = 304;
+/** Narrowest the sidebar gets beside the feed (`S_min`): the three equal
+ *  zones of `sidebarMinWidth()` (domain/windows.rs `SIDEBAR_MIN_WIDTH_PX`). */
+export const SIDEBAR_MIN_WIDTH_PX = 314;
+/** Widest a drag takes the sidebar (`S_max`). */
 export const SIDEBAR_MAX_WIDTH_PX = 600;
-export const APP_MIN_WIDTH_PX = SIDEBAR_MAX_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX;
+/** The strip the sidebar leaves at the right when it lies over the feed
+ *  (`STRIP`, domain/windows.rs `SIDEBAR_OVERLAY_STRIP_PX`). */
+export const SIDEBAR_OVERLAY_STRIP_PX = 40;
+/** Narrowest the page gets: the narrowest sidebar beside the narrowest feed,
+ *  the window's minimum until the sidebar can lie over the feed (PLAN.md,
+ *  47.2b; domain/windows.rs `WINDOW_MIN_WIDTH`). */
+export const APP_MIN_WIDTH_PX = SIDEBAR_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX;
 
 // ── Sidebar column model ─────────────────────────────────────────────────────
 // One keystone width unifies three things at the minimum: 2.5 preview icons

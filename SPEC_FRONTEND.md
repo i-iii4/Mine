@@ -473,15 +473,38 @@ Vault-пикер — не маршрут, а состояние: если `vault
 ### Layout
 
 Двухколоночная раскладка:
-- Sidebar (resizable `220–600px`, может быть collapsed)
+- Sidebar (ширина от `314` до `600px`, может быть collapsed)
 - Main area (flex-1, содержит Outlet роутера) имеет минимум `304px`: `240px`
   минимальной metadata card + два боковых inset по `32px`.
-- Минимальная ширина desktop window: `904px` = `600px` максимального sidebar +
-  `304px` минимальной правой/main области. Значения фронтенда живут в
-  `src/lib/appLayout.ts`. Окна создаёт бэкенд по сохранённым окнам
+- Ширины по SPEC_NARROW_WINDOW.md, У1 (15.10.2026): пока окно не уже
+  `S_target + 304`, меню шириной `S_target` (ширина последнего
+  перетаскивания), лента берёт остальное; уже этого лента держит `304px`, а
+  меню сжимается до `W − 304`, но не уже `314px`. Сжатие делает CSS:
+  `--sidebar-width` равна `min(S_target px, 100vw - 304px)`
+  (`sidebarWidthCss` в `src/lib/sidebarPlacement.ts`), изменение окна не
+  вызывает рендер и не меняет `S_target`. Чистая функция `sidebarPlacement`
+  там же описывает три состояния таблицы У1, `sidebarDragBounds` пределы
+  перетаскивания.
+- Минимальная ширина desktop window: `618px` = `314px` наименьшего меню +
+  `304px` наименьшей ленты (шаг 47.2b; с шагом 47.3c станет `354px`, когда
+  меню ляжет поверх ленты). Окна создаёт бэкенд по сохранённым окнам
   (03.10.2026), поэтому нативный минимум окна живёт в
-  `src-tauri/src/domain/windows.rs`: `WINDOW_MIN_WIDTH` 904 и
-  `WINDOW_MIN_HEIGHT` 600 плюс `TAB_BAR_HEIGHT_PX`.
+  `src-tauri/src/domain/windows.rs`: `WINDOW_MIN_WIDTH` выводится из
+  `SIDEBAR_MIN_WIDTH_PX` и `APP_MAIN_MIN_WIDTH_PX`, `WINDOW_MIN_HEIGHT` 600
+  плюс `TAB_BAR_HEIGHT_PX`; сохранённое окно уже минимума восстанавливается
+  шириной минимума (`normalize`). `src/lib/appLayout.ts` повторяет
+  `SIDEBAR_MIN_WIDTH_PX`, `APP_MAIN_MIN_WIDTH_PX` и
+  `SIDEBAR_OVERLAY_STRIP_PX`, `appLayout.test.ts` сверяет их с Rust, CSS
+  повторяет `--sidebar-min-width`.
+- Группа действий выделения, которую не вмещает верхний ряд над лентой,
+  уходит во второй ряд; ничто другое в ряду во второй ряд не уходит, а
+  сокращается с многоточием (SPEC_NARROW_WINDOW.md, У10;
+  `src/hooks/useTopRowWrap.ts`, `src/lib/topRowFit.ts`; DESIGN_SYSTEM.md,
+  «Верхние ряды»). Лента
+  (`main[data-below-top-row]`) сдвигается на `--top-second-row-height`;
+  прокрутка, растворение верхней кромки и раскладка ленты берут размер
+  своего `main`, поэтому следуют за ним сами. Браузерная проверка
+  `bun run test:top-row`.
 
 ### Sidebar
 
@@ -890,6 +913,18 @@ article-card без media (8 lines × widest single-column inner width). Fronten
 `window-sidebar-changed`. Пока край тащат, пришедшее событие не сдвигает
 панель из-под указателя. Ширина первого запуска 360px
 (`SIDEBAR_DEFAULT_WIDTH_PX` в `domain/windows.rs`).
+
+Хранится ширина последнего перетаскивания (`S_target`, SPEC_NARROW_WINDOW.md,
+У2); узкое окно показывает меньше неё (раздел «Layout»). Перетаскивание,
+стрелки, Home и End начинают с показанной ширины и держат её от `314px` до
+`min(600, W − 304)`; конец перетаскивания и клавиши задают новую `S_target`.
+Значение разделителя (`aria-valuenow`, `aria-valuemax`) и курсор у пределов
+ручка берёт из ширины окна сама, рендерится только она. Ширина меню
+анимируется (`200ms`) только при сворачивании и разворачивании кнопкой,
+пунктом View, сочетанием клавиш или жестом, и не анимируется при
+«Уменьшить движение»; изменение окна, перетаскивание и ширина от другой
+вкладки меняют её сразу (`widthAnimating` в `useSidebarResize.ts`). Второй
+ряд над лентой сдвигается вместе с краем меню.
 
 Ручка это сама линия между боковым меню и лентой с видом и ответом на
 указатель рельса shadcn `SidebarRail` (решение пользователя 07.10.2026,

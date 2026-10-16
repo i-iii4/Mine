@@ -74,6 +74,7 @@ import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
 import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
+import { SIDEBAR_WIDTH_MOTION_MS } from "@/hooks/useSidebarResize";
 import { ReadOnlyCardPreview } from "./Card";
 import { MicroPreviewThumbnail, microPreviewFromPreviewCard } from "./MicroPreviewThumbnail";
 
@@ -196,7 +197,9 @@ type SidebarKeyboardNavigationFocus = {
 interface SidebarProps {
   width: number;
   collapsed: boolean;
-  isResizing: boolean;
+  /** The width is moving to a collapse or an opening: the only time it
+   *  animates (useSidebarResize.ts). */
+  widthAnimating: boolean;
   vaultPath?: string;
   thumbsRootPath?: string;
   tags?: TagCount[];
@@ -279,7 +282,7 @@ export function Sidebar(props: SidebarProps) {
 
 const SidebarCore = memo(function SidebarCore({
   dropOverId,
-  isResizing,
+  widthAnimating,
   vaultPath,
   thumbsRootPath,
   orderedTags,
@@ -813,7 +816,7 @@ const SidebarCore = memo(function SidebarCore({
       )}
       style={{
         width: "var(--sidebar-width)",
-        transition: isResizing ? "none" : "width 200ms ease",
+        transition: widthAnimating ? `width ${SIDEBAR_WIDTH_MOTION_MS}ms ease` : "none",
       }}
     >
       {/* Navigation. The wrapper exists so the fade band can be a sibling of
