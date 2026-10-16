@@ -12,16 +12,20 @@ const THEME: GraphCanvasTheme = {
   mutedText: "muted",
   foregroundText: "foreground",
   hoverOutline: "hover",
+  canvasFill: "canvas",
+  dimmedOpacity: 0.68,
 };
 
-/** The fills and strokes a paint made, in order. */
+/** The fills and strokes a paint made, in order, with the alpha of each. */
 function recordingContext() {
   const calls: string[] = [];
+  const alphas: number[] = [];
   const ctx = {
     fillStyle: "",
     strokeStyle: "",
     lineWidth: 0,
     filter: "none",
+    globalAlpha: 1,
     beginPath() {},
     moveTo() {},
     lineTo() {},
@@ -30,11 +34,11 @@ function recordingContext() {
     save() {},
     restore() {},
     clip() {},
-    fill() { calls.push(`fill ${this.fillStyle}`); },
-    stroke() { calls.push(`stroke ${this.strokeStyle}`); },
-    drawImage() { calls.push("image"); },
+    fill() { calls.push(`fill ${this.fillStyle}`); alphas.push(this.globalAlpha); },
+    stroke() { calls.push(`stroke ${this.strokeStyle}`); alphas.push(this.globalAlpha); },
+    drawImage() { calls.push("image"); alphas.push(this.globalAlpha); },
   };
-  return { ctx: ctx as unknown as CanvasRenderingContext2D, calls };
+  return { ctx: ctx as unknown as CanvasRenderingContext2D, calls, alphas };
 }
 
 function card(kind: "text" | "image" | null): PositionedGraphCanvasNode {
@@ -57,7 +61,15 @@ function card(kind: "text" | "image" | null): PositionedGraphCanvasNode {
 }
 
 function paint(node: PositionedGraphCanvasNode, picture: boolean, state: { hovered?: boolean; selected?: boolean } = {}) {
-  const { ctx, calls } = recordingContext();
+  return paintRecorded(node, picture, state).calls;
+}
+
+function paintRecorded(
+  node: PositionedGraphCanvasNode,
+  picture: boolean,
+  state: { hovered?: boolean; selected?: boolean; opacity?: number } = {},
+) {
+  const { ctx, calls, alphas } = recordingContext();
   const image = Object.assign(new Image(), { width: 480, height: 480 });
   paintCardNode(ctx, node, {
     globalScale: 1,
@@ -70,8 +82,9 @@ function paint(node: PositionedGraphCanvasNode, picture: boolean, state: { hover
     hovered: state.hovered ?? false,
     screenSize: 96,
     targetScreenSize: 96,
+    opacity: state.opacity ?? 1,
   });
-  return calls;
+  return { calls, alphas };
 }
 
 describe("paintCardNode", () => {
@@ -90,5 +103,22 @@ describe("paintCardNode", () => {
   it("lights the frame under the pointer and while selected, on every card", () => {
     expect(paint(card("image"), true, { hovered: true })).toEqual(["image", "stroke hover"]);
     expect(paint(card("text"), true, { selected: true })).toEqual(["fill chrome", "image", "stroke hover"]);
+  });
+
+  it("draws a dimmed card as itself under the canvas: the canvas first, then the card at the dimmed opacity", () => {
+    // SPEC_GRAPH_VIEW.md, «Приглушение при наведении на коллекцию»: the
+    // footprint is covered first so the lines beneath do not show through.
+    const picture = paintRecorded(card("image"), true, { opacity: 0.68 });
+    expect(picture.calls).toEqual(["fill canvas", "image", "stroke border"]);
+    expect(picture.alphas).toEqual([1, 0.68, 0.68]);
+    const text = paintRecorded(card("text"), true, { opacity: 0.68, selected: true });
+    expect(text.calls).toEqual(["fill canvas", "fill chrome", "image", "stroke hover"]);
+    expect(text.alphas).toEqual([1, 0.68, 0.68, 0.68]);
+  });
+
+  it("paints an undimmed card without the canvas underlay or any change of alpha", () => {
+    const rest = paintRecorded(card("text"), true, { opacity: 1 });
+    expect(rest.calls).toEqual(["fill chrome", "image", "stroke border"]);
+    expect(rest.alphas).toEqual([1, 1, 1]);
   });
 });

@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -16,6 +17,7 @@ import { fallbackThumbsRoot } from "@/lib/assets";
 import { useHoverIntent } from "@/hooks/useHoverIntent";
 import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
 import type { GraphPreferences } from "@/lib/graphPreferences";
+import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { ReadOnlyCardPreview } from "./Card";
 import { Button } from "./ui/button";
 import type {
@@ -73,6 +75,14 @@ import { graphNodeScreenSize, graphZoomBounds } from "./graph/nodeSize";
 import { animateCamera, type CameraTarget } from "./graph/cameraAnimation";
 import { motionDuration } from "@/lib/motion";
 import { graphLinkCurvature, graphLinkLineDash } from "./graph/linkStyle";
+import {
+  beginDimTransition,
+  colorAtOpacity,
+  dimProgressAt,
+  graphElementOpacity,
+  graphHoverHighlight,
+  restingDimTransition,
+} from "./graph/hoverDim";
 import {
   cardChargeFor,
   collectionLabelCollisionForce,
@@ -159,6 +169,23 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const [hoverPreviewPosition, setHoverPreviewPosition] = useState<GraphPreviewPosition | null>(null);
   const [hoveredCollectionId, setHoveredCollectionId] = useState<string | null>(null);
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
+  // Whether the pointer is over the graph's surface. The graph answers hover
+  // only then, and only while no open card covers it (SPEC_GRAPH_VIEW.md,
+  // «Hover»; SPEC_CARD_STATES.md, С7.10). force-graph keeps the last point
+  // its container heard and reads the node under it every frame; it never
+  // forgets that point on leave, so a node drifting under it afterwards (the
+  // layout cooling after a click, a new snapshot after Connect) opened a
+  // preview over the open card (16.10.2026). True until the pointer first
+  // leaves: before a move over its own surface the library knows no point
+  // and hears nothing.
+  const [pointerOverGraph, setPointerOverGraph] = useState(true);
+  // The same, for the hover callback between a leave and the render it
+  // causes, so a frame in that gap cannot hover a node.
+  const pointerOverGraphRef = useRef(true);
+  const graphAnswersPointer = pointerOverGraph && !detailOpen;
+  // True only while a hover dimming fades: the canvas then redraws every
+  // frame, and pauses again once it has drawn the last one.
+  const [dimAnimating, setDimAnimating] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [imageVersion, setImageVersion] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -178,6 +205,9 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const previewOpener = useHoverPreviewOpener(nodePointer.isSlow);
   const lastPointerPointRef = useRef<GraphCardMenuPoint | null>(null);
   const graphScaleRef = useRef(1);
+  // Read by the painters on every frame, so it lives outside React state: a
+  // fade advances it once per frame without rendering the view.
+  const dimTransitionRef = useRef(restingDimTransition());
 
   // Dragging a node reheats the simulation, and the engine stops between mouse
   // moves; recomputing on each stop made the whole screen pulse under the hand.
@@ -324,14 +354,37 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   /// vault, which hands the graph an equal snapshot as a fresh object; keying
   /// the physics on the object alone made every focus change reheat the
   /// simulation, and the graph visibly breathed out and back in.
-  const layoutIdentity = useMemo(() => {
+  const nodeIdentity = useMemo(() => {
     if (!snapshot) return "empty";
     return [
       snapshot.current_collection ?? "__library__",
-      snapshot.links.length,
       snapshot.nodes.map((node) => `${node.id}:${node.label}`).join("\u0000"),
     ].join("|");
   }, [snapshot]);
+  /// The lines apart from the nodes: a link switch in the graph's panel, or a
+  /// note whose link now points elsewhere, changes these and not the nodes
+  /// (SPEC_GRAPH_VIEW.md, «Панель графа», ГП4). Ids, not a count: the same
+  /// number of different lines is a different graph.
+  const linkIdentity = useMemo(
+    () => (snapshot ? snapshot.links.map((link) => link.id).join("\u0000") : ""),
+    [snapshot],
+  );
+
+  // Lines that change over the same nodes leave the layout where it stands:
+  // the canvas takes the new lines and stops before its first tick, instead
+  // of restarting the simulation and moving every node (ГП4). Only when the
+  // layout is at rest; one still settling keeps running. Released when the
+  // engine stops, so the next drag runs the simulation as always. Kept as
+  // state from the previous render, so the canvas gets the hold in the same
+  // update as the lines.
+  const [shownLayout, setShownLayout] = useState({ nodeIdentity, linkIdentity });
+  const [heldLinkIdentity, setHeldLinkIdentity] = useState<string | null>(null);
+  if (shownLayout.nodeIdentity !== nodeIdentity || shownLayout.linkIdentity !== linkIdentity) {
+    const linksOnly = shownLayout.nodeIdentity === nodeIdentity && engineStoppedRef.current;
+    setShownLayout({ nodeIdentity, linkIdentity });
+    setHeldLinkIdentity(linksOnly ? linkIdentity : null);
+  }
+  const holdLayout = heldLinkIdentity !== null && heldLinkIdentity === linkIdentity;
 
   // Read inside the memo below without being one of its dependencies: the
   // canvas restarts its simulation whenever it is handed a new node array, so
@@ -376,12 +429,46 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       return { ...node };
     }).sort(compareGraphNodePaintOrder);
     return { nodes, links: snapshot.links.map((link) => ({ ...link })) };
-  }, [focusNodeId, layoutIdentity]);
+  }, [focusNodeId, linkIdentity, nodeIdentity]);
 
   const selectedNode = useMemo(
     () => graphData.nodes.find((node) => node.id === selectedNodeId) ?? null,
     [graphData.nodes, selectedNodeId],
   );
+
+  // What a hovered collection keeps lit, worked out when the hover or the
+  // snapshot changes and never per frame (SPEC_GRAPH_VIEW.md, «Приглушение
+  // при наведении на коллекцию»). A card dims nothing.
+  const hoverHighlight = useMemo(() => {
+    if (!hoveredCollectionId) return null;
+    const hovered = graphData.nodes.find((node) => node.id === hoveredCollectionId) ?? null;
+    return graphHoverHighlight(hovered, graphData.links);
+  }, [graphData, hoveredCollectionId]);
+
+  // A layout effect, so the frame after the hover already starts the fade.
+  // Dimming arrives at the hover's fade-in speed and leaves at its fade-out
+  // speed (SPEC_CARD_STATES.md, С7.6); reduced motion swaps at once.
+  useLayoutEffect(() => {
+    const current = dimTransitionRef.current;
+    if (current.to === hoverHighlight) return;
+    const durationMs = motionDuration(
+      hoverHighlight ? HOVER_INTENT.fadeInMs : HOVER_INTENT.fadeOutMs,
+    );
+    dimTransitionRef.current = beginDimTransition(
+      current,
+      hoverHighlight,
+      performance.now(),
+      durationMs,
+    );
+    setDimAnimating(durationMs > 0);
+  }, [hoverHighlight]);
+
+  const advanceDimming = useCallback(() => {
+    const transition = dimTransitionRef.current;
+    if (transition.progress >= 1) return;
+    transition.progress = dimProgressAt(transition, performance.now());
+    if (transition.progress >= 1) setDimAnimating(false);
+  }, []);
 
   const renderThumbnails = !(
     scope.kind === "library" && materializeLargeLibrary
@@ -621,6 +708,8 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     cameraHeldByGestureRef.current = false;
   }, [routeKey]);
 
+  // Keyed on the nodes, not the lines: new lines over the same nodes are not a
+  // new layout, and neither the forces nor the camera start again (ГП4).
   useEffect(() => {
     if (!graphViewportReady || graphData.nodes.length === 0) return;
     let frame = 0;
@@ -691,7 +780,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     };
     frame = requestAnimationFrame(applyForces);
     return () => cancelAnimationFrame(frame);
-  }, [currentCollection, graphViewportReady, layoutIdentity, syncGraphScale]);
+  }, [currentCollection, graphViewportReady, nodeIdentity, syncGraphScale]);
 
   const handleEngineTick = useCallback(() => {
     const positions = nodePositionsRef.current;
@@ -773,6 +862,23 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       previewOpener.cancel();
     }
   }, [hoverPreviewFrozen, previewOpener]);
+
+  const markPointerOverGraph = useCallback((over: boolean) => {
+    if (pointerOverGraphRef.current === over) return;
+    pointerOverGraphRef.current = over;
+    setPointerOverGraph(over);
+  }, []);
+
+  // The pointer left the graph or an open card covers it: nothing on the
+  // graph is hovered any more, the card preview closes and a collection's
+  // dimming fades. An open card menu keeps both until it closes (`Hover`,
+  // freeze); its release lands here again.
+  useEffect(() => {
+    if (graphAnswersPointer || hoverPreviewFrozen) return;
+    setHoveredCollectionId(null);
+    setHoveredCardId(null);
+    closePreview();
+  }, [closePreview, graphAnswersPointer, hoverPreviewFrozen]);
 
   const pointerIsInsidePreviewNode = useCallback((target: GraphPreviewTarget) => {
     const point = lastPointerPointRef.current;
@@ -948,6 +1054,15 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     (node: GraphCanvasNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
       if (!hasNodePosition(node)) return;
       const selected = selectedNodeId === node.id;
+      // Hover alone decides it: a selected card or the opened collection
+      // outside the hovered collection's part dims like any other node, and
+      // keeps its outline.
+      const opacity = graphElementOpacity(
+        dimTransitionRef.current,
+        "node",
+        node.id,
+        canvasTheme.dimmedOpacity,
+      );
       ctx.save();
       if (node.kind === "collection") {
         paintCollectionNode(ctx, node, {
@@ -958,6 +1073,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
           highlighted: hoveredCollectionId === node.id
             || selected
             || node.id === focusNodeId,
+          opacity,
         });
         ctx.restore();
         return;
@@ -974,12 +1090,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
         thumbVersion: node.slug ? thumbVersions.get(node.slug) ?? 0 : 0,
         renderThumbnail: renderThumbnails,
         selected,
+        opacity,
       });
       ctx.restore();
     },
     [
       canvasTheme,
       focusNodeId,
+      hoverHighlight,
       hoveredCardId,
       hoveredCollectionId,
       imageVersion,
@@ -1010,7 +1128,19 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     [nodeScreenSizeAt],
   );
 
-  const linkColor = useCallback(() => canvasTheme.linkDefault, [canvasTheme.linkDefault]);
+  // The arrows take this colour too: the graph sets no arrow colour of its own.
+  const linkColorAt = useMemo(() => colorAtOpacity(canvasTheme.linkDefault), [canvasTheme.linkDefault]);
+  const linkColor = useCallback(
+    (link: GraphCanvasLink) => linkColorAt(graphElementOpacity(
+      dimTransitionRef.current,
+      "link",
+      link.id,
+      canvasTheme.dimmedOpacity,
+    )),
+    // The highlight is read from the ref; naming it here hands the canvas a
+    // new accessor, and with it a redraw, when the hover changes.
+    [canvasTheme.dimmedOpacity, hoverHighlight, linkColorAt],
+  );
   const linkDash = useCallback(
     (link: GraphCanvasLink) => graphLinkLineDash(link, graphScaleRef.current),
     [],
@@ -1028,8 +1158,15 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       className="absolute inset-0 overflow-hidden bg-background"
       onWheelCapture={yieldCameraToGesture}
       onPointerDownCapture={yieldCameraToGesture}
-      onPointerMove={(event) => nodePointer.move(null, event.clientX, event.clientY)}
-      onPointerLeave={() => nodePointer.leave()}
+      onPointerEnter={() => markPointerOverGraph(true)}
+      onPointerMove={(event) => {
+        markPointerOverGraph(true);
+        nodePointer.move(null, event.clientX, event.clientY);
+      }}
+      onPointerLeave={() => {
+        nodePointer.leave();
+        markPointerOverGraph(false);
+      }}
       onContextMenu={(event) => event.preventDefault()}
       data-graph-view=""
       data-graph-snapshot-route={snapshot?.current_collection ?? "__library__"}
@@ -1114,8 +1251,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
               setSelectedNodeId(null);
               closePreview();
             }}
+            // Off while the graph does not answer the pointer: the library
+            // then stops reading the node under its stale point, and turning
+            // it back on forgets the node it last reported, so returning onto
+            // that same node hovers it again.
+            enablePointerInteraction={graphAnswersPointer}
             onNodeHover={(node) => {
               if (hoverPreviewFrozen) return;
+              if (!pointerOverGraphRef.current || detailOpen) return;
               if (!node) {
                 setHoveredCollectionId(null);
                 setHoveredCardId(null);
@@ -1158,12 +1301,17 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
             d3VelocityDecay={dragging ? DRAG_VELOCITY_DECAY : physics.velocityDecay}
             warmupTicks={nodePositionsRef.current.size > 0 ? 0 : physics.warmupTicks}
             cooldownTime={physics.cooldownTime}
+            // Zero only while new lines over the same nodes are being handed
+            // over: the canvas reheats on every new data, and this stops it
+            // before the first tick moves anything (ГП4).
+            cooldownTicks={holdLayout ? 0 : Infinity}
             onEngineTick={() => {
               engineStoppedRef.current = false;
               handleEngineTick();
             }}
             onEngineStop={() => {
               engineStoppedRef.current = true;
+              setHeldLinkIdentity(null);
             }}
             onZoom={(transform) => {
               // Scale only. Density does not depend on the zoom, and touching
@@ -1179,6 +1327,8 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
               ensureZoomLevelInFrame();
             }}
             backgroundColor="transparent"
+            autoPauseRedraw={!dimAnimating}
+            onRenderFramePre={advanceDimming}
             linkDirectionalArrowLength={(link) => link.directed ? 3 : 0}
             linkColor={linkColor}
             linkCurvature={graphLinkCurvature}

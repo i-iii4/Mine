@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { GraphView } from "@/components/GraphView";
+import type { GraphPreferences } from "@/lib/graphPreferences";
 import type {
   GraphLink,
   GraphNode,
@@ -42,10 +43,16 @@ const AUDIT_COLLECTIONS = [
 ] as const;
 const AUDIT_VAULT_PATH = "/tmp/mine-graph-audit";
 const AUDIT_THUMBS_PATH = "/graph-audit/thumbs";
-const AUDIT_GRAPH_PREFERENCES = {
+const AUDIT_GRAPH_PREFERENCES: GraphPreferences = {
   include_wikilinks: true,
   include_related_notes: true,
-} as const;
+};
+// Both extra kinds off, as the graph's panel turns them off (SPEC_GRAPH_VIEW.md,
+// «Панель графа»): the audit checks the lines go and the layout stays.
+const AUDIT_NO_EXTRA_LINKS: GraphPreferences = {
+  include_wikilinks: false,
+  include_related_notes: false,
+};
 
 function auditBlock(index: number): LightBlock {
   const slug = `graph-card-${index}`;
@@ -216,6 +223,8 @@ export function GraphAuditRoute() {
   const thumbVersions = useMemo(() => new Map<string, number>(), []);
   const [currentCollection, setCurrentCollection] = useState<string | undefined>(undefined);
   const [activatedSlug, setActivatedSlug] = useState<string | null>(null);
+  const [graphPreferences, setGraphPreferences] = useState(AUDIT_GRAPH_PREFERENCES);
+  const extraLinksShown = graphPreferences.include_wikilinks;
 
   // Installed during render, not in a mount effect: child effects run before
   // parent effects, so GraphView's first snapshot load fires before a mount
@@ -266,7 +275,7 @@ export function GraphAuditRoute() {
         thumbsRootPath={AUDIT_THUMBS_PATH}
         loadedBlocks={blocks}
         thumbVersions={thumbVersions}
-        graphPreferences={AUDIT_GRAPH_PREFERENCES}
+        graphPreferences={graphPreferences}
         loadSnapshot={loadSnapshot}
         onOpenBlock={(block) => setActivatedSlug(block.slug)}
         onOpenCardMenu={() => undefined}
@@ -279,6 +288,14 @@ export function GraphAuditRoute() {
         onClick={() => setCurrentCollection((current) => current ? undefined : "Design")}
       >
         {currentCollection ? "Library audit" : "Collection audit"}
+      </button>
+      <button
+        type="button"
+        className="absolute right-3 bottom-12 z-30 h-7 border bg-chrome px-2 text-sm text-foreground"
+        data-graph-audit-links=""
+        onClick={() => setGraphPreferences(extraLinksShown ? AUDIT_NO_EXTRA_LINKS : AUDIT_GRAPH_PREFERENCES)}
+      >
+        {extraLinksShown ? "Hide extra links" : "Show extra links"}
       </button>
     </main>
   );

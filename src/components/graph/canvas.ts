@@ -1,6 +1,7 @@
 import { collectionRefLabel } from "@/lib/collections";
 import { SYSTEM_SANS_STACK } from "@/lib/fontChoice";
 import { parsePreviewManifest } from "@/lib/cardLayout";
+import { dimmedOpacityFromScrim } from "./hoverDim";
 import {
   graphFullThumbnailUrl,
   graphThumbLevelFor,
@@ -37,6 +38,9 @@ export function paintCardNode(
     screenSize: number;
     /// Where that size is heading. Only the thumbnail level reads it.
     targetScreenSize: number;
+    /// 1, or less while a hovered collection dims this card
+    /// (`graphElementOpacity`).
+    opacity: number;
   },
 ) {
   const size = options.screenSize / options.globalScale;
@@ -75,6 +79,7 @@ export function paintCardNode(
   const radius = cardCornerRadius(options.screenSize) / options.globalScale;
   const textPreview = image !== null && isTextPreview(node);
   roundedRectPath(ctx, x, y, size, size, radius);
+  dimFootprint(ctx, options.canvasTheme, options.opacity);
   if (image && !textPreview) {
     ctx.save();
     ctx.clip();
@@ -105,6 +110,23 @@ export function paintCardNode(
   ctx.lineWidth = 1 / options.globalScale;
   ctx.strokeStyle = highlighted ? options.canvasTheme.hoverOutline : options.canvasTheme.border;
   ctx.stroke();
+}
+
+/// A dimmed node is the node seen through the canvas veil, not a translucent
+/// node: its footprint, the current path, is first covered with the canvas,
+/// so the lines that end under a pill or pass under a card do not show
+/// through it; then everything the node paints is drawn at `opacity`
+/// (SPEC_GRAPH_VIEW.md, «Приглушение при наведении на коллекцию»). The caller
+/// restores the context.
+function dimFootprint(
+  ctx: CanvasRenderingContext2D,
+  theme: GraphCanvasTheme,
+  opacity: number,
+) {
+  if (opacity >= 1) return;
+  ctx.fillStyle = theme.canvasFill;
+  ctx.fill();
+  ctx.globalAlpha *= opacity;
 }
 
 /// Text thumbnails tinted with the text colour, one canvas per picture and
@@ -157,6 +179,9 @@ export function paintCollectionNode(
     // giving the opened one its own heavier outline invented a third look
     // nobody asked for.
     highlighted: boolean;
+    /// 1, or less while another collection is hovered
+    /// (`graphElementOpacity`).
+    opacity: number;
   },
 ) {
   const label = collectionLabel(node);
@@ -168,6 +193,7 @@ export function paintCollectionNode(
   ctx.translate(node.x, node.y);
   ctx.scale(1 / options.globalScale, 1 / options.globalScale);
   roundedRectPath(ctx, x, y, width, COLLECTION_HEIGHT, COLLECTION_HEIGHT / 2);
+  dimFootprint(ctx, options.theme, options.opacity);
   ctx.fillStyle = options.theme.chromeFill;
   ctx.fill();
   ctx.lineWidth = 1;
@@ -310,6 +336,16 @@ export function readGraphCanvasTheme(mode: "light" | "dark"): GraphCanvasTheme {
     getComputedStyle(probe).color,
     fallback.foregroundText,
   );
+  // Read after the chrome fill above: the inline background replaces the
+  // class's for the rest of the probe's life.
+  probe.style.backgroundColor = "var(--background)";
+  const canvasFill = resolvedCanvasColor(getComputedStyle(probe).backgroundColor, fallback.canvasFill);
+  // The dimmed share is the scrim's, the one way the interface pushes
+  // something back (SPEC_COLOR_RULES.md, 3.9.1): read from the token, not
+  // written here a second time.
+  probe.style.backgroundColor = "var(--scrim-color)";
+  const dimmedOpacity = dimmedOpacityFromScrim(getComputedStyle(probe).backgroundColor)
+    ?? fallback.dimmedOpacity;
   probe.remove();
 
   return {
@@ -322,8 +358,14 @@ export function readGraphCanvasTheme(mode: "light" | "dark"): GraphCanvasTheme {
     mutedText,
     foregroundText,
     hoverOutline,
+    canvasFill,
+    dimmedOpacity,
   };
 }
+
+// 1 minus the 32 % of `--scrim-color` (global.css), for the case the token
+// cannot be read.
+const DIMMED_OPACITY_FALLBACK = 0.68;
 
 function graphCanvasThemeFallback(mode: "light" | "dark"): GraphCanvasTheme {
   return mode === "dark"
@@ -335,6 +377,8 @@ function graphCanvasThemeFallback(mode: "light" | "dark"): GraphCanvasTheme {
         mutedText: "#9a9a9a",
         foregroundText: "#fafafa",
         hoverOutline: "#343434",
+        canvasFill: "#090909",
+        dimmedOpacity: DIMMED_OPACITY_FALLBACK,
       }
     : {
         ...GRAPH_PALETTE.light,
@@ -344,6 +388,8 @@ function graphCanvasThemeFallback(mode: "light" | "dark"): GraphCanvasTheme {
         mutedText: "#777777",
         foregroundText: "#0a0a0a",
         hoverOutline: "#e7e7e7",
+        canvasFill: "#ffffff",
+        dimmedOpacity: DIMMED_OPACITY_FALLBACK,
       };
 }
 

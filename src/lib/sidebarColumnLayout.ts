@@ -74,42 +74,61 @@ export function isDefaultSidebarColumnLayout(layout: SidebarColumnLayout): boole
 }
 
 // ── Geometry ────────────────────────────────────────────────────────────────
+//
+// The rows' own model (DESIGN_SYSTEM.md, «Строка боковой панели: три зоны»):
+// a row is zones split by guidelines; the row's inset belongs to the name's
+// zone, a guideline's pixel to the zone after it. So every column carries its
+// insets wherever it stands: the name its inset (`--sidebar-row-pad-x`), the
+// previews the gap after their guideline, the meta zone its fields. A column
+// after another owns the guideline's pixel before it (its lead); the first
+// one has none.
 
-const PAD = "var(--sidebar-row-pad-x)";
-const META_WIDTH = "(var(--sidebar-zone) + 1px)";
+/** The name's zone with the previews shown: the row's inset and the name's
+ *  column, as it is when the name comes first. */
+const NAME_ZONE = "(var(--sidebar-row-pad-x) + var(--sidebar-name-col))";
+const META_ZONE = "var(--sidebar-zone)";
+/** A guideline's pixel, owned by the column after it. */
+const GUIDE_PX = 1;
 
-/** The CSS width of `column` in a row laid out as `layout`, as a term of a
- *  `calc()`: the name its column (or, with the previews hidden, the rest), the
- *  meta zone its zone and its guideline's pixel, the previews the rest. */
-function columnWidth(column: SidebarColumn, layout: SidebarColumnLayout): string {
-  const shown = (candidate: SidebarColumn) => !layout.hidden.includes(candidate);
-  const rest = () => {
-    const taken = [PAD];
-    if (column !== "name" && shown("name") && shown("previews")) taken.push("var(--sidebar-name-col)");
-    if (shown("meta")) taken.push(META_WIDTH);
-    return `(100% - ${taken.join(" - ")})`;
-  };
-  if (column === "meta") return META_WIDTH;
-  if (column === "name") return shown("previews") ? "var(--sidebar-name-col)" : rest();
-  return rest();
+function shownColumns(layout: SidebarColumnLayout): SidebarColumn[] {
+  return layout.order.filter((column) => !layout.hidden.includes(column));
 }
 
-/** What the root carries for `layout`: the columns' order, the guidelines'
+/** The width of `column`'s zone in a row laid out as `layout`, as a term of a
+ *  `calc()`: the name's and the meta zone's their own; the previews (or, with
+ *  them hidden, the name) take what the others and the guidelines leave. */
+function zoneWidth(column: SidebarColumn, layout: SidebarColumnLayout): string {
+  const shown = shownColumns(layout);
+  const flexible: SidebarColumn = shown.includes("previews") ? "previews" : "name";
+  const own = (candidate: SidebarColumn) => (candidate === "meta" ? META_ZONE : NAME_ZONE);
+  if (column !== flexible) return own(column);
+  const taken = shown.filter((candidate) => candidate !== column).map(own);
+  const guides = shown.length - 1;
+  if (guides > 0) taken.push(`${guides * GUIDE_PX}px`);
+  return taken.length === 0 ? "100%" : `(100% - ${taken.join(" - ")})`;
+}
+
+/** What the root carries for `layout`: the columns' order, each column's lead
+ *  (the guideline's pixel before it, none for the first), the guidelines'
  *  places between the shown columns, and how far the meta zone stands from
  *  the row's right edge (the count and Connect are placed from there). The
  *  default carries nothing: the styles' own defaults are the rows as they
  *  were. */
 export function sidebarColumnRootStyle(layout: SidebarColumnLayout): Record<string, string> {
   if (isDefaultSidebarColumnLayout(layout)) return {};
-  const shown = layout.order.filter((column) => !layout.hidden.includes(column));
+  const shown = shownColumns(layout);
   const style: Record<string, string> = {};
   for (const column of SIDEBAR_COLUMNS) {
     style[`--sidebar-${column}-order`] = String(layout.order.indexOf(column));
+    const index = shown.indexOf(column);
+    style[`--sidebar-${column}-lead`] = index > 0 ? `${GUIDE_PX}px` : "0px";
   }
-  // A guideline after each shown column but the last.
-  const guides = shown.slice(0, -1).map((_, index) => {
-    const widths = shown.slice(0, index + 1).map((column) => columnWidth(column, layout));
-    return `calc(${[PAD, ...widths].join(" + ")})`;
+  // A guideline before each shown column but the first: after the zones
+  // before it and the guidelines between them.
+  const guides = shown.slice(1).map((_, index) => {
+    const terms = shown.slice(0, index + 1).map((column) => zoneWidth(column, layout));
+    if (index > 0) terms.push(`${index * GUIDE_PX}px`);
+    return `calc(${terms.join(" + ")})`;
   });
   style["--sidebar-guide-1-left"] = guides[0] ?? "-1px";
   style["--sidebar-guide-2-left"] = guides[1] ?? "-1px";
@@ -120,12 +139,13 @@ export function sidebarColumnRootStyle(layout: SidebarColumnLayout): Record<stri
   const after = metaIndex === -1 ? [] : shown.slice(metaIndex + 1);
   style["--sidebar-meta-right"] = after.length === 0
     ? "0px"
-    : `calc(${after.map((column) => columnWidth(column, layout)).join(" + ")})`;
+    : `calc(${[...after.map((column) => zoneWidth(column, layout)), `${after.length * GUIDE_PX}px`].join(" + ")})`;
   return style;
 }
 
 const ROOT_VARIABLES = [
   ...SIDEBAR_COLUMNS.map((column) => `--sidebar-${column}-order`),
+  ...SIDEBAR_COLUMNS.map((column) => `--sidebar-${column}-lead`),
   "--sidebar-guide-1-left",
   "--sidebar-guide-2-left",
   "--sidebar-guide-2-right",

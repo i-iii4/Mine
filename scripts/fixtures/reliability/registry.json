@@ -3936,6 +3936,72 @@
         "scripts/top-row-wrap-audit.mjs"
       ],
       "command": "test:top-row"
+    },
+    {
+      "paths": [
+        "src/components/graph/hoverDim.ts",
+        "src/components/graph/hoverDim.test.ts",
+        "src/components/graph/canvas.ts",
+        "src/components/graph/contracts.ts",
+        "src/components/graph/cameraAnimation.ts",
+        "src/components/graph/paintCardNode.test.ts",
+        "src/components/GraphView.tsx",
+        "src/components/GraphView.test.tsx"
+      ],
+      "requirement": "SPEC_GRAPH_VIEW.md#### Приглушение при наведении на коллекцию",
+      "tests": [
+        "src/components/graph/hoverDim.test.ts",
+        "src/components/graph/paintCardNode.test.ts",
+        "src/components/graph/cardCorner.test.ts",
+        "src/components/graph/cameraAnimation.test.ts",
+        "src/components/GraphView.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/graph-view-audit.mjs"
+      ],
+      "requirement": "SPEC_GRAPH_VIEW.md#### Приглушение при наведении на коллекцию",
+      "tests": [
+        "scripts/graph-view-audit.mjs"
+      ],
+      "command": "test:graph"
+    },
+    {
+      "paths": [
+        "src/components/GraphView.tsx",
+        "src/components/GraphView.test.tsx",
+        "src/dev/GraphAuditRoute.tsx",
+        "src/dev/GraphAuditRoute.test.tsx"
+      ],
+      "requirement": "SPEC_GRAPH_VIEW.md### Панель графа",
+      "tests": [
+        "src/components/GraphView.test.tsx",
+        "src/dev/GraphAuditRoute.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/graph-view-audit.mjs"
+      ],
+      "requirement": "SPEC_GRAPH_VIEW.md### Панель графа",
+      "tests": [
+        "scripts/graph-view-audit.mjs"
+      ],
+      "command": "test:graph"
+    },
+    {
+      "paths": [
+        "src/components/GraphView.tsx",
+        "src/components/GraphView.test.tsx"
+      ],
+      "requirement": "SPEC_GRAPH_VIEW.md#### Hover",
+      "tests": [
+        "src/components/GraphView.test.tsx"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

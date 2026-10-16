@@ -22,7 +22,8 @@ export interface CameraTarget {
 type Frame = (callback: FrameRequestCallback) => number;
 type CancelFrame = (handle: number) => void;
 
-function easeOutCubic(t: number): number {
+/** The graph's one easing: the camera glide and the hover dimming share it. */
+export function easeOutCubic(t: number): number {
   return 1 - (1 - t) ** 3;
 }
 

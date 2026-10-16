@@ -9,6 +9,9 @@ const PAINT_WAIT_TIMEOUT_MS = 3_000;
 const MAX_UNIQUE_IMAGE_REQUESTS = 48;
 const MAX_LONG_TASK_MS = 100;
 const MAX_P95_FRAME_MS = 32;
+// A switch of the extra links redraws the new lines and stops (ГП4); a
+// restarted simulation draws a frame on every tick for seconds.
+const MAX_LINK_SWITCH_FRAMES = 5;
 
 async function assertDevServerReady() {
   try {
@@ -451,12 +454,205 @@ async function verifyCardHoverOutline(page) {
   return changed.ratio;
 }
 
+function pixelAt(buffer, point) {
+  const png = PNG.sync.read(buffer);
+  const index = (png.width * point.y + point.x) << 2;
+  return [...png.data.slice(index, index + 4)];
+}
+
+async function waitForStableCanvas(page) {
+  // The hover fades over at most 150 ms; a frame unchanged for twice that
+  // long has finished both the fade and the hover's own redraw.
+  await page.evaluate(() => {
+    delete window.__MINE_GRAPH_STABLE_FRAME__;
+  });
+  await page.waitForFunction(() => {
+    const canvas = document.querySelector("[data-graph-view] canvas");
+    const frame = canvas.toDataURL("image/png");
+    const previous = window.__MINE_GRAPH_STABLE_FRAME__;
+    if (!previous || previous.frame !== frame) {
+      window.__MINE_GRAPH_STABLE_FRAME__ = { frame, since: performance.now() };
+      return false;
+    }
+    return performance.now() - previous.since >= 300;
+  }, undefined, { polling: 100, timeout: 5_000 });
+}
+
+async function verifyCollectionHoverDimming(page) {
+  // SPEC_GRAPH_VIEW.md, «Приглушение при наведении на коллекцию». The red
+  // audit thumbnail is a Research card (GraphAuditRoute: card i is in
+  // collection i % 6 and draws audit-(i % 6).svg). Hovering Design must dim
+  // that pixel to the card seen through the scrim's share of the canvas;
+  // hovering Research must leave it as it was; leaving must bring it back.
+  // That card hover dims nothing is the zero-change check of
+  // verifyCardHoverOutline.
+  const canvas = page.locator("[data-graph-view] canvas").first();
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error("Graph canvas has no bounding box for collection hover");
+  const before = await canvasScreenshot(page);
+  const target = findAuditCardPixel(before);
+  if (!target) throw new Error("Could not locate the red audit thumbnail for collection hover");
+  const labels = await page.evaluate(() => window.__MINE_GRAPH_LABELS__ ?? {});
+  const design = labels.Design;
+  const research = labels.Research;
+  if (!design || !research) {
+    throw new Error(`Collection pills were not painted: ${JSON.stringify(labels)}`);
+  }
+  const expected = await page.evaluate(() => {
+    const probe = document.createElement("span");
+    document.body.appendChild(probe);
+    probe.style.backgroundColor = "var(--scrim-color)";
+    const scrim = getComputedStyle(probe).backgroundColor;
+    probe.style.backgroundColor = "var(--background)";
+    const background = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    const pixel = document.createElement("canvas");
+    pixel.width = 1;
+    pixel.height = 1;
+    const context = pixel.getContext("2d", { willReadFrequently: true });
+    context.fillStyle = scrim;
+    context.fillRect(0, 0, 1, 1);
+    const scrimAlpha = context.getImageData(0, 0, 1, 1).data[3] / 255;
+    context.clearRect(0, 0, 1, 1);
+    context.fillStyle = background;
+    context.fillRect(0, 0, 1, 1);
+    return { opacity: 1 - scrimAlpha, canvas: [...context.getImageData(0, 0, 1, 1).data.slice(0, 3)] };
+  });
+  const original = pixelAt(before, target);
+  const dimmedTarget = original.slice(0, 3)
+    .map((channel, index) => expected.opacity * channel + (1 - expected.opacity) * expected.canvas[index]);
+
+  await page.mouse.move(box.x + design.x, box.y + design.y);
+  await waitForStableCanvas(page);
+  const dimmed = pixelAt(await canvasScreenshot(page), target);
+  await page.mouse.move(box.x + research.x, box.y + research.y);
+  await waitForStableCanvas(page);
+  const lit = pixelAt(await canvasScreenshot(page), target);
+  await page.mouse.move(box.x + 8, box.y + 8);
+  await waitForStableCanvas(page);
+  const restored = pixelAt(await canvasScreenshot(page), target);
+
+  const near = (actual, wanted, tolerance) => wanted
+    .every((channel, index) => Math.abs(actual[index] - channel) <= tolerance);
+  const report = { target, original, dimmed, dimmedTarget, lit, restored, opacity: expected.opacity };
+  if (Math.abs(dimmed[0] - original[0]) < 20 || !near(dimmed, dimmedTarget, 4)) {
+    throw new Error(`Hovering Design must dim a Research card by the scrim's share: ${JSON.stringify(report)}`);
+  }
+  if (!near(lit, original.slice(0, 3), 2)) {
+    throw new Error(`Hovering Research must leave its own card as it was: ${JSON.stringify(report)}`);
+  }
+  if (!near(restored, original.slice(0, 3), 2)) {
+    throw new Error(`Leaving the collection must bring the graph back: ${JSON.stringify(report)}`);
+  }
+  return { opacity: Number(expected.opacity.toFixed(3)), original, dimmed, lit, restored };
+}
+
+async function waitForCanvasAtRest(page) {
+  // The canvas stops redrawing once its engine has stopped and nothing else
+  // asks for a frame: no frame for 600 ms is a layout at rest.
+  await page.waitForFunction(() => {
+    const frame = window.__MINE_GRAPH_FRAME__;
+    const now = performance.now();
+    if (frame.seen !== frame.count) {
+      frame.seen = frame.count;
+      frame.seenAt = now;
+      return false;
+    }
+    return now - frame.seenAt >= 600;
+  }, undefined, { polling: 100, timeout: 15_000 });
+  return page.evaluate(() => {
+    const { count, images, dashed } = window.__MINE_GRAPH_FRAME__;
+    return { count, images: JSON.stringify(images), dashed };
+  });
+}
+
+async function switchExtraLinks(page, shown) {
+  const before = await page.evaluate(() => window.__MINE_GRAPH_FRAME__.count);
+  await page.locator("[data-graph-audit-links]").click();
+  await page.waitForFunction((wanted) => (
+    window.__MINE_GRAPH_AUDIT__?.lastOptions?.include_wikilinks === wanted
+  ), shown);
+  await page.waitForFunction((count) => window.__MINE_GRAPH_FRAME__.count > count, before);
+  const after = await waitForCanvasAtRest(page);
+  return { ...after, frames: after.count - before };
+}
+
+async function verifyLinkSwitchKeepsLayout(page) {
+  // SPEC_GRAPH_VIEW.md, «Панель графа», ГП4: switching the extra kinds of
+  // link off and on takes their dashed lines away and brings them back, and
+  // leaves every card and pill where it was. The new lines are drawn in a
+  // frame or two; a restarted simulation would redraw for seconds and move
+  // the pictures.
+  const atRest = await waitForCanvasAtRest(page);
+  if (atRest.dashed === 0) {
+    throw new Error(`The audit graph drew no dashed lines to switch off: ${JSON.stringify(atRest)}`);
+  }
+  const off = await switchExtraLinks(page, false);
+  const on = await switchExtraLinks(page, true);
+  const report = {
+    dashedAtRest: atRest.dashed,
+    dashedOff: off.dashed,
+    dashedOn: on.dashed,
+    framesOff: off.frames,
+    framesOn: on.frames,
+  };
+  if (off.dashed !== 0 || on.dashed === 0) {
+    throw new Error(`Switching the extra links must take the dashed lines away and back: ${JSON.stringify(report)}`);
+  }
+  if (off.images !== atRest.images || on.images !== atRest.images) {
+    throw new Error(`Switching the extra links moved the layout: ${JSON.stringify(report)}`);
+  }
+  if (off.frames > MAX_LINK_SWITCH_FRAMES || on.frames > MAX_LINK_SWITCH_FRAMES) {
+    throw new Error(`Switching the extra links restarted the simulation: ${JSON.stringify(report)}`);
+  }
+  return report;
+}
+
 async function runTheme(browser, theme) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   await page.addInitScript(() => {
     window.__MINE_GRAPH_LINK_PAINT__ = {
       curvedLinks: 0,
       dashedLinks: 0,
+    };
+    // Where each collection pill was last painted, in canvas CSS pixels: the
+    // label is drawn at the pill's centre.
+    window.__MINE_GRAPH_LABELS__ = {};
+    // The graph canvas's latest frame: where each picture was drawn and how
+    // many dashed line groups, and how many frames it has drawn in all.
+    window.__MINE_GRAPH_FRAME__ = { count: 0, images: [], dashed: 0, seen: -1, seenAt: 0 };
+    const onGraphCanvas = (context) => context.canvas instanceof HTMLCanvasElement
+      && context.canvas.closest("[data-graph-view]") !== null;
+    const originalClearRect = CanvasRenderingContext2D.prototype.clearRect;
+    CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+      if (onGraphCanvas(this)) {
+        const frame = window.__MINE_GRAPH_FRAME__;
+        frame.count += 1;
+        frame.images = [];
+        frame.dashed = 0;
+      }
+      return originalClearRect.apply(this, args);
+    };
+    const originalFrameDrawImage = CanvasRenderingContext2D.prototype.drawImage;
+    CanvasRenderingContext2D.prototype.drawImage = function (image, ...args) {
+      if (onGraphCanvas(this)) {
+        const transform = this.getTransform();
+        window.__MINE_GRAPH_FRAME__.images.push(
+          [transform.e, transform.f, transform.a, ...args].map((value) => Number(value.toFixed(3))),
+        );
+      }
+      return originalFrameDrawImage.call(this, image, ...args);
+    };
+    const originalFillText = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+      if (this.canvas instanceof HTMLCanvasElement && this.canvas.closest("[data-graph-view]")) {
+        const transform = this.getTransform();
+        window.__MINE_GRAPH_LABELS__[text] = {
+          x: transform.e / devicePixelRatio,
+          y: transform.f / devicePixelRatio,
+        };
+      }
+      return originalFillText.call(this, text, ...args);
     };
     const originalQuadraticCurveTo = CanvasRenderingContext2D.prototype.quadraticCurveTo;
     CanvasRenderingContext2D.prototype.quadraticCurveTo = function (...args) {
@@ -467,6 +663,7 @@ async function runTheme(browser, theme) {
     CanvasRenderingContext2D.prototype.setLineDash = function (segments) {
       if (segments.some((segment) => segment > 0)) {
         window.__MINE_GRAPH_LINK_PAINT__.dashedLinks += 1;
+        if (onGraphCanvas(this)) window.__MINE_GRAPH_FRAME__.dashed += 1;
       }
       return originalSetLineDash.call(this, segments);
     };
@@ -494,6 +691,12 @@ async function runTheme(browser, theme) {
   await installFrameProbe(page);
   const hoverChangedRatio = theme === "dark"
     ? await verifyCardHoverOutline(page)
+    : null;
+  const collectionHoverDimming = theme === "dark"
+    ? await verifyCollectionHoverDimming(page)
+    : null;
+  const linkSwitch = theme === "dark"
+    ? await verifyLinkSwitchKeepsLayout(page)
     : null;
 
   const canvas = page.locator("[data-graph-view] canvas").first();
@@ -553,6 +756,8 @@ async function runTheme(browser, theme) {
     uniqueImageRequests: imageRequests.size,
     semanticLinkPaint,
     hoverChangedRatio,
+    collectionHoverDimming,
+    linkSwitch,
     ...interaction,
   };
 }
