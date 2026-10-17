@@ -30,7 +30,6 @@ test('GUI builds exclude developer and migration binaries', () => {
     'migrate-collections-to-wikilinks',
     'migrate-primary-file-to-wikilinks',
     'localize-remote-media',
-    'migrate-vault-layout',
     'cold-space-audit',
     'export-bindings',
   ];

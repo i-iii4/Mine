@@ -4002,6 +4002,17 @@
         "src/components/GraphView.test.tsx"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/startup-packaging.test.mjs",
+        "src-tauri/Cargo.toml"
+      ],
+      "requirement": "SPEC_STARTUP_PERFORMANCE.md### Packaging contract",
+      "tests": [
+        "scripts/startup-packaging.test.mjs"
+      ],
+      "command": "test:startup-packaging"
     }
   ],
   "release": null

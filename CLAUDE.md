@@ -130,7 +130,6 @@ local-arena/
 │   │   │   ├── cold_space_audit.rs # Read-only source + disposable derived acceptance CLI
 │   │   │   ├── export_bindings.rs # Rust/Specta → committed TypeScript bindings
 │   │   │   ├── localize_remote_media.rs # CLI: найти медиа, оставшееся удалённой ссылкой
-│   │   │   ├── migrate_vault_layout.rs # CLI: разложить плоское хранилище по Collections/Cards/Media
 │   │   │   ├── migrate_body_to_wikilinks.rs      # Legacy-миграция inline media → wikilinks
 │   │   │   ├── migrate_collections_to_wikilinks.rs # Legacy-миграция membership → quoted wikilinks
 │   │   │   └── migrate_primary_file_to_wikilinks.rs # Legacy-миграция frontmatter file → wikilink
@@ -397,9 +396,8 @@ local-arena/
     └── stripe-og.png               # Миниатюра ссылки
 ```
 
-Раскладка трёх папок — стандарт для новых пространств; существующее плоское
-хранилище остаётся плоским и не переписывается (`SPEC_VAULT_LIFECYCLE.md`),
-разложить его можно CLI `migrate-vault-layout`.
+Раскладка трёх папок: стандарт для новых пространств. Существующее плоское
+хранилище остаётся плоским и не переписывается (`SPEC_VAULT_LIFECYCLE.md`).
 
 ```
 ~/Library/Application Support/com.mine.app/windows.json        # Сохранённые окна и вкладки (SPEC_TABS.md)
@@ -498,7 +496,6 @@ bun run verify:release         # Полный contract + clipper-worker + native
 bunx shadcn info               # Проверить CLI/config/base без изменения файлов
 bunx shadcn add button --diff  # Read-only upstream diff; не перезаписывает компонент
 cargo run -p mine --bin localize-remote-media --features tooling -- --dry-run <vault> # Найти медиа, оставшееся удалённой ссылкой
-cargo run -p mine --bin migrate-vault-layout --features tooling -- --dry-run <vault>   # Разложить плоское хранилище по Collections/Cards/Media
 cargo run -p mine --bin cold-space-audit --features tooling -- <source> <empty-derived-dir> 2
 cargo +1.88.0 check --workspace --all-targets --locked # MSRV gate
 cargo clippy                   # Линтинг Rust

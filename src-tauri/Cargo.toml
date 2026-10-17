@@ -164,11 +164,6 @@ path = "src/tooling/localize_remote_media.rs"
 required-features = ["tooling"]
 
 [[bin]]
-name = "migrate-vault-layout"
-path = "src/tooling/migrate_vault_layout.rs"
-required-features = ["tooling"]
-
-[[bin]]
 name = "cold-space-audit"
 path = "src/tooling/cold_space_audit.rs"
 required-features = ["tooling"]
