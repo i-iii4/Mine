@@ -162,10 +162,19 @@ pub fn start_watching(app: &AppHandle, vault: &VaultLayout) -> Result<VaultWatch
             let vault_events: Vec<_> = events::classify_notify_event(&event, &vault_clone)
                 .into_iter()
                 .filter(|vault_event| !state.is_path_suppressed(vault_event.path()))
+                .filter(|vault_event| !is_own_note_write(&vault_clone, vault_event))
                 .collect();
             if vault_events.is_empty() {
                 return;
             }
+            // The sessions editing these notes hear of the change now, past
+            // the window of `vault-changed` and whatever the index is busy
+            // with (SPEC_EDITING.md, Л4.1).
+            crate::commands::edit_sessions::announce_outside_changes(
+                &app_clone,
+                &vault_clone,
+                vault_events.iter().filter(|vault_event| is_note_event(vault_event)).map(events::VaultEvent::path),
+            );
 
             let path = vault_clone.root().to_string_lossy().into_owned();
             if state.freshness.mark_dirty_if_running(&path) {
@@ -240,6 +249,21 @@ pub fn start_watching(app: &AppHandle, vault: &VaultLayout) -> Result<VaultWatch
         _removals: removals,
         layout: vault.clone(),
     })
+}
+
+/// Whether `event` is a note changed by Mine itself: the file holds exactly
+/// the bytes Mine wrote there last, a moment ago (SPEC_EDITING.md, Л3.6).
+/// Any other change of the note, however soon after Mine's, is news.
+fn is_own_note_write(vault: &VaultLayout, event: &events::VaultEvent) -> bool {
+    matches!(event, events::VaultEvent::BlockChanged(path) if crate::storage::note_write::is_own_write(vault, path))
+}
+
+/// Whether `event` is about a note rather than a media file.
+fn is_note_event(event: &events::VaultEvent) -> bool {
+    matches!(
+        event,
+        events::VaultEvent::BlockChanged(_) | events::VaultEvent::BlockDeleted(_)
+    )
 }
 
 /// Put a recovered watcher in place, only while its space and index slot are
@@ -596,6 +620,33 @@ mod tests {
             installed.as_ref().unwrap().layout().index_db_path(),
             adopted.index_db_path()
         );
+    }
+
+    /// SPEC_EDITING.md, Л3.6: the watcher drops a note event only while the
+    /// file holds Mine's own bytes; an outside write right after it, and a
+    /// deletion, are news.
+    #[test]
+    fn only_mines_own_bytes_are_dropped() {
+        let temp = tempfile::tempdir().unwrap();
+        let vault =
+            VaultLayout::with_derived_root(temp.path().join("source"), temp.path().join("derived"));
+        std::fs::create_dir_all(vault.root()).unwrap();
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        let path = vault.block_path("Note");
+        std::fs::write(&path, "before\n").unwrap();
+        let note = crate::storage::note_write::writable_note(&vault, "Note").unwrap();
+        let read = crate::storage::note_write::read_note(&vault, &note.path).unwrap();
+        let written = read.read_back("mine\n").unwrap();
+        crate::storage::note_write::publish_note(&conn, &vault, &note, read, "mine\n".into(), &written, "test")
+            .unwrap();
+
+        let changed = events::VaultEvent::BlockChanged(path.clone());
+        assert!(is_own_note_write(&vault, &changed));
+        assert!(!is_own_note_write(&vault, &events::VaultEvent::BlockDeleted(path.clone())));
+        std::fs::write(&path, "from Obsidian\n").unwrap();
+        assert!(!is_own_note_write(&vault, &changed));
+        assert!(is_note_event(&changed));
+        assert!(!is_note_event(&events::VaultEvent::MediaChanged(path)));
     }
 
     #[test]

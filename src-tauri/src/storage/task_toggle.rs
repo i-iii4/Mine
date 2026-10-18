@@ -3,33 +3,41 @@
 //!
 //! The note's file changes by one byte, the state character of one GFM task
 //! (`domain::markdown::toggle_task_marker`); every other byte of the file
-//! stays. The write is the checked source mutation (`SourceFileWrite::replace`
-//! through `StagedSourceMutation::commit_with_index`): a file that holds
-//! anything else by the time the new version would become visible is not
-//! overwritten, and the index takes the written note in the same step.
+//! stays. The checks, the read and the checked publication are the steps
+//! every write of a note's body shares (`storage::note_write`,
+//! SPEC_EDITING.md, Л3.3): a file that holds anything else by the time the
+//! new version would become visible is not overwritten, and the index takes
+//! the written note in the same step.
 //!
 //! Nothing is read or written that would wait: a note whose contents are in
 //! iCloud is asked for and refused at once, and a note Mine may not write is
 //! refused before anything is staged.
 
-use std::io;
-use std::path::{Path, PathBuf};
-
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::domain::block::{
-    compute_body_hash, parse_markdown_document, BlockType, ParsedMarkdownBlock,
-};
+use crate::domain::block::{compute_body_hash, BlockType, ParsedMarkdownBlock};
 use crate::domain::markdown::toggle_task_marker;
-use crate::domain::vault::{validate_slug, VaultLayout};
+use crate::domain::vault::VaultLayout;
 use crate::storage::index::IndexedBlock;
-use crate::storage::source_mutation::{SourceFileWrite, SourceMutationError, StagedSourceMutation};
+use crate::storage::note_write::{self, NoteWriteRefusal, ReadNote, WritableNote};
 use crate::storage::thumbnails::ThumbSource;
-use crate::storage::{
-    cloud_files, files, icloud_downloads, index, media_refs, reconcile, thumbnails,
-};
+use crate::storage::{index, thumbnails};
+
+// What the tests below name from this module's scope.
+#[cfg(test)]
+use crate::domain::block::parse_markdown_document;
+#[cfg(test)]
+use crate::storage::note_write::hooks;
+#[cfg(test)]
+use crate::storage::source_mutation::SourceMutationError;
+#[cfg(test)]
+use crate::storage::cloud_files;
+#[cfg(test)]
+use std::io;
+#[cfg(test)]
+use std::path::{Path, PathBuf};
 
 /// The index operation the write commits with.
 const OPERATION: &str = "toggle_task_item";
@@ -93,6 +101,21 @@ impl TaskToggleError {
             message: format!("{error:#}"),
         }
     }
+
+    /// What a refusal of the shared write steps tells the reader of `slug`.
+    fn refused(refusal: NoteWriteRefusal, slug: &str) -> Self {
+        match refusal {
+            NoteWriteRefusal::SourceNotFound => Self::SourceNotFound {
+                source_slug: slug.to_string(),
+            },
+            NoteWriteRefusal::InCloud { file_name } => Self::InCloud { file_name },
+            NoteWriteRefusal::ReadOnly { file_name } => Self::ReadOnly { file_name },
+            NoteWriteRefusal::Changed => Self::Changed {
+                source_slug: slug.to_string(),
+            },
+            NoteWriteRefusal::Internal(message) => Self::Internal { message },
+        }
+    }
 }
 
 /// A toggled task: the card as the index holds it now, and which preview
@@ -121,37 +144,20 @@ pub fn toggle_task_item(
     params: &ToggleTaskItemParams,
 ) -> Result<ToggledTask, TaskToggleError> {
     let slug = params.source_slug.as_str();
-    let (path, file_name) = writable_note(vault, slug)?;
-    let note = toggled_note(vault, &path, params)?;
-    let mut block = note.written.block;
-    files::normalize_block_media_refs_for_index(
-        &mut media_refs::MediaResolver::new(vault),
-        &mut block,
-    );
-    let refused = |error: SourceMutationError| refusal(error, slug, &path, &file_name);
-    let staged = StagedSourceMutation::stage(vec![SourceFileWrite::replace(
-        path.clone(),
-        note.read.into_bytes(),
-        note.toggled.into_bytes(),
-    )])
+    let refused = |refusal| TaskToggleError::refused(refusal, slug);
+    let note = note_write::writable_note(vault, slug).map_err(refused)?;
+    let toggled = toggled_note(vault, &note, params)?;
+    let published = note_write::publish_note(
+        conn,
+        vault,
+        &note,
+        toggled.read,
+        toggled.toggled,
+        &toggled.written,
+        OPERATION,
+    )
     .map_err(refused)?;
-    let indexed = staged
-        .commit_with_index(conn, OPERATION, |index_conn| {
-            index::upsert_block_with_diagnostics(
-                index_conn,
-                &block,
-                Some(vault.root()),
-                Some(note.written.origin.as_str()),
-                note.written.index_warning.as_deref(),
-            )?;
-            index::get_block(index_conn, &block.slug)?.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "'{}' is missing from the index after its task was written",
-                    block.slug
-                )
-            })
-        })
-        .map_err(refused)?;
+    let block = published.block;
 
     let thumb = thumbnails::generate_for_block(&block, vault);
     if let Err(error) = index::sync_thumb_metadata(
@@ -166,84 +172,40 @@ pub fn toggle_task_item(
         );
     }
     Ok(ToggledTask {
-        block: indexed,
+        block: published.indexed,
         thumb,
     })
 }
 
-/// The path and file name of the note `slug`, once it is on disk, its
-/// contents are on this Mac and Mine may write it and its folder. None of the
-/// checks reads the contents, so none waits for iCloud.
-fn writable_note(vault: &VaultLayout, slug: &str) -> Result<(PathBuf, String), TaskToggleError> {
-    validate_slug(slug).map_err(|error| {
-        TaskToggleError::internal(format!("'{slug}' names no note of the space: {error}"))
-    })?;
-    let path = vault.block_path(slug);
-    let file_name = path.file_name().map_or_else(
-        || format!("{slug}.md"),
-        |name| name.to_string_lossy().into_owned(),
-    );
-    if !path.is_file() {
-        return Err(TaskToggleError::SourceNotFound {
-            source_slug: slug.to_string(),
-        });
-    }
-    if cloud_files::is_content_offloaded(&path) {
-        icloud_downloads::request_downloads([path.as_path()]);
-        return Err(TaskToggleError::InCloud { file_name });
-    }
-    let folder = path
-        .parent()
-        .ok_or_else(|| TaskToggleError::internal(format!("{} has no folder", path.display())))?;
-    if !may_write(&path).map_err(TaskToggleError::internal)?
-        || !may_write(folder).map_err(TaskToggleError::internal)?
-    {
-        return Err(TaskToggleError::ReadOnly { file_name });
-    }
-    Ok((path, file_name))
-}
-
 /// A note as read and with its task toggled.
 struct ToggledNote {
-    /// The text read from the file: the write is refused unless the file
+    /// The note as read from the file: the write is refused unless the file
     /// still holds it.
-    read: String,
+    read: ReadNote,
     /// The same text with the one state byte changed.
     toggled: String,
     /// `toggled` read the way reconciliation reads the file.
     written: ParsedMarkdownBlock,
 }
 
-/// Read the note at `path` and toggle the task `params` names in its body,
-/// when the body is the one the reader saw.
+/// Read `note` and toggle the task `params` names in its body, when the body
+/// is the one the reader saw.
 fn toggled_note(
     vault: &VaultLayout,
-    path: &Path,
+    note: &WritableNote,
     params: &ToggleTaskItemParams,
 ) -> Result<ToggledNote, TaskToggleError> {
     let slug = params.source_slug.as_str();
-    let (read_slug, read) = files::read_block_file(vault, path).map_err(|error| {
-        if path.exists() {
-            TaskToggleError::internal(error)
-        } else {
-            TaskToggleError::SourceNotFound {
-                source_slug: slug.to_string(),
-            }
-        }
-    })?;
-    #[cfg(test)]
-    hooks::run_after_read(path);
-    let read_at = reconcile::file_saved_at(path);
-    let parsed = parse_markdown_document(&read_slug, &read, read_at.clone())
-        .map_err(|error| TaskToggleError::internal(format!("failed to read '{slug}': {error}")))?;
-    if parsed.block.frontmatter.block_type == BlockType::Channel {
+    let read = note_write::read_note(vault, &note.path)
+        .map_err(|refusal| TaskToggleError::refused(refusal, slug))?;
+    if read.parsed.block.frontmatter.block_type == BlockType::Channel {
         // A collection page is no card: its row is a collection's, and the
         // reading view never shows it.
         return Err(TaskToggleError::internal(format!(
             "'{slug}' is a collection page, not a card"
         )));
     }
-    let body = parsed.block.body.as_str();
+    let body = read.parsed.block.body.as_str();
     if compute_body_hash(body) != params.source_body_hash.trim() {
         return Err(TaskToggleError::StaleBody {
             source_slug: slug.to_string(),
@@ -257,13 +219,13 @@ fn toggled_note(
                 reason: error.to_string(),
             }
         })?;
-    let body_start = body_start(&read, body).ok_or_else(|| {
-        TaskToggleError::internal(format!("the body of '{slug}' does not end its file"))
-    })?;
-    let toggled = format!("{}{toggled_body}", &read[..body_start]);
-    let written = parse_markdown_document(&read_slug, &toggled, read_at).map_err(|error| {
-        TaskToggleError::internal(format!("failed to read back '{slug}': {error}"))
-    })?;
+    let body_start = read
+        .body_start()
+        .map_err(|refusal| TaskToggleError::refused(refusal, slug))?;
+    let toggled = format!("{}{toggled_body}", &read.text[..body_start]);
+    let written = read
+        .read_back(&toggled)
+        .map_err(|refusal| TaskToggleError::refused(refusal, slug))?;
     Ok(ToggledNote {
         read,
         toggled,
@@ -271,102 +233,15 @@ fn toggled_note(
     })
 }
 
-/// Where `body` starts in `content`, the file it was read from. The parser
-/// takes the body as the end of the file in every reading of it: after the
-/// front matter, or the whole file when there is none or it does not parse.
-fn body_start(content: &str, body: &str) -> Option<usize> {
-    let start = content.len().checked_sub(body.len())?;
-    (content.get(start..)? == body).then_some(start)
-}
-
-/// Whether Mine may write at `path`: replace the file, or create a file in
-/// the folder. A file locked in Finder counts as one Mine may not write.
-fn may_write(path: &Path) -> io::Result<bool> {
-    use std::os::unix::ffi::OsStrExt;
-    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
-    // SAFETY: `c_path` is a NUL-terminated string that outlives the call.
-    if unsafe { libc::access(c_path.as_ptr(), libc::W_OK) } == 0 {
-        return Ok(true);
-    }
-    let error = io::Error::last_os_error();
-    if is_write_refusal(&error) {
-        Ok(false)
-    } else {
-        Err(error)
-    }
-}
-
-/// Whether the system refused a write for want of the right to it: no
-/// permission, a locked file, a read-only volume.
-fn is_write_refusal(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem
-    )
-}
-
 /// What a refused source mutation tells the reader.
+#[cfg(test)]
 fn refusal(
     error: SourceMutationError,
     slug: &str,
     path: &Path,
     file_name: &str,
 ) -> TaskToggleError {
-    if matches!(error, SourceMutationError::Changed { .. }) {
-        return TaskToggleError::Changed {
-            source_slug: slug.to_string(),
-        };
-    }
-    if !path.exists() {
-        return TaskToggleError::SourceNotFound {
-            source_slug: slug.to_string(),
-        };
-    }
-    if refused_for_permission(&error) {
-        return TaskToggleError::ReadOnly {
-            file_name: file_name.to_string(),
-        };
-    }
-    TaskToggleError::internal(error)
-}
-
-/// Whether staging or publishing the write met a system refusal of the right
-/// to write, after the check before it passed.
-fn refused_for_permission(error: &SourceMutationError) -> bool {
-    let (SourceMutationError::Stage { source, .. }
-    | SourceMutationError::CommitFile { source, .. }) = error
-    else {
-        return false;
-    };
-    source
-        .chain()
-        .filter_map(|cause| cause.downcast_ref::<io::Error>())
-        .any(is_write_refusal)
-}
-
-#[cfg(test)]
-mod hooks {
-    use std::cell::RefCell;
-    use std::path::Path;
-
-    type Hook = Box<dyn FnOnce(&Path)>;
-
-    thread_local! {
-        /// Runs once after the note was read and before the write is
-        /// staged: the window an outside edit can hit.
-        static AFTER_READ: RefCell<Option<Hook>> = const { RefCell::new(None) };
-    }
-
-    pub(super) fn run_after_read(path: &Path) {
-        if let Some(hook) = AFTER_READ.with(|slot| slot.borrow_mut().take()) {
-            hook(path);
-        }
-    }
-
-    /// Run `hook` with the path of the next note read on this thread.
-    pub(super) fn after_next_read(hook: impl FnOnce(&Path) + 'static) {
-        AFTER_READ.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
-    }
+    TaskToggleError::refused(note_write::mutation_refusal(&error, path, file_name), slug)
 }
 
 #[cfg(test)]

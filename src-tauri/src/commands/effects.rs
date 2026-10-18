@@ -86,6 +86,14 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("extract_text_selection", Effect::ChangesSources),
     ("delete_text_selection", Effect::ChangesSources),
     ("toggle_task_item", Effect::ChangesSources),
+    ("begin_note_edit", Effect::Reads),
+    ("save_note_body", Effect::ChangesSources),
+    ("note_body_state", Effect::Reads),
+    // Edit sessions change no space: they are the pages' state in memory
+    // (SPEC_EDITING.md, Л3.9).
+    ("report_note_edits", Effect::Reads),
+    ("end_note_edit", Effect::Reads),
+    ("report_edits_flushed", Effect::Reads),
     ("rename_block_file", Effect::ChangesSources),
     ("check_block_rename", Effect::Reads),
     ("prepare_delete_block", Effect::Reads),
@@ -176,6 +184,11 @@ pub const MAIN_THREAD_COMMANDS: &[(&str, &str)] = &[
     ("reorder_known_vaults", "the app's settings"),
     ("report_native_shell_smoke", "a diagnostics report outside any space"),
     ("youtube_player_url", "an address of the app's local player page"),
+    // A page's reports keep the order it sent them in (SPEC_EDITING.md,
+    // Л3.9): the pool would run two of them in any order.
+    ("report_note_edits", "edit sessions in memory"),
+    ("end_note_edit", "edit sessions and waiting previews in memory"),
+    ("report_edits_flushed", "edit sessions in memory"),
     // Windows and tabs: the pages and their layers are made and ordered on
     // the main thread (SPEC_TABS.md, «Команды»).
     ("get_tab_bootstrap", "tabs in memory"),

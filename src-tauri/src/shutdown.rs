@@ -103,19 +103,39 @@ pub fn exit_requested(app: &AppHandle) -> bool {
 }
 
 fn finish(app: &AppHandle) {
-    let downloads = app.state::<crate::source_video_download::SourceVideoDownloads>();
-    let unfinished = downloads.shutdown(DOWNLOADS_DEADLINE);
-    if unfinished > 0 {
-        log::warn!("{unfinished} download job(s) did not end before Mine quit");
-    }
-    match crate::storage::source_mutation::close_for_exit(WRITES_DEADLINE) {
-        crate::storage::source_mutation::ExitDrain::Drained => {}
-        crate::storage::source_mutation::ExitDrain::TimedOut { running } => {
-            log::warn!("{running} write(s) still running when Mine quit");
-        }
-    }
+    finish_in_order(
+        || {
+            // The pages write their unsaved edits while writes may still
+            // start, and the previews of the edited notes follow
+            // (SPEC_EDITING.md, Л3.9).
+            crate::commands::edit_sessions::flush(app, &crate::commands::edit_sessions::FlushScope::All);
+            crate::commands::note_edit::make_waiting_previews(app);
+        },
+        || {
+            let downloads = app.state::<crate::source_video_download::SourceVideoDownloads>();
+            let unfinished = downloads.shutdown(DOWNLOADS_DEADLINE);
+            if unfinished > 0 {
+                log::warn!("{unfinished} download job(s) did not end before Mine quit");
+            }
+        },
+        || match crate::storage::source_mutation::close_for_exit(WRITES_DEADLINE) {
+            crate::storage::source_mutation::ExitDrain::Drained => {}
+            crate::storage::source_mutation::ExitDrain::TimedOut { running } => {
+                log::warn!("{running} write(s) still running when Mine quit");
+            }
+        },
+    );
     *phase() = ExitPhase::Done;
     app.exit(0);
+}
+
+/// What quitting finishes, in its order: the edits of the pages first, while
+/// writes may still start; then the downloads; then the writes that began,
+/// after which no write starts.
+fn finish_in_order(flush_edits: impl FnOnce(), stop_downloads: impl FnOnce(), close_writes: impl FnOnce()) {
+    flush_edits();
+    stop_downloads();
+    close_writes();
 }
 
 #[cfg(test)]
@@ -132,5 +152,18 @@ mod tests {
         assert_eq!(answer, ExitAnswer::Hold, "a second ⌘Q started a second finish");
         assert_eq!(phase, ExitPhase::Finishing);
         assert_eq!(on_request(ExitPhase::Done), (ExitPhase::Done, ExitAnswer::Exit));
+    }
+
+    /// SPEC_EDITING.md, Л3.9: the pages write their unsaved edits before
+    /// the gate of writes closes, after which their saves would be refused.
+    #[test]
+    fn the_edits_are_flushed_before_writes_stop() {
+        let steps = std::cell::RefCell::new(Vec::new());
+        finish_in_order(
+            || steps.borrow_mut().push("flush edits"),
+            || steps.borrow_mut().push("stop downloads"),
+            || steps.borrow_mut().push("close writes"),
+        );
+        assert_eq!(steps.into_inner(), ["flush edits", "stop downloads", "close writes"]);
     }
 }

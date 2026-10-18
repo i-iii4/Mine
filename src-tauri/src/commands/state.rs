@@ -49,6 +49,12 @@ pub struct AppState {
     pub(crate) preview_reconcile: PreviewReconcileCoordinator,
     /// The iCloud conflict checks of the open spaces (SPEC_ICLOUD_CONFLICTS.md, ВК4).
     pub(crate) conflict_checks: super::conflicts::ConflictChecks,
+    /// Which page edits which note, and the flushes of their unsaved edits
+    /// (SPEC_EDITING.md, Л3.9).
+    pub(crate) edit_sessions: super::edit_sessions::EditSessions,
+    /// The previews of edited notes, made once a note rests (SPEC_EDITING.md,
+    /// Л3.3 step 8).
+    pub(crate) edit_previews: super::note_edit::EditPreviews,
 }
 
 impl AppState {
@@ -63,6 +69,8 @@ impl AppState {
             freshness: FreshnessCoordinator::default(),
             preview_reconcile: PreviewReconcileCoordinator::default(),
             conflict_checks: super::conflicts::ConflictChecks::default(),
+            edit_sessions: super::edit_sessions::EditSessions::default(),
+            edit_previews: super::note_edit::EditPreviews::default(),
         }
     }
 

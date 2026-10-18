@@ -371,6 +371,12 @@ export type FeedPreviewManifest = { kind: FeedPreviewKind; primary_preview_path:
  */
 export type FeedPreviewTile = { source_path: string; preview_path: string | null; width: number | null; height: number | null; preview_width?: number | null; preview_height?: number | null; is_video: boolean; is_video_poster: boolean }
 
+/**
+ * `flush-edits`: write every unsaved edit now and answer
+ * `report_edits_flushed(request_id)` (Л3.9).
+ */
+export type FlushEditsPayload = { request_id: number }
+
 export type GraphLink = { id: string; kind: GraphLinkKind; source: string; target: string; directed: boolean; count: number; target_ref: string | null }
 
 export type GraphLinkKind = "collection_membership" | "wikilink" | "related_note"
@@ -520,6 +526,83 @@ export type MergeBlocksResult = { block: IndexedBlock; merged_slug: string; remo
 export type NativeShellSmokeReport = { status: string; vault_path: string | null; location: string; user_agent: string; timestamp_ms: number }
 
 /**
+ * The body of a note as it is on disk (Л4.1).
+ */
+export type NoteBodyState = { body_hash: string; body: string }
+
+/**
+ * `note-changed`: the body of the note `slug` on disk hashes to
+ * `body_hash` now (Л4.1). A session whose base is that hash does nothing;
+ * any other takes the body from `note_body_state` or enters a conflict.
+ */
+export type NoteChangedPayload = { slug: string; body_hash: string }
+
+/**
+ * Why editing does not begin, or the body on disk cannot be given (Л2.8,
+ * Л4.1).
+ */
+export type NoteEditError =
+/**
+ * The tab shows no space.
+ */
+{ kind: "no_vault" } |
+/**
+ * The note's contents are in iCloud: Mine asked iCloud to download them
+ * and did not wait.
+ */
+{ kind: "in_cloud"; file_name: string } |
+/**
+ * Mine may not write the note or its folder.
+ */
+{ kind: "read_only"; file_name: string } |
+/**
+ * The note is not on disk.
+ */
+{ kind: "source_not_found"; source_slug: string } |
+/**
+ * The note is a collection page: the editor does not open it (Л2.5).
+ */
+{ kind: "not_a_card"; source_slug: string } | { kind: "internal"; message: string }
+
+/**
+ * Why a body was not saved (Л3.3). Nothing was written in any case.
+ */
+export type NoteSaveError =
+/**
+ * The tab shows no space.
+ */
+{ kind: "no_vault" } |
+/**
+ * The body on disk is not the base of the edits: the note changed
+ * outside this session (Л4.3). The body on disk and its hash come back.
+ */
+{ kind: "stale_body"; source_slug: string; disk_body: string; disk_body_hash: string } |
+/**
+ * The note changed between Mine's read and the publication of the new
+ * version; the other version stays.
+ */
+{ kind: "changed"; source_slug: string } |
+/**
+ * The note's contents are in iCloud: Mine asked iCloud to download them
+ * and did not wait.
+ */
+{ kind: "in_cloud"; file_name: string } |
+/**
+ * Mine may not write the note or its folder: no permission, a file
+ * locked in Finder, a read-only volume.
+ */
+{ kind: "read_only"; file_name: string } |
+/**
+ * The note is not on disk.
+ */
+{ kind: "source_not_found"; source_slug: string } |
+/**
+ * The note is a collection page, or the new body would make it one
+ * (Л2.5).
+ */
+{ kind: "not_a_card"; source_slug: string } | { kind: "internal"; message: string }
+
+/**
  * The card open in a tab. A session saved before 07.10.2026 also holds the
  * card's `link_mode`, the All / Connected filter removed with its switch;
  * reading ignores it.
@@ -647,6 +730,25 @@ export type SaveEvidence = { markdown: PublicationEvidence; media: PublicationEv
 export type SaveExecutor = "native" | "browser"
 
 /**
+ * What the editor sends to save the body of its note (Л3.3).
+ */
+export type SaveNoteBodyParams = {
+/**
+ * The note being edited.
+ */
+source_slug: string;
+/**
+ * `body_hash` of the body the unsaved edits started from: the base.
+ */
+base_body_hash: string;
+/**
+ * The new body, byte for byte: the document as `sliceDoc()` gives it,
+ * with the byte order mark back in front when the body had one (Л0.3,
+ * Л0.4).
+ */
+body: string }
+
+/**
  * Transport outcomes do not confuse an unobserved result with a rejected save.
  */
 export type SaveOutcome = "committed" | "not_committed" | "unknown"
@@ -655,6 +757,25 @@ export type SaveOutcome = "committed" | "not_committed" | "unknown"
  * Durable phases. Publishing intent is recorded before a filesystem side effect.
  */
 export type SavePhase = "prepared" | "media_publishing" | "media_published" | "markdown_publishing" | "source_committed" | "committed"
+
+/**
+ * A saved body (Л3.3).
+ */
+export type SavedNoteBody = {
+/**
+ * The card as the index holds it now: the new `body_hash` is the next
+ * base, `display_title` follows the first H1 (Л2.2).
+ */
+block: IndexedBlock;
+/**
+ * The written file divides into front matter and body differently from
+ * before (Л2.4): the editor takes `block.body` as its document.
+ */
+split_changed: boolean;
+/**
+ * The file already held this body: nothing was written.
+ */
+unchanged: boolean }
 
 /**
  * Result of a full vault scan.

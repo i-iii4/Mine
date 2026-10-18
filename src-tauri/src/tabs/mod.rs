@@ -1275,7 +1275,24 @@ pub fn page_painted(app: &AppHandle, label: &str) {
 }
 
 /// Close the page of `tab`, keeping the tab (В40), or as part of closing it.
+/// A page with unsaved edits is hidden at once and closes once it wrote them
+/// or the flush deadline passed (SPEC_EDITING.md, Л3.9).
 fn close_page(app: &AppHandle, tab: &TabId) {
+    let label = forget_page(app, tab);
+    let deferred = crate::commands::edit_sessions::after_flushing_pages(app, vec![label.clone()], {
+        let label = label.clone();
+        move |app| close_page_now(app, &label)
+    });
+    if deferred {
+        if let Some(page) = app.get_webview(&label) {
+            let _ = page.hide();
+        }
+    }
+}
+
+/// The shell forgets the page of `tab`: it is shown nowhere and no longer
+/// counts as live. Returns the page's label.
+fn forget_page(app: &AppHandle, tab: &TabId) -> String {
     let shell = shell(app);
     {
         let mut live = lock(&shell.live);
@@ -1286,12 +1303,19 @@ fn close_page(app: &AppHandle, tab: &TabId) {
     }
     let label = tab.label();
     crate::frame_context_menu::unregister_page(&label);
-    if let Some(page) = app.get_webview(&label) {
+    label
+}
+
+/// Close the page `label` and unbind it from its space. Until this, a page
+/// that writes its unsaved edits still reaches its space (Л3.9).
+fn close_page_now(app: &AppHandle, label: &str) {
+    if let Some(page) = app.get_webview(label) {
         let _ = page.close();
     }
     let state = app.state::<AppState>();
-    let space = state.space_for(&label);
-    state.tabs.remove(&label);
+    state.edit_sessions.end_page(label);
+    let space = state.space_for(label);
+    state.tabs.remove(label);
     if let Some(space) = space {
         refresh_leads(app, space.vault_id());
     }
@@ -1501,11 +1525,25 @@ pub fn close_window(app: &AppHandle, window_id: &WindowId) {
     let Some(closed) = shell.change(|model| model.close_window(window_id)) else {
         return;
     };
-    for tab in &closed.tabs {
-        close_page(app, &tab.id);
-    }
-    if let Some(window) = app.get_window(&window_id.label()) {
-        let _ = window.destroy();
+    let labels: Vec<String> = closed.tabs.iter().map(|tab| forget_page(app, &tab.id)).collect();
+    let window_label = window_id.label();
+    // A window whose pages hold unsaved edits is hidden at once and goes once
+    // they wrote them (SPEC_EDITING.md, Л3.9): destroying it takes its pages.
+    let deferred = crate::commands::edit_sessions::after_flushing_pages(app, labels.clone(), {
+        let window_label = window_label.clone();
+        move |app| {
+            for label in &labels {
+                close_page_now(app, label);
+            }
+            if let Some(window) = app.get_window(&window_label) {
+                let _ = window.destroy();
+            }
+        }
+    });
+    if deferred {
+        if let Some(window) = app.get_window(&window_label) {
+            let _ = window.hide();
+        }
     }
     project_current_space(app);
 }

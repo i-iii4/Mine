@@ -1322,6 +1322,12 @@ fn perform_rename_match(
                 );
             }
             if let Some(app) = app {
+                // The edit sessions of the note follow it (SPEC_EDITING.md,
+                // Л4.8).
+                let state = app.state::<AppState>();
+                if let Some(space) = state.spaces.by_root(vault.root()) {
+                    state.edit_sessions.rename(space.vault_id(), &pending.slug, new_slug);
+                }
                 let _ = crate::commands::space_events::emit_to_vault(
                     app,
                     vault,

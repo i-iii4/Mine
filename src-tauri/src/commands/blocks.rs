@@ -3,6 +3,7 @@
 // Contract: SPEC_INTEGRATION.md#commands/blocks
 
 use anyhow::bail;
+use crate::commands::edit_sessions::SessionFlush;
 use crate::commands::effects::VaultChangedPayload;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -367,10 +368,12 @@ pub(crate) struct BlockRemovedPayload {
     tags: Vec<String>,
 }
 
+/// `thumb:updated` for a card whose preview a command made, also the
+/// deferred preview of an edited note (`commands::note_edit`).
 #[derive(Debug, Clone, Serialize)]
-struct ThumbUpdatedPayload {
-    slug: String,
-    is_text: bool,
+pub(crate) struct ThumbUpdatedPayload {
+    pub(crate) slug: String,
+    pub(crate) is_text: bool,
 }
 
 
@@ -790,9 +793,13 @@ fn rename_media_asset_unannounced(
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn rename_media_asset(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: RenameMediaAssetParams) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
     let announcing = super::effects::ChangeNews::before(&webview);
+    // The notes that name the file are found while the command runs: every
+    // session of the space writes its edits first (SPEC_EDITING.md, Л4.7).
+    let sessions = SessionFlush::space(&webview);
     let outcome = rename_media_asset_unannounced(webview, app, state, params);
     if outcome.is_ok() {
         announcing.send(Vec::new());
+        sessions.announce();
     }
     outcome
 }
@@ -859,9 +866,13 @@ fn delete_media_asset_unannounced(
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn delete_media_asset(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, media_ref: String) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
     let announcing = super::effects::ChangeNews::before(&webview);
+    // The notes that name the file are found while the command runs: every
+    // session of the space writes its edits first (SPEC_EDITING.md, Л4.7).
+    let sessions = SessionFlush::space(&webview);
     let outcome = delete_media_asset_unannounced(webview, app, state, media_ref);
     if outcome.is_ok() {
         announcing.send(Vec::new());
+        sessions.announce();
     }
     outcome
 }
@@ -920,9 +931,12 @@ fn remove_media_asset_from_card_unannounced(
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn remove_media_asset_from_card(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: RemoveMediaAssetFromCardParams) -> Result<MediaAssetMutationResult, MediaAssetActionError> {
     let announcing = super::effects::ChangeNews::before(&webview);
+    // SPEC_EDITING.md, Л4.7.
+    let sessions = SessionFlush::notes(&webview, vec![params.source_slug.clone()]);
     let outcome = remove_media_asset_from_card_unannounced(webview, app, state, params);
     if outcome.is_ok() {
         announcing.send(Vec::new());
+        sessions.announce();
     }
     outcome
 }
@@ -1224,9 +1238,13 @@ async fn extract_text_selection_unannounced(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn extract_text_selection(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: ExtractTextSelectionParams) -> Result<IndexedBlock, TextSelectionExtractError> {
     let announcing = super::effects::ChangeNews::before(&webview);
+    // The source note is written: its edit sessions write theirs first
+    // (SPEC_EDITING.md, Л4.7).
+    let sessions = SessionFlush::notes_async(&webview, vec![params.source_slug.clone()]).await;
     let outcome = extract_text_selection_unannounced(webview, app, state, params).await;
     if outcome.is_ok() {
         announcing.send(Vec::new());
+        sessions.announce();
     }
     outcome
 }
@@ -1304,9 +1322,12 @@ async fn delete_text_selection_unannounced(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn delete_text_selection(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: DeleteTextSelectionParams) -> Result<IndexedBlock, TextSelectionExtractError> {
     let announcing = super::effects::ChangeNews::before(&webview);
+    // SPEC_EDITING.md, Л4.7.
+    let sessions = SessionFlush::notes_async(&webview, vec![params.source_slug.clone()]).await;
     let outcome = delete_text_selection_unannounced(webview, app, state, params).await;
     if outcome.is_ok() {
         announcing.send(Vec::new());
+        sessions.announce();
     }
     outcome
 }
@@ -1325,13 +1346,9 @@ async fn toggle_task_item_unannounced(
             .map_err(|_| TaskToggleError::internal("vault state mutex poisoned"))?;
         vault_state.as_ref().ok_or(TaskToggleError::NoVault)?.vault.clone()
     };
-    state
-        .suppress_paths(
-            [vault.block_path(&params.source_slug)],
-            Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
-        )
-        .map_err(TaskToggleError::internal)?;
-
+    // The watcher knows the write by its bytes, not by a time window: an
+    // outside write of the note meanwhile is never hidden (SPEC_EDITING.md,
+    // Л3.6).
     let event_vault = vault.clone();
     let toggled = tauri::async_runtime::spawn_blocking(move || {
         let conn = db::open_or_create(&vault.index_db_path()).map_err(TaskToggleError::internal)?;
@@ -1360,9 +1377,14 @@ async fn toggle_task_item_unannounced(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn toggle_task_item(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: ToggleTaskItemParams) -> Result<IndexedBlock, TaskToggleError> {
     let announcing = super::effects::ChangeNews::before(&webview);
+    // A session editing the note in another tab writes its edits first; the
+    // reader's body hash then tells whether the task is still the one it saw
+    // (SPEC_EDITING.md, Л4.7).
+    let sessions = SessionFlush::notes_async(&webview, vec![params.source_slug.clone()]).await;
     let outcome = toggle_task_item_unannounced(webview, app, state, params).await;
     if outcome.is_ok() {
         announcing.send(Vec::new());
+        sessions.announce();
     }
     outcome
 }
@@ -1819,6 +1841,10 @@ fn rename_block_file_unannounced(
         // Cancel and the video follow it (SPEC_DEEP_AUDIT.md, Н4).
         app.state::<crate::source_video_download::SourceVideoDownloads>()
             .follow_rename(&vs.vault, &result.old_slug, &result.new_slug);
+        // So do its edit sessions (SPEC_EDITING.md, Л4.8).
+        state
+            .edit_sessions
+            .rename(space.vault_id(), &result.old_slug, &result.new_slug);
     }
     renamed
 }
@@ -1828,10 +1854,15 @@ fn rename_block_file_unannounced(
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn rename_block_file(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, old_slug: String, new_stem: String) -> Result<RenameBlockResult, RenameBlockError> {
     let announcing = super::effects::ChangeNews::before(&webview);
+    // The rename rewrites the links of notes it finds while it runs: every
+    // session of the space writes its edits first (SPEC_EDITING.md, Л4.7,
+    // Л10.3).
+    let sessions = SessionFlush::space(&webview);
     let outcome = rename_block_file_unannounced(webview, app, state, old_slug, new_stem);
     if let Ok(result) = &outcome {
         announcing.send(vec![super::effects::SpaceRename::card(&result.old_slug, &result.new_slug)],
         );
+        sessions.announce();
     }
     outcome
 }
@@ -1917,9 +1948,13 @@ fn delete_block_unannounced(
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn delete_block(webview: tauri::Webview, state: State<'_, AppState>, slug: String, delete_unused_media: Option<bool>, offered_media: Option<Vec<String>>) -> Result<DeleteBlockOutcome, CommandError> {
     let announcing = super::effects::ChangeNews::before(&webview);
+    // The card goes to the Trash with its edits written (SPEC_EDITING.md,
+    // Л4.7).
+    let sessions = SessionFlush::notes(&webview, vec![slug.clone()]);
     let outcome = delete_block_unannounced(webview, state, slug, delete_unused_media, offered_media);
     if outcome.is_ok() {
         announcing.send(Vec::new());
+        sessions.announce();
     }
     outcome
 }
@@ -2007,10 +2042,13 @@ pub async fn delete_blocks(
     offered_media: Option<Vec<String>>,
 ) -> Result<DeleteBlocksOutcome, CommandError> {
     let announcing = super::effects::ChangeNews::before(&webview);
+    // SPEC_EDITING.md, Л4.7.
+    let sessions = SessionFlush::notes_async(&webview, slugs.clone()).await;
     let outcome =
         delete_blocks_unannounced(webview, app, slugs, delete_unused_media, offered_media).await;
     if outcome.is_ok() {
         announcing.send(Vec::new());
+        sessions.announce();
     }
     outcome
 }
@@ -2251,9 +2289,13 @@ fn merge_blocks_unannounced(
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn merge_blocks(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, ordered_slugs: Vec<String>) -> Result<MergeBlocksResult, MergeBlocksError> {
     let announcing = super::effects::ChangeNews::before(&webview);
+    // A merge rewrites the links of notes it finds while it runs: every
+    // session of the space writes its edits first (SPEC_EDITING.md, Л4.7).
+    let sessions = SessionFlush::space(&webview);
     let outcome = merge_blocks_unannounced(webview, app, state, ordered_slugs);
     if outcome.is_ok() {
         announcing.send(Vec::new());
+        sessions.announce();
     }
     outcome
 }

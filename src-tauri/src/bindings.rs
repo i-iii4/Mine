@@ -61,6 +61,10 @@ use crate::storage::index::{
 use crate::storage::projection::{GridSnapshot, GridRowsSnapshot, ProjectionRevision};
 use crate::storage::search_projection::{SearchPageToken, SearchRevision, SearchSnapshot};
 use crate::storage::task_toggle::{TaskToggleError, ToggleTaskItemParams};
+use crate::storage::note_edit::{
+    NoteBodyState, NoteEditError, NoteSaveError, SaveNoteBodyParams, SavedNoteBody,
+};
+use crate::commands::edit_sessions::{FlushEditsPayload, NoteChangedPayload};
 use crate::watcher::handler::ScanResult;
 
 pub fn export_types(check_only: bool) -> Result<()> {
@@ -165,6 +169,13 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<MediaAssetActionError>()
         .register::<TextSelectionExtractError>()
         .register::<TaskToggleError>()
+        .register::<SaveNoteBodyParams>()
+        .register::<SavedNoteBody>()
+        .register::<NoteSaveError>()
+        .register::<NoteEditError>()
+        .register::<NoteBodyState>()
+        .register::<NoteChangedPayload>()
+        .register::<FlushEditsPayload>()
         .register::<MergeBlocksError>()
         .register::<ScanResult>()
         .register::<VaultOpenResult>()
