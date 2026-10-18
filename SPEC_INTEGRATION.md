@@ -352,7 +352,10 @@ enum CommandError {
 #[tauri::command] delete_blocks(state, slugs: Vec<String>, delete_unused_media: bool) -> Result<DeleteBlocksOutcome, CommandError>
 #[tauri::command] merge_blocks(state, ordered_slugs: Vec<String>) -> Result<MergeBlocksResult, MergeBlocksError>
 #[tauri::command] rename_block_file(state, old_slug: String, new_stem: String) -> Result<RenameBlockResult, RenameBlockError>
+#[tauri::command] toggle_task_item(state, params: ToggleTaskItemParams) -> Result<IndexedBlock, TaskToggleError>
 ```
+
+`toggle_task_item` переключает флажок задачи из режима чтения: меняется ровно один знак исходника, логика записи в `storage::task_toggle`, отказы типизированы (`stale_body`, `changed`, `state_changed`, `in_cloud`, `read_only`, `source_not_found`, `no_vault`, `internal`). Контракт: [SPEC_READING_MODE.md](SPEC_READING_MODE.md), Ч12.3.
 
 ### Поведение create_block
 
