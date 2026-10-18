@@ -1,0 +1,238 @@
+/* The article's reading styles (SPEC_READING_MODE.md, Ч0.4, Ч1 to Ч12), by
+   the class of its root, `mine-article`, so a future editor can draw the same
+   article (Ч13). No rule here knows the open card's layout; selection rules
+   stay on `[data-article-body]` (global.css). Every colour is a token: no grey
+   number of Tailwind Typography reaches the screen. */
+
+/* Ч0.4. All 18 variables of Tailwind Typography, the `-invert-` ones too
+   (unused: the theme switches the tokens, not the variables). */
+.mine-article {
+  --tw-prose-body: var(--foreground);
+  --tw-prose-headings: var(--foreground);
+  --tw-prose-lead: var(--muted-foreground);
+  --tw-prose-links: var(--foreground);
+  --tw-prose-bold: var(--foreground);
+  --tw-prose-counters: var(--muted-foreground);
+  --tw-prose-bullets: var(--muted-foreground);
+  --tw-prose-hr: var(--border);
+  --tw-prose-quotes: var(--muted-foreground);
+  --tw-prose-quote-borders: var(--border);
+  --tw-prose-captions: var(--muted-foreground);
+  --tw-prose-kbd: var(--foreground);
+  /* Unused: `kbd` has a look of its own (Ч4). */
+  --tw-prose-kbd-shadows: transparent;
+  --tw-prose-code: var(--foreground);
+  --tw-prose-pre-code: var(--foreground);
+  --tw-prose-pre-bg: var(--muted);
+  --tw-prose-th-borders: var(--border);
+  --tw-prose-td-borders: var(--border);
+  --tw-prose-invert-body: var(--foreground);
+  --tw-prose-invert-headings: var(--foreground);
+  --tw-prose-invert-lead: var(--muted-foreground);
+  --tw-prose-invert-links: var(--foreground);
+  --tw-prose-invert-bold: var(--foreground);
+  --tw-prose-invert-counters: var(--muted-foreground);
+  --tw-prose-invert-bullets: var(--muted-foreground);
+  --tw-prose-invert-hr: var(--border);
+  --tw-prose-invert-quotes: var(--muted-foreground);
+  --tw-prose-invert-quote-borders: var(--border);
+  --tw-prose-invert-captions: var(--muted-foreground);
+  --tw-prose-invert-kbd: var(--foreground);
+  --tw-prose-invert-kbd-shadows: transparent;
+  --tw-prose-invert-code: var(--foreground);
+  --tw-prose-invert-pre-code: var(--foreground);
+  --tw-prose-invert-pre-bg: var(--muted);
+  --tw-prose-invert-th-borders: var(--border);
+  --tw-prose-invert-td-borders: var(--border);
+  /* Code is content, so it keeps the system monospace whatever the interface
+     font (SYSTEM_MONO_STACK in src/lib/fontChoice.ts; DESIGN_SYSTEM.md,
+     «Шрифты»). */
+  --article-code-font: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Ч1. A word or an address longer than the line breaks anywhere inside the
+     column; shorter words break at spaces as before, and nothing is
+     hyphenated. Code blocks and formulas on their own line set `pre` and
+     scroll instead. */
+  overflow-wrap: anywhere;
+  hyphens: manual;
+}
+
+/* Ч2. Code in a line: no backticks, regular weight, the system monospace at
+   12/14 of the text round it (12 px in a 14 px paragraph, the same share in a
+   heading or a footnote), on the quiet fill of a key in a tooltip. The fill
+   follows the surface, so it reads the same on the page and in a callout. */
+.mine-article :not(pre) > code {
+  font-family: var(--article-code-font);
+  /* --text-sm / --text-base. */
+  font-size: calc(12em / 14);
+  font-weight: 400;
+  color: inherit;
+  background-color: var(--component-fill);
+  border-radius: var(--radius-1);
+  padding-inline: var(--spacing-s1);
+}
+
+.mine-article code::before,
+.mine-article code::after {
+  content: none;
+}
+
+/* Ч3. `==text==` and `<mark>`: the search's yellow marker, the same in both
+   themes, lying on the text. */
+.mine-article mark {
+  background-color: var(--search-mark);
+  color: var(--search-mark-foreground);
+  padding: 0;
+}
+
+/* Ч4. A key: the tooltip's key in the size of the text round it, the
+   interface font, the primary step (in an article a key is content). */
+.mine-article kbd {
+  font-family: var(--font-sans);
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  color: var(--foreground);
+  background-color: var(--component-fill);
+  border-radius: var(--radius-1);
+  padding: 0 var(--spacing-s1);
+  box-shadow: none;
+}
+
+.mine-article :is(sub, sup, u, abbr, ins, del, s) {
+  color: inherit;
+}
+
+/* A disclosure, `<details>` or a folding callout: its summary is a control
+   of the reader's, under the arrow, with the chevron of its own instead of
+   the browser's triangle. */
+.mine-article summary {
+  list-style: none;
+  cursor: default;
+}
+
+.mine-article summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Ч5.2. Tables: alignment from the delimiter row only, left by default (the
+   pipeline turns the row's `align` into the cell's own `text-align`, which
+   wins over the rule below), a cell's content from the top line of its row, a one-line row as tall as a
+   metadata row (32: 6 + 20 + 6), 1 px grid lines, square corners; the header
+   row looks like a body row. */
+.mine-article table {
+  /* No stretching to the column: a table is as wide as its columns. */
+  width: auto;
+  margin: 0;
+  border-collapse: collapse;
+  font-size: var(--text-base);
+  line-height: var(--text-base--line-height);
+}
+
+.mine-article :is(th, td) {
+  padding: calc(var(--spacing) * 1.5) var(--spacing-plate);
+  border: 1px solid var(--border);
+  vertical-align: top;
+  text-align: left;
+}
+
+.mine-article :is(thead, tbody, tfoot, tr) {
+  border: 0;
+}
+
+.mine-article th {
+  font-weight: 400;
+  color: inherit;
+}
+
+/* Ч6.4. Highlighted code: the classes of highlight.js take their colours
+   from `--code-*`. The values wait for the user's decision
+   (SPEC_READING_MODE.md, В3 (б)); a variable with no value leaves the class
+   in the block's own text colour. */
+.mine-article [data-code-block] :is(.hljs-keyword, .hljs-doctag, .hljs-meta .hljs-keyword) { color: var(--code-keyword); }
+.mine-article [data-code-block] :is(.hljs-string, .hljs-regexp, .hljs-meta .hljs-string) { color: var(--code-string); }
+.mine-article [data-code-block] :is(.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet) { color: var(--code-number); }
+.mine-article [data-code-block] :is(.hljs-comment, .hljs-quote) { color: var(--code-comment); }
+.mine-article [data-code-block] :is(.hljs-title, .hljs-section) { color: var(--code-title); }
+.mine-article [data-code-block] :is(.hljs-type, .hljs-built_in, .hljs-class) { color: var(--code-type); }
+.mine-article [data-code-block] :is(.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-template-variable, .hljs-params) { color: var(--code-variable); }
+.mine-article [data-code-block] :is(.hljs-tag, .hljs-name, .hljs-selector-tag, .hljs-selector-class, .hljs-selector-id) { color: var(--code-tag); }
+.mine-article [data-code-block] :is(.hljs-meta, .hljs-operator, .hljs-punctuation) { color: var(--code-meta); }
+.mine-article [data-code-block] .hljs-addition { color: var(--code-addition); }
+.mine-article [data-code-block] .hljs-deletion { color: var(--code-deletion); }
+
+/* Ч7. A diagram stands centred in the column and shrinks to it. */
+.mine-article [data-mermaid-diagram] svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-inline: auto;
+}
+
+/* Ч9. A formula takes the colour of its text; one on its own line stands
+   centred and scrolls inside its block when wider than the column. */
+.mine-article .katex {
+  color: inherit;
+}
+
+.mine-article [data-math-display] .katex-display {
+  margin: 0;
+  overflow-wrap: normal;
+}
+
+/* Ч10. Footnotes: under a line, in the small step, the secondary text step
+   with their numbers. */
+.mine-article section[data-footnotes] {
+  margin-top: calc(var(--spacing) * 6);
+  padding-top: var(--spacing-s3);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+  color: var(--muted-foreground);
+}
+
+.mine-article section[data-footnotes] :is(p, li) {
+  line-height: var(--text-sm--line-height);
+}
+
+.mine-article section[data-footnotes] li::marker {
+  color: var(--muted-foreground);
+}
+
+.mine-article section[data-footnotes] a {
+  color: inherit;
+}
+
+/* Ч11.3. A note embed stands on a line of its own, centred, with the media
+   paragraph's margins; several in a row stand under each other with the
+   media's gap (`[data-article-media-stack]`, global.css). */
+.mine-article [data-note-embed] {
+  display: flex;
+  justify-content: center;
+  margin-block: calc(var(--spacing) * 5);
+}
+
+/* Ч12.1. A task's box stands where a list marker would: the list keeps the
+   box and the plate's gap before the text; a done task's text takes the
+   secondary step and is struck through, as Obsidian draws it. */
+.mine-article :is(ul, ol).contains-task-list {
+  padding-inline-start: calc(var(--spacing) * 4 + var(--spacing-plate));
+}
+
+.mine-article li[data-task-item] {
+  position: relative;
+  list-style: none;
+  padding-inline-start: 0;
+}
+
+.mine-article li[data-task-item] > [data-task-checkbox] {
+  position: absolute;
+  inset-inline-start: calc(-1 * (var(--spacing) * 4 + var(--spacing-plate)));
+  /* Centred on the first line: (20 − 16) / 2. */
+  top: calc(var(--spacing) * 0.5);
+}
+
+.mine-article li[data-task-item][data-task-checked="true"] > [data-task-text] {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}

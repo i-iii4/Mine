@@ -4013,6 +4013,179 @@
         "scripts/startup-packaging.test.mjs"
       ],
       "command": "test:startup-packaging"
+    },
+    {
+      "paths": [
+        "src-tauri/src/storage/task_toggle.rs",
+        "mine-core/src/domain/markdown.rs"
+      ],
+      "requirement": "SPEC_READING_MODE.md### Ч12. Флажки задач",
+      "tests": [
+        "src-tauri/src/storage/task_toggle.rs",
+        "mine-core/src/domain/markdown.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/lib/reading/pipeline.ts",
+        "src/lib/reading/syntax.ts",
+        "src/lib/reading/hast.ts",
+        "src/lib/reading/readingSanitize.test.ts",
+        "src/test/readingPipeline.ts",
+        "src/components/reading/ArticleMarkdown.tsx",
+        "src/components/reading/ArticleMarkdown.test.tsx",
+        "src/lib/markdownUrl.ts",
+        "src/lib/feedPreview.ts"
+      ],
+      "requirement": "SPEC_READING_MODE.md### Ч0. Конвейер чтения",
+      "tests": [
+        "src/lib/reading/readingSanitize.test.ts",
+        "src/components/reading/ArticleMarkdown.test.tsx",
+        "src/lib/reading/remarkMark.test.ts",
+        "src/lib/reading/tableLayout.test.ts",
+        "src/lib/markdownWikilinks.test.ts",
+        "src/lib/feedPreview.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/styles/article.css",
+        "src/styles/article.test.ts"
+      ],
+      "requirement": "SPEC_READING_MODE.md### Ч2. Код в строке",
+      "tests": [
+        "src/styles/article.test.ts",
+        "src/styles/colorLaw.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/reading/remarkMark.ts",
+        "src/lib/reading/remarkMark.test.ts"
+      ],
+      "requirement": "SPEC_READING_MODE.md### Ч3. Маркер `==текст==`",
+      "tests": [
+        "src/lib/reading/remarkMark.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/reading/tableLayout.ts",
+        "src/lib/reading/tableLayout.test.ts",
+        "src/components/reading/ArticleTable.tsx",
+        "src/components/reading/ArticleTable.test.tsx"
+      ],
+      "requirement": "SPEC_READING_MODE.md### Ч5. Таблицы",
+      "tests": [
+        "src/lib/reading/tableLayout.test.ts",
+        "src/components/reading/ArticleTable.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/reading/highlight.ts",
+        "src/lib/reading/highlight.test.ts",
+        "src/components/reading/CodeBlock.tsx",
+        "src/components/reading/CodeBlock.test.tsx",
+        "src/components/reading/mediaControls.ts",
+        "src/components/reading/mediaControls.test.ts"
+      ],
+      "requirement": "SPEC_READING_MODE.md### Ч6. Блоки кода",
+      "tests": [
+        "src/lib/reading/highlight.test.ts",
+        "src/components/reading/CodeBlock.test.tsx",
+        "src/components/reading/mediaControls.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/reading/mermaid.ts",
+        "src/lib/reading/mermaid.test.ts",
+        "src/components/reading/MermaidDiagram.tsx",
+        "src/components/reading/MermaidDiagram.test.tsx"
+      ],
+      "requirement": "SPEC_READING_MODE.md### Ч7. Mermaid",
+      "tests": [
+        "src/lib/reading/mermaid.test.ts",
+        "src/components/reading/MermaidDiagram.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/reading/callouts.ts",
+        "src/lib/reading/remarkObsidianCallouts.ts",
+        "src/lib/reading/remarkObsidianCallouts.test.ts",
+        "src/components/reading/Callout.tsx",
+        "src/components/reading/Callout.test.tsx",
+        "src/components/reading/Disclosure.tsx",
+        "src/components/reading/Disclosure.test.tsx"
+      ],
+      "requirement": "SPEC_READING_MODE.md### Ч8. Выноски",
+      "tests": [
+        "src/lib/reading/remarkObsidianCallouts.test.ts",
+        "src/components/reading/Callout.test.tsx",
+        "src/components/reading/Disclosure.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/reading/remarkObsidianInlineMath.ts",
+        "src/lib/reading/remarkObsidianInlineMath.test.ts",
+        "src/lib/reading/math.ts",
+        "src/lib/reading/math.test.ts",
+        "src/components/reading/MathView.tsx",
+        "src/components/reading/MathView.test.tsx"
+      ],
+      "requirement": "SPEC_READING_MODE.md### Ч9. Формулы",
+      "tests": [
+        "src/lib/reading/remarkObsidianInlineMath.test.ts",
+        "src/lib/reading/math.test.ts",
+        "src/components/reading/MathView.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/reading/remarkNoteEmbeds.ts",
+        "src/lib/reading/remarkNoteEmbeds.test.ts",
+        "src/components/reading/NoteEmbed.tsx",
+        "src/components/reading/NoteEmbed.test.tsx"
+      ],
+      "requirement": "SPEC_READING_MODE.md### Ч11. Вставки заметок",
+      "tests": [
+        "src/lib/reading/remarkNoteEmbeds.test.ts",
+        "src/components/reading/NoteEmbed.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/reading/TaskCheckbox.tsx",
+        "src/components/reading/TaskCheckbox.test.tsx"
+      ],
+      "requirement": "SPEC_READING_MODE.md### Ч12. Флажки задач",
+      "tests": [
+        "src/components/reading/TaskCheckbox.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/reading-mode-audit.mjs"
+      ],
+      "requirement": "SPEC_READING_MODE.md### Ч14. Проверки",
+      "tests": [
+        "scripts/reading-mode-audit.mjs"
+      ],
+      "command": "test:reading-mode"
     }
   ],
   "release": null

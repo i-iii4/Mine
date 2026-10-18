@@ -320,4 +320,21 @@ describe("tokens follow the colour rules", () => {
       expect(theme["--scrim-color"]).toBeUndefined();
     }
   });
+
+  it("takes every colour of the article from a token (SPEC_READING_MODE.md, Ч0.4)", () => {
+    const article = readFileSync("src/styles/article.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const declared = Object.fromEntries(
+      [...article.matchAll(/(--tw-prose-[a-z-]+):\s*([^;]+);/g)].map((match) => [match[1], match[2]?.trim()]),
+    );
+    const variables = ["body", "headings", "lead", "links", "bold", "counters", "bullets", "hr", "quotes", "quote-borders", "captions", "kbd", "kbd-shadows", "code", "pre-code", "pre-bg", "th-borders", "td-borders"];
+    expect(variables).toHaveLength(18);
+    for (const name of variables) {
+      for (const variable of [`--tw-prose-${name}`, `--tw-prose-invert-${name}`]) {
+        expect(declared[variable], variable).toMatch(/^(var\(--[a-z-]+\)|transparent)$/);
+      }
+    }
+    expect(Object.keys(declared)).toHaveLength(36);
+    // Nothing else of the article's stylesheet names a colour by number.
+    expect(article).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|oklch\(|hsla?\(/i);
+  });
 });

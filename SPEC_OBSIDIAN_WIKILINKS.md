@@ -152,7 +152,18 @@ Frontmatter `file` read path must likewise support both canonical
 
 **`src/lib/markdownWikilinks.ts :: preprocessWikilinks(body)`** —
 единственная функция, преобразующая wikilinks в стандартный markdown
-для react-markdown + remark-gfm.
+для конвейера чтения (`src/lib/reading/pipeline.ts`, SPEC_READING_MODE.md,
+Ч0). С 18.10.2026 (Ч0.2) вики-ссылка внутри кода (блок, отступ, код в
+строке), формулы (`$…$`, `$$…$$`) и блока HTML не меняется: места кода,
+формул и HTML находит один разбор `parseReadingSyntax` с теми же
+расширениями, что у конвейера, и вики-ссылка, которая с ними
+пересекается, остаётся как написана (`A[[Sub]]` в Mermaid, матрица
+`$[[1,2],[3,4]]$`, пример `[[x]]` в коде). `preprocessWikilinksWithMap`
+отдаёт вместе с текстом список замен (начало и конец в исходнике и в
+выводе); пересчёт позиций `markdownSourceOffset`, `markdownSourceByteOffset`
+и `inlineMediaOccurrenceIndex` идёт по этому списку, а не повторяет замену
+по строкам. Последнее тело и его замены хранятся одной записью, поэтому
+повторные вопросы о позициях одного тела разбора не повторяют.
 
 Правила:
 
@@ -170,7 +181,10 @@ Percent-encoding применяется **только** на render boundary, �
 source файле. Пользователь, смотрящий raw `.md` в Obsidian или Finder,
 всегда видит read-friendly wikilink форму.
 
-Вызывается в `Detail.tsx` перед `<ReactMarkdown>`, memoized per body.
+Вызывается в `ArticleMarkdown` (`src/components/reading/`) перед
+`<ReactMarkdown>`, memoized per body. `decodeLocalMarkdownUrl` живёт в
+`src/lib/markdownUrl.ts` (модуль реэкспортирует её): лента декодирует
+локальные адреса без разборщика чтения в первой части сборки.
 Card preview (`stripMarkdown` в `cardLayout.ts`) отдельно
 обрабатывает wikilinks — embed strip'ается полностью (не prose),
 text link collapse'ится в display text.
@@ -219,8 +233,11 @@ kind. New inline-media extraction creates an empty-body media-card with
    `vault_root.join(name)` напрямую.
 2. **Obsidian compat**: raw `.md` читается в Obsidian source view
    без артефактов encoding.
-3. **Render invariance**: после `preprocessWikilinks` парсер видит
-   standard markdown. Никаких custom extensions в рендер pipeline.
+3. **Render invariance**: после `preprocessWikilinks` вики-ссылки текста
+   стали стандартным Markdown. Свои расширения в конвейере чтения есть с
+   18.10.2026 (маркер, формула в строке, выноски, вставки заметок,
+   SPEC_READING_MODE.md, Ч0.1), и ни одно из них вики-ссылок не читает;
+   вики-ссылка в коде, формуле и HTML не меняется (Ч0.2).
 4. **Backward compat**: existing блоки с `![alt](url)` читаются без
    миграции. Mix двух форм в одном vault — supported forever.
 5. **Idempotent migration**: `migrate-body-to-wikilinks --apply`
@@ -249,9 +266,11 @@ kind. New inline-media extraction creates an empty-body media-card with
 
 ### Frontend
 
-- `markdownWikilinks.test.ts` (11 tests) — preprocessWikilinks
-  covers: all syntax variants, encoding, Unicode, multi-link body,
-  ordinary markdown passthrough
+- `markdownWikilinks.test.ts`: preprocessWikilinks
+  covers all syntax variants, encoding, Unicode, multi-link body,
+  ordinary markdown passthrough; с 18.10.2026 вики-ссылка в блоке кода, в
+  отступе, в коде в строке, в `$…$`, в `$$…$$`, в Mermaid и в HTML не
+  меняется, рядом с ними меняется, пересчёт позиций по списку замен
 
 ### Manual QA
 

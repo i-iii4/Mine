@@ -217,8 +217,9 @@ async function main() {
     await runAudit("scripts/edge-states-audit.mjs", {
       MINE_EDGE_STATES_AUDIT_URL: `${origin}/edge-states.html`,
     }, onAuditChildChange);
-    // Starts and stops a Vite of its own (audit-vite.mjs).
+    // Start and stop a Vite of their own (audit-vite.mjs).
     await runAudit("scripts/narrow-window-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/reading-mode-audit.mjs", {}, onAuditChildChange);
   } finally {
     process.removeListener("SIGINT", interrupt);
     process.removeListener("SIGTERM", terminate);

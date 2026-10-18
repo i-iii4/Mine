@@ -12,6 +12,10 @@
 
 import { fromMarkdown } from "mdast-util-from-markdown";
 import type { Nodes } from "mdast";
+import { parseReadingSyntax } from "@/lib/reading/syntax";
+// The feed decodes local addresses too and must not take this module, which
+// holds the reading parser, into the first screen's bundle.
+export { decodeLocalMarkdownUrl } from "./markdownUrl";
 
 // Lazy up to the first `]]`, and never across a line break. Barring `]`
 // outright looked equivalent — filenames rarely hold one — until the clipper
@@ -33,10 +37,6 @@ export function decodeWikilinkHref(href: string | undefined): string | null {
   }
 }
 
-function isRemoteMarkdownUrl(src: string): boolean {
-  return src.startsWith("http://") || src.startsWith("https://");
-}
-
 function encodeMarkdownUrl(name: string): string {
   // Mirror the backend encoder (Phase 18.F.1): space, parens, percent.
   // encodeURI would also percent-encode Cyrillic, which we avoid to
@@ -48,9 +48,118 @@ function encodeMarkdownUrl(name: string): string {
     .replace(/\)/g, "%29");
 }
 
+/** One wikilink the pre-processing rewrote: where it stands in the body as
+ *  written and where its replacement stands in the rendered Markdown. */
+export interface WikilinkRewrite {
+  sourceStart: number;
+  sourceEnd: number;
+  renderedStart: number;
+  renderedEnd: number;
+}
+
+/** A body with its wikilinks rewritten, and the list of rewrites in order. */
+export interface PreprocessedBody {
+  text: string;
+  rewrites: readonly WikilinkRewrite[];
+}
+
+/** Node types whose text the pipeline does not read as Markdown: code, math
+ *  and HTML. A wikilink that touches one is left as written (Ч0.2). */
+const VERBATIM_NODE_TYPES: ReadonlySet<string> = new Set([
+  "code",
+  "inlineCode",
+  "math",
+  "inlineMath",
+  "html",
+]);
+
+/** The ranges of code, math and HTML in `body`, ascending, from one parse
+ *  with the pipeline's own syntax. */
+function verbatimRanges(body: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  function visit(node: Nodes) {
+    if (VERBATIM_NODE_TYPES.has(node.type)) {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined) ranges.push([start, end]);
+      return;
+    }
+    if ("children" in node) node.children.forEach(visit);
+  }
+  visit(parseReadingSyntax(body));
+  return ranges.sort((left, right) => left[0] - right[0]);
+}
+
+function overlapsAny(ranges: ReadonlyArray<readonly [number, number]>, start: number, end: number): boolean {
+  return ranges.some(([rangeStart, rangeEnd]) => start < rangeEnd && rangeStart < end);
+}
+
+function embedReplacement(inner: string): string {
+  const [rawName, altPart] = inner.split("|", 2);
+  const name = (rawName ?? "").trim();
+  const alt = (altPart ?? "").trim();
+  if (!name) return "";
+  return `![${alt}](${encodeMarkdownUrl(name)})`;
+}
+
+function linkReplacement(inner: string): string {
+  const [rawName, altPart] = inner.split("|", 2);
+  const name = (rawName ?? "").trim();
+  const alt = (altPart ?? "").trim();
+  if (!name) return "";
+  const display = alt || name;
+  return `[${display}](${wikilinkHref(name)})`;
+}
+
+/** The href of a rewritten wikilink to `name`, which the article's link
+ *  opens as a note (`decodeWikilinkHref`). */
+export function wikilinkHref(name: string): string {
+  return `${WIKILINK_HREF_PREFIX}${encodeURIComponent(name)}`;
+}
+
+function computePreprocessedBody(body: string): PreprocessedBody {
+  const verbatim = verbatimRanges(body);
+  const found: Array<{ start: number; end: number; replacement: string }> = [];
+  for (const match of body.matchAll(WIKILINK_EMBED)) {
+    const end = match.index + match[0].length;
+    if (overlapsAny(verbatim, match.index, end)) continue;
+    found.push({ start: match.index, end, replacement: embedReplacement(match[1] ?? "") });
+  }
+  // Links are found in the body as written, outside the embeds: an embed's
+  // replacement holds no `]]`, so this finds what a second pass over the
+  // rewritten text would.
+  const embeds = found.map(({ start, end }) => [start, end] as const);
+  for (const match of body.matchAll(WIKILINK_LINK)) {
+    const end = match.index + match[0].length;
+    if (overlapsAny(verbatim, match.index, end) || overlapsAny(embeds, match.index, end)) continue;
+    found.push({ start: match.index, end, replacement: linkReplacement(match[1] ?? "") });
+  }
+  found.sort((left, right) => left.start - right.start);
+
+  let text = "";
+  let sourceCursor = 0;
+  const rewrites: WikilinkRewrite[] = [];
+  for (const { start, end, replacement } of found) {
+    text += body.slice(sourceCursor, start);
+    const renderedStart = text.length;
+    text += replacement;
+    rewrites.push({ sourceStart: start, sourceEnd: end, renderedStart, renderedEnd: text.length });
+    sourceCursor = end;
+  }
+  text += body.slice(sourceCursor);
+  return { text, rewrites };
+}
+
+// One body at a time is drawn, measured and mapped back: the selection
+// handle asks for offsets on every change of the selection, and the body
+// parses once.
+let cachedBody: string | null = null;
+let cachedResult: PreprocessedBody | null = null;
+
 /**
  * Rewrite Obsidian wikilinks in a markdown body into standard
- * `![alt](url)` / `[alt](url)` form so `react-markdown` can parse them.
+ * `![alt](url)` / `[alt](url)` form so `react-markdown` can parse them, with
+ * the list of rewrites that maps positions back (Ч0.2).
  *
  * Wikilink embed:
  *   `![[name]]`        -> `![](name)` (alt empty)
@@ -62,63 +171,40 @@ function encodeMarkdownUrl(name: string): string {
  *
  * URLs are percent-encoded (space, parens, %) so the downstream
  * markdown parser does not truncate on filenames containing those
- * characters.
+ * characters. A wikilink inside code (a block, an indented block, code in a
+ * line), math (`$…$`, `$$…$$`) or HTML stays as written: Mermaid's `A[[Sub]]`,
+ * the matrix `$[[1,2],[3,4]]$` and a `[[x]]` in an example reach their block
+ * as they are.
  */
+export function preprocessWikilinksWithMap(body: string): PreprocessedBody {
+  if (cachedBody !== body || cachedResult === null) {
+    cachedResult = computePreprocessedBody(body);
+    cachedBody = body;
+  }
+  return cachedResult;
+}
+
+/** The rendered Markdown of `body` (`preprocessWikilinksWithMap`). */
 export function preprocessWikilinks(body: string): string {
-  return body
-    .replace(WIKILINK_EMBED, (_match, inner) => {
-      const [rawName, altPart] = String(inner).split("|", 2);
-      const name = (rawName ?? "").trim();
-      const alt = (altPart ?? "").trim();
-      if (!name) return "";
-      return `![${alt}](${encodeMarkdownUrl(name)})`;
-    })
-    .replace(WIKILINK_LINK, (_match, inner) => {
-      const [rawName, altPart] = String(inner).split("|", 2);
-      const name = (rawName ?? "").trim();
-      const alt = (altPart ?? "").trim();
-      if (!name) return "";
-      const display = alt || name;
-      return `[${display}](${WIKILINK_HREF_PREFIX}${encodeURIComponent(name)})`;
-    });
+  return preprocessWikilinksWithMap(body).text;
 }
 
 /** Map a renderer UTF-16 position back to a UTF-16 position of the original
- * Markdown. Rewrites are line-local; only unchanged spans and replacement
- * boundaries are addressable: the start of a rewritten wikilink maps to the
- * start of the wikilink. A position inside rewritten syntax is not guessed.
+ * Markdown, by the list of rewrites the pre-processing made. Only unchanged
+ * spans and replacement boundaries are addressable: the start of a rewritten
+ * wikilink maps to the start of the wikilink. A position inside rewritten
+ * syntax is not guessed.
  */
 export function markdownSourceOffset(body: string, renderedOffset: number): number | null {
-  const lines = body.split("\n");
-  let renderedStart = 0;
-  let sourceStart = 0;
-  for (const line of lines) {
-    const rendered = preprocessWikilinks(line);
-    if (renderedOffset <= renderedStart + rendered.length) {
-      const offset = renderedOffset - renderedStart;
-      if (offset < 0) return null;
-      // Both wikilink forms are replaced by the same renderer used above.
-      const pattern = /!?\[\[([^\n]*?)\]\]/g;
-      let sourceCursor = 0;
-      let renderedCursor = 0;
-      for (const match of line.matchAll(pattern)) {
-        const start = match.index;
-        const unchanged = start - sourceCursor;
-        if (offset <= renderedCursor + unchanged) {
-          return sourceStart + sourceCursor + offset - renderedCursor;
-        }
-        renderedCursor += unchanged;
-        const replacement = preprocessWikilinks(match[0]);
-        if (offset < renderedCursor + replacement.length) return null;
-        renderedCursor += replacement.length;
-        sourceCursor = start + match[0].length;
-      }
-      return sourceStart + sourceCursor + offset - renderedCursor;
-    }
-    renderedStart += rendered.length + 1;
-    sourceStart += line.length + 1;
+  const { text, rewrites } = preprocessWikilinksWithMap(body);
+  if (!Number.isInteger(renderedOffset) || renderedOffset < 0 || renderedOffset > text.length) return null;
+  let delta = 0;
+  for (const rewrite of rewrites) {
+    if (renderedOffset <= rewrite.renderedStart) return renderedOffset - (rewrite.renderedStart - rewrite.sourceStart);
+    if (renderedOffset < rewrite.renderedEnd) return null;
+    delta = rewrite.sourceEnd - rewrite.renderedEnd;
   }
-  return null;
+  return renderedOffset + delta;
 }
 
 /** Map renderer UTF-16 positions back to original Markdown UTF-8 boundaries
@@ -127,26 +213,6 @@ export function markdownSourceOffset(body: string, renderedOffset: number): numb
 export function markdownSourceByteOffset(body: string, renderedOffset: number): number | null {
   const offset = markdownSourceOffset(body, renderedOffset);
   return offset === null ? null : new TextEncoder().encode(body.slice(0, offset)).length;
-}
-
-/**
- * Decode a local markdown URL back to the real filename on disk.
- *
- * Render-time markdown uses percent-encoding for a small set of characters
- * (space, parens, bare `%`) so the parser does not truncate. The source
- * vault and preview manifests keep the actual filenames, so any local path
- * crossing the render boundary must be decoded before it is used as a file
- * or preview-manifest lookup key.
- */
-export function decodeLocalMarkdownUrl(src: string): string {
-  if (!src || isRemoteMarkdownUrl(src)) {
-    return src;
-  }
-  try {
-    return decodeURIComponent(src);
-  } catch {
-    return src;
-  }
 }
 
 const IMAGE_OPENER = "![";

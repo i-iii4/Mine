@@ -1823,6 +1823,20 @@ Image media expansion:
 - Article content keeps a stable top inset (`pt-4`) even when duplicate
   author/title chrome is removed. The inset belongs to the article content
   wrapper; `ArticleBody` itself does not carry a compensating `mt-*` margin.
+- Статья открытой карточки рисуется конвейером чтения (реализация
+  18.10.2026, правила Ч0 по Ч14
+  [SPEC_READING_MODE.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_READING_MODE.md>)):
+  `ArticleBody` в `Detail.tsx` держит выделение текста, действия медиа и
+  прыжок к блоку `^id` и рисует `ArticleMarkdown` из
+  `src/components/reading/`; картинки и видео тела он отдаёт ему своим
+  элементом `ArticleBodyImage`, который берёт тело, медиа и действия из
+  контекста, поэтому новое тело (после записи флажка задачи) не
+  пересоздаёт статью. Корень статьи держит `data-article-body`,
+  `data-content-font` и класс `mine-article` (стили `src/styles/article.css`).
+  Прыжок к блоку ждёт первых ответов по вставкам заметок (Ч11.4). Запись
+  флажка задачи отдаёт открытой карточке новую полную карточку
+  (`setFullBlock`); отказ, после которого файл не тот, что видел читатель,
+  перечитывает тело (`refreshFullBlock`).
 - Метаданные справа (Geist Mono): AUDIO, WARNING, RESOLUTION, DATE, TYPE, SOURCE, AUTHOR
 - Metadata labels используют `text-sm leading-4 text-muted-foreground`;
   значения — `text-sm leading-4 text-foreground`, matching feed-card text scale.

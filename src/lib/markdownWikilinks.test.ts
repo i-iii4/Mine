@@ -1,13 +1,17 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import type { Nodes } from "mdast";
+import { decodeLocalMarkdownUrl } from "./markdownUrl";
 import {
-  decodeLocalMarkdownUrl,
+  decodeLocalMarkdownUrl as reexportedDecode,
   decodeWikilinkHref,
   firstImageOffset,
   inlineMediaOccurrenceIndex,
   preprocessWikilinks,
+  preprocessWikilinksWithMap,
   markdownSourceByteOffset,
+  markdownSourceOffset,
 } from "./markdownWikilinks";
 
 /** Where react-markdown's image nodes start in the rendered body, in order. */
@@ -178,5 +182,76 @@ describe("decodeLocalMarkdownUrl", () => {
   it("leaves remote URLs untouched", () => {
     const remote = "https://example.com/Title%20%28image%201%29.jpg";
     expect(decodeLocalMarkdownUrl(remote)).toBe(remote);
+  });
+});
+
+// SPEC_READING_MODE.md, Ч0.2: a wikilink inside code, math or HTML reaches its
+// block as written; one in text beside them is rewritten, and positions map
+// back by the list of rewrites, not by repeating the rewrite line by line.
+describe("wikilinks only in text", () => {
+  it.each([
+    ["a fenced code block", "```\n[[x]] and ![[y.png]]\n```"],
+    ["an indented code block", "Text\n\n    [[x]]"],
+    ["code in a line", "`[[x]]`"],
+    ["math in a line", "$[[1,2],[3,4]]$"],
+    ["math on its own lines", "$$\n[[1,2],[3,4]]\n$$"],
+    ["a Mermaid block", "```mermaid\nflowchart LR\n  A[[Sub]] --> B\n```"],
+    ["an HTML block", "<div>\n[[x]]\n</div>"],
+  ])("leaves a wikilink in %s as written", (_where, body) => {
+    expect(preprocessWikilinks(body)).toBe(body);
+    expect(preprocessWikilinksWithMap(body).rewrites).toEqual([]);
+  });
+
+  it("rewrites a wikilink next to code, math and HTML", () => {
+    const body = "`[[x]]` [[y]] $[[1]]$ ![[p.png]] <kbd>[[k]]</kbd>";
+    expect(preprocessWikilinks(body)).toBe(
+      "`[[x]]` [y](#mine-wikilink:y) $[[1]]$ ![](p.png) <kbd>[k](#mine-wikilink:k)</kbd>",
+    );
+  });
+
+  it("keeps a price, which is no formula, from protecting a wikilink", () => {
+    expect(preprocessWikilinks("It costs $5 and [[x]] $10")).toBe("It costs $5 and [x](#mine-wikilink:x) $10");
+  });
+
+  it("lists each rewrite with its place in the source and in the output", () => {
+    const body = "`[[a]]` [[b]] tail";
+    const { text, rewrites } = preprocessWikilinksWithMap(body);
+    expect(text).toBe("`[[a]]` [b](#mine-wikilink:b) tail");
+    expect(rewrites).toEqual([{
+      sourceStart: body.indexOf("[[b]]"),
+      sourceEnd: body.indexOf("[[b]]") + "[[b]]".length,
+      renderedStart: text.indexOf("[b]"),
+      renderedEnd: text.indexOf(" tail"),
+    }]);
+  });
+
+  it("maps positions on a line where code and a wikilink stand together", () => {
+    const body = "`[[a]]` [[b]] tail";
+    const text = preprocessWikilinks(body);
+    expect(markdownSourceOffset(body, text.indexOf("tail"))).toBe(body.indexOf("tail"));
+    expect(markdownSourceOffset(body, text.indexOf("[[a]]"))).toBe(body.indexOf("[[a]]"));
+    expect(markdownSourceOffset(body, text.indexOf("[b]"))).toBe(body.indexOf("[[b]]"));
+    expect(markdownSourceOffset(body, text.indexOf("[b]") + 2)).toBeNull();
+  });
+
+  it("maps positions across a code block holding a wikilink", () => {
+    const body = "```\n[[x]]\n```\n\n[[y]] after";
+    const text = preprocessWikilinks(body);
+    expect(markdownSourceByteOffset(body, text.indexOf("after"))).toBe(new TextEncoder().encode(body.slice(0, body.indexOf("after"))).length);
+  });
+
+  it("maps an empty embed, which renders as nothing, to where it was", () => {
+    const body = "a ![[]] b";
+    const text = preprocessWikilinks(body);
+    expect(text).toBe("a  b");
+    expect(markdownSourceOffset(body, 2)).toBe(2);
+    expect(markdownSourceOffset(body, text.indexOf("b"))).toBe(body.indexOf("b"));
+  });
+});
+
+describe("decodeLocalMarkdownUrl", () => {
+  it("is the one of markdownUrl.ts, which the feed takes without the reading parser", () => {
+    expect(reexportedDecode).toBe(decodeLocalMarkdownUrl);
+    expect(readFileSync("src/lib/feedPreview.ts", "utf8")).toContain('from "@/lib/markdownUrl"');
   });
 });

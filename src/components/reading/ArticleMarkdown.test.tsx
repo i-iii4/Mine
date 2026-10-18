@@ -1,0 +1,198 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
+import type { ExtraProps } from "react-markdown";
+import { ArticleMarkdown } from "./ArticleMarkdown";
+import { NoteEmbedLookups } from "./NoteEmbed";
+import { markdownSourceByteOffset, preprocessWikilinks } from "@/lib/markdownWikilinks";
+import { getBlock, resolveNoteLink } from "@/lib/commands";
+
+vi.mock("@/lib/commands", () => ({
+  getBlock: vi.fn(),
+  resolveNoteLink: vi.fn(),
+  toggleTaskItem: vi.fn(),
+}));
+
+vi.mock("@/lib/reading/mermaid", () => ({
+  readMermaidTheme: vi.fn(() => ({ dark: false, fontFamily: "system-ui", width: 680, variables: {} })),
+  renderMermaid: vi.fn(() => new Promise(() => undefined)),
+}));
+
+const SOURCE = "Cards/Source";
+
+/** The host's picture: a plain image, stable across renders. */
+function TestImage({ src, alt }: ComponentProps<"img"> & ExtraProps) {
+  return <img data-test-image="" src={src} alt={alt} />;
+}
+
+function renderArticle(body: string, onOpenNote = vi.fn()) {
+  const view = render(
+    <ArticleMarkdown
+      body={body}
+      sourceSlug={SOURCE}
+      vaultPath="/vault"
+      thumbsRootPath="/thumbs"
+      noteEmbeds={new NoteEmbedLookups(SOURCE)}
+      tasks={null}
+      image={TestImage}
+      onOpenNote={onOpenNote}
+      data-article-body=""
+    />,
+  );
+  const root = view.container.querySelector<HTMLElement>("[data-article-body]")!;
+  return { ...view, root, onOpenNote };
+}
+
+/** What the element's `data-mine-md-*` range holds of the rendered body. */
+function blockSource(body: string, element: Element | null): string {
+  const start = Number(element?.getAttribute("data-mine-md-start"));
+  const end = Number(element?.getAttribute("data-mine-md-end"));
+  return preprocessWikilinks(body).slice(start, end);
+}
+
+beforeEach(() => {
+  vi.mocked(getBlock).mockReset();
+  vi.mocked(resolveNoteLink).mockReset();
+  vi.mocked(Element.prototype.scrollIntoView).mockClear();
+});
+
+// SPEC_READING_MODE.md, Ч0.3: the places of blocks survive the new plugins.
+describe("ArticleMarkdown positions", () => {
+  const body = "First paragraph\n\n- item one\n- item two\n\n> A quote\n\n> [!note] Title\n> Callout body\n>\n> - callout item";
+
+  it("keeps the place of a paragraph, a list item and a quote", () => {
+    const { root } = renderArticle(body);
+    expect(blockSource(body, root.querySelector("p"))).toBe("First paragraph");
+    expect([...root.querySelectorAll("li")].slice(0, 2).map((item) => blockSource(body, item))).toEqual(["- item one", "- item two"]);
+    expect(blockSource(body, root.querySelector("blockquote"))).toBe("> A quote");
+  });
+
+  it("keeps the place of a callout's paragraph and list item", () => {
+    const { root } = renderArticle(body);
+    const callout = root.querySelector("[data-callout]")!;
+    expect(blockSource(body, callout.querySelector("[data-callout-body] p"))).toBe("Callout body");
+    expect(blockSource(body, callout.querySelector("[data-callout-body] li"))).toBe("- callout item");
+  });
+
+  it("names the same source bytes for a selection in a callout as in a paragraph", () => {
+    const callout = "Lead\n\n> [!note] Title\n> Alpha beta";
+    const plain = "Lead\n\nAlpha beta";
+    const byteRange = (source: string, element: Element | null) => [
+      markdownSourceByteOffset(source, Number(element?.getAttribute("data-mine-md-start"))),
+      markdownSourceByteOffset(source, Number(element?.getAttribute("data-mine-md-end"))),
+    ];
+    const inCallout = byteRange(callout, renderArticle(callout).root.querySelector("[data-callout-body] p"));
+    const inParagraph = byteRange(plain, renderArticle(plain).root.querySelectorAll("p")[1] ?? null);
+    const bytes = (source: string, [start, end]: (number | null)[]) => Buffer.from(source).subarray(start ?? 0, end ?? 0).toString();
+    expect(bytes(callout, inCallout)).toBe("Alpha beta");
+    expect(bytes(plain, inParagraph)).toBe("Alpha beta");
+  });
+});
+
+describe("ArticleMarkdown elements", () => {
+  it("draws code in a line as code, without backtick text", () => {
+    const { root } = renderArticle("Use `npm test` here");
+    expect(root.querySelector("p > code")?.textContent).toBe("npm test");
+    expect(root.textContent).not.toContain("`");
+  });
+
+  it("draws the note's sanitized HTML", () => {
+    const { root } = renderArticle("Press <kbd>⌘</kbd>, H<sub>2</sub>O, <mark>m</mark>\n\n<script>window.bad = 1</script>\n\n<img src=\"x.png\" onerror=\"window.bad = 2\">");
+    expect(root.querySelector("kbd")?.textContent).toBe("⌘");
+    expect(root.querySelector("sub")?.textContent).toBe("2");
+    expect(root.querySelector("mark")?.textContent).toBe("m");
+    expect(root.querySelector("script")).toBeNull();
+    expect(root.querySelector("[onerror]")).toBeNull();
+  });
+
+  it("draws a checkbox from HTML inert", () => {
+    const { root } = renderArticle("<input type=\"checkbox\" checked> from HTML");
+    const box = root.querySelector("[data-html-checkbox]");
+    expect(box).toBeDisabled();
+    expect(box).toHaveAttribute("data-state", "checked");
+    expect(root.querySelector("[data-task-checkbox]")).toBeNull();
+  });
+
+  it("opens an external link in the browser and drops a script address", () => {
+    const { root } = renderArticle("[out](https://example.com) and [bad](javascript:alert(1))");
+    const [out, bad] = root.querySelectorAll("a");
+    expect(out).toHaveAttribute("target", "_blank");
+    expect(out).toHaveAttribute("rel", "noopener noreferrer");
+    expect(bad?.getAttribute("href") ?? "").toBe("");
+  });
+
+  it("opens a wikilink's note", async () => {
+    vi.mocked(resolveNoteLink).mockResolvedValue("Notes/Peer");
+    const { onOpenNote } = renderArticle("See [[Peer|my peer]]");
+    fireEvent.click(screen.getByRole("link", { name: "my peer" }));
+    await waitFor(() => expect(onOpenNote).toHaveBeenCalledWith("Notes/Peer"));
+    expect(resolveNoteLink).toHaveBeenCalledWith(SOURCE, "Peer");
+  });
+
+  it("draws code blocks, diagrams, formulas, tables and callouts by their own elements", () => {
+    const { root } = renderArticle("```ts\nconst a = 1\n```\n\n```mermaid\ngraph A\n```\n\n$$\nx^2\n$$\n\n| A |\n|---|\n| 1 |\n\n> [!tip]- Folded\n> Body");
+    expect(root.querySelector("[data-code-block][data-code-language='ts']")).not.toBeNull();
+    expect(root.querySelector("[data-mermaid]")).not.toBeNull();
+    expect(root.querySelector("[data-article-table-scroll] table")).not.toBeNull();
+    expect(root.querySelector("details[data-callout='tip']")).toHaveProperty("open", false);
+    expect(root.textContent).toContain("x^2");
+  });
+});
+
+// SPEC_READING_MODE.md, Ч10.
+describe("ArticleMarkdown footnotes", () => {
+  const body = "Claim.[^1]\n\n[^1]: The note.";
+
+  it("gives ids one user-content- prefix", () => {
+    const { root } = renderArticle(body);
+    expect(root.querySelector("#user-content-fn-1")).not.toBeNull();
+    expect(root.querySelector("#user-content-fnref-1")).not.toBeNull();
+    expect(root.querySelector("[id^='user-content-user-content']")).toBeNull();
+  });
+
+  it("jumps to the footnote and back inside the article, the address kept", () => {
+    const { root } = renderArticle(body);
+    const address = window.location.href;
+    const reference = root.querySelector<HTMLAnchorElement>("[data-footnote-ref]")!;
+    expect(reference).not.toHaveAttribute("target");
+    fireEvent.click(reference);
+    expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts.at(-1)).toBe(root.querySelector("#user-content-fn-1"));
+    fireEvent.click(root.querySelector<HTMLAnchorElement>("[data-footnote-backref]")!);
+    expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts.at(-1)).toBe(root.querySelector("#user-content-fnref-1"));
+    expect(window.location.href).toBe(address);
+  });
+
+  it("does nothing for a place the article does not hold", () => {
+    const { root } = renderArticle("[nowhere](#missing)");
+    fireEvent.click(root.querySelector("a")!);
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+  });
+});
+
+// SPEC_READING_MODE.md, Ч4: `<details>` opens by a click and by keys.
+describe("ArticleMarkdown details", () => {
+  const body = "<details>\n<summary>More</summary>\n\nHidden **text**.\n\n</details>";
+
+  it("opens and closes by a click on its summary", () => {
+    const { root } = renderArticle(body);
+    const details = root.querySelector("details")!;
+    expect(details.open).toBe(false);
+    fireEvent.click(screen.getByText("More"), { detail: 1 });
+    expect(details.open).toBe(true);
+    fireEvent.click(screen.getByText("More"), { detail: 1 });
+    expect(details.open).toBe(false);
+  });
+
+  it("opens by Enter and Space, and a click the key makes does not undo it", () => {
+    const { root } = renderArticle(body);
+    const details = root.querySelector("details")!;
+    const summary = root.querySelector("summary")!;
+    expect(summary).toHaveAttribute("tabindex", "0");
+    fireEvent.keyDown(summary, { key: "Enter" });
+    fireEvent.click(summary, { detail: 0 });
+    expect(details.open).toBe(true);
+    fireEvent.keyDown(summary, { key: " " });
+    expect(details.open).toBe(false);
+    expect(root.querySelector("strong")?.textContent).toBe("text");
+  });
+});

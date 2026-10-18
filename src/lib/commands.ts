@@ -53,6 +53,8 @@ import type {
   MergeBlocksError,
   MergeBlocksResult,
   TextSelectionExtractError,
+  TaskToggleError,
+  ToggleTaskItemParams,
   OrphanMediaList,
   OrphanMediaBatchRequest,
   PromoteOrphanResult,
@@ -379,6 +381,30 @@ export const deleteTextSelection = async (params: DeleteTextSelectionParams) => 
     return await tauriInvoke<IndexedBlock>("delete_text_selection", { params });
   } catch (error) {
     throw normalizeTextSelectionExtractError(error);
+  }
+};
+
+function normalizeTaskToggleError(error: unknown): TaskToggleError {
+  if (error && typeof error === "object" && "kind" in error) {
+    return error as TaskToggleError;
+  }
+  if (typeof error === "string") {
+    return { kind: "internal", message: error };
+  }
+  if (error instanceof Error) {
+    return { kind: "internal", message: error.message };
+  }
+  return { kind: "internal", message: String(error) };
+}
+
+/** Toggle one task of the open card in its file: one byte changes
+ *  (SPEC_READING_MODE.md, Ч12.3). Resolves to the card read anew, rejects
+ *  with a `TaskToggleError`. */
+export const toggleTaskItem = async (params: ToggleTaskItemParams) => {
+  try {
+    return await tauriInvoke<IndexedBlock>("toggle_task_item", { params });
+  } catch (error) {
+    throw normalizeTaskToggleError(error);
   }
 };
 

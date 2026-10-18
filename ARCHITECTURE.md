@@ -2142,8 +2142,15 @@ Canvas перезапускает симуляцию всякий раз, ког
 | tw-animate-css | latest | CSS-анимации для Tailwind v4 | MIT |
 | react-router | 7.x | Роутинг | MIT |
 | @dnd-kit/core | 6.3.x | Drag-and-drop (Pointer Events вместо HTML5 DnD — обходит перехват Tauri WKWebView) | MIT |
-| react-markdown | latest | Рендеринг markdown в Detail.tsx | MIT |
-| remark-gfm | latest | GFM-расширение для react-markdown | MIT |
+| react-markdown | 10.x | Рендеринг markdown статьи: конвейер чтения `src/lib/reading/pipeline.ts` (SPEC_READING_MODE.md) | MIT |
+| remark-gfm | 4.x | GFM-расширение для react-markdown | MIT |
+| rehype-raw | 7.0.0 | HTML заметок в элементы (`parse5` 7.3.0 через `hast-util-raw`), часть сборки `Detail` | MIT |
+| rehype-sanitize | 6.0.0 | Очистка HTML заметок по своей схеме поверх схемы GitHub (`hast-util-sanitize` 5.0.2) | MIT |
+| remark-math | 6.0.0 | Разбор `$$` формул; `$…$` разбирает своё расширение по правилу Obsidian | MIT |
+| katex | 0.16.47 | Формулы, по требованию; одна копия с Mermaid (`katex ^0.16.47`), шрифты в сборке | MIT |
+| lowlight | 3.3.0 | Подсветка кода, по требованию, `highlight.js` 11.11.2, набор `common` | MIT |
+| mermaid | 12.1.0 | Диаграммы, по требованию; dagre и `classic` настройкой, ELK только для диаграммы, которая его просит | MIT |
+| unified, remark-parse, hast-util-to-jsx-runtime, micromark-util-* | как у react-markdown | Прямые импорты конвейера чтения (разбор вики-ссылок, свои расширения, вывод подсветки), без новых пакетов в сборке | MIT |
 | @tailwindcss/typography | latest | Стилизация prose-контента | MIT |
 | Defuddle | bundled | Извлечение статей и Markdown-конвертация в content script | MIT |
 | eslint + typescript-eslint | 10.x | Линтинг фронтенда (TypeScript) | MIT |
@@ -2739,3 +2746,33 @@ iCloud и реализация 11.10.2026 в Phase 45 ([PLAN.md](PLAN.md), эт�
 |---|---|
 | Одна подложка по эталонам | Принято: одно значение на обе темы, проверяется `colorLaw.test.ts` |
 | Своё затемнение у каждого слоя (как было: у поиска `bg-black/50`, у просмотра всегда тёмное) | Не выбрано: слои над страницей выглядели по-разному |
+
+### 062: Конвейер чтения статьи отдельными модулями, тяжёлое по требованию
+
+Команда пользователя 18.10.2026, реализация 18.10.2026. Контракт:
+[SPEC_READING_MODE.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_READING_MODE.md>),
+Ч0 и Ч13. Код: `src/lib/reading/`, `src/components/reading/`,
+`src/styles/article.css`.
+
+1. **Один конвейер.** Порядок плагинов, схема очистки и настройки
+   `remark-rehype` живут в `src/lib/reading/pipeline.ts`; синтаксис
+   (`syntax.ts`) один для статьи и для предобработки вики-ссылок, которая
+   по тому же разбору не трогает код, формулы и HTML.
+2. **Граница без React и Tauri.** `src/lib/reading/**` не импортирует
+   `react`, `@tauri-apps/*` и компоненты приложения (правило
+   `no-restricted-imports` ESLint), поэтому будущий редактор возьмёт его как
+   есть. Элементы React лежат в `src/components/reading/`; `ArticleBody` в
+   `Detail.tsx` держит выделение текста и действия медиа.
+3. **Тяжёлое по требованию.** Подсветка (`lowlight`), KaTeX со шрифтами и
+   Mermaid грузятся динамическим `import()` из своих элементов, только для
+   статьи, где они есть; всё в сборке, сеть не нужна. Лёгкие части в части
+   сборки `Detail`; `decodeLocalMarkdownUrl` вынесена в `markdownUrl.ts`,
+   чтобы лента не тянула разборщик в первый экран.
+4. **Один набор элементов на все статьи.** Элементы читают тело и данные
+   из контекста, поэтому новое тело (после записи флажка) не пересоздаёт
+   статью, а состояние раскрытий и подсветки сохраняется.
+
+| Вариант | Результат выбора |
+|---|---|
+| Свои модули конвейера, тяжёлое по требованию из элементов | Принято: статья без кода, формул и диаграмм их не грузит, первый экран меньше, чем был |
+| Плагины `rehype-katex`, `rehype-callouts`, подсветка плагином | Не выбрано: синхронный конвейер грузил бы KaTeX и подсветку сразу; `rehype-callouts` теряет позицию абзаца и не рисует неизвестный тип как `note` |

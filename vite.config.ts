@@ -1,5 +1,5 @@
 import { defineConfig } from "vitest/config";
-import type { Plugin } from "vite";
+import { searchForWorkspaceRoot, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import fs from "node:fs";
@@ -101,6 +101,14 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       ignored: ["**/src-tauri/**"],
+    },
+    // A worktree's node_modules can be a link to the main checkout's: the
+    // files behind it (KaTeX fonts) are served from their real path.
+    fs: {
+      allow: [
+        searchForWorkspaceRoot(process.cwd()),
+        ...(fs.existsSync("node_modules") ? [fs.realpathSync("node_modules")] : []),
+      ],
     },
   },
 }));

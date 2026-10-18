@@ -1,5 +1,5 @@
 import type { FeedPreviewKind } from "@/types";
-import { decodeLocalMarkdownUrl } from "@/lib/markdownWikilinks";
+import { decodeLocalMarkdownUrl } from "@/lib/markdownUrl";
 
 export interface NormalizedFeedPreviewTile {
   sourcePath: string;

@@ -1,12 +1,15 @@
 import { scrollBehavior } from "@/lib/motion";
 import { commandById } from "@/lib/commandRegistry";
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
   useMemo,
+  type ComponentProps,
   type ComponentType,
   type CSSProperties,
   type HTMLAttributes,
@@ -15,11 +18,9 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useDraggable } from "@dnd-kit/core";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import type { Nodes } from "mdast";
-import type { Components } from "react-markdown";
+import type { ExtraProps } from "react-markdown";
 import {
   CloudDownload,
   Expand,
@@ -90,7 +91,7 @@ import type {
   TagCount,
 } from "@/types";
 import { preprocessWikilinks, inlineMediaOccurrenceIndex, markdownSourceByteOffset, firstImageOffset } from "@/lib/markdownWikilinks";
-import { decodeLocalMarkdownUrl, decodeWikilinkHref } from "@/lib/markdownWikilinks";
+import { decodeLocalMarkdownUrl } from "@/lib/markdownWikilinks";
 import {
   thumbnailUrl,
   mediaUrl,
@@ -100,7 +101,6 @@ import {
   fallbackThumbsRoot,
   withRetry,
 } from "@/lib/assets";
-import { safeMarkdownUrl } from "@/lib/markdownUrl";
 import {
   CLOUD_BADGE_DELAY_MS,
   CLOUD_DOWNLOADING_LABEL,
@@ -113,7 +113,7 @@ import { mediaAssetErrorMessage } from "@/lib/mediaAssetErrors";
 import { MissingAwareImage } from "./MissingAwareImage";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
-import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset, resolveNoteLink } from "@/lib/commands";
+import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
 import type { FloatingMenuWidth } from "@/lib/floatingLayer";
 import { useHoverIntent, type HoverIntentHandle } from "@/hooks/useHoverIntent";
@@ -159,6 +159,10 @@ import {
   CardReferenceRow,
 } from "./CardReferenceRow";
 import { ReadOnlyCardPreview } from "./Card";
+import { ArticleMarkdown } from "./reading/ArticleMarkdown";
+import { mediaControlsClasses } from "./reading/mediaControls";
+import { useNoteEmbedLookups } from "./reading/NoteEmbed";
+import { useTaskToggles } from "./reading/TaskCheckbox";
 import {
   COLLECTION_PICKER_CONTENT_CLASS,
   CollectionPicker,
@@ -210,8 +214,6 @@ const HOVER_CARD_FALLBACK_HEIGHT = 320;
 const HOVER_CARD_GAP = 8;
 const HOVER_CARD_VIEWPORT_MARGIN = 16;
 const TEXT_SELECTION_ACTION_BAR_FALLBACK_WIDTH_PX = 296;
-const ARTICLE_H1_CLASSES = "mt-0 mb-4 text-lg leading-6 font-semibold";
-const ARTICLE_SECTION_HEADING_CLASSES = "mt-6 mb-2 text-base leading-5 font-semibold";
 
 interface DetailProps {
   block: LightBlock | IndexedBlock;
@@ -543,6 +545,16 @@ export function Detail({
     refreshFullBlock(block.slug, block);
   }, [block, refreshFullBlock]);
 
+  // A task box wrote the file: the card read anew carries the new body and
+  // its hash (SPEC_READING_MODE.md, Ч12.3). A write that found the file
+  // changed reads it again.
+  const handleBodyWritten = useCallback((written: IndexedBlock) => {
+    if (currentBlockSlugRef.current === written.slug) setFullBlock(written);
+  }, []);
+  const handleBodyStale = useCallback(() => {
+    refreshFullBlock(block.slug, block);
+  }, [block, refreshFullBlock]);
+
   useEffect(() => {
     const handleVaultRefreshed = () => {
       refreshFullBlock(block.slug, block);
@@ -701,6 +713,8 @@ export function Detail({
                 onCreateChannelAndTextSelectionCard={onCreateChannelAndTextSelectionCard}
                 onTextSelectionDelete={onTextSelectionDelete}
                 onLonePictureOwnSize={setLonePictureOwnSize}
+                onBodyWritten={handleBodyWritten}
+                onBodyStale={handleBodyStale}
               />
             </div>
             {isStackedLayout ? (
@@ -1840,6 +1854,8 @@ function BlockContent({
   onCreateChannelAndTextSelectionCard,
   onTextSelectionDelete,
   onLonePictureOwnSize,
+  onBodyWritten,
+  onBodyStale,
 }: {
   block: LightBlock | IndexedBlock;
   fullBlock: IndexedBlock | null;
@@ -1865,6 +1881,10 @@ function BlockContent({
   onTextSelectionDelete?: (payload: MineTextSelectionDragPayload) => void | Promise<void>;
   /** The lone picture corrected its record's size (Р6). */
   onLonePictureOwnSize: (own: LonePictureOwnSize) => void;
+  /** A task write changed the file: the card read anew (Ч12.3). */
+  onBodyWritten: (block: IndexedBlock) => void;
+  /** A task write found the file changed: read the body again. */
+  onBodyStale: () => void;
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const previewManifest = useMemo(
@@ -1954,6 +1974,8 @@ function BlockContent({
             onTextSelectionDrop={onTextSelectionDrop}
             onCreateChannelAndTextSelectionCard={onCreateChannelAndTextSelectionCard}
             onTextSelectionDelete={onTextSelectionDelete}
+            onBodyWritten={onBodyWritten}
+            onBodyStale={onBodyStale}
           />
         </div>
       );
@@ -1983,6 +2005,8 @@ function BlockContent({
               onTextSelectionDrop={onTextSelectionDrop}
               onCreateChannelAndTextSelectionCard={onCreateChannelAndTextSelectionCard}
               onTextSelectionDelete={onTextSelectionDelete}
+              onBodyWritten={onBodyWritten}
+              onBodyStale={onBodyStale}
             />
           </div>
         );
@@ -2169,6 +2193,8 @@ function BlockContent({
                   onTextSelectionDrop={onTextSelectionDrop}
                   onCreateChannelAndTextSelectionCard={onCreateChannelAndTextSelectionCard}
                   onTextSelectionDelete={onTextSelectionDelete}
+                  onBodyWritten={onBodyWritten}
+                  onBodyStale={onBodyStale}
                 />
               </div>
             )}
@@ -2456,7 +2482,7 @@ function MediaAssetActionFrame({
                 ellipsis covered them; its menu opens only on right click. */}
             {asset.media_kind !== "video" && (
               <div
-                className={detailMediaControlsClasses(controlsVisible)}
+                className={mediaControlsClasses(controlsVisible)}
                 data-detail-media-action-menu
                 onClick={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
@@ -2520,17 +2546,6 @@ function MediaAssetActionFrame({
 const DETAIL_MEDIA_ACTION_FRAME_CLASSES =
   "not-prose relative inline-flex max-h-[var(--detail-media-max-height)] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block";
 
-/** The media controls in the picture's top right corner: shown while the
- *  picture is hovered or focused, or while `visible` (its menu is open). */
-function detailMediaControlsClasses(visible: boolean): string {
-  return cn(
-    "absolute right-2 top-2 z-10 flex gap-1 transition-opacity duration-[160ms]",
-    visible
-      ? "opacity-100"
-      : "pointer-events-none opacity-0 group-hover/detail-media:pointer-events-auto group-hover/detail-media:opacity-100 group-focus-within/detail-media:pointer-events-auto group-focus-within/detail-media:opacity-100",
-  );
-}
-
 /** ⤢: opens the picture in the viewer over the window. */
 function ExpandImageButton({ onExpand }: { onExpand: (origin: HTMLElement) => void }) {
   return (
@@ -2573,7 +2588,7 @@ function ExpandableImageFrame({
     >
       {children}
       <div
-        className={detailMediaControlsClasses(false)}
+        className={mediaControlsClasses(false)}
         data-detail-media-action-menu
         onClick={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
@@ -3424,6 +3439,8 @@ function ArticleBody({
   onTextSelectionDrop,
   onCreateChannelAndTextSelectionCard,
   onTextSelectionDelete,
+  onBodyWritten,
+  onBodyStale,
 }: {
   /** An embed already shown above the body (a media card's lead video): its
    * first image in the body is not drawn twice. */
@@ -3450,6 +3467,10 @@ function ArticleBody({
     tag: string,
   ) => Promise<void>;
   onTextSelectionDelete?: (payload: MineTextSelectionDragPayload) => void | Promise<void>;
+  /** A task write changed the file: the card read anew (Ч12.3). */
+  onBodyWritten: (block: IndexedBlock) => void;
+  /** A task write found the file changed: the card reads its body again. */
+  onBodyStale: () => void;
 }) {
   const articleRef = useRef<HTMLDivElement | null>(null);
   const selectionFrameRef = useRef<number | null>(null);
@@ -3575,10 +3596,9 @@ function ArticleBody({
     };
   }, [hasTextSelectionActions, scheduleTextSelectionHandleUpdate]);
 
-  // Phase 18.H.2: rewrite Obsidian wikilinks into standard markdown
-  // before passing to react-markdown. The raw `.md` file stays in
-  // wikilink form for Obsidian; only the render pipeline sees the
-  // transformed markdown.
+  // Phase 18.H.2: wikilinks are rewritten into standard markdown before
+  // the pipeline reads the body (`ArticleMarkdown`); the lead video's image
+  // is found in the same rendered text.
   const processedBody = useMemo(() => preprocessWikilinks(body), [body]);
   // The lead video's own image in the body: the first one of its source, the
   // one `bodyHasMoreThanEmbed` sets aside and the player's Remove names.
@@ -3589,199 +3609,54 @@ function ArticleBody({
       : leadEmbedImageOffset(processedBody, previewManifest, omittedSource),
     [omittedSource, previewManifest, processedBody],
   );
+  const noteEmbeds = useNoteEmbedLookups(sourceSlug);
+  const tasks = useTaskToggles(sourceSlug, sourceBodyHash ?? null, {
+    onWritten: onBodyWritten,
+    onStale: onBodyStale,
+  });
 
   useEffect(() => {
     if (!scrollAnchor || !articleRef.current) return;
     const root = articleRef.current;
-    const frame = window.requestAnimationFrame(() => {
-      const element = findElementForBlockAnchor(root, scrollAnchor);
-      if (!element) return;
-      element.scrollIntoView?.({ block: "center", behavior: scrollBehavior() });
-      element.setAttribute("data-scroll-anchor-hit", "true");
-      window.setTimeout(() => {
-        element.removeAttribute("data-scroll-anchor-hit");
-      }, 1400);
+    let frame: number | null = null;
+    let current = true;
+    // The embeds' first answers move what stands under them, and WebKit
+    // keeps no scroll anchor: the jump waits for them (Ч11.4).
+    void noteEmbeds.settled().then(() => {
+      if (!current) return;
+      frame = window.requestAnimationFrame(() => {
+        const element = findElementForBlockAnchor(root, scrollAnchor);
+        if (!element) return;
+        element.scrollIntoView?.({ block: "center", behavior: scrollBehavior() });
+        element.setAttribute("data-scroll-anchor-hit", "true");
+        window.setTimeout(() => {
+          element.removeAttribute("data-scroll-anchor-hit");
+        }, 1400);
+      });
     });
-    return () => window.cancelAnimationFrame(frame);
-  }, [processedBody, scrollAnchor]);
+    return () => {
+      current = false;
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [noteEmbeds, processedBody, scrollAnchor]);
 
-  const components: Components = useMemo(
+  const media = useMemo<ArticleMediaState>(
     () => ({
-      p: ({ node, ...props }) => {
-        const mediaLayout = paragraphMediaLayout(node);
-        if (mediaLayout === "media-only") {
-          return (
-            <div
-              {...markdownBlockPositionProps(node)}
-              {...props}
-              className={cn("not-prose my-5 leading-none", props.className)}
-              data-article-media-stack=""
-            />
-          );
-        }
-        if (mediaLayout === "mixed-media") {
-          return (
-            <div
-              {...markdownBlockPositionProps(node)}
-              {...props}
-              className={cn("my-5 leading-5", props.className)}
-            />
-          );
-        }
-        return <p {...markdownBlockPositionProps(node)} {...props} />;
-      },
-      li: ({ node, ...props }) => (
-        <li {...markdownBlockPositionProps(node)} {...props} />
-      ),
-      blockquote: ({ node, ...props }) => (
-        <blockquote {...markdownBlockPositionProps(node)} {...props} />
-      ),
-      h1: ({ node, ...props }) => (
-        <h1
-          {...markdownBlockPositionProps(node)}
-          {...props}
-          className={cn(ARTICLE_H1_CLASSES, props.className)}
-        />
-      ),
-      h2: ({ node, ...props }) => (
-        <h2
-          {...markdownBlockPositionProps(node)}
-          {...props}
-          className={cn(ARTICLE_SECTION_HEADING_CLASSES, props.className)}
-        />
-      ),
-      h3: ({ node, ...props }) => (
-        <h3
-          {...markdownBlockPositionProps(node)}
-          {...props}
-          className={cn(ARTICLE_SECTION_HEADING_CLASSES, props.className)}
-        />
-      ),
-      h4: ({ node, ...props }) => (
-        <h4
-          {...markdownBlockPositionProps(node)}
-          {...props}
-          className={cn(ARTICLE_SECTION_HEADING_CLASSES, props.className)}
-        />
-      ),
-      h5: ({ node, ...props }) => (
-        <h5
-          {...markdownBlockPositionProps(node)}
-          {...props}
-          className={cn(ARTICLE_SECTION_HEADING_CLASSES, props.className)}
-        />
-      ),
-      h6: ({ node, ...props }) => (
-        <h6
-          {...markdownBlockPositionProps(node)}
-          {...props}
-          className={cn(ARTICLE_SECTION_HEADING_CLASSES, props.className)}
-        />
-      ),
-      img: ({ node, src, alt, ...props }) => {
-        const decodedSrc = decodeLocalMarkdownUrl(src ?? "");
-        const previewTile = findPreviewTileForSource(previewManifest, decodedSrc);
-        const resolvedSrc = previewTile?.sourcePath ?? decodedSrc;
-        const originalSrc = resolveImageSrc(resolvedSrc, vaultPath);
-        // Where this image stands among the body's `![`: Remove takes away
-        // this one image and no other of the same file (Г1.4).
-        const nodeStartOffset = (node as MarkdownPositionedNode | undefined)?.position?.start?.offset;
-        const occurrenceIndex = typeof nodeStartOffset === "number"
-          ? inlineMediaOccurrenceIndex(body, nodeStartOffset) ?? undefined
-          : undefined;
-        if (omittedImageOffset !== null && nodeStartOffset === omittedImageOffset) {
-          return null;
-        }
-        // Video/GIF (downloaded MP4) — render as inline autoplay video with controls.
-        // Autoplay must stay muted to satisfy browser/WebView media policies.
-        if (/\.(?:mp4|webm|m4v|mov)(?:\?|$)/i.test(decodedSrc)) {
-          const videoAsset = sourceSlug && isLocalMediaRef(resolvedSrc)
-            ? mediaAssetFromMediaRef(sourceSlug, resolvedSrc, "video", "body_embed", occurrenceIndex)
-            : null;
-          return (
-            <MediaAssetActionFrame
-              asset={videoAsset}
-              vaultPath={vaultPath}
-              tags={tags}
-              currentTag={currentTag}
-              canDrag={false}
-              onCreateMediaAssetCard={onCreateMediaAssetCard}
-              onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
-              onRenameMediaAsset={onRenameMediaAsset}
-              onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
-              onDeleteMediaAsset={onDeleteMediaAsset}
-              onOpenRelatedNote={onOpenRelatedNote}
-            >
-              <DetailVideo
-                key={originalSrc}
-                src={originalSrc}
-                recordedSize={detailMediaSize(previewTile?.width, previewTile?.height)}
-                controls
-                autoPlay
-                muted
-                loop
-              />
-            </MediaAssetActionFrame>
-          );
-        }
-        const previewSrc = previewTile?.previewPath
-          ? previewAssetUrl(thumbsRootPath, previewTile.previewPath)
-          : null;
-        const asset = sourceSlug && isExtractableLocalImage(resolvedSrc)
-          ? mediaAssetFromMediaRef(sourceSlug, resolvedSrc, "image", "body_embed", occurrenceIndex)
-          : null;
-        return (
-          <MediaAssetActionFrame
-            asset={asset}
-            vaultPath={vaultPath}
-            tags={tags}
-            currentTag={currentTag}
-            canDrag
-            imageSrc={previewSrc ?? originalSrc}
-            fullSizeImageSrc={originalSrc}
-            onCreateMediaAssetCard={onCreateMediaAssetCard}
-            onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
-            onRenameMediaAsset={onRenameMediaAsset}
-            onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
-            onDeleteMediaAsset={onDeleteMediaAsset}
-            onOpenImagePreview={onOpenImagePreview}
-            onOpenRelatedNote={onOpenRelatedNote}
-          >
-            <DetailImage
-              key={originalSrc}
-              src={originalSrc}
-              sourceWidth={previewTile?.width}
-              sourceHeight={previewTile?.height}
-              previewSrc={previewSrc}
-              previewSlug={sourceSlug}
-              alt={alt ?? ""}
-              className="rounded-0"
-              {...props}
-            />
-          </MediaAssetActionFrame>
-        );
-      },
-      a: ({ href, children, ...props }) => {
-        const wikilinkTarget = decodeWikilinkHref(href);
-        return (
-          <a
-            href={href}
-            target={wikilinkTarget === null ? "_blank" : undefined}
-            rel={wikilinkTarget === null ? "noopener noreferrer" : undefined}
-            {...props}
-            onClick={(event) => {
-              if (wikilinkTarget === null) return;
-              event.preventDefault();
-              if (!sourceSlug) return;
-              void resolveNoteLink(sourceSlug, wikilinkTarget)
-                .then((slug) => { if (slug) onOpenRelatedNote(slug); })
-                .catch((error) => { console.error("Failed to resolve note link:", error); });
-            }}
-          >
-            {children}
-          </a>
-        );
-      },
+      body,
+      vaultPath,
+      thumbsRootPath,
+      previewManifest,
+      sourceSlug,
+      tags,
+      currentTag,
+      omittedImageOffset,
+      onCreateMediaAssetCard,
+      onCreateChannelAndMediaAssetCard,
+      onRenameMediaAsset,
+      onRemoveMediaAssetFromCard,
+      onDeleteMediaAsset,
+      onOpenImagePreview,
+      onOpenRelatedNote,
     }),
     [
       body,
@@ -3803,35 +3678,166 @@ function ArticleBody({
   );
 
   return (
-    <div
-      ref={articleRef}
-      onMouseUp={scheduleTextSelectionHandleUpdate}
-      onKeyUp={scheduleTextSelectionHandleUpdate}
-      className="prose prose-sm max-w-none [&>:first-child]:mt-0 [&>:last-child]:mb-0 [&_li]:leading-5 [&_p]:leading-5"
-      data-article-body
-      data-content-font=""
-    >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        urlTransform={safeMarkdownUrl}
-        components={components}
+    <ArticleMediaContext.Provider value={media}>
+      <ArticleMarkdown
+        rootRef={articleRef}
+        onMouseUp={scheduleTextSelectionHandleUpdate}
+        onKeyUp={scheduleTextSelectionHandleUpdate}
+        data-article-body
+        data-content-font=""
+        body={body}
+        sourceSlug={sourceSlug}
+        vaultPath={vaultPath}
+        thumbsRootPath={thumbsRootPath}
+        noteEmbeds={noteEmbeds}
+        tasks={tasks}
+        image={ArticleBodyImage}
+        onOpenNote={onOpenRelatedNote}
       >
-        {processedBody}
-      </ReactMarkdown>
-      {selectionHandle && (
-        <TextSelectionActionBar
-          state={selectionHandle}
-          tags={tags}
-          currentTag={currentTag}
-          onCreateCard={onTextSelectionDrop}
-          onCreateChannelAndCard={onCreateChannelAndTextSelectionCard}
-          onDelete={onTextSelectionDelete ? handleTextSelectionDelete : undefined}
-          onInteractionStart={lockTextSelectionHandle}
-          onMenuOpenChange={(open) => { selectionMenuOpenRef.current = open; }}
-          onDismiss={dismissTextSelectionHandle}
+        {selectionHandle && (
+          <TextSelectionActionBar
+            state={selectionHandle}
+            tags={tags}
+            currentTag={currentTag}
+            onCreateCard={onTextSelectionDrop}
+            onCreateChannelAndCard={onCreateChannelAndTextSelectionCard}
+            onDelete={onTextSelectionDelete ? handleTextSelectionDelete : undefined}
+            onInteractionStart={lockTextSelectionHandle}
+            onMenuOpenChange={(open) => { selectionMenuOpenRef.current = open; }}
+            onDismiss={dismissTextSelectionHandle}
+          />
+        )}
+      </ArticleMarkdown>
+    </ArticleMediaContext.Provider>
+  );
+}
+
+/** What a picture or video of the body needs of its article: the body for
+ *  its place among the body's images, the card's media and their actions. */
+interface ArticleMediaState {
+  body: string;
+  vaultPath: string;
+  thumbsRootPath: string;
+  previewManifest: ReturnType<typeof normalizeDetailPreviewManifest>;
+  sourceSlug?: string;
+  tags: TagCount[];
+  currentTag?: string;
+  /** Where the lead video's image starts in the rendered body: not drawn. */
+  omittedImageOffset: number | null;
+  onCreateMediaAssetCard: (asset: MediaAssetRef, tag: string) => Promise<void>;
+  onCreateChannelAndMediaAssetCard: (asset: MediaAssetRef, tag: string) => Promise<void>;
+  onRenameMediaAsset: (asset: MediaAssetRef, newStem: string) => Promise<void>;
+  onRemoveMediaAssetFromCard: (asset: MediaAssetRef) => Promise<void>;
+  onDeleteMediaAsset: (asset: MediaAssetRef) => Promise<void>;
+  onOpenImagePreview: (preview: ImagePreviewRequest) => void;
+  onOpenRelatedNote: (slug: string) => void;
+}
+
+const ArticleMediaContext = createContext<ArticleMediaState | null>(null);
+
+/** A picture or a video of the body, with its media actions (Р5, Р6,
+ *  SPEC_MEDIA_ASSET_ACTIONS.md). One component for every article: what
+ *  changes comes from the context, so a new body does not remount it. */
+function ArticleBodyImage({ node, src, alt, ...props }: ComponentProps<"img"> & ExtraProps) {
+  const media = useContext(ArticleMediaContext);
+  if (!media) return null;
+  const {
+    body,
+    vaultPath,
+    thumbsRootPath,
+    previewManifest,
+    sourceSlug,
+    tags,
+    currentTag,
+    omittedImageOffset,
+    onCreateMediaAssetCard,
+    onCreateChannelAndMediaAssetCard,
+    onRenameMediaAsset,
+    onRemoveMediaAssetFromCard,
+    onDeleteMediaAsset,
+    onOpenImagePreview,
+    onOpenRelatedNote,
+  } = media;
+  const decodedSrc = decodeLocalMarkdownUrl(src ?? "");
+  const previewTile = findPreviewTileForSource(previewManifest, decodedSrc);
+  const resolvedSrc = previewTile?.sourcePath ?? decodedSrc;
+  const originalSrc = resolveImageSrc(resolvedSrc, vaultPath);
+  // Where this image stands among the body's `![`: Remove takes away
+  // this one image and no other of the same file (Г1.4).
+  const nodeStartOffset = node?.position?.start.offset;
+  const occurrenceIndex = typeof nodeStartOffset === "number"
+    ? inlineMediaOccurrenceIndex(body, nodeStartOffset) ?? undefined
+    : undefined;
+  if (omittedImageOffset !== null && nodeStartOffset === omittedImageOffset) {
+    return null;
+  }
+  // Video/GIF (downloaded MP4) — render as inline autoplay video with controls.
+  // Autoplay must stay muted to satisfy browser/WebView media policies.
+  if (/\.(?:mp4|webm|m4v|mov)(?:\?|$)/i.test(decodedSrc)) {
+    const videoAsset = sourceSlug && isLocalMediaRef(resolvedSrc)
+      ? mediaAssetFromMediaRef(sourceSlug, resolvedSrc, "video", "body_embed", occurrenceIndex)
+      : null;
+    return (
+      <MediaAssetActionFrame
+        asset={videoAsset}
+        vaultPath={vaultPath}
+        tags={tags}
+        currentTag={currentTag}
+        canDrag={false}
+        onCreateMediaAssetCard={onCreateMediaAssetCard}
+        onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
+        onRenameMediaAsset={onRenameMediaAsset}
+        onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+        onDeleteMediaAsset={onDeleteMediaAsset}
+        onOpenRelatedNote={onOpenRelatedNote}
+      >
+        <DetailVideo
+          key={originalSrc}
+          src={originalSrc}
+          recordedSize={detailMediaSize(previewTile?.width, previewTile?.height)}
+          controls
+          autoPlay
+          muted
+          loop
         />
-      )}
-    </div>
+      </MediaAssetActionFrame>
+    );
+  }
+  const previewSrc = previewTile?.previewPath
+    ? previewAssetUrl(thumbsRootPath, previewTile.previewPath)
+    : null;
+  const asset = sourceSlug && isExtractableLocalImage(resolvedSrc)
+    ? mediaAssetFromMediaRef(sourceSlug, resolvedSrc, "image", "body_embed", occurrenceIndex)
+    : null;
+  return (
+    <MediaAssetActionFrame
+      asset={asset}
+      vaultPath={vaultPath}
+      tags={tags}
+      currentTag={currentTag}
+      canDrag
+      imageSrc={previewSrc ?? originalSrc}
+      fullSizeImageSrc={originalSrc}
+      onCreateMediaAssetCard={onCreateMediaAssetCard}
+      onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
+      onRenameMediaAsset={onRenameMediaAsset}
+      onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+      onDeleteMediaAsset={onDeleteMediaAsset}
+      onOpenImagePreview={onOpenImagePreview}
+      onOpenRelatedNote={onOpenRelatedNote}
+    >
+      <DetailImage
+        key={originalSrc}
+        src={originalSrc}
+        sourceWidth={previewTile?.width}
+        sourceHeight={previewTile?.height}
+        previewSrc={previewSrc}
+        previewSlug={sourceSlug}
+        alt={alt ?? ""}
+        className="rounded-0"
+        {...props}
+      />
+    </MediaAssetActionFrame>
   );
 }
 
@@ -4550,60 +4556,4 @@ function shouldIgnoreDetailCommandK(event: KeyboardEvent): boolean {
   if (target.closest("[data-image-preview-overlay]")) return true;
   const dialog = target.closest("[role='dialog']");
   return !!dialog && !(dialog as HTMLElement).hasAttribute("data-detail-root");
-}
-
-type MarkdownPositionedNode = {
-  position?: {
-    start?: { offset?: number };
-    end?: { offset?: number };
-  };
-};
-
-type MarkdownElementNode = {
-  type?: string;
-  tagName?: string;
-  value?: string;
-  children?: MarkdownElementNode[];
-};
-
-function paragraphMediaLayout(node: unknown): "none" | "media-only" | "mixed-media" {
-  const element = node as MarkdownElementNode | undefined;
-  let hasMedia = false;
-  let hasNonWhitespaceContent = false;
-  for (const child of element?.children ?? []) {
-    const isMedia = child.type === "element" && (
-      child.tagName === "img" || child.tagName === "video"
-    );
-    if (isMedia) {
-      hasMedia = true;
-      continue;
-    }
-    if (child.type === "text" && !/\S/.test(child.value ?? "")) {
-      continue;
-    }
-    hasNonWhitespaceContent = true;
-  }
-  if (!hasMedia) return "none";
-  return hasNonWhitespaceContent ? "mixed-media" : "media-only";
-}
-
-function markdownBlockPositionProps(
-  node: unknown,
-): { "data-mine-md-start"?: string; "data-mine-md-end"?: string } {
-  const positioned = node as MarkdownPositionedNode | undefined;
-  const start = positioned?.position?.start?.offset;
-  const end = positioned?.position?.end?.offset;
-  if (
-    typeof start !== "number"
-    || typeof end !== "number"
-    || !Number.isFinite(start)
-    || !Number.isFinite(end)
-    || end <= start
-  ) {
-    return {};
-  }
-  return {
-    "data-mine-md-start": String(start),
-    "data-mine-md-end": String(end),
-  };
 }

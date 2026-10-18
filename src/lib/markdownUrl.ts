@@ -32,3 +32,27 @@ export function safeMarkdownUrl(url: string): string {
   const scheme = schemeMatch[1]?.toLowerCase() ?? "";
   return SAFE_MARKDOWN_SCHEMES.has(scheme) ? trimmed : "";
 }
+
+function isRemoteMarkdownUrl(src: string): boolean {
+  return src.startsWith("http://") || src.startsWith("https://");
+}
+
+/**
+ * Decode a local markdown URL back to the real filename on disk.
+ *
+ * Render-time markdown uses percent-encoding for a small set of characters
+ * (space, parens, bare `%`) so the parser does not truncate. The source
+ * vault and preview manifests keep the actual filenames, so any local path
+ * crossing the render boundary must be decoded before it is used as a file
+ * or preview-manifest lookup key.
+ */
+export function decodeLocalMarkdownUrl(src: string): string {
+  if (!src || isRemoteMarkdownUrl(src)) {
+    return src;
+  }
+  try {
+    return decodeURIComponent(src);
+  } catch {
+    return src;
+  }
+}

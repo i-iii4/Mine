@@ -100,7 +100,11 @@
 | class-variance-authority | Варианты компонентов (CVA) |
 | tw-animate-css | CSS-анимации для Tailwind v4 (Dialog, DropdownMenu, ContextMenu) |
 | @dnd-kit | Drag-and-drop: сортировка каналов, перетаскивание карточек на теги |
-| react-markdown + remark-gfm | Рендеринг markdown в Detail.tsx и popup расширения |
+| react-markdown + remark-gfm | Рендеринг markdown статьи (конвейер чтения, SPEC_READING_MODE.md) и popup расширения |
+| rehype-raw + rehype-sanitize | HTML заметок в статье после очистки по своей схеме (SPEC_READING_MODE.md, Ч4) |
+| remark-math + katex | Формулы статьи: `$$` разбирает remark-math, `$…$` своё расширение по правилу Obsidian, рисует KaTeX по требованию (Ч9) |
+| lowlight (highlight.js) | Подсветка блоков кода статьи по требованию, классы `hljs-*` (Ч6) |
+| mermaid | Диаграммы Mermaid в статье по требованию, dagre и `classic` (Ч7) |
 | @tailwindcss/typography | Стилизация prose-контента (статьи) |
 | Defuddle | Извлечение статей + Markdown-конвертация + YouTube-транскрипты (content script) |
 | src/lib/masonryLayout.ts | Кастомный virtualized masonry layout engine |
@@ -303,8 +307,10 @@ local-arena/
 │   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()), pageEvents.ts (события своей страницы), tabPage.ts (память вкладки), tabVisibility.ts (показ и пауза медиа), chromeHeight.ts (высота хрома окна), controlCharGuard.ts, floatingLayer.ts (ширина меню, зазор от плашки кнопки), deleteFailure.ts (уведомления о сбое удаления), actionFailures.ts (уведомления о сбоях действий вкладки), createElements.ts (очередь новых элементов из броска и ⌘V), systemActions.ts (ссылка в браузер, файл в Finder), tabBarFailure.ts (сбой полосы вкладок видимой вкладке), errorMessage.ts (слова ошибки), sidebarPlacement.ts (меню рядом с лентой, сжатое или поверх неё по ширине окна, пределы перетаскивания), topRowFit.ts (обрезает ли верхний ряд действия выделения), topRowPath.ts (место в верхнем ряду при открытой карточке в узком окне), detailLayout.ts (раскладка открытой карточки и рамка её медиа, один предел высоты) и др.
 │   ├── workers/                # fontMetrics.worker.ts (Canvas measureText), thumbWorker.ts
 │   ├── dev/                    # Dev-only Feed, Graph, ColdSpace and SidebarReorder acceptance routes; страницы сравнения на dev-сервере: /__buttons (кнопки shadcn), /__cloud-open (первое открытие пространства из облака), /__onboarding (онбординг по экранам), /__popups (модальные окна приложения по кнопкам)
-│   ├── test/                   # Vitest setup
-│   └── styles/                 # global.css (токены единственной палитры, SPEC_COLOR_RULES.md) и buttons.css (лицо кнопки и три стиля краёв: macOS, Retro, Linear)
+│   ├── components/reading/     # Элементы статьи (SPEC_READING_MODE.md, Ч13): ArticleMarkdown, CodeBlock, MermaidDiagram, MathView, Callout, Disclosure, NoteEmbed, TaskCheckbox, ArticleTable
+│   ├── lib/reading/            # Конвейер чтения без React и Tauri (правило ESLint): pipeline.ts, syntax.ts, remarkMark.ts, remarkObsidianInlineMath.ts, remarkObsidianCallouts.ts, remarkNoteEmbeds.ts, callouts.ts, tableLayout.ts, highlight.ts, math.ts, mermaid.ts, hast.ts
+│   ├── test/                   # Vitest setup, readingPipeline.ts (деревья конвейера чтения для тестов)
+│   └── styles/                 # global.css (токены единственной палитры, SPEC_COLOR_RULES.md), buttons.css (лицо кнопки и три стиля краёв: macOS, Retro, Linear) и article.css (стили статьи по классу mine-article, SPEC_READING_MODE.md)
 ├── scripts/
 │   ├── browser-audits.mjs      # Оркестратор browser gates: свой Vite, все аудиты, teardown
 │   ├── feed-scroll-audit.mjs   # Playwright Grid scroll/source-request acceptance
@@ -313,7 +319,8 @@ local-arena/
 │   ├── cold-space-browser-audit.mjs # First/settled/deep cold Grid acceptance
 │   ├── edge-states-audit.mjs   # Витрина краевых состояний: варианты, контексты, обрезка, невидимый текст
 │   ├── audit-vite.mjs          # Свой Vite браузерной проверки: свободный порт, кэш зависимостей во временной папке
-│   ├── selection-menu-audit.mjs, sidebar-action-audit.mjs, detail-image-geometry-audit.mjs, top-row-wrap-audit.mjs, narrow-window-audit.mjs # Самостоятельные браузерные проверки на audit-vite.mjs
+│   ├── selection-menu-audit.mjs, sidebar-action-audit.mjs, detail-image-geometry-audit.mjs, top-row-wrap-audit.mjs, narrow-window-audit.mjs, reading-mode-audit.mjs # Самостоятельные браузерные проверки на audit-vite.mjs
+│   ├── fixtures/reading-mode.md # Заметка проверки режима чтения: код, Mermaid, таблицы, выноски, формулы, HTML, сноски, вставки, задачи
 │   ├── x-thread-smoke.mjs      # Собранное расширение: цепочка автора X во временном Chromium, сеть перехвачена
 │   ├── fetch-ytdlp.mjs         # Загрузка распакованной сборки yt-dlp (onedir, сумма SHA-256) в ресурсы бандла
 │   ├── disposable-app-home.mjs # Свой HOME в папке прогона для скриптов, которые запускают помощника
@@ -486,6 +493,7 @@ bun run test:top-row           # Действия выделения во вто
 bun run test:narrow-window     # Узкое окно: меню рядом с лентой и поверх неё на ширинах 1200, 750, 749, 740, 739, 400, 390, низ панели у низа окна, закрытие, движение, переходы через порог (свой Vite)
 bun run test:detail-image-geometry # Рамка изображения Detail: подмена превью оригиналом, contain, resize; раскладка открытой карточки: содержимое по центру между меню и панелью, переход в мобильный вид, панель в нём не шире колонки чтения по центру, медиа в теле по центру, коробка видео равна рамке, своя прокрутка панели до последней карточки (свой Vite)
 bun run test:x-thread          # Сборка расширения и цепочка автора X во временном Chromium, сеть перехвачена
+bun run test:reading-mode      # Режим чтения статьи: фикстура scripts/fixtures/reading-mode.md в Detail, обе темы, 1600 и 900 в ширину, перенос, код, маркер, HTML, таблицы, Mermaid, выноски, KaTeX, сноски, вставки, флажки, без сетевых запросов (свой Vite)
 bun run test:browser           # Сам поднимает Vite и запускает все browser gates
 bun run test:native-shell      # Packaged macOS WKWebView + real Tauri invoke smoke
 bun run test:clipper-worker    # Собранное расширение/CSP/WASM и цепочка X (x-thread-smoke) в отдельном headless Chromium

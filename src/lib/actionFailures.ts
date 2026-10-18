@@ -20,7 +20,8 @@ export type ActionFailureKind =
   | "membership"
   | "create-collection"
   | "create-elements"
-  | "read-element";
+  | "read-element"
+  | "task-toggle";
 
 export interface ActionFailure {
   kind: ActionFailureKind;
@@ -36,6 +37,9 @@ export const NOTHING_CHANGED = "Nothing changed.";
 
 export const CREATE_COLLECTION_FAILED_TITLE = "Could not create the collection";
 export const READ_ELEMENT_FAILED_TITLE = "Could not read the element";
+/** The title of a task the reading view could not toggle (SPEC_READING_MODE.md,
+ *  Ч12.3). */
+export const TASK_TOGGLE_FAILED_TITLE = "Could not change the task";
 
 /** The title of a Connect or a Disconnect that changed nothing. */
 export function membershipFailureTitle(connected: boolean, count: number): string {

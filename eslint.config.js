@@ -103,4 +103,28 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // The reading pipeline is shared: the open card draws an article with it
+    // and a future editor would draw the same article (SPEC_READING_MODE.md,
+    // Ч13). It knows neither React, nor Tauri, nor the app's components; the
+    // elements that draw it live in src/components/reading. This block
+    // replaces the one above for these files, and forbids all it forbids.
+    files: ["src/lib/reading/**/*.ts"],
+    ignores: ["src/lib/reading/**/*.test.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            { name: "react", message: "src/lib/reading stays free of React; elements go in src/components/reading (SPEC_READING_MODE.md, Ч13)." },
+          ],
+          patterns: [
+            { group: ["react/*", "react-dom", "react-dom/*"], message: "src/lib/reading stays free of React (SPEC_READING_MODE.md, Ч13)." },
+            { group: ["@tauri-apps/*"], message: "src/lib/reading stays free of Tauri; the host asks the backend (SPEC_READING_MODE.md, Ч13)." },
+            { group: ["@/components", "@/components/*"], message: "src/lib/reading knows no component of the app (SPEC_READING_MODE.md, Ч13)." },
+          ],
+        },
+      ],
+    },
+  },
 );
