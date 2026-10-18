@@ -4088,6 +4088,21 @@
     },
     {
       "paths": [
+        "src/hooks/useHiddenEdges.ts",
+        "src/hooks/useHiddenEdges.test.tsx",
+        "src/components/FadeScrollRow.tsx",
+        "src/components/reading/ArticleTable.tsx"
+      ],
+      "requirement": "SPEC_SCROLL_EDGE_FADE.md### Полоса вкладок",
+      "tests": [
+        "src/hooks/useHiddenEdges.test.tsx",
+        "src/components/FadeScrollRow.test.tsx",
+        "src/components/reading/ArticleTable.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "src/lib/reading/highlight.ts",
         "src/lib/reading/highlight.test.ts",
         "src/components/reading/CodeBlock.tsx",

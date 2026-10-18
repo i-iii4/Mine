@@ -53,6 +53,7 @@ const vite = await startAuditVite([{
       import { DndContext } from '@dnd-kit/core';
       import { Detail } from '/src/components/Detail.tsx';
       import { TooltipProvider } from '/src/components/ui/tooltip.tsx';
+      import { stripFadeMaskStyle } from '/src/lib/edgeFade.ts';
       import '/src/styles/global.css';
       const params = new URLSearchParams(location.search);
       if (params.get('theme')) document.documentElement.setAttribute('data-theme', params.get('theme'));
@@ -62,7 +63,10 @@ const vite = await startAuditVite([{
       const embedded = { ...base, id: 2, slug: ${JSON.stringify(EMBED_SLUG)}, display_title: 'Пример заметки', fallback_label: 'Пример заметки', body: 'Текст примера заметки.', preview_text: 'Текст примера заметки.', body_hash: 'hash-embed' };
       const blocks = { [card.slug]: card, [embedded.slug]: embedded };
       const notes = { 'Пример заметки': embedded.slug, 'Проверка просмотрщика': card.slug };
-      window.__audit = { toggles: [], clipboard: [], logs: [] };
+      // The block of the wide table, the one whose header starts with "№".
+      const wideTableBlock = () => [...document.querySelectorAll('[data-article-table-scroll]')]
+        .find((wrapper) => wrapper.querySelector('tr')?.textContent.trim().startsWith('№'));
+      window.__audit = { toggles: [], clipboard: [], logs: [], stripFadeMaskStyle, wideTableBlock };
       let writes = 0;
       window.__TAURI_INTERNALS__ = {
         convertFileSrc: (path) => location.origin + '/media/' + encodeURIComponent(path.split('/').pop()),
@@ -108,6 +112,34 @@ const vite = await startAuditVite([{
 /** Within a pixel: Chromium lays out in fractions of one. */
 function near(actual, expected, message) {
   assert(Math.abs(actual - expected) <= 1, `${message}: ${actual} against ${expected}`);
+}
+
+/** The edges the wide table's block dissolves, its mask as Chromium
+ *  computes it, and the shared strip mask for its right and its left edge
+ *  alone (SPEC_SCROLL_EDGE_FADE.md, «Полоса вкладок»). */
+async function readWideTableFade(page) {
+  return page.evaluate(() => {
+    const block = window.__audit.wideTableBlock();
+    const maskOf = (element) => {
+      const style = getComputedStyle(element);
+      return style.maskImage && style.maskImage !== 'none' ? style.maskImage : style.webkitMaskImage;
+    };
+    const shared = (edges) => {
+      const probe = document.createElement('div');
+      Object.assign(probe.style, window.__audit.stripFadeMaskStyle(edges));
+      document.body.appendChild(probe);
+      const mask = maskOf(probe);
+      probe.remove();
+      return mask;
+    };
+    return {
+      left: block.dataset.fadeLeft ?? null,
+      right: block.dataset.fadeRight ?? null,
+      mask: maskOf(block),
+      rightMask: shared({ left: false, right: true }),
+      leftMask: shared({ left: true, right: false }),
+    };
+  });
 }
 
 /** Everything the rules say of the drawn article, read in the page. */
@@ -313,6 +345,23 @@ try {
       const row = long.cells.slice(2, 4);
       assert(row[1].height > row[0].height || Math.abs(row[0].height - row[1].height) < 1, `${label}: a row of the long table`);
       near(row[0].firstLineTop, row[1].firstLineTop, `${label}: a one-line cell stands on the first line of a taller one`);
+      // The wide table's block dissolves the edge that hides columns, with
+      // the strip's own mask: the right one at rest, the left one scrolled
+      // to the end.
+      const rest = await readWideTableFade(page);
+      assert.match(rest.rightMask, /linear-gradient/, `${label}: the shared right-edge mask`);
+      assert.deepEqual([rest.left, rest.right], [null, 'true'], `${label}: at rest the wide table dissolves its right edge only`);
+      assert.equal(rest.mask, rest.rightMask, `${label}: the wide table's block wears the shared right-edge mask`);
+      await page.evaluate(() => {
+        const block = window.__audit.wideTableBlock();
+        block.scrollLeft = block.scrollWidth;
+      });
+      await page.waitForFunction(() => {
+        const block = window.__audit.wideTableBlock();
+        return block.dataset.fadeLeft === 'true' && block.dataset.fadeRight === undefined;
+      }, null, { timeout: 5000 });
+      const scrolled = await readWideTableFade(page);
+      assert.equal(scrolled.mask, scrolled.leftMask, `${label}: scrolled to the end the block wears the shared left-edge mask`);
 
       // Ч6. Code blocks on --muted, highlighted, a long line scrolls inside
       // its block, the copy button hidden until the pointer comes.
@@ -401,7 +450,7 @@ try {
       const foreign = requests.filter((url) => !url.startsWith(vite.origin) && !url.startsWith('data:') && !url.startsWith('blob:'));
       assert.deepEqual(foreign, [], `${label}: no request outside the page's origin`);
       assert.deepEqual(errors, [], `${label}: no page errors`);
-      console.log(`PASS ${label}: no sideways scroll, code in a line, marker, HTML, tables, code blocks, Mermaid, callouts, KaTeX, footnotes, embeds and task boxes as the rules say; ${requests.length} requests, all local`);
+      console.log(`PASS ${label}: no sideways scroll, code in a line, marker, HTML, tables and their dissolving edges, code blocks, Mermaid, callouts, KaTeX, footnotes, embeds and task boxes as the rules say; ${requests.length} requests, all local`);
       await page.close();
     }
   }

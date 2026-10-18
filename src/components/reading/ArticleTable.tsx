@@ -1,5 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TableHTMLAttributes } from "react";
 import type { Element } from "hast";
+import { useHiddenEdges } from "@/hooks/useHiddenEdges";
+import { stripFadeMaskStyle } from "@/lib/edgeFade";
 import { hastTableColumns } from "@/lib/reading/hast";
 import {
   layoutTableColumns,
@@ -64,7 +66,10 @@ function pageMeasure(table: HTMLTableElement): (TableMeasure & { outerBorder: nu
  * fixed`, laid out again when the column or the article's font changes. It
  * stands at the column's left edge, no wider than its natural width, and a
  * table wider than its budget scrolls sideways inside its own block, the
- * header row with the body; the page never does. The budget is the width of
+ * header row with the body; the page never does. The block dissolves the
+ * edges that hide columns past them, as the tab bar's strip does
+ * (SPEC_SCROLL_EDGE_FADE.md, «Полоса вкладок»): the mask lies on the block,
+ * so the table's lines dissolve with its text. The budget is the width of
  * the block it stands in: the column, or the content of a list, quote,
  * callout or footnote (Ч5.4; a wider budget waits for the user's decision,
  * В1). A table from HTML with merged cells keeps the browser's own layout in
@@ -79,6 +84,7 @@ export function ArticleTable({
   const tableRef = useRef<HTMLTableElement>(null);
   const columns = useMemo<TableColumnText[] | null>(() => (node ? hastTableColumns(node) : null), [node]);
   const [layout, setLayout] = useState<TableLayout | null>(null);
+  const { edges, sync } = useHiddenEdges(wrapperRef);
 
   useLayoutEffect(() => {
     const wrapper = wrapperRef.current;
@@ -110,7 +116,15 @@ export function ArticleTable({
   }, [columns]);
 
   return (
-    <div ref={wrapperRef} className="my-5 max-w-full overflow-x-auto" data-article-table-scroll="">
+    <div
+      ref={wrapperRef}
+      className="my-5 max-w-full overflow-x-auto"
+      style={stripFadeMaskStyle(edges)}
+      onScroll={sync}
+      data-article-table-scroll=""
+      data-fade-left={edges.left ? "true" : undefined}
+      data-fade-right={edges.right ? "true" : undefined}
+    >
       <table
         {...props}
         ref={tableRef}
