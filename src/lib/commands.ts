@@ -55,6 +55,11 @@ import type {
   TextSelectionExtractError,
   TaskToggleError,
   ToggleTaskItemParams,
+  NoteBodyState,
+  NoteEditError,
+  NoteSaveError,
+  SaveNoteBodyParams,
+  SavedNoteBody,
   OrphanMediaList,
   OrphanMediaBatchRequest,
   PromoteOrphanResult,
@@ -407,6 +412,63 @@ export const toggleTaskItem = async (params: ToggleTaskItemParams) => {
     throw normalizeTaskToggleError(error);
   }
 };
+
+/** A rejection of the editing commands as their typed error: the backend
+ *  sends one tagged by `kind`; anything else is `internal`. */
+function normalizeKindError<Typed extends { kind: string }>(error: unknown): Typed | { kind: "internal"; message: string } {
+  if (error && typeof error === "object" && "kind" in error) {
+    // The backend rejects these commands only with their error type.
+    return error as Typed;
+  }
+  if (typeof error === "string") return { kind: "internal", message: error };
+  if (error instanceof Error) return { kind: "internal", message: error.message };
+  return { kind: "internal", message: String(error) };
+}
+
+/** Begin editing a note in this tab (SPEC_EDITING.md, Л2.8): the card with
+ *  its body and `body_hash` from disk, and the tab's session opens. Rejects
+ *  with a `NoteEditError`. */
+export const beginNoteEdit = async (slug: string) => {
+  try {
+    return await tauriInvoke<IndexedBlock>("begin_note_edit", { slug });
+  } catch (error) {
+    throw normalizeKindError<NoteEditError>(error);
+  }
+};
+
+/** The body of a note on disk and its hash (Л4.1). Rejects with a
+ *  `NoteEditError`. */
+export const noteBodyState = async (slug: string) => {
+  try {
+    return await tauriInvoke<NoteBodyState>("note_body_state", { slug });
+  } catch (error) {
+    throw normalizeKindError<NoteEditError>(error);
+  }
+};
+
+/** Write the body of the note being edited over its base (Л3.3). Rejects
+ *  with a `NoteSaveError`. */
+export const saveNoteBody = async (params: SaveNoteBodyParams) => {
+  try {
+    return await tauriInvoke<SavedNoteBody>("save_note_body", { params });
+  } catch (error) {
+    throw normalizeKindError<NoteSaveError>(error);
+  }
+};
+
+/** Whether this tab's session of `slug` holds edits the file has not
+ *  (Л3.9). */
+export const reportNoteEdits = (slug: string, unsaved: boolean) =>
+  tauriInvoke<void>("report_note_edits", { slug, unsaved });
+
+/** This tab stopped editing `slug` (Л3.9). */
+export const endNoteEdit = (slug: string) =>
+  tauriInvoke<void>("end_note_edit", { slug });
+
+/** This page wrote its unsaved edits for the flush `request_id`: the answer
+ *  `edits-flushed` (Л3.9). */
+export const reportEditsFlushed = (request_id: number) =>
+  tauriInvoke<void>("report_edits_flushed", { request_id });
 
 function normalizeRenameBlockError(error: unknown): RenameBlockError {
   if (error && typeof error === "object" && "kind" in error) {

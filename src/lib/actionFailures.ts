@@ -21,7 +21,9 @@ export type ActionFailureKind =
   | "create-collection"
   | "create-elements"
   | "read-element"
-  | "task-toggle";
+  | "task-toggle"
+  | "note-edit"
+  | "note-save";
 
 export interface ActionFailure {
   kind: ActionFailureKind;
@@ -40,6 +42,10 @@ export const READ_ELEMENT_FAILED_TITLE = "Could not read the element";
 /** The title of a task the reading view could not toggle (SPEC_READING_MODE.md,
  *  Ч12.3). */
 export const TASK_TOGGLE_FAILED_TITLE = "Could not change the task";
+/** The title of a note the editor could not open (SPEC_EDITING.md, Л2.8). */
+export const NOTE_EDIT_FAILED_TITLE = "Could not edit the note";
+/** The title of a write of the editor that failed (SPEC_EDITING.md, Л3.8). */
+export const NOTE_SAVE_FAILED_TITLE = "Could not save the note";
 
 /** The title of a Connect or a Disconnect that changed nothing. */
 export function membershipFailureTitle(connected: boolean, count: number): string {

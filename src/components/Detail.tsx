@@ -2,6 +2,8 @@ import { scrollBehavior } from "@/lib/motion";
 import { commandById } from "@/lib/commandRegistry";
 import {
   createContext,
+  lazy,
+  Suspense,
   useCallback,
   useContext,
   useEffect,
@@ -90,7 +92,7 @@ import type {
   MediaAssetRef,
   TagCount,
 } from "@/types";
-import { preprocessWikilinks, inlineMediaOccurrenceIndex, markdownSourceByteOffset, firstImageOffset } from "@/lib/markdownWikilinks";
+import { preprocessWikilinks, inlineMediaOccurrenceIndex, markdownSourceByteOffset, markdownSourceOffset, firstImageOffset } from "@/lib/markdownWikilinks";
 import { decodeLocalMarkdownUrl } from "@/lib/markdownWikilinks";
 import {
   thumbnailUrl,
@@ -164,6 +166,7 @@ import { ArticleMarkdown } from "./reading/ArticleMarkdown";
 import { mediaControlsClasses } from "./reading/mediaControls";
 import { useNoteEmbedLookups } from "./reading/NoteEmbed";
 import { useTaskToggles } from "./reading/TaskCheckbox";
+import { NoteEditingSwitch } from "./editing/noteEditingSwitch";
 import {
   COLLECTION_PICKER_CONTENT_CLASS,
   CollectionPicker,
@@ -3419,6 +3422,13 @@ function MediaAssetReferenceCards({
 
 // ─── Markdown renderer for article body ─────────────────────────────────────
 
+/** The editor, its own part of the bundle, loaded when it is first shown
+ *  (SPEC_EDITING.md, Л0.6). */
+const NoteEditor = lazy(async () => {
+  const module = await import("./editing/NoteEditor");
+  return { default: module.NoteEditor };
+});
+
 function ArticleBody({
   omittedEmbed = null,
   body,
@@ -3688,37 +3698,62 @@ function ArticleBody({
     ],
   );
 
+  const article = (
+    <ArticleMarkdown
+      rootRef={articleRef}
+      onMouseUp={scheduleTextSelectionHandleUpdate}
+      onKeyUp={scheduleTextSelectionHandleUpdate}
+      data-article-body
+      data-content-font=""
+      body={body}
+      sourceSlug={sourceSlug}
+      vaultPath={vaultPath}
+      thumbsRootPath={thumbsRootPath}
+      noteEmbeds={noteEmbeds}
+      tasks={tasks}
+      image={ArticleBodyImage}
+      onOpenNote={onOpenRelatedNote}
+    >
+      {selectionHandle && (
+        <TextSelectionActionBar
+          state={selectionHandle}
+          tags={tags}
+          currentTag={currentTag}
+          onCreateCard={onTextSelectionDrop}
+          onCreateChannelAndCard={onCreateChannelAndTextSelectionCard}
+          onDelete={onTextSelectionDelete ? handleTextSelectionDelete : undefined}
+          onInteractionStart={lockTextSelectionHandle}
+          onMenuOpenChange={(open) => { selectionMenuOpenRef.current = open; }}
+          onDismiss={dismissTextSelectionHandle}
+        />
+      )}
+    </ArticleMarkdown>
+  );
+  // The editor takes the article's place once the switch is on and the card's
+  // whole body has come (SPEC_EDITING.md, Л1, Л2.1); until it opens, and when
+  // the note cannot be edited, the article stays.
+  const editing = useContext(NoteEditingSwitch);
   return (
     <ArticleMediaContext.Provider value={media}>
-      <ArticleMarkdown
-        rootRef={articleRef}
-        onMouseUp={scheduleTextSelectionHandleUpdate}
-        onKeyUp={scheduleTextSelectionHandleUpdate}
-        data-article-body
-        data-content-font=""
-        body={body}
-        sourceSlug={sourceSlug}
-        vaultPath={vaultPath}
-        thumbsRootPath={thumbsRootPath}
-        noteEmbeds={noteEmbeds}
-        tasks={tasks}
-        image={ArticleBodyImage}
-        onOpenNote={onOpenRelatedNote}
-      >
-        {selectionHandle && (
-          <TextSelectionActionBar
-            state={selectionHandle}
-            tags={tags}
-            currentTag={currentTag}
-            onCreateCard={onTextSelectionDrop}
-            onCreateChannelAndCard={onCreateChannelAndTextSelectionCard}
-            onDelete={onTextSelectionDelete ? handleTextSelectionDelete : undefined}
-            onInteractionStart={lockTextSelectionHandle}
-            onMenuOpenChange={(open) => { selectionMenuOpenRef.current = open; }}
-            onDismiss={dismissTextSelectionHandle}
+      {editing && sourceSlug && sourceBodyHash ? (
+        <Suspense fallback={article}>
+          <NoteEditor
+            key={sourceSlug}
+            slug={sourceSlug}
+            body={body}
+            bodyHash={sourceBodyHash}
+            fileName={`${sourceSlug.split("/").pop() ?? sourceSlug}.md`}
+            vaultPath={vaultPath}
+            thumbsRootPath={thumbsRootPath}
+            noteEmbeds={noteEmbeds}
+            image={ArticleBodyImage}
+            onOpenNote={onOpenRelatedNote}
+            onSaved={onBodyWritten}
+            omittedEmbed={omittedImageOffset === null ? null : markdownSourceOffset(body, omittedImageOffset)}
+            fallback={article}
           />
-        )}
-      </ArticleMarkdown>
+        </Suspense>
+      ) : article}
     </ArticleMediaContext.Provider>
   );
 }

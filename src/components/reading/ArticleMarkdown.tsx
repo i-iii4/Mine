@@ -45,7 +45,7 @@ import { DisclosureRoot, DisclosureSummary } from "./Disclosure";
 import { MathView } from "./MathView";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { NoteEmbed, type NoteEmbedLookups } from "./NoteEmbed";
-import { InertCheckbox, TaskCheckbox, useTaskState, type TaskToggles } from "./TaskCheckbox";
+import { InertCheckbox, TaskCheckbox, useTaskState, type TaskBoxes } from "./TaskCheckbox";
 
 /** The log line of a wikilink whose note could not be looked up. */
 export const NOTE_LINK_LOOKUP_FAILED_TITLE = "Could not resolve the note link";
@@ -68,7 +68,7 @@ interface ArticleState {
   vaultPath: string;
   thumbsRootPath: string | undefined;
   noteEmbeds: NoteEmbedLookups;
-  tasks: TaskToggles | null;
+  tasks: TaskBoxes | null;
   Image: ComponentType<ComponentProps<"img"> & ExtraProps>;
   onOpenNote: (slug: string) => void;
 }
@@ -197,7 +197,7 @@ function TaskItem({
   labelId,
   children,
   ...props
-}: ElementProps<"li"> & { tasks: TaskToggles | null; itemStart: number | null; inBody: boolean; labelId: string }) {
+}: ElementProps<"li"> & { tasks: TaskBoxes | null; itemStart: number | null; inBody: boolean; labelId: string }) {
   const { checked, pressable } = useTaskState(tasks, itemStart, inBody);
   const parts = Children.toArray(children);
   return (
@@ -397,7 +397,7 @@ export interface ArticleMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement
   thumbsRootPath?: string;
   noteEmbeds: NoteEmbedLookups;
   /** The task writes of the card; `null` where boxes cannot be pressed. */
-  tasks: TaskToggles | null;
+  tasks: TaskBoxes | null;
   /** The host's picture and video of the body (media actions, Р5, Р6). */
   image: ComponentType<ComponentProps<"img"> & ExtraProps>;
   /** Opens a note a wikilink resolved to, or an embed's note with the place

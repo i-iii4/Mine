@@ -127,4 +127,29 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // The editor's modules keep the reading pipeline's boundary
+    // (SPEC_EDITING.md, Л0.5): syntax, presentation, line endings, the write
+    // queue and the reload difference know neither React, nor Tauri, nor the
+    // app's components; the editor's elements live in src/components/editing.
+    // This block replaces the tab pages' one for these files, and forbids
+    // all it forbids.
+    files: ["src/lib/editing/**/*.ts"],
+    ignores: ["src/lib/editing/**/*.test.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            { name: "react", message: "src/lib/editing stays free of React; elements go in src/components/editing (SPEC_EDITING.md, Л0.5)." },
+          ],
+          patterns: [
+            { group: ["react/*", "react-dom", "react-dom/*"], message: "src/lib/editing stays free of React (SPEC_EDITING.md, Л0.5)." },
+            { group: ["@tauri-apps/*"], message: "src/lib/editing stays free of Tauri; the host asks the backend (SPEC_EDITING.md, Л0.5)." },
+            { group: ["@/components", "@/components/*"], message: "src/lib/editing knows no component of the app (SPEC_EDITING.md, Л0.5)." },
+          ],
+        },
+      ],
+    },
+  },
 );

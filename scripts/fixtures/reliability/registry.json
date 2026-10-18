@@ -4205,6 +4205,130 @@
         "scripts/reading-mode-audit.mjs"
       ],
       "command": "test:reading-mode"
+    },
+    {
+      "paths": [
+        "src-tauri/src/storage/note_write.rs",
+        "src-tauri/src/storage/note_edit.rs",
+        "src-tauri/src/commands/note_edit.rs"
+      ],
+      "requirement": "SPEC_EDITING.md### Л3. Сохранение",
+      "tests": [
+        "src-tauri/src/storage/note_write.rs",
+        "src-tauri/src/storage/note_edit.rs",
+        "src-tauri/src/commands/note_edit.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src-tauri/src/commands/edit_sessions.rs",
+        "src-tauri/src/watcher/watch.rs",
+        "src-tauri/src/shutdown.rs"
+      ],
+      "requirement": "SPEC_EDITING.md### Л4. Внешние изменения, конфликты, отмена",
+      "tests": [
+        "src-tauri/src/commands/edit_sessions.rs",
+        "src-tauri/src/watcher/watch.rs",
+        "src-tauri/src/shutdown.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/lib/editing/lineEndings.ts",
+        "src/lib/editing/lineEndings.test.ts",
+        "src/lib/editing/syntax.ts",
+        "src/lib/editing/syntax.test.ts",
+        "src/lib/editing/saveQueue.ts",
+        "src/lib/editing/saveQueue.test.ts",
+        "src/lib/editing/reloadDiff.ts",
+        "src/lib/editing/reloadDiff.test.ts",
+        "src/lib/editing/boundary.lint.test.ts"
+      ],
+      "requirement": "SPEC_EDITING.md### Л0. Движок, документ и граница",
+      "tests": [
+        "src/lib/editing/lineEndings.test.ts",
+        "src/lib/editing/syntax.test.ts",
+        "src/lib/editing/saveQueue.test.ts",
+        "src/lib/editing/reloadDiff.test.ts",
+        "src/lib/editing/boundary.lint.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/editing/reveal.ts",
+        "src/lib/editing/reveal.test.ts",
+        "src/lib/editing/presentation.ts",
+        "src/lib/editing/presentation.test.ts",
+        "src/lib/editing/livePreview.ts",
+        "src/lib/editing/livePreview.test.ts",
+        "src/test/codemirror.ts"
+      ],
+      "requirement": "SPEC_EDITING.md### Л5. Живой просмотр: декорации, раскрытие, жизненный цикл",
+      "tests": [
+        "src/lib/editing/reveal.test.ts",
+        "src/lib/editing/presentation.test.ts",
+        "src/lib/editing/livePreview.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/editing/lists.ts",
+        "src/lib/editing/lists.test.ts"
+      ],
+      "requirement": "SPEC_EDITING.md### Л7. Списки и задачи",
+      "tests": [
+        "src/lib/editing/lists.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/editing/blocks.ts",
+        "src/lib/editing/blocks.test.ts",
+        "src/components/editing/EditorWidgets.tsx",
+        "src/components/editing/EditorWidgets.test.tsx",
+        "src/test/editingFixture.ts",
+        "src/styles/editor.css",
+        "src/styles/editor.test.ts"
+      ],
+      "requirement": "SPEC_EDITING.md### Л8. Виджеты блоков",
+      "tests": [
+        "src/lib/editing/blocks.test.ts",
+        "src/components/editing/EditorWidgets.test.tsx",
+        "src/styles/editor.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/editing/NoteEditor.tsx",
+        "src/components/editing/NoteEditor.test.tsx",
+        "src/components/editing/noteEditMessages.ts",
+        "src/components/editing/noteEditingSwitch.ts",
+        "src/dev/EditingPage.tsx",
+        "src/dev/EditingPage.test.tsx"
+      ],
+      "requirement": "SPEC_EDITING.md### Л3. Сохранение",
+      "tests": [
+        "src/components/editing/NoteEditor.test.tsx",
+        "src/dev/EditingPage.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/reading/intents.ts",
+        "src/lib/reading/intents.test.ts"
+      ],
+      "requirement": "SPEC_EDITING.md### Л11. Работа с открытой карточкой",
+      "tests": [
+        "src/lib/reading/intents.test.ts"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

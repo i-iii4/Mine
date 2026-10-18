@@ -1,0 +1,139 @@
+/* The editor of an open card's note (SPEC_EDITING.md, Л15). Its content
+   carries the article's root class, `mine-article`, so `article.css` and
+   Tailwind Typography style its text, code, marks, links and the elements
+   of its widgets as in the reading mode. Here only what lines need to look
+   like the blocks they stand for: every colour is a token, every size the
+   article's own or Typography's for that element. */
+
+/* CodeMirror keeps the caret beside a hidden range with an empty `img`;
+   Typography's margins of pictures must not reach it. */
+.mine-note-editor .cm-widgetBuffer {
+  margin: 0;
+}
+
+/* A block widget is as wide as the column: its own wide content (a long
+   line of code, a wide table) scrolls inside it (Ч5.3, Ч6.2). */
+.mine-note-editor .cm-md-block {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Widgets are drawn as the reading mode draws them: the text of the lines
+   keeps its spaces and breaks (`pre-wrap`), the elements of an article do
+   not, or the line breaks between a table's rows would show. */
+.mine-note-editor :is(.cm-md-block, .cm-md-inline-media, .cm-md-inline-math) {
+  white-space: normal;
+  word-break: normal;
+}
+
+/* Л15: muted syntax and special signs. */
+.mine-note-editor .cm-md-syntax {
+  color: var(--muted-foreground);
+}
+
+/* Л6: a wikilink to a note that is not there is dim. */
+.mine-note-editor .cm-md-link-missing {
+  color: var(--muted-foreground);
+}
+
+/* Quotes and lists are wrappers around their lines: the reading mode's
+   blockquote, ul and ol with their padding and border, without the
+   vertical margins, which lines must not have (CodeMirror measures lines
+   by their boxes). */
+.mine-note-editor .cm-content :is(blockquote, ul, ol) {
+  margin-block: 0;
+}
+
+/* Л7.3: a list item's first line is the list item: its marker is drawn as
+   the reading mode draws it, outside the text, so wrapped lines stand
+   under the text. The padding is Typography's for a list item at
+   `prose-sm`. */
+.mine-note-editor .cm-content :is(ul, ol) > :is(.cm-line, .cm-md-block) {
+  padding-inline-start: 0.4285714em;
+}
+
+.mine-note-editor .cm-line.cm-md-li {
+  display: list-item;
+}
+
+.mine-note-editor ul > .cm-line.cm-md-li::marker {
+  color: var(--tw-prose-bullets);
+}
+
+.mine-note-editor ol > .cm-line.cm-md-li::marker {
+  color: var(--tw-prose-counters);
+  font-weight: 400;
+}
+
+/* A marker shown as source takes the drawn marker's place. */
+.mine-note-editor .cm-line.cm-md-li-source {
+  list-style: none;
+}
+
+/* Ч12.1, Л7.4: a task's box stands where the marker would, in the list's
+   box and gap; a done task's text is secondary and struck through. */
+.mine-note-editor .cm-line[data-task-item] {
+  list-style: none;
+  position: relative;
+  padding-inline-start: 0;
+}
+
+.mine-note-editor .cm-line[data-task-item] > .cm-md-inline-task {
+  position: absolute;
+  inset-inline-start: calc(-1 * (var(--spacing) * 4 + var(--spacing-plate)));
+  /* Centred on the first line: (20 − 16) / 2. */
+  top: calc(var(--spacing) * 0.5);
+  line-height: 0;
+}
+
+.mine-note-editor .cm-md-task-done {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
+
+/* Л6, Л15: code, a diagram and a formula shown as source stand on the code
+   block's zone, in its font and size, with its padding and corners (Ч6.1). */
+.mine-note-editor .cm-line.cm-md-source {
+  background-color: var(--muted);
+  font-family: var(--article-code-font);
+  font-size: var(--text-sm);
+  line-height: calc(var(--spacing) * 5);
+  padding-inline: calc(var(--spacing) * 4);
+}
+
+.mine-note-editor .cm-line.cm-md-source-first {
+  padding-top: calc(var(--spacing) * 4);
+  border-start-start-radius: var(--radius-card);
+  border-start-end-radius: var(--radius-card);
+}
+
+.mine-note-editor .cm-line.cm-md-source-last {
+  padding-bottom: calc(var(--spacing) * 4);
+  border-end-start-radius: var(--radius-card);
+  border-end-end-radius: var(--radius-card);
+}
+
+/* Л6: a rule as the reading mode draws it, in the middle of its line. It
+   stays an inline box the width of the line: CodeMirror's caret buffers on
+   both sides of a widget would otherwise make lines of their own. */
+.mine-note-editor .cm-md-rule {
+  display: inline-flex;
+  width: 100%;
+  vertical-align: top;
+  align-items: center;
+  height: calc(var(--spacing) * 5);
+}
+
+.mine-note-editor .cm-md-rule > hr {
+  flex: 1;
+  margin: 0;
+}
+
+/* A picture or a note embed among words takes a line of its own, as in the
+   reading mode's paragraph of media and text (Р5, Ч11.3): an inline box the
+   width of the line, for the same reason as the rule. */
+.mine-note-editor .cm-md-inline-media {
+  display: inline-block;
+  width: 100%;
+  vertical-align: top;
+}

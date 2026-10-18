@@ -66,6 +66,19 @@ export interface TaskToggleHost {
   onStale(): void;
 }
 
+/** What an article's task boxes are pressed through: the open card's writes
+ *  (`TaskToggles`) or, in the editor, edits of its document (SPEC_EDITING.md,
+ *  Л7.4). */
+export interface TaskBoxes {
+  /** Whether a box may be pressed. */
+  readonly active: boolean;
+  /** The box at `itemStart` as the reader sees it. */
+  visible(itemStart: number | null, inBody: boolean): boolean;
+  subscribe(listener: () => void): () => void;
+  /** The reader pressed the box at `itemStart`, which showed `seen`. */
+  toggle(itemStart: number, seen: boolean): void;
+}
+
 /**
  * The task writes of one open card (SPEC_READING_MODE.md, Ч12.2, Ч12.4). A
  * click changes the box at once and queues one write; writes of one note go
@@ -76,7 +89,7 @@ export interface TaskToggleHost {
  * in the tab's notice and, when the file is not the reader's, has the card
  * read it again; the next success takes the notice away.
  */
-export class TaskToggles {
+export class TaskToggles implements TaskBoxes {
   private readonly overrides = new Map<number, boolean>();
   private readonly listeners = new Set<() => void>();
   private queue: TaskWrite[] = [];
@@ -186,7 +199,7 @@ export function useTaskToggles(
 /** A task's box as the reader sees it, and whether it may be pressed now:
  *  the card's whole body is shown and the task's place in it is known. */
 export function useTaskState(
-  toggles: TaskToggles | null,
+  toggles: TaskBoxes | null,
   itemStart: number | null,
   inBody: boolean,
 ): { checked: boolean; pressable: boolean } {

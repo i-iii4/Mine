@@ -114,6 +114,8 @@ const cloudOpenRoute = import.meta.env.DEV && window.location.pathname === "/__c
 const onboardingRoute = import.meta.env.DEV && window.location.pathname === "/__onboarding";
 // Every modal window of the app open at once, one frame each.
 const popupsRoute = import.meta.env.DEV && window.location.pathname === "/__popups";
+// The open card in the editor over a made-up backend (SPEC_EDITING.md, Л17).
+const editingRoute = import.meta.env.DEV && window.location.pathname === "/__editing";
 const nativeShellSmokeRoute = new URLSearchParams(window.location.search)
   .has("mine-native-shell-smoke");
 const auditRoute = feedScrollAuditRoute
@@ -263,6 +265,14 @@ function Root() {
     );
   }
 
+  if (editingRoute) {
+    return (
+      <React.Suspense fallback={null}>
+        <EditingPage />
+      </React.Suspense>
+    );
+  }
+
   if (auditRoute) {
     return AuditRoute ? <AuditRoute /> : null;
   }
@@ -313,6 +323,11 @@ const OnboardingPage = React.lazy(async () => {
 const PopupsPage = React.lazy(async () => {
   const mod = await import("./dev/PopupsPage");
   return { default: mod.PopupsPage };
+});
+
+const EditingPage = React.lazy(async () => {
+  const mod = await import("./dev/EditingPage");
+  return { default: mod.EditingPage };
 });
 
 function NativeShellSmokeRoute() {
