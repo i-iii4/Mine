@@ -85,6 +85,7 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("set_shortcut_capture_active", Effect::Reads),
     ("extract_text_selection", Effect::ChangesSources),
     ("delete_text_selection", Effect::ChangesSources),
+    ("toggle_task_item", Effect::ChangesSources),
     ("rename_block_file", Effect::ChangesSources),
     ("check_block_rename", Effect::Reads),
     ("prepare_delete_block", Effect::Reads),

@@ -908,6 +908,42 @@ export type TabVisibility = { visible: boolean }
  */
 export type TagCount = { tag: string; count: number }
 
+/**
+ * Why a task was not toggled (Ч12.3). Nothing was written in any case.
+ */
+export type TaskToggleError =
+/**
+ * The tab shows no space.
+ */
+{ kind: "no_vault" } |
+/**
+ * The body is not the one the reader saw: the note changed after it
+ * was read.
+ */
+{ kind: "stale_body"; source_slug: string } |
+/**
+ * The note changed between Mine's read and the publication of the new
+ * version; the other version stays.
+ */
+{ kind: "changed"; source_slug: string } |
+/**
+ * No task in the state the reader saw starts at `item_start`.
+ */
+{ kind: "state_changed"; source_slug: string; item_start: number; reason: string } |
+/**
+ * The note's contents are in iCloud: Mine asked iCloud to download them
+ * and did not wait.
+ */
+{ kind: "in_cloud"; file_name: string } |
+/**
+ * Mine may not write the note or its folder.
+ */
+{ kind: "read_only"; file_name: string } |
+/**
+ * The note is not on disk.
+ */
+{ kind: "source_not_found"; source_slug: string } | { kind: "internal"; message: string }
+
 export type TaxonomySnapshot = { generation: ProjectionRevision; tags: TagCount[]; channels: ChannelDto[]; total_blocks: number;
 /**
  * Which collections each card is in, from the same projection revision
@@ -923,6 +959,28 @@ export type TextSelectionExtractError = { kind: "no_vault" } | { kind: "source_n
 { kind: "collection_not_found"; collection: string } | { kind: "internal"; message: string }
 
 export type ThumbFormat = "jpeg" | "png"
+
+/**
+ * What the reading view sends to toggle one task (Ч12.3).
+ */
+export type ToggleTaskItemParams = {
+/**
+ * The open card.
+ */
+source_slug: string;
+/**
+ * `body_hash` of the body the reader saw.
+ */
+source_body_hash: string;
+/**
+ * The byte offset in that body where the task's list item starts: its
+ * list marker, after `> ` in a quote or a callout.
+ */
+item_start: number;
+/**
+ * The state the reader saw: `true` for a done task.
+ */
+checked: boolean }
 
 /**
  * A space that is bound but not reachable right now. Also the payload of

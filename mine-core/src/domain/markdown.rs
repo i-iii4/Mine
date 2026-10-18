@@ -326,6 +326,144 @@ fn remove_ranges(body: &str, mut ranges: Vec<(usize, usize)>) -> String {
     out
 }
 
+/// Columns between two tab stops: CommonMark expands a tab to the next one.
+const TAB_STOP_COLUMNS: usize = 4;
+
+/// The most digits of an ordered list marker (CommonMark: from one to nine).
+const MAX_ORDERED_MARKER_DIGITS: usize = 9;
+
+/// The widest gap between a list marker and the item's text, in columns. One
+/// column more makes the text indented code, and no task.
+const MAX_LIST_MARKER_PADDING_COLUMNS: usize = 4;
+
+/// What a toggle writes as the state of a task that becomes done.
+const TASK_DONE: char = 'x';
+
+/// What a toggle writes as the state of a task that becomes open.
+const TASK_OPEN: char = ' ';
+
+/// Why [`toggle_task_marker`] changed nothing.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TaskMarkerError {
+    /// `item_start` is past the end of the body or inside a character.
+    #[error("offset {item_start} is outside the body of {body_len} bytes or inside a character")]
+    OutsideBody { item_start: usize, body_len: usize },
+    /// No task list item starts at `item_start`: no list marker there, or no
+    /// `[ ]`, `[x]` or `[X]` right after it.
+    #[error("no task list item starts at offset {item_start}")]
+    NoTask { item_start: usize },
+    /// The task is not in the state the reader saw; `found_checked` is the
+    /// state it is in.
+    #[error(
+        "the task at offset {item_start} is already {}",
+        if *found_checked { "done" } else { "open" }
+    )]
+    OtherState { item_start: usize, found_checked: bool },
+}
+
+/// Toggle the GFM task whose list item starts at `item_start`, a byte offset
+/// of `body` (SPEC_READING_MODE.md, Ч12.3). `checked` is the state the reader
+/// saw: an open task (`[ ]`, or a tab between the brackets) becomes done
+/// (`[x]`), a done one (`[x]`, `[X]`) becomes open (`[ ]`).
+///
+/// Exactly one byte of the body changes, the state character; every other
+/// byte stays as written, line endings and Unicode spellings included, and
+/// the offsets of the other tasks stay where they were.
+///
+/// The item is read the way GFM reads it, from `item_start` and within its
+/// line: a list marker (`-`, `*`, `+`, or from one to nine digits with `.` or
+/// `)`), a gap of one to four columns of spaces and tabs (a tab reaches the
+/// next multiple of four, counted from the start of the line), `[`, the state
+/// character, `]`, then a space, a tab or the end of the line. In a quote or
+/// a callout the item starts at its marker after `> `. Other characters
+/// between the brackets (`[/]`, `[-]`, `[>]`) make no task in GFM.
+///
+/// # Errors
+///
+/// [`TaskMarkerError`] when no task starts at `item_start`, or the one there
+/// is not in the state `checked` says; the body is left as it was.
+pub fn toggle_task_marker(
+    body: &str,
+    item_start: usize,
+    checked: bool,
+) -> Result<String, TaskMarkerError> {
+    let state = task_state_offset(body, item_start)?;
+    let found_checked = matches!(body.as_bytes()[state], b'x' | b'X');
+    if found_checked != checked {
+        return Err(TaskMarkerError::OtherState {
+            item_start,
+            found_checked,
+        });
+    }
+    // The state character is ASCII: both slices end and begin on character
+    // boundaries.
+    let mut toggled = String::with_capacity(body.len());
+    toggled.push_str(&body[..state]);
+    toggled.push(if checked { TASK_OPEN } else { TASK_DONE });
+    toggled.push_str(&body[state + 1..]);
+    Ok(toggled)
+}
+
+/// The offset of the state character of the task list item that starts at
+/// `item_start`, by the rule of [`toggle_task_marker`].
+fn task_state_offset(body: &str, item_start: usize) -> Result<usize, TaskMarkerError> {
+    let bytes = body.as_bytes();
+    if item_start >= bytes.len() || !body.is_char_boundary(item_start) {
+        return Err(TaskMarkerError::OutsideBody {
+            item_start,
+            body_len: bytes.len(),
+        });
+    }
+    let no_task = || TaskMarkerError::NoTask { item_start };
+    let line_start = body[..item_start]
+        .rfind(['\n', '\r'])
+        .map_or(0, |line_end| line_end + 1);
+    let marker_len = list_marker_len(&bytes[item_start..]).ok_or_else(no_task)?;
+    let mut cursor = item_start + marker_len;
+    let padding_start = body[line_start..cursor].chars().fold(0, next_column);
+    let mut column = padding_start;
+    while let Some(&byte @ (b' ' | b'\t')) = bytes.get(cursor) {
+        column = next_column(column, char::from(byte));
+        cursor += 1;
+    }
+    if !(1..=MAX_LIST_MARKER_PADDING_COLUMNS).contains(&(column - padding_start)) {
+        return Err(no_task());
+    }
+    let state = cursor + 1;
+    let opens = bytes.get(cursor) == Some(&b'[');
+    let holds_state = matches!(bytes.get(state), Some(b' ' | b'\t' | b'x' | b'X'));
+    let closes = bytes.get(state + 1) == Some(&b']');
+    let ends = matches!(bytes.get(state + 2), None | Some(b' ' | b'\t' | b'\n' | b'\r'));
+    if opens && holds_state && closes && ends {
+        Ok(state)
+    } else {
+        Err(no_task())
+    }
+}
+
+/// The length of the list marker `rest` starts with, `None` when it starts
+/// with none.
+fn list_marker_len(rest: &[u8]) -> Option<usize> {
+    match rest.first()? {
+        b'-' | b'*' | b'+' => Some(1),
+        b'0'..=b'9' => {
+            let digits = rest.iter().take_while(|byte| byte.is_ascii_digit()).count();
+            let delimited = matches!(rest.get(digits), Some(b'.' | b')'));
+            (digits <= MAX_ORDERED_MARKER_DIGITS && delimited).then_some(digits + 1)
+        }
+        _ => None,
+    }
+}
+
+/// The column after `ch` written at `column`.
+fn next_column(column: usize, ch: char) -> usize {
+    if ch == '\t' {
+        column + TAB_STOP_COLUMNS - column % TAB_STOP_COLUMNS
+    } else {
+        column + 1
+    }
+}
+
 fn expand_media_removal_range(body: &str, start: usize, end: usize) -> (usize, usize) {
     let line_start = body[..start]
         .rfind('\n')
@@ -863,5 +1001,218 @@ Real  and .
         let mut removals = BTreeSet::new();
         removals.insert("photo.jpg".to_string());
         assert_eq!(remove_inline_media_references(input, &removals), input);
+    }
+
+    /// `toggled` is `body` with the one byte at `at` turned to `state`.
+    fn assert_only_state_changed(body: &str, toggled: &str, at: usize, state: u8) {
+        let (before, after) = (body.as_bytes(), toggled.as_bytes());
+        assert_eq!(before.len(), after.len(), "{body:?}");
+        let changed: Vec<usize> = (0..before.len()).filter(|&i| before[i] != after[i]).collect();
+        assert_eq!(changed, [at], "{body:?}");
+        assert_eq!(after[at], state, "{body:?}");
+    }
+
+    /// The offset of the state character of the task at `item_start`.
+    fn state_at(body: &str, item_start: usize) -> usize {
+        item_start + body[item_start..].find('[').unwrap() + 1
+    }
+
+    /// Ч12.2, Ч12.3: every list marker of GFM, open and done; the state byte
+    /// changes and nothing else does.
+    #[test]
+    fn toggle_task_marker_turns_one_state_byte_for_every_list_marker() {
+        let cases = [
+            ("- [ ] open", false, b'x'),
+            ("* [ ] open", false, b'x'),
+            ("+ [ ] open", false, b'x'),
+            ("1. [ ] open", false, b'x'),
+            ("1) [ ] open", false, b'x'),
+            ("123456789. [ ] nine digits", false, b'x'),
+            ("- [x] done", true, b' '),
+            ("- [X] done", true, b' '),
+            ("7) [x] done", true, b' '),
+        ];
+        for (body, checked, state) in cases {
+            let toggled = toggle_task_marker(body, 0, checked).unwrap();
+            assert_only_state_changed(body, &toggled, state_at(body, 0), state);
+        }
+        assert_eq!(
+            toggle_task_marker("1234567890. [ ] ten digits", 0, false),
+            Err(TaskMarkerError::NoTask { item_start: 0 })
+        );
+    }
+
+    /// Ч12.3: the gap after the marker is one to four columns of spaces and
+    /// tabs, a tab reaching the next multiple of four from the start of the
+    /// line; a tab between the brackets is an open task, as GFM reads it.
+    #[test]
+    fn toggle_task_marker_reads_the_gap_in_columns() {
+        let tasks = [
+            "- [ ] a",
+            "-    [ ] four spaces",
+            "-\t[ ] a tab",
+            "- \t[ ] a space and a tab",
+            "10.\t[ ] a",
+            "   -\t[ ] a tab to the fourth column",
+            "- [\t] a tab between the brackets",
+        ];
+        for body in tasks {
+            let item_start = body.find(['-', '1']).unwrap();
+            let toggled = toggle_task_marker(body, item_start, false).unwrap();
+            assert_only_state_changed(body, &toggled, state_at(body, item_start), b'x');
+        }
+        let refused = [
+            "-[ ] no gap",
+            "-     [ ] five spaces: indented code",
+            "-   \t[ ] seven columns",
+            "-\t\t[ ] seven columns",
+        ];
+        for body in refused {
+            assert_eq!(
+                toggle_task_marker(body, 0, false),
+                Err(TaskMarkerError::NoTask { item_start: 0 }),
+                "{body:?}"
+            );
+        }
+    }
+
+    /// Ч12.3: after `]` comes a space, a tab or the end of the line; Ч12.6:
+    /// other characters between the brackets make no task.
+    #[test]
+    fn toggle_task_marker_refuses_what_gfm_reads_as_text() {
+        for body in ["- [ ]", "- [ ]\nnext", "- [ ]\ttab", "- [ ]\r\n"] {
+            let toggled = toggle_task_marker(body, 0, false).unwrap();
+            assert_only_state_changed(body, &toggled, 3, b'x');
+        }
+        for body in [
+            "- [ ]x", "- [ ]] a", "- [/] a", "- [-] a", "- [>] a", "- [] a", "- [xx] a",
+            "- [ x] a", "- x a", "-",
+        ] {
+            assert_eq!(
+                toggle_task_marker(body, 0, false),
+                Err(TaskMarkerError::NoTask { item_start: 0 }),
+                "{body:?}"
+            );
+        }
+    }
+
+    /// Ч12.6: each item of a nested list changes only its own byte, and the
+    /// offsets of the other tasks stay where they were.
+    #[test]
+    fn toggle_task_marker_changes_only_the_item_of_a_nested_list() {
+        let body = "- [ ] parent\n  - [x] child\n    1. [ ] grandchild\n- [ ] sibling\n";
+        let parent = 0;
+        let child = body.find("- [x]").unwrap();
+        let grandchild = body.find("1. [ ]").unwrap();
+
+        let once = toggle_task_marker(body, child, true).unwrap();
+        assert_only_state_changed(body, &once, state_at(body, child), b' ');
+        let twice = toggle_task_marker(&once, parent, false).unwrap();
+        assert_only_state_changed(&once, &twice, state_at(body, parent), b'x');
+        let thrice = toggle_task_marker(&twice, grandchild, false).unwrap();
+        assert_only_state_changed(&twice, &thrice, state_at(body, grandchild), b'x');
+        assert_eq!(
+            thrice,
+            "- [x] parent\n  - [ ] child\n    1. [x] grandchild\n- [ ] sibling\n"
+        );
+    }
+
+    /// Ч12.6: in a quote and in a callout the item starts at its marker
+    /// after `> `.
+    #[test]
+    fn toggle_task_marker_reads_tasks_in_quotes_and_callouts() {
+        let body = "> - [ ] in a quote\n> > 1. [x] in a nested quote\n>- [ ] tight\n\n> [!note] Title\n> - [ ] in a callout\n";
+        let items = [
+            (body.find("- [ ] in a quote").unwrap(), false, b'x'),
+            (body.find("1. [x]").unwrap(), true, b' '),
+            (body.find("- [ ] tight").unwrap(), false, b'x'),
+            (body.find("- [ ] in a callout").unwrap(), false, b'x'),
+        ];
+        for (item_start, checked, state) in items {
+            let toggled = toggle_task_marker(body, item_start, checked).unwrap();
+            assert_only_state_changed(body, &toggled, state_at(body, item_start), state);
+        }
+        // The quote marker itself starts no item.
+        assert_eq!(
+            toggle_task_marker(body, 0, false),
+            Err(TaskMarkerError::NoTask { item_start: 0 })
+        );
+    }
+
+    /// Ч12.6: CRLF line endings stay; the search stays inside the line.
+    #[test]
+    fn toggle_task_marker_keeps_crlf_line_endings() {
+        let body = "- [ ] one\r\n- [x] two\r\n- [ ]\r\n";
+        let items = [
+            (0, false, b'x'),
+            (body.find("- [x]").unwrap(), true, b' '),
+            (body.rfind("- [ ]").unwrap(), false, b'x'),
+        ];
+        for (item_start, checked, state) in items {
+            let toggled = toggle_task_marker(body, item_start, checked).unwrap();
+            assert_only_state_changed(body, &toggled, state_at(body, item_start), state);
+            assert_eq!(toggled.matches("\r\n").count(), 3);
+        }
+    }
+
+    /// The body is never normalized: decomposed letters (NFD) before and in
+    /// the task stay byte for byte, and an offset inside a character is
+    /// refused.
+    #[test]
+    fn toggle_task_marker_keeps_decomposed_unicode_byte_for_byte() {
+        let body = "Список и\u{0306}:\n- [ ] пои\u{0306}ти\n";
+        let item_start = body.find("- [ ]").unwrap();
+        let toggled = toggle_task_marker(body, item_start, false).unwrap();
+        assert_only_state_changed(body, &toggled, state_at(body, item_start), b'x');
+        assert_eq!(toggled.matches('\u{0306}').count(), 2);
+
+        let inside_a_letter = "Список".len() - 1;
+        assert_eq!(
+            toggle_task_marker(body, inside_a_letter, false),
+            Err(TaskMarkerError::OutsideBody {
+                item_start: inside_a_letter,
+                body_len: body.len(),
+            })
+        );
+    }
+
+    /// Ч12.3: an offset that names no task, or names one in the other state,
+    /// changes nothing.
+    #[test]
+    fn toggle_task_marker_refuses_a_wrong_offset_or_the_other_state() {
+        let body = "text - [ ] x\n- [ ] open\n- [x] done";
+        let open = body.find("- [ ] open").unwrap();
+        let done = body.find("- [x] done").unwrap();
+        assert_eq!(
+            toggle_task_marker(body, 0, false),
+            Err(TaskMarkerError::NoTask { item_start: 0 })
+        );
+        assert_eq!(
+            toggle_task_marker(body, open + 2, false),
+            Err(TaskMarkerError::NoTask { item_start: open + 2 })
+        );
+        for past_the_end in [body.len(), body.len() + 1] {
+            assert_eq!(
+                toggle_task_marker(body, past_the_end, false),
+                Err(TaskMarkerError::OutsideBody {
+                    item_start: past_the_end,
+                    body_len: body.len(),
+                })
+            );
+        }
+        assert_eq!(
+            toggle_task_marker(body, open, true),
+            Err(TaskMarkerError::OtherState {
+                item_start: open,
+                found_checked: false,
+            })
+        );
+        assert_eq!(
+            toggle_task_marker(body, done, false),
+            Err(TaskMarkerError::OtherState {
+                item_start: done,
+                found_checked: true,
+            })
+        );
     }
 }

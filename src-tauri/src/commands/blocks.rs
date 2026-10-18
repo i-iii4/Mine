@@ -36,6 +36,7 @@ use crate::domain::vault::{
 use crate::source_video_download::CardKey;
 use crate::storage::index::IndexedBlock;
 use crate::storage::source_mutation::{SourceFileWrite, SourceMutationError, StagedSourceMutation};
+use crate::storage::task_toggle::{self, TaskToggleError, ToggleTaskItemParams};
 use crate::storage::{
     article_audio, block_queries, db, derived_preview, files, index, media_refs, projection,
     reconcile, thumbnails,
@@ -1304,6 +1305,62 @@ async fn delete_text_selection_unannounced(
 pub async fn delete_text_selection(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: DeleteTextSelectionParams) -> Result<IndexedBlock, TextSelectionExtractError> {
     let announcing = super::effects::ChangeNews::before(&webview);
     let outcome = delete_text_selection_unannounced(webview, app, state, params).await;
+    if outcome.is_ok() {
+        announcing.send(Vec::new());
+    }
+    outcome
+}
+
+async fn toggle_task_item_unannounced(
+    webview: tauri::Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    params: ToggleTaskItemParams,
+) -> Result<IndexedBlock, TaskToggleError> {
+    let vault = {
+        let space = state.space_for(webview.label()).ok_or(TaskToggleError::NoVault)?;
+        let vault_state = space
+            .vault_state
+            .lock()
+            .map_err(|_| TaskToggleError::internal("vault state mutex poisoned"))?;
+        vault_state.as_ref().ok_or(TaskToggleError::NoVault)?.vault.clone()
+    };
+    state
+        .suppress_paths(
+            [vault.block_path(&params.source_slug)],
+            Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
+        )
+        .map_err(TaskToggleError::internal)?;
+
+    let event_vault = vault.clone();
+    let toggled = tauri::async_runtime::spawn_blocking(move || {
+        let conn = db::open_or_create(&vault.index_db_path()).map_err(TaskToggleError::internal)?;
+        task_toggle::toggle_task_item(&conn, &vault, &params)
+    })
+    .await
+    .map_err(|e| TaskToggleError::internal(format!("task toggle worker failed: {e}")))??;
+
+    if toggled.thumb != thumbnails::ThumbSource::None {
+        crate::commands::space_events::announce_to_vault(
+            &app,
+            &event_vault,
+            "thumb:updated",
+            ThumbUpdatedPayload {
+                slug: toggled.block.slug.clone(),
+                is_text: toggled.thumb == thumbnails::ThumbSource::Text,
+            },
+        );
+    }
+    Ok(toggled.block)
+}
+
+/// Toggle one task checkbox of the open card from the reading view
+/// (SPEC_READING_MODE.md, Ч12.3): [`toggle_task_item_unannounced`], then the
+/// other tabs of the space hear of the change (SPEC_TABS.md, В15).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn toggle_task_item(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, params: ToggleTaskItemParams) -> Result<IndexedBlock, TaskToggleError> {
+    let announcing = super::effects::ChangeNews::before(&webview);
+    let outcome = toggle_task_item_unannounced(webview, app, state, params).await;
     if outcome.is_ok() {
         announcing.send(Vec::new());
     }

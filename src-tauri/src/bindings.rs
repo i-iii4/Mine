@@ -60,6 +60,7 @@ use crate::storage::index::{
 };
 use crate::storage::projection::{GridSnapshot, GridRowsSnapshot, ProjectionRevision};
 use crate::storage::search_projection::{SearchPageToken, SearchRevision, SearchSnapshot};
+use crate::storage::task_toggle::{TaskToggleError, ToggleTaskItemParams};
 use crate::watcher::handler::ScanResult;
 
 pub fn export_types(check_only: bool) -> Result<()> {
@@ -149,6 +150,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<RemoveMediaAssetFromCardParams>()
         .register::<ExtractTextSelectionParams>()
         .register::<DeleteTextSelectionParams>()
+        .register::<ToggleTaskItemParams>()
         .register::<DeleteMediaAssetKind>()
         .register::<DeleteBlockMedia>()
         .register::<DeleteBlockPlan>()
@@ -162,6 +164,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<RenameBlockError>()
         .register::<MediaAssetActionError>()
         .register::<TextSelectionExtractError>()
+        .register::<TaskToggleError>()
         .register::<MergeBlocksError>()
         .register::<ScanResult>()
         .register::<VaultOpenResult>()

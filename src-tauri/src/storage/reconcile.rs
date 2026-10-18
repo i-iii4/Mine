@@ -1083,7 +1083,10 @@ fn write_source_state(
     Ok(())
 }
 
-fn file_saved_at(path: &Path) -> DateTime {
+/// The date a note without `saved_at` is read under: when its file was
+/// created, else last modified. A command that writes a note reads it back
+/// under the same date, so its index row is the one reconciliation makes.
+pub(crate) fn file_saved_at(path: &Path) -> DateTime {
     let time = std::fs::metadata(path)
         .ok()
         .and_then(|metadata| metadata.created().ok().or_else(|| metadata.modified().ok()))

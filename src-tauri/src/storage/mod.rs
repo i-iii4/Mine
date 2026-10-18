@@ -30,6 +30,7 @@ pub mod save_operations;
 pub mod search_engine;
 pub mod search_projection;
 pub mod source_mutation;
+pub mod task_toggle;
 pub mod thumbnails;
 pub mod vault_conflicts;
 pub mod vault_stats;

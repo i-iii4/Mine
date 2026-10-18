@@ -195,6 +195,7 @@ pub fn run() {
             commands::shortcuts::set_shortcut_capture_active,
             commands::blocks::extract_text_selection,
             commands::blocks::delete_text_selection,
+            commands::blocks::toggle_task_item,
             commands::blocks::rename_block_file,
             commands::blocks::check_block_rename,
             commands::blocks::prepare_delete_block,
