@@ -4172,12 +4172,16 @@
         "src/lib/reading/remarkNoteEmbeds.ts",
         "src/lib/reading/remarkNoteEmbeds.test.ts",
         "src/components/reading/NoteEmbed.tsx",
-        "src/components/reading/NoteEmbed.test.tsx"
+        "src/components/reading/NoteEmbed.test.tsx",
+        "src/lib/reading/anchors.ts",
+        "src/lib/reading/anchors.test.ts"
       ],
       "requirement": "SPEC_READING_MODE.md### Ч11. Вставки заметок",
       "tests": [
         "src/lib/reading/remarkNoteEmbeds.test.ts",
-        "src/components/reading/NoteEmbed.test.tsx"
+        "src/components/reading/NoteEmbed.test.tsx",
+        "src/lib/reading/anchors.test.ts",
+        "src/components/reading/ArticleMarkdown.test.tsx"
       ],
       "command": "test:frontend"
     },

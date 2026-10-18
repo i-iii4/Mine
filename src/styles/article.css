@@ -145,21 +145,28 @@
   color: inherit;
 }
 
-/* Ч6.4. Highlighted code: the classes of highlight.js take their colours
-   from `--code-*`. The values wait for the user's decision
-   (SPEC_READING_MODE.md, В3 (б)); a variable with no value leaves the class
-   in the block's own text colour. */
-.mine-article [data-code-block] :is(.hljs-keyword, .hljs-doctag, .hljs-meta .hljs-keyword) { color: var(--code-keyword); }
-.mine-article [data-code-block] :is(.hljs-string, .hljs-regexp, .hljs-meta .hljs-string) { color: var(--code-string); }
-.mine-article [data-code-block] :is(.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet) { color: var(--code-number); }
-.mine-article [data-code-block] :is(.hljs-comment, .hljs-quote) { color: var(--code-comment); }
-.mine-article [data-code-block] :is(.hljs-title, .hljs-section) { color: var(--code-title); }
-.mine-article [data-code-block] :is(.hljs-type, .hljs-built_in, .hljs-class) { color: var(--code-type); }
-.mine-article [data-code-block] :is(.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-template-variable, .hljs-params) { color: var(--code-variable); }
-.mine-article [data-code-block] :is(.hljs-tag, .hljs-name, .hljs-selector-tag, .hljs-selector-class, .hljs-selector-id) { color: var(--code-tag); }
-.mine-article [data-code-block] :is(.hljs-meta, .hljs-operator, .hljs-punctuation) { color: var(--code-meta); }
-.mine-article [data-code-block] .hljs-addition { color: var(--code-addition); }
-.mine-article [data-code-block] .hljs-deletion { color: var(--code-deletion); }
+/* Ч6.4. Highlighted code in the colours of highlight.js 11.11.2's GitHub
+   themes (user's decision of 18.10.2026): the classes are grouped as
+   `styles/github.css` and `styles/github-dark.css` group them, each group on
+   its `--code-*` variable (global.css), in the same order, so a class in two
+   groups ends in the later one as there. The classes GitHub leaves alone
+   (`params`, `property`, `punctuation`, `tag`, `link`, `char.escape_`) keep
+   the block's own text; the block keeps the article's fill, not GitHub's
+   white and #0d1117. Its bold is the design system's 600. */
+.mine-article [data-code-block] :is(.hljs-doctag, .hljs-keyword, .hljs-meta .hljs-keyword, .hljs-template-tag, .hljs-template-variable, .hljs-type, .hljs-variable.language_) { color: var(--code-keyword); }
+.mine-article [data-code-block] :is(.hljs-title, .hljs-title.class_, .hljs-title.class_.inherited__, .hljs-title.function_) { color: var(--code-entity); }
+.mine-article [data-code-block] :is(.hljs-attr, .hljs-attribute, .hljs-literal, .hljs-meta, .hljs-number, .hljs-operator, .hljs-variable, .hljs-selector-attr, .hljs-selector-class, .hljs-selector-id) { color: var(--code-constant); }
+.mine-article [data-code-block] :is(.hljs-regexp, .hljs-string, .hljs-meta .hljs-string) { color: var(--code-string); }
+.mine-article [data-code-block] :is(.hljs-built_in, .hljs-symbol) { color: var(--code-variable); }
+.mine-article [data-code-block] :is(.hljs-comment, .hljs-code, .hljs-formula) { color: var(--code-comment); }
+.mine-article [data-code-block] :is(.hljs-name, .hljs-quote, .hljs-selector-tag, .hljs-selector-pseudo) { color: var(--code-tag); }
+.mine-article [data-code-block] .hljs-subst { color: var(--tw-prose-pre-code); }
+.mine-article [data-code-block] .hljs-section { color: var(--code-heading); font-weight: 600; }
+.mine-article [data-code-block] .hljs-bullet { color: var(--code-list); }
+.mine-article [data-code-block] .hljs-emphasis { color: var(--tw-prose-pre-code); font-style: italic; }
+.mine-article [data-code-block] .hljs-strong { color: var(--tw-prose-pre-code); font-weight: 600; }
+.mine-article [data-code-block] .hljs-addition { color: var(--code-addition); background-color: var(--code-addition-fill); }
+.mine-article [data-code-block] .hljs-deletion { color: var(--code-deletion); background-color: var(--code-deletion-fill); }
 
 /* Ч7. A diagram stands centred in the column and shrinks to it. */
 .mine-article [data-mermaid-diagram] svg {
@@ -210,6 +217,20 @@
   display: flex;
   justify-content: center;
   margin-block: calc(var(--spacing) * 5);
+}
+
+/* Ч11.7. The embed's card is a button with the feed card's states and no
+   values of its own (SPEC_CARD_STATES.md, С1): under the pointer and in
+   keyboard focus its frame takes the focus frame `--border-accent`, at the
+   pace a frame takes a state; in keyboard focus a picture also takes the
+   focus wash, as a focused card of the feed does. */
+.mine-article [data-note-embed-open]:is(:hover, :focus-visible) [data-feed-card-frame] {
+  --card-frame-color: var(--border-accent);
+  --card-frame-fade: var(--hover-intent-fade-in);
+}
+
+.mine-article [data-note-embed-open]:focus-visible [data-card-media-clip] > [data-card-lift="window"]::after {
+  opacity: 1;
 }
 
 /* Ч12.1. A task's box stands where a list marker would: the list keeps the

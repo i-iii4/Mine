@@ -789,6 +789,41 @@ describe("Detail", () => {
     expect(screen.getAllByText("Author Name")).toHaveLength(1);
   });
 
+  // SPEC_READING_MODE.md, Ч11.8: a card opened by `Note#Heading` or
+  // `Note#^block` scrolls its article to that place, once.
+  it("opens scrolled to the heading or the block its link names, and stays when the body is written", async () => {
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView);
+    const props = {
+      vaultPath: "/tmp/test-vault",
+      thumbsRootPath: "/tmp/thumbs",
+      onClose: vi.fn(),
+      onNavigate: vi.fn(),
+      tags: [],
+      onToggleTag: vi.fn(),
+      onCreateAndAssign: vi.fn(),
+      onTagsChanged: vi.fn(),
+      onRequestRename: vi.fn(),
+      onRequestDelete: vi.fn(),
+      onOpenRelatedNote: vi.fn(),
+    };
+    const body = "Intro [[Peer]]\n\n## Plan: A/B\n\nText ^c0ffee\n\n### Steps\n\n- [ ] task";
+    scrollIntoView.mockClear();
+    const { rerender } = render(<Detail {...props} block={block({ slug: "Cards/Source", body })} scrollAnchor="Plan A B#Steps" />);
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    expect((scrollIntoView.mock.contexts[0] as Element).textContent).toBe("Steps");
+    // A body written later (a task box) does not jump again.
+    rerender(<Detail {...props} block={block({ slug: "Cards/Source", body: body.replace("[ ]", "[x]") })} scrollAnchor="Plan A B#Steps" />);
+    await act(async () => { await new Promise((done) => window.setTimeout(done, 30)); });
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    rerender(<Detail {...props} block={block({ slug: "Cards/Source", body })} scrollAnchor="^C0FFEE" />);
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(2));
+    expect((scrollIntoView.mock.contexts[1] as Element).textContent).toBe("Text ^c0ffee");
+    // A place the note has not leaves the card at its top.
+    rerender(<Detail {...props} block={block({ slug: "Cards/Source", body })} scrollAnchor="Missing" />);
+    await act(async () => { await new Promise((done) => window.setTimeout(done, 30)); });
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+  });
+
   it("opens nested note wikilinks through source resolution and leaves external links external", async () => {
     resolveNoteLinkMock.mockResolvedValue("Notes/Peer");
     const onOpenRelatedNote = vi.fn();

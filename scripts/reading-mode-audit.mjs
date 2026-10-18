@@ -5,7 +5,10 @@
 // layout, fonts and lazy chunks, which the jsdom tests cannot see: nothing
 // pushes the page sideways, code in a line, the marker, HTML, tables, code
 // blocks, Mermaid, callouts, KaTeX, footnotes, note embeds and task boxes
-// look and act as the rules say, and nothing is asked of the network.
+// look and act as the rules say, in the colours the user chose on 18.10.2026
+// (callout types, highlighted code, diagram series), an embed opens its note
+// and a card opened at a heading or a block scrolls to it, and nothing is
+// asked of the network.
 // Starts and stops its own Vite.
 import assert from 'node:assert/strict';
 import { readFileSync, realpathSync } from 'node:fs';
@@ -66,7 +69,7 @@ const vite = await startAuditVite([{
       // The block of the wide table, the one whose header starts with "№".
       const wideTableBlock = () => [...document.querySelectorAll('[data-article-table-scroll]')]
         .find((wrapper) => wrapper.querySelector('tr')?.textContent.trim().startsWith('№'));
-      window.__audit = { toggles: [], clipboard: [], logs: [], stripFadeMaskStyle, wideTableBlock };
+      window.__audit = { toggles: [], clipboard: [], logs: [], opened: [], stripFadeMaskStyle, wideTableBlock };
       let writes = 0;
       window.__TAURI_INTERNALS__ = {
         convertFileSrc: (path) => location.origin + '/media/' + encodeURIComponent(path.split('/').pop()),
@@ -90,10 +93,17 @@ const vite = await startAuditVite([{
         },
       };
       const noop = () => {};
-      const detail = React.createElement(Detail, { block: card, vaultPath: '/vault', thumbsRootPath: '/thumbs', tags: [], onClose: noop, onToggleTag: noop, onCreateAndAssign: noop, onRequestRename: noop, onRequestDelete: noop, onOpenRelatedNote: noop });
-      const shell = React.createElement('div', { style: { display: 'flex', height: '100vh' } },
-        React.createElement('main', { style: { position: 'relative', flex: '1', minWidth: 0 } }, detail));
-      createRoot(document.getElementById('root')).render(React.createElement(TooltipProvider, null, React.createElement(DndContext, null, shell)));`;
+      // An embed's click asks the host to open a note: the page notes what.
+      // \`jump\` opens the card again at a place, as a link with \`#…\` does.
+      const openRelatedNote = (slug) => window.__audit.opened.push(slug);
+      function Shell() {
+        const [anchor, setAnchor] = React.useState(null);
+        window.__audit.jump = setAnchor;
+        const detail = React.createElement(Detail, { block: card, scrollAnchor: anchor, vaultPath: '/vault', thumbsRootPath: '/thumbs', tags: [], onClose: noop, onToggleTag: noop, onCreateAndAssign: noop, onRequestRename: noop, onRequestDelete: noop, onOpenRelatedNote: openRelatedNote });
+        return React.createElement('div', { style: { display: 'flex', height: '100vh' } },
+          React.createElement('main', { style: { position: 'relative', flex: '1', minWidth: 0 } }, detail));
+      }
+      createRoot(document.getElementById('root')).render(React.createElement(TooltipProvider, null, React.createElement(DndContext, null, React.createElement(Shell))));`;
   },
   configureServer(server) {
     server.middlewares.use(async (req, res, next) => {
@@ -170,6 +180,15 @@ async function inspect(page) {
       probe.remove();
       return value;
     };
+    /** `token` as the element `host` would paint it as text. */
+    const inkIn = (host, token) => {
+      const probe = document.createElement('span');
+      probe.style.color = `var(${token})`;
+      host.appendChild(probe);
+      const value = getComputedStyle(probe).color;
+      probe.remove();
+      return value;
+    };
     const textOf = (element) => element?.textContent?.trim() ?? '';
     const paragraphWith = (text) => [...article.querySelectorAll('p')].find((p) => p.textContent.includes(text));
     const inlineCode = article.querySelector('p > code');
@@ -211,6 +230,11 @@ async function inspect(page) {
         copyOpacity: getComputedStyle(block.querySelector('[data-code-copy]')).opacity,
       };
     });
+    const series = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple']
+      .map((name) => hex(getComputedStyle(document.documentElement).getPropertyValue(`--series-${name}`)));
+    const pie = [...article.querySelectorAll('[data-mermaid-diagram] svg .pieCircle')].map((slice) => hex(getComputedStyle(slice).fill));
+    const ganttBars = [...article.querySelectorAll('[data-mermaid-diagram] svg rect.task')].map((bar) => hex(getComputedStyle(bar).fill));
+    const keyword = article.querySelector('[data-code-block][data-code-language="typescript"] .hljs-keyword');
     const diagrams = [...article.querySelectorAll('[data-mermaid]')].map((host) => {
       const svg = host.querySelector('[data-mermaid-diagram] svg');
       const shape = svg?.querySelector('.node rect, .node polygon, .node path');
@@ -262,12 +286,23 @@ async function inspect(page) {
       tables,
       codeBlocks,
       diagrams,
-      callouts: [...article.querySelectorAll('[data-callout]')].map((callout) => ({
-        type: callout.getAttribute('data-callout'),
-        title: textOf(callout.querySelector('[data-callout-title]')),
-        fold: callout.getAttribute('data-callout-fold'),
-        open: callout.tagName === 'DETAILS' ? callout.open : null,
-      })),
+      callouts: [...article.querySelectorAll('[data-callout]')].map((callout) => {
+        const title = callout.querySelector('[data-callout-title]');
+        return {
+          type: callout.getAttribute('data-callout'),
+          title: textOf(title),
+          fold: callout.getAttribute('data-callout-fold'),
+          open: callout.tagName === 'DETAILS' ? callout.open : null,
+          color: getComputedStyle(title).color,
+          iconColor: getComputedStyle(title.querySelector('[data-callout-icon]')).color,
+          tokens: Object.fromEntries(['--destructive', '--detach', '--callout-blue', '--callout-cyan', '--callout-green', '--callout-purple', '--muted-foreground']
+            .map((token) => [token, inkIn(title, token)])),
+        };
+      }),
+      series,
+      pie,
+      ganttBars,
+      keyword: keyword && { color: getComputedStyle(keyword).color, token: inkIn(keyword.parentElement, '--code-keyword'), text: inkIn(keyword.parentElement, '--foreground') },
       katex: article.querySelectorAll('.katex').length,
       katexFont: document.fonts.check('16px KaTeX_Main'),
       embeds,
@@ -379,6 +414,11 @@ try {
       const expectedCode = /```typescript\n([\s\S]*?)\n```/.exec(body)[1];
       await page.waitForFunction((code) => window.__audit.clipboard.includes(code), expectedCode, { timeout: 5000 });
 
+      // Ч6.4. A highlighted keyword in GitHub's colour of the theme.
+      assert(report.keyword, `${label}: a highlighted keyword`);
+      assert.equal(report.keyword.color, report.keyword.token, `${label}: a keyword in --code-keyword`);
+      assert.notEqual(report.keyword.color, report.keyword.text, `${label}: a keyword not in the text's colour`);
+
       // Ч7. Diagrams in the tokens' colours; a broken one stays code.
       const drawn = report.diagrams.filter((diagram) => diagram.drawn);
       assert(drawn.length >= 5, `${label}: the diagrams drawn (${drawn.length})`);
@@ -386,6 +426,11 @@ try {
       const flow = drawn[0];
       assert.equal(flow.nodeFill, report.cardText.card, `${label}: a node's fill is --card`);
       assert.equal(flow.labelColor, report.cardText.foreground, `${label}: a node's text is --foreground`);
+      // The series (В3 (в)): the pie's slices take the first colours of the
+      // series, a Gantt task bar the blue one.
+      assert.deepEqual([...report.pie].sort(), report.series.slice(0, report.pie.length).sort(), `${label}: the pie's slices in the series colours`);
+      assert(report.pie.length >= 4, `${label}: the pie's slices (${report.pie.length})`);
+      assert(report.ganttBars.length >= 3 && report.ganttBars.every((fill) => fill === report.series[5]), `${label}: Gantt's task bars in the series blue (${report.ganttBars})`);
       const broken = report.diagrams.find((diagram) => diagram.failed);
       assert(broken && broken.code && !broken.drawn, `${label}: the broken diagram stands as a code block under the quiet line`);
 
@@ -396,6 +441,13 @@ try {
       }
       assert(report.callouts.some((callout) => callout.title === 'Faq'), `${label}: the default title of an alias`);
       assert(report.callouts.some((callout) => callout.title === 'Неизвестный тип' && callout.type === 'note'), `${label}: an unknown type drawn as note`);
+      // The type's colour on its icon and title (В3 (а)), a token of the theme.
+      const CALLOUT_TOKENS = { note: '--callout-blue', info: '--callout-blue', todo: '--callout-blue', abstract: '--callout-cyan', tip: '--callout-cyan', success: '--callout-green', example: '--callout-purple', question: '--detach', warning: '--detach', failure: '--destructive', danger: '--destructive', bug: '--destructive', quote: '--muted-foreground' };
+      for (const callout of report.callouts) {
+        const token = CALLOUT_TOKENS[callout.type];
+        assert.equal(callout.color, callout.tokens[token], `${label}: a ${callout.type} callout's title in ${token}`);
+        assert.equal(callout.iconColor, callout.color, `${label}: a ${callout.type} callout's icon in its title's colour`);
+      }
       const folded = report.callouts.find((callout) => callout.fold === 'folded');
       assert(folded && folded.open === false, `${label}: the folded callout starts folded`);
       const summary = page.locator('[data-callout][data-callout-fold="folded"] [data-callout-title]');
@@ -431,6 +483,28 @@ try {
       }
       const missing = report.embeds.find((embed) => embed.state === 'missing');
       assert.equal(missing.text, 'Нет такой заметки', `${label}: the missing note's line`);
+      // Ч11.7, Ч11.8. An embed is a button that opens its note, at the place
+      // after its `#`; under the pointer its frame takes the focus frame. A
+      // note embedding itself is not pressable.
+      assert.equal(await page.locator(`[data-note-embed-slug="${SOURCE_SLUG}"] [data-note-embed-open]`).count(), 0, `${label}: the note embedding itself is not pressable`);
+      const plain = page.locator(`[data-note-embed-slug="${EMBED_SLUG}"] [data-note-embed-open]`).first();
+      await plain.hover();
+      await page.waitForTimeout(250);
+      const frame = await plain.evaluate((button) => {
+        const card = button.querySelector('[data-feed-card-frame]');
+        const probe = document.createElement('span');
+        probe.style.color = 'var(--border-accent)';
+        button.appendChild(probe);
+        const accent = getComputedStyle(probe).color;
+        probe.remove();
+        return { line: getComputedStyle(card, '::after').borderTopColor, accent };
+      });
+      assert.equal(frame.line, frame.accent, `${label}: an embed under the pointer takes the focus frame`);
+      await plain.click();
+      const section = page.locator(`[data-note-embed-slug="${EMBED_SLUG}"] [data-note-embed-open]`).last();
+      await section.click();
+      assert.deepEqual(await page.evaluate(() => window.__audit.opened), [EMBED_SLUG, `${EMBED_SLUG}#Раздел`], `${label}: the embeds open their note, at the heading after #`);
+      await page.mouse.move(0, 0);
 
       // Ч12. A task box sends the item's byte offset and the state seen.
       assert(report.tasks >= 9, `${label}: task boxes (${report.tasks})`);
@@ -446,11 +520,22 @@ try {
       assert.equal(second.item_start, itemStartOf('Задача в цитате'), `${label}: a task in a quote names its marker after "> "`);
       assert.equal(second.source_body_hash, 'hash-1', `${label}: the next write takes the new hash`);
 
+      // Ч11.8. A card opened at a heading or a block scrolls its article
+      // there.
+      for (const [anchor, selector, text] of [['Таблицы', 'h2', 'Таблицы'], ['^READING-CHECK', 'p', 'Абзац с меткой блока']]) {
+        await page.evaluate((value) => window.__audit.jump(value), anchor);
+        await page.waitForFunction(([tag, words]) => {
+          const target = [...document.querySelectorAll(`[data-article-body] ${tag}`)].find((element) => element.textContent.includes(words));
+          const box = target?.getBoundingClientRect();
+          return box && box.top >= 0 && box.bottom <= window.innerHeight;
+        }, [selector, text], { timeout: 5000 });
+      }
+
       // Nothing from the network: every request is the audit page's own.
       const foreign = requests.filter((url) => !url.startsWith(vite.origin) && !url.startsWith('data:') && !url.startsWith('blob:'));
       assert.deepEqual(foreign, [], `${label}: no request outside the page's origin`);
       assert.deepEqual(errors, [], `${label}: no page errors`);
-      console.log(`PASS ${label}: no sideways scroll, code in a line, marker, HTML, tables and their dissolving edges, code blocks, Mermaid, callouts, KaTeX, footnotes, embeds and task boxes as the rules say; ${requests.length} requests, all local`);
+      console.log(`PASS ${label}: no sideways scroll, code in a line, marker, HTML, tables and their dissolving edges, code blocks and their colours, Mermaid and its series, callouts and their colours, KaTeX, footnotes, embeds that open their note, the jump to a heading and a block, and task boxes as the rules say; ${requests.length} requests, all local`);
       await page.close();
     }
   }

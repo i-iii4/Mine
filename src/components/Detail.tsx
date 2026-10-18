@@ -159,6 +159,7 @@ import {
   CardReferenceRow,
 } from "./CardReferenceRow";
 import { ReadOnlyCardPreview } from "./Card";
+import { findArticleAnchor, parseArticleAnchor } from "@/lib/reading/anchors";
 import { ArticleMarkdown } from "./reading/ArticleMarkdown";
 import { mediaControlsClasses } from "./reading/mediaControls";
 import { useNoteEmbedLookups } from "./reading/NoteEmbed";
@@ -3451,6 +3452,8 @@ function ArticleBody({
   previewManifest: ReturnType<typeof normalizeDetailPreviewManifest>;
   sourceSlug?: string;
   sourceBodyHash?: string | null;
+  /** The part after `#` of the link the card was opened by (`Heading`,
+   *  `A#B`, `^block`): the article scrolls to that place (Ч11.8). */
   scrollAnchor?: string | null;
   tags: TagCount[];
   currentTag?: string;
@@ -3615,18 +3618,26 @@ function ArticleBody({
     onStale: onBodyStale,
   });
 
+  // The place the card opened at, once jumped to: a body written later (a
+  // task box) keeps the reader where they are.
+  const jumpedAnchorRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!scrollAnchor || !articleRef.current) return;
+    const anchor = scrollAnchor ? parseArticleAnchor(scrollAnchor) : null;
+    const jump = `${sourceSlug ?? ""}\u0000${scrollAnchor ?? ""}`;
+    if (!anchor || !articleRef.current || jumpedAnchorRef.current === jump) return;
     const root = articleRef.current;
     let frame: number | null = null;
     let current = true;
     // The embeds' first answers move what stands under them, and WebKit
-    // keeps no scroll anchor: the jump waits for them (Ч11.4).
+    // keeps no scroll anchor: the jump waits for them (Ч11.4). The body may
+    // still be the feed's start of it: the jump is tried again with the
+    // whole body, and a place the note has not stays at the top (Ч11.8).
     void noteEmbeds.settled().then(() => {
       if (!current) return;
       frame = window.requestAnimationFrame(() => {
-        const element = findElementForBlockAnchor(root, scrollAnchor);
+        const element = findArticleAnchor(root, body, anchor);
         if (!element) return;
+        jumpedAnchorRef.current = jump;
         element.scrollIntoView?.({ block: "center", behavior: scrollBehavior() });
         element.setAttribute("data-scroll-anchor-hit", "true");
         window.setTimeout(() => {
@@ -3638,7 +3649,7 @@ function ArticleBody({
       current = false;
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
-  }, [noteEmbeds, processedBody, scrollAnchor]);
+  }, [body, noteEmbeds, scrollAnchor, sourceSlug]);
 
   const media = useMemo<ArticleMediaState>(
     () => ({
@@ -4451,20 +4462,6 @@ function isLocalMediaRef(src: string): boolean {
   return trimmed.split("/").every((segment) => {
     return segment.length > 0 && segment !== "." && segment !== "..";
   });
-}
-
-function findElementForBlockAnchor(root: HTMLElement, blockId: string): HTMLElement | null {
-  const marker = `^${blockId}`;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let node = walker.nextNode();
-  while (node) {
-    if (node.textContent?.includes(marker)) {
-      const parent = node.parentElement;
-      return parent?.closest<HTMLElement>("p, li, blockquote, h1, h2, h3, h4, h5, h6") ?? parent ?? null;
-    }
-    node = walker.nextNode();
-  }
-  return null;
 }
 
 function isExtractableLocalImage(src: string): boolean {

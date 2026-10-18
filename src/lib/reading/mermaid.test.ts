@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MERMAID_MAX_TEXT_SIZE,
+  MERMAID_SERIES,
   MERMAID_TEXT_TOO_LONG,
   mermaidConfig,
+  mermaidSeriesVariables,
   readMermaidTheme,
   renderMermaid,
   resetMermaidForTests,
@@ -16,7 +18,8 @@ const engine = vi.hoisted(() => ({
 }));
 vi.mock("mermaid", () => ({ default: engine }));
 
-const LIGHT: MermaidTheme = { dark: false, fontFamily: "system-ui", width: 680, variables: { primaryColor: "#fafafa" } };
+const SERIES = { red: "#d6002c", orange: "#a65e00", yellow: "#8a7300", green: "#008a2c", cyan: "#007f99", blue: "#1a6dff", purple: "#b600cc" } as const;
+const LIGHT: MermaidTheme = { dark: false, fontFamily: "system-ui", width: 680, variables: { primaryColor: "#fafafa" }, series: SERIES };
 const DARK: MermaidTheme = { ...LIGHT, dark: true, variables: { primaryColor: "#0f0f0f" } };
 
 beforeEach(() => {
@@ -106,6 +109,39 @@ describe("mermaidConfig", () => {
     });
   });
 
+  it("gives the series colours out in their order, again from the first after the last (В3 (в))", () => {
+    const order = MERMAID_SERIES.map((name) => SERIES[name]);
+    expect(MERMAID_SERIES).toEqual(["red", "orange", "yellow", "green", "cyan", "blue", "purple"]);
+    const variables = mermaidConfig(LIGHT).themeVariables as Record<string, unknown>;
+    const palette = (prefix: string, first: number, count: number) =>
+      Array.from({ length: count }, (_, slot) => variables[`${prefix}${first + slot}`]);
+    const cycled = (count: number) => Array.from({ length: count }, (_, slot) => order[slot % order.length]);
+    expect(palette("pie", 1, 12)).toEqual(cycled(12));
+    expect(palette("cScale", 0, 12)).toEqual(cycled(12));
+    expect(palette("git", 0, 8)).toEqual(cycled(8));
+    expect(palette("fillType", 0, 8)).toEqual(cycled(8));
+    expect(palette("venn", 1, 8)).toEqual(cycled(8));
+    expect(variables.xyChart).toEqual({ plotColorPalette: order.join(",") });
+    // A slice shows the token itself, not a mix of it with the page.
+    expect(variables.pieOpacity).toBe("1");
+  });
+
+  it("colours a Gantt bar by its state and keeps the base theme's variables", () => {
+    const variables = mermaidConfig(LIGHT).themeVariables as Record<string, unknown>;
+    expect(variables).toMatchObject({
+      taskBkgColor: SERIES.blue,
+      activeTaskBkgColor: SERIES.cyan,
+      doneTaskBkgColor: SERIES.green,
+      critBkgColor: SERIES.red,
+      primaryColor: "#fafafa",
+    });
+  });
+
+  it("gives no series colours when they could not be read", () => {
+    expect(mermaidSeriesVariables({})).toEqual({});
+    expect(mermaidSeriesVariables({ red: "#ff0000" })).toEqual({});
+  });
+
   it("keeps colour and font out of a diagram's own directives", () => {
     expect(mermaidConfig(LIGHT).secure).toEqual(expect.arrayContaining(
       ["secure", "securityLevel", "theme", "themeVariables", "themeCSS", "darkMode", "fontFamily", "look"],
@@ -136,7 +172,13 @@ describe("readMermaidTheme", () => {
         lineColor: "#0c22ff",
         primaryTextColor: "#0c22ff",
         fontSize: "14px",
+        // The frames of slices and bars are lines (Ч7).
+        pieStrokeColor: "#0c22ff",
+        pieOuterStrokeColor: "#0c22ff",
+        critBorderColor: "#0c22ff",
+        doneTaskBorderColor: "#0c22ff",
       });
+      expect(theme.series).toEqual(Object.fromEntries(MERMAID_SERIES.map((name) => [name, "#0c22ff"])));
       expect(host.children).toHaveLength(0);
     } finally {
       HTMLCanvasElement.prototype.getContext = original;

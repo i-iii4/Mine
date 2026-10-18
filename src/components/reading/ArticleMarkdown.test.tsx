@@ -6,6 +6,7 @@ import { ArticleMarkdown } from "./ArticleMarkdown";
 import { NoteEmbedLookups } from "./NoteEmbed";
 import { markdownSourceByteOffset, preprocessWikilinks } from "@/lib/markdownWikilinks";
 import { getBlock, resolveNoteLink } from "@/lib/commands";
+import { findArticleAnchor, parseArticleAnchor } from "@/lib/reading/anchors";
 
 vi.mock("@/lib/commands", () => ({
   getBlock: vi.fn(),
@@ -194,5 +195,49 @@ describe("ArticleMarkdown details", () => {
     fireEvent.keyDown(summary, { key: " " });
     expect(details.open).toBe(false);
     expect(root.querySelector("strong")?.textContent).toBe("text");
+  });
+});
+
+// SPEC_READING_MODE.md, Ч11.8: the place an embed's or a related note's
+// `#…` names, found in the drawn article as Obsidian finds it.
+describe("ArticleMarkdown anchors", () => {
+  function find(body: string, subpath: string) {
+    const { root } = renderArticle(body);
+    const anchor = parseArticleAnchor(subpath);
+    if (!anchor) throw new Error(`no anchor in ${subpath}`);
+    return findArticleAnchor(root, body, anchor);
+  }
+
+  it("finds a heading after wikilinks, by Obsidian's matching", () => {
+    const body = "See [[Peer]] and [[Other|o]].\n\n## Plan: A/B [[Peer|p]]\n\nText\n\n### Steps\n\n## Steps";
+    expect(find(body, "plan a b peer p")?.textContent).toBe("Plan: A/B p");
+    const steps = find(body, "Plan A B Peer p#Steps");
+    expect(steps?.tagName).toBe("H3");
+    expect(find(body, "Steps")?.tagName).toBe("H3");
+  });
+
+  it("does not find a heading inside a callout, nor one the note has not", () => {
+    const body = "> [!note] Callout\n> ## Hidden\n\n## Shown";
+    expect(find(body, "Hidden")).toBeNull();
+    expect(find(body, "Missing")).toBeNull();
+    expect(find(body, "Shown")?.tagName).toBe("H2");
+  });
+
+  it("finds the block whose ^id ends it, in any letter case", () => {
+    const body = "First ^other\n\nThe paragraph ^c0ffee\n\n- an item ^Item-1\n- next";
+    expect(find(body, "^c0ffee")?.textContent).toBe("The paragraph ^c0ffee");
+    expect(find(body, "^C0FFEE")?.tagName).toBe("P");
+    expect(find(body, "^item-1")?.tagName).toBe("LI");
+  });
+
+  it("takes the block before a lone ^id, as Obsidian names a list, a quote or a table", () => {
+    const body = "- one\n- two\n\n^list-id\n\n> quoted\n\n^quote-id";
+    expect(find(body, "^list-id")?.tagName).toBe("UL");
+    expect(find(body, "^quote-id")?.tagName).toBe("BLOCKQUOTE");
+  });
+
+  it("does not take a longer id, an id mid-line, or one in code", () => {
+    const body = "Ends ^c0ffee-2\n\nMid ^c0ffee then text\n\n`^c0ffee`\n\n```\nline ^c0ffee\n```";
+    expect(find(body, "^c0ffee")).toBeNull();
   });
 });

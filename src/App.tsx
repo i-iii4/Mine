@@ -160,11 +160,14 @@ function baseRelatedNoteSlug(target: string): string {
   return target.split("#", 1)[0] ?? target;
 }
 
-function relatedNoteBlockAnchor(target: string): string | null {
-  const fragment = target.split("#", 2)[1];
-  if (!fragment?.startsWith("^")) return null;
-  const blockId = fragment.slice(1).trim();
-  return blockId || null;
+/// The part of a note's link after its first `#` (`Heading`, `A#B`,
+/// `^block`): the place the opened card scrolls to (SPEC_READING_MODE.md,
+/// Ч11.8).
+function relatedNoteSubpath(target: string): string | null {
+  const hash = target.indexOf("#");
+  if (hash === -1) return null;
+  const subpath = target.slice(hash + 1).trim();
+  return subpath || null;
 }
 
 function blockMarkdownPath(vaultPath: string, slug: string): string {
@@ -3248,11 +3251,11 @@ export function AppWithVault({
   );
 
   const handleOpenRelatedNote = useCallback((slug: string) => {
-    const blockAnchor = relatedNoteBlockAnchor(slug);
+    const anchor = relatedNoteSubpath(slug);
     void getBlock(baseRelatedNoteSlug(slug))
       .then((block) => {
         if (block) {
-          openDetailBlock(block, blockAnchor);
+          openDetailBlock(block, anchor);
         }
       })
       .catch((error) => {

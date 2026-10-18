@@ -155,6 +155,11 @@ function useEmbedWidth(shown: string) {
   return { ref, width };
 }
 
+/** The file name of the note `slug` names: its last segment and `.md`. */
+function noteFileName(slug: string): string {
+  return `${slug.split("/").pop() ?? slug}.md`;
+}
+
 /**
  * A note embedded in the article, `![[Note]]` (SPEC_READING_MODE.md, Ч11):
  * the note's card as the feed draws it, unfolded, without a shadow, centred on
@@ -163,21 +168,35 @@ function useEmbedWidth(shown: string) {
  * pressable, like a missing note among related notes. The card shows the
  * note's preview, not its body, so an embed never unfolds into the note's own
  * embeds: a note that embeds itself, or a ring of two, shows one card each.
+ *
+ * The card is a button (Ч11.7, user's decision of 18.10.2026): a click,
+ * Enter and Space open the note as a row of Related notes does, with the
+ * heading or block after `#` as the place it opens at (Ч11.8). Under the
+ * pointer and in keyboard focus it takes the feed card's focus frame, in
+ * keyboard focus its picture the feed's focus wash too (SPEC_CARD_STATES.md,
+ * С1; `article.css`). A note embedding itself is already open: its card is
+ * not pressable.
  */
 export function NoteEmbed({
   lookups,
   target,
   fragment,
   label,
+  sourceSlug,
   vaultPath,
   thumbsRootPath,
+  onOpenNote,
 }: {
   lookups: NoteEmbedLookups;
   target: string;
   fragment: string | null;
   label: string | null;
+  /** The note the article is of. */
+  sourceSlug: string | undefined;
   vaultPath: string;
   thumbsRootPath?: string;
+  /** Opens a note, `slug` or `slug#place`. */
+  onOpenNote: (slug: string) => void;
 }) {
   const lookup = useSyncExternalStore(lookups.subscribe, () => lookups.lookup(target), () => LOADING);
   const { ref, width } = useEmbedWidth(lookup.state);
@@ -200,15 +219,29 @@ export function NoteEmbed({
       </span>
     );
   }
+  const { slug } = lookup.block;
+  const card = (
+    <ReadOnlyCardPreview
+      block={lookup.block}
+      vaultPath={vaultPath}
+      thumbsRootPath={thumbsRootPath}
+      width={width}
+      shadow="none"
+    />
+  );
   return (
-    <span ref={ref} data-note-embed="found" data-note-embed-slug={lookup.block.slug}>
-      <ReadOnlyCardPreview
-        block={lookup.block}
-        vaultPath={vaultPath}
-        thumbsRootPath={thumbsRootPath}
-        width={width}
-        shadow="none"
-      />
+    <span ref={ref} data-note-embed="found" data-note-embed-slug={slug}>
+      {slug === sourceSlug ? card : (
+        <button
+          type="button"
+          className="block cursor-default rounded-card outline-none"
+          aria-label={`Open ${noteFileName(slug)}`}
+          data-note-embed-open=""
+          onClick={() => onOpenNote(fragment === null ? slug : `${slug}#${fragment}`)}
+        >
+          {card}
+        </button>
+      )}
     </span>
   );
 }

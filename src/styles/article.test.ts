@@ -62,10 +62,19 @@ describe("article.css", () => {
     expect(rule(".mine-article table")).toContain("width: auto;");
   });
 
-  it("colours highlighting from --code-* variables only (Ч6.4)", () => {
+  it("colours highlighting from --code-* variables and the block's own text only (Ч6.4)", () => {
     const highlight = article.match(/\[data-code-block\][^{]*\{ color: [^}]+\}/g) ?? [];
-    expect(highlight.length).toBeGreaterThan(5);
-    for (const line of highlight) expect(line).toMatch(/\{ color: var\(--code-[a-z]+\); \}$/);
+    expect(highlight.length).toBeGreaterThan(10);
+    for (const line of highlight) {
+      expect(line).toMatch(/\{ color: var\(--(?:code-[a-z]+|tw-prose-pre-code)\);(?: background-color: var\(--code-[a-z]+-fill\);| font-(?:weight: 600|style: italic);)? \}$/);
+    }
+  });
+
+  it("gives a note embed's button the feed card's frame under the pointer and in focus (Ч11.7)", () => {
+    expect(rule(".mine-article [data-note-embed-open]:is(:hover, :focus-visible) [data-feed-card-frame]"))
+      .toContain("--card-frame-color: var(--border-accent);");
+    expect(rule(".mine-article [data-note-embed-open]:focus-visible [data-card-media-clip] > [data-card-lift=\"window\"]::after"))
+      .toContain("opacity: 1;");
   });
 
   it("sets footnotes under a line in the small secondary step (Ч10)", () => {

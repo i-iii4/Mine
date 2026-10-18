@@ -258,6 +258,148 @@ describe("tokens follow the colour rules", () => {
     expect(contrastRatio(rgbFromOklch(darkL, darkC, darkH), hoverFill("dark", DARK))).toBeGreaterThanOrEqual(4.5);
   });
 
+  // K12 (section 2): the system colours of macOS as sRGB, light appearance;
+  // red and orange as K12 has held them since 05.10.2026, the others from
+  // AppKit's NSColor on macOS 27.2 (18.10.2026).
+  const SYSTEM_COLORS = {
+    red: [255, 59, 48],
+    orange: [255, 149, 0],
+    yellow: [255, 204, 0],
+    green: [52, 199, 89],
+    cyan: [0, 192, 232],
+    blue: [0, 136, 255],
+    purple: [203, 48, 224],
+  } as const satisfies Record<string, readonly [number, number, number]>;
+  type SystemColor = keyof typeof SYSTEM_COLORS;
+  /** Hue (one decimal) and chroma (three) of a system colour, as K12 writes them. */
+  const hueAndChroma = (name: SystemColor) => {
+    const linear = (channel: number) => {
+      const value = channel / 255;
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    };
+    const [red, green, blue] = SYSTEM_COLORS[name];
+    const [r, g, b] = [linear(red), linear(green), linear(blue)] as const;
+    const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    const a = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s;
+    const bb = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
+    const hue = (Math.atan2(bb, a) * 180) / Math.PI;
+    return { hue: Math.round((hue < 0 ? hue + 360 : hue) * 10) / 10, chroma: Math.round(Math.hypot(a, bb) * 1000) / 1000 };
+  };
+  const oklchParts = (value: string | undefined): [number, number, number] => {
+    const match = /oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)/.exec(value ?? "");
+    return [Number(match?.[1]), Number(match?.[2]), Number(match?.[3])];
+  };
+  const bisect = (holds: (value: number) => boolean, low: number, high: number) => {
+    let lo = low;
+    let hi = high;
+    for (let step = 0; step < 60; step += 1) {
+      const middle = (lo + hi) / 2;
+      if (holds(middle)) lo = middle;
+      else hi = middle;
+    }
+    return lo;
+  };
+
+  it("derives the semantic text colours: macOS's hue and chroma, K5 on the light canvas, the dark by the line form (3.8)", () => {
+    const TEXT: ReadonlyArray<readonly [string, SystemColor]> = [
+      ["--destructive", "red"],
+      ["--detach", "orange"],
+      ["--callout-blue", "blue"],
+      ["--callout-cyan", "cyan"],
+      ["--callout-green", "green"],
+      ["--callout-purple", "purple"],
+    ];
+    const canvas = { light: greyFromOklch(CANVAS.light), dark: greyFromOklch(CANVAS.dark) };
+    for (const [token, name] of TEXT) {
+      const { hue, chroma } = hueAndChroma(name);
+      const ink = (l: number) => rgbFromOklch(l, gamutChroma(l, hue, chroma), hue);
+      // The brightest lightness that keeps K5 on the white canvas.
+      const light = bisect((l) => contrastRatio(ink(l), canvas.light) >= 4.5, 0, 1);
+      const dark = CANVAS.dark + darkSignalDelta(CANVAS.light - light, "line");
+      for (const [theme, tokens, expected] of [["light", LIGHT, light], ["dark", DARK, dark]] as const) {
+        const [l, c, h] = oklchParts(tokens[token]);
+        expect(l, `${token} ${theme}`).toBeCloseTo(expected, 3);
+        expect(c, `${token} ${theme}`).toBeCloseTo(gamutChroma(l, hue, chroma), 2);
+        expect(h, `${token} ${theme}`).toBe(hue);
+        expect(contrastRatio(rgbFromOklch(l, c, h), canvas[theme]), `${token} ${theme}`).toBeGreaterThan(4.49);
+      }
+    }
+  });
+
+  it("derives the series of a diagram: an area under the foreground text, K5 against K2 of its theme (3.8)", () => {
+    const foreground = { light: greyFromOklch(FG.light), dark: greyFromOklch(FG.dark) };
+    for (const name of Object.keys(SYSTEM_COLORS) as SystemColor[]) {
+      const token = `--series-${name}`;
+      const { hue, chroma } = hueAndChroma(name);
+      const fill = (l: number) => rgbFromOklch(l, gamutChroma(l, hue, chroma), hue);
+      // Light: the darkest fill dark text still reads on; dark: the brightest
+      // fill light text still reads on.
+      const light = 1 - bisect((x) => contrastRatio(fill(1 - x), foreground.light) >= 4.5, 0, 1);
+      const dark = bisect((l) => contrastRatio(fill(l), foreground.dark) >= 4.5, 0, 1);
+      for (const [theme, tokens, expected] of [["light", LIGHT, light], ["dark", DARK, dark]] as const) {
+        const [l, c, h] = oklchParts(tokens[token]);
+        expect(l, `${token} ${theme}`).toBeCloseTo(expected, 3);
+        expect(c, `${token} ${theme}`).toBeCloseTo(gamutChroma(l, hue, chroma), 2);
+        expect(h, `${token} ${theme}`).toBe(hue);
+        const drawn = rgbFromOklch(l, c, h);
+        expect(contrastRatio(drawn, foreground[theme]), `${token} ${theme}`).toBeGreaterThanOrEqual(4.5);
+        // A slice or a bar stands out from the canvas as an indicator (K6).
+        expect(contrastRatio(drawn, greyFromOklch(CANVAS[theme])), `${token} ${theme}`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
+  it("colours highlighted code exactly as highlight.js 11.11.2's GitHub themes do (SPEC_READING_MODE.md, Ч6.4)", () => {
+    const highlightJs = path.join(process.cwd(), "node_modules/highlight.js");
+    expect(JSON.parse(readFileSync(path.join(highlightJs, "package.json"), "utf8")).version).toBe("11.11.2");
+    /** Each selector of a stylesheet with the declarations of its rule. */
+    const rules = (text: string) => {
+      const found = new Map<string, Record<string, string>>();
+      for (const [, selectors, body] of text.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+        const declarations = Object.fromEntries(
+          [...body!.matchAll(/([\w-]+)\s*:\s*([^;]+?)\s*(?:;|$)/g)].map(([, name, value]) => [name!, value!]),
+        );
+        for (const selector of selectors!.split(",")) {
+          const key = selector.trim().replace(/^\.mine-article \[data-code-block\] /, "");
+          found.set(key, { ...found.get(key), ...declarations });
+        }
+      }
+      return found;
+    };
+    // The article's rules, `:is()` lists opened, `var(--x)` read from a theme.
+    const article = new Map<string, Record<string, string>>();
+    const articleCss = readFileSync("src/styles/article.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const highlightRule = /\.mine-article \[data-code-block\] (?::is\(([^)]*)\)|(\.hljs-[\w-]+))\s*\{([^}]*)\}/g;
+    for (const [, list, single, body] of articleCss.matchAll(highlightRule)) {
+      const declarations = Object.fromEntries([...body!.matchAll(/([\w-]+)\s*:\s*([^;]+?)\s*;/g)].map(([, name, value]) => [name!, value!]));
+      for (const selector of (list ?? single!).split(",")) article.set(selector.trim(), declarations);
+    }
+    expect(article.size).toBeGreaterThan(30);
+    for (const [file, tokens] of [["github.css", LIGHT], ["github-dark.css", DARK]] as const) {
+      const github = rules(readFileSync(path.join(highlightJs, "styles", file), "utf8"));
+      const base = github.get(".hljs")?.color;
+      for (const [selector, declarations] of github) {
+        if (!selector.startsWith(".hljs-")) continue;
+        const ours = article.get(selector);
+        if (!declarations.color) {
+          // What the theme leaves alone keeps the block's own text.
+          expect(ours, `${file} ${selector}`).toBeUndefined();
+          continue;
+        }
+        const resolve = (value: string | undefined) => {
+          const variable = /^var\((--[\w-]+)\)$/.exec(value ?? "")?.[1];
+          return variable === "--tw-prose-pre-code" ? base : variable ? tokens[variable] : value;
+        };
+        expect(resolve(ours?.color), `${file} ${selector}`).toBe(declarations.color);
+        if (declarations["background-color"]) {
+          expect(resolve(ours?.["background-color"]), `${file} ${selector} fill`).toBe(declarations["background-color"]);
+        }
+      }
+    }
+  });
+
   it("dims to the tertiary step", () => {
     expect(percent(LIGHT["--glass-bg"])).toBeCloseTo((1 - K8) * 100, 1);
     expect(percent(DARK["--glass-bg"])).toBeCloseTo((1 - darkAlpha(K8)) * 100, 1);

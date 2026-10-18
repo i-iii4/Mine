@@ -1,4 +1,5 @@
-import { act, render, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getBlock, resolveNoteLink } from "@/lib/commands";
 import { indexedBlock } from "@/test/blocks";
@@ -15,11 +16,25 @@ vi.mock("@/components/Card", () => ({
 const SOURCE = "Cards/Source";
 const notes: Record<string, string> = { Peer: "Cards/Peer", Source: SOURCE, Ring: "Cards/Ring" };
 
-function embed(lookups: NoteEmbedLookups, target: string, label: string | null = null) {
-  return <NoteEmbed lookups={lookups} target={target} fragment={null} label={label} vaultPath="/vault" thumbsRootPath="/thumbs" />;
+const openNote = vi.fn();
+
+function embed(lookups: NoteEmbedLookups, target: string, label: string | null = null, fragment: string | null = null) {
+  return (
+    <NoteEmbed
+      lookups={lookups}
+      target={target}
+      fragment={fragment}
+      label={label}
+      sourceSlug={SOURCE}
+      vaultPath="/vault"
+      thumbsRootPath="/thumbs"
+      onOpenNote={openNote}
+    />
+  );
 }
 
 beforeEach(() => {
+  openNote.mockReset();
   vi.mocked(resolveNoteLink).mockReset().mockImplementation(async (_source, target) => notes[target] ?? null);
   vi.mocked(getBlock).mockReset().mockImplementation(async (slug) => indexedBlock({ slug, body: `![[${slug === "Cards/Ring" ? "Source" : "Ring"}]]` }));
 });
@@ -91,6 +106,49 @@ describe("NoteEmbed", () => {
       await lookups.settled();
     });
     expect(settled).toBe(true);
+  });
+
+  // Ч11.7 and Ч11.8, the user's decision of 18.10.2026 on В2.
+  it("opens the note by a click, as a row of Related notes does", async () => {
+    const lookups = new NoteEmbedLookups(SOURCE);
+    render(embed(lookups, "Peer"));
+    const open = await screen.findByRole("button", { name: "Open Peer.md" });
+    expect(open).toHaveAttribute("type", "button");
+    expect(open).toHaveAttribute("data-note-embed-open");
+    expect(open).toHaveClass("cursor-default");
+    fireEvent.click(open);
+    expect(openNote).toHaveBeenCalledWith("Cards/Peer");
+  });
+
+  it("is in the Tab order and opens by Enter and Space", async () => {
+    const user = userEvent.setup();
+    const lookups = new NoteEmbedLookups(SOURCE);
+    render(embed(lookups, "Peer"));
+    const open = await screen.findByRole("button", { name: "Open Peer.md" });
+    await user.tab();
+    expect(open).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(openNote).toHaveBeenCalledTimes(1);
+    await user.keyboard(" ");
+    expect(openNote).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens the note at the heading or the block after its #", async () => {
+    const lookups = new NoteEmbedLookups(SOURCE);
+    render(<>{embed(lookups, "Peer", null, "Plan#Steps")}{embed(lookups, "Ring", null, "^c0ffee")}</>);
+    const [heading, block] = await screen.findAllByRole("button");
+    fireEvent.click(heading!);
+    fireEvent.click(block!);
+    expect(openNote.mock.calls).toEqual([["Cards/Peer#Plan#Steps"], ["Cards/Ring#^c0ffee"]]);
+    expect(resolveNoteLink).toHaveBeenCalledWith(SOURCE, "Peer");
+  });
+
+  it("does not press a note embedding itself, nor a missing one", async () => {
+    const lookups = new NoteEmbedLookups(SOURCE);
+    const { container } = render(<>{embed(lookups, "Source")}{embed(lookups, "Gone")}</>);
+    await waitFor(() => expect(container.querySelector("[data-test-card='Cards/Source']")).not.toBeNull());
+    await waitFor(() => expect(container.querySelector("[data-note-embed='missing']")).not.toBeNull());
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
   it("treats a lookup that failed as a missing note and logs it", async () => {

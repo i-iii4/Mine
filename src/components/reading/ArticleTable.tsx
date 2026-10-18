@@ -71,9 +71,9 @@ function pageMeasure(table: HTMLTableElement): (TableMeasure & { outerBorder: nu
  * (SPEC_SCROLL_EDGE_FADE.md, «Полоса вкладок»): the mask lies on the block,
  * so the table's lines dissolve with its text. The budget is the width of
  * the block it stands in: the column, or the content of a list, quote,
- * callout or footnote (Ч5.4; a wider budget waits for the user's decision,
- * В1). A table from HTML with merged cells keeps the browser's own layout in
- * the same block.
+ * callout or footnote (Ч5.4; user's decision of 18.10.2026 on В1: a table
+ * stays in the column). A table from HTML with merged cells keeps the
+ * browser's own layout in the same block.
  */
 export function ArticleTable({
   node,

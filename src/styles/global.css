@@ -908,6 +908,10 @@ body {
   --color-destructive-fill-hover: var(--destructive-fill-hover);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-detach: var(--detach);
+  --color-callout-blue: var(--callout-blue);
+  --color-callout-cyan: var(--callout-cyan);
+  --color-callout-green: var(--callout-green);
+  --color-callout-purple: var(--callout-purple);
   --color-border: var(--border);
   --color-border-accent: var(--border-accent);
   --color-input: var(--input);
@@ -1055,6 +1059,44 @@ body {
   --destructive-foreground: oklch(0.5176 0.212 28.7);
   --search-mark: rgb(255 255 0);
   --search-mark-foreground: oklch(0.145 0 0);
+  /* K12 by role (SPEC_COLOR_RULES.md, 3.8; user's decision of 18.10.2026).
+     A callout type's icon and title take hue and chroma from macOS's
+     systemBlue, systemCyan, systemGreen and systemPurple and their lightness
+     as the destructive text does: K5 on the canvas, the dark one by the line
+     form; red and orange types take --destructive and --detach. A series of
+     a diagram (Mermaid's pie slices, Gantt bars, other fills of many series)
+     is an area under the foreground text, in the order red, orange, yellow,
+     green, cyan, blue, purple of macOS's system colours: its lightness
+     reaches K5 against K2 of its own theme. Every chroma is cut to sRGB. */
+  --callout-blue: oklch(0.5712 0.182 254.1);
+  --callout-cyan: oklch(0.5601 0.101 220);
+  --callout-green: oklch(0.5512 0.162 147.4);
+  --callout-purple: oklch(0.6032 0.263 322.5);
+  --series-red: oklch(0.6015 0.232 28.7);
+  --series-orange: oklch(0.5827 0.133 62.6);
+  --series-yellow: oklch(0.5746 0.117 90.4);
+  --series-green: oklch(0.5567 0.163 147.4);
+  --series-cyan: oklch(0.5656 0.102 220);
+  --series-blue: oklch(0.5769 0.184 254.1);
+  --series-purple: oklch(0.6087 0.263 322.5);
+  /* Code highlighting (SPEC_READING_MODE.md, Ч6.4; user's decision of
+     18.10.2026): the colours of highlight.js 11.11.2's GitHub themes,
+     `styles/github.css` here and `styles/github-dark.css` in the dark
+     blocks, exactly as written there, one variable per group of classes
+     the theme colours alike. The block keeps the article's own fill. */
+  --code-keyword: #d73a49;
+  --code-entity: #6f42c1;
+  --code-constant: #005cc5;
+  --code-string: #032f62;
+  --code-variable: #e36209;
+  --code-comment: #6a737d;
+  --code-tag: #22863a;
+  --code-heading: #005cc5;
+  --code-list: #735c0f;
+  --code-addition: #22863a;
+  --code-addition-fill: #f0fff4;
+  --code-deletion: #b31d28;
+  --code-deletion-fill: #ffeef0;
   /* Dimming: the canvas at 1 minus the tertiary share. */
   --glass-bg: oklch(1 0 0 / 74%);
   --primary-hover: oklch(0.4495 0 0);
@@ -1121,6 +1163,30 @@ body {
     --destructive-foreground: oklch(0.8758 0.0662 28.7);
     --search-mark: rgb(255 255 0);
     --search-mark-foreground: oklch(0.145 0 0);
+    --callout-blue: oklch(0.7526 0.129 254.1);
+    --callout-cyan: oklch(0.7684 0.136 220);
+    --callout-green: oklch(0.7811 0.194 147.4);
+    --callout-purple: oklch(0.7069 0.263 322.5);
+    --series-red: oklch(0.5856 0.232 28.7);
+    --series-orange: oklch(0.5664 0.129 62.6);
+    --series-yellow: oklch(0.5586 0.114 90.4);
+    --series-green: oklch(0.5412 0.159 147.4);
+    --series-cyan: oklch(0.5498 0.1 220);
+    --series-blue: oklch(0.5608 0.179 254.1);
+    --series-purple: oklch(0.5929 0.263 322.5);
+    --code-keyword: #ff7b72;
+    --code-entity: #d2a8ff;
+    --code-constant: #79c0ff;
+    --code-string: #a5d6ff;
+    --code-variable: #ffa657;
+    --code-comment: #8b949e;
+    --code-tag: #7ee787;
+    --code-heading: #1f6feb;
+    --code-list: #f2cc60;
+    --code-addition: #aff5b4;
+    --code-addition-fill: #033a16;
+    --code-deletion: #ffdcd7;
+    --code-deletion-fill: #67060c;
     --glass-bg: oklch(0.14 0 0 / 72.08%);
     --primary-hover: oklch(0.8 0 0);
     --primary-active: oklch(0.7 0 0);
@@ -1183,6 +1249,30 @@ body {
   --destructive-foreground: oklch(0.8758 0.0662 28.7);
   --search-mark: rgb(255 255 0);
   --search-mark-foreground: oklch(0.145 0 0);
+  --callout-blue: oklch(0.7526 0.129 254.1);
+  --callout-cyan: oklch(0.7684 0.136 220);
+  --callout-green: oklch(0.7811 0.194 147.4);
+  --callout-purple: oklch(0.7069 0.263 322.5);
+  --series-red: oklch(0.5856 0.232 28.7);
+  --series-orange: oklch(0.5664 0.129 62.6);
+  --series-yellow: oklch(0.5586 0.114 90.4);
+  --series-green: oklch(0.5412 0.159 147.4);
+  --series-cyan: oklch(0.5498 0.1 220);
+  --series-blue: oklch(0.5608 0.179 254.1);
+  --series-purple: oklch(0.5929 0.263 322.5);
+  --code-keyword: #ff7b72;
+  --code-entity: #d2a8ff;
+  --code-constant: #79c0ff;
+  --code-string: #a5d6ff;
+  --code-variable: #ffa657;
+  --code-comment: #8b949e;
+  --code-tag: #7ee787;
+  --code-heading: #1f6feb;
+  --code-list: #f2cc60;
+  --code-addition: #aff5b4;
+  --code-addition-fill: #033a16;
+  --code-deletion: #ffdcd7;
+  --code-deletion-fill: #67060c;
   --glass-bg: oklch(0.14 0 0 / 72.08%);
   --primary-hover: oklch(0.8 0 0);
   --primary-active: oklch(0.7 0 0);
@@ -1237,6 +1327,30 @@ body {
   --destructive-foreground: oklch(0.5176 0.212 28.7);
   --search-mark: rgb(255 255 0);
   --search-mark-foreground: oklch(0.145 0 0);
+  --callout-blue: oklch(0.5712 0.182 254.1);
+  --callout-cyan: oklch(0.5601 0.101 220);
+  --callout-green: oklch(0.5512 0.162 147.4);
+  --callout-purple: oklch(0.6032 0.263 322.5);
+  --series-red: oklch(0.6015 0.232 28.7);
+  --series-orange: oklch(0.5827 0.133 62.6);
+  --series-yellow: oklch(0.5746 0.117 90.4);
+  --series-green: oklch(0.5567 0.163 147.4);
+  --series-cyan: oklch(0.5656 0.102 220);
+  --series-blue: oklch(0.5769 0.184 254.1);
+  --series-purple: oklch(0.6087 0.263 322.5);
+  --code-keyword: #d73a49;
+  --code-entity: #6f42c1;
+  --code-constant: #005cc5;
+  --code-string: #032f62;
+  --code-variable: #e36209;
+  --code-comment: #6a737d;
+  --code-tag: #22863a;
+  --code-heading: #005cc5;
+  --code-list: #735c0f;
+  --code-addition: #22863a;
+  --code-addition-fill: #f0fff4;
+  --code-deletion: #b31d28;
+  --code-deletion-fill: #ffeef0;
   --glass-bg: oklch(1 0 0 / 74%);
   --primary-hover: oklch(0.4495 0 0);
   --primary-active: oklch(0.2178 0 0);

@@ -12,6 +12,13 @@ export type MermaidRender =
   | { kind: "rendered"; svg: string }
   | { kind: "failed"; message: string };
 
+/** The colours of a diagram's series, in the order they are given out
+ *  (SPEC_READING_MODE.md, Ч7; user's decision of 18.10.2026 on В3 (в)). */
+export const MERMAID_SERIES = ["red", "orange", "yellow", "green", "cyan", "blue", "purple"] as const;
+
+/** One colour of the series. */
+export type MermaidSeriesColor = (typeof MERMAID_SERIES)[number];
+
 /** The colours and font a diagram is drawn with: the theme's tokens. */
 export interface MermaidTheme {
   dark: boolean;
@@ -21,6 +28,9 @@ export interface MermaidTheme {
   width: number;
   /** Mermaid's theme variables, colours as `#rrggbb`. */
   variables: Readonly<Record<string, string>>;
+  /** The series colours (`--series-*`) as `#rrggbb`; empty where there was
+   *  no canvas to read them. */
+  series: Readonly<Partial<Record<MermaidSeriesColor, string>>>;
 }
 
 /** Finished diagrams kept, the oldest used one goes first. */
@@ -54,7 +64,8 @@ const MERMAID_ID_PREFIX = "mine-mermaid-";
 /** The tokens a diagram's variables take (Ч7, the table of variables). The
  *  muted step is read opaque, over the page: Mermaid's colour library cannot
  *  composite. Lines and frames carry the diagram's meaning, so they take the
- *  secondary text step, 4.5:1, not the interface's `--border`. */
+ *  secondary text step, 4.5:1, not the interface's `--border`: the frames of
+ *  pie slices and Gantt bars too, which Mermaid draws black, grey or pink. */
 const MERMAID_TOKEN_VARIABLES: ReadonlyArray<readonly [token: string, variables: readonly string[]]> = [
   ["--background", ["background", "edgeLabelBackground", "tertiaryColor"]],
   ["--card", ["primaryColor", "mainBkg"]],
@@ -62,9 +73,62 @@ const MERMAID_TOKEN_VARIABLES: ReadonlyArray<readonly [token: string, variables:
   ["--foreground", ["primaryTextColor", "textColor", "noteTextColor", "titleColor"]],
   [
     "--muted-foreground-opaque",
-    ["lineColor", "primaryBorderColor", "nodeBorder", "clusterBorder", "noteBorderColor"],
+    [
+      "lineColor",
+      "primaryBorderColor",
+      "nodeBorder",
+      "clusterBorder",
+      "noteBorderColor",
+      "pieStrokeColor",
+      "pieOuterStrokeColor",
+      "activeTaskBorderColor",
+      "doneTaskBorderColor",
+      "critBorderColor",
+    ],
   ],
 ];
+
+/** How many colours each of Mermaid's palettes of series holds: slices of a
+ *  pie, sections of a mindmap or timeline (`cScale`), branches of a git
+ *  graph, sections of a journey (`fillType`), sets of a Venn diagram. */
+const SERIES_SLOTS: ReadonlyArray<readonly [prefix: string, first: number, count: number]> = [
+  ["pie", 1, 12],
+  ["cScale", 0, 12],
+  ["git", 0, 8],
+  ["fillType", 0, 8],
+  ["venn", 1, 8],
+];
+/** The bars of a Gantt chart by their state: Mermaid's own red for the
+ *  critical ones, a task blue, an active one cyan, a done one green. */
+const GANTT_BARS: ReadonlyArray<readonly [variable: string, color: MermaidSeriesColor]> = [
+  ["taskBkgColor", "blue"],
+  ["activeTaskBkgColor", "cyan"],
+  ["doneTaskBkgColor", "green"],
+  ["critBkgColor", "red"],
+];
+
+/**
+ * The theme variables of a diagram's series (Ч7, «Цвета серий»): every
+ * palette Mermaid gives out to series takes the series colours in their
+ * order, again from the first after the last; a Gantt bar takes the colour
+ * of its state, an XY chart's lines and bars the list. A slice is drawn
+ * opaque, so it shows the token and not a mix of it with the page. Lines and
+ * text keep the tokens of the table of variables.
+ */
+export function mermaidSeriesVariables(series: MermaidTheme["series"]): Record<string, unknown> {
+  const colors = MERMAID_SERIES.flatMap((name) => {
+    const color = series[name];
+    return color === undefined ? [] : [color];
+  });
+  if (colors.length < MERMAID_SERIES.length) return {};
+  const variables: Record<string, unknown> = { pieOpacity: "1" };
+  for (const [prefix, first, count] of SERIES_SLOTS) {
+    for (let slot = 0; slot < count; slot += 1) variables[`${prefix}${first + slot}`] = colors[slot % colors.length];
+  }
+  for (const [variable, color] of GANTT_BARS) variables[variable] = series[color];
+  variables.xyChart = { plotColorPalette: colors.join(",") };
+  return variables;
+}
 
 /** `color` as sRGB `#rrggbb`, laid over `under` on one pixel of a canvas;
  *  `null` where there is no canvas to ask. */
@@ -107,6 +171,11 @@ export function readMermaidTheme(host: HTMLElement, dark: boolean): MermaidTheme
     const hex = context ? srgbHex(context, read(token), page) : null;
     if (hex) for (const name of names) variables[name] = hex;
   }
+  const series: Partial<Record<MermaidSeriesColor, string>> = {};
+  for (const name of MERMAID_SERIES) {
+    const hex = context ? srgbHex(context, read(`--series-${name}`), page) : null;
+    if (hex) series[name] = hex;
+  }
   const fontFamily = getComputedStyle(host).fontFamily;
   probe.remove();
   return {
@@ -114,6 +183,7 @@ export function readMermaidTheme(host: HTMLElement, dark: boolean): MermaidTheme
     fontFamily,
     width: Math.round(host.clientWidth),
     variables: { ...variables, fontFamily, fontSize: MERMAID_FONT_SIZE },
+    series,
   };
 }
 
@@ -129,7 +199,7 @@ export function mermaidConfig(theme: MermaidTheme): MermaidConfig {
     suppressErrorRendering: true,
     maxTextSize: MERMAID_MAX_TEXT_SIZE,
     theme: "base",
-    themeVariables: { ...theme.variables, darkMode: theme.dark },
+    themeVariables: { ...theme.variables, ...mermaidSeriesVariables(theme.series), darkMode: theme.dark },
     darkMode: theme.dark,
     fontFamily: theme.fontFamily,
     look: "classic",

@@ -338,8 +338,10 @@ function Span({ node, children, ...props }: ElementProps<"span">) {
         target={target}
         fragment={typeof fragment === "string" ? fragment : null}
         label={typeof label === "string" ? label : null}
+        sourceSlug={article.sourceSlug}
         vaultPath={article.vaultPath}
         thumbsRootPath={article.thumbsRootPath}
+        onOpenNote={article.onOpenNote}
       />
     );
   }
@@ -398,7 +400,8 @@ export interface ArticleMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement
   tasks: TaskToggles | null;
   /** The host's picture and video of the body (media actions, Р5, Р6). */
   image: ComponentType<ComponentProps<"img"> & ExtraProps>;
-  /** Opens a note a wikilink resolved to. */
+  /** Opens a note a wikilink resolved to, or an embed's note with the place
+   *  after its `#` (`slug#Heading`, `slug#^block`). */
   onOpenNote: (slug: string) => void;
   rootRef?: Ref<HTMLDivElement>;
   /** Drawn after the article, inside its root. */

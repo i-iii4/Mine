@@ -14,7 +14,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { CALLOUT_TYPES, type CalloutFold, type CalloutIconName, type CalloutType } from "@/lib/reading/callouts";
+import { CALLOUT_TYPES, type CalloutColor, type CalloutFold, type CalloutIconName, type CalloutType } from "@/lib/reading/callouts";
 import { cn } from "@/lib/utils";
 import { DisclosureRoot, DisclosureSummary } from "./Disclosure";
 
@@ -34,6 +34,19 @@ const CALLOUT_ICONS: Record<CalloutIconName, ComponentType<SVGProps<SVGSVGElemen
   Quote,
 };
 
+/** The token of each colour (SPEC_COLOR_RULES.md, К12, 3.8): red and orange
+ *  are the semantic colours Mine has, blue, cyan, green and purple the
+ *  callout's own, grey the secondary text step. */
+export const CALLOUT_COLOR_CLASSES: Record<CalloutColor, string> = {
+  red: "text-destructive",
+  orange: "text-detach",
+  blue: "text-callout-blue",
+  cyan: "text-callout-cyan",
+  green: "text-callout-green",
+  purple: "text-callout-purple",
+  grey: "text-muted-foreground",
+};
+
 interface CalloutState {
   type: CalloutType;
   fold: CalloutFold;
@@ -49,10 +62,9 @@ const CALLOUT_TITLE_CLASSES = "min-h-row px-plate py-1.5 leading-5 font-semibold
 
 /**
  * A callout of the article (SPEC_READING_MODE.md, Ч8): the box, the title row
- * with the type's icon, and the body. With `-` or `+` after its type it folds
- * by its title like a `<details>`, starting folded or unfolded as written.
- * Without colours of its own: those of the types wait for the user's
- * decision (В3 (а)).
+ * with the type's icon, both in the type's colour, and the body in the
+ * article's own. With `-` or `+` after its type it folds by its title like a
+ * `<details>`, starting folded or unfolded as written.
  */
 export function Callout({ type, fold, children }: { type: CalloutType; fold: CalloutFold; children?: ReactNode }) {
   const state = { type, fold };
@@ -73,7 +85,9 @@ export function Callout({ type, fold, children }: { type: CalloutType; fold: Cal
 /** A callout's title row; in a callout that folds, its summary. */
 export function CalloutTitle({ children }: { children?: ReactNode }) {
   const state = useContext(CalloutContext);
-  const Icon = CALLOUT_ICONS[CALLOUT_TYPES[state?.type ?? "note"].icon];
+  const type = CALLOUT_TYPES[state?.type ?? "note"];
+  const Icon = CALLOUT_ICONS[type.icon];
+  const color = CALLOUT_COLOR_CLASSES[type.color];
   const content = (
     <>
       <Icon aria-hidden="true" className="size-[13px] shrink-0" data-callout-icon={state?.type} />
@@ -82,13 +96,13 @@ export function CalloutTitle({ children }: { children?: ReactNode }) {
   );
   if (state?.fold) {
     return (
-      <DisclosureSummary className={cn(CALLOUT_TITLE_CLASSES, "gap-plate")} data-callout-title="">
+      <DisclosureSummary className={cn(CALLOUT_TITLE_CLASSES, color, "gap-plate")} data-callout-title="">
         {content}
       </DisclosureSummary>
     );
   }
   return (
-    <div className={cn(CALLOUT_TITLE_CLASSES, "flex items-center gap-plate")} data-callout-title="">
+    <div className={cn(CALLOUT_TITLE_CLASSES, color, "flex items-center gap-plate")} data-callout-title="">
       {content}
     </div>
   );
