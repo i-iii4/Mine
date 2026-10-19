@@ -353,7 +353,22 @@ enum CommandError {
 #[tauri::command] merge_blocks(state, ordered_slugs: Vec<String>) -> Result<MergeBlocksResult, MergeBlocksError>
 #[tauri::command] rename_block_file(state, old_slug: String, new_stem: String) -> Result<RenameBlockResult, RenameBlockError>
 #[tauri::command] toggle_task_item(state, params: ToggleTaskItemParams) -> Result<IndexedBlock, TaskToggleError>
+#[tauri::command] suggest_note_links(state, source_slug: String, query: NoteLinkQuery) -> Result<Vec<NoteLinkSuggestion>, CommandError>
 ```
+
+### commands/note_edit, commands/edit_sessions, commands/edit_menu
+
+```rust
+#[tauri::command] begin_note_edit(state, slug: String) -> Result<IndexedBlock, NoteEditError>
+#[tauri::command] save_note_body(state, params: SaveNoteBodyParams) -> Result<SavedNoteBody, NoteSaveError>
+#[tauri::command] note_body_state(state, slug: String) -> Result<NoteBodyState, NoteEditError>
+#[tauri::command] report_note_edits(state, slug: String, unsaved: bool)
+#[tauri::command] end_note_edit(state, slug: String)
+#[tauri::command] report_edits_flushed(state, request_id: String)
+#[tauri::command] report_focused_editor(state, focused: bool, can_undo: bool, can_redo: bool)
+```
+
+События: `note-changed { slug, body_hash }`, `flush-edits { request_id }` (ответ `report_edits_flushed` в пределах 3000 мс), `edit-menu-command`. Контракт: [SPEC_EDITING.md](SPEC_EDITING.md), Л2, Л3, Л4, Л10, Л12. Точные типы в `src/types/generated.ts`.
 
 `toggle_task_item` переключает флажок задачи из режима чтения: меняется ровно один знак исходника, логика записи в `storage::task_toggle`, отказы типизированы (`stale_body`, `changed`, `state_changed`, `in_cloud`, `read_only`, `source_not_found`, `no_vault`, `internal`). Контракт: [SPEC_READING_MODE.md](SPEC_READING_MODE.md), Ч12.3.
 

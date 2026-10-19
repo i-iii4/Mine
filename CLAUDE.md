@@ -106,6 +106,7 @@
 | remark-math + katex | Формулы статьи: `$$` разбирает remark-math, `$…$` своё расширение по правилу Obsidian, рисует KaTeX по требованию (Ч9) |
 | lowlight (highlight.js) | Подсветка блоков кода статьи по требованию, классы `hljs-*` (Ч6) |
 | mermaid | Диаграммы Mermaid в статье по требованию, dagre и `classic` (Ч7) |
+| CodeMirror 6 (`@codemirror/state`, `view`, `commands`, `language`, `lang-markdown`, `autocomplete`) + `@lezer/markdown` | Правка заметки в открытой карточке: Live Preview поверх исходника, грузится через `import()` только при правке (SPEC_EDITING.md) |
 | @tailwindcss/typography | Стилизация prose-контента (статьи) |
 | Defuddle | Извлечение статей + Markdown-конвертация + YouTube-транскрипты (content script) |
 | src/lib/masonryLayout.ts | Кастомный virtualized masonry layout engine |
@@ -183,6 +184,9 @@ local-arena/
 │   │   │   ├── root_guard.rs   # Страж корня: массовые удаления только при живом корне с тем же vault_id
 │   │   │   ├── source_mutation.rs # Атомарные multi-file мутации source с rollback
 │   │   │   ├── task_toggle.rs  # Флажок задачи из режима чтения: один знак исходника, типизированные отказы (SPEC_READING_MODE.md, Ч12.3)
+│   │   │   ├── note_write.rs   # Общие проверки записи исходника: iCloud, только чтение, сверка тела (SPEC_EDITING.md, Л3)
+│   │   │   ├── note_edit.rs    # Правка тела: begin_note_edit, save_note_body, note_body_state, отложенное превью (Л2, Л3, Л4)
+│   │   │   ├── note_links.rs   # Подсказки меню `[[`: заметки, заголовки, блоки; вставленная ссылка ведёт на выбранное (Л10)
 │   │   │   ├── block_queries.rs # Block read models + row hydration
 │   │   │   ├── card_associations.rs # Столбцы связей, унаследованный автор, группы открытой карточки
 │   │   │   ├── channel_index.rs # Collection persistence owner
@@ -239,6 +243,9 @@ local-arena/
 │   │       ├── article_audio.rs # Article audio state/generate/delete
 │   │       ├── article_audio_desktop.rs # Desktop synthesis через Swift helper
 │   │       ├── graph.rs        # list_graph_snapshot command
+│   │       ├── note_edit.rs    # Команды правки заметки (тонкий слой над storage/note_edit.rs)
+│   │       ├── edit_sessions.rs # Сеансы правки вкладок, flush-edits перед выходом и перед переписывающими командами (Л3.9)
+│   │       ├── edit_menu.rs    # Пункты Undo, Redo, Select All меню Edit для редактора в фокусе (Л12)
 │   │       ├── tags.rs
 │   │       ├── search.rs
 │   │       ├── vault.rs        # select_vault, open_vault, get_vault_path, раскладка записи, недоступное пространство
@@ -311,6 +318,8 @@ local-arena/
 │   ├── dev/                    # Dev-only Feed, Graph, ColdSpace and SidebarReorder acceptance routes; страницы сравнения на dev-сервере: /__buttons (кнопки shadcn), /__cloud-open (первое открытие пространства из облака), /__onboarding (онбординг по экранам), /__popups (модальные окна приложения по кнопкам)
 │   ├── components/reading/     # Элементы статьи (SPEC_READING_MODE.md, Ч13): ArticleMarkdown, CodeBlock, MermaidDiagram, MathView, Callout, Disclosure, NoteEmbed, TaskCheckbox, ArticleTable
 │   ├── lib/reading/            # Конвейер чтения без React и Tauri (правило ESLint): pipeline.ts, syntax.ts, remarkMark.ts, remarkObsidianInlineMath.ts, remarkObsidianCallouts.ts, remarkNoteEmbeds.ts, callouts.ts, tableLayout.ts, highlight.ts, math.ts, mermaid.ts, hast.ts, anchors.ts (место после `#` ссылки по правилам Obsidian)
+│   ├── components/editing/     # Редактор заметки (SPEC_EDITING.md): NoteEditor, EditorWidgets (блоки через элементы чтения), TableEditor, сообщения правки
+│   ├── lib/editing/            # Модули редактора без React: переводы строк и BOM, синтаксис Obsidian на Lezer, блоки, показ разметки, живой просмотр, списки, очередь записи, внешние изменения, ссылки и меню `[[`, модель и редактор таблиц, правило «в правке или в чтении» (noteSurface)
 │   ├── test/                   # Vitest setup, readingPipeline.ts (деревья конвейера чтения для тестов)
 │   └── styles/                 # global.css (токены единственной палитры, SPEC_COLOR_RULES.md), buttons.css (лицо кнопки и три стиля краёв: macOS, Retro, Linear) и article.css (стили статьи по классу mine-article, SPEC_READING_MODE.md)
 ├── scripts/
