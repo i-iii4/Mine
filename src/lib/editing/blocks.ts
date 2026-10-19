@@ -31,6 +31,9 @@ export interface EditorBlock {
   to: number;
   /** The quotes and list items it stands in, outermost first. */
   containers: readonly BlockContainer[];
+  /** Whether it starts the list item it stands in, the item's marker on its
+   *  first line. */
+  startsItem: boolean;
 }
 
 /** A block's own source, as the reading pipeline draws it, with the way back
@@ -58,22 +61,19 @@ function fenceLanguage(node: SyntaxNode, doc: Text): string {
   return doc.sliceString(info.from, info.to).trim().split(/\s+/)[0]?.toLowerCase() ?? "";
 }
 
-/** Whether a paragraph holds only pictures and embeds, with only spaces and
- *  line breaks between: the reading mode draws it as media on lines of
- *  their own (Р5, Ч11.3). */
+/** Whether a paragraph holds only pictures and embeds, with only spaces,
+ *  line breaks (a hard one's `\` too) and the markers of its quote between:
+ *  the reading mode draws it as media on lines of their own (Р5, Ч11.3,
+ *  Ч15). */
 export function isMediaParagraph(node: SyntaxNode, doc: Text): boolean {
   let media = 0;
   let position = node.from;
   for (let child = node.firstChild; child; child = child.nextSibling) {
-    if (child.name === "Image" || child.name === NODE.WikilinkEmbed) {
-      if (/\S/.test(doc.sliceString(position, child.from))) return false;
-      media += 1;
-      position = child.to;
-    } else if (child.name === "HardBreak" || child.name === "QuoteMark") {
-      continue;
-    } else {
-      return false;
-    }
+    const isMedia = child.name === "Image" || child.name === NODE.WikilinkEmbed;
+    if (!isMedia && child.name !== "HardBreak" && child.name !== "QuoteMark") return false;
+    if (/\S/.test(doc.sliceString(position, child.from))) return false;
+    if (isMedia) media += 1;
+    position = child.to;
   }
   return media > 0 && !/\S/.test(doc.sliceString(position, node.to));
 }
@@ -164,7 +164,9 @@ function collectIn(
     const kind = blockKind(node, doc);
     if (kind) {
       const end = kind === "html" ? htmlGroupEnd(node, doc) : node;
-      blocks.push({ kind, from: doc.lineAt(node.from).from, to: doc.lineAt(end.to).to, containers });
+      const start = doc.lineAt(node.from).from;
+      const startsItem = parent.name === "ListItem" && doc.lineAt(parent.from).from === start;
+      blocks.push({ kind, from: start, to: doc.lineAt(end.to).to, containers, startsItem });
       if (end !== node) node = end;
       continue;
     }

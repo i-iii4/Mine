@@ -241,3 +241,44 @@ describe("ArticleMarkdown anchors", () => {
     expect(find(body, "^c0ffee")).toBeNull();
   });
 });
+
+// SPEC_READING_MODE.md, Ч15: a picture that is its list item's whole content
+// stands as a picture of its own paragraph does.
+describe("ArticleMarkdown pictures in lists and paragraphs", () => {
+  /** What each list item starts with: the one box of its media and the
+   *  pictures of its stack, or its own content. */
+  const items = (root: HTMLElement) => [...root.querySelectorAll("li")].map((item) => {
+    const stack = item.querySelector(":scope > [data-list-item-media] > [data-article-media-stack]:first-child");
+    return stack && item.children.length === 1 ? `stack:${stack.querySelectorAll("img").length}` : item.firstElementChild?.tagName.toLowerCase() ?? "text";
+  });
+
+  it("draws an item of a tight list that is one picture as a stack of media, its marker kept", () => {
+    const { root } = renderArticle("- ![[a.png]]\n- ![[b.png]] ![[c.png]]\n- text ![[d.png]]\n- [ ] ![[e.png]]");
+    expect(items(root).slice(0, 2)).toEqual(["stack:1", "stack:2"]);
+    // An item with words keeps its picture among them, a task its box.
+    const [, , mixed, task] = root.querySelectorAll("li");
+    expect(mixed?.querySelector("[data-article-media-stack]")).toBeNull();
+    expect(task?.querySelector("[data-article-media-stack]")).toBeNull();
+    expect(task).toHaveAttribute("data-task-item");
+    // The item keeps its place in the source (Ч0.3).
+    expect(root.querySelector("li")).toHaveAttribute("data-mine-md-start");
+  });
+
+  it("keeps a nested list under the stack, outside it, and a loose item's paragraph of pictures as its stack", () => {
+    const { root } = renderArticle("- ![[a.png]]\n  - nested\n\n1. ![[b.png]]\n\n2. ![[c.png]]");
+    const [first] = root.querySelectorAll("li");
+    expect(items(root)[0]).toBe("stack:1");
+    expect(first?.querySelector("[data-article-media-stack] ul")).toBeNull();
+    expect(first?.querySelector(":scope > [data-list-item-media] > ul")).not.toBeNull();
+    expect([...root.querySelectorAll("ol > li")].map((item) => item.querySelector(":scope > [data-list-item-media] > [data-article-media-stack]") !== null)).toEqual([true, true]);
+  });
+
+  it("draws pictures parted by hard line breaks as one stack, as by soft ones", () => {
+    const { root } = renderArticle("![[a.png]]  \n![[b.png]]\\\n![[c.png]]\n\n![[d.png]]\n![[e.png]]\n\n![[f.png]]  \nwords");
+    const stacks = [...root.querySelectorAll("[data-article-media-stack]")].map((stack) => stack.querySelectorAll("img").length);
+    expect(stacks).toEqual([3, 2]);
+    // Words after a break keep the paragraph of media and text.
+    expect(root.querySelector("p")).toBeNull();
+    expect(root.textContent).toContain("words");
+  });
+});

@@ -233,6 +233,32 @@
   opacity: 1;
 }
 
+/* Ч15. A list item that starts with media (an item that is one picture, a
+   loose item whose first paragraph is pictures) stands as a paragraph of
+   media does: the paragraph's margins, `my-5`, on the item, so two such
+   items stand as two such paragraphs; inside, the media's margin before
+   what follows. Its marker stays beside the first row, as beside a first
+   line of text: the item's whole content is one inline box of its first
+   line, at its top. A block beside that box would put the line in an
+   anonymous block, where Chromium sets the box below the marker's line. */
+.mine-article li:has(> [data-list-item-media]) {
+  margin-block: calc(var(--spacing) * 5);
+}
+
+.mine-article [data-list-item-media] {
+  display: inline-block;
+  width: 100%;
+  vertical-align: top;
+}
+
+.mine-article [data-list-item-media] > :first-child {
+  margin-top: 0;
+}
+
+.mine-article [data-list-item-media] > :last-child {
+  margin-bottom: 0;
+}
+
 /* Ч12.1. A task's box stands where a list marker would: the list keeps the
    box and the plate's gap before the text; a done task's text takes the
    secondary step and is struck through, as Obsidian draws it. */

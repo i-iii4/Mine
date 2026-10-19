@@ -323,6 +323,7 @@ local-arena/
 │   ├── audit-vite.mjs          # Свой Vite браузерной проверки: свободный порт, кэш зависимостей во временной папке
 │   ├── selection-menu-audit.mjs, sidebar-action-audit.mjs, detail-image-geometry-audit.mjs, top-row-wrap-audit.mjs, narrow-window-audit.mjs, reading-mode-audit.mjs # Самостоятельные браузерные проверки на audit-vite.mjs
 │   ├── fixtures/reading-mode.md # Заметка проверки режима чтения: код, Mermaid, таблицы, выноски, формулы, HTML, сноски, вставки, задачи
+│   ├── fixtures/list-of-images.md, fixtures/media-shapes.md, picture-rows.mjs # Заметки картинок (тело карточки клиппера байт в байт; картинки в списках, абзацах, цитатах) и их замеры для test:reading-mode и test:editing (SPEC_READING_MODE.md, Ч15)
 │   ├── x-thread-smoke.mjs      # Собранное расширение: цепочка автора X во временном Chromium, сеть перехвачена
 │   ├── fetch-ytdlp.mjs         # Загрузка распакованной сборки yt-dlp (onedir, сумма SHA-256) в ресурсы бандла
 │   ├── disposable-app-home.mjs # Свой HOME в папке прогона для скриптов, которые запускают помощника

@@ -539,8 +539,17 @@ export function presentationItems(cx: PresentationContext): PresentationItem[] {
     from: cx.from,
     to: cx.to,
     enter(ref) {
-      if (insideAny(skip, ref.from, ref.to) && ref.name !== "Document") return false;
-      return presentNode(out, ref, cx, skip);
+      if (ref.name === "Document") return undefined;
+      const block = insideAny(skip, ref.from, ref.to);
+      if (!block) return presentNode(out, ref, cx, skip);
+      // A quote or a list whose whole content is one drawn block (a quote
+      // of pictures, a list of one picture) still stands round it, as the
+      // reading mode's does (Л8.6).
+      if (doc.lineAt(ref.from).from !== block.from || wrapperEnd(doc, ref.node) !== block.to) return false;
+      if (ref.name === "ListItem") return undefined;
+      if (!CONTAINERS.has(ref.name)) return false;
+      presentNode(out, ref, cx, skip);
+      return undefined;
     },
   });
   const first = doc.lineAt(cx.from).number;

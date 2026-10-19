@@ -25,6 +25,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import type { MineTextSelectionDragPayload } from "@/lib/textSelectionDrag";
 import type { FocusedEditor, IndexedBlock, NoteEditError, NoteLinkQuery, SaveNoteBodyParams } from "@/types";
 import fixture from "../../scripts/fixtures/reading-mode.md?raw";
+import listOfImages from "../../scripts/fixtures/list-of-images.md?raw";
+import mediaShapes from "../../scripts/fixtures/media-shapes.md?raw";
 import { editingEditorHandle, type EditingEditorHandle } from "./editingEditorHandle";
 import { perfSetBody } from "./editingPerfSets";
 import { editingTableHandle, tableCaseBody, type EditingTableHandle } from "./editingTables";
@@ -35,8 +37,10 @@ const EMBED_SLUG = "Cards/Пример заметки";
 
 /** The fixture's body: the file after its front matter. A variant of it
  *  (line endings, a byte order mark), a table case (`tables`,
- *  `tables-crlf`, `large-table`, `wide-table`, `editingTables.ts`) or a set
- *  of the performance check (`editingPerfSets.ts`) comes as
+ *  `tables-crlf`, `large-table`, `wide-table`, `editingTables.ts`), a set
+ *  of the performance check (`editingPerfSets.ts`) or a note of pictures
+ *  (`list-of-images`, the body of a card the clipper saved, byte for byte;
+ *  `media-shapes`, pictures in lists, paragraphs and quotes) comes as
  *  `?body=<name>`. */
 function fixtureBody(): string {
   const body = fixture.replace(/^---\n[\s\S]*?\n---\n/, "");
@@ -44,6 +48,10 @@ function fixtureBody(): string {
   const generated = tableCaseBody(variant) ?? perfSetBody(variant);
   if (generated !== null) return generated;
   switch (variant) {
+    case "list-of-images":
+      return listOfImages;
+    case "media-shapes":
+      return mediaShapes;
     case "crlf":
       return body.replace(/\n/g, "\r\n");
     case "mixed":

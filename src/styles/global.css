@@ -128,6 +128,13 @@ select,
   margin-block-end: 0;
 }
 
+/* A hard line break between pictures of a stack only parts them: each
+   stands on a row of its own already, and the break would add an empty
+   line between them (SPEC_READING_MODE.md, Ч15). */
+[data-article-media-stack] > br {
+  display: none;
+}
+
 /* Answers to the pointer fade in over one duration and out over a shorter
    one (SPEC_CARD_STATES.md, С7.6): a row's pill and count, its button and
    labels, a card's border. Leaving then reads as a response, not a lag. The

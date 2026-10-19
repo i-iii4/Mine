@@ -27,13 +27,22 @@
 //   (Л4); the `[[` menu (Л10);
 //   the open card's selection bar and jumps (Л11); a composition through CDP
 //   writes nothing until it ends (Л13.1);
-// - the page never scrolls sideways, and nothing is asked of the network.
+// - the page never scrolls sideways, and nothing is asked of the network;
+// - the body of a card the clipper saved (a list of 20 pictures, tables with
+//   empty cells, items with tabbed lines) and the note of pictures in lists,
+//   paragraphs and quotes: nothing written on opening, on the focus, a
+//   scroll, the focus leaving, the page hidden and back, the backend's
+//   flush, the window's focus, the reading surface and back, closing (Л3);
+//   their pictures as far apart as in the reading mode, 20 between items
+//   and paragraphs, 16 in one paragraph, each item's marker beside its
+//   first row (Л8.6, SPEC_READING_MODE.md, Ч15).
 //
 // What waits for the user's decisions is reported as PENDING with the
 // decision's name, never passed. Starts and stops its own Vite.
 import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 import { COLD_START_MS, startAuditVite } from './audit-vite.mjs';
+import { CLIPPER_LIST, gapBetween, LINE_HEIGHT, markerRows, PARAGRAPH_GAP, pictureBoxes, routePictures, SHAPE_ITEMS, SHAPE_PAIRS } from './picture-rows.mjs';
 
 const PAGE = '/__editing';
 const THEMES = ['light', 'dark'];
@@ -690,6 +699,83 @@ async function composition(label, page) {
   await cdp.detach();
 }
 
+/** Л3, Л8.6: the picture notes. Nothing a person does without typing
+ *  writes; the pictures stand as the reading mode stands them. */
+async function picturesInLists(label, theme) {
+  for (const note of ['list-of-images', 'media-shapes']) {
+    const page = await browser.newPage({ viewport: WIDE });
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await routePictures(page);
+    await page.goto(`${vite.origin}${PAGE}?theme=${theme}&body=${note}`, { waitUntil: 'domcontentloaded', timeout: COLD_START_MS });
+    await page.waitForSelector('.mine-note-editor .cm-content', { timeout: COLD_START_MS });
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForTimeout(400);
+    const original = await body(page);
+    // Everything done without typing: the focus by a press in the text, a
+    // scroll down the note and back, the focus leaving, another tab (the
+    // page hidden, the backend's flush), the window back.
+    const heading = await pointOf(page, note === 'list-of-images' ? '-' : 'Картинки в списках');
+    await page.mouse.click(heading.x, heading.y);
+    await page.waitForTimeout(150);
+    const editorBoxes = await pictureBoxes(page, '.mine-note-editor .cm-content');
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.__editing.emit('flush-edits', { request_id: 41 });
+    });
+    await page.waitForTimeout(200);
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('focus'));
+    });
+    await page.waitForTimeout(300);
+    const editorMarkers = {};
+    for (const name of note === 'list-of-images' ? ['image 1', 'image 2', 'image 3'] : SHAPE_ITEMS) {
+      editorMarkers[name] = await markerRows(page, '.mine-note-editor .cm-content', name);
+    }
+    await page.evaluate(() => window.__editing.setEditing(false));
+    await page.waitForSelector('[data-article-body]');
+    await page.waitForTimeout(300);
+    const readingBoxes = await pictureBoxes(page, '[data-article-body]');
+    await page.evaluate(() => window.__editing.setEditing(true));
+    await page.waitForSelector('.mine-note-editor .cm-content');
+    await page.waitForTimeout(300);
+    await page.evaluate(() => window.__editing.setOpen(false));
+    await page.waitForTimeout(400);
+    const record = await page.evaluate(() => ({
+      writes: window.__editing.record.writes.length,
+      unsaved: window.__editing.record.sessions.filter((entry) => entry === 'unsaved true').length,
+      flushed: window.__editing.record.sessions.includes('flushed 41'),
+      ended: window.__editing.record.sessions.at(-1)?.startsWith('end ') ?? false,
+    }));
+    check(label, `${note}: nothing written on opening, the focus, a scroll, the focus leaving, another tab, the flush, the window back, the reading surface and closing (Л3)`,
+      record.writes === 0 && record.unsaved === 0 && record.flushed && record.ended && (await body(page)) === original, JSON.stringify(record));
+
+    const pairs = note === 'list-of-images'
+      ? CLIPPER_LIST.slice(1).map((name, index) => [CLIPPER_LIST[index], name, PARAGRAPH_GAP])
+      : SHAPE_PAIRS;
+    const wrongGaps = pairs.filter(([upper, lower, gap]) => Math.abs(gapBetween(editorBoxes, upper, lower) - gap) > 1 || Math.abs(gapBetween(readingBoxes, upper, lower) - gap) > 1)
+      .map(([upper, lower, gap]) => `${upper}→${lower}: editor ${gapBetween(editorBoxes, upper, lower)}, reading ${gapBetween(readingBoxes, upper, lower)}, rule ${gap}`);
+    check(label, `${note}: pictures stand ${PARAGRAPH_GAP} apart between items and paragraphs, 16 in one paragraph, in the editor and the reading mode (Л8.6, Ч15), ${pairs.length} pairs`, wrongGaps.length === 0, wrongGaps.slice(0, 4).join('; '));
+    // Pictures on rows of their own. One among words or in a link (`shape
+    // 22`, the clipper's `image 21`) has a line of its own in the editor
+    // (Л6) and stays in the line when reading (Р5).
+    const ownRows = note === 'list-of-images' ? CLIPPER_LIST : Object.keys(readingBoxes).filter((name) => name !== 'shape 22');
+    const shared = ownRows.filter((name) => readingBoxes[name]);
+    const moved = shared.filter((name) => !editorBoxes[name] || Math.abs(editorBoxes[name].left - readingBoxes[name].left) > 1 || Math.abs(editorBoxes[name].right - readingBoxes[name].right) > 1);
+    check(label, `${note}: every picture stands where the reading mode stands it across the column, ${shared.length} of them`, shared.length > 0 && moved.length === 0, moved.slice(0, 4).map((name) => `${name}: editor ${JSON.stringify(editorBoxes[name] ?? null)} reading ${JSON.stringify(readingBoxes[name])}`).join('; '));
+    const items = note === 'list-of-images' ? CLIPPER_LIST : SHAPE_ITEMS;
+    const unmarked = items.filter((name) => !editorBoxes[name]?.item?.marker || !readingBoxes[name]?.item?.marker);
+    const markerOff = Object.entries(editorMarkers).filter(([, rows]) => !rows || rows.length === 0 || rows[0] < 0 || rows[1] >= LINE_HEIGHT);
+    check(label, `${note}: a picture that is its list item shows the item's marker beside its first row, as the reading mode does (Л8.6, Ч15)`, unmarked.length === 0 && markerOff.length === 0, JSON.stringify({ unmarked, markerOff }));
+    check(label, `${note}: no page errors`, errors.length === 0, errors.join(' | '));
+    await page.close();
+  }
+}
+
 async function layoutChecks(label, page, requests) {
   const sideways = await page.evaluate(() => {
     const scroller = document.querySelector('[data-detail-scroll]');
@@ -727,6 +813,7 @@ try {
     }
     for (const variant of Object.keys(VARIANTS)) await byteExact(label, theme, variant);
     await tables(label, theme);
+    await picturesInLists(label, theme);
     await externalChanges(label, theme);
     await readingWhenNotEditable(label, theme);
 

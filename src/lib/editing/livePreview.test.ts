@@ -254,3 +254,54 @@ describe("the expected height of a block not yet drawn (Л8.2)", () => {
     expect(expectedBlockHeight(WIDTH, "table", 7)).toBe(240);
   });
 });
+
+describe("pictures among lines (SPEC_EDITING.md, Л8.6; SPEC_READING_MODE.md, Ч15)", () => {
+  /** Each widget of pictures as `[space before, space after, list item]`. */
+  const placements = (view: EditorView) => [...view.contentDOM.querySelectorAll("[data-editor-block='media']")]
+    .map((dom) => [dom.hasAttribute("data-space-before"), dom.hasAttribute("data-space-after"), dom.hasAttribute("data-list-item")]);
+
+  it("keeps a paragraph of pictures' distance from lines that are not blank, once between two, and shows each item's marker", () => {
+    const { view } = makeView("Intro\n\n- ![[a.png]]\n- ![[b.png]]\n- text\n- ![[c.png]]\n\nAfter");
+    expect(placements(view)).toEqual([
+      [false, false, true],
+      [true, true, true],
+      [true, false, true],
+    ]);
+    view.destroy();
+  });
+
+  it("keeps a list of pictures in a list wrapper, and a quote of pictures in its quote", () => {
+    const { view } = makeView("Intro\n\n- ![[a.png]]\n\n> ![[b.png]]\n> ![[c.png]]\n\n1. ![[d.png]]");
+    const parents = [...view.contentDOM.querySelectorAll("[data-editor-block='media']")].map((dom) => dom.parentElement?.tagName);
+    expect(parents).toEqual(["UL", "BLOCKQUOTE", "OL"]);
+    expect(placements(view)).toEqual([
+      [false, false, true],
+      [false, false, false],
+      [false, false, true],
+    ]);
+    view.destroy();
+  });
+
+  it("stands apart from a heading right above it, and follows the line below as it changes", () => {
+    const { view } = makeView("# Heading\n![[a.png]]\n# Next");
+    expect(placements(view)).toEqual([[true, true, false]]);
+    const next = view.state.doc.line(3).from;
+    view.dispatch({ changes: { from: next, insert: "\n" }, userEvent: "input" });
+    expect(placements(view)).toEqual([[true, false, false]]);
+    view.destroy();
+  });
+
+  it("leaves the marker and the space above to the source line of a picture that shows its source", () => {
+    const { view } = makeView("- text\n- ![[a.png]]\n- ![[b.png]]");
+    const first = view.state.field(blockField).set.iter();
+    view.dispatch({ selection: EditorSelection.range(first.from, first.to), userEvent: "select" });
+    expect(press(view, "Enter")).toBe(true);
+    // The revealed picture stands right under its source line, no marker of
+    // its own; the next picture keeps the one space between them.
+    expect(placements(view)).toEqual([
+      [false, false, false],
+      [true, false, true],
+    ]);
+    view.destroy();
+  });
+});

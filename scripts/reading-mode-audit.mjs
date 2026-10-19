@@ -17,6 +17,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { COLD_START_MS, startAuditVite } from './audit-vite.mjs';
+import { CLIPPER_LIST, gapBetween, LINE_HEIGHT, markerRows, PARAGRAPH_GAP, pictureBoxes, routePictures, SHAPE_ITEMS, SHAPE_PAIRS } from './picture-rows.mjs';
 
 const ENTRY = '/reading-mode-entry.js';
 const PAGE = '/__reading-mode-audit';
@@ -30,6 +31,11 @@ const EMBED_WIDTH = 240;
 const fixture = readFileSync(new URL('./fixtures/reading-mode.md', import.meta.url), 'utf8');
 /** The body: the file after its front matter, as the core splits it. */
 const body = fixture.replace(/^---\n[\s\S]*?\n---\n/, '');
+/** The notes of pictures (Ч15), `?body=<name>`. */
+const PICTURE_NOTES = {
+  'list-of-images': readFileSync(new URL('./fixtures/list-of-images.md', import.meta.url), 'utf8'),
+  'media-shapes': readFileSync(new URL('./fixtures/media-shapes.md', import.meta.url), 'utf8'),
+};
 
 /** The byte offset in the body where the task item `text` starts (its list
  *  marker), the one `toggle_task_item` must be given. */
@@ -63,7 +69,7 @@ const vite = await startAuditVite([{
       import '/src/styles/global.css';
       const params = new URLSearchParams(location.search);
       if (params.get('theme')) document.documentElement.setAttribute('data-theme', params.get('theme'));
-      const body = ${JSON.stringify(body)};
+      const body = ${JSON.stringify(PICTURE_NOTES)}[params.get('body')] ?? ${JSON.stringify(body)};
       const base = { id: 1, block_type: 'article', card_kind: 'article', title: null, content_heading: null, description: null, url: null, media_file: null, thumbnail: null, saved_at: '2026-10-18T14:23:24Z', source: null, width: null, height: null, author: null, preview_text: null, first_image: null, media_urls: null, media_dimensions: null, preview_manifest: null, feed_playback: null, thumb_format: null, thumb_mtime: 0, related_notes: [], origin: null, index_warning: null, tags: [] };
       const card = { ...base, slug: ${JSON.stringify(SOURCE_SLUG)}, display_title: 'Проверка просмотрщика', fallback_label: 'Проверка просмотрщика', body, body_hash: 'hash-0' };
       const embedded = { ...base, id: 2, slug: ${JSON.stringify(EMBED_SLUG)}, display_title: 'Пример заметки', fallback_label: 'Пример заметки', body: 'Текст примера заметки.', preview_text: 'Текст примера заметки.', body_hash: 'hash-embed' };
@@ -540,6 +546,42 @@ try {
       assert.deepEqual(foreign, [], `${label}: no request outside the page's origin`);
       assert.deepEqual(errors, [], `${label}: no page errors`);
       console.log(`PASS ${label}: no sideways scroll, code in a line, marker, HTML, tables and their dissolving edges, code blocks and their colours, Mermaid and its series, callouts and their colours, KaTeX, footnotes, embeds that open their note, the jump to a heading and a block, and task boxes as the rules say; ${requests.length} requests, all local`);
+      await page.close();
+    }
+  }
+
+  // Ч15. The notes of pictures: 20 between items and paragraphs, 16 in one
+  // paragraph, each list item's marker beside its first row.
+  const [width, height] = SIZES[0];
+  for (const theme of THEMES) {
+    for (const note of Object.keys(PICTURE_NOTES)) {
+      const label = `${theme} ${width} × ${height} ${note}`;
+      const page = await browser.newPage({ viewport: { width, height } });
+      const errors = [];
+      page.on('pageerror', (error) => errors.push(error.message));
+      await routePictures(page);
+      await page.goto(new URL(`${PAGE}?theme=${theme}&body=${note}`, vite.origin).href, { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('[data-article-body]', { timeout: COLD_START_MS });
+      await page.evaluate(() => document.fonts.ready);
+      const boxes = await pictureBoxes(page, '[data-article-body]');
+      const pairs = note === 'list-of-images'
+        ? CLIPPER_LIST.slice(1).map((name, index) => [CLIPPER_LIST[index], name, PARAGRAPH_GAP])
+        : SHAPE_PAIRS;
+      for (const [upper, lower, gap] of pairs) near(gapBetween(boxes, upper, lower), gap, `${label}: the space between ${upper} and ${lower}`);
+      for (const name of note === 'list-of-images' ? CLIPPER_LIST : SHAPE_ITEMS) {
+        assert(boxes[name]?.item?.marker, `${label}: ${name} shows its list item's marker`);
+      }
+      for (const name of note === 'list-of-images' ? ['image 1', 'image 2', 'image 3'] : SHAPE_ITEMS) {
+        const rows = await markerRows(page, '[data-article-body]', name);
+        assert(rows && rows.length === 2 && rows[0] >= 0 && rows[1] < LINE_HEIGHT, `${label}: ${name}'s marker beside its first row, rows ${JSON.stringify(rows)}`);
+      }
+      const sideways = await page.evaluate(() => {
+        const scroller = document.querySelector('[data-detail-scroll]');
+        return scroller.scrollWidth - scroller.clientWidth;
+      });
+      assert(sideways <= 0, `${label}: nothing pushes the open card sideways (${sideways})`);
+      assert.deepEqual(errors, [], `${label}: no page errors`);
+      console.log(`PASS ${label}: ${pairs.length} pairs of pictures ${PARAGRAPH_GAP} apart between items and paragraphs and 16 in one paragraph, every list item's marker beside its first row`);
       await page.close();
     }
   }

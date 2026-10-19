@@ -110,22 +110,49 @@ function isNoteEmbed(node: ElementContent): boolean {
   return node.type === "element" && node.tagName === "span" && node.properties?.[NOTE_EMBED_PROPERTY] !== undefined;
 }
 
-/** Whether a paragraph holds media (pictures, videos, note embeds) and
- *  whether anything else. */
-export function paragraphMediaLayout(node: Element | undefined): "none" | "media-only" | "mixed-media" {
+/** Whether some content holds media (pictures, videos, note embeds) and
+ *  whether anything else: spaces and line breaks, soft or hard, only part
+ *  the media (Р5). */
+function mediaLayout(children: readonly ElementContent[]): "none" | "media-only" | "mixed-media" {
   let hasMedia = false;
   let hasOther = false;
-  for (const child of node?.children ?? []) {
+  for (const child of children) {
     if (child.type === "element" && (child.tagName === "img" || child.tagName === "video" || isNoteEmbed(child))) {
       hasMedia = true;
       continue;
     }
+    if (child.type === "element" && child.tagName === "br") continue;
     if (child.type === "text" && !/\S/.test(child.value)) continue;
     hasOther = true;
   }
   if (!hasMedia) return "none";
   return hasOther ? "mixed-media" : "media-only";
 }
+
+/** Whether a paragraph holds media (pictures, videos, note embeds) and
+ *  whether anything else. */
+export function paragraphMediaLayout(node: Element | undefined): "none" | "media-only" | "mixed-media" {
+  return mediaLayout(node?.children ?? []);
+}
+
+/** Whether a list item's own content, its nested lists apart, is media
+ *  only: the item of a tight list holds it with no paragraph round it, and
+ *  it is drawn as a paragraph of media is (Р5). */
+function listItemMediaLayout(node: Element | undefined): "none" | "media-only" | "mixed-media" {
+  const own = (node?.children ?? []).filter((child) => !(child.type === "element" && (child.tagName === "ul" || child.tagName === "ol")));
+  return mediaLayout(own);
+}
+
+/** Whether a list item's first block is a paragraph of media only: an
+ *  item of a loose list that starts with pictures (Ч15). */
+function startsWithMediaParagraph(node: Element | undefined): boolean {
+  const [first] = hastElements(node);
+  return first?.tagName === "p" && paragraphMediaLayout(first) === "media-only";
+}
+
+/** The classes of media on rows of their own: centred in the column, with
+ *  the vertical margins of a paragraph of media, `my-5` (Р5). */
+const MEDIA_STACK_CLASSES = "not-prose my-5 leading-none";
 
 function Paragraph({ node, className, ...props }: ElementProps<"p">) {
   const layout = paragraphMediaLayout(node);
@@ -134,7 +161,7 @@ function Paragraph({ node, className, ...props }: ElementProps<"p">) {
       <div
         {...markdownBlockPositionProps(node)}
         {...props}
-        className={cn("not-prose my-5 leading-none", className)}
+        className={cn(MEDIA_STACK_CLASSES, className)}
         data-article-media-stack=""
       />
     );
@@ -165,6 +192,28 @@ function ListItem({ node, children, className, ...props }: ElementProps<"li">) {
   const article = useArticle();
   const labelId = useId();
   const input = gfmTaskInput(node);
+  const ownMedia = !input && listItemMediaLayout(node) === "media-only";
+  if (ownMedia || (!input && startsWithMediaParagraph(node))) {
+    // An item that starts with media stands as a paragraph of media does,
+    // its marker beside their first row (Ч15): an item of a tight list
+    // holds the bare media, one of a loose list a paragraph of them. The
+    // item's content is one box of its first line, at its top.
+    const parts = Children.toArray(children);
+    return (
+      <li {...markdownBlockPositionProps(node)} {...props} className={className}>
+        <div data-list-item-media="">
+          {ownMedia ? (
+            <>
+              <div className={MEDIA_STACK_CLASSES} data-article-media-stack="">
+                {parts.filter((child) => !isListElement(child))}
+              </div>
+              {parts.filter(isListElement)}
+            </>
+          ) : children}
+        </div>
+      </li>
+    );
+  }
   if (!input) {
     return (
       <li {...markdownBlockPositionProps(node)} {...props} className={className}>

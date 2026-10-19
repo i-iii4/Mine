@@ -4462,6 +4462,26 @@
     },
     {
       "paths": [
+        "scripts/picture-rows.mjs"
+      ],
+      "requirement": "SPEC_READING_MODE.md### Ч15. Медиа в пунктах списков, в цитатах и через перенос строки",
+      "tests": [
+        "scripts/reading-mode-audit.mjs"
+      ],
+      "command": "test:reading-mode"
+    },
+    {
+      "paths": [
+        "src/components/editing/openWritesNothing.test.tsx"
+      ],
+      "requirement": "SPEC_EDITING.md### Л3. Сохранение",
+      "tests": [
+        "src/components/editing/openWritesNothing.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "src/lib/editing/noteSurface.ts",
         "src/lib/editing/noteSurface.test.ts",
         "src/components/editing/openInEditor.test.tsx"

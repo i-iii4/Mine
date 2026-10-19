@@ -1,6 +1,6 @@
 import { Text } from "@codemirror/state";
 import { parseReadingSyntax } from "@/lib/reading/syntax";
-import { READING_FIXTURE_BODY } from "@/test/editingFixture";
+import { LIST_OF_IMAGES_BODY, MEDIA_SHAPES_BODY, READING_FIXTURE_BODY } from "@/test/editingFixture";
 import { blockSource, collectBlocks, containerPrefixLength, type EditorBlock } from "./blocks";
 import { mineMarkdownParser } from "./syntax";
 
@@ -158,5 +158,45 @@ describe("the limitation of a table in a mixed body (SPEC_EDITING.md, Л9, «О�
     const rowsCr = "Абзац.\r\n\r\n| a | b |\n|---|---|\n| 1 | 2 |\r\n| 3 | 4 |\r\n";
     expect(describeBlocks(rowsCr)).toEqual(["table@3-6"]);
     expect(readingSegments(rowsCr)).toEqual(["paragraph@1", "table@3"]);
+  });
+});
+
+describe("pictures in lists, paragraphs and quotes (SPEC_READING_MODE.md, Ч15; SPEC_EDITING.md, Л8.6)", () => {
+  it("draws every picture of the clipper's list as a widget that starts its item", () => {
+    const { doc, blocks } = blocksOfText(LIST_OF_IMAGES_BODY);
+    const items = blocks.filter((block) => block.kind === "media" && block.containers.length === 1 && block.containers[0]?.kind === "item");
+    expect(items).toHaveLength(20);
+    expect(items.every((block) => block.startsItem)).toBe(true);
+    expect(items.map((block) => doc.lineAt(block.from).number)).toEqual(Array.from({ length: 20 }, (_, index) => index + 3));
+  });
+
+  it("takes pictures parted by hard line breaks and by the lines of their quote as one paragraph of pictures", () => {
+    expect(describeBlocks("![[a.png]]  \n![[b.png]]\\\n![[c.png]]")).toEqual(["media@1-3"]);
+    expect(describeBlocks("> ![[a.png]]\n> ![[b.png]]")).toEqual(["media@1-2"]);
+    expect(describeBlocks("![[a.png]]\n![[b.png]] and words")).toEqual([]);
+    expect(describeBlocks("> ![[a.png]]\n> words")).toEqual([]);
+  });
+
+  it("says a block starts its item only on the item's first line", () => {
+    const { blocks } = blocksOfText("- ![[a.png]]\n\n  ![[b.png]]\n1. ![[c.png]]\n- text\n  ```js\n  x\n  ```");
+    expect(blocks.map((block) => [block.kind, block.startsItem])).toEqual([
+      ["media", true],
+      ["media", false],
+      ["media", true],
+      ["code", false],
+    ]);
+    expect(blocksOfText("![[a.png]]").blocks.map((block) => block.startsItem)).toEqual([false]);
+  });
+
+  it("finds the same pictures on the shapes note as the reading mode's paragraphs and items of pictures", () => {
+    const { blocks } = blocksOfText(MEDIA_SHAPES_BODY);
+    // Shapes 1 to 21 and 23 and the note embed stand on rows of their own;
+    // 22 among words.
+    const media = blocks.filter((block) => block.kind === "media");
+    expect(media.map((block) => MEDIA_SHAPES_BODY.slice(block.from, block.to).match(/shape \d+|Пример заметки/g)?.join(" "))).toEqual([
+      "shape 1", "shape 2", "shape 3", "shape 4", "shape 5", "shape 6", "shape 7", "shape 8", "shape 9",
+      "shape 10", "shape 11", "shape 12 shape 13", "shape 14 shape 15 shape 16", "shape 17 shape 18",
+      "shape 19", "shape 20", "shape 23", "Пример заметки", "shape 21",
+    ]);
   });
 });

@@ -52,17 +52,39 @@
   padding-inline-start: 0.4285714em;
 }
 
-.mine-note-editor .cm-line.cm-md-li {
+.mine-note-editor :is(.cm-line.cm-md-li, .cm-md-block[data-list-item]) {
   display: list-item;
 }
 
-.mine-note-editor ul > .cm-line.cm-md-li::marker {
+.mine-note-editor ul > :is(.cm-line.cm-md-li, .cm-md-block[data-list-item])::marker {
   color: var(--tw-prose-bullets);
 }
 
-.mine-note-editor ol > .cm-line.cm-md-li::marker {
+.mine-note-editor ol > :is(.cm-line.cm-md-li, .cm-md-block[data-list-item])::marker {
   color: var(--tw-prose-counters);
   font-weight: 400;
+}
+
+/* Л8.6, Ч15: a widget of pictures keeps the distance of a paragraph of
+   media (`my-5`) from a line above or below it that is not blank; lines
+   have no margins, so the distance is the widget's padding, which
+   CodeMirror measures with it. A picture that starts its list item shows
+   the item's marker (the rule above). */
+.mine-note-editor .cm-md-block[data-space-before] {
+  padding-top: calc(var(--spacing) * 5);
+}
+
+.mine-note-editor .cm-md-block[data-space-after] {
+  padding-bottom: calc(var(--spacing) * 5);
+}
+
+/* Its marker beside the first row of pictures, as the reading mode's list
+   item has it (article.css, Ч15): the widget's article is the inline box of
+   the item's first line, at its top. */
+.mine-note-editor .cm-md-block[data-list-item] > .mine-article {
+  display: inline-block;
+  width: 100%;
+  vertical-align: top;
 }
 
 /* A marker shown as source takes the drawn marker's place. */

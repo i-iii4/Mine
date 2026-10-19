@@ -21,6 +21,7 @@ import {
   type EditorState,
   type Extension,
   type Range,
+  type Text,
   type Transaction,
 } from "@codemirror/state";
 import {
@@ -276,6 +277,52 @@ function sameNumbers(left: readonly number[], right: readonly number[]): boolean
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+/** How a widget of pictures stands among the lines (SPEC_READING_MODE.md,
+ *  Ч15; SPEC_EDITING.md, Л8.6). Lines have no margins, a blank line is what
+ *  parts blocks: a widget keeps the distance of a paragraph of media,
+ *  `my-5`, from a line above or below it that is not blank, once between
+ *  two such widgets, and shows the marker of the list item it starts. */
+export interface MediaPlacement {
+  spaceBefore: boolean;
+  spaceAfter: boolean;
+  listItem: boolean;
+}
+
+const NO_PLACEMENT: MediaPlacement = { spaceBefore: false, spaceAfter: false, listItem: false };
+
+/** Whether line `number` of `doc` shows nothing but quote markers: a blank
+ *  line, a line's height between blocks. */
+function blankLine(doc: Text, number: number): boolean {
+  return /^[ \t>\r]*$/.test(doc.line(number).text);
+}
+
+/**
+ * Where a widget of pictures `block` keeps its distance (Л8.6): above,
+ * unless it starts the note, the line above is blank or its source shows
+ * above it; below, unless it ends the note, the line below is blank or
+ * starts another widget of pictures, which keeps the distance itself.
+ * `widgetOfPicturesAt` tells whether a widget of pictures drawn as one
+ * starts at a position.
+ */
+export function mediaPlacement(
+  doc: Text,
+  block: EditorBlock,
+  revealed: boolean,
+  widgetOfPicturesAt: (pos: number) => boolean,
+): MediaPlacement {
+  if (block.kind !== "media") return NO_PLACEMENT;
+  const first = doc.lineAt(block.from).number;
+  const last = doc.lineAt(block.to).number;
+  const spaceBefore = !revealed && first > 1 && !blankLine(doc, first - 1);
+  const spaceAfter = last < doc.lines && !blankLine(doc, last + 1) && !widgetOfPicturesAt(doc.line(last + 1).from);
+  // A revealed item shows its marker in its source line.
+  return { spaceBefore, spaceAfter, listItem: block.startsItem && !revealed };
+}
+
+function samePlacement(left: MediaPlacement, right: MediaPlacement): boolean {
+  return left.spaceBefore === right.spaceBefore && left.spaceAfter === right.spaceAfter && left.listItem === right.listItem;
+}
+
 /** A block drawn by the reading pipeline in place of its lines (Л8.1). */
 export class BlockWidget extends WidgetType {
   constructor(
@@ -283,6 +330,7 @@ export class BlockWidget extends WidgetType {
     readonly environment: EditorEnvironment,
     readonly lines: number,
     readonly inList: boolean,
+    readonly placement: MediaPlacement = NO_PLACEMENT,
   ) {
     super();
   }
@@ -291,7 +339,15 @@ export class BlockWidget extends WidgetType {
     return other.widget.kind === this.widget.kind
       && other.widget.source === this.widget.source
       && other.inList === this.inList
+      && samePlacement(other.placement, this.placement)
       && sameNumbers(other.widget.lineOffsets, this.widget.lineOffsets);
+  }
+
+  /** What its measured height is kept by: its source, and the distance it
+   *  keeps from the lines round it. */
+  private get heightSource(): string {
+    const { spaceBefore, spaceAfter } = this.placement;
+    return spaceBefore || spaceAfter ? `${spaceBefore ? 1 : 0}${spaceAfter ? 1 : 0}\u0000${this.widget.source}` : this.widget.source;
   }
 
   toDOM(view: EditorView): HTMLElement {
@@ -299,10 +355,14 @@ export class BlockWidget extends WidgetType {
     dom.className = "cm-md-block";
     dom.setAttribute("data-editor-block", this.widget.kind);
     if (this.inList) dom.setAttribute("data-in-list", "");
+    if (this.placement.spaceBefore) dom.setAttribute("data-space-before", "");
+    if (this.placement.spaceAfter) dom.setAttribute("data-space-after", "");
+    if (this.placement.listItem) dom.setAttribute("data-list-item", "");
     holdExpectedHeight(dom, this.estimatedHeight);
     mountHosted(view, dom, this.widget);
     if (typeof ResizeObserver !== "undefined") {
-      const { source, kind } = this.widget;
+      const { kind } = this.widget;
+      const source = this.heightSource;
       const { environment, lines } = this;
       const observer = new ResizeObserver(() => {
         const height = dom.getBoundingClientRect().height;
@@ -325,7 +385,7 @@ export class BlockWidget extends WidgetType {
 
   get estimatedHeight(): number {
     const width = this.environment.columnWidth;
-    return knownBlockHeight(width, this.widget.source) ?? expectedBlockHeight(width, this.widget.kind, this.lines);
+    return knownBlockHeight(width, this.heightSource) ?? expectedBlockHeight(width, this.widget.kind, this.lines);
   }
 
   ignoreEvent(): boolean {
@@ -491,11 +551,16 @@ export function itemsToDecorations(items: readonly PresentationItem[], state: Ed
 }
 
 /** The decorations of the blocks drawn as widgets (Л8): a block in place of
- *  its lines; a revealed picture or embed under its source line (Л6). */
-function blockDecorations(state: EditorState, blocks: readonly EditorBlock[]): Range<Decoration>[] {
+ *  its lines; a revealed picture or embed under its source line (Л6).
+ *  `blocks` are every block that touches the document up to `coveredTo`. */
+function blockDecorations(state: EditorState, blocks: readonly EditorBlock[], coveredTo = state.doc.length): Range<Decoration>[] {
   const reveal = state.field(revealField);
   const environment = state.facet(editorEnvironment);
   const ranges: Range<Decoration>[] = [];
+  const picturesAt = new Set(blocks.filter((block) => block.kind === "media" && !isBlockRevealed(reveal, block)).map((block) => block.from));
+  const widgetOfPicturesAt = (pos: number) => (pos <= coveredTo
+    ? picturesAt.has(pos)
+    : blocksOf(state, pos, pos).some((block) => block.kind === "media" && block.from === pos && !isBlockRevealed(reveal, block)));
   for (const block of blocks) {
     const revealed = isBlockRevealed(reveal, block);
     if (revealed && block.kind !== "media") continue;
@@ -513,6 +578,7 @@ function blockDecorations(state: EditorState, blocks: readonly EditorBlock[]): R
       environment,
       state.doc.lineAt(block.to).number - state.doc.lineAt(block.from).number + 1,
       block.containers.some((container) => container.kind === "item"),
+      mediaPlacement(state.doc, block, revealed, widgetOfPicturesAt),
     );
     if (revealed) ranges.push(Decoration.widget({ widget, block: true, side: 1 }).range(block.to));
     else ranges.push(Decoration.replace({ widget, block: true }).range(block.from, block.to));
@@ -580,13 +646,20 @@ function revealRegion(state: EditorState, before: readonly number[], after: read
   return { from: state.doc.lineAt(from).from, to: Math.max(state.doc.lineAt(last).to, block?.to ?? 0) };
 }
 
-function rebuildRegion(state: EditorState, set: DecorationSet, region: { from: number; to: number }): DecorationSet {
-  const blocks = collectBlocks(syntaxTree(state), state.doc, region.from, region.to);
+/** Rebuild the widgets of `region` and of the lines next to it: a widget of
+ *  pictures keeps its distance by the lines round it (Л8.6). */
+function rebuildRegion(state: EditorState, set: DecorationSet, changed: { from: number; to: number }): DecorationSet {
+  const doc = state.doc;
+  const region = {
+    from: doc.lineAt(Math.max(0, doc.lineAt(changed.from).from - 1)).from,
+    to: doc.lineAt(Math.min(doc.length, doc.lineAt(changed.to).to + 1)).to,
+  };
+  const blocks = collectBlocks(syntaxTree(state), doc, region.from, region.to);
   return set.update({
     filterFrom: region.from,
     filterTo: region.to,
     filter: (from, to) => to < region.from || from > region.to,
-    add: blockDecorations(state, blocks),
+    add: blockDecorations(state, blocks, region.to),
     sort: true,
   });
 }
