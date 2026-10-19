@@ -285,6 +285,32 @@
     return link ? link.getAttribute("href") : null;
   }
 
+  /**
+   * The page's name by one rule for every clip (SPEC_CLIPPER.md, «Название
+   * страницы»): `og:title`, `twitter:title`, `<title>`, a placeholder of
+   * separators alone skipped.
+   * @returns {string}
+   */
+  function pageTitle() {
+    const declared = [getMeta("og:title"), getMeta("twitter:title")];
+    const titles = globalThis.MinePageTitle;
+    if (!titles) return declared.find(Boolean) || document.title || "";
+    return titles.choosePageTitle(declared, document.title,
+      [getMeta("og:site_name"), getMeta("application-name"), getMeta("author")]);
+  }
+
+  /**
+   * The title an extractor read, unless it is a placeholder: then the page's
+   * name (SPEC_CLIPPER.md, «Название страницы»).
+   * @param {string | null | undefined} extracted
+   * @returns {string}
+   */
+  function articleTitle(extracted) {
+    const titles = globalThis.MinePageTitle;
+    if (!titles) return extracted || document.title;
+    return titles.hasNameText(extracted) ? extracted || "" : pageTitle();
+  }
+
   // Metadata is only a candidate source, never authority over a concrete post.
   /** @param {string} pageUrl */
   function capturePageSource(pageUrl) {
@@ -652,8 +678,7 @@
     const selectionText = sel ? sel.toString().trim() : "";
 
     const pageUrl = snapshot.documentUrl;
-    let title = youtubeSource(pageUrl) ? document.title || ""
-      : getMeta("og:title") || getMeta("twitter:title") || document.title || "";
+    let title = youtubeSource(pageUrl) ? document.title || "" : pageTitle();
     let author = getMeta("author") || getMeta("article:author") || null;
 
     // Twitter/X: author from URL, title left as og:title (overridden by extractTwitterThread later)
@@ -1912,7 +1937,7 @@
       }
 
       return {
-        title: result.title || document.title,
+        title: articleTitle(result.title),
         content: result.contentMarkdown || "",
         html: result.content || "",
         byline: result.author || null,
@@ -2006,7 +2031,7 @@
       }
 
       return {
-        title: result.title || document.title,
+        title: articleTitle(result.title),
         content: result.contentMarkdown || "",
         html: result.content || "",
         byline: result.author || null,

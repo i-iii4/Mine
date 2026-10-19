@@ -824,6 +824,23 @@ mod tests {
         );
     }
     #[test]
+    fn a_title_of_separators_alone_names_neither_the_file_nor_the_heading() {
+        let url = "https://m.en.anglan.co.kr/product/parachute-wide-track-pants-navy/4455/";
+        let mut input = request();
+        input.title = Some("-".into());
+        input.url = Some(url.into());
+        assert_eq!(build_capture(&input).expect("capture").body, "Text");
+        assert_eq!(
+            select_name(&VaultWriteLayout::standard(), Some("-"), Some(url), &[]).unwrap(),
+            "m.en.anglan.co.kr product parachute-wide-track-pants-navy 4455"
+        );
+        input.title = Some("Parachute Wide Track Pants - Navy".into());
+        assert_eq!(
+            build_capture(&input).expect("capture").body,
+            "# Parachute Wide Track Pants - Navy\n\nText"
+        );
+    }
+    #[test]
     fn capture_uses_body_heading_and_no_card_type_or_title_frontmatter() {
         let markdown = serialize_block(&build_capture(&request()).expect("valid fixture"));
         assert!(markdown.contains("# Example\n\nText"));

@@ -8,6 +8,18 @@
     /(^|[-_/.\s])(?:tracking|tracker|beacon|pixel|spacer|transparent|shim|blank|1x1)(?:[-_/.\s]|$)/i;
   const APP_SHELL_ASSET_RE =
     /(^|\/)(?:template[-_])?app[-_]icon(?:[-_.]|$)|(^|\/)(?:favicon|apple-touch-icon)(?:[-_.]|$)/i;
+  // Copies a looping slider adds around its slides, each marked by the
+  // slider's own class: Swiper up to version 8, Slick, bxSlider, Owl
+  // Carousel 2, Glide, Splide. The slide each copies stays in the slider
+  // (SPEC_CLIPPER.md, «Копии слайдов»).
+  const SLIDER_CLONE_SELECTOR = [
+    ".swiper-slide-duplicate",
+    ".slick-cloned",
+    ".bx-clone",
+    ".owl-item.cloned",
+    ".glide__slide--clone",
+    ".splide__slide--clone",
+  ].join(", ");
 
   /** @param {unknown} value */
   function compact(value) {
@@ -114,9 +126,21 @@
     }
   }
 
+  /**
+   * Remove the copies a looping slider made of its slides: the clip keeps
+   * each slide once, in the slider's own order.
+   * @param {Document} doc
+   */
+  function removeSliderClones(doc) {
+    for (const clone of Array.from(doc.querySelectorAll(SLIDER_CLONE_SELECTOR))) {
+      clone.remove();
+    }
+  }
+
   /** @param {Document} doc */
   function sanitizeExtractionDocument(doc) {
     if (!doc?.querySelectorAll) return doc;
+    removeSliderClones(doc);
     for (const img of Array.from(doc.querySelectorAll("img"))) {
       if (shouldRemoveExtractionImage(img)) {
         removeImage(img);

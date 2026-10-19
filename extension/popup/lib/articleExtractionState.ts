@@ -1,3 +1,4 @@
+import "../../lib/pageTitle.js";
 import type { ArticleData, PageMetadata } from "./messaging";
 import { articleHasTwitterMediaBody } from "./socialContent";
 
@@ -31,9 +32,10 @@ export function contentModeNeedsArticleExtraction(metadata: PageMetadata | null)
   return !metadata.selection.trim();
 }
 
+/** A link's heading, unless its title is a placeholder of separators alone (SPEC_CLIPPER.md, «Название страницы»). */
 export function buildLinkBody(title: string): string {
   const heading = title.trim();
-  return heading ? `# ${heading}` : "";
+  return globalThis.MinePageTitle.hasNameText(heading) ? `# ${heading}` : "";
 }
 
 export function emptyContentMessage(

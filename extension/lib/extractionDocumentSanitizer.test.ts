@@ -82,6 +82,27 @@ describe("extraction document sanitizer", () => {
     expect(document.querySelector('img[src*="pixel.gif"]')).toBeNull();
   });
 
+  it("keeps each slide of a looping slider once, without the copies the slider made", () => {
+    const slide = (name: string, copy = "") =>
+      `<li class="swiper-slide${copy}"><img src="https://shop.example/${name}.jpg" alt=""></li>`;
+    document.body.innerHTML = `
+      <main>
+        <ul class="swiper-wrapper">${slide("c", " swiper-slide-duplicate")}${slide("a")}${slide("b")}${slide("c")}${slide("a", " swiper-slide-duplicate")}</ul>
+        <div class="slick-track"><div class="slick-slide slick-cloned"><img src="https://shop.example/f.jpg"></div><div class="slick-slide"><img src="https://shop.example/e.jpg"></div><div class="slick-slide"><img src="https://shop.example/f.jpg"></div></div>
+        <ul class="bxslider"><li class="bx-clone"><img src="https://shop.example/g.jpg"></li><li><img src="https://shop.example/g.jpg"></li></ul>
+        <div class="owl-stage"><div class="owl-item cloned"><img src="https://shop.example/h.jpg"></div><div class="owl-item"><img src="https://shop.example/h.jpg"></div></div>
+        <ul class="glide__slides"><li class="glide__slide glide__slide--clone"><img src="https://shop.example/i.jpg"></li><li class="glide__slide"><img src="https://shop.example/i.jpg"></li></ul>
+        <ul class="splide__list"><li class="splide__slide splide__slide--clone"><img src="https://shop.example/j.jpg"></li><li class="splide__slide"><img src="https://shop.example/j.jpg"></li></ul>
+        <div class="cloned"><img src="https://shop.example/own.jpg"></div>
+      </main>
+    `;
+
+    sanitizer.sanitizeExtractionDocument(document);
+
+    expect(Array.from(document.querySelectorAll("img"), (img) => img.getAttribute("src")?.split("/").pop()))
+      .toEqual(["a.jpg", "b.jpg", "c.jpg", "e.jpg", "f.jpg", "g.jpg", "h.jpg", "i.jpg", "j.jpg", "own.jpg"]);
+  });
+
   it("does not remove ordinary layout logos by generic filename alone", () => {
     document.body.innerHTML = `
       <header>

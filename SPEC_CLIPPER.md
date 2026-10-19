@@ -2583,12 +2583,54 @@ Content script извлекает метаданные из DOM текущей �
 | Field | Priority |
 |---|---|
 | url | `link[rel=canonical]` > `og:url` > `window.location.href` |
-| page heading seed | `og:title` > `twitter:title` > `<title>`; written as body H1 for link/article clips, not as generated `title:` frontmatter |
+| page heading seed | `og:title` > `twitter:title` > `<title>`, название без букв и цифр пропускается («Название страницы» ниже); written as body H1 for link/article clips, not as generated `title:` frontmatter |
 | description | `og:description` > `twitter:description` > `meta[name=description]` |
 | image | `og:image` > `twitter:image` |
 | author | `meta[name=author]` > `article:author` |
 | type | `og:type` (для эвристики) |
 | favicon | `link[rel=icon]` (отображение в popup, не сохраняется) |
+
+#### Название страницы
+
+Решение 19.10.2026 после карточки `-.md`: товарная страница магазина на
+Cafe24 (`m.en.anglan.co.kr`) объявляет `og:title` как `-`. Это заглушка
+шаблона магазина, а не название страницы.
+
+1. Название без единой буквы, цифры или другого видимого знака (эмодзи,
+   звезда) пустое по смыслу: в нём только пробелы, знаки препинания, тире и
+   разделители (`-`, `|`, `…`, `・`). Знаки препинания задаёт одна таблица
+   блоков Юникода: ASCII без букв и цифр, знаки Latin-1, General Punctuation,
+   Supplemental Punctuation, CJK Symbols and Punctuation, `・`, вертикальные,
+   малые и полноширинные формы. Таблица одинакова в `extension/lib/pageTitle.js`
+   и `mine-core/src/domain/block.rs`.
+2. Клиппер берёт название страницы в прежнем порядке `og:title`,
+   `twitter:title`, `<title>` и пропускает пустые по смыслу. Если объявленное
+   название (`og:title` или `twitter:title`) есть, но пустое по смыслу,
+   `<title>` очищается от имени сайта по правилу Defuddle: часть в конце или в
+   начале, отделённая знаком `|`, дефисом или тире (U+2013, U+2014) и
+   совпадающая без учёта регистра с `og:site_name`, `application-name` или
+   `meta[name=author]`, отбрасывается. Разделители внутри названия остаются;
+   название, от которого ничего не осталось бы, остаётся целым. Без
+   объявленного названия `<title>` берётся как прежде, без очистки: названия
+   других сайтов не меняются.
+3. Название, которое прочитал Defuddle, проходит ту же проверку: пустое по
+   смыслу заменяется названием страницы из пункта 2.
+4. Пустое по смыслу название не становится именем карточки. Ядро сохранения
+   (`is_name_text`) не делает из него имя файла и не пишет из него H1: имя
+   берётся из адреса страницы, без адреса `Untitled` (правило `suggest_slug`).
+   Клиппер не пишет из него заголовок ссылки (`buildLinkBody`).
+5. Пример: страница с `og:title` `-`, `<title>`
+   `Parachute Wide Track Pants - Navy - ANGLAN` и `meta[name=author]`
+   `Anglan` сохраняется как `Parachute Wide Track Pants - Navy.md` с тем же H1.
+
+Проверки: `extension/lib/pageTitle.test.ts`,
+`extension/lib/cafe24ProductCapture.test.ts` на приведённой копии страницы
+`extension/lib/cafe24Product.fixtures.html`, тесты `is_name_text`,
+`suggest_slug` и `build_capture` в `mine-core`.
+
+Ограничение: настольная версия той же страницы (`en.anglan.co.kr`) объявляет
+первым `og:title` `앵글런` из устаревшего блока главной страницы. По пункту 1
+это название, и карточка с настольной версии получит его.
 
 ### Defuddle
 
@@ -2614,6 +2656,24 @@ app-shell assets вроде `template-app-icon.png` без alt/title/caption/lin
 semantics. Изображения внутри content-zone сохраняются даже при пустом `alt`,
 чтобы статьи про иконки, логотипы, pixel art и реальные иллюстрации не
 терялись.
+
+#### Копии слайдов
+
+Решение 19.10.2026 после той же карточки `-.md`: галерея с бесконечной
+прокруткой (Swiper 4.5 с `loop: true`) добавляет к слайдам их копии, копию
+последнего слайда перед первым и копию первого после последнего. Из-за них
+картинки 1 и 2 повторились в конце карточки.
+
+Sanitizer удаляет из копии документа элементы, которые слайдер сам пометил
+как копии: `.swiper-slide-duplicate` (Swiper до версии 8), `.slick-cloned`
+(Slick), `.bx-clone` (bxSlider), `.owl-item.cloned` (Owl Carousel 2),
+`.glide__slide--clone` (Glide), `.splide__slide--clone` (Splide). Подлинный
+слайд остаётся, поэтому материал не теряется, а порядок совпадает с порядком
+слайдера. Это правило извлечения: авторские повторы картинки в тексте
+по-прежнему сохраняются (SPEC_AUDIT_FIXES.md, Ф5), ни ядро, ни помощник
+повторы по адресу не убирают. Проверки:
+`extension/lib/extractionDocumentSanitizer.test.ts`,
+`extension/lib/cafe24ProductCapture.test.ts`.
 
 Извлекает:
 - `title` — заголовок статьи; Mine writes it as first body H1, not as `title:` frontmatter

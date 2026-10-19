@@ -60,6 +60,7 @@
         "lib/productExtraction.js",
         "lib/tweetTextCompletion.js",
         "lib/youtubeSource.js",
+        "lib/pageTitle.js",
         "lib/xFeedButton.js",
         "lib/feedButtonSettings.js",
         "content.js"

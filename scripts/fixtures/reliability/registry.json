@@ -4500,6 +4500,50 @@
         "src-tauri/src/lib.rs"
       ],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "extension/lib/pageTitle.js",
+        "extension/lib/pageTitle.test.ts",
+        "extension/lib/cafe24ProductCapture.test.ts",
+        "extension/lib/cafe24Product.fixtures.html",
+        "extension/content.js",
+        "extension/popup/lib/articleExtractionState.ts",
+        "extension/popup/lib/articleExtractionState.test.ts"
+      ],
+      "requirement": "SPEC_CLIPPER.md##### Название страницы",
+      "tests": [
+        "extension/lib/pageTitle.test.ts",
+        "extension/lib/cafe24ProductCapture.test.ts",
+        "extension/popup/lib/articleExtractionState.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "mine-core/src/domain/block.rs",
+        "mine-core/src/save.rs"
+      ],
+      "requirement": "SPEC_CLIPPER.md##### Название страницы",
+      "tests": [
+        "mine-core/src/domain/block.rs",
+        "mine-core/src/save.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "extension/lib/extractionDocumentSanitizer.js",
+        "extension/lib/extractionDocumentSanitizer.test.ts",
+        "extension/lib/cafe24ProductCapture.test.ts",
+        "extension/lib/cafe24Product.fixtures.html"
+      ],
+      "requirement": "SPEC_CLIPPER.md##### Копии слайдов",
+      "tests": [
+        "extension/lib/extractionDocumentSanitizer.test.ts",
+        "extension/lib/cafe24ProductCapture.test.ts"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

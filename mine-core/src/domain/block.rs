@@ -596,8 +596,12 @@ pub fn strip_first_markdown_h1(body: &str) -> String {
     joined.trim_start_matches('\n').trim_start().to_string()
 }
 
+/// Put `heading` above `body` as its first H1, unless the body already starts
+/// with it. A heading without name text ([`is_name_text`]) is not written.
 pub fn ensure_body_starts_with_h1(body: &str, heading: &str) -> String {
-    let Some(normalized_heading) = normalize_optional_title(Some(heading)) else {
+    let Some(normalized_heading) =
+        normalize_optional_title(Some(heading)).filter(|heading| is_name_text(heading))
+    else {
         return body.to_string();
     };
 
@@ -1318,9 +1322,45 @@ pub fn compute_body_hash(body: &str) -> String {
     out
 }
 
+/// Unicode blocks of punctuation, dashes, separators and invisible marks. The
+/// same table as `PUNCTUATION_BLOCKS` in `extension/lib/pageTitle.js`, which
+/// applies this rule when the clipper chooses a page's name.
+const TITLE_PUNCTUATION_BLOCKS: [(char, char); 12] = [
+    ('\u{00A0}', '\u{00BF}'),
+    ('\u{00D7}', '\u{00D7}'),
+    ('\u{00F7}', '\u{00F7}'),
+    ('\u{2000}', '\u{206F}'),
+    ('\u{2E00}', '\u{2E7F}'),
+    ('\u{3000}', '\u{303F}'),
+    ('\u{30FB}', '\u{30FB}'),
+    ('\u{FE10}', '\u{FE1F}'),
+    ('\u{FE30}', '\u{FE6F}'),
+    ('\u{FEFF}', '\u{FEFF}'),
+    ('\u{FF01}', '\u{FF65}'),
+    ('\u{FFE0}', '\u{FFEE}'),
+];
+
+/// Whether `title` can name a card: it holds a letter, a digit or another
+/// visible sign such as an emoji. A title of punctuation, dashes and
+/// separators alone (`-`, `|`, `…`, `・`) is a page template's placeholder,
+/// not a name: it becomes neither the file name nor the H1
+/// (SPEC_CLIPPER.md, «Название страницы»).
+pub fn is_name_text(title: &str) -> bool {
+    title.chars().any(|ch| {
+        ch.is_alphanumeric()
+            || !(ch.is_whitespace()
+                || ch.is_control()
+                || ch.is_ascii()
+                || TITLE_PUNCTUATION_BLOCKS
+                    .iter()
+                    .any(|&(first, last)| (first..=last).contains(&ch)))
+    })
+}
+
 /// Generate a human-readable filesystem-safe slug from a title or URL.
 ///
-/// Title takes precedence over URL. Unicode, spaces, parentheses and most
+/// Title takes precedence over URL when it has name text ([`is_name_text`]).
+/// Unicode, spaces, parentheses and most
 /// punctuation are preserved as-is. Only characters that break filesystem
 /// semantics (`/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`, NUL, control
 /// characters) are stripped or replaced with a space. Whitespace runs are
@@ -1330,7 +1370,7 @@ pub fn compute_body_hash(body: &str) -> String {
 /// identity. Maximum length 100 characters (char count, not bytes).
 /// Fallback to `Untitled` when neither input yields usable content.
 pub fn suggest_slug(title: Option<&str>, url: Option<&str>) -> String {
-    let raw = if let Some(title) = title.filter(|t| !t.trim().is_empty()) {
+    let raw = if let Some(title) = title.filter(|t| is_name_text(t)) {
         title.to_string()
     } else if let Some(url) = url {
         url.strip_prefix("https://")
@@ -2965,6 +3005,39 @@ mod tests {
     fn slug_empty_title_falls_back_to_url() {
         let slug = suggest_slug(Some("   "), Some("https://example.com"));
         assert_eq!(slug, "example.com");
+    }
+
+    #[test]
+    fn a_title_of_separators_alone_names_nothing() {
+        for placeholder in [
+            "-", " - ", "|", "—", "– | –", "...", "…", "・", "－", "｜", "·", "•", "»", "* * *",
+            "\u{200B}", "\u{00A0}-\u{00A0}", "",
+        ] {
+            assert!(!is_name_text(placeholder), "{placeholder:?} is a placeholder");
+        }
+        for name in [
+            "Parachute Wide Track Pants - Navy", "앵글런", "2026", "Ⅻ", "🔥", "★", "a", "-a-", "日本語",
+        ] {
+            assert!(is_name_text(name), "{name:?} is a name");
+        }
+    }
+
+    #[test]
+    fn slug_title_of_separators_alone_falls_back_to_url_then_untitled() {
+        let url = "https://m.en.anglan.co.kr/product/parachute-wide-track-pants-navy/4455/";
+        assert_eq!(
+            suggest_slug(Some("-"), Some(url)),
+            "m.en.anglan.co.kr product parachute-wide-track-pants-navy 4455"
+        );
+        assert_eq!(suggest_slug(Some("—"), None), "Untitled");
+        assert_eq!(suggest_slug(Some("🔥"), None), "🔥");
+    }
+
+    #[test]
+    fn a_heading_of_separators_alone_is_not_written() {
+        assert_eq!(ensure_body_starts_with_h1("Text", "-"), "Text");
+        assert_eq!(ensure_body_starts_with_h1("Text", " | "), "Text");
+        assert_eq!(ensure_body_starts_with_h1("Text", "Navy - Pants"), "# Navy - Pants\n\nText");
     }
 
     #[test]

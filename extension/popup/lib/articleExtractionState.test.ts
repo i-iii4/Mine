@@ -75,6 +75,12 @@ describe("article extraction state", () => {
     expect(buildLinkBody("   ")).toBe("");
   });
 
+  it("writes no Link heading from a title of separators alone", () => {
+    expect(buildLinkBody("-")).toBe("");
+    expect(buildLinkBody(" – | – ")).toBe("");
+    expect(buildLinkBody("Parachute Wide Track Pants - Navy")).toBe("# Parachute Wide Track Pants - Navy");
+  });
+
   it("returns mode-specific empty extraction messages", () => {
     expect(emptyContentMessage(meta(), "empty")).toContain("No article text");
     expect(emptyContentMessage(meta({ detectedType: "video" }), "empty")).toContain("No transcript");
