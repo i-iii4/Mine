@@ -5,7 +5,7 @@ import type { ExtraProps } from "react-markdown";
 import { undo } from "@codemirror/commands";
 import { EditorView } from "@codemirror/view";
 import { beginNoteEdit, endNoteEdit, noteBodyState, reportNoteEdits, saveNoteBody } from "@/lib/commands";
-import { clearActionFailures, NOTE_SAVE_FAILED_TITLE, useActionFailures } from "@/lib/actionFailures";
+import { clearActionFailures, NOTE_NOT_SAVED_TITLE, NOTE_SAVE_FAILED_TITLE, useActionFailures } from "@/lib/actionFailures";
 import { followNoteRename, isNoteHeldForEditing, noteMissingFromIndex } from "@/lib/noteEditSessions";
 import { NoteEmbedLookups } from "@/components/reading/NoteEmbed";
 import { TASK_NOTE_GONE, taskInCloudLine } from "@/components/reading/TaskCheckbox";
@@ -13,6 +13,7 @@ import { indexedBlock } from "@/test/blocks";
 import { installCodeMirrorLayoutStubs } from "@/test/codemirror";
 import type { IndexedBlock, NoteBodyState, NoteEditError, NoteSaveError, SavedNoteBody, SaveNoteBodyParams } from "@/types";
 import { NoteEditor } from "./NoteEditor";
+import { NOTE_CHANGED_ON_DISK, NOTE_TEXT_KEPT } from "./noteEditMessages";
 
 // SPEC_EDITING.md, Л4 (row 50.16): the file's own changes, conflicts, two
 // tabs, a rename and a deletion during a session, iCloud and read-only.
@@ -23,6 +24,7 @@ vi.mock("@/lib/commands", () => ({
   noteBodyState: vi.fn(),
   reportEditsFlushed: vi.fn(async () => undefined),
   reportNoteEdits: vi.fn(async () => undefined),
+  reportFocusedEditor: vi.fn(async () => undefined),
   saveNoteBody: vi.fn(),
   suggestNoteLinks: vi.fn(async () => []),
   getBlock: vi.fn(async () => null),
@@ -281,7 +283,12 @@ describe("the file's own changes (SPEC_EDITING.md, Л4.1, Л4.2)", () => {
 describe("a conflict (Л4.3)", () => {
   it("keeps both sides when the file changes while edits are unsaved, and ends when the file holds the editor's text", async () => {
     const disk = fakeDisk("Body");
-    render(<NoteEditor {...editorProps(SLUG, disk.body, disk.hash)} />);
+    render(
+      <>
+        <FailureProbe />
+        <NoteEditor {...editorProps(SLUG, disk.body, disk.hash)} />
+      </>,
+    );
     const view = await editorView();
     disk.holdWrites();
     type(view, 4, " mine");
@@ -293,10 +300,14 @@ describe("a conflict (Л4.3)", () => {
     expect(view.state.doc.toString()).toBe("Body mine!");
     expect(disk.body).toBe("Body theirs");
     expect(disk.writes).toHaveLength(1);
+    // The tab says so in its notice, in the place of the choice ЛВ2 (а)
+    // will give: not saved, the text kept here, why.
+    expect(failures).toEqual([{ kind: "note-save", title: NOTE_NOT_SAVED_TITLE, summary: NOTE_TEXT_KEPT, messages: [NOTE_CHANGED_ON_DISK] }]);
     // The other side wrote exactly the editor's text: nothing is lost, the
-    // session goes on from it.
+    // session goes on from it, the notice goes.
     disk.writeFromOutside("Body mine!");
     await settle();
+    expect(failures).toEqual([]);
     type(view, 10, "?");
     await waitFor(() => expect(disk.body).toBe("Body mine!?"));
   });

@@ -8,7 +8,9 @@
 // look and act as the rules say, in the colours the user chose on 18.10.2026
 // (callout types, highlighted code, diagram series), an embed opens its note
 // and a card opened at a heading or a block scrolls to it, and nothing is
-// asked of the network.
+// asked of the network. A card whose body can be edited opens in the editor
+// (SPEC_EDITING.md, Л1); the reading surface is what a body that cannot be
+// edited shows, and the check turns the editor off to look at it.
 // Starts and stops its own Vite.
 import assert from 'node:assert/strict';
 import { readFileSync, realpathSync } from 'node:fs';
@@ -55,6 +57,7 @@ const vite = await startAuditVite([{
       import { createRoot } from 'react-dom/client';
       import { DndContext } from '@dnd-kit/core';
       import { Detail } from '/src/components/Detail.tsx';
+      import { NoteEditingSwitch } from '/src/components/editing/noteEditingSwitch.ts';
       import { TooltipProvider } from '/src/components/ui/tooltip.tsx';
       import { stripFadeMaskStyle } from '/src/lib/edgeFade.ts';
       import '/src/styles/global.css';
@@ -100,8 +103,9 @@ const vite = await startAuditVite([{
         const [anchor, setAnchor] = React.useState(null);
         window.__audit.jump = setAnchor;
         const detail = React.createElement(Detail, { block: card, scrollAnchor: anchor, vaultPath: '/vault', thumbsRootPath: '/thumbs', tags: [], onClose: noop, onToggleTag: noop, onCreateAndAssign: noop, onRequestRename: noop, onRequestDelete: noop, onOpenRelatedNote: openRelatedNote });
-        return React.createElement('div', { style: { display: 'flex', height: '100vh' } },
-          React.createElement('main', { style: { position: 'relative', flex: '1', minWidth: 0 } }, detail));
+        return React.createElement(NoteEditingSwitch.Provider, { value: false },
+          React.createElement('div', { style: { display: 'flex', height: '100vh' } },
+            React.createElement('main', { style: { position: 'relative', flex: '1', minWidth: 0 } }, detail)));
       }
       createRoot(document.getElementById('root')).render(React.createElement(TooltipProvider, null, React.createElement(DndContext, null, React.createElement(Shell))));`;
   },

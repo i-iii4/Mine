@@ -1,11 +1,18 @@
 // The note's editor in headless Chromium (SPEC_EDITING.md, Л17): the open card
-// in the editor on the dev page `/__editing` (`src/dev/EditingPage.tsx`, its
-// made-up backend checking every write against its base), with the reading
-// mode's fixture `scripts/fixtures/reading-mode.md`, its variants and the
-// table cases, in the light and the dark theme, at 1600 × 800 and 900 × 800.
-// Real layout, fonts, lazy parts and events, which the jsdom tests cannot
-// see:
+// on the dev page `/__editing` (`src/dev/EditingPage.tsx`, its made-up
+// backend checking every write against its base), opened as the app opens
+// it, straight in the editor with nothing turned on (Л1, the user's decision
+// of 18.10.2026 on ЛВ1), with the reading mode's fixture
+// `scripts/fixtures/reading-mode.md`, its variants and the table cases, in the
+// light and the dark theme, at 1600 × 800 and 900 × 800. Real layout, fonts,
+// lazy parts and events, which the jsdom tests cannot see:
 //
+// - the card opens in the editor by itself; a note the backend refuses and a
+//   collection page stay in the reading mode, a refusal with its reason in
+//   the tab's notice (Л1, Л2);
+// - the Edit menu's Undo, Redo and Select All, as the backend sends them,
+//   act on the editor, and the page reports the editor's focus and history
+//   for the menu (Л12);
 // - the field's name and role, Escape and Tab out of it, the task boxes'
 //   names, the table and its active cell, the `Table` menu by its keys (Л16);
 // - nothing written on opening, an edit in every kind of block writes its own
@@ -16,7 +23,8 @@
 //   by the arrows (Л5);
 // - lists and tasks (Л7); block widgets as tall and wide as the reading
 //   mode's elements (Л8); the table editor (Л9); a change of the file applied
-//   by itself, and kept apart from unsaved edits (Л4); the `[[` menu (Л10);
+//   by itself, and kept apart from unsaved edits with the conflict's notice
+//   (Л4); the `[[` menu (Л10);
 //   the open card's selection bar and jumps (Л11); a composition through CDP
 //   writes nothing until it ends (Л13.1);
 // - the page never scrolls sideways, and nothing is asked of the network.
@@ -62,12 +70,10 @@ const EDITS = [
 
 /** Waiting for the user's decisions: named, never passed. */
 const PENDING = [
-  ['entering and leaving editing, the first visible line kept (Л1)', 'ЛВ1, row 50.12'],
-  ['how a conflict is shown and decided (Л4.3)', 'ЛВ2 (а), row 50.16'],
+  ['the choice in a conflict, its window and its words beyond the notice (Л4.3)', 'ЛВ2 (а), row 50.16'],
   ['what the person is offered for a note deleted during the session (Л4.9)', 'ЛВ2 (б), row 50.16'],
   ['`New note` in the `[[` menu and a click on a link to a missing note (Л10)', 'ЛВ4, row 50.22'],
   ['⌘K from a cell to the open card\'s menu, ⌘L, ⌘[ ⌘] in the editor (Л12, Л16)', 'ЛВ5, row 50.24'],
-  ['Undo, Redo and Select All of the Edit menu (Л12)', 'row 50.24'],
   ['Enter in a cell (Л9.6)', 'ЛВ6'],
   ['the handles and the add strips of a table, their names, the row and column drag (Л9.8, Л16)', 'ЛВ7 (а), (б), (е), (ж)'],
   ['how the active cell, a range, a chosen block look (Л15)', 'ЛВ7 (в), (г), (д), row 50.26'],
@@ -195,6 +201,76 @@ function changed(before, after) {
 
 // ─── The checks ─────────────────────────────────────────────────────────────
 
+/** Л1, Л2: a card opens straight in the editor, nothing turned on, and no
+ *  control turns it into a reading view (ЛВ1). */
+async function opensInEditor(label, page) {
+  const opened = await page.evaluate(() => ({
+    sessions: window.__editing.record.sessions.filter((entry) => entry.startsWith('begin ')).length,
+    article: document.querySelector('[data-article-body]') !== null,
+    toggle: [...document.querySelectorAll('button')].some((button) => /^(Edit|Done)$/.test(button.textContent.trim()) || /^(Edit|Done)$/.test(button.getAttribute('aria-label') ?? '')),
+  }));
+  check(label, 'the card opens straight in the editor, no reading article and no Edit or Done button (Л1, ЛВ1)', opened.sessions >= 1 && !opened.article && !opened.toggle, JSON.stringify(opened));
+}
+
+/** Л1, Л2.5, Л2.8: a note the backend refuses and a collection page stay in
+ *  the reading mode; a refusal says why in the tab's notice. */
+async function readingWhenNotEditable(label, theme) {
+  const cases = [
+    { query: '&refuse=read_only', name: 'a read-only note', line: '“Проверка просмотрщика.md” is read-only.', asks: true },
+    { query: '&refuse=in_cloud', name: 'a note in iCloud not downloaded', line: '“Проверка просмотрщика.md” is downloading from iCloud. Try again when it has arrived.', asks: true },
+    { query: '&card=collection', name: 'a collection page', line: null, asks: false },
+  ];
+  for (const { query, name, line, asks } of cases) {
+    const page = await browser.newPage({ viewport: WIDE });
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto(`${vite.origin}${PAGE}?theme=${theme}${query}`, { waitUntil: 'domcontentloaded', timeout: COLD_START_MS });
+    await page.waitForSelector('[data-article-body]', { timeout: COLD_START_MS });
+    if (asks) await page.waitForFunction(() => window.__editing.record.sessions.some((entry) => entry.startsWith('begin ')), null, { timeout: 10_000 });
+    await page.waitForTimeout(600);
+    const state = await page.evaluate(() => ({
+      article: document.querySelector('[data-article-body]') !== null,
+      editor: document.querySelector('.mine-note-editor') !== null,
+      asked: window.__editing.record.sessions.filter((entry) => entry.startsWith('begin ')).length,
+      notices: [...document.querySelectorAll('[data-notification-card]')].map((card) => card.textContent),
+    }));
+    const said = line === null ? state.notices.length === 0 : state.notices.some((text) => text.includes('Could not edit the note') && text.includes(line));
+    check(label, `${name} stays in the reading mode${line ? ' and the notice says why' : ', the backend is not asked'} (Л2)`, state.article && !state.editor && (asks ? state.asked >= 1 : state.asked === 0) && said && errors.length === 0, JSON.stringify({ ...state, errors }));
+    await page.close();
+  }
+}
+
+/** Л12: the Edit menu's Undo, Redo and Select All, sent by the backend as
+ *  `edit-menu-command`, act on the editor; the page reports the editor's
+ *  focus and history, by which the backend enables Undo and Redo. */
+async function editMenu(label, page) {
+  const original = await body(page);
+  const lastReport = () => page.evaluate(() => window.__editing.record.focusReports.at(-1) ?? null);
+  await caretAfter(page, 'Короткий абзац с ');
+  await page.waitForTimeout(100);
+  check(label, 'the editor in focus is reported for the Edit menu (Л12)', (await lastReport()) !== null, JSON.stringify(await lastReport()));
+  await page.keyboard.type(MARK);
+  const typed = original.replace('Короткий абзац с ', `Короткий абзац с ${MARK}`);
+  await bodyBecomes(page, typed);
+  check(label, 'after an edit the report lets Undo in (Л12)', JSON.stringify(await lastReport()) === JSON.stringify({ can_undo: true, can_redo: false }), JSON.stringify(await lastReport()));
+  const command = (name) => page.evaluate((payload) => window.__editing.emit('edit-menu-command', payload), name);
+  await command('undo');
+  const undone = await bodyBecomes(page, original);
+  check(label, 'the menu\'s Undo takes the edit back through the editor\'s history, and Redo is let in', undone && JSON.stringify(await lastReport()) === JSON.stringify({ can_undo: false, can_redo: true }), JSON.stringify({ report: await lastReport(), diff: changed(original, await body(page)) }));
+  await command('redo');
+  check(label, 'the menu\'s Redo puts it back', await bodyBecomes(page, typed));
+  await command('select_all');
+  await page.waitForTimeout(100);
+  const selection = await page.evaluate(() => window.__editing.editor.selection());
+  const length = (await docText(page)).replace(/\r\n/g, '\n').length;
+  check(label, 'the menu\'s Select All selects the whole note (Л12)', selection && Math.min(selection.anchor, selection.head) === 0 && Math.max(selection.anchor, selection.head) === length, JSON.stringify({ selection, length }));
+  await page.evaluate(() => window.__editing.editor.undo());
+  await bodyBecomes(page, original);
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.waitForTimeout(150);
+  check(label, 'with the focus out of the editor nothing is reported: the menu keeps its stock actions (Л12)', (await lastReport()) === null, JSON.stringify(await lastReport()));
+}
+
 /** Л16: the field, Escape and Tab, the task boxes. */
 async function accessibility(label, page) {
   const field = await page.evaluate(() => {
@@ -269,7 +345,7 @@ async function byteExact(label, theme, variant) {
 }
 
 /** ⌘Z of the page itself reaches the editor's history in Chromium; the
- *  menu's Undo of the app waits for row 50.24. */
+ *  app's menu Undo comes as the backend's command (`editMenu`). */
 async function keyboardUndo(label, page) {
   const before = await body(page);
   await caretAfter(page, 'Короткий абзац с ');
@@ -548,6 +624,9 @@ async function externalChanges(label, theme) {
   const fileKept = (await body(page)) === third;
   const overwritten = await page.evaluate(() => window.__editing.record.writes.some((write, index, all) => write.accepted && index === all.length - 1 && write.body.includes('✎')));
   check(label, 'with an unsaved edit the text and the changed file both stay, nothing written over the file (Л4.3)', kept && fileKept && !overwritten, JSON.stringify({ kept, fileKept, overwritten }));
+  // Until the user decides ЛВ2 (а), the tab's notice says it (Л4.3).
+  const notice = await page.evaluate(() => [...document.querySelectorAll('[data-notification-card]')].map((card) => card.textContent));
+  check(label, 'the conflict shows the notice Not saved, the text kept, the file changed (Л4.3)', notice.some((text) => text.startsWith('Not saved') && text.includes('Your text is kept here.') && text.includes('The file changed on disk while you were editing.')), JSON.stringify(notice));
   check(label, 'external changes: no page errors', errors.length === 0, errors.join(' | '));
   await page.close();
 }
@@ -627,6 +706,7 @@ try {
     const label = `${theme} ${WIDE.width} × ${WIDE.height}`;
     {
       const { page, errors, requests } = await open(theme, WIDE);
+      await opensInEditor(label, page);
       await accessibility(label, page);
       await livePreview(label, page);
       await listsAndTasks(label, page);
@@ -634,6 +714,7 @@ try {
       await openCard(label, page);
       await composition(label, page);
       await keyboardUndo(label, page);
+      await editMenu(label, page);
       await layoutChecks(label, page, requests);
       check(label, 'every write went over its base, no page errors', (await allAccepted(page)) && errors.length === 0, errors.join(' | '));
       await page.close();
@@ -647,6 +728,7 @@ try {
     for (const variant of Object.keys(VARIANTS)) await byteExact(label, theme, variant);
     await tables(label, theme);
     await externalChanges(label, theme);
+    await readingWhenNotEditable(label, theme);
 
     const narrow = `${theme} ${NARROW.width} × ${NARROW.height}`;
     const { page, errors, requests } = await open(theme, NARROW);

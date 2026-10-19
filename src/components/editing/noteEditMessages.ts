@@ -17,6 +17,15 @@ import type { SaveDisposition } from "@/lib/editing/saveQueue";
  *  as a collection page (Л3.3, step 5). */
 export const NOTE_WOULD_BE_COLLECTION = "The text would make the note a collection page.";
 
+/** The line of a conflict (Л4.3): the file changed outside the session while
+ *  it held edits the file has not. Under the title `NOTE_NOT_SAVED_TITLE`;
+ *  a proposal until the user decides ЛВ2 (а), which adds the choice. */
+export const NOTE_CHANGED_ON_DISK = "The file changed on disk while you were editing.";
+
+/** The quiet line of a conflict: nothing of the editor's text is lost while
+ *  the card stays open. */
+export const NOTE_TEXT_KEPT = "Your text is kept here.";
+
 /** The line of a note the editor could not open; `null` where nothing is
  *  said: a collection page simply has no editing (Л2.8). */
 export function noteEditErrorLine(error: NoteEditError): string | null {

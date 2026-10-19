@@ -40,6 +40,7 @@ vi.mock("@/lib/commands", () => ({
   noteBodyState: vi.fn(),
   reportEditsFlushed: vi.fn(async () => undefined),
   reportNoteEdits: vi.fn(async () => undefined),
+  reportFocusedEditor: vi.fn(async () => undefined),
   saveNoteBody: vi.fn(),
   suggestNoteLinks: vi.fn(async () => []),
   copyMediaAssetToClipboard: vi.fn(),

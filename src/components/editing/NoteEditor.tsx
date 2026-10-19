@@ -34,10 +34,12 @@ import {
 import {
   dismissActionFailure,
   NOTE_EDIT_FAILED_TITLE,
+  NOTE_NOT_SAVED_TITLE,
   NOTE_SAVE_FAILED_TITLE,
   reportActionFailure,
 } from "@/lib/actionFailures";
 import { logFailure } from "@/lib/appLog";
+import { refreshEditMenu, registerEditMenuEditor } from "@/lib/editMenu";
 import { computeBodyHash } from "@/lib/editing/bodyHash";
 import {
   BYTE_ORDER_MARK,
@@ -52,6 +54,7 @@ import { editorLinkHost, linkClicks } from "@/lib/editing/links";
 import { linkSuggestHost, linkSuggestions, type LinkQuery, type LinkSuggestion } from "@/lib/editing/linkSuggest";
 import { continueListMarkup, deleteListMarkup, indentListItem, outdentListItem } from "@/lib/editing/lists";
 import { editorEnvironment, livePreview, omittedEmbedField, type EditorEnvironment, type EditorLinkStatus } from "@/lib/editing/livePreview";
+import { editorHistory, runEditMenuCommand } from "@/lib/editing/menuCommands";
 import { externalChange, externalChangeSpec } from "@/lib/editing/reloadDiff";
 import { revealField } from "@/lib/editing/reveal";
 import { SaveQueue, type SaveAnswer } from "@/lib/editing/saveQueue";
@@ -65,7 +68,14 @@ import type { MineTextSelectionDragPayload } from "@/lib/textSelectionDrag";
 import { cn } from "@/lib/utils";
 import type { FlushEditsPayload, IndexedBlock, NoteChangedPayload, NoteEditError, NoteSaveError } from "@/types";
 import { EditorWidgets, WidgetPortals, type EditorArticleHost } from "./EditorWidgets";
-import { asNoteSaveError, noteEditErrorLine, noteSaveDisposition, noteSaveErrorLine } from "./noteEditMessages";
+import {
+  asNoteSaveError,
+  NOTE_CHANGED_ON_DISK,
+  NOTE_TEXT_KEPT,
+  noteEditErrorLine,
+  noteSaveDisposition,
+  noteSaveErrorLine,
+} from "./noteEditMessages";
 
 /** The log lines of the session's quiet failures. */
 export const NOTE_CONFLICT_LOG = "The note changed outside the editor";
@@ -440,10 +450,18 @@ function EditorSession({
         });
         askAfterWriteIfWaiting();
       },
-      // How a conflict is shown waits for the user's decision ЛВ2 (а): until
-      // then the queue stops, the text and the file stay, the log says why.
+      // A conflict (Л4.3): the queue stops, the text and the file stay. The
+      // tab's notice says so until the file holds the editor's text again;
+      // the choice between the two sides waits for the user's decision ЛВ2
+      // (а), the log keeps the reason.
       onConflict: (error) => {
         logFailure(NOTE_CONFLICT_LOG, error);
+        reportActionFailure({
+          kind: "note-save",
+          title: NOTE_NOT_SAVED_TITLE,
+          summary: NOTE_TEXT_KEPT,
+          messages: [NOTE_CHANGED_ON_DISK],
+        });
         askAfterWriteIfWaiting();
       },
       onRecovered: () => dismissActionFailure("note-save"),
@@ -595,6 +613,8 @@ function EditorSession({
           }),
           label.of(fieldLabel(latest.current.fileName)),
           EditorView.updateListener.of((update) => {
+            // The Edit menu's Undo and Redo follow the history (Л12).
+            if (update.transactions.length > 0 || update.focusChanged) refreshEditMenu();
             if (update.view.composing !== composing) {
               composing = update.view.composing;
               queue.setComposing(composing);
@@ -678,6 +698,22 @@ function EditorSession({
     sessionRef.current = { queue, view: created, bom: loaded.bom, mode: loaded.mode, cardBody, relabel };
     setView(created);
 
+    // The Edit menu's Undo, Redo and Select All while the editor, or a
+    // cell's editor in it, holds the focus (Л12): the history is the main
+    // editor's, Select All takes the text of the part in focus.
+    const releaseEditMenu = registerEditMenuEditor({
+      hasFocus: () => {
+        const active = document.activeElement;
+        return active !== null && created.dom.contains(active);
+      },
+      history: () => editorHistory(created.state),
+      run: (command) => {
+        const active = document.activeElement;
+        const focused = active instanceof HTMLElement ? EditorView.findFromDOM(active) : null;
+        runEditMenuCommand(created, focused ?? created, command);
+      },
+    });
+
     // The backend's flush (Л3.9): write now, then answer.
     const flushRequests = listenPage<FlushEditsPayload>("flush-edits", (event) => {
       void queue.flush().finally(() => {
@@ -709,6 +745,7 @@ function EditorSession({
       void flushRequests.then((unlisten) => unlisten(), (error: unknown) => logFailure(NOTE_SESSION_LOG, error));
       void changes.then((unlisten) => unlisten(), (error: unknown) => logFailure(NOTE_SESSION_LOG, error));
       hold.release();
+      releaseEditMenu();
       if (published !== null) latest.current.onTextSelection?.(null);
       // The session ends after its last write (Л3.2): the queue keeps the
       // body the view held, the view can go now.

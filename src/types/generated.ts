@@ -330,6 +330,11 @@ export type DeleteTextSelectionParams = { source_slug: string; selected_text: st
  */
 export type DropHover = { tab_id: TabId; x: number | null }
 
+/**
+ * A command of the Edit menu that the note editor carries out itself.
+ */
+export type EditMenuCommand = "undo" | "redo" | "select_all"
+
 export type ExtractTextSelectionParams = { source_slug: string; target_tag: string; selected_text: string; first_block_start: number; first_block_end: number; source_body_hash: string;
 /**
  * The editor's selection as exact source bytes (SPEC_EDITING.md, Л11.2).
@@ -383,6 +388,13 @@ export type FeedPreviewTile = { source_path: string; preview_path: string | null
  * `report_edits_flushed(request_id)` (Л3.9).
  */
 export type FlushEditsPayload = { request_id: number }
+
+/**
+ * What a page reports while its note editor holds the focus: whether its
+ * history has a step to undo and a step to redo (`undoDepth`, `redoDepth`
+ * of CodeMirror).
+ */
+export type FocusedEditor = { can_undo: boolean; can_redo: boolean }
 
 export type GraphLink = { id: string; kind: GraphLinkKind; source: string; target: string; directed: boolean; count: number; target_ref: string | null }
 

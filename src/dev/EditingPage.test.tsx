@@ -36,14 +36,14 @@ beforeAll(() => {
 });
 
 describe("the editing page (SPEC_EDITING.md, Л17)", () => {
-  it("leaves the editor off where no page turns its switch on (Л1, row 50.12)", () => {
+  it("has the editor on where nothing turns it off: the card opens straight in it (Л1, row 50.12)", () => {
     let seen: boolean | null = null;
     function Probe() {
       seen = useContext(NoteEditingSwitch);
       return null;
     }
     render(<Probe />);
-    expect(seen).toBe(false);
+    expect(seen).toBe(true);
   });
 
   it("opens the fixture in the editor and writes every edit over its base", async () => {

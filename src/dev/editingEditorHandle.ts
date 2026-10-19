@@ -30,8 +30,8 @@ export interface EditingEditorHandle {
   select(anchor: number, head?: number): Promise<boolean>;
   /** How far the text is parsed, and its length. */
   parsed(): Promise<{ to: number; length: number } | null>;
-  /** Undo in the editor's history, as the Edit menu's Undo will (row 50.24
-   *  waits for its decisions). */
+  /** Undo in the editor's history itself; the Edit menu's Undo comes as
+   *  the backend's `edit-menu-command` (Л12). */
   undo(): Promise<boolean>;
 }
 

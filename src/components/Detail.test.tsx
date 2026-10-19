@@ -76,6 +76,14 @@ vi.mock("./VideoFromBlob", () => ({
   ),
 }));
 
+// These tests read the open card's reading surface. A card with its whole
+// body opens in the editor by default (SPEC_EDITING.md, Л1, row 50.12); the
+// editor's own tests are in `editing/`, here it stays off.
+vi.mock("./editing/noteEditingSwitch", async () => {
+  const { createContext } = await import("react");
+  return { NoteEditingSwitch: createContext(false) };
+});
+
 vi.mock("@/lib/commands", () => ({
   getBlock: vi.fn(),
   copyMediaAssetToClipboard: vi.fn(),

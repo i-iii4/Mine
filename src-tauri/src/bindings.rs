@@ -67,6 +67,7 @@ use crate::storage::note_edit::{
 };
 use crate::storage::note_links::{LabelMatch, NoteLinkQuery, NoteLinkSuggestion};
 use crate::commands::edit_sessions::{FlushEditsPayload, NoteChangedPayload};
+use crate::domain::edit_menu::{EditMenuCommand, FocusedEditor};
 use crate::watcher::handler::ScanResult;
 
 pub fn export_types(check_only: bool) -> Result<()> {
@@ -182,6 +183,8 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<LabelMatch>()
         .register::<NoteChangedPayload>()
         .register::<FlushEditsPayload>()
+        .register::<EditMenuCommand>()
+        .register::<FocusedEditor>()
         .register::<MergeBlocksError>()
         .register::<ScanResult>()
         .register::<VaultOpenResult>()

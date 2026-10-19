@@ -55,6 +55,9 @@ pub struct AppState {
     /// The previews of edited notes, made once a note rests (SPEC_EDITING.md,
     /// Л3.3 step 8).
     pub(crate) edit_previews: super::note_edit::EditPreviews,
+    /// Which page's note editor holds the focus, for the Edit menu
+    /// (SPEC_EDITING.md, Л12).
+    pub(crate) focused_editors: super::edit_menu::FocusedEditors,
 }
 
 impl AppState {
@@ -71,6 +74,7 @@ impl AppState {
             conflict_checks: super::conflicts::ConflictChecks::default(),
             edit_sessions: super::edit_sessions::EditSessions::default(),
             edit_previews: super::note_edit::EditPreviews::default(),
+            focused_editors: super::edit_menu::FocusedEditors::default(),
         }
     }
 

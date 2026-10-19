@@ -95,6 +95,9 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("report_note_edits", Effect::Reads),
     ("end_note_edit", Effect::Reads),
     ("report_edits_flushed", Effect::Reads),
+    // Which editor holds the focus, for the Edit menu: a page's state in
+    // memory and the menu's items (SPEC_EDITING.md, Л12).
+    ("report_focused_editor", Effect::Reads),
     ("rename_block_file", Effect::ChangesSources),
     ("check_block_rename", Effect::Reads),
     ("prepare_delete_block", Effect::Reads),
@@ -190,6 +193,7 @@ pub const MAIN_THREAD_COMMANDS: &[(&str, &str)] = &[
     ("report_note_edits", "edit sessions in memory"),
     ("end_note_edit", "edit sessions and waiting previews in memory"),
     ("report_edits_flushed", "edit sessions in memory"),
+    ("report_focused_editor", "the editor in focus in memory and the app menu"),
     // Windows and tabs: the pages and their layers are made and ordered on
     // the main thread (SPEC_TABS.md, «Команды»).
     ("get_tab_bootstrap", "tabs in memory"),

@@ -203,6 +203,7 @@ pub fn run() {
             commands::edit_sessions::report_note_edits,
             commands::edit_sessions::end_note_edit,
             commands::edit_sessions::report_edits_flushed,
+            commands::edit_menu::report_focused_editor,
             commands::blocks::rename_block_file,
             commands::blocks::check_block_rename,
             commands::blocks::prepare_delete_block,
@@ -425,14 +426,23 @@ fn build_app_menu(
         .accelerator(accelerator("find-collections", "CmdOrCtrl+Shift+F"))
         .build(app)?;
 
-    let edit_menu = SubmenuBuilder::new(app, "Edit")
-        .undo()
-        .redo()
+    // Undo, Redo and Select All are Mine's own items with the stock titles
+    // and keys (SPEC_EDITING.md, Л12): a note editor in focus carries them
+    // out, anywhere else they send the stock items' actions. Cut, Copy and
+    // Paste stay stock: the page's clipboard events reach the editor.
+    let edit_item = |command: domain::edit_menu::EditMenuCommand| -> anyhow::Result<tauri::menu::MenuItem<tauri::Wry>> {
+        Ok(MenuItemBuilder::with_id(command.menu_id(), command.title())
+            .accelerator(command.accelerator())
+            .build(app)?)
+    };
+    let edit_menu = SubmenuBuilder::with_id(app, commands::edit_menu::MENU_ID_EDIT, "Edit")
+        .item(&edit_item(domain::edit_menu::EditMenuCommand::Undo)?)
+        .item(&edit_item(domain::edit_menu::EditMenuCommand::Redo)?)
         .separator()
         .cut()
         .copy()
         .paste()
-        .select_all()
+        .item(&edit_item(domain::edit_menu::EditMenuCommand::SelectAll)?)
         .separator()
         .item(&find_cards_item)
         .item(&find_channels_item)
@@ -504,6 +514,12 @@ fn menu_tab(app: &tauri::AppHandle) -> Option<domain::windows::TabId> {
 
 #[cfg(feature = "desktop")]
 fn on_menu_event(app: &tauri::AppHandle, id: &str) {
+    // Undo, Redo and Select All go to the note editor in focus, else to the
+    // system (SPEC_EDITING.md, Л12).
+    if let Some(command) = domain::edit_menu::EditMenuCommand::from_menu_id(id) {
+        commands::edit_menu::run(app, command);
+        return;
+    }
     match id {
         // Menu commands act on the tab in use (SPEC_TABS.md, В21).
         MENU_ID_FIND_CARDS => {
@@ -595,6 +611,8 @@ pub fn refresh_app_menu(app: &tauri::AppHandle) {
             if let Err(e) = app.set_menu(menu) {
                 log::warn!("failed to apply rebuilt menu: {e}");
             }
+            // The new items start enabled: they take the editor in focus.
+            commands::edit_menu::reflect(app);
         }
         Err(e) => log::warn!("failed to rebuild menu: {e:#}"),
     }
@@ -640,5 +658,30 @@ mod app_log_tests {
             builder.contains("RotationStrategy::KeepSome(") && builder.contains("APP_LOG_KEPT_FILES"),
             "{builder}"
         );
+    }
+}
+
+#[cfg(all(test, feature = "desktop"))]
+mod edit_menu_tests {
+    /// SPEC_EDITING.md, Л12: Undo, Redo and Select All are Mine's own items
+    /// (the stock ones send actions the note editor never hears); Cut, Copy
+    /// and Paste stay stock. A menu needs a running app, so the builder is
+    /// read as written.
+    #[test]
+    fn the_edit_menu_has_its_own_undo_redo_and_select_all() {
+        let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs")).unwrap();
+        let start = source.find("let edit_menu = SubmenuBuilder").expect("the Edit menu");
+        let end = start + source[start..].find(".build()?;").expect("a built Edit menu");
+        let builder = &source[start..end];
+        for stock in [".undo()", ".redo()", ".select_all()"] {
+            assert!(!builder.contains(stock), "{stock} in {builder}");
+        }
+        for own in ["EditMenuCommand::Undo", "EditMenuCommand::Redo", "EditMenuCommand::SelectAll"] {
+            assert!(builder.contains(&format!("edit_item(domain::edit_menu::{own})")), "{own} in {builder}");
+        }
+        for stock in [".cut()", ".copy()", ".paste()"] {
+            assert!(builder.contains(stock), "{stock} in {builder}");
+        }
+        assert!(builder.contains("commands::edit_menu::MENU_ID_EDIT"), "{builder}");
     }
 }

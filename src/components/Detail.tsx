@@ -85,6 +85,7 @@ import { Input } from "@/components/ui/input";
 import { MODAL_DETAIL_CLASS, MODAL_ERROR_CLASS } from "@/components/ui/modal-window";
 import type {
   CardAssociationGroup,
+  CardKind,
   DeleteMediaAssetPlan,
   IndexedBlock,
   LightBlock,
@@ -161,6 +162,7 @@ import {
 } from "./CardReferenceRow";
 import { ReadOnlyCardPreview } from "./Card";
 import { findArticleAnchor, parseArticleAnchor } from "@/lib/reading/anchors";
+import { noteSurface } from "@/lib/editing/noteSurface";
 import { ArticleMarkdown } from "./reading/ArticleMarkdown";
 import { mediaControlsClasses } from "./reading/mediaControls";
 import { useNoteEmbedLookups } from "./reading/NoteEmbed";
@@ -573,7 +575,8 @@ export function Detail({
   const handleEditedBodyWritten = useCallback((written: IndexedBlock) => {
     if (currentBlockSlugRef.current === written.slug) setFullBlock(written);
   }, []);
-  // Without the editor the card is the reading mode's again.
+  // A check of the reading surface turned the editor off: the card is the
+  // reading mode's again.
   const editingSwitch = useContext(NoteEditingSwitch);
   useEffect(() => {
     if (!editingSwitch && fullBlock) setReadingCard(fullBlock);
@@ -1990,6 +1993,7 @@ function BlockContent({
             </div>
           ) : sourcePlayer}
           <ArticleBody
+            cardKind={block.card_kind}
             body={body}
             vaultPath={vaultPath}
             thumbsRootPath={resolvedThumbsRoot}
@@ -2022,6 +2026,7 @@ function BlockContent({
         return (
           <div>
             <ArticleBody
+              cardKind={block.card_kind}
               body={body}
               vaultPath={vaultPath}
               thumbsRootPath={resolvedThumbsRoot}
@@ -2211,6 +2216,7 @@ function BlockContent({
             {showBody && (
               <div className="p-6">
                 <ArticleBody
+                  cardKind={block.card_kind}
                   omittedEmbed={omittedEmbed}
                   body={body}
                   vaultPath={vaultPath}
@@ -3472,6 +3478,7 @@ const NoteEditor = lazy(async () => {
 
 function ArticleBody({
   omittedEmbed = null,
+  cardKind,
   body,
   vaultPath,
   thumbsRootPath,
@@ -3498,6 +3505,9 @@ function ArticleBody({
   /** An embed already shown above the body (a media card's lead video): its
    * first image in the body is not drawn twice. */
   omittedEmbed?: { source: string } | null;
+  /** The card's kind: a collection page is never edited (SPEC_EDITING.md,
+   *  Л2.5). */
+  cardKind: CardKind;
   body: string;
   vaultPath: string;
   thumbsRootPath: string;
@@ -3774,11 +3784,13 @@ function ArticleBody({
       )}
     </ArticleMarkdown>
   );
-  // The editor takes the article's place once the switch is on and the card's
-  // whole body has come (SPEC_EDITING.md, Л1, Л2.1); until it opens, and when
-  // the note cannot be edited, the article stays. The editor follows its note
-  // through a rename by itself (Л4.8): it is not keyed by the slug.
-  const editing = useContext(NoteEditingSwitch);
+  // The card opens straight in the editor (SPEC_EDITING.md, Л1, the user's
+  // decision of 18.10.2026 on ЛВ1) once its whole body has come (Л2.1); a
+  // collection page never does (Л2.5). Until the session opens, and when the
+  // backend refuses it (in iCloud, read-only, gone: Л2.8, said in the tab's
+  // notice), the article stays. The editor follows its note through a rename
+  // by itself (Л4.8): it is not keyed by the slug.
+  const surface = noteSurface({ card_kind: cardKind, body_hash: sourceBodyHash }, useContext(NoteEditingSwitch));
   // Where the lead video's embed starts in the body as written: the editor
   // takes it once, when its session opens (Л2.7).
   const omittedEmbedOffset = useMemo(
@@ -3821,7 +3833,7 @@ function ArticleBody({
   ), [editorSelection]);
   return (
     <ArticleMediaContext.Provider value={media}>
-      {editing && sourceSlug && sourceBodyHash ? (
+      {surface.kind === "editor" && sourceSlug && sourceBodyHash ? (
         <>
           <Suspense fallback={article}>
             <NoteEditor

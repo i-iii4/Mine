@@ -8,17 +8,31 @@ import {
   endNoteEdit,
   noteBodyState,
   reportEditsFlushed,
+  reportFocusedEditor,
   reportNoteEdits,
   saveNoteBody,
 } from "@/lib/commands";
-import { clearActionFailures, NOTE_EDIT_FAILED_TITLE, NOTE_SAVE_FAILED_TITLE, useActionFailures } from "@/lib/actionFailures";
+import {
+  clearActionFailures,
+  NOTE_EDIT_FAILED_TITLE,
+  NOTE_NOT_SAVED_TITLE,
+  NOTE_SAVE_FAILED_TITLE,
+  useActionFailures,
+} from "@/lib/actionFailures";
 import { NoteEmbedLookups } from "@/components/reading/NoteEmbed";
 import { taskInCloudLine, taskReadOnlyLine } from "@/components/reading/TaskCheckbox";
 import { indexedBlock } from "@/test/blocks";
 import { installCodeMirrorLayoutStubs } from "@/test/codemirror";
 import type { IndexedBlock, NoteSaveError, SavedNoteBody, SaveNoteBodyParams } from "@/types";
 import { NoteEditor } from "./NoteEditor";
-import { NOTE_WOULD_BE_COLLECTION, noteEditErrorLine, noteSaveDisposition, noteSaveErrorLine } from "./noteEditMessages";
+import {
+  NOTE_CHANGED_ON_DISK,
+  NOTE_TEXT_KEPT,
+  NOTE_WOULD_BE_COLLECTION,
+  noteEditErrorLine,
+  noteSaveDisposition,
+  noteSaveErrorLine,
+} from "./noteEditMessages";
 
 vi.mock("@/lib/commands", () => ({
   beginNoteEdit: vi.fn(),
@@ -26,6 +40,7 @@ vi.mock("@/lib/commands", () => ({
   noteBodyState: vi.fn(),
   reportEditsFlushed: vi.fn(async () => undefined),
   reportNoteEdits: vi.fn(async () => undefined),
+  reportFocusedEditor: vi.fn(async () => undefined),
   saveNoteBody: vi.fn(),
   getBlock: vi.fn(async () => null),
   resolveNoteLink: vi.fn(async () => null),
@@ -287,6 +302,60 @@ describe("NoteEditor (SPEC_EDITING.md, Л2.8, Л3)", () => {
     type(view, 5, "?");
     expect(saves.calls).toHaveLength(0);
     expect(view.state.doc.toString()).toBe("Body!?");
+    // The conflict is said in the tab's notice until the user decides ЛВ2
+    // (а): not saved, the text kept, why.
+    expect(failures).toEqual([{ kind: "note-save", title: NOTE_NOT_SAVED_TITLE, summary: NOTE_TEXT_KEPT, messages: [NOTE_CHANGED_ON_DISK] }]);
+  });
+});
+
+describe("the Edit menu in the editor (SPEC_EDITING.md, Л12)", () => {
+  async function settleFocus() {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  beforeEach(() => {
+    vi.mocked(reportFocusedEditor).mockClear();
+  });
+
+  it("tells the backend its focus and what its history can do, and nothing once the focus leaves", async () => {
+    const saves = pendingSaves();
+    const { unmount } = renderEditor("Body");
+    const view = await editorView();
+    act(() => view.focus());
+    await settleFocus();
+    expect(reportFocusedEditor).toHaveBeenLastCalledWith({ can_undo: false, can_redo: false });
+    type(view, 4, "!");
+    expect(reportFocusedEditor).toHaveBeenLastCalledWith({ can_undo: true, can_redo: false });
+    await saves.answer();
+    act(() => view.contentDOM.blur());
+    await settleFocus();
+    expect(reportFocusedEditor).toHaveBeenLastCalledWith(null);
+    unmount();
+    expect(reportFocusedEditor).toHaveBeenLastCalledWith(null);
+  });
+
+  it("undoes, redoes and selects all by the menu's commands, which the system's undo never reached", async () => {
+    const saves = pendingSaves();
+    renderEditor("Body");
+    const view = await editorView();
+    act(() => view.focus());
+    await settleFocus();
+    type(view, 4, "!");
+    await saves.answer();
+    emitPage("edit-menu-command", "undo");
+    expect(view.state.doc.toString()).toBe("Body");
+    expect(reportFocusedEditor).toHaveBeenLastCalledWith({ can_undo: false, can_redo: true });
+    await saves.answer();
+    emitPage("edit-menu-command", "redo");
+    expect(view.state.doc.toString()).toBe("Body!");
+    await saves.answer();
+    emitPage("edit-menu-command", "select_all");
+    expect(view.state.selection.main.from).toBe(0);
+    expect(view.state.selection.main.to).toBe(view.state.doc.length);
+    // Each step of the menu was written like any edit (Л3.1).
+    expect(saveNoteBody).toHaveBeenCalledTimes(3);
   });
 });
 

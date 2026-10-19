@@ -19,6 +19,7 @@ vi.mock("@/lib/commands", () => ({
   noteBodyState: vi.fn(),
   reportEditsFlushed: vi.fn(async () => undefined),
   reportNoteEdits: vi.fn(async () => undefined),
+  reportFocusedEditor: vi.fn(async () => undefined),
   saveNoteBody: vi.fn(() => new Promise(() => undefined)),
   getBlock: vi.fn(async () => null),
   resolveNoteLink: vi.fn(async () => null),

@@ -14,6 +14,7 @@ pub mod clipboard;
 pub mod clipper_setup;
 pub mod cloud_recommendation;
 pub mod conflicts;
+pub mod edit_menu;
 pub mod edit_sessions;
 pub mod effects;
 pub mod freshness;

@@ -1,9 +1,11 @@
 //! What Tauri does not offer for tab pages on macOS (SPEC_TABS.md, В5, В25,
 //! В26, В83): the layer order of two pages, a page without its own
-//! background, the window's background colour, the title bar's height.
+//! background, the window's background colour, the title bar's height; and
+//! the system's action of a stock Edit menu item (SPEC_EDITING.md, Л12).
 
-use tauri::{Webview, Window};
+use tauri::{AppHandle, Webview, Window};
 
+use crate::domain::edit_menu::EditMenuCommand;
 use crate::domain::windows::TitleBar;
 
 /// A colour `#rrggbb` as three channels from 0 to 1.
@@ -285,9 +287,37 @@ mod imp {
     use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
     use objc2_app_kit::{NSColor, NSView, NSWindow, NSWindowOrderingMode};
     use objc2_foundation::{NSNumber, NSString};
-    use tauri::{Webview, Window};
+    use tauri::{AppHandle, Webview, Window};
 
+    use crate::domain::edit_menu::EditMenuCommand;
     use crate::domain::windows::TitleBar;
+
+    /// Send the system's action of `command` to the first responder of the
+    /// key window, as the stock item of the Edit menu did: `undo:`, `redo:`
+    /// and `selectAll:` with no target (SPEC_EDITING.md, Л12).
+    pub fn send_edit_action(app: &AppHandle, command: EditMenuCommand) {
+        let action = match command {
+            EditMenuCommand::Undo => objc2::sel!(undo:),
+            EditMenuCommand::Redo => objc2::sel!(redo:),
+            EditMenuCommand::SelectAll => objc2::sel!(selectAll:),
+        };
+        let sent = app.run_on_main_thread(move || {
+            // SAFETY: the shared application, on the main thread. A nil
+            // target walks the responder chain from the key window's first
+            // responder, as AppKit does for a menu item without a target.
+            unsafe {
+                let application: *mut AnyObject = objc2::msg_send![objc2::class!(NSApplication), sharedApplication];
+                let Some(application) = application.as_ref() else {
+                    return;
+                };
+                let nothing: *mut AnyObject = std::ptr::null_mut();
+                let _: bool = objc2::msg_send![application, sendAction: action, to: nothing, from: nothing];
+            }
+        });
+        if let Err(error) = sent {
+            log::warn!("cannot send the Edit menu's action: {error}");
+        }
+    }
 
     /// Let every page show hover while its window is not key or Mine is
     /// not the active app (В85). The hook goes on `WKWebView` before any
@@ -566,9 +596,12 @@ pub fn on_memory_pressure(handler: impl Fn() + Send + 'static) {
 
 #[cfg(not(target_os = "macos"))]
 mod imp {
-    use tauri::{Webview, Window};
+    use tauri::{AppHandle, Webview, Window};
 
+    use crate::domain::edit_menu::EditMenuCommand;
     use crate::domain::windows::TitleBar;
+
+    pub fn send_edit_action(_app: &AppHandle, _command: EditMenuCommand) {}
 
     pub fn order_below(_upper: &Webview, _lower: &Webview) {}
     pub fn clear_page_background(_page: &Webview) {}
@@ -609,6 +642,13 @@ pub fn hide_toolbar_in_full_screen(window: &Window) {
 /// Give the keyboard to `page` unless a page of `window` has it.
 pub fn keyboard_to_page(window: &Window, page: &Webview) {
     imp::keyboard_to_page(window, page);
+}
+
+/// Send the system's action of the Edit menu's `command`, as its stock item
+/// did: where no note editor holds the focus, the menu keeps what it did
+/// (SPEC_EDITING.md, Л12).
+pub fn send_system_edit_action(app: &AppHandle, command: EditMenuCommand) {
+    imp::send_edit_action(app, command);
 }
 
 /// Paint `window`'s background with `hex` (`#rrggbb`); an unreadable colour

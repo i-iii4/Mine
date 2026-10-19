@@ -1,23 +1,29 @@
-// The open card in the editor on the dev server, `/__editing` (SPEC_EDITING.md,
-// Л17): `Detail` with the reading mode's fixture note behind the editor's
-// switch, over a made-up backend that keeps the note's body in memory and
-// checks every write against its base. The browser check of row 50.29 drives
-// it through `window.__editing`; a person can try the editor in a browser
-// without the app. The performance check of row 50.28 builds this page for
-// production and measures the editor on it (Л14). Dev only: `main.tsx`
-// reaches it only under `import.meta.env.DEV`.
+// The open card on the dev server, `/__editing` (SPEC_EDITING.md, Л17):
+// `Detail` with the reading mode's fixture note, opened as the app opens it,
+// straight in the editor (Л1, the user's decision of 18.10.2026 on ЛВ1), over
+// a made-up backend that keeps the note's body in memory and checks every
+// write against its base. The browser check of row 50.29 drives it through
+// `window.__editing`; a person can try the editor in a browser without the
+// app. The performance check of row 50.28 builds this page for production
+// and measures the editor on it (Л14). Dev only: `main.tsx` reaches it only
+// under `import.meta.env.DEV`.
 //
 // `?body=` picks the note (a variant of the fixture, a table case, a set of
 // the performance check), `?theme=light|dark` the theme, `?editing=off`
-// starts with the editor's switch off, `?open=off` with no card open.
+// starts with the editor turned off (the reading surface, for comparison),
+// `?open=off` with no card open, `?refuse=in_cloud|read_only|source_not_found|not_a_card`
+// makes `begin_note_edit` refuse the note (Л2.8), `?card=collection` makes
+// the card a collection page (Л2.5).
 
-import { useSyncExternalStore } from "react";
+import { useContext, useSyncExternalStore, type ReactNode } from "react";
 import { DndContext } from "@dnd-kit/core";
+import { ActionFailureNoticeStack } from "@/components/ActionFailureNotices";
 import { Detail } from "@/components/Detail";
 import { NoteEditingSwitch } from "@/components/editing/noteEditingSwitch";
+import { NotificationAnchor } from "@/components/NotificationCard";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { MineTextSelectionDragPayload } from "@/lib/textSelectionDrag";
-import type { IndexedBlock, NoteLinkQuery, SaveNoteBodyParams } from "@/types";
+import type { FocusedEditor, IndexedBlock, NoteEditError, NoteLinkQuery, SaveNoteBodyParams } from "@/types";
 import fixture from "../../scripts/fixtures/reading-mode.md?raw";
 import { editingEditorHandle, type EditingEditorHandle } from "./editingEditorHandle";
 import { perfSetBody } from "./editingPerfSets";
@@ -80,9 +86,9 @@ const NEUTRAL_CARD: Omit<IndexedBlock, "slug" | "body" | "body_hash" | "display_
   tags: [],
 };
 
-/** What a check switches on the page: the editor's switch (the modes of row
- *  50.12 wait for the decision ЛВ1), the open card, or none, and the place
- *  it opened at (Л11.8). */
+/** What a check switches on the page: the editor off for a look at the
+ *  reading surface (the app never turns it off), the open card, or none,
+ *  and the place it opened at (Л11.8). */
 interface PageControls {
   editing: boolean;
   card: IndexedBlock | null;
@@ -130,6 +136,8 @@ interface EditingRecord {
   clipboard: Array<{ html: string; text: string }>;
   /** Selections dropped to make an element of, with the collection (Л11.2). */
   extractions: Array<{ payload: MineTextSelectionDragPayload; tag: string }>;
+  /** What the page told the Edit menu of its editor's focus, in order (Л12). */
+  focusReports: Array<FocusedEditor | null>;
 }
 
 type EventHandler = (event: { event: string; id: number; payload: unknown }) => void;
@@ -152,7 +160,8 @@ interface EditingWindow {
     table: EditingTableHandle;
     /** The note's editor: its document, its selection (Л17). */
     editor: EditingEditorHandle;
-    /** The editor's switch on or off: off, the card shows its article. */
+    /** The editor turned off, the card shows its article, or back on as the
+     *  app has it. */
     setEditing(on: boolean): void;
     /** The card open, as the file holds it now, or closed: closed, nothing
      *  of it stays drawn. */
@@ -176,9 +185,13 @@ function installBackend(initialBody: string): EditingRecord {
   // of the browser check; nothing else of the app reads these names.
   const target = window as unknown as EditingWindow;
   if (target.__editing) return target.__editing.record;
-  const record: EditingRecord = { writes: [], sessions: [], calls: [], clipboard: [], extractions: [] };
+  const record: EditingRecord = { writes: [], sessions: [], calls: [], clipboard: [], extractions: [], focusReports: [] };
+  const query = new URLSearchParams(window.location.search);
+  const refusal = refusalOf(query.get("refuse"));
+  const collection = query.get("card") === "collection";
   let card: IndexedBlock = {
     ...NEUTRAL_CARD,
+    ...(collection ? { block_type: "channel" as const, card_kind: "channel" as const } : {}),
     slug: EDITING_PAGE_SLUG,
     display_title: "Проверка просмотрщика",
     fallback_label: "Проверка просмотрщика",
@@ -225,6 +238,7 @@ function installBackend(initialBody: string): EditingRecord {
         return args.slug === card.slug ? card : args.slug === EMBED_SLUG ? embedded : null;
       case "begin_note_edit":
         record.sessions.push(`begin ${String(args.slug)}`);
+        if (refusal) throw refusal;
         return card;
       case "note_body_state":
         if (gone) throw { kind: "source_not_found", source_slug: card.slug };
@@ -253,6 +267,10 @@ function installBackend(initialBody: string): EditingRecord {
         return null;
       case "report_edits_flushed":
         record.sessions.push(`flushed ${String(args.request_id)}`);
+        return null;
+      case "report_focused_editor":
+        // The page sends `{ editor }` of this shape (commands.ts).
+        record.focusReports.push((args.editor ?? null) as FocusedEditor | null);
         return null;
       case "list_card_associations":
         return { generation: 0, slug: String(args.slug), groups: [] };
@@ -333,6 +351,31 @@ function installBackend(initialBody: string): EditingRecord {
   return record;
 }
 
+/** The refusal of `begin_note_edit` that `?refuse=` names (Л2.8). */
+function refusalOf(kind: string | null): NoteEditError | null {
+  const fileName = "Проверка просмотрщика.md";
+  switch (kind) {
+    case "in_cloud":
+      return { kind: "in_cloud", file_name: fileName };
+    case "read_only":
+      return { kind: "read_only", file_name: fileName };
+    case "source_not_found":
+      return { kind: "source_not_found", source_slug: EDITING_PAGE_SLUG };
+    case "not_a_card":
+      return { kind: "not_a_card", source_slug: EDITING_PAGE_SLUG };
+    default:
+      return null;
+  }
+}
+
+/** The editor as the app has it, or off where a check looks at the reading
+ *  surface: the page never turns it on itself, so it opens the way the app
+ *  opens a card. */
+function EditorSurface({ off, children }: { off: boolean; children: ReactNode }) {
+  const inherited = useContext(NoteEditingSwitch);
+  return <NoteEditingSwitch.Provider value={off ? false : inherited}>{children}</NoteEditingSwitch.Provider>;
+}
+
 /** The page's theme: `?theme=light|dark`, else the system's. */
 function applyTheme() {
   const theme = new URLSearchParams(window.location.search).get("theme");
@@ -357,7 +400,7 @@ export function EditingPage() {
   return (
     <TooltipProvider>
       <DndContext>
-        <NoteEditingSwitch.Provider value={editing}>
+        <EditorSurface off={!editing}>
           <div style={{ display: "flex", height: "100vh" }}>
             <main style={{ position: "relative", flex: "1", minWidth: 0 }}>
               {card && <Detail
@@ -378,7 +421,14 @@ export function EditingPage() {
               />}
             </main>
           </div>
-        </NoteEditingSwitch.Provider>
+          {/* The tab's notices, as the app stacks them: refusals, failed
+              writes, conflicts (Л2.8, Л3.8, Л4.3). */}
+          <NotificationAnchor>
+            <div className="grid justify-items-end gap-2">
+              <ActionFailureNoticeStack />
+            </div>
+          </NotificationAnchor>
+        </EditorSurface>
       </DndContext>
     </TooltipProvider>
   );

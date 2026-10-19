@@ -4459,6 +4459,47 @@
         "scripts/editing-audit.mjs"
       ],
       "command": "test:editing"
+    },
+    {
+      "paths": [
+        "src/lib/editing/noteSurface.ts",
+        "src/lib/editing/noteSurface.test.ts",
+        "src/components/editing/openInEditor.test.tsx"
+      ],
+      "requirement": "SPEC_EDITING.md### Л1. Режимы",
+      "tests": [
+        "src/lib/editing/noteSurface.test.ts",
+        "src/components/editing/openInEditor.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/editMenu.ts",
+        "src/lib/editMenu.test.ts",
+        "src/lib/editing/menuCommands.ts",
+        "src/lib/editing/menuCommands.test.ts"
+      ],
+      "requirement": "SPEC_EDITING.md### Л12. Клавиатура",
+      "tests": [
+        "src/lib/editMenu.test.ts",
+        "src/lib/editing/menuCommands.test.ts",
+        "src/components/editing/NoteEditor.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/domain/edit_menu.rs",
+        "src-tauri/src/commands/edit_menu.rs"
+      ],
+      "requirement": "SPEC_EDITING.md### Л12. Клавиатура",
+      "tests": [
+        "src-tauri/src/domain/edit_menu.rs",
+        "src-tauri/src/commands/edit_menu.rs",
+        "src-tauri/src/lib.rs"
+      ],
+      "command": "test:rust"
     }
   ],
   "release": null

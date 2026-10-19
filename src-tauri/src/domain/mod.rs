@@ -8,6 +8,7 @@ pub mod canvas;
 pub mod card_association;
 pub mod channel;
 pub mod collection;
+pub mod edit_menu;
 pub mod markdown;
 pub mod search;
 pub mod source_patch;

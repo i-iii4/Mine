@@ -9,12 +9,12 @@ use crate::tabs::{self, TabBarState, TabBootstrap};
 
 /// What the calling tab page needs to start. A page that starts again
 /// (reloaded) holds no edit session of its earlier life (SPEC_EDITING.md,
-/// Л3.9).
+/// Л3.9), and no editor of it holds the focus (Л12).
 #[tauri::command]
 pub fn get_tab_bootstrap(app: AppHandle, webview: Webview) -> Option<TabBootstrap> {
-    app.state::<super::state::AppState>()
-        .edit_sessions
-        .end_page(webview.label());
+    let state = app.state::<super::state::AppState>();
+    state.edit_sessions.end_page(webview.label());
+    state.focused_editors.forget(webview.label());
     tabs::bootstrap(&app, webview.label())
 }
 

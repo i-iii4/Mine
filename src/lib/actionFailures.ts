@@ -46,6 +46,9 @@ export const TASK_TOGGLE_FAILED_TITLE = "Could not change the task";
 export const NOTE_EDIT_FAILED_TITLE = "Could not edit the note";
 /** The title of a write of the editor that failed (SPEC_EDITING.md, Л3.8). */
 export const NOTE_SAVE_FAILED_TITLE = "Could not save the note";
+/** The title of a conflict of the editor (SPEC_EDITING.md, Л4.3): the file
+ *  changed while edits were unsaved, nothing is written over it. */
+export const NOTE_NOT_SAVED_TITLE = "Not saved";
 
 /** The title of a Connect or a Disconnect that changed nothing. */
 export function membershipFailureTitle(connected: boolean, count: number): string {

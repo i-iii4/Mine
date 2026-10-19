@@ -55,6 +55,7 @@ import type {
   TextSelectionExtractError,
   TaskToggleError,
   ToggleTaskItemParams,
+  FocusedEditor,
   NoteBodyState,
   NoteEditError,
   NoteLinkQuery,
@@ -477,6 +478,12 @@ export const endNoteEdit = (slug: string) =>
  *  `edits-flushed` (Л3.9). */
 export const reportEditsFlushed = (request_id: number) =>
   tauriInvoke<void>("report_edits_flushed", { request_id });
+
+/** A note editor of this page holds the focus with this history, or none
+ *  does (`null`): the Edit menu's Undo, Redo and Select All follow it
+ *  (SPEC_EDITING.md, Л12). */
+export const reportFocusedEditor = (editor: FocusedEditor | null) =>
+  tauriInvoke<void>("report_focused_editor", { editor });
 
 function normalizeRenameBlockError(error: unknown): RenameBlockError {
   if (error && typeof error === "object" && "kind" in error) {

@@ -1314,6 +1314,7 @@ fn close_page_now(app: &AppHandle, label: &str) {
     }
     let state = app.state::<AppState>();
     state.edit_sessions.end_page(label);
+    state.focused_editors.forget(label);
     let space = state.space_for(label);
     state.tabs.remove(label);
     if let Some(space) = space {
