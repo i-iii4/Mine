@@ -9,7 +9,9 @@
 // `EDIT_SAVE_RETRY_MS`; the next success takes the notice away. A conflict
 // (the file is not the base) stops the queue: nothing is written over the
 // file until the session takes a side (Л4.3). A note that is gone stops it
-// too (Л4.9).
+// too (Л4.9); the queue goes on when the note is back as the base it knew.
+// Every write started counts: an answer about the file asked before the last
+// write started tells nothing of the file now (Л4.2).
 //
 // The queue knows no command and no error type of the backend: the host
 // gives it the write and says what an error means.
@@ -91,6 +93,7 @@ export class SaveQueue<Answer extends SaveAnswer> {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private waiters: Waiter[] = [];
   private disposed = false;
+  private started = 0;
 
   constructor(
     baseBodyHash: string,
@@ -110,6 +113,12 @@ export class SaveQueue<Answer extends SaveAnswer> {
   /** Where the queue stands. */
   get state(): SaveQueueStatus {
     return this.status;
+  }
+
+  /** How many writes have started: an answer about the file asked at an
+   *  earlier count may predate one of them. */
+  get writes(): number {
+    return this.started;
   }
 
   /** Whether the document holds edits the file has not. */
@@ -155,17 +164,19 @@ export class SaveQueue<Answer extends SaveAnswer> {
   }
 
   /** The session took the file's body without a write of its own (an
-   *  external change it applied, Л4.2): it is the new base. */
+   *  external change it applied, Л4.2, or a file that came to hold the
+   *  document's text): it is the new base, and a conflict or a stop is
+   *  over, for neither side has anything the other lacks. */
   rebase(baseBodyHash: string, body: string): void {
     this.baseBodyHash = baseBodyHash;
     this.savedBody = body;
-    if (this.status === "conflict") this.status = "idle";
+    if (this.status === "conflict" || this.status === "stopped") this.recover();
   }
 
   /** The file changed outside the session while it holds edits the file has
    *  not (Л4.3): nothing more is written until the session takes a side. */
   enterConflict(reason: unknown): void {
-    if (this.status === "conflict" || this.status === "stopped") return;
+    if (this.status === "conflict") return;
     this.clearRetry();
     this.status = "conflict";
     this.pending = false;
@@ -174,10 +185,39 @@ export class SaveQueue<Answer extends SaveAnswer> {
     this.settle({ saved: false, status: "conflict", error: reason });
   }
 
+  /** The note is gone (Л4.9), learned outside a write: nothing is written
+   *  until it is back. A write under way finds it out itself. */
+  stop(reason: unknown): void {
+    if (this.status === "saving" || this.status === "stopped") return;
+    this.clearRetry();
+    this.status = "stopped";
+    this.pending = false;
+    this.lastError = reason;
+    this.host.onFailed(reason, "stop");
+    this.settle({ saved: false, status: "stopped", error: reason });
+  }
+
+  /** The note is back as the base the queue knew (Л4.8, Л4.9): what the
+   *  document holds beyond it is written now. */
+  resume(): void {
+    if (this.status !== "stopped") return;
+    this.recover();
+    if (this.host.readBody() !== this.savedBody) this.pending = true;
+    this.start();
+  }
+
   /** The session is over: no timer stays, a write under way still lands. */
   dispose(): void {
     this.disposed = true;
     this.clearRetry();
+  }
+
+  /** Out of a conflict or a stop: the notice of a failure goes. */
+  private recover() {
+    this.status = "idle";
+    if (this.lastError === null) return;
+    this.lastError = null;
+    this.host.onRecovered();
   }
 
   /** A failed write is tried again now: its timer goes. */
@@ -199,6 +239,7 @@ export class SaveQueue<Answer extends SaveAnswer> {
       return false;
     }
     this.status = "saving";
+    this.started += 1;
     const request: SaveRequest = { baseBodyHash: this.baseBodyHash, body };
     this.host.save(request).then(
       (answer) => this.succeeded(answer),

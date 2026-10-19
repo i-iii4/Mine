@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type ReactNode, type TableHTMLAttributes } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref, type TableHTMLAttributes } from "react";
 import type { Element } from "hast";
 import { useHiddenEdges } from "@/hooks/useHiddenEdges";
 import { stripFadeMaskStyle } from "@/lib/edgeFade";
@@ -60,6 +60,20 @@ function pageMeasure(table: HTMLTableElement): (TableMeasure & { outerBorder: nu
   };
 }
 
+/** What the note's editor lends a table it edits (SPEC_EDITING.md, Л9.10,
+ *  Л9.12); the reading mode lends none of it. */
+export interface ArticleTableEditing {
+  /** While set, the widths are measured once for each value and then kept:
+   *  they do not follow the table's text, its block or its font until the
+   *  value changes or goes. */
+  freezeKey?: number | null;
+  /** The text of every column, for a table drawn only in part: its widths
+   *  stand on all its rows, not on the drawn ones. */
+  columns?: TableColumnText[] | null;
+  /** The block that scrolls the table sideways. */
+  scrollRef?: Ref<HTMLDivElement>;
+}
+
 /**
  * A table of the article (SPEC_READING_MODE.md, Ч5): column widths by its
  * content (`tableLayout.ts`), set by a `<colgroup>` at `table-layout:
@@ -78,17 +92,31 @@ function pageMeasure(table: HTMLTableElement): (TableMeasure & { outerBorder: nu
 export function ArticleTable({
   node,
   children,
+  freezeKey = null,
+  columns: givenColumns = null,
+  scrollRef,
   ...props
-}: TableHTMLAttributes<HTMLTableElement> & { node?: Element; children?: ReactNode }) {
+}: TableHTMLAttributes<HTMLTableElement> & ArticleTableEditing & { node?: Element; children?: ReactNode }) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
-  const columns = useMemo<TableColumnText[] | null>(() => (node ? hastTableColumns(node) : null), [node]);
+  const columns = useMemo<TableColumnText[] | null>(
+    () => givenColumns ?? (node ? hastTableColumns(node) : null),
+    [givenColumns, node],
+  );
   const [layout, setLayout] = useState<TableLayout | null>(null);
   const { edges, sync } = useHiddenEdges(wrapperRef);
+  // The key the widths were measured for while frozen.
+  const measuredFor = useRef<number | null>(null);
+  const setWrapper = useCallback((element: HTMLDivElement | null) => {
+    wrapperRef.current = element;
+    if (typeof scrollRef === "function") scrollRef(element);
+    else if (scrollRef) scrollRef.current = element;
+  }, [scrollRef]);
 
   useLayoutEffect(() => {
     const wrapper = wrapperRef.current;
     const table = tableRef.current;
+    if (freezeKey !== null && measuredFor.current === freezeKey) return undefined;
     if (!columns || !wrapper || !table) {
       setLayout(null);
       return undefined;
@@ -101,6 +129,9 @@ export function ArticleTable({
       setLayout((current) => (sameLayout(current, next) ? current : next));
     };
     lay();
+    measuredFor.current = freezeKey;
+    // Frozen widths follow neither the block nor the font.
+    if (freezeKey !== null) return undefined;
     const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(lay);
     resize?.observe(wrapper);
     // The article's font is the page's choice (`data-font-content`).
@@ -113,11 +144,11 @@ export function ArticleTable({
       font.disconnect();
       fonts?.removeEventListener?.("loadingdone", lay);
     };
-  }, [columns]);
+  }, [columns, freezeKey]);
 
   return (
     <div
-      ref={wrapperRef}
+      ref={setWrapper}
       className="my-5 max-w-full overflow-x-auto"
       style={stripFadeMaskStyle(edges)}
       onScroll={sync}

@@ -14,6 +14,7 @@ use crate::commands::blocks::{
     MediaAssetActionError, MediaAssetMutationResult, MediaAssetReferenceBlock,
     MediaAssetReferenceKind, MergeBlocksError, MergeBlocksResult, RemoveMediaAssetFromCardParams,
     RenameBlockError, RenameBlockResult, RenameMediaAssetParams, TextSelectionExtractError,
+    TextSourceRange,
 };
 use crate::commands::clipboard::ClipboardPayload;
 use crate::commands::shortcuts::ShortcutBinding;
@@ -64,6 +65,7 @@ use crate::storage::task_toggle::{TaskToggleError, ToggleTaskItemParams};
 use crate::storage::note_edit::{
     NoteBodyState, NoteEditError, NoteSaveError, SaveNoteBodyParams, SavedNoteBody,
 };
+use crate::storage::note_links::{LabelMatch, NoteLinkQuery, NoteLinkSuggestion};
 use crate::commands::edit_sessions::{FlushEditsPayload, NoteChangedPayload};
 use crate::watcher::handler::ScanResult;
 
@@ -153,6 +155,7 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<MediaAssetReferenceKind>()
         .register::<RemoveMediaAssetFromCardParams>()
         .register::<ExtractTextSelectionParams>()
+        .register::<TextSourceRange>()
         .register::<DeleteTextSelectionParams>()
         .register::<ToggleTaskItemParams>()
         .register::<DeleteMediaAssetKind>()
@@ -174,6 +177,9 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<NoteSaveError>()
         .register::<NoteEditError>()
         .register::<NoteBodyState>()
+        .register::<NoteLinkQuery>()
+        .register::<NoteLinkSuggestion>()
+        .register::<LabelMatch>()
         .register::<NoteChangedPayload>()
         .register::<FlushEditsPayload>()
         .register::<MergeBlocksError>()

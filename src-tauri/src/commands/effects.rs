@@ -71,6 +71,7 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("get_block", Effect::Reads),
     ("list_card_associations", Effect::Reads),
     ("resolve_note_link", Effect::Reads),
+    ("suggest_note_links", Effect::Reads),
     ("create_block", Effect::ChangesSources),
     ("create_media_asset_card", Effect::ChangesSources),
     ("rename_media_asset", Effect::ChangesSources),

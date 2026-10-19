@@ -37,6 +37,7 @@ use crate::domain::vault::{
 use crate::source_video_download::CardKey;
 use crate::storage::index::IndexedBlock;
 use crate::storage::source_mutation::{SourceFileWrite, SourceMutationError, StagedSourceMutation};
+use crate::storage::note_links::{self, NoteLinkQuery, NoteLinkSuggestion};
 use crate::storage::task_toggle::{self, TaskToggleError, ToggleTaskItemParams};
 use crate::storage::{
     article_audio, block_queries, db, derived_preview, files, index, media_refs, projection,
@@ -105,6 +106,19 @@ pub struct ExtractTextSelectionParams {
     pub first_block_start: usize,
     pub first_block_end: usize,
     pub source_body_hash: String,
+    /// The editor's selection as exact source bytes (SPEC_EDITING.md, Л11.2).
+    /// With it, `selected_text` and the first block range are not read and
+    /// nothing is compared with rendered text: the new card takes the
+    /// selected Markdown as written.
+    #[serde(default)]
+    pub source_range: Option<TextSourceRange>,
+}
+
+/// A selection made in the editor: exact byte offsets `[start, end)` of the source body (Л11.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, specta::Type)]
+pub struct TextSourceRange {
+    pub start: usize,
+    pub end: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, specta::Type)]
@@ -550,6 +564,31 @@ pub async fn resolve_note_link(
     .await
     .map_err(|error| {
         CommandError::Internal(format!("resolve_note_link task join failed: {error}"))
+    })?
+}
+
+/// Rows of the editor's `[[` menu typed in the note `source_slug`: notes,
+/// headings or block ids, each with the link text that opens what it names
+/// (SPEC_EDITING.md, Л10.2).
+#[tauri::command]
+pub async fn suggest_note_links(
+    webview: tauri::Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source_slug: String,
+    query: NoteLinkQuery,
+) -> Result<Vec<NoteLinkSuggestion>, CommandError> {
+    validate_slug(&source_slug).map_err(|error| CommandError::Internal(error.to_string()))?;
+    let vault = tab_layout(&state, &webview)?;
+    ensure_vault_fresh(&app, vault.clone()).await?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<NoteLinkSuggestion>, CommandError> {
+        read_owned_projection(&app, &vault, |conn| {
+            note_links::suggest_note_links(conn, &source_slug, &query)
+        })
+    })
+    .await
+    .map_err(|error| {
+        CommandError::Internal(format!("suggest_note_links task join failed: {error}"))
     })?
 }
 
@@ -1165,6 +1204,7 @@ async fn extract_text_selection_unannounced(
         first_block_start,
         first_block_end,
         source_body_hash,
+        source_range,
     } = params;
     validate_slug(&source_slug).map_err(|e| TextSelectionExtractError::UnsafeSourcePatch {
         reason: format!("invalid source slug: {e}"),
@@ -1204,6 +1244,7 @@ async fn extract_text_selection_unannounced(
             first_block_start,
             first_block_end,
             source_body_hash,
+            source_range,
         )
     })
     .await
@@ -1505,6 +1546,7 @@ fn extract_text_selection_inner(
     first_block_start: usize,
     first_block_end: usize,
     source_body_hash: String,
+    source_range: Option<TextSourceRange>,
 ) -> Result<IndexedBlock, TextSelectionExtractError> {
     validate_slug(&source_slug).map_err(|e| TextSelectionExtractError::UnsafeSourcePatch {
         reason: format!("invalid source slug: {e}"),
@@ -1523,8 +1565,9 @@ fn extract_text_selection_inner(
         )?;
     }
 
+    // An exact source range is read from the body once its hash matches.
     let selected_text = selected_text.trim();
-    if selected_text.is_empty() {
+    if source_range.is_none() && selected_text.is_empty() {
         return Err(TextSelectionExtractError::EmptySelection);
     }
 
@@ -1553,12 +1596,20 @@ fn extract_text_selection_inner(
         return Err(TextSelectionExtractError::StaleSelection);
     }
 
-    let (block_start, block_end) = validated_source_block_range(
-        &source_block.body,
-        first_block_start,
-        first_block_end,
-        selected_text,
-    )?;
+    // What the new card holds, and the source range of the block the
+    // selection starts in, which receives the anchor.
+    let (selection, (block_start, block_end)) = match source_range {
+        Some(range) => source_range_selection(&source_block.body, range)?,
+        None => (
+            selected_text,
+            validated_source_block_range(
+                &source_block.body,
+                first_block_start,
+                first_block_end,
+                selected_text,
+            )?,
+        ),
+    };
     let source_block_slice = source_block
         .body
         .get(block_start..block_end)
@@ -1575,7 +1626,7 @@ fn extract_text_selection_inner(
     let block_id = if let Some(existing) = existing_block_id(source_block_slice) {
         existing
     } else {
-        let block_id = generate_block_id(selected_text, &source_block.body);
+        let block_id = generate_block_id(selection, &source_block.body);
         let insertion_offset =
             block_anchor_insert_offset(&source_block.body, block_start, block_end).ok_or_else(
                 || TextSelectionExtractError::UnsafeSourcePatch {
@@ -1599,7 +1650,7 @@ fn extract_text_selection_inner(
         block_id
     };
 
-    let raw_slug = suggest_slug(Some(&text_selection_slug_seed(selected_text)), None);
+    let raw_slug = suggest_slug(Some(&text_selection_slug_seed(selection)), None);
     let slug = resolve_unique_text_selection_slug(conn, vault, &raw_slug)
         .map_err(internal_text_selection_error)?;
     let source_link = files::shortest_vault_link(vault, &format!("{}.md", source_block.slug), true)
@@ -1636,7 +1687,7 @@ fn extract_text_selection_inner(
             color: None,
             icon: None,
         },
-        body: selected_text.to_string(),
+        body: selection.to_string(),
     };
 
     let patched_parsed = patched_source
@@ -5191,6 +5242,38 @@ fn selection_mapping_error(error: SelectionMappingError) -> TextSelectionExtract
     }
 }
 
+/// A selection the editor made, as exact bytes of `body` (SPEC_EDITING.md,
+/// Л11.2): the selected Markdown as written, trimmed, and the source block
+/// its first character stands in, which anchors it. Nothing is compared with
+/// rendered text; a range that starts in the blank between blocks belongs to
+/// the block after it.
+fn source_range_selection(
+    body: &str,
+    range: TextSourceRange,
+) -> Result<(&str, (usize, usize)), TextSelectionExtractError> {
+    let TextSourceRange { start, end } = range;
+    if start >= end || end > body.len() {
+        return Err(TextSelectionExtractError::UnsafeSourcePatch {
+            reason: format!(
+                "selection range {start}..{end} is empty or outside the body of {} bytes",
+                body.len()
+            ),
+        });
+    }
+    if !body.is_char_boundary(start) || !body.is_char_boundary(end) {
+        return Err(TextSelectionExtractError::UnsafeSourcePatch {
+            reason: format!("selection range {start}..{end} splits a character"),
+        });
+    }
+    let selected = &body[start..end];
+    let leading = selected.len() - selected.trim_start().len();
+    let selection = selected.trim();
+    if selection.is_empty() {
+        return Err(TextSelectionExtractError::EmptySelection);
+    }
+    Ok((selection, markdown_block_range_containing(body, start + leading)))
+}
+
 /// The source block that anchors an extracted selection.
 ///
 /// The selection is read as rendered text (`markdown_selection`), so it may
@@ -8164,6 +8247,7 @@ mod tests {
             0,
             0,
             body_hash.clone(),
+            None,
         )
         .unwrap();
 
@@ -8259,6 +8343,7 @@ mod tests {
             0,
             0,
             body_hash,
+            None,
         );
         assert!(
             matches!(&selection, Err(TextSelectionExtractError::CollectionNotFound { collection }) if collection == "Pageless"),
@@ -8324,6 +8409,7 @@ mod tests {
             0,
             0,
             body_hash,
+            None,
         )
         .unwrap();
 
@@ -8349,6 +8435,7 @@ mod tests {
             0,
             0,
             body_hash,
+            None,
         )
         .unwrap();
 
@@ -8664,6 +8751,7 @@ mod tests {
             0,
             source_first_block_end,
             body_hash,
+            None,
         )
         .unwrap();
 
@@ -8696,6 +8784,7 @@ mod tests {
             0,
             source.body.find("\n\n").unwrap(),
             body_hash,
+            None,
         )
         .unwrap();
 
@@ -8723,10 +8812,141 @@ mod tests {
             0,
             0,
             "stale".to_string(),
+            None,
         )
         .unwrap_err();
 
         assert!(matches!(err, TextSelectionExtractError::StaleSelection));
+    }
+
+    /// Extracts bytes `start..end` of the body of `Source Article` into
+    /// `Quotes` the way the editor does (SPEC_EDITING.md, Л11.2).
+    fn extract_source_range(
+        conn: &rusqlite::Connection,
+        vault: &VaultLayout,
+        body_hash: &str,
+        start: usize,
+        end: usize,
+    ) -> Result<IndexedBlock, TextSelectionExtractError> {
+        extract_text_selection_inner(
+            conn,
+            vault,
+            "Source Article".to_string(),
+            "Quotes".to_string(),
+            // With a source range the rendered text is not read.
+            "not in the note".to_string(),
+            0,
+            0,
+            body_hash.to_string(),
+            Some(TextSourceRange { start, end }),
+        )
+    }
+
+    /// The source note's body on disk and the extracted card's related notes.
+    fn extraction_result(vault: &VaultLayout, indexed: &IndexedBlock) -> (String, Vec<String>) {
+        let (_, source) = files::read_block_file(vault, &vault.block_path("Source Article")).unwrap();
+        let source = crate::domain::block::parse_block("Source Article", &source).unwrap();
+        let (_, extracted) = files::read_block_file(vault, &vault.block_path(&indexed.slug)).unwrap();
+        let extracted = crate::domain::block::parse_block(&indexed.slug, &extracted).unwrap();
+        (source.body, extracted.frontmatter.related_notes)
+    }
+
+    #[test]
+    fn extracting_a_source_range_keeps_its_markdown_and_anchors_its_first_block() {
+        let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Quotes");
+        let body = "Intro.\n\nText with **bold** and [[Other note]] inside.\n\nOutro.";
+        let source = article("Source Article", body);
+        persist_block(&conn, &vault, &source);
+        let start = body.find("**bold**").unwrap();
+        let end = body.find(" inside").unwrap();
+
+        let indexed = extract_source_range(&conn, &vault, &compute_body_hash(body), start, end).unwrap();
+
+        assert_eq!(indexed.body, "**bold** and [[Other note]]");
+        let (source_body, related) = extraction_result(&vault, &indexed);
+        assert_eq!(
+            source_body,
+            "Intro.\n\nText with **bold** and [[Other note]] inside. ^bold-and-other-note\n\nOutro."
+        );
+        assert_eq!(related, vec!["Source Article#^bold-and-other-note"]);
+    }
+
+    #[test]
+    fn extracting_a_source_range_across_blocks_anchors_the_first() {
+        let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Quotes");
+        let body = "Alpha beta gamma.\n\nDelta epsilon.";
+        persist_block(&conn, &vault, &article("Source Article", body));
+        let start = body.find("beta").unwrap();
+        let end = body.find(" epsilon").unwrap();
+
+        let indexed = extract_source_range(&conn, &vault, &compute_body_hash(body), start, end).unwrap();
+
+        assert_eq!(indexed.body, "beta gamma.\n\nDelta");
+        let (source_body, _) = extraction_result(&vault, &indexed);
+        assert_eq!(source_body, "Alpha beta gamma. ^beta-gamma-delta\n\nDelta epsilon.");
+    }
+
+    #[test]
+    fn extracting_a_source_range_reuses_the_block_id_of_its_first_block() {
+        let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Quotes");
+        let body = "Paragraph with anchor. ^manual-anchor\n\nOther paragraph.";
+        persist_block(&conn, &vault, &article("Source Article", body));
+        let start = body.find("with").unwrap();
+        let end = body.find(". ^").unwrap();
+
+        let indexed = extract_source_range(&conn, &vault, &compute_body_hash(body), start, end).unwrap();
+
+        assert_eq!(indexed.body, "with anchor");
+        let (source_body, related) = extraction_result(&vault, &indexed);
+        assert_eq!(source_body, body);
+        assert_eq!(related, vec!["Source Article#^manual-anchor"]);
+    }
+
+    #[test]
+    fn a_source_range_starting_between_blocks_anchors_the_next_block() {
+        let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Quotes");
+        let body = "First.\n\nSecond paragraph.";
+        persist_block(&conn, &vault, &article("Source Article", body));
+        let start = body.find('\n').unwrap();
+
+        let indexed =
+            extract_source_range(&conn, &vault, &compute_body_hash(body), start, body.len()).unwrap();
+
+        assert_eq!(indexed.body, "Second paragraph.");
+        let (source_body, _) = extraction_result(&vault, &indexed);
+        assert_eq!(source_body, "First.\n\nSecond paragraph. ^second-paragraph");
+    }
+
+    #[test]
+    fn a_bad_or_stale_source_range_is_refused_without_writing() {
+        let (_root, _derived, vault, conn) = make_vault();
+        collection_page(&conn, &vault, "Quotes");
+        let body = "Привет мир.\n\n   \n\nКонец.";
+        persist_block(&conn, &vault, &article("Source Article", body));
+        let hash = compute_body_hash(body);
+        let before = space_snapshot(&vault);
+        let blank = body.find("   ").unwrap();
+
+        let outside = extract_source_range(&conn, &vault, &hash, 0, body.len() + 1);
+        let reversed = extract_source_range(&conn, &vault, &hash, 4, 2);
+        let empty = extract_source_range(&conn, &vault, &hash, 2, 2);
+        let split = extract_source_range(&conn, &vault, &hash, 1, 4);
+        let whitespace = extract_source_range(&conn, &vault, &hash, blank, blank + 3);
+        let stale = extract_source_range(&conn, &vault, "old hash", 0, 4);
+
+        for refused in [outside, reversed, empty, split] {
+            assert!(
+                matches!(refused, Err(TextSelectionExtractError::UnsafeSourcePatch { .. })),
+                "{refused:?}"
+            );
+        }
+        assert!(matches!(whitespace, Err(TextSelectionExtractError::EmptySelection)), "{whitespace:?}");
+        assert!(matches!(stale, Err(TextSelectionExtractError::StaleSelection)), "{stale:?}");
+        assert_eq!(space_snapshot(&vault), before);
     }
 
     #[test]

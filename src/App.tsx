@@ -337,6 +337,7 @@ import {
   getActiveMineTextSelectionDragPayload,
   type MineTextSelectionDragPayload,
 } from "@/lib/textSelectionDrag";
+import { followNoteRename, isNoteHeldForEditing, noteMissingFromIndex } from "@/lib/noteEditSessions";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useSidebarOverlay } from "@/hooks/useSidebarOverlay";
 import { SIDEBAR_COLUMNS_STORAGE_KEY, reloadSidebarColumnLayout } from "@/lib/sidebarColumnLayout";
@@ -2390,6 +2391,11 @@ export function AppWithVault({
         navigateRef.current(tabLocationPath({ kind: "collection", tag: rename.to }), { replace: true });
       }
     }
+    // The editor's sessions follow their renamed notes before the open card
+    // does (SPEC_EDITING.md, Л4.8).
+    for (const rename of renames) {
+      if (rename.kind === "card") followNoteRename(rename.from, rename.to);
+    }
     const open = selectedBlockRef.current;
     if (!open) return;
     const cardRename = renames.find((rename) => rename.kind === "card" && rename.from === open.slug);
@@ -2401,14 +2407,18 @@ export function AppWithVault({
     }
     void getBlock(slug)
       .then((full) => {
+        // A note the editor holds stays open when it is gone: its text stays
+        // in the editor, which asks the file what became of it (Л4.9).
+        const held = !full && isNoteHeldForEditing(slug);
+        if (held) noteMissingFromIndex(slug);
         setSelectedBlock((current) => {
           if (!current || current.slug !== slug) return current;
           // Gone: closed. Renamed: the fresh card under its new name. Still
           // there: the card on screen stays as it is.
-          if (!full) return null;
+          if (!full) return held ? current : null;
           return cardRename ? full : current;
         });
-        if (!full) setSelectedBlockAnchor(null);
+        if (!full && !held) setSelectedBlockAnchor(null);
       })
       .catch((error: unknown) => {
         console.error("Could not re-read the open card:", error);
@@ -2746,6 +2756,9 @@ export function AppWithVault({
     }));
 
     unlistenFns.push(listenPage<BlockRenamedEvent>("block:renamed", (event) => {
+      // The editor's session of the note follows it first (SPEC_EDITING.md,
+      // Л4.8).
+      followNoteRename(event.payload.old_slug, event.payload.new_slug);
       invalidateRouteSnapshots();
       setSelectedBlock((current) => {
         if (!current || current.slug !== event.payload.old_slug) {
@@ -3613,6 +3626,7 @@ export function AppWithVault({
             first_block_start: payload.firstBlockStart,
             first_block_end: payload.firstBlockEnd,
             source_body_hash: payload.sourceBodyHash,
+            source_range: payload.sourceRange ?? null,
           });
           invalidateRoutesForTags(block.tags);
         } catch (err) {
@@ -4046,6 +4060,7 @@ export function AppWithVault({
           first_block_start: payload.firstBlockStart,
           first_block_end: payload.firstBlockEnd,
           source_body_hash: payload.sourceBodyHash,
+          source_range: payload.sourceRange ?? null,
         });
         invalidateRoutesForTags(block.tags);
         scheduleRefresh({
@@ -4483,6 +4498,9 @@ export function AppWithVault({
   const handleRenameBlock = useCallback(
     async (block: LightBlock | IndexedBlock, newStem: string) => {
       const result = await renameBlockFile(block.slug, newStem);
+      // The editor's session of the note follows it before the open card
+      // does (SPEC_EDITING.md, Л4.8).
+      followNoteRename(result.old_slug, result.new_slug);
       await reloadAllSnapshots();
       const refreshed = await getBlock(result.new_slug);
       if (refreshed) {

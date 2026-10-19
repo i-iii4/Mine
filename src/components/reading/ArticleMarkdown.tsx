@@ -46,6 +46,8 @@ import { MathView } from "./MathView";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { NoteEmbed, type NoteEmbedLookups } from "./NoteEmbed";
 import { InertCheckbox, TaskCheckbox, useTaskState, type TaskBoxes } from "./TaskCheckbox";
+import { actOnReadingElement, clickEvent } from "./readingIntents";
+import type { NoteLinkTarget } from "@/lib/reading/intents";
 
 /** The log line of a wikilink whose note could not be looked up. */
 export const NOTE_LINK_LOOKUP_FAILED_TITLE = "Could not resolve the note link";
@@ -214,7 +216,13 @@ function TaskItem({
         itemStart={itemStart}
         labelledBy={labelId}
         onToggle={() => {
-          if (pressable && tasks && itemStart !== null) tasks.toggle(itemStart, checked);
+          // A click or Space on the box (Л7.4, Ч12.7), decided with the
+          // editor's (Л11.1).
+          actOnReadingElement({ kind: "task" }, "click", {
+            toggleTask: () => {
+              if (pressable && tasks && itemStart !== null) tasks.toggle(itemStart, checked);
+            },
+          });
         }}
       />
       <span id={labelId} data-task-text="">
@@ -256,36 +264,47 @@ function inArticleTarget(root: HTMLElement, fragment: string): HTMLElement | nul
   return target && root.contains(target) ? target : null;
 }
 
+/** Where a link of the article leads, read from its `href` as the reading
+ *  pipeline wrote it (SPEC_EDITING.md, Л11.1). */
+export function articleLinkTarget(href: string | undefined): NoteLinkTarget {
+  const wikilinkTarget = decodeWikilinkHref(href);
+  if (wikilinkTarget !== null) return { kind: "note", target: wikilinkTarget };
+  if (href?.startsWith("#")) return { kind: "anchor", fragment: href.slice(1) };
+  return { kind: "external", href: href ?? "" };
+}
+
 function Link({ node: _node, href, children, ...props }: ElementProps<"a">) {
   const article = useArticle();
-  const wikilinkTarget = decodeWikilinkHref(href);
-  if (wikilinkTarget !== null) {
-    const open = (event: MouseEvent<HTMLAnchorElement>) => {
-      event.preventDefault();
-      const sourceSlug = article.sourceSlug;
-      if (!sourceSlug) return;
-      void resolveNoteLink(sourceSlug, wikilinkTarget)
-        .then((slug) => { if (slug) article.onOpenNote(slug); })
-        .catch((error: unknown) => logFailure(NOTE_LINK_LOOKUP_FAILED_TITLE, error));
-    };
-    return <a href={href} {...props} onClick={open}>{children}</a>;
+  const to = articleLinkTarget(href);
+  // What a click means is decided with the editor's (Л11.1). A wikilink
+  // opens its note; a place in the article (a footnote, its way back, any
+  // `#…`) is a jump inside it, as to a block, with the address and the route
+  // kept (Ч10); an address outside the note is followed by the link itself.
+  const click = (event: MouseEvent<HTMLAnchorElement>) => {
+    const root = event.currentTarget.closest<HTMLElement>(".mine-article");
+    const handled = actOnReadingElement({ kind: "link", to }, clickEvent(event), {
+      openNote: (target) => {
+        const sourceSlug = article.sourceSlug;
+        if (!sourceSlug) return;
+        void resolveNoteLink(sourceSlug, target)
+          .then((slug) => { if (slug) article.onOpenNote(slug); })
+          .catch((error: unknown) => logFailure(NOTE_LINK_LOOKUP_FAILED_TITLE, error));
+      },
+      jumpToAnchor: (fragment) => {
+        const target = root ? inArticleTarget(root, fragment) : null;
+        target?.scrollIntoView?.({ block: "center", behavior: scrollBehavior() });
+      },
+    });
+    if (handled) event.preventDefault();
+  };
+  if (to.kind === "external") {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" {...props} onClick={click}>
+        {children}
+      </a>
+    );
   }
-  if (href?.startsWith("#")) {
-    // A place in the article (a footnote, its way back, any `#…`): a jump
-    // inside it, as to a block, with the address and the route kept (Ч10).
-    const jump = (event: MouseEvent<HTMLAnchorElement>) => {
-      event.preventDefault();
-      const root = event.currentTarget.closest<HTMLElement>(".mine-article");
-      const target = root ? inArticleTarget(root, href.slice(1)) : null;
-      target?.scrollIntoView?.({ block: "center", behavior: scrollBehavior() });
-    };
-    return <a href={href} {...props} onClick={jump}>{children}</a>;
-  }
-  return (
-    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-      {children}
-    </a>
-  );
+  return <a href={href} {...props} onClick={click}>{children}</a>;
 }
 
 function ArticleImage(props: ElementProps<"img">) {
@@ -404,6 +423,10 @@ export interface ArticleMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement
    *  after its `#` (`slug#Heading`, `slug#^block`). */
   onOpenNote: (slug: string) => void;
   rootRef?: Ref<HTMLDivElement>;
+  /** Elements a host draws in place of the article's own: the note's
+   *  editor draws its tables (SPEC_EDITING.md, Л9). One object for the
+   *  host's life, or the article's elements would mount anew. */
+  components?: Components;
   /** Drawn after the article, inside its root. */
   children?: ReactNode;
 }
@@ -425,11 +448,13 @@ export function ArticleMarkdown({
   image,
   onOpenNote,
   rootRef,
+  components,
   className,
   children,
   ...props
 }: ArticleMarkdownProps) {
   const markdown = useMemo(() => preprocessWikilinks(body), [body]);
+  const elements = useMemo(() => (components ? { ...ARTICLE_COMPONENTS, ...components } : ARTICLE_COMPONENTS), [components]);
   const state = useMemo<ArticleState>(
     () => ({ body, sourceSlug, vaultPath, thumbsRootPath, noteEmbeds, tasks, Image: image, onOpenNote }),
     [body, image, noteEmbeds, onOpenNote, sourceSlug, tasks, thumbsRootPath, vaultPath],
@@ -442,7 +467,7 @@ export function ArticleMarkdown({
           remarkRehypeOptions={READING_REMARK_REHYPE_OPTIONS}
           rehypePlugins={READING_REHYPE_PLUGINS}
           urlTransform={safeMarkdownUrl}
-          components={ARTICLE_COMPONENTS}
+          components={elements}
         >
           {markdown}
         </ReactMarkdown>

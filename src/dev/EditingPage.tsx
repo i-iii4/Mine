@@ -10,18 +10,23 @@ import { DndContext } from "@dnd-kit/core";
 import { Detail } from "@/components/Detail";
 import { NoteEditingSwitch } from "@/components/editing/noteEditingSwitch";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import type { IndexedBlock, SaveNoteBodyParams } from "@/types";
+import type { IndexedBlock, NoteLinkQuery, SaveNoteBodyParams } from "@/types";
 import fixture from "../../scripts/fixtures/reading-mode.md?raw";
+import { editingTableHandle, tableCaseBody, type EditingTableHandle } from "./editingTables";
 
 /** The note the page edits, and the note its embeds and links name. */
 export const EDITING_PAGE_SLUG = "Cards/Проверка просмотрщика";
 const EMBED_SLUG = "Cards/Пример заметки";
 
 /** The fixture's body: the file after its front matter. A variant of it
- *  (line endings, a byte order mark) comes as `?body=<name>`. */
+ *  (line endings, a byte order mark) or a table case (`tables`,
+ *  `tables-crlf`, `large-table`, `wide-table`, `editingTables.ts`) comes as
+ *  `?body=<name>`. */
 function fixtureBody(): string {
   const body = fixture.replace(/^---\n[\s\S]*?\n---\n/, "");
   const variant = new URLSearchParams(window.location.search).get("body");
+  const tableCase = tableCaseBody(variant);
+  if (tableCase !== null) return tableCase;
   switch (variant) {
     case "crlf":
       return body.replace(/\n/g, "\r\n");
@@ -70,6 +75,8 @@ interface EditingRecord {
   writes: Array<{ base: string; body: string; accepted: boolean }>;
   sessions: string[];
   calls: string[];
+  /** What went to the system's clipboard as HTML with its text (Л9.7). */
+  clipboard: Array<{ html: string; text: string }>;
 }
 
 type EventHandler = (event: { event: string; id: number; payload: unknown }) => void;
@@ -83,8 +90,13 @@ interface EditingWindow {
     body(): string;
     /** The file changed outside Mine: `note-changed` follows. */
     writeFromOutside(body: string): void;
+    /** The file went (Л4.9): reads and writes find no note; a later
+     *  `writeFromOutside` brings it back. */
+    removeFile(): void;
     /** A backend event to this page. */
     emit(event: string, payload: unknown): void;
+    /** The table editor (Л9). */
+    table: EditingTableHandle;
   };
 }
 
@@ -100,7 +112,7 @@ function installBackend(initialBody: string) {
   // of the browser check; nothing else of the app reads these names.
   const target = window as unknown as EditingWindow;
   if (target.__editing) return;
-  const record: EditingRecord = { writes: [], sessions: [], calls: [] };
+  const record: EditingRecord = { writes: [], sessions: [], calls: [], clipboard: [] };
   let card: IndexedBlock = {
     ...NEUTRAL_CARD,
     slug: EDITING_PAGE_SLUG,
@@ -121,6 +133,7 @@ function installBackend(initialBody: string) {
   };
   const notes: Record<string, string> = { "Пример заметки": EMBED_SLUG, "Проверка просмотрщика": EDITING_PAGE_SLUG };
   const callbacks = new Map<number, EventHandler>();
+  let gone = false;
   const listeners = new Map<number, { event: string; handler: number }>();
   let nextId = 1;
   const emit = (event: string, payload: unknown) => {
@@ -138,10 +151,12 @@ function installBackend(initialBody: string) {
         record.sessions.push(`begin ${String(args.slug)}`);
         return card;
       case "note_body_state":
+        if (gone) throw { kind: "source_not_found", source_slug: card.slug };
         return { body_hash: card.body_hash, body: card.body };
       case "save_note_body": {
         // The editor sends `{ params }` of this shape (commands.ts).
         const params = args.params as SaveNoteBodyParams;
+        if (gone) throw { kind: "source_not_found", source_slug: card.slug };
         const accepted = params.base_body_hash === card.body_hash;
         record.writes.push({ base: params.base_body_hash, body: params.body, accepted });
         if (!accepted) {
@@ -162,6 +177,20 @@ function installBackend(initialBody: string) {
         return null;
       case "list_card_associations":
         return { generation: 0, slug: String(args.slug), groups: [] };
+      case "suggest_note_links": {
+        // The `[[` menu (Л10.2): the page's two notes by a plain match of
+        // their names; headings and blocks are the backend's to find.
+        // The editor sends `{ sourceSlug, query }` of this shape (commands.ts).
+        const query = args.query as NoteLinkQuery;
+        if (query.kind !== "notes") return [];
+        const text = query.text.toLocaleLowerCase();
+        return Object.entries(notes)
+          .filter(([name]) => name.toLocaleLowerCase().includes(text))
+          .map(([name, slug]) => {
+            const start = text ? name.toLocaleLowerCase().indexOf(text) : 0;
+            return { label: name, detail: "Cards", target: name, slug, matches: text ? [{ start, end: start + text.length }] : [] };
+          });
+      }
       case "resolve_note_link": {
         const raw = String(args.rawTarget ?? "");
         return notes[raw.split("#")[0] ?? raw] ?? null;
@@ -177,6 +206,9 @@ function installBackend(initialBody: string) {
         return null;
       case "plugin:log|log":
       case "plugin:clipboard-manager|write_text":
+        return null;
+      case "plugin:clipboard-manager|write_html":
+        record.clipboard.push({ html: String(args.html ?? ""), text: String(args.altText ?? "") });
         return null;
       default:
         throw new Error(`The editing page has no ${command}`);
@@ -201,10 +233,15 @@ function installBackend(initialBody: string) {
     record,
     body: () => card.body,
     writeFromOutside(body: string) {
+      gone = false;
       card = { ...card, body, body_hash: nextHash() };
       emit("note-changed", { slug: card.slug, body_hash: card.body_hash });
     },
+    removeFile() {
+      gone = true;
+    },
     emit,
+    table: editingTableHandle(),
   };
 }
 

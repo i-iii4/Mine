@@ -5,6 +5,9 @@ export type MineTextSelectionDragPayload = {
   firstBlockStart: number;
   firstBlockEnd: number;
   sourceBodyHash: string;
+  /** A selection of the editor: its exact byte range of the body, which the
+   *  backend takes as written (SPEC_EDITING.md, Л11.2). */
+  sourceRange?: { start: number; end: number };
 };
 
 let activeMineTextSelectionDragPayload: MineTextSelectionDragPayload | null = null;

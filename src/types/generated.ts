@@ -330,7 +330,14 @@ export type DeleteTextSelectionParams = { source_slug: string; selected_text: st
  */
 export type DropHover = { tab_id: TabId; x: number | null }
 
-export type ExtractTextSelectionParams = { source_slug: string; target_tag: string; selected_text: string; first_block_start: number; first_block_end: number; source_body_hash: string }
+export type ExtractTextSelectionParams = { source_slug: string; target_tag: string; selected_text: string; first_block_start: number; first_block_end: number; source_body_hash: string;
+/**
+ * The editor's selection as exact source bytes (SPEC_EDITING.md, Л11.2).
+ * With it, `selected_text` and the first block range are not read and
+ * nothing is compared with rendered text: the new card takes the
+ * selected Markdown as written.
+ */
+source_range?: TextSourceRange | null }
 
 /**
  * Order of the feed (SPEC_FEED_DISPLAY.md, Д6): by save date, newest or
@@ -464,6 +471,20 @@ export type ImportProgress = { channel_slug: string; current: number; total: num
 export type IndexedBlock = { id: number; slug: string; block_type: BlockType; card_kind: CardKind; title: string | null; content_heading: string | null; display_title: string | null; fallback_label: string; description: string | null; url: string | null; media_file: string | null; thumbnail: string | null; saved_at: string; source: string | null; width: number | null; height: number | null; author: string | null; body: string; preview_text: string | null; first_image: string | null; media_urls: string | null; media_dimensions: string | null; preview_manifest: string | null; feed_playback: string | null; thumb_format: ThumbFormat | null; thumb_mtime: number; related_notes: string[]; body_hash: string | null; origin: string | null; index_warning: string | null; tags: string[] }
 
 /**
+ * A part of a row's label that matched the query: `[start, end)` in UTF-16
+ * code units.
+ */
+export type LabelMatch = {
+/**
+ * Offset of the first matched code unit.
+ */
+start: number;
+/**
+ * Offset just past the last matched code unit.
+ */
+end: number }
+
+/**
  * A lightweight block for list/grid views. Body is truncated (max 500 chars),
  * description is omitted, source is omitted.
  */
@@ -563,6 +584,48 @@ export type NoteEditError =
  * The note is a collection page: the editor does not open it (Л2.5).
  */
 { kind: "not_a_card"; source_slug: string } | { kind: "internal"; message: string }
+
+/**
+ * What the `[[` menu asks for (Л10.2).
+ */
+export type NoteLinkQuery =
+/**
+ * Notes whose name or path matches `text` fuzzily; an empty `text` lists notes by name.
+ */
+{ kind: "notes"; text: string } |
+/**
+ * Headings of the note that the link target `note` resolves to from the source note.
+ */
+{ kind: "headings"; note: string; text: string } |
+/**
+ * Block ids `^id` of the note that `note` resolves to.
+ */
+{ kind: "blocks"; note: string; text: string }
+
+/**
+ * One row of the `[[` menu.
+ */
+export type NoteLinkSuggestion = {
+/**
+ * The row's text: the note's name (file name without `.md`), the heading's text, or the block id without `^`.
+ */
+label: string;
+/**
+ * The second line: the note's folder (`""` at the space root); `H1`..`H6` for a heading; the start of the block's text for a block.
+ */
+detail: string;
+/**
+ * What goes between `[[` and `]]`: `Name`, `Folder/Name`, `Name#Heading`, `Name#Parent#Heading`, `Name#^id`.
+ */
+target: string;
+/**
+ * The slug of the note the link resolves to.
+ */
+slug: string;
+/**
+ * The parts of `label` that matched the query, in UTF-16 code units (JavaScript string offsets), ascending, not overlapping.
+ */
+matches: LabelMatch[] }
 
 /**
  * Why a body was not saved (Л3.3). Nothing was written in any case.
@@ -1078,6 +1141,11 @@ export type TextSelectionExtractError = { kind: "no_vault" } | { kind: "source_n
  * new card nor the source article (SPEC_COLLECTIONS_OBSIDIAN_LINKS.md, К7).
  */
 { kind: "collection_not_found"; collection: string } | { kind: "internal"; message: string }
+
+/**
+ * A selection made in the editor: exact byte offsets `[start, end)` of the source body (Л11.2).
+ */
+export type TextSourceRange = { start: number; end: number }
 
 export type ThumbFormat = "jpeg" | "png"
 

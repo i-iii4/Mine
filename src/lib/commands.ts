@@ -57,6 +57,8 @@ import type {
   ToggleTaskItemParams,
   NoteBodyState,
   NoteEditError,
+  NoteLinkQuery,
+  NoteLinkSuggestion,
   NoteSaveError,
   SaveNoteBodyParams,
   SavedNoteBody,
@@ -273,6 +275,12 @@ export const getBlock = (slug: string) =>
 
 export const resolveNoteLink = (sourceSlug: string, rawTarget: string) =>
   invoke<string | null>("resolve_note_link", { sourceSlug, rawTarget });
+
+/** What the `[[` menu offers from the note `sourceSlug` (SPEC_EDITING.md,
+ *  Л10.2): notes, a note's headings or its blocks, each with the link that
+ *  resolves to it. */
+export const suggestNoteLinks = (sourceSlug: string, query: NoteLinkQuery) =>
+  invoke<NoteLinkSuggestion[]>("suggest_note_links", { sourceSlug, query });
 
 export const createBlock = (params: CreateBlockParams) =>
   invoke<IndexedBlock>("create_block", { params });

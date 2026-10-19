@@ -22,6 +22,7 @@ pub mod media_dimensions;
 pub mod media_refs;
 pub(crate) mod migrations;
 pub mod note_edit;
+pub mod note_links;
 pub mod note_write;
 pub mod preview_plan;
 pub mod projection;

@@ -20,7 +20,6 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useDraggable } from "@dnd-kit/core";
-import { fromMarkdown } from "mdast-util-from-markdown";
 import type { Nodes } from "mdast";
 import type { ExtraProps } from "react-markdown";
 import {
@@ -92,7 +91,7 @@ import type {
   MediaAssetRef,
   TagCount,
 } from "@/types";
-import { preprocessWikilinks, inlineMediaOccurrenceIndex, markdownSourceByteOffset, markdownSourceOffset, firstImageOffset } from "@/lib/markdownWikilinks";
+import { preprocessWikilinks, inlineMediaOccurrenceIndex, markdownSourceByteOffset, markdownSourceOffset, firstImageOffset, renderedMarkdownTree } from "@/lib/markdownWikilinks";
 import { decodeLocalMarkdownUrl } from "@/lib/markdownWikilinks";
 import {
   thumbnailUrl,
@@ -167,6 +166,9 @@ import { mediaControlsClasses } from "./reading/mediaControls";
 import { useNoteEmbedLookups } from "./reading/NoteEmbed";
 import { useTaskToggles } from "./reading/TaskCheckbox";
 import { NoteEditingSwitch } from "./editing/noteEditingSwitch";
+import type { EditorTextSelection } from "./editing/NoteEditor";
+import { EditorImagePlacementContext } from "./editing/editorImagePlacement";
+import { actOnReadingElement, clickEvent } from "./reading/readingIntents";
 import {
   COLLECTION_PICKER_CONTENT_CLASS,
   CollectionPicker,
@@ -455,6 +457,12 @@ export function Detail({
   const [fullBlock, setFullBlock] = useState<IndexedBlock | null>(
     isIndexedBlock(block) ? block : null,
   );
+  // The body the reading mode's derivations read (SPEC_EDITING.md, Л14):
+  // every body the card is read with, but not the editor's own writes,
+  // which change the file on every keystroke while the editor holds the
+  // text. The lead media, the content's width and the article's own data
+  // are derived from it, so a keystroke parses none of them again.
+  const [readingBody, setReadingBody] = useState<string>((isIndexedBlock(block) ? block : null)?.body ?? block.body);
   const [topMenuRequestSequence, setTopMenuRequestSequence] = useState(0);
   const [topMenuOpen, setTopMenuOpen] = useState(false);
   const displayBlock = fullBlock ?? block;
@@ -474,9 +482,13 @@ export function Detail({
     && lonePictureOwnSize.mediaRef === displayBlock.media_file
     ? lonePictureOwnSize.size
     : null;
+  const layoutBlock = useMemo(
+    () => (displayBlock.body === readingBody ? displayBlock : { ...displayBlock, body: readingBody }),
+    [displayBlock, readingBody],
+  );
   const contentWidth = useMemo(
-    () => detailContentFullWidth(displayBlock, viewportHeight, pictureOwnSize),
-    [displayBlock, viewportHeight, pictureOwnSize],
+    () => detailContentFullWidth(layoutBlock, viewportHeight, pictureOwnSize),
+    [layoutBlock, viewportHeight, pictureOwnSize],
   );
   const isStackedLayout = detailLayoutMetrics !== null
     && detailLayout(detailLayoutMetrics.width, detailLayoutMetrics.pad, contentWidth).mode === "stacked";
@@ -498,6 +510,7 @@ export function Detail({
 
   useEffect(() => {
     setFullBlock(isIndexedBlock(block) ? block : null);
+    setReadingBody(block.body);
   }, [block]);
 
   useEffect(() => {
@@ -531,6 +544,7 @@ export function Detail({
         }
         dismissActionFailure("read-element");
         setFullBlock(full);
+        setReadingBody(full.body);
       },
       (error: unknown) => {
         if (currentBlockSlugRef.current !== slug) return;
@@ -553,8 +567,21 @@ export function Detail({
   // its hash (SPEC_READING_MODE.md, Ч12.3). A write that found the file
   // changed reads it again.
   const handleBodyWritten = useCallback((written: IndexedBlock) => {
+    if (currentBlockSlugRef.current !== written.slug) return;
+    setFullBlock(written);
+    setReadingBody(written.body);
+  }, []);
+  // The editor wrote its text: the card's fields follow it (the panel, the
+  // chrome, Л3.7); the reading mode's derivations keep the body they read
+  // (Л14), the editor holds the text.
+  const handleEditedBodyWritten = useCallback((written: IndexedBlock) => {
     if (currentBlockSlugRef.current === written.slug) setFullBlock(written);
   }, []);
+  // Without the editor the card's text is the reading mode's again.
+  const editingSwitch = useContext(NoteEditingSwitch);
+  useEffect(() => {
+    if (!editingSwitch && fullBlock) setReadingBody(fullBlock.body);
+  }, [editingSwitch, fullBlock]);
   const handleBodyStale = useCallback(() => {
     refreshFullBlock(block.slug, block);
   }, [block, refreshFullBlock]);
@@ -717,7 +744,9 @@ export function Detail({
                 onCreateChannelAndTextSelectionCard={onCreateChannelAndTextSelectionCard}
                 onTextSelectionDelete={onTextSelectionDelete}
                 onLonePictureOwnSize={setLonePictureOwnSize}
+                readingBody={readingBody}
                 onBodyWritten={handleBodyWritten}
+                onEditedBodyWritten={handleEditedBodyWritten}
                 onBodyStale={handleBodyStale}
               />
             </div>
@@ -1667,7 +1696,7 @@ function localBodyVideoReferences(body: string, manifest: ReturnType<typeof norm
     }
     if ("children" in node) node.children.forEach(visit);
   }
-  visit(fromMarkdown(preprocessWikilinks(body)));
+  visit(renderedMarkdownTree(preprocessWikilinks(body)));
   return sources;
 }
 
@@ -1697,7 +1726,7 @@ function bodyHasMoreThanEmbed(
     }
     if ("children" in node) node.children.forEach(visit);
   }
-  visit(fromMarkdown(preprocessWikilinks(body)));
+  visit(renderedMarkdownTree(preprocessWikilinks(body)));
   return more;
 }
 
@@ -1858,11 +1887,15 @@ function BlockContent({
   onCreateChannelAndTextSelectionCard,
   onTextSelectionDelete,
   onLonePictureOwnSize,
+  readingBody,
   onBodyWritten,
+  onEditedBodyWritten,
   onBodyStale,
 }: {
   block: LightBlock | IndexedBlock;
   fullBlock: IndexedBlock | null;
+  /** The body the reading mode's derivations read (Л14). */
+  readingBody: string;
   scrollAnchor?: string | null;
   vaultPath: string;
   thumbsRootPath?: string;
@@ -1887,13 +1920,17 @@ function BlockContent({
   onLonePictureOwnSize: (own: LonePictureOwnSize) => void;
   /** A task write changed the file: the card read anew (Ч12.3). */
   onBodyWritten: (block: IndexedBlock) => void;
+  /** The editor wrote its text: the card read anew (Л3.7). */
+  onEditedBodyWritten: (block: IndexedBlock) => void;
   /** A task write found the file changed: read the body again. */
   onBodyStale: () => void;
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
+  // By the manifest's text: a card read anew with the same manifest keeps it.
+  const rawPreviewManifest = (fullBlock ?? block).preview_manifest;
   const previewManifest = useMemo(
-    () => normalizeDetailPreviewManifest((fullBlock ?? block).preview_manifest),
-    [block, fullBlock],
+    () => normalizeDetailPreviewManifest(rawPreviewManifest),
+    [rawPreviewManifest],
   );
   // The record's source decides how the open card shows its media; the feed
   // card's look does not (SPEC_CARD_UNIFIED.md, Е1).
@@ -1903,8 +1940,9 @@ function BlockContent({
   );
   // The whole text comes with the card read from its file (`fullBlock`,
   // read by Detail, which reports a read that fails); until then the feed's
-  // start of it.
-  const body = fullBlock?.body ?? block.body;
+  // start of it. While the editor writes the text, the reading mode keeps
+  // the body it read (Л14).
+  const body = readingBody;
   const description = "description" in block ? (block as IndexedBlock).description : null;
   const displayTitle = getDisplayTitle(block);
   const navigationLabel = getNavigationLabel(block);
@@ -1979,6 +2017,7 @@ function BlockContent({
             onCreateChannelAndTextSelectionCard={onCreateChannelAndTextSelectionCard}
             onTextSelectionDelete={onTextSelectionDelete}
             onBodyWritten={onBodyWritten}
+            onEditedBodyWritten={onEditedBodyWritten}
             onBodyStale={onBodyStale}
           />
         </div>
@@ -2010,6 +2049,7 @@ function BlockContent({
               onCreateChannelAndTextSelectionCard={onCreateChannelAndTextSelectionCard}
               onTextSelectionDelete={onTextSelectionDelete}
               onBodyWritten={onBodyWritten}
+              onEditedBodyWritten={onEditedBodyWritten}
               onBodyStale={onBodyStale}
             />
           </div>
@@ -2198,6 +2238,7 @@ function BlockContent({
                   onCreateChannelAndTextSelectionCard={onCreateChannelAndTextSelectionCard}
                   onTextSelectionDelete={onTextSelectionDelete}
                   onBodyWritten={onBodyWritten}
+                  onEditedBodyWritten={onEditedBodyWritten}
                   onBodyStale={onBodyStale}
                 />
               </div>
@@ -2455,10 +2496,15 @@ function MediaAssetActionFrame({
               // A completed drag never reaches here: dnd-kit swallows the click once
               // the pointer passes the activation distance.
               if (!canOpenImagePreview || !fullSizeImageSrc || isDragging) return;
-              onOpenImagePreview({
-                src: fullSizeImageSrc,
-                mediaRef: asset.media_ref,
-                siblings: collectCardImages(event.currentTarget),
+              const origin = event.currentTarget;
+              // What a click on the picture means is decided with the
+              // editor's (SPEC_EDITING.md, Л11.1).
+              actOnReadingElement({ kind: "image" }, clickEvent(event), {
+                openImagePreview: () => onOpenImagePreview({
+                  src: fullSizeImageSrc,
+                  mediaRef: asset.media_ref,
+                  siblings: collectCardImages(origin),
+                }),
               });
             }}
             onContextMenu={(event) => {
@@ -2588,7 +2634,9 @@ function ExpandableImageFrame({
     <div
       className={cn(DETAIL_MEDIA_ACTION_FRAME_CLASSES, "group/detail-media")}
       data-detail-media-action-frame
-      onClick={open}
+      onClick={(event) => {
+        actOnReadingElement({ kind: "image" }, clickEvent(event), { openImagePreview: open });
+      }}
     >
       {children}
       <div
@@ -3451,6 +3499,7 @@ function ArticleBody({
   onCreateChannelAndTextSelectionCard,
   onTextSelectionDelete,
   onBodyWritten,
+  onEditedBodyWritten,
   onBodyStale,
 }: {
   /** An embed already shown above the body (a media card's lead video): its
@@ -3482,6 +3531,9 @@ function ArticleBody({
   onTextSelectionDelete?: (payload: MineTextSelectionDragPayload) => void | Promise<void>;
   /** A task write changed the file: the card read anew (Ч12.3). */
   onBodyWritten: (block: IndexedBlock) => void;
+  /** The editor wrote its text: the card read anew (Л3.7); the body the
+   *  article reads stays (Л14). */
+  onEditedBodyWritten: (block: IndexedBlock) => void;
   /** A task write found the file changed: the card reads its body again. */
   onBodyStale: () => void;
 }) {
@@ -3731,28 +3783,90 @@ function ArticleBody({
   );
   // The editor takes the article's place once the switch is on and the card's
   // whole body has come (SPEC_EDITING.md, Л1, Л2.1); until it opens, and when
-  // the note cannot be edited, the article stays.
+  // the note cannot be edited, the article stays. The editor follows its note
+  // through a rename by itself (Л4.8): it is not keyed by the slug.
   const editing = useContext(NoteEditingSwitch);
+  // Where the lead video's embed starts in the body as written: the editor
+  // takes it once, when its session opens (Л2.7).
+  const omittedEmbedOffset = useMemo(
+    () => (omittedImageOffset === null ? null : markdownSourceOffset(body, omittedImageOffset)),
+    [body, omittedImageOffset],
+  );
+  // The editor's selection shows the same action bar, without Delete Text:
+  // deleting is an edit there (Л11.2). While the bar is pressed or its menu
+  // is open, a newer selection waits.
+  const [editorSelection, setEditorSelection] = useState<EditorTextSelection | null>(null);
+  const waitingEditorSelectionRef = useRef<EditorTextSelection | null | undefined>(undefined);
+  const handleEditorSelection = useCallback((selection: EditorTextSelection | null) => {
+    if (selectionHandleLockedRef.current || selectionMenuOpenRef.current) {
+      waitingEditorSelectionRef.current = selection;
+      return;
+    }
+    setEditorSelection(selection);
+  }, []);
+  const releaseEditorSelection = useCallback(() => {
+    selectionHandleLockedRef.current = false;
+    window.removeEventListener("pointerup", releaseEditorSelection, true);
+    window.removeEventListener("pointercancel", releaseEditorSelection, true);
+    const waiting = waitingEditorSelectionRef.current;
+    waitingEditorSelectionRef.current = undefined;
+    if (waiting !== undefined && !selectionMenuOpenRef.current) setEditorSelection(waiting);
+  }, []);
+  const holdEditorSelection = useCallback(() => {
+    selectionHandleLockedRef.current = true;
+    window.addEventListener("pointerup", releaseEditorSelection, true);
+    window.addEventListener("pointercancel", releaseEditorSelection, true);
+  }, [releaseEditorSelection]);
+  const editorSelectionState = useMemo<TextSelectionHandleState | null>(() => (
+    editorSelection
+      ? {
+        payload: editorSelection.payload,
+        anchorRect: textSelectionAnchorRect(editorSelection.rect),
+        safeBounds: textSelectionSafeBounds(editorSelection.root),
+      }
+      : null
+  ), [editorSelection]);
   return (
     <ArticleMediaContext.Provider value={media}>
       {editing && sourceSlug && sourceBodyHash ? (
-        <Suspense fallback={article}>
-          <NoteEditor
-            key={sourceSlug}
-            slug={sourceSlug}
-            body={body}
-            bodyHash={sourceBodyHash}
-            fileName={`${sourceSlug.split("/").pop() ?? sourceSlug}.md`}
-            vaultPath={vaultPath}
-            thumbsRootPath={thumbsRootPath}
-            noteEmbeds={noteEmbeds}
-            image={ArticleBodyImage}
-            onOpenNote={onOpenRelatedNote}
-            onSaved={onBodyWritten}
-            omittedEmbed={omittedImageOffset === null ? null : markdownSourceOffset(body, omittedImageOffset)}
-            fallback={article}
-          />
-        </Suspense>
+        <>
+          <Suspense fallback={article}>
+            <NoteEditor
+              slug={sourceSlug}
+              body={body}
+              bodyHash={sourceBodyHash}
+              fileName={`${sourceSlug.split("/").pop() ?? sourceSlug}.md`}
+              vaultPath={vaultPath}
+              thumbsRootPath={thumbsRootPath}
+              noteEmbeds={noteEmbeds}
+              image={ArticleBodyImage}
+              onOpenNote={onOpenRelatedNote}
+              onSaved={onEditedBodyWritten}
+              omittedEmbed={omittedEmbedOffset}
+              scrollAnchor={scrollAnchor}
+              onTextSelection={hasTextSelectionActions ? handleEditorSelection : undefined}
+              fallback={article}
+            />
+          </Suspense>
+          {editorSelection && editorSelectionState && (
+            <TextSelectionActionBar
+              state={editorSelectionState}
+              tags={tags}
+              currentTag={currentTag}
+              onCreateCard={onTextSelectionDrop}
+              onCreateChannelAndCard={onCreateChannelAndTextSelectionCard}
+              onInteractionStart={holdEditorSelection}
+              onMenuOpenChange={(open) => {
+                selectionMenuOpenRef.current = open;
+                if (!open) releaseEditorSelection();
+              }}
+              onDismiss={() => {
+                editorSelection.dismiss();
+                setEditorSelection(null);
+              }}
+            />
+          )}
+        </>
       ) : article}
     </ArticleMediaContext.Provider>
   );
@@ -3786,6 +3900,8 @@ const ArticleMediaContext = createContext<ArticleMediaState | null>(null);
  *  changes comes from the context, so a new body does not remount it. */
 function ArticleBodyImage({ node, src, alt, ...props }: ComponentProps<"img"> & ExtraProps) {
   const media = useContext(ArticleMediaContext);
+  // Drawn in the editor's widget: its place is the editor's to count.
+  const editorPlacement = useContext(EditorImagePlacementContext);
   if (!media) return null;
   const {
     body,
@@ -3809,14 +3925,20 @@ function ArticleBodyImage({ node, src, alt, ...props }: ComponentProps<"img"> & 
   const resolvedSrc = previewTile?.sourcePath ?? decodedSrc;
   const originalSrc = resolveImageSrc(resolvedSrc, vaultPath);
   // Where this image stands among the body's `![`: Remove takes away
-  // this one image and no other of the same file (Г1.4).
+  // this one image and no other of the same file (Г1.4). In the editor the
+  // place is counted from its document when Remove asks, not from the body
+  // on every write (SPEC_EDITING.md, Л11.3, Л14); the editor draws the lead
+  // video's embed as source, never here (Л2.7).
   const nodeStartOffset = node?.position?.start.offset;
-  const occurrenceIndex = typeof nodeStartOffset === "number"
+  const occurrenceIndex = editorPlacement === null && typeof nodeStartOffset === "number"
     ? inlineMediaOccurrenceIndex(body, nodeStartOffset) ?? undefined
     : undefined;
-  if (omittedImageOffset !== null && nodeStartOffset === omittedImageOffset) {
+  if (editorPlacement === null && omittedImageOffset !== null && nodeStartOffset === omittedImageOffset) {
     return null;
   }
+  const removeFromCard = editorPlacement === null
+    ? onRemoveMediaAssetFromCard
+    : (asset: MediaAssetRef) => onRemoveMediaAssetFromCard({ ...asset, occurrence_index: editorPlacement.occurrenceIndex() });
   // Video/GIF (downloaded MP4) — render as inline autoplay video with controls.
   // Autoplay must stay muted to satisfy browser/WebView media policies.
   if (/\.(?:mp4|webm|m4v|mov)(?:\?|$)/i.test(decodedSrc)) {
@@ -3833,7 +3955,7 @@ function ArticleBodyImage({ node, src, alt, ...props }: ComponentProps<"img"> & 
         onCreateMediaAssetCard={onCreateMediaAssetCard}
         onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
         onRenameMediaAsset={onRenameMediaAsset}
-        onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+        onRemoveMediaAssetFromCard={removeFromCard}
         onDeleteMediaAsset={onDeleteMediaAsset}
         onOpenRelatedNote={onOpenRelatedNote}
       >
@@ -3867,7 +3989,7 @@ function ArticleBodyImage({ node, src, alt, ...props }: ComponentProps<"img"> & 
       onCreateMediaAssetCard={onCreateMediaAssetCard}
       onCreateChannelAndMediaAssetCard={onCreateChannelAndMediaAssetCard}
       onRenameMediaAsset={onRenameMediaAsset}
-      onRemoveMediaAssetFromCard={onRemoveMediaAssetFromCard}
+      onRemoveMediaAssetFromCard={removeFromCard}
       onDeleteMediaAsset={onDeleteMediaAsset}
       onOpenImagePreview={onOpenImagePreview}
       onOpenRelatedNote={onOpenRelatedNote}
@@ -3893,7 +4015,7 @@ type TextSelectionHandleState = {
   safeBounds: TextSelectionSafeBounds;
 };
 
-function textSelectionAnchorRect(rect: DOMRect | ClientRect): TextSelectionAnchorRect {
+function textSelectionAnchorRect(rect: Pick<DOMRect, "left" | "right" | "top" | "bottom" | "width" | "height">): TextSelectionAnchorRect {
   return {
     left: rect.left,
     right: rect.right,

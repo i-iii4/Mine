@@ -3,6 +3,7 @@ import { ReadOnlyCardPreview } from "@/components/Card";
 import { getBlock, resolveNoteLink } from "@/lib/commands";
 import { logFailure } from "@/lib/appLog";
 import type { IndexedBlock } from "@/types";
+import { actOnReadingElement, clickEvent } from "./readingIntents";
 
 /** A note embed's card: as wide as the previews of related notes, the graph
  *  and the sidebar (SPEC_CARD_STATES.md, С10.4), narrower only in a narrower
@@ -237,7 +238,13 @@ export function NoteEmbed({
           className="block cursor-default rounded-card outline-none"
           aria-label={`Open ${noteFileName(slug)}`}
           data-note-embed-open=""
-          onClick={() => onOpenNote(fragment === null ? slug : `${slug}#${fragment}`)}
+          onClick={(event) => {
+            // A click, Enter or Space opens the note, decided with the
+            // editor's (SPEC_EDITING.md, Л11.1).
+            actOnReadingElement({ kind: "embed" }, clickEvent(event), {
+              openEmbed: () => onOpenNote(fragment === null ? slug : `${slug}#${fragment}`),
+            });
+          }}
         >
           {card}
         </button>

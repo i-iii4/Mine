@@ -4236,6 +4236,16 @@
     },
     {
       "paths": [
+        "src-tauri/src/storage/note_links.rs"
+      ],
+      "requirement": "SPEC_EDITING.md### Л10. Ссылки, меню `[[` и переименование",
+      "tests": [
+        "src-tauri/src/storage/note_links.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
         "src/lib/editing/lineEndings.ts",
         "src/lib/editing/lineEndings.test.ts",
         "src/lib/editing/syntax.ts",
@@ -4305,6 +4315,35 @@
     },
     {
       "paths": [
+        "src/lib/editing/tableCell.ts",
+        "src/lib/editing/tableCell.test.ts",
+        "src/lib/editing/tableModel.ts",
+        "src/lib/editing/tableModel.test.ts",
+        "src/lib/editing/tableSelection.ts",
+        "src/lib/editing/tableSelection.test.ts",
+        "src/lib/editing/tableEditor.ts",
+        "src/lib/editing/tableEditor.test.ts",
+        "src/components/editing/TableEditor.tsx",
+        "src/components/editing/TableEditor.test.tsx",
+        "src/lib/editorTableMenu.ts",
+        "src/dev/editingTables.ts",
+        "src/dev/editingTables.test.ts",
+        "scripts/fixtures/editing-tables.md"
+      ],
+      "requirement": "SPEC_EDITING.md### Л9. Таблицы",
+      "tests": [
+        "src/lib/editing/tableCell.test.ts",
+        "src/lib/editing/tableModel.test.ts",
+        "src/lib/editing/tableSelection.test.ts",
+        "src/lib/editing/tableEditor.test.ts",
+        "src/components/editing/TableEditor.test.tsx",
+        "src/components/CardHoverMenu.test.tsx",
+        "src/dev/editingTables.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "src/components/editing/NoteEditor.tsx",
         "src/components/editing/NoteEditor.test.tsx",
         "src/components/editing/noteEditMessages.ts",
@@ -4327,6 +4366,65 @@
       "requirement": "SPEC_EDITING.md### Л11. Работа с открытой карточкой",
       "tests": [
         "src/lib/reading/intents.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/noteEditSessions.ts",
+        "src/lib/noteEditSessions.test.ts",
+        "src/components/editing/externalChanges.test.tsx"
+      ],
+      "requirement": "SPEC_EDITING.md### Л4. Внешние изменения, конфликты, отмена",
+      "tests": [
+        "src/lib/noteEditSessions.test.ts",
+        "src/components/editing/externalChanges.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/editing/links.ts",
+        "src/lib/editing/links.test.ts",
+        "src/lib/editing/linkSuggest.ts",
+        "src/lib/editing/linkSuggest.test.ts"
+      ],
+      "requirement": "SPEC_EDITING.md### Л10. Ссылки, меню `[[` и переименование",
+      "tests": [
+        "src/lib/editing/links.test.ts",
+        "src/lib/editing/linkSuggest.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/editing/bodyHash.ts",
+        "src/lib/editing/bodyHash.test.ts",
+        "src/components/reading/readingIntents.ts",
+        "src/components/reading/readingIntents.test.ts",
+        "src/lib/textSelectionDrag.ts",
+        "src/components/editing/parityCorpus.test.tsx",
+        "src/components/editing/openCard.test.tsx"
+      ],
+      "requirement": "SPEC_EDITING.md### Л11. Работа с открытой карточкой",
+      "tests": [
+        "src/lib/editing/bodyHash.test.ts",
+        "src/components/reading/readingIntents.test.ts",
+        "src/components/editing/parityCorpus.test.tsx",
+        "src/components/editing/openCard.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/editing/editorImagePlacement.ts",
+        "src/components/editing/saveParse.test.tsx"
+      ],
+      "requirement": "SPEC_EDITING.md### Л14. Производительность и загрузка",
+      "tests": [
+        "src/components/editing/saveParse.test.tsx",
+        "src/components/editing/EditorWidgets.test.tsx",
+        "src/components/editing/openCard.test.tsx"
       ],
       "command": "test:frontend"
     }

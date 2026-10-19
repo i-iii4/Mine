@@ -244,9 +244,16 @@ export function blockSource(doc: Text, block: EditorBlock): BlockSource {
   return {
     text: lines.join("\n"),
     toDocument(position: number) {
-      let index = starts.length - 1;
-      while (index > 0 && (starts[index] ?? 0) > position) index -= 1;
-      return (documentStarts[index] ?? block.from) + position - (starts[index] ?? 0);
+      // The last line starting at or before `position`, found by halves: a
+      // long table asks this for each of its lines (Л9.12).
+      let low = 0;
+      let high = starts.length - 1;
+      while (low < high) {
+        const middle = (low + high + 1) >> 1;
+        if ((starts[middle] ?? 0) <= position) low = middle;
+        else high = middle - 1;
+      }
+      return (documentStarts[low] ?? block.from) + position - (starts[low] ?? 0);
     },
   };
 }

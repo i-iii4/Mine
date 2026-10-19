@@ -137,3 +137,75 @@
   width: 100%;
   vertical-align: top;
 }
+
+/* Л10.2: the `[[` menu is a floating menu of Mine (DESIGN_SYSTEM.md,
+   «Всплывающие элементы»): the popover layer with its line and corner, rows
+   of 32 on the surface's padding of 4, their content on the plate's padding
+   of 8, the active swatch under the chosen row, the width of the `search`
+   role (its attribute is set by the menu) and whole rows only. A note's
+   folder is its second line, inside the row's 32. The selectors outweigh
+   CodeMirror's own look of its tooltips. */
+.mine-note-editor .cm-tooltip.cm-tooltip-autocomplete.mine-link-menu {
+  --surface: var(--popover);
+  background-color: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-1);
+  padding: var(--spacing-surface);
+  font-family: inherit;
+}
+
+.mine-note-editor .cm-tooltip.cm-tooltip-autocomplete.mine-link-menu > ul {
+  font-family: inherit;
+  min-width: 0;
+  max-width: none;
+  max-height: calc(var(--spacing-row) * 8);
+  white-space: nowrap;
+}
+
+.mine-note-editor .cm-tooltip.cm-tooltip-autocomplete.mine-link-menu > ul > li {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: var(--spacing-row);
+  padding: 0 var(--spacing-plate);
+  border-radius: var(--radius-1);
+  cursor: default;
+  color: var(--popover-foreground);
+  background: none;
+}
+
+.mine-note-editor .cm-tooltip.cm-tooltip-autocomplete.mine-link-menu > ul > li[aria-selected] {
+  color: var(--foreground);
+  background-image: linear-gradient(var(--active), var(--active));
+}
+
+.mine-note-editor .mine-link-menu .cm-completionLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--text-base);
+  line-height: calc(var(--spacing-row) / 2);
+}
+
+.mine-note-editor .mine-link-menu li.mine-link-option-single .cm-completionLabel {
+  line-height: var(--text-base--line-height);
+}
+
+.mine-note-editor .mine-link-menu .cm-completionDetail {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: normal;
+  font-size: var(--text-sm);
+  line-height: calc(var(--spacing-row) / 2);
+  color: var(--muted-foreground);
+}
+
+/* The matched letters wear the search's match mark (DESIGN_SYSTEM.md,
+   «Search match mark»): the highlighter's yellow with its dark ink, no
+   padding, no underline, the text's own metrics. */
+.mine-note-editor .mine-link-menu .cm-completionMatchedText {
+  text-decoration: none;
+  background-color: var(--search-mark);
+  color: var(--search-mark-foreground);
+}

@@ -1,5 +1,6 @@
 import { commandById } from "@/lib/commandRegistry";
 import {
+  Fragment,
   memo,
   useCallback,
   useContext,
@@ -7,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import type { ComponentProps } from "react";
@@ -38,6 +40,7 @@ import { useCardMembership } from "@/hooks/useCardMembership";
 import { CardCollectionsContext } from "@/lib/cardCollections";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
 import { useContextMenuPresence } from "@/lib/openMenus";
+import { editorTableMenu, subscribeEditorTableMenu } from "@/lib/editorTableMenu";
 
 interface CardMenuActionsProps<TBlock extends LightBlock | IndexedBlock> {
   block: TBlock;
@@ -268,6 +271,11 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
   // The collections the feed knows, then what the file says (Е6.12).
   const selectedTags = useCardMembership(block, menuOpen);
   const connectTriggerRef = useRef<HTMLDivElement>(null);
+  // The commands of the table active in the card's editor (SPEC_EDITING.md,
+  // Л9.8, Л16); after one the editor keeps the focus it takes.
+  const tableMenu = useSyncExternalStore(subscribeEditorTableMenu, editorTableMenu, () => null);
+  const tableCommands = tableMenu?.slug === block.slug ? tableMenu.commands : [];
+  const tableCommandRan = useRef(false);
 
   useEffect(() => {
     if (!menuOpen) setConnectSubmenuOpen(false);
@@ -276,7 +284,14 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
   return (
     <DropdownMenuContent
       align="end"
-      onCloseAutoFocus={onCloseAutoFocus}
+      onCloseAutoFocus={(event) => {
+        if (tableCommandRan.current) {
+          tableCommandRan.current = false;
+          event.preventDefault();
+          return;
+        }
+        onCloseAutoFocus?.(event);
+      }}
       onKeyDownCapture={onKeyDownCapture}
     >
       <DropdownMenuSub open={connectSubmenuOpen} onOpenChange={setConnectSubmenuOpen}>
@@ -306,6 +321,32 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
           />
         </DropdownMenuSubContent>
       </DropdownMenuSub>
+
+      {tableMenu && tableCommands.length > 0 && (
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <MenuIconSlot />
+            Table
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent onKeyDownCapture={onKeyDownCapture}>
+            {tableCommands.map((command) => (
+              <Fragment key={command.id}>
+                {command.separatorBefore && <DropdownMenuSeparator />}
+                <DropdownMenuItem
+                  variant={command.destructive ? "destructive" : "default"}
+                  onSelect={() => {
+                    tableCommandRan.current = true;
+                    tableMenu.run(command.id);
+                  }}
+                >
+                  <MenuIconSlot />
+                  {command.label}
+                </DropdownMenuItem>
+              </Fragment>
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+      )}
 
       {hasUrl && (
         <DropdownMenuItem onSelect={() => openLinkInBrowser(block.url!)}>

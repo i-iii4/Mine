@@ -1,4 +1,4 @@
-import { noteInteractionIntent, type NoteElement, type NoteEvent, type NoteInteraction, type NoteSurface } from "./intents";
+import { noteInteractionIntent, observeNoteIntents, type NoteElement, type NoteEvent, type NoteInteraction, type NoteSurface } from "./intents";
 
 function intent(surface: NoteSurface, element: NoteElement, event: NoteEvent, extra: Partial<NoteInteraction> = {}) {
   return noteInteractionIntent({ surface, element, event, ...extra }).kind;
@@ -37,6 +37,22 @@ describe("noteInteractionIntent (SPEC_EDITING.md, Л11.1)", () => {
     expect(intent("editing", { kind: "embed" }, "click")).toBe("SelectBlock");
     expect(intent("editing", { kind: "image" }, "enter", { selected: true })).toBe("RevealBlock");
     expect(intent("editing", { kind: "embed" }, "enter")).toBe("Nothing");
+  });
+
+  it("opens a picture and an embed with ⌘-click on both surfaces, as a click opens them when reading (Л10.1, Л11.5)", () => {
+    for (const surface of ["reading", "editing"] as const) {
+      expect(intent(surface, { kind: "image" }, "command-click")).toBe("OpenImagePreview");
+      expect(intent(surface, { kind: "embed" }, "command-click")).toBe("OpenEmbed");
+    }
+  });
+
+  it("lets the parity corpus hear every decision, and stops when it is done", () => {
+    const heard: string[] = [];
+    const stop = observeNoteIntents((interaction, decided) => heard.push(`${interaction.surface} ${decided.kind}`));
+    intent("reading", { kind: "task" }, "click");
+    stop();
+    intent("editing", { kind: "task" }, "click");
+    expect(heard).toEqual(["reading ToggleTask"]);
   });
 
   it("shows the source of code, a diagram, a formula, a callout and HTML at a click when editing", () => {

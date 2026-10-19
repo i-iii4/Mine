@@ -181,6 +181,7 @@ pub fn run() {
             commands::blocks::get_block,
             commands::card_associations::list_card_associations,
             commands::blocks::resolve_note_link,
+            commands::blocks::suggest_note_links,
             commands::blocks::create_block,
             commands::blocks::create_media_asset_card,
             commands::blocks::rename_media_asset,

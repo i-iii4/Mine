@@ -52,6 +52,7 @@ import {
   type RevealWait,
 } from "./reveal";
 import { toggleTaskSpec } from "./lists";
+import { enterTableCell, enterTableFromText, tableEditor } from "./tableEditor";
 
 /** Lines drawn around the visible part: the window moves only when the
  *  visible part leaves it, not on every scroll (Л5.6). */
@@ -76,6 +77,9 @@ export type HostedWidget =
      *  document, counted from the block's start (`blockSource`). */
     lineStarts: readonly number[];
     lineOffsets: readonly number[];
+    /** Whether it stands in a quote or a list item: a table there is edited
+     *  as its container's source, not by the table editor (Л9.1). */
+    nested: boolean;
   }
   | { type: "task"; checked: boolean; labelledBy: string }
   | { type: "math"; source: string }
@@ -242,6 +246,14 @@ export class BlockWidget extends WidgetType {
       resizeObservers.set(dom, observer);
     }
     return dom;
+  }
+
+  /** A table of the top level keeps its element through edits: its editor,
+   *  its sideways scroll and its frozen widths live there (Л9.2, Л9.5). */
+  updateDOM(dom: HTMLElement, view: EditorView, from: BlockWidget): boolean {
+    if (this.widget.kind !== "table" || this.widget.nested || from.widget.kind !== "table" || from.widget.nested) return false;
+    (mountedHosts.get(dom) ?? view.state.facet(editorEnvironment).host)?.update(dom, this.widget);
+    return true;
   }
 
   get estimatedHeight(): number {
@@ -429,7 +441,7 @@ function blockDecorations(state: EditorState, blocks: readonly EditorBlock[]): R
       offset += line.length + 1;
     }
     const widget = new BlockWidget(
-      { type: "block", kind: block.kind, source: source.text, lineStarts, lineOffsets },
+      { type: "block", kind: block.kind, source: source.text, lineStarts, lineOffsets, nested: block.containers.length > 0 },
       environment,
       state.doc.lineAt(block.to).number - state.doc.lineAt(block.from).number + 1,
       block.containers.some((container) => container.kind === "item"),
@@ -750,9 +762,12 @@ export function carryOutBlockIntent(view: EditorView, block: EditorBlock, intent
         userEvent: "select",
       });
       return true;
-    // The table editor is row 50.18 of the plan: until it comes, a table
-    // opens in its source state (Л9.2), as Enter on any chosen block does.
+    // A table of the top level opens its first cell in the table editor;
+    // one in a quote or a list item shows its source (Л9.1, Л9.2).
     case "EnterTableCell":
+      if (block.kind === "table" && block.containers.length === 0) {
+        return enterTableCell(view, block, { row: 0, col: 0 }, { kind: "start" });
+      }
       return carryOutBlockIntent(view, block, { kind: "RevealBlock" });
     case "SelectBlock":
       return selectBlock(view, block);
@@ -820,12 +835,21 @@ function verticalMove(forward: boolean) {
     if (forward) {
       if (line.to >= state.doc.length || target.head <= line.to) return false;
       const next = widgetBlockAt(state, line.to + 1, "starts");
-      return next ? selectBlock(view, next) : false;
+      return next ? arriveAtBlock(view, next, true) : false;
     }
     if (line.from === 0 || target.head >= line.from) return false;
     const previous = widgetBlockAt(state, line.from - 1, "ends");
-    return previous ? selectBlock(view, previous) : false;
+    return previous ? arriveAtBlock(view, previous, false) : false;
   };
+}
+
+/** ↑ ↓ from the text beside a block: a table of the top level opens its
+ *  header or its last row in the cell under the caret (Л9.6), any other
+ *  block is chosen (Л5.3). */
+function arriveAtBlock(view: EditorView, block: EditorBlock, fromAbove: boolean): boolean {
+  if (block.kind !== "table" || block.containers.length > 0) return selectBlock(view, block);
+  const x = view.coordsAtPos(view.state.selection.main.head)?.left ?? null;
+  return enterTableFromText(view, block, fromAbove, x);
 }
 
 /** ← and → at the edge of a line next to a block widget choose it. */
@@ -996,5 +1020,6 @@ export function livePreview(): Extension {
     columnWidthTracker,
     safeMoments,
     Prec.high(keymap.of(blockKeymap)),
+    tableEditor(),
   ];
 }

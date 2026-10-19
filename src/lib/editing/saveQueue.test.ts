@@ -204,3 +204,57 @@ describe("SaveQueue (SPEC_EDITING.md, Л3.1, Л3.2, Л3.8)", () => {
     expect(session.writes.map((write) => write.request)).toEqual([{ baseBodyHash: "hash-disk", body: "disk body!" }]);
   });
 });
+
+describe("SaveQueue when the note is gone and back, and after a conflict (SPEC_EDITING.md, Л4.3, Л4.9)", () => {
+  it("stops when the note is learned gone, writes nothing, and goes on with its edits when the note is back", async () => {
+    const session = setup();
+    session.type("one");
+    await session.answer();
+    session.queue.stop({ kind: "source_not_found" });
+    expect(session.queue.state).toBe("stopped");
+    expect(session.events).toContain("failed stop");
+    session.type("one two");
+    expect(session.writes).toHaveLength(0);
+    session.queue.resume();
+    expect(session.events).toContain("recovered");
+    expect(session.writes.map((write) => write.request)).toEqual([{ baseBodyHash: "hash-1", body: "one two" }]);
+  });
+
+  it("does not stop a write under way: the write finds the note gone itself", () => {
+    const session = setup();
+    session.type("one");
+    session.queue.stop({ kind: "source_not_found" });
+    expect(session.queue.state).toBe("saving");
+  });
+
+  it("leaves a conflict when the file comes to hold the document's text", async () => {
+    const session = setup();
+    session.type("mine");
+    session.dispositions.set("stale", "conflict");
+    await session.refuse("stale");
+    expect(session.queue.state).toBe("conflict");
+    session.queue.rebase("hash-disk", "mine");
+    expect(session.queue.state).toBe("idle");
+    expect(session.queue.dirty).toBe(false);
+    session.type("mine!");
+    expect(session.writes.map((write) => write.request)).toEqual([{ baseBodyHash: "hash-disk", body: "mine!" }]);
+  });
+
+  it("enters a conflict from a stop: the note came back other than the session knew it", () => {
+    const session = setup();
+    session.queue.stop({ kind: "source_not_found" });
+    session.queue.enterConflict({ kind: "changed" });
+    expect(session.queue.state).toBe("conflict");
+    expect(session.events).toContain("conflict");
+  });
+
+  it("counts the writes it starts, so an older answer about the file is known to be older", async () => {
+    const session = setup();
+    expect(session.queue.writes).toBe(0);
+    session.type("a");
+    expect(session.queue.writes).toBe(1);
+    session.type("ab");
+    await session.answer();
+    expect(session.queue.writes).toBe(2);
+  });
+});

@@ -1,6 +1,6 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ComponentProps } from "react";
+import { useContext, type ComponentProps } from "react";
 import type { ExtraProps } from "react-markdown";
 import { EditorView } from "@codemirror/view";
 import { beginNoteEdit, saveNoteBody } from "@/lib/commands";
@@ -9,6 +9,7 @@ import { NoteEmbedLookups } from "@/components/reading/NoteEmbed";
 import type { TaskBoxes } from "@/components/reading/TaskCheckbox";
 import { indexedBlock } from "@/test/blocks";
 import { installCodeMirrorLayoutStubs } from "@/test/codemirror";
+import { EditorImagePlacementContext } from "./editorImagePlacement";
 import { WidgetPortals } from "./EditorWidgets";
 import { NoteEditor } from "./NoteEditor";
 
@@ -48,7 +49,16 @@ beforeEach(() => {
 });
 
 function TestImage({ src, alt, node }: ComponentProps<"img"> & ExtraProps) {
-  return <img data-test-image="" data-offset={node?.position?.start.offset} src={src} alt={alt} />;
+  const placement = useContext(EditorImagePlacementContext);
+  return (
+    <img
+      data-test-image=""
+      data-offset={node?.position?.start.offset}
+      data-occurrence={placement?.occurrenceIndex() ?? undefined}
+      src={src}
+      alt={alt}
+    />
+  );
 }
 
 /** The blocks of the reading mode's fixture, one of each kind. */
@@ -74,7 +84,9 @@ function normalized(element: Element | null): string {
   if (!element) return "";
   const copy = element.cloneNode(true) as Element;
   for (const node of [copy, ...copy.querySelectorAll("*")]) {
-    for (const name of ["data-mine-md-start", "data-mine-md-end", "data-task-item-start", "id", "aria-labelledby", "data-offset"]) {
+    // The table editor tells its rows and cells apart (Л9): the editor's
+    // own marks, not the reading mode's look.
+    for (const name of ["data-mine-md-start", "data-mine-md-end", "data-task-item-start", "id", "aria-labelledby", "data-offset", "data-occurrence", "data-table-row", "data-table-col", "data-table-line-row"]) {
       node.removeAttribute(name);
     }
   }
@@ -141,11 +153,12 @@ describe("block widgets (SPEC_EDITING.md, Л8)", () => {
     }, { timeout: 4000 });
   });
 
-  it("tells the host's picture where it stands in the whole body", async () => {
-    const { reading, editing } = await renderBoth(["code", "media"]);
-    const own = editing.querySelector("[data-editor-block='media'] [data-test-image]");
-    const read = reading.querySelector("[data-test-image]");
-    expect(own?.getAttribute("data-offset")).toBe(read?.getAttribute("data-offset"));
+  it("tells the host's picture its place among the body's pictures, counted from the document when asked (Л11.3, Л14)", async () => {
+    const { editing } = await renderBoth(["media", "code", "media"]);
+    const pictures = [...editing.querySelectorAll("[data-editor-block='media'] [data-test-image]")];
+    expect(pictures.map((picture) => picture.getAttribute("data-occurrence"))).toEqual(["0", "1"]);
+    // Not a parse of the body: the reading mode's offset is not asked.
+    expect(pictures.every((picture) => picture.getAttribute("data-offset") === "0")).toBe(true);
   });
 
   it("changes a task inside a callout as an edit of the document (Л7.4)", async () => {

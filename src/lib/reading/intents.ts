@@ -74,10 +74,12 @@ function follow(to: NoteLinkTarget): NoteInteractionIntent {
  *  there (Л5.3). */
 function editorBlock(element: NoteElement, interaction: NoteInteraction): NoteInteractionIntent {
   switch (element.kind) {
-    // A picture and a note embed are chosen first, Enter shows the source.
+    // A picture and a note embed are chosen first, Enter shows the source;
+    // ⌘-click opens them as a click does when reading (Л10.1, Л11.5).
     case "image":
     case "embed":
       if (interaction.event === "click") return { kind: "SelectBlock" };
+      if (interaction.event === "command-click") return element.kind === "image" ? { kind: "OpenImagePreview" } : { kind: "OpenEmbed" };
       return interaction.event === "enter" && interaction.selected ? { kind: "RevealBlock" } : NOTHING;
     // A table opens a cell: its editor, not its source (Л9.2).
     case "table":
@@ -99,13 +101,32 @@ function editorBlock(element: NoteElement, interaction: NoteInteraction): NoteIn
  *   it is drawn; a revealed link takes the caret, ⌘-click opens it there;
  * - a task box changes with a click and Space, not Enter (WAI-ARIA);
  * - a picture opens its preview in the reading mode, a note embed its note;
- *   in the editor both are chosen as blocks;
+ *   in the editor a click chooses them as blocks and ⌘-click opens them;
  * - code, a diagram, a formula, a callout and HTML show their source in the
  *   editor at a click; a table opens a cell;
  * - anything else takes the caret in the editor and does nothing in the
  *   reading mode.
  */
 export function noteInteractionIntent(interaction: NoteInteraction): NoteInteractionIntent {
+  const intent = decide(interaction);
+  for (const observer of observers) observer(interaction, intent);
+  return intent;
+}
+
+/** Who hears every decision: the parity corpus records what each surface
+ *  decided for the real events it was given (Л11.1). Nobody in the app. */
+type IntentObserver = (interaction: NoteInteraction, intent: NoteInteractionIntent) => void;
+const observers = new Set<IntentObserver>();
+
+/** Hear every decision until the returned function is called. */
+export function observeNoteIntents(observer: IntentObserver): () => void {
+  observers.add(observer);
+  return () => {
+    observers.delete(observer);
+  };
+}
+
+function decide(interaction: NoteInteraction): NoteInteractionIntent {
   const { surface, element, event } = interaction;
   if (element.kind === "task") return event === "click" || event === "space" ? { kind: "ToggleTask" } : NOTHING;
   if (surface === "reading") {
@@ -113,9 +134,9 @@ export function noteInteractionIntent(interaction: NoteInteraction): NoteInterac
       case "link":
         return event === "click" || event === "command-click" || event === "enter" ? follow(element.to) : NOTHING;
       case "image":
-        return event === "click" ? { kind: "OpenImagePreview" } : NOTHING;
+        return event === "click" || event === "command-click" ? { kind: "OpenImagePreview" } : NOTHING;
       case "embed":
-        return event === "space" || event === "enter" || event === "click" ? { kind: "OpenEmbed" } : NOTHING;
+        return event === "space" || event === "enter" || event === "click" || event === "command-click" ? { kind: "OpenEmbed" } : NOTHING;
       default:
         return NOTHING;
     }

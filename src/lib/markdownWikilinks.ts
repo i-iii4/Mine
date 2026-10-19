@@ -11,7 +11,7 @@
 // disk stays human-readable in Obsidian and Finder.
 
 import { fromMarkdown } from "mdast-util-from-markdown";
-import type { Nodes } from "mdast";
+import type { Nodes, Root } from "mdast";
 import { parseReadingSyntax } from "@/lib/reading/syntax";
 // The feed decodes local addresses too and must not take this module, which
 // holds the reading parser, into the first screen's bundle.
@@ -150,11 +150,46 @@ function computePreprocessedBody(body: string): PreprocessedBody {
   return { text, rewrites };
 }
 
-// One body at a time is drawn, measured and mapped back: the selection
+/** Texts whose pre-processing and Markdown tree are kept: the open card's
+ *  body, the bodies the reading mode's derivations read and the sources of
+ *  the editor's widgets come and go together, and one of them must not push
+ *  another out (SPEC_EDITING.md, Л14). */
+export const PARSED_TEXT_CACHE_LIMIT = 8;
+
+/** A small cache of what a text gave, the latest last; a text is looked up by
+ *  its value, as a body arrives anew with every read of its card. */
+class TextCache<Value> {
+  private readonly entries = new Map<string, Value>();
+
+  get(text: string, compute: (text: string) => Value): Value {
+    const found = this.entries.get(text);
+    if (found !== undefined) {
+      this.entries.delete(text);
+      this.entries.set(text, found);
+      return found;
+    }
+    const value = compute(text);
+    this.entries.set(text, value);
+    while (this.entries.size > PARSED_TEXT_CACHE_LIMIT) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest === undefined) break;
+      this.entries.delete(oldest);
+    }
+    return value;
+  }
+}
+
+// The body is drawn, measured and mapped back many times: the selection
 // handle asks for offsets on every change of the selection, and the body
 // parses once.
-let cachedBody: string | null = null;
-let cachedResult: PreprocessedBody | null = null;
+const preprocessed = new TextCache<PreprocessedBody>();
+const renderedTrees = new TextCache<Root>();
+
+/** The Markdown tree of `processedBody`, a body after `preprocessWikilinks`,
+ *  parsed once while it is kept (SPEC_EDITING.md, Л14). */
+export function renderedMarkdownTree(processedBody: string): Root {
+  return renderedTrees.get(processedBody, (text) => fromMarkdown(text));
+}
 
 /**
  * Rewrite Obsidian wikilinks in a markdown body into standard
@@ -177,11 +212,7 @@ let cachedResult: PreprocessedBody | null = null;
  * as they are.
  */
 export function preprocessWikilinksWithMap(body: string): PreprocessedBody {
-  if (cachedBody !== body || cachedResult === null) {
-    cachedResult = computePreprocessedBody(body);
-    cachedBody = body;
-  }
-  return cachedResult;
+  return preprocessed.get(body, computePreprocessedBody);
 }
 
 /** The rendered Markdown of `body` (`preprocessWikilinksWithMap`). */
@@ -263,6 +294,6 @@ export function firstImageOffset(
     }
     if ("children" in node) node.children.forEach(visit);
   }
-  visit(fromMarkdown(processedBody));
+  visit(renderedMarkdownTree(processedBody));
   return found;
 }

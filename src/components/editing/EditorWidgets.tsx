@@ -8,6 +8,8 @@
 
 import {
   createContext,
+  memo,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -17,7 +19,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import type { ExtraProps } from "react-markdown";
+import type { Components, ExtraProps } from "react-markdown";
 import { EditorSelection } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { ArticleMarkdown } from "@/components/reading/ArticleMarkdown";
@@ -25,9 +27,12 @@ import { MathView } from "@/components/reading/MathView";
 import type { NoteEmbedLookups } from "@/components/reading/NoteEmbed";
 import { TaskCheckbox, type TaskBoxes } from "@/components/reading/TaskCheckbox";
 import { positionOfByteOffset } from "@/lib/editing/lineEndings";
-import { activateBlockWidget, toggleTaskWidget, type EditorWidgetHost, type HostedWidget } from "@/lib/editing/livePreview";
+import { activateBlockWidget, blockElement, toggleTaskWidget, type EditorWidgetHost, type HostedWidget } from "@/lib/editing/livePreview";
+import { noteInteractionIntent, type NoteElement, type NoteInteractionIntent } from "@/lib/reading/intents";
 import { toggleTaskSpec } from "@/lib/editing/lists";
 import { markdownSourceOffset } from "@/lib/markdownWikilinks";
+import { TableBlockView } from "./TableEditor";
+import { EditorImagePlacementContext, imageOccurrenceBefore, type EditorImagePlacement } from "./editorImagePlacement";
 
 type HostedBlock = Extract<HostedWidget, { type: "block" }>;
 
@@ -86,10 +91,6 @@ export interface EditorArticleHost {
   /** The host's picture and video of the body (Р5, Р6, Л11.3). */
   image: ComponentType<ComponentProps<"img"> & ExtraProps>;
   onOpenNote: (slug: string) => void;
-  /** Where document position `pos` stands in the body as the reading
-   *  pipeline renders it (after `preprocessWikilinks`): the host's media
-   *  elements find themselves among the body's pictures by it. */
-  renderedOffsetOf(pos: number): number | null;
 }
 
 const ArticleHostContext = createContext<EditorArticleHost | null>(null);
@@ -103,11 +104,16 @@ interface WidgetSource {
 }
 
 const WidgetSourceContext = createContext<WidgetSource | null>(null);
+/** The editor the widgets stand in. */
+const WidgetViewContext = createContext<EditorView | null>(null);
 
 /** Controls inside a widget keep their own clicks: links, buttons, folds,
  *  boxes. A note embed's card is no control in the editor: a click chooses
  *  its block (Л5.3). */
 const WIDGET_CONTROLS = "a, button:not([data-note-embed-open]), summary, input, label, [role='checkbox']";
+
+/** A picture or an embed among words. */
+const INLINE_MEDIA_ELEMENT: NoteElement = { kind: "image" };
 
 function isControl(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(WIDGET_CONTROLS) !== null;
@@ -150,39 +156,42 @@ class WidgetTaskBoxes implements TaskBoxes {
   }
 }
 
-/** The host's picture, told where it stands in the whole body: a widget
- *  draws its own source, whose positions start at the block. */
+/** The host's picture, told how to find where it stands in the note: a
+ *  widget draws its own source, whose positions start at the block, and
+ *  the place among the body's pictures is counted from the document only
+ *  when an action asks (Л11.3, Л14). */
 function EditorWidgetImage({ node, ...props }: ComponentProps<"img"> & ExtraProps) {
   const host = useContext(ArticleHostContext);
   const source = useContext(WidgetSourceContext);
+  const view = useContext(WidgetViewContext);
+  const start = node?.position?.start.offset;
+  const placement = useMemo<EditorImagePlacement>(() => ({
+    occurrenceIndex: () => {
+      if (!source || !view || typeof start !== "number") return null;
+      const own = markdownSourceOffset(source.text, start);
+      const pos = own === null ? null : source.toDocument(own);
+      // Joined by `\n`, the text's offsets are the document's positions.
+      return pos === null ? null : imageOccurrenceBefore(view.state.doc.sliceString(0, pos + 2, "\n"), pos);
+    },
+  }), [source, start, view]);
   if (!host) return null;
   const Image = host.image;
-  const start = node?.position?.start;
-  const end = node?.position?.end;
-  if (!node || !source || !start || !end || typeof start.offset !== "number" || typeof end.offset !== "number") {
-    return <Image node={node} {...props} />;
-  }
-  const own = markdownSourceOffset(source.text, start.offset);
-  const pos = own === null ? null : source.toDocument(own);
-  const rendered = pos === null ? null : host.renderedOffsetOf(pos);
-  if (rendered === null) return <Image node={node} {...props} />;
-  const placed = {
-    ...node,
-    position: {
-      start: { ...start, offset: rendered },
-      end: { ...end, offset: rendered + (end.offset - start.offset) },
-    },
-  };
-  return <Image node={placed} {...props} />;
+  return (
+    <EditorImagePlacementContext.Provider value={placement}>
+      <Image node={node} {...props} />
+    </EditorImagePlacementContext.Provider>
+  );
 }
 
-/** A widget's article: the source as `ArticleMarkdown` draws a body. */
-function WidgetArticle({ view, source }: { view: EditorView; source: WidgetSource }) {
+/** A widget's article: the source as `ArticleMarkdown` draws a body; a
+ *  table of the top level with the table editor's elements (Л9). */
+function WidgetArticle({ view, source, components }: { view: EditorView; source: WidgetSource; components?: Components }) {
   const host = useContext(ArticleHostContext);
   const tasks = useMemo(() => new WidgetTaskBoxes(view, source), [source, view]);
   if (!host) return null;
   return (
     <WidgetSourceContext.Provider value={source}>
+      <WidgetViewContext.Provider value={view}>
       <ArticleMarkdown
         body={source.text}
         sourceSlug={host.sourceSlug}
@@ -192,16 +201,59 @@ function WidgetArticle({ view, source }: { view: EditorView; source: WidgetSourc
         tasks={tasks}
         image={EditorWidgetImage}
         onOpenNote={host.onOpenNote}
+        components={components}
       />
+      </WidgetViewContext.Provider>
     </WidgetSourceContext.Provider>
   );
 }
 
+/** The element of the note a click in a widget hit (Л11.1). */
+function widgetElement(target: EventTarget | null, fallback: NoteElement): NoteElement {
+  if (!(target instanceof Element)) return fallback;
+  if (target.closest("[data-note-embed]")) return { kind: "embed" };
+  if (target.closest("[data-detail-media-action-frame], img, video")) return { kind: "image" };
+  return fallback;
+}
+
+/** Who carries out an intent decided on a widget: the editor (the block's
+ *  choice, its source, the caret, a task's sign), the reading element under
+ *  the pointer, which opens itself as it does when reading, or nobody. */
+function widgetIntentOwner(intent: NoteInteractionIntent): "editor" | "element" | "none" {
+  switch (intent.kind) {
+    case "SelectBlock":
+    case "RevealBlock":
+    case "EnterTableCell":
+    case "PlaceCaret":
+    case "ToggleTask":
+      return "editor";
+    case "OpenImagePreview":
+    case "OpenEmbed":
+    case "OpenNote":
+    case "OpenExternal":
+    case "JumpToAnchor":
+      return "element";
+    case "Nothing":
+      return "none";
+    default: {
+      const unhandled: never = intent;
+      return unhandled;
+    }
+  }
+}
+
 /** Clicks on a widget's own content are the editor's (Л5.3): the block's
- *  source, its choice, the caret; its controls keep theirs. The listener runs
- *  in the capture phase, before the elements' own handlers. */
-function useWidgetClicks(dom: HTMLElement, activate: () => void) {
+ *  source, its choice, the caret; its controls keep theirs, and ⌘-click on a
+ *  picture or an embed opens it as a click does when reading (Л10.1,
+ *  Л11.1). The listener runs in the capture phase, before the elements' own
+ *  handlers. */
+function useWidgetClicks(dom: HTMLElement, element: NoteElement, activate: () => void) {
   useEffect(() => {
+    const intentOf = (event: MouseEvent) => noteInteractionIntent({
+      surface: "editing",
+      element: widgetElement(event.target, element),
+      event: event.metaKey || event.ctrlKey ? "command-click" : "click",
+    });
     const onMouseDown = (event: MouseEvent) => {
       if (event.button !== 0 || isControl(event.target)) return;
       // The caret and the focus stay in the editor until the click decides.
@@ -209,9 +261,11 @@ function useWidgetClicks(dom: HTMLElement, activate: () => void) {
     };
     const onClick = (event: MouseEvent) => {
       if (event.button !== 0 || isControl(event.target)) return;
+      const owner = widgetIntentOwner(intentOf(event));
+      if (owner === "element") return;
       event.preventDefault();
       event.stopPropagation();
-      activate();
+      if (owner === "editor") activate();
     };
     dom.addEventListener("mousedown", onMouseDown, true);
     dom.addEventListener("click", onClick, true);
@@ -219,7 +273,7 @@ function useWidgetClicks(dom: HTMLElement, activate: () => void) {
       dom.removeEventListener("mousedown", onMouseDown, true);
       dom.removeEventListener("click", onClick, true);
     };
-  }, [activate, dom]);
+  }, [activate, dom, element]);
 }
 
 function BlockWidgetView({ view, dom, widget }: { view: EditorView; dom: HTMLElement; widget: HostedBlock }) {
@@ -230,7 +284,8 @@ function BlockWidgetView({ view, dom, widget }: { view: EditorView; dom: HTMLEle
   const activate = useMemo(() => () => {
     activateBlockWidget(view, dom);
   }, [dom, view]);
-  useWidgetClicks(dom, activate);
+  const element = useMemo(() => blockElement(widget.kind), [widget.kind]);
+  useWidgetClicks(dom, element, activate);
   return <WidgetArticle view={view} source={source} />;
 }
 
@@ -245,7 +300,7 @@ function InlineMediaView({ view, dom, source: text }: { view: EditorView; dom: H
     view.dispatch({ selection: EditorSelection.cursor(view.posAtDOM(dom)), userEvent: "select" });
     view.focus();
   }, [dom, view]);
-  useWidgetClicks(dom, activate);
+  useWidgetClicks(dom, INLINE_MEDIA_ELEMENT, activate);
   return <WidgetArticle view={view} source={source} />;
 }
 
@@ -263,15 +318,30 @@ function TaskBoxView({ view, dom, checked, labelledBy }: { view: EditorView; dom
       itemStart={null}
       labelledBy={labelledBy}
       onToggle={() => {
-        toggleTaskWidget(view, dom);
+        // A click or Space on the box, decided with the reading mode's
+        // (Л7.4, Л11.1).
+        const intent = noteInteractionIntent({ surface: "editing", element: { kind: "task" }, event: "click" });
+        if (widgetIntentOwner(intent) === "editor") toggleTaskWidget(view, dom);
       }}
     />
   );
 }
 
-function WidgetView({ view, dom, widget }: { view: EditorView; dom: HTMLElement; widget: HostedWidget }): ReactNode {
+/** A table of the top level: the table editor draws and edits it (Л9). */
+function TableWidgetView({ view, dom, widget }: { view: EditorView; dom: HTMLElement; widget: HostedBlock }) {
+  const host = useContext(ArticleHostContext);
+  const renderArticle = useCallback((text: string, toDocument: (offset: number) => number | null, components: Components) => (
+    <WidgetArticle view={view} source={{ text, toDocument }} components={components} />
+  ), [view]);
+  return <TableBlockView view={view} dom={dom} widget={widget} sourceSlug={host?.sourceSlug ?? null} renderArticle={renderArticle} />;
+}
+
+/** One widget; a widget whose entry did not change is not drawn again when
+ *  another one is, as a table is on every key typed in its cell. */
+const WidgetView = memo(function WidgetView({ view, dom, widget }: { view: EditorView; dom: HTMLElement; widget: HostedWidget }): ReactNode {
   switch (widget.type) {
     case "block":
+      if (widget.kind === "table" && !widget.nested) return <TableWidgetView view={view} dom={dom} widget={widget} />;
       return <BlockWidgetView view={view} dom={dom} widget={widget} />;
     case "media":
       return <InlineMediaView view={view} dom={dom} source={widget.source} />;
@@ -280,7 +350,7 @@ function WidgetView({ view, dom, widget }: { view: EditorView; dom: HTMLElement;
     case "task":
       return <TaskBoxView view={view} dom={dom} checked={widget.checked} labelledBy={widget.labelledBy} />;
   }
-}
+});
 
 /**
  * The widgets of one editor, drawn into CodeMirror's containers through

@@ -8,6 +8,7 @@ import { ActionFailureNoticeStack } from "./ActionFailureNotices";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { getBlock, startWindowDrag } from "@/lib/commands";
 import { clearActionFailures } from "@/lib/actionFailures";
+import { offerEditorTableMenu, withdrawEditorTableMenu } from "@/lib/editorTableMenu";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import type { LightBlock } from "@/types";
@@ -665,5 +666,57 @@ describe("CardHoverMenu", () => {
       expect(screen.queryByText("Rename…")).not.toBeInTheDocument();
     });
     expect(onKeyboardMoreMenuOpenChange).toHaveBeenLastCalledWith(false);
+  });
+  it("shows the Table submenu of the table active in the card's editor and runs its commands (SPEC_EDITING.md, Л9.8)", async () => {
+    const run = vi.fn();
+    offerEditorTableMenu({
+      slug: "alpha-block",
+      commands: [
+        { id: "insert-row-below", label: "Insert Row Below", destructive: false, separatorBefore: false },
+        { id: "delete-row", label: "Delete Row", destructive: true, separatorBefore: true },
+      ],
+      run,
+    });
+    render(
+      <CardHoverMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "Card actions" });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(trigger);
+    const submenu = await screen.findByText("Table");
+    await userEvent.setup().hover(submenu);
+    fireEvent.keyDown(submenu, { key: "ArrowRight" });
+    fireEvent.click(await screen.findByText("Insert Row Below"));
+    expect(run).toHaveBeenCalledWith("insert-row-below");
+    withdrawEditorTableMenu("alpha-block");
+  });
+
+  it("has no Table submenu for a card whose editor has no active table", async () => {
+    offerEditorTableMenu({ slug: "another-card", commands: [{ id: "clear-row", label: "Clear Row", destructive: false, separatorBefore: false }], run: vi.fn() });
+    render(
+      <CardHoverMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "Card actions" });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(trigger);
+    await screen.findByText("Rename…");
+    expect(screen.queryByText("Table")).not.toBeInTheDocument();
+    withdrawEditorTableMenu("another-card");
   });
 });
