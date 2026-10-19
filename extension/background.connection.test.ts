@@ -234,7 +234,13 @@ describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
       postMessage: vi.fn<(message: NativeResponse) => void>(),
     };
     const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ buildId: onDisk, commit: "c" }) }));
+    // The clips kept for tabs and the openings that wait for the reload belong
+    // to the clipper part of the worker, which background.messaging.test.ts
+    // runs whole; here they only report that the reload reached them.
+    const carryKeptClips = vi.fn(async () => undefined);
+    const tellOpeningsHeldByClipper = vi.fn(async () => undefined);
     const context = createContext({
+      carryKeptClips, tellOpeningsHeldByClipper, dropCarriedClips: async () => undefined,
       HOST_NAME: "test.mine",
       chrome: {
         runtime: {
@@ -245,7 +251,11 @@ describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
         },
         tabs,
         storage: {
-          local: { get: async (key: string) => ({ [key]: local[key] }), set: async (values: Record<string, unknown>) => { Object.assign(local, values); } },
+          local: {
+            get: async (key: string) => ({ [key]: local[key] }),
+            set: async (values: Record<string, unknown>) => { Object.assign(local, values); },
+            remove: async (key: string) => { delete local[key]; },
+          },
           session: {
             get: async (key: string) => ({ [key]: session[key] }),
             set: async (values: Record<string, unknown>) => { Object.assign(session, values); },
@@ -268,7 +278,8 @@ describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
     // The worker's own trackBrowserWrite; the script's value comes back untyped.
     const trackBrowserWrite: (work: () => Promise<unknown>) => Promise<unknown> = runInContext("trackBrowserWrite", context);
     const browserWrite = (work: () => Promise<unknown>): Promise<unknown> => trackBrowserWrite(work);
-    return { send, closed, browserWrite, respond: (message: NativeResponse) => respond(message), reload, local, session, fetch };
+    return { send, closed, browserWrite, respond: (message: NativeResponse) => respond(message), reload, local, session, fetch,
+      carryKeptClips, tellOpeningsHeldByClipper };
   }
 
   async function statusFrom(host: ReturnType<typeof updatableTransport>, installed: string) {
@@ -286,6 +297,8 @@ describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
     await host.closed();
     expect(host.reload).toHaveBeenCalledOnce();
     expect(host.local.mineReloadedFor).toBe("new-build");
+    // The clips kept for tabs cross the reload (SPEC_CLIPPER.md, К4, «Значок после обновления»).
+    expect(host.carryKeptClips).toHaveBeenCalledOnce();
   });
 
   it("compares the build written into the worker, not the copy on disk the update replaced", async () => {
@@ -336,6 +349,8 @@ describe("extension update applies itself (SPEC_CLIPPER.md, К4)", () => {
     await host.closed();
     expect(host.reload).not.toHaveBeenCalled();
     expect(host.session.mineReloadPending).toBe("new-build");
+    // The openings waiting for this reload hear why (19.10.2026).
+    expect(host.tellOpeningsHeldByClipper).toHaveBeenCalledOnce();
   });
 
   it("keeps the clipper window or the folder setup page open", async () => {

@@ -2064,6 +2064,47 @@
   /** @type {ActiveCrop | null} */
   let activeCrop = null;
 
+  // Above any content of the page: the largest z-index there is (int32 max).
+  const TOP_OF_PAGE_Z_INDEX = "2147483647";
+  /** The crop's layer covers the window and passes the mouse to its shadow tree. */
+  const CROP_LAYER_LOOK = { position: "fixed", inset: "0", "z-index": TOP_OF_PAGE_Z_INDEX, "pointer-events": "none" };
+  /** The crop's notice stands at the top of the window, in the middle. */
+  const CROP_TOAST_LOOK = {
+    position: "fixed", top: "16px", left: "50%", transform: "translateX(-50%)",
+    "z-index": TOP_OF_PAGE_Z_INDEX, "pointer-events": "none",
+  };
+
+  /**
+   * The host of a layer the crop puts on the page. Its content lives in a
+   * closed shadow tree, so to the page the host is an empty <div>, and a page
+   * that hides empty elements hid the crop: Shopify's Dawn theme has
+   * `div:empty { display: none }` (19.10.2026). The host declares
+   * `all: initial` and then every property of `look` in its own style and
+   * important: no rule of the page, important or not, outweighs that
+   * (SPEC_CLIPPER.md, «Слой обрезки и CSS страницы»). `display` and
+   * `visibility`, which decide whether the layer is seen at all, are named
+   * too, not left to how `all` is expanded.
+   * @param {Readonly<Record<string, string>>} look
+   * @returns {HTMLDivElement}
+   */
+  function createCropLayerHost(look) {
+    const host = document.createElement("div");
+    host.style.setProperty("all", "initial", "important");
+    for (const [name, value] of Object.entries({ display: "block", visibility: "visible", ...look })) {
+      host.style.setProperty(name, value, "important");
+    }
+    return host;
+  }
+
+  /**
+   * Hide a crop layer for a capture. Important like the host's own
+   * `all: initial`, which would outweigh a plain declaration.
+   * @param {HTMLElement} host
+   */
+  function hideCropLayerForCapture(host) {
+    host.style.setProperty("visibility", "hidden", "important");
+  }
+
   /** @param {() => void} callback */
   function afterViewportPaint(callback) {
     let done = false;
@@ -2094,10 +2135,10 @@
       host.style.display = "none";
     }
     if (cropOverlayHost) {
-      cropOverlayHost.style.visibility = "hidden";
+      hideCropLayerForCapture(cropOverlayHost);
     }
     if (cropToastHost) {
-      cropToastHost.style.visibility = "hidden";
+      hideCropLayerForCapture(cropToastHost);
     }
     hideFeedButtonsForCapture();
 
@@ -2145,8 +2186,7 @@
   function showCropToast(message) {
     if (cropToastHost) cropToastHost.remove();
 
-    const host = document.createElement("div");
-    host.style.cssText = "position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none;";
+    const host = createCropLayerHost(CROP_TOAST_LOOK);
     const shadow = host.attachShadow({ mode: "closed" });
     shadow.innerHTML = `
       <style>
@@ -2314,8 +2354,7 @@
     /** @type {ActiveCrop} */
     const crop = { id: typeof cropId === "string" ? cropId : null, cancel: () => undefined };
 
-    const host = document.createElement("div");
-    host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none;";
+    const host = createCropLayerHost(CROP_LAYER_LOOK);
     const shadow = host.attachShadow({ mode: "closed" });
 
     // Styles and markup inside shadow — isolated from page CSS

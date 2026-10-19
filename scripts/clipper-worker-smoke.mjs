@@ -362,6 +362,73 @@ async function checkScreenshotForAnyClip(worker) {
   }
 }
 
+// Crop Area on a page that hides empty elements (SPEC_CLIPPER.md, «Слой
+// обрезки и CSS страницы», 19.10.2026): the Shopify product page on the Dawn
+// theme hid the crop's layer with its `div:empty { display: none }`, and
+// the crop showed nothing. The page is the reduced fixture of the unit test,
+// served locally. The crop's layer shows and takes the mouse, the drawn
+// rectangle becomes the frame, and the clipper comes back with it.
+const DAWN_PRODUCT_PATH = '/products/mondrian-light-shorts-mud';
+const CROP_RECTANGLE = { x: 300, y: 300, width: 300, height: 200 };
+
+async function checkCropOnPageHidingEmptyElements(worker) {
+  const fixture = readFileSync(join(root, 'extension/lib/shopifyDawnProduct.fixtures.html'));
+  const server = createServer((request, response) => {
+    if (new URL(request.url, 'http://127.0.0.1').pathname !== DAWN_PRODUCT_PATH) {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(fixture);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${server.address().port}${DAWN_PRODUCT_PATH}`;
+  const page = await context.newPage();
+  try {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(url);
+    // The browser takes two captures a second; the previous check's last one
+    // must not count against this one.
+    await page.waitForTimeout(1_100);
+    await worker.evaluate(async (pageUrl) => {
+      const tab = (await chrome.tabs.query({})).find((candidate) => candidate.url === pageUrl);
+      if (!tab) throw new Error('No tab for the product page');
+      await chrome.tabs.update(tab.id, { active: true });
+      await openClipperUi(tab);
+    }, url);
+    const overlay = page.locator('[data-mine-clipper-overlay]');
+    await page.getByRole('tab', { name: 'Screenshot', exact: true }).click({ timeout: 15_000 });
+    const preview = page.locator('[data-clipper-preview] img');
+    await preview.waitFor({ state: 'visible', timeout: 15_000 });
+    await page.waitForTimeout(1_100);
+
+    await overlay.getByRole('button', { name: 'Crop Area', exact: true }).click();
+    const centre = { x: CROP_RECTANGLE.x + CROP_RECTANGLE.width / 2, y: CROP_RECTANGLE.y + CROP_RECTANGLE.height / 2 };
+    const layer = await page.waitForFunction(({ x, y }) => {
+      const host = document.elementFromPoint(x, y);
+      // The crop's layer is the host of a closed shadow tree, outside the clipper.
+      if (!host || host.hasAttribute('data-mine-clipper-overlay') || !host.matches('body > div:empty')) return null;
+      return { display: getComputedStyle(host).display, clipperHidden: document.querySelector('[data-mine-clipper-overlay]')?.style.display === 'none' };
+    }, centre, { timeout: 5_000 }).then((handle) => handle.jsonValue(), () => null);
+    assert.deepEqual(layer, { display: 'block', clipperHidden: true }, 'the crop layer is not shown over the page');
+
+    await dragBy(page, { x: CROP_RECTANGLE.x, y: CROP_RECTANGLE.y }, CROP_RECTANGLE.width, CROP_RECTANGLE.height);
+    await page.waitForFunction(({ width, height }) => {
+      const image = document.querySelector('[data-mine-clipper-overlay]')?.shadowRoot?.querySelector('[data-clipper-preview] img');
+      return image?.complete && image.naturalWidth === Math.round(width * devicePixelRatio)
+        && image.naturalHeight === Math.round(height * devicePixelRatio);
+    }, CROP_RECTANGLE, { timeout: 15_000 });
+    assert.equal(await page.locator('[data-mine-clipper-panel]').isVisible(), true, 'the clipper did not come back after the crop');
+    assert.equal(await page.evaluate(() => document.documentElement.style.overflow), '', 'the crop kept the page from scrolling');
+
+    await overlay.getByRole('button', { name: 'Close', exact: true }).first().click();
+    await page.locator('[data-mine-clipper-panel]').waitFor({ state: 'detached', timeout: 5_000 });
+  } finally {
+    await page.close();
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
 // Р10: the header drags by the window chrome's rule, the space's name
 // included. A long name leaves no empty part of the header; a press on it
 // that travels past 4 px moves the panel and opens nothing, a press without
@@ -936,18 +1003,61 @@ async function enableDeveloperMode(browser) {
 // Turn the copy at `staged` into the next build the way the extension build
 // makes one: its own build identity, background and overlay, then its own
 // version and worker wrapper (scripts/clipper-extension-payload.mjs). The
-// background and the overlay mark the world they run in.
-function makeNextBuild(staged) {
-  const next = { buildId: createHash('sha256').update(`${report.runtimeIdentity.buildId}:next`).digest('hex'), commit: 'next-commit' };
+// background and the overlay mark the world they run in. `name` tells builds
+// made one after another apart. With `newContentScript` the build also adds a
+// file to the manifest's content scripts, before content.js, and its
+// content.js needs that file: the update of 19.10.2026 added lib/pageTitle.js
+// the same way.
+function makeNextBuild(staged, { name = 'next', newContentScript = false } = {}) {
+  const next = { buildId: createHash('sha256').update(`${report.runtimeIdentity.buildId}:${name}`).digest('hex'), commit: `${name}-commit` };
   writeFileSync(join(staged, 'dist/runtime-identity.json'), `${JSON.stringify(next)}\n`);
   writeFileSync(join(staged, 'dist/build-identity.js'), `globalThis.MineBuildIdentity = Object.freeze(${JSON.stringify(next)});\n`);
   writeFileSync(join(staged, 'background.js'),
-    `${readFileSync(join(staged, 'background.js'), 'utf8')}\nglobalThis.MineNextBackground = true;\n`);
+    `${readFileSync(join(staged, 'background.js'), 'utf8')}\nglobalThis.MineNextBackground = true;\nglobalThis.__mineSmokeBackgroundBuild = ${JSON.stringify(name)};\n`);
   writeFileSync(join(staged, 'dist/overlay.js'),
     `${readFileSync(join(staged, 'dist/overlay.js'), 'utf8')}\n;globalThis.__mineSmokeOverlayBuild = ${JSON.stringify(next.buildId)};\n`);
+  if (newContentScript) {
+    const file = `lib/smoke-${name}.js`;
+    writeFileSync(join(staged, file), `globalThis.__mineSmokeContentFile = ${JSON.stringify(name)};\n`);
+    writeFileSync(join(staged, 'content.js'), `if (globalThis.__mineSmokeContentFile !== ${JSON.stringify(name)}) throw new Error("content.js without the new file of its build");\n`
+      + `globalThis.__mineSmokeContentBuild = ${JSON.stringify(name)};\n${readFileSync(join(staged, 'content.js'), 'utf8')}`);
+    const stagedManifest = JSON.parse(readFileSync(join(staged, 'manifest.json'), 'utf8'));
+    const group = stagedManifest.content_scripts.find((candidate) => candidate.js.includes('content.js'));
+    group.js.splice(group.js.indexOf('content.js'), 0, file);
+    writeFileSync(join(staged, 'manifest.json'), `${JSON.stringify(stagedManifest, null, 2)}\n`);
+  }
   const version = extensionBuildVersion();
   const worker = stampExtensionBuild(staged, version);
   return { ...next, version, workerUrl: `chrome-extension://${extensionId}/${worker}` };
+}
+
+/// Replace the copy at `installed` with the next build the way an install
+/// does: a new directory renamed into the same path.
+function installNextBuild(sandbox, installed, options) {
+  const staged = join(sandbox, 'next');
+  cpSync(installed, staged, { recursive: true });
+  const next = makeNextBuild(staged, options);
+  const previous = mkdtempSync(join(sandbox, 'previous-'));
+  renameSync(installed, join(previous, 'extension'));
+  renameSync(staged, installed);
+  return next;
+}
+
+/// Register, in `profile`, a disposable helper that reports the build of the
+/// copy at `installed` the way the real one does (UPDATE_HELPER).
+function registerUpdateHelper(sandbox, profile, installed) {
+  const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+  const hostName = readFileSync(join(installed, 'background.js'), 'utf8').match(/const HOST_NAME = "([^"]+)";/)?.[1];
+  assert.ok(hostName, 'packaged native host name is unavailable');
+  const helper = join(sandbox, 'helper.mjs');
+  writeFileSync(helper, UPDATE_HELPER);
+  const launcher = join(sandbox, 'helper');
+  writeFileSync(launcher, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(helper)} ${quote(join(installed, 'dist/runtime-identity.json'))} "$@"\n`, { mode: 0o700 });
+  mkdirSync(join(profile, 'NativeMessagingHosts'), { recursive: true });
+  writeFileSync(join(profile, `NativeMessagingHosts/${hostName}.json`), JSON.stringify({
+    name: hostName, description: 'Disposable Mine update acceptance', path: launcher,
+    type: 'stdio', allowed_origins: [`chrome-extension://${extensionId}/`],
+  }));
 }
 
 // Chromium location of an extension added with Load unpacked.
@@ -1035,21 +1145,10 @@ async function checkUpdateReloadsWorker() {
   const sandbox = mkdtempSync(join(tmpdir(), 'mine-clipper-update-'));
   const installed = join(sandbox, 'extension');
   const profile = join(sandbox, 'profile');
-  const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
   let browser;
   try {
     cpSync(extension, installed, { recursive: true });
-    const hostName = readFileSync(join(installed, 'background.js'), 'utf8').match(/const HOST_NAME = "([^"]+)";/)?.[1];
-    assert.ok(hostName, 'packaged native host name is unavailable');
-    const helper = join(sandbox, 'helper.mjs');
-    writeFileSync(helper, UPDATE_HELPER);
-    const launcher = join(sandbox, 'helper');
-    writeFileSync(launcher, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(helper)} ${quote(join(installed, 'dist/runtime-identity.json'))} "$@"\n`, { mode: 0o700 });
-    mkdirSync(join(profile, 'NativeMessagingHosts'), { recursive: true });
-    writeFileSync(join(profile, `NativeMessagingHosts/${hostName}.json`), JSON.stringify({
-      name: hostName, description: 'Disposable Mine update acceptance', path: launcher,
-      type: 'stdio', allowed_origins: [`chrome-extension://${extensionId}/`],
-    }));
+    registerUpdateHelper(sandbox, profile, installed);
     browser = await chromium.launchPersistentContext(profile, {
       channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${installed}`, `--load-extension=${installed}`],
@@ -1185,6 +1284,145 @@ async function checkUpdateReloadsWorker() {
     assert.equal((await worker.evaluate(() => chrome.storage.session.get('mineReloadPending'))).mineReloadPending, undefined);
   } finally {
     await browser?.close();
+    // Allocated above for this check only, never a user profile or extension.
+    rmSync(sandbox, { recursive: true, force: true });
+  }
+}
+
+const UPDATE_WAITS_FOR_CLIPPER = 'Mine was updated. Close the open clipper to finish the update, then open Mine again.';
+
+/// Stop the worker at `url` the way the browser stops an idle one.
+async function stopWorker(devtools, url) {
+  const { targetInfos } = await devtools.send('Target.getTargets');
+  const target = targetInfos.find((candidate) => candidate.type === 'service_worker' && candidate.url === url);
+  assert.ok(target, `no worker runs at ${url}`);
+  assert.equal((await devtools.send('Target.closeTarget', { targetId: target.targetId })).success, true);
+  await waitForTargetToClose(devtools, target.targetId);
+}
+
+/// What runs in the extension's world of the tab at `url`: the overlay
+/// bundle and the marks a build of makeNextBuild leaves there.
+function extensionWorldOf(worker, url) {
+  return worker.evaluate(async (address) => {
+    const tab = (await chrome.tabs.query({})).find((candidate) => candidate.url === address);
+    if (!tab) throw new Error(`No tab for ${address}`);
+    const [frame] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => ({
+      overlay: globalThis.__mineOverlayInstance !== undefined,
+      overlayBuild: globalThis.__mineSmokeOverlayBuild ?? null,
+      contentFile: globalThis.__mineSmokeContentFile ?? null,
+      contentBuild: globalThis.__mineSmokeContentBuild ?? null,
+      contentScript: typeof globalThis.__mineClipper,
+    }) });
+    return frame.result;
+  }, url);
+}
+
+// The icon after an update (SPEC_CLIPPER.md, К4, «Значок после обновления»,
+// 19.10.2026). The update adds a file to the manifest's content scripts and
+// changes content.js, as the update of that day added lib/pageTitle.js; the
+// background is stopped as after idling, and the icon is clicked for real
+// (Extensions.triggerAction). Stage 1: a clip of tab A waits for a page that
+// never asks for it; the click on tab B reloads the extension, and the worker
+// of the new build opens its overlay beside its own content script and its new
+// file, and keeps the clip of A again. Before 19.10.2026 that clip held the
+// reload, the reload held the opening, and the icon did nothing. Stage 2: an
+// overlay open in tab B holds the next update; the click on tab C puts no
+// file of another build into it and says so on the page; once B closes, the
+// update applies and the icon opens the overlay of that build. Runs on a copy
+// in its own profile.
+async function checkIconClickAfterUpdate() {
+  const sandbox = mkdtempSync(join(tmpdir(), 'mine-clipper-icon-update-'));
+  const installed = join(sandbox, 'extension');
+  const profile = join(sandbox, 'profile');
+  const { server, origin } = await startSite();
+  let browser;
+  try {
+    cpSync(extension, installed, { recursive: true });
+    registerUpdateHelper(sandbox, profile, installed);
+    browser = await chromium.launchPersistentContext(profile, {
+      channel: 'chromium', headless: true,
+      // Lets the browser's own protocol click the extension's icon.
+      args: [`--disable-extensions-except=${installed}`, `--load-extension=${installed}`, '--enable-unsafe-extension-debugging'],
+    });
+    let worker = browser.serviceWorkers()[0] ?? await browser.waitForEvent('serviceworker', { timeout: 15_000 });
+    await enableDeveloperMode(browser);
+    const devtools = await browser.browser().newBrowserCDPSession();
+    const clickIcon = async (page) => {
+      await page.bringToFront();
+      const { targetInfos } = await devtools.send('Target.getTargets', { filter: [{ type: 'tab' }] });
+      const tab = targetInfos.find((candidate) => candidate.url === page.url());
+      assert.ok(tab, `no tab shows ${page.url()}`);
+      await devtools.send('Extensions.triggerAction', { id: extensionId, targetId: tab.targetId });
+    };
+    const runningWorker = (url) => browser.serviceWorkers().find((candidate) => candidate.url() === url);
+    const nextWorker = (url) => {
+      const started = browser.waitForEvent('serviceworker', { timeout: 15_000, predicate: (candidate) => candidate.url() === url });
+      // A failure below closes the browser under this wait; it reports nothing.
+      started.catch(() => undefined);
+      return started;
+    };
+    const session = (key) => worker.evaluate(async (name) => (await chrome.storage.session.get(name))[name] ?? null, key);
+    const panelOf = (page) => page.locator('[data-mine-clipper-panel]');
+
+    const pageA = await browser.newPage();
+    await pageA.goto(`${origin}/a`);
+    const pageB = await browser.newPage();
+    await pageB.goto(`${origin}/b`);
+
+    // Stage 1. The overlay of A hands its clip over; A then shows a page
+    // where no content script runs, and the clip waits for the next one.
+    await clickIcon(pageA);
+    await panelOf(pageA).waitFor({ state: 'visible', timeout: 15_000 });
+    const tabA = await pollUntil(async () => (await session('mineOpenClipTabs'))?.[0], 'the overlay of A kept no clip');
+    await pageA.goto('about:blank');
+    const next = installNextBuild(sandbox, installed, { name: 'next', newContentScript: true });
+    await stopWorker(devtools, workerUrl);
+    const reloaded = nextWorker(next.workerUrl);
+    await clickIcon(pageB);
+    worker = await reloaded.catch((error) => {
+      throw new Error('the icon clicked after the update did nothing: the reload into the build on disk never came', { cause: error });
+    });
+    await panelOf(pageB).waitFor({ state: 'visible', timeout: 15_000 });
+    assert.deepEqual(await extensionWorldOf(worker, pageB.url()),
+      { overlay: true, overlayBuild: next.buildId, contentFile: 'next', contentBuild: 'next', contentScript: 'object' },
+    'the overlay of the clicked tab is not of the build on disk, beside its content script and its new file');
+    await pollUntil(async () => ((await session('mineOpenClipTabs')) ?? []).includes(tabA) || undefined,
+      'the clip of A did not cross the reload');
+    assert.equal((await session(`mineOpenClip:${tabA}`))?.version, 1);
+
+    // Stage 2. An overlay is open in B; the next update waits for it.
+    const pageC = await browser.newPage();
+    await pageC.goto(`${origin}/a?c`);
+    const third = installNextBuild(sandbox, installed, { name: 'third' });
+    await stopWorker(devtools, next.workerUrl);
+    await clickIcon(pageC);
+    const notice = pageC.locator('[data-mine-notice]').getByRole('status');
+    await notice.waitFor({ state: 'visible', timeout: 15_000 });
+    assert.equal(await notice.textContent(), UPDATE_WAITS_FOR_CLIPPER);
+    worker = await pollUntil(async () => runningWorker(next.workerUrl), 'the worker woken by the icon is gone');
+    assert.equal(runningWorker(third.workerUrl), undefined, 'the extension reloaded under an open clipper');
+    assert.equal(await session('mineReloadPending'), third.buildId);
+    const worldOfC = await extensionWorldOf(worker, pageC.url());
+    assert.deepEqual({ overlay: worldOfC.overlay, overlayBuild: worldOfC.overlayBuild }, { overlay: false, overlayBuild: null },
+      'a file of another build reached the clicked tab');
+    assert.equal(await panelOf(pageC).count(), 0);
+    assert.equal(await panelOf(pageB).isVisible(), true, 'the open clipper went with the update');
+
+    const afterClose = nextWorker(third.workerUrl);
+    await panelOf(pageB).getByRole('button', { name: 'Close', exact: true }).first().click({ timeout: 5_000 });
+    worker = await afterClose.catch((error) => {
+      throw new Error('the update did not apply once the clipper closed', { cause: error });
+    });
+    // The browser hands a click to a worker only once its script has added the
+    // listener; a person clicks long after the reload.
+    assert.equal(await worker.evaluate(() => globalThis.MineBuildIdentity?.buildId), third.buildId);
+    await clickIcon(pageC);
+    await panelOf(pageC).waitFor({ state: 'visible', timeout: 15_000 });
+    assert.equal((await extensionWorldOf(worker, pageC.url())).overlayBuild, third.buildId);
+  } finally {
+    await browser?.close();
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
     // Allocated above for this check only, never a user profile or extension.
     rmSync(sandbox, { recursive: true, force: true });
   }
@@ -1402,6 +1640,7 @@ try {
   assert.deepEqual(finalCapture.pending, []);
   await checkOverlayAcrossPages(worker);
   await checkScreenshotForAnyClip(worker);
+  await checkCropOnPageHidingEmptyElements(worker);
   await checkHeaderDragBySpaceName(worker);
   await checkCollectionsArePages(worker);
   await checkXPostWithoutPageCache(worker);
@@ -1412,6 +1651,7 @@ try {
   await checkNativeHelperReplies();
   await checkBrowserRestartRunsBuildOnDisk();
   await checkUpdateReloadsWorker();
+  await checkIconClickAfterUpdate();
   Object.assign(report, { ok: true, scope: 'chromium-extension-worker-wasm',
     fixtures: fixtures.length, headless: true, temporaryProfile: true,
     persistedHandleBlobReceipt: true, browserRestarts: 3, popupSaveToFile: true,
@@ -1420,6 +1660,7 @@ try {
     standaloneSetupTransport: true, nativeRefusalWithoutHelper: true, nativeHelperRepliesPassedOn: true, serviceWorkerRestarts: 2,
     overlayLeavesPageWorking: true, overlayClipAcrossNewDocument: true, screenshotOfShownPageForOriginalCard: true,
     screenshotOfShownPageForSaveLinkClip: true, screenshotStaysChosenAfterContent: true,
+    cropLayerShownOnPageHidingEmptyElements: true,
     overlayMovedResizedKeptAndFitted: true, overlayResizedByTopLeftCorner: true,
     overlayDraggedBySpaceName: true, spaceMenuOpensOnClickNotDrag: true, openClipClearedAfterSave: true,
     collectionsListedAsPagesOnly: true, saveIntoCollectionWithoutPageWritesNothing: true,
@@ -1428,6 +1669,8 @@ try {
     overlayOfRunningBuild: true, openPagesGetNewContentScript: true, oldContentScriptButtonsRemoved: true,
     xButtonOfNewContentScriptOpensClipper: true, xPostWithoutPageCacheReadThroughBackground: true,
     pageWorldScriptsPutIntoTabOpenBeforeReload: true,
+    iconClickAfterContentScriptUpdateReloads: true, keptClipHoldsNoUpdateAndCrossesReload: true,
+    liveClipperHoldsUpdateAndPageSaysSo: true,
     overlayStyledOnPageOnDisk: true, svgPageOpensClipperWindow: true, localStorageKeepsRecordPast10MB: true,
     filesystem: 'OPFS-not-OS-folder' });
 } catch (error) {

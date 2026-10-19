@@ -4564,6 +4564,52 @@
         "extension/lib/cafe24ProductCapture.test.ts"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "extension/content.js",
+        "extension/lib/cropLayerPageCss.test.ts",
+        "extension/lib/shopifyDawnProduct.fixtures.html"
+      ],
+      "requirement": "SPEC_CLIPPER.md###### Слой обрезки и CSS страницы",
+      "tests": [
+        "extension/lib/cropLayerPageCss.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/clipper-worker-smoke.mjs",
+        "extension/lib/shopifyDawnProduct.fixtures.html"
+      ],
+      "requirement": "SPEC_CLIPPER.md###### Слой обрезки и CSS страницы",
+      "tests": [
+        "scripts/clipper-worker-smoke.mjs"
+      ],
+      "command": "test:clipper-worker"
+    },
+    {
+      "paths": [
+        "extension/background.js",
+        "extension/background.messaging.test.ts",
+        "extension/background.connection.test.ts"
+      ],
+      "requirement": "SPEC_CLIPPER.md### Пространство для клиппера: идентичность и синхронизация (28.09.2026)",
+      "tests": [
+        "extension/background.messaging.test.ts",
+        "extension/background.connection.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/clipper-worker-smoke.mjs"
+      ],
+      "requirement": "SPEC_CLIPPER.md### Пространство для клиппера: идентичность и синхронизация (28.09.2026)",
+      "tests": [
+        "scripts/clipper-worker-smoke.mjs"
+      ],
+      "command": "test:clipper-worker"
     }
   ],
   "release": null

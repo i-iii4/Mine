@@ -444,10 +444,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // document in the tab (a link, a reload, a page back from the history cache)
 // asks for it, and the overlay opens again with the same clip
 // (SPEC_CLIPPER.md, «Доработки после живого просмотра», Р7). The close, the
-// Save and the tab's close take it away; the browser's restart and the
-// extension's reload or update clear session storage with it. The list of
-// tabs with an open clip (`OPEN_CLIP_TABS_KEY`, beside `anyEditorOpen`) is a
-// key of its own: pages read it before asking.
+// Save and the tab's close take it away; the browser's restart and a manual
+// reload of the extension clear session storage with it, and the reload into
+// an update carries it across (`carryKeptClips`). The list of tabs with an
+// open clip (`OPEN_CLIP_TABS_KEY`, beside `anyEditorOpen`) is a key of its
+// own: pages read it before asking.
 const OPEN_CLIP_PREFIX = "mineOpenClip:";
 // The clip format this version writes and opens (extension/popup/lib/openClip.ts).
 const OPEN_CLIP_VERSION = 1;
@@ -627,7 +628,12 @@ async function openClipperUiNow(tab, options) {
   // the reload into it (К4).
   const files = await filesOfRunningBuild();
   if (files === "reload") return openAfterReload(tab, { options: launchOptions(options) });
-  if (files === "refused") throw new Error(FILES_OF_ANOTHER_BUILD);
+  if (files === "refused") {
+    // The person learns why nothing opens, on the page they asked on
+    // (19.10.2026).
+    if (hasTabId(tab)) await tellInPage(tab.id, FILES_OF_ANOTHER_BUILD);
+    throw new Error(FILES_OF_ANOTHER_BUILD);
+  }
   await pageRefreshed(tab?.id);
   const { tabId, tabUrl } = await resolveClipperTarget(tab, options.fallbackUrl ?? null);
   const allowWindowFallback = options.allowWindowFallback !== false;
@@ -847,6 +853,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
 const FILES_OF_ANOTHER_BUILD = "The Mine extension files on disk do not match the running extension. Restart the browser or reload Mine on the extensions page to finish updating Mine.";
 const EXTENSION_UPDATED = "Mine was updated. Close the clipper and open it again.";
+const UPDATE_WAITS_FOR_CLIPPER = "Mine was updated. Close the open clipper to finish the update, then open Mine again.";
 
 /// `same`, `reload` (pending now) or `refused`: lib/extensionBuild.js.
 function filesOfRunningBuild() {
@@ -888,17 +895,140 @@ function takeOpeningsAfterReload() {
     (openings) => ({ next: openings === undefined ? undefined : null, result: openings }));
 }
 
-async function runOpeningsAfterReload() {
-  const openings = asRecord(await takeOpeningsAfterReload());
-  for (const [tabId, opening] of Object.entries(openings)) {
-    if (!isRecord(opening) || typeof opening.createdAt !== "number" || Date.now() - opening.createdAt > CLIPPER_LAUNCH_TTL_MS) continue;
-    let tab;
+/// The tab `tabId` names, or `null` when it is gone.
+/** @param {number} tabId @returns {Promise<TabWithId | null>} */
+async function tabStillOpen(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    return hasTabId(tab) ? tab : null;
+  } catch {
+    return null;
+  }
+}
+
+/// Whether an entry an earlier worker left is recent enough to act on.
+/** @param {unknown} entry @returns {entry is Record<string, unknown>} */
+function isRecentEntry(entry) {
+  return isRecord(entry) && typeof entry.createdAt === "number" && Date.now() - entry.createdAt <= CLIPPER_LAUNCH_TTL_MS;
+}
+
+// The clips kept for tabs whose overlay went with its page (Ч12), carried
+// across the reload, which clears session storage. They hold no update: the
+// overlay that would close them is gone, and its tab may never show a page
+// that asks for them, an `about:blank` or a page closed to extensions, which
+// left the icon dead until a manual reload (SPEC_CLIPPER.md, К4, «Значок
+// после обновления», 19.10.2026). The worker of the new build puts each back
+// and opens it in its tab; a tab that cannot hold the overlay keeps it for its
+// next document, as before.
+const KEPT_CLIPS_AFTER_RELOAD_KEY = "mineKeptClipsAfterReload";
+
+/// Carry every clip kept now. It replaces what an earlier carry left.
+async function carryKeptClips() {
+  /** @type {Record<string, { clip: KeptClip, createdAt: number }>} */
+  const carried = {};
+  for (const tabId of await keptClipTabs()) {
+    const clip = await readOpenClip(tabId);
+    if (isOpenClip(clip) && await tabStillOpen(tabId)) carried[tabId] = { clip, createdAt: Date.now() };
+  }
+  if (Object.keys(carried).length > 0) await chrome.storage.local.set({ [KEPT_CLIPS_AFTER_RELOAD_KEY]: carried });
+  else await chrome.storage.local.remove(KEPT_CLIPS_AFTER_RELOAD_KEY);
+}
+
+/// Take back a carry whose reload did not happen: the clips are still kept in
+/// session storage, and a later reload carries them again.
+function dropCarriedClips() {
+  return chrome.storage.local.remove(KEPT_CLIPS_AFTER_RELOAD_KEY);
+}
+
+/// The clips an earlier worker carried for this one, taken once.
+async function takeCarriedClips() {
+  const carried = (await chrome.storage.local.get(KEPT_CLIPS_AFTER_RELOAD_KEY))[KEPT_CLIPS_AFTER_RELOAD_KEY];
+  if (carried !== undefined) await chrome.storage.local.remove(KEPT_CLIPS_AFTER_RELOAD_KEY);
+  return asRecord(carried);
+}
+
+/// The launches that wait for a reload a live clipper holds. Each is told on
+/// its page and dropped instead of waiting for a close that may be far off:
+/// the person closes that clipper, the update applies, and the next opening
+/// is made by the worker of the new build (19.10.2026). Kept clips waiting
+/// for the reload stay.
+async function tellOpeningsHeldByClipper() {
+  const held = await changeStoredValue(chrome.storage.local, OPENINGS_AFTER_RELOAD_KEY, (stored) => {
+    const openings = asRecord(stored);
+    const launches = Object.keys(openings).filter((tabId) => isRecord(openings[tabId]) && openings[tabId].options !== undefined);
+    if (launches.length === 0) return { result: [] };
+    const rest = Object.fromEntries(Object.entries(openings).filter(([tabId]) => !launches.includes(tabId)));
+    return {
+      next: Object.keys(rest).length > 0 ? rest : null,
+      result: launches.filter((tabId) => isRecentEntry(openings[tabId])).map(Number),
+    };
+  });
+  await Promise.all((held ?? []).map((tabId) => tellInPage(tabId, UPDATE_WAITS_FOR_CLIPPER)));
+}
+
+/// Show `text` on the page of `tabId` for a moment. The page gets a function
+/// of this worker's own code, never a file from disk, which may be of another
+/// build (К4). A page closed to extensions leaves the badge to say it.
+/** @param {number} tabId @param {string} text */
+async function tellInPage(tabId, text) {
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, func: showPageNotice, args: [text] });
+  } catch (error) {
+    console.warn("[Mine] the page could not show why the clipper did not open:", failureText(error));
     try {
-      tab = await chrome.tabs.get(Number(tabId));
+      chrome.action.setBadgeText({ text: "ERR" });
+      chrome.action.setBadgeBackgroundColor({ color: "#dc2626" });
     } catch {
-      continue;
+      // Badge is cosmetic; ignore if the action API is unavailable.
     }
-    if (!hasTabId(tab)) continue;
+  }
+}
+
+/// The notice `tellInPage` puts on a page: one line in the bottom right
+/// corner, 16 px in from the window's edges like the overlay (Р10), read out
+/// without taking the keyboard (Р5), gone after a few seconds or a click. It
+/// runs in the page, so it holds everything it uses.
+/** @param {string} text */
+function showPageNotice(text) {
+  const MARK = "data-mine-notice";
+  const SHOWN_MS = 8_000;
+  for (const old of document.querySelectorAll(`[${MARK}]`)) old.remove();
+  const host = document.createElement("div");
+  host.setAttribute(MARK, "");
+  const note = document.createElement("div");
+  note.setAttribute("role", "status");
+  note.textContent = text;
+  note.style.cssText = [
+    "position:fixed", "right:16px", "bottom:16px", "z-index:2147483647", "box-sizing:border-box",
+    "max-width:min(360px,calc(100vw - 32px))", "padding:12px 14px", "border-radius:12px",
+    "background:rgba(28,28,30,0.94)", "color:#fff", "font:13px/1.4 -apple-system,BlinkMacSystemFont,system-ui,sans-serif",
+    "box-shadow:0 8px 24px rgba(0,0,0,0.24)", "cursor:default",
+  ].join(";");
+  host.attachShadow({ mode: "open" }).append(note);
+  host.addEventListener("click", () => host.remove());
+  (document.body ?? document.documentElement).append(host);
+  setTimeout(() => host.remove(), SHOWN_MS);
+}
+
+async function runOpeningsAfterReload() {
+  const carried = await takeCarriedClips();
+  const openings = asRecord(await takeOpeningsAfterReload());
+  // A clip carried across the reload comes back first; an opening of its tab
+  // below opens it, or replaces it with a launch, as without the reload.
+  for (const [tabId, kept] of Object.entries(carried)) {
+    if (!isRecentEntry(kept) || !isOpenClip(kept.clip)) continue;
+    const tab = await tabStillOpen(Number(tabId));
+    if (!tab) continue;
+    await writeOpenClip(tab.id, kept.clip);
+    if (tabId in openings) continue;
+    // A tab that cannot hold the overlay now keeps the clip for its next
+    // document (Ч12); its failure is not news.
+    void restoreOpenClipInTab(tab).catch(() => undefined);
+  }
+  for (const [tabId, opening] of Object.entries(openings)) {
+    if (!isRecentEntry(opening)) continue;
+    const tab = await tabStillOpen(Number(tabId));
+    if (!tab) continue;
     /** @param {unknown} error */
     const failed = (error) => console.warn("[Mine] the clipper did not open after the update:", failureText(error));
     if (isOpenClip(opening.restore)) {
@@ -1193,7 +1323,10 @@ function getNativePort() {
 // from this one, the extension reloads itself once the clipper is closed and
 // no save is waiting for an answer. One reload per installed build: if the
 // browser loads another folder than the one updated, the extension does not
-// reload in a loop.
+// reload in a loop. Only a live clipper holds the reload, and an opening it
+// holds is told so on its page: an opening that waits for the reload while the
+// reload waits for a clipper nobody can close left the icon dead
+// (19.10.2026).
 //
 // The running build is the one written into this worker's code: the extension
 // build puts it into dist/build-identity.js, imported when the worker starts.
@@ -1218,17 +1351,28 @@ async function reloadIfUpdated() {
   if (typeof mineReloadPending !== "string") return;
   // A save in flight finishes first; its end checks again.
   if (reloadWaits(activity)) return;
-  // Closing one clipper must not take away another one still open.
-  if (await anyEditorOpen()) return;
+  // Closing one clipper must not take away another one still open. The
+  // openings waiting for the reload are told so on their page (19.10.2026).
+  if (await anyEditorOpen()) {
+    await tellOpeningsHeldByClipper();
+    return;
+  }
   if (reloadWaits(activity)) return;
+  await carryKeptClips();
+  const { mineReloadedFor } = await chrome.storage.local.get("mineReloadedFor");
   await chrome.storage.local.set({ mineReloadedFor: mineReloadPending });
   await chrome.storage.session.remove("mineReloadPending");
   // Checked again with nothing awaited before the reload: a clipper opened,
   // a browser write begun or a save sent while the tabs were asked or storage
   // written would be cut off. The update stays pending, and the end of that
-  // work checks again (SPEC_AUDIT_FIXES.md, В4.6).
+  // work checks again (SPEC_AUDIT_FIXES.md, В4.6). The reload did not happen:
+  // an opening meanwhile must find it pending, not refused as one that
+  // happened and failed (19.10.2026).
   if (reloadWaits(activity)) {
     await chrome.storage.session.set({ mineReloadPending });
+    if (mineReloadedFor === undefined) await chrome.storage.local.remove("mineReloadedFor");
+    else await chrome.storage.local.set({ mineReloadedFor });
+    await dropCarriedClips();
     return;
   }
   // Chromium loads an unpacked extension again only while developer mode is
@@ -1302,27 +1446,49 @@ function scheduleReloadCheck() {
 // The tabs whose overlay has a clip kept for its next document (Ч12).
 const OPEN_CLIP_TABS_KEY = "mineOpenClipTabs";
 
-async function anyOpenClip() {
+/** @returns {Promise<number[]>} */
+async function keptClipTabs() {
   const tabs = (await chrome.storage.session.get(OPEN_CLIP_TABS_KEY))[OPEN_CLIP_TABS_KEY];
-  return Array.isArray(tabs) && tabs.length > 0;
+  return asList(tabs).filter((tabId) => typeof tabId === "number");
 }
 
 // Whether a clipper is open anywhere: an extension page (the window used where
-// the overlay cannot run, the folder setup page) or the overlay in some tab.
-// A browser that cannot list extension pages is treated as having one open.
+// the overlay cannot run, the folder setup page) or an overlay that says so in
+// its tab, hidden for a screenshot or a crop or still mounting included. A
+// browser that cannot list extension pages is treated as having one open. A
+// clip kept for a tab is no open clipper by itself: its overlay went with the
+// page, and the clip crosses the reload (`carryKeptClips`, 19.10.2026).
 async function anyEditorOpen() {
-  // An overlay whose page is changing is still open: its clip waits for the
-  // next document of its tab (SPEC_CLIPPER_DRAFTS_REMOVAL.md, Ч12).
-  if (await anyOpenClip()) return true;
   if (typeof chrome.runtime.getContexts !== "function") return true;
   const pages = await chrome.runtime.getContexts({ contextTypes: ["TAB", "POPUP", "SIDE_PANEL"] });
   if (pages.length > 0) return true;
+  const keeping = new Set(await keptClipTabs());
   const tabs = await chrome.tabs.query({});
   const answers = await Promise.all(tabs.map((tab) => (typeof tab.id !== "number"
     ? false
-    : chrome.tabs.sendMessage(tab.id, { action: "mineClipperIsOpen" }, { frameId: 0 })
-      .then((/** @type {unknown} */ answer) => isRecord(answer) && answer.open === true, () => false))));
+    : overlayOpenIn(tab.id, keeping.has(tab.id)))));
   return answers.some(Boolean);
+}
+
+// A tab's overlay answers at once. One that has not answered by then cannot
+// be asked: a frozen or hung page. It holds a pending update only while a clip
+// is kept for it, whose overlay may still be there (19.10.2026).
+const OVERLAY_ANSWER_TIMEOUT_MS = 2_000;
+
+/// Whether the overlay in `tabId` says it is open; `keepsClip` is the answer of
+/// a tab that does not answer in time.
+/** @param {number} tabId @param {boolean} keepsClip @returns {Promise<boolean>} */
+function overlayOpenIn(tabId, keepsClip) {
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let late;
+  /** @type {Promise<boolean>} */
+  const unanswered = new Promise((resolve) => {
+    late = setTimeout(() => resolve(keepsClip), OVERLAY_ANSWER_TIMEOUT_MS);
+  });
+  /** @type {Promise<boolean>} */
+  const answered = chrome.tabs.sendMessage(tabId, { action: "mineClipperIsOpen" }, { frameId: 0 })
+    .then((/** @type {unknown} */ answer) => isRecord(answer) && answer.open === true, () => false);
+  return Promise.race([answered, unanswered]).finally(() => clearTimeout(late));
 }
 
 // A newer helper was installed while this connection stayed open (К4). The

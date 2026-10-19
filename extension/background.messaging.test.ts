@@ -670,7 +670,7 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       const removed = worker.chrome.tabs.onRemoved.addListener.mock.calls.map(([listener]) => listener);
       removed.forEach((listener) => listener(5));
       await vi.waitFor(async () => expect(await stored(worker)).toBeNull());
-      await expect(worker.run("anyOpenClip()")).resolves.toBe(false);
+      await expect(worker.run("keptClipTabs()")).resolves.toEqual([]);
     });
 
     it("opens the overlay of a new document with the kept clip, by the icon's delivery", async () => {
@@ -731,13 +731,25 @@ describe("a clipper opening belongs to its source tab (SPEC_AUDIT_FIXES.md, Ф6)
       }));
       expect(reply).toMatchObject({ ok: false, code: "open_clip_too_large" });
       await expect(stored(worker)).resolves.toBeNull();
-      await expect(worker.run("anyOpenClip()")).resolves.toBe(false);
+      await expect(worker.run("keptClipTabs()")).resolves.toEqual([]);
     });
 
-    it("counts a kept clip as an open clipper for a pending update (К4)", async () => {
+    // A kept clip is no open clipper by itself: its overlay went with the
+    // page. Only the overlay that says so in its tab holds a pending update
+    // (SPEC_CLIPPER.md, К4, «Значок после обновления», 19.10.2026).
+    it("counts the overlay that says it is open, not a clip kept for its tab, for a pending update (К4)", async () => {
       const worker = launchWorker();
+      await write(worker, clip("Kept"));
+      worker.chrome.tabs.query.mockResolvedValue([{ id: 5, url: "about:blank" }]);
+      let overlay: Message | undefined;
+      worker.chrome.tabs.sendMessage.mockImplementation(async () => {
+        if (overlay === undefined) throw new Error("Could not establish connection. Receiving end does not exist.");
+        return overlay;
+      });
       await expect(worker.run("anyEditorOpen()")).resolves.toBe(false);
-      await write(worker, clip("Open"));
+      overlay = { open: false };
+      await expect(worker.run("anyEditorOpen()")).resolves.toBe(false);
+      overlay = { open: true };
       await expect(worker.run("anyEditorOpen()")).resolves.toBe(true);
     });
   });
@@ -961,6 +973,39 @@ describe("an extension update checks again right before the reload (SPEC_AUDIT_F
     await vi.advanceTimersByTimeAsync(0);
     expect(host.worker.chrome.runtime.reload).toHaveBeenCalledOnce();
   });
+
+  // The carry of the kept clips and the mark of the reload are written before
+  // the last check; a reload that check stops did not happen (19.10.2026).
+  it("takes back the carried clips and the reload mark when a write began right before the reload", async () => {
+    const host = updatingWorker();
+    const local = new Map<string, unknown>([["mineReloadedFor", "older-build"]]);
+    keepIn(host.worker.chrome.storage.local, local);
+    const kept = { version: 1, pageUrl: "https://a.example/story", metadata: { url: "https://a.example/story" }, title: "Kept" };
+    host.session.set("mineOpenClipTabs", [7]);
+    host.session.set("mineOpenClip:7", kept);
+    let answerTab: (tab: { id: number; url: string }) => void = () => undefined;
+    host.worker.chrome.tabs.get.mockImplementationOnce(() => new Promise((resolve) => { answerTab = resolve; }));
+    host.worker.dispatch({ target: "background", action: "mineClipperClosed" }, { tab });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(host.worker.chrome.tabs.get).toHaveBeenCalledWith(7);
+
+    const written = host.send({ action: "standaloneSave", payload: { title: "Saved during the carry" } });
+    answerTab({ id: 7, url: "about:blank" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(host.worker.chrome.runtime.reload).not.toHaveBeenCalled();
+    expect(host.session.get("mineReloadPending")).toBe("new-build");
+    expect(local.get("mineReloadedFor")).toBe("older-build");
+    expect(local.has("mineKeptClipsAfterReload")).toBe(false);
+    expect(host.session.get("mineOpenClip:7")).toMatchObject({ title: "Kept" });
+
+    host.worker.chrome.tabs.get.mockResolvedValue({ id: 7, url: "about:blank" });
+    host.finishWrite();
+    await expect(written).resolves.toMatchObject({ ok: true });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(host.worker.chrome.runtime.reload).toHaveBeenCalledOnce();
+    expect(local.get("mineReloadedFor")).toBe("new-build");
+    expect(local.get("mineKeptClipsAfterReload")).toMatchObject({ 7: { clip: { title: "Kept" } } });
+  });
 });
 
 // SPEC_CLIPPER.md, К4: what the worker reads from disk is of its own build,
@@ -1146,11 +1191,109 @@ describe("files of the running build and the pages open before it (К4)", () => 
     expect(host.chrome.runtime.reload).not.toHaveBeenCalled();
   });
 
-  it("opens nothing from files that name no build, and makes no reload pending", async () => {
+  /// Whether the worker put a file of its folder into a tab, rather than a
+  /// function of its own code.
+  const filesPut = (host: ReturnType<typeof background>) =>
+    host.chrome.scripting.executeScript.mock.calls.flatMap(([options]) => options.files ?? []);
+  /// The notices the worker put on pages: the tab and the text.
+  const notices = (host: ReturnType<typeof background>) =>
+    host.chrome.scripting.executeScript.mock.calls
+      .filter(([options]) => options.func !== undefined && options.args !== undefined)
+      .map(([options]) => [options.target.tabId, ...(options.args ?? [])]);
+  const waitsForClipper = "Mine was updated. Close the open clipper to finish the update, then open Mine again.";
+
+  it("opens nothing from files that name no build, makes no reload pending, and says why on the page", async () => {
     const host = background("promise", { fetch: async () => ({ ok: false, json: async () => ({}) }) });
     await expect(host.run(`openClipperUi(${JSON.stringify({ id: 5, url: "https://a.example/" })})`))
       .rejects.toThrow("do not match the running extension");
-    expect(host.chrome.scripting.executeScript).not.toHaveBeenCalled();
+    expect(filesPut(host)).toEqual([]);
+    expect(notices(host)).toEqual([[5, expect.stringContaining("do not match the running extension")]]);
     expect(host.chrome.storage.session.set).not.toHaveBeenCalledWith(expect.objectContaining({ mineReloadPending: expect.anything() }));
+  });
+
+  // SPEC_CLIPPER.md, К4, «Значок после обновления» (19.10.2026): the icon
+  // clicked on page B while a clip of tab A waits for a page that never asks
+  // for it (`about:blank`). The reload waited for that clip, the opening for
+  // the reload: the icon did nothing until a manual reload.
+  it("reloads for an opening while a clip waits for the next page of its tab, and brings the clip back after", async () => {
+    vi.useFakeTimers();
+    const local = new Map<string, unknown>();
+    const tabA = { id: 5, url: "about:blank" };
+    const tabB = { id: 6, url: "https://b.example/", title: "B" };
+    const before = worker("old", "new", local, [tabA, tabB]);
+    const kept = {
+      version: 1, pageUrl: "https://a.example/story", metadata: { url: "https://a.example/story", title: "Kept", selection: "", detectedType: "link" },
+      articleData: null, articleExtractionState: "idle", launchedArticle: null, linkTarget: null, title: "Kept", selectedTags: [],
+      currentType: "link", destination: { executor: "native", vaultPath: "/v", bindingId: "b", label: "/v" }, edited: true,
+    };
+    await before.host.dispatch({ target: "background", action: "openClipWrite", clip: kept },
+      { url: "https://a.example/story", frameId: 0, tab: { id: 5, url: "https://a.example/story" } }).response;
+    expect(before.session.get("mineOpenClipTabs")).toEqual([5]);
+
+    await expect(before.host.run(`openClipperUi(${JSON.stringify(tabB)})`)).resolves.toBe("deferred");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(before.host.chrome.runtime.reload).toHaveBeenCalledOnce();
+    expect(before.injected.size).toBe(0);
+    expect(local.get("mineKeptClipsAfterReload")).toMatchObject({ 5: { clip: { title: "Kept" } } });
+    vi.useRealTimers();
+
+    // The worker of the new build opens the clipper on B and keeps the clip
+    // of A again; A shows a page now, and the overlay opens there with it.
+    tabA.url = "https://c.example/later";
+    const after = worker("new", "new", local, [tabA, tabB]);
+    after.host.install("update");
+    await vi.waitFor(() => expect(after.shown).toHaveLength(2));
+    expect(after.shown).toEqual(expect.arrayContaining([
+      { tabId: 6, message: expect.objectContaining({ action: "showClipperOverlay", freshMaterial: false }) },
+      { tabId: 5, message: expect.objectContaining({ action: "showClipperOverlay", restore: expect.objectContaining({ title: "Kept" }) }) },
+    ]));
+    expect(after.session.get("mineOpenClipTabs")).toEqual([5]);
+    expect(local.has("mineKeptClipsAfterReload")).toBe(false);
+  });
+
+  it("keeps a live overlay through the update, tells the waiting opening on its page and drops it", async () => {
+    vi.useFakeTimers();
+    const local = new Map<string, unknown>();
+    const tabA = { id: 5, url: "https://a.example/" };
+    const tabB = { id: 6, url: "https://b.example/" };
+    const before = worker("old", "new", local, [tabA, tabB]);
+    let overlayOpen = true;
+    const answer = before.host.chrome.tabs.sendMessage.getMockImplementation();
+    before.host.chrome.tabs.sendMessage.mockImplementation((tabId, message, reply) =>
+      message.action === "mineClipperIsOpen" && tabId === 6 ? Promise.resolve({ open: overlayOpen }) : answer?.(tabId, message, reply));
+
+    await expect(before.host.run(`openClipperUi(${JSON.stringify(tabA)})`)).resolves.toBe("deferred");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(before.host.chrome.runtime.reload).not.toHaveBeenCalled();
+    expect(filesPut(before.host)).toEqual([]);
+    expect(notices(before.host)).toEqual([[5, waitsForClipper]]);
+    expect(local.has("mineOpeningsAfterReload")).toBe(false);
+
+    // The overlay of B closes: the update applies, and nothing opens by itself.
+    overlayOpen = false;
+    before.host.dispatch({ target: "background", action: "mineClipperClosed" }, { tab: tabB });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(before.host.chrome.runtime.reload).toHaveBeenCalledOnce();
+    expect(notices(before.host)).toHaveLength(1);
+  });
+
+  it.each([[false, "reloads"], [true, "keeps waiting"]])("with a tab that never answers and a clip kept for it %s, the update %s", async (keepsClip) => {
+    vi.useFakeTimers();
+    const local = new Map<string, unknown>();
+    const tabA = { id: 5, url: "https://a.example/" };
+    const frozen = { id: 6, url: "https://b.example/" };
+    const before = worker("old", "new", local, [tabA, frozen]);
+    if (keepsClip) {
+      before.session.set("mineOpenClipTabs", [6]);
+      before.session.set("mineOpenClip:6", { version: 1, pageUrl: frozen.url, title: "Kept" });
+    }
+    const answer = before.host.chrome.tabs.sendMessage.getMockImplementation();
+    before.host.chrome.tabs.sendMessage.mockImplementation((tabId, message, reply) =>
+      message.action === "mineClipperIsOpen" && tabId === 6 ? new Promise(() => undefined) : answer?.(tabId, message, reply));
+
+    await expect(before.host.run(`openClipperUi(${JSON.stringify(tabA)})`)).resolves.toBe("deferred");
+    await vi.advanceTimersByTimeAsync(1_000 + 2_000);
+    expect(before.host.chrome.runtime.reload).toHaveBeenCalledTimes(keepsClip ? 0 : 1);
+    expect(notices(before.host)).toEqual(keepsClip ? [[5, waitsForClipper]] : []);
   });
 });
