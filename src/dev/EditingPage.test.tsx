@@ -4,6 +4,7 @@ import { EditorView } from "@codemirror/view";
 import { useContext } from "react";
 import { NoteEditingSwitch } from "@/components/editing/noteEditingSwitch";
 import { installCodeMirrorLayoutStubs } from "@/test/codemirror";
+import { editingEditorHandle } from "./editingEditorHandle";
 
 // The page brings its own made-up backend through Tauri's internals, as the
 // browser check of row 50.29 will drive it: the real Tauri modules, not the
@@ -18,7 +19,7 @@ vi.mock("@/lib/reading/mermaid", () => ({
 }));
 
 interface EditingHandle {
-  record: { writes: Array<{ base: string; body: string; accepted: boolean }>; sessions: string[] };
+  record: { writes: Array<{ base: string; accepted: boolean; length: number; body?: string }>; sessions: string[] };
   body(): string;
   writeFromOutside(body: string): void;
 }
@@ -63,6 +64,21 @@ describe("the editing page (SPEC_EDITING.md, Л17)", () => {
     });
     await waitFor(() => expect(backend.body().split("\n")[0]).toBe("# Проверка просмотрщика: код, Mermaid, таблицы!"));
     expect(backend.record.writes.every((write) => write.accepted)).toBe(true);
+    // Only the last write keeps its body.
+    expect(backend.record.writes.slice(0, -1).every((write) => write.body === undefined)).toBe(true);
+    expect(backend.record.writes.at(-1)?.body).toBe(backend.body());
     await waitFor(() => expect(backend.record.sessions).toContain("unsaved false"));
+
+    // The handle the browser checks drive the editor by (Л17).
+    const editor = editingEditorHandle();
+    expect(await editor.text()).toBe(backend.body());
+    expect(await editor.after("# Пров")).toBe(6);
+    expect(await editor.after("no such text")).toBeNull();
+    expect(await editor.select(2)).toBe(true);
+    expect(await editor.selection()).toEqual({ anchor: 2, head: 2 });
+    const parsed = await editor.parsed();
+    expect(parsed?.length).toBe(view.state.doc.length);
+    expect(await editor.undo()).toBe(true);
+    await waitFor(() => expect(backend.body().split("\n")[0]).toBe("# Проверка просмотрщика: код, Mermaid, таблицы"));
   });
 });

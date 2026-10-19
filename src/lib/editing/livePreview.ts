@@ -60,8 +60,9 @@ export const PRESENTATION_WINDOW_MARGIN_LINES = 150;
 /** How long the first frame may parse, so it is drawn without raw markup
  *  (Л5.4). */
 export const INITIAL_PARSE_BUDGET_MS = 100;
-/** The height of a line of the article, `leading-5`: the height of a block
- *  not yet measured is its source's (Л8.2). */
+/** The height of a line of the article, `leading-5`: a block not yet
+ *  measured is as tall as its source until a block of its kind has been
+ *  measured at the column's width (Л8.2). */
 export const SOURCE_LINE_HEIGHT_PX = 20;
 /** Measured heights kept for blocks not drawn now (Л8.2). */
 export const BLOCK_HEIGHT_CACHE_LIMIT = 512;
@@ -156,8 +157,21 @@ export const omittedEmbedField = StateField.define<number | null>({
   },
 });
 
+/** A measured block: its height, and what it says of the blocks of its
+ *  kind. */
+interface MeasuredBlock {
+  height: number;
+  kind: BlockKind;
+  lines: number;
+  width: number;
+}
+
 // Measured heights by column width and source (Л8.2).
-const blockHeights = new Map<string, number>();
+const blockHeights = new Map<string, MeasuredBlock>();
+// The measured blocks of each kind at each column width, summed: how tall a
+// line of their source is drawn. A long note of tables or diagrams keeps
+// its height when they are drawn, and its scroll does not jump (Л8.2).
+const kindHeights = new Map<string, { height: number; lines: number }>();
 
 function hashText(text: string): number {
   let hash = 2166136261;
@@ -172,24 +186,56 @@ function heightKey(width: number, source: string): string {
   return `${Math.round(width)}|${source.length}|${hashText(source)}`;
 }
 
-/** The height a block with `source` measured at `width`, if known. */
-export function knownBlockHeight(width: number, source: string): number | null {
-  return blockHeights.get(heightKey(width, source)) ?? null;
+function kindKey(width: number, kind: BlockKind): string {
+  return `${Math.round(width)}|${kind}`;
 }
 
-/** Keep the measured height of a block for when it is drawn again. */
-export function rememberBlockHeight(width: number, source: string, height: number): void {
+/** Add a measured block to the sums of its kind, or take it away. */
+function countKind(block: MeasuredBlock, sign: 1 | -1) {
+  const key = kindKey(block.width, block.kind);
+  const sums = kindHeights.get(key) ?? { height: 0, lines: 0 };
+  const next = { height: sums.height + sign * block.height, lines: sums.lines + sign * block.lines };
+  if (next.lines > 0) kindHeights.set(key, next);
+  else kindHeights.delete(key);
+}
+
+/** The height a block with `source` measured at `width`, if known. */
+export function knownBlockHeight(width: number, source: string): number | null {
+  return blockHeights.get(heightKey(width, source))?.height ?? null;
+}
+
+/** The height a block of `kind` with `lines` lines of source is expected to
+ *  take at `width` before it is measured: its lines at the height a line of
+ *  the measured blocks of its kind takes, else at the article's line. */
+export function expectedBlockHeight(width: number, kind: BlockKind, lines: number): number {
+  const sums = kindHeights.get(kindKey(width, kind));
+  const perLine = sums && sums.lines > 0 ? sums.height / sums.lines : SOURCE_LINE_HEIGHT_PX;
+  return Math.round(lines * perLine);
+}
+
+/** Keep the measured height of a block of `kind` with `lines` lines of
+ *  source for when it is drawn again, and for the blocks of its kind not
+ *  measured yet. */
+export function rememberBlockHeight(width: number, source: string, height: number, kind: BlockKind, lines: number): void {
   const key = heightKey(width, source);
-  blockHeights.delete(key);
-  blockHeights.set(key, height);
+  const previous = blockHeights.get(key);
+  if (previous) {
+    countKind(previous, -1);
+    blockHeights.delete(key);
+  }
+  const measured: MeasuredBlock = { height, kind, lines, width };
+  blockHeights.set(key, measured);
+  countKind(measured, 1);
   while (blockHeights.size > BLOCK_HEIGHT_CACHE_LIMIT) {
-    const oldest = blockHeights.keys().next().value;
+    const oldest = blockHeights.entries().next().value;
     if (oldest === undefined) break;
-    blockHeights.delete(oldest);
+    blockHeights.delete(oldest[0]);
+    countKind(oldest[1], -1);
   }
 }
 
 const resizeObservers = new WeakMap<HTMLElement, ResizeObserver>();
+const drawnObservers = new WeakMap<HTMLElement, MutationObserver>();
 const mountedHosts = new WeakMap<HTMLElement, EditorWidgetHost>();
 
 function mountHosted(view: EditorView, dom: HTMLElement, widget: HostedWidget) {
@@ -204,6 +250,26 @@ function unmountHosted(dom: HTMLElement) {
   mountedHosts.delete(dom);
   resizeObservers.get(dom)?.disconnect();
   resizeObservers.delete(dom);
+  drawnObservers.get(dom)?.disconnect();
+  drawnObservers.delete(dom);
+}
+
+/** Until the host has drawn into a block's container, the container keeps
+ *  the height the block is expected to take. CodeMirror measures a new
+ *  widget in the frame it makes it, before the host's elements are in it:
+ *  an empty container would tell it the block has no height, and a note of
+ *  many blocks would jump as they enter the view (Л5.6, Л8.2). */
+function holdExpectedHeight(dom: HTMLElement, height: number) {
+  if (height <= 0 || typeof MutationObserver === "undefined") return;
+  dom.style.minHeight = `${height}px`;
+  const drawn = new MutationObserver(() => {
+    if (!dom.firstChild) return;
+    dom.style.minHeight = "";
+    drawn.disconnect();
+    drawnObservers.delete(dom);
+  });
+  drawn.observe(dom, { childList: true });
+  drawnObservers.set(dom, drawn);
 }
 
 function sameNumbers(left: readonly number[], right: readonly number[]): boolean {
@@ -233,13 +299,14 @@ export class BlockWidget extends WidgetType {
     dom.className = "cm-md-block";
     dom.setAttribute("data-editor-block", this.widget.kind);
     if (this.inList) dom.setAttribute("data-in-list", "");
+    holdExpectedHeight(dom, this.estimatedHeight);
     mountHosted(view, dom, this.widget);
     if (typeof ResizeObserver !== "undefined") {
-      const source = this.widget.source;
-      const environment = this.environment;
+      const { source, kind } = this.widget;
+      const { environment, lines } = this;
       const observer = new ResizeObserver(() => {
         const height = dom.getBoundingClientRect().height;
-        if (height > 0) rememberBlockHeight(environment.columnWidth, source, height);
+        if (height > 0) rememberBlockHeight(environment.columnWidth, source, height, kind, lines);
         view.requestMeasure();
       });
       observer.observe(dom);
@@ -257,7 +324,8 @@ export class BlockWidget extends WidgetType {
   }
 
   get estimatedHeight(): number {
-    return knownBlockHeight(this.environment.columnWidth, this.widget.source) ?? this.lines * SOURCE_LINE_HEIGHT_PX;
+    const width = this.environment.columnWidth;
+    return knownBlockHeight(width, this.widget.source) ?? expectedBlockHeight(width, this.widget.kind, this.lines);
   }
 
   ignoreEvent(): boolean {

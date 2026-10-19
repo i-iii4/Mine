@@ -914,4 +914,60 @@ mod tests {
             assert!(lines_edited > 0, "{name}");
         }
     }
+
+    /// The note of the save's time limit (Л14.3): 100 KB of prose.
+    const TIMED_NOTE_BYTES: usize = 100 * 1024;
+    /// Saves timed, one sign typed after the title each time.
+    const TIMED_SAVES: usize = 40;
+    /// Л14.3: the 95th percentile of `save_note_body` on a note of 100 KB.
+    const SAVE_P95_LIMIT: std::time::Duration = std::time::Duration::from_millis(50);
+    /// Set to `assert` by the performance check (`scripts/editing-perf-audit.mjs`),
+    /// which builds the tests optimised as the app is: the limit is asserted.
+    const SAVE_TIMING_ENV: &str = "MINE_SAVE_TIMING";
+
+    /// Л14.3: typing in a note of 100 KB, every save, from the checks to the
+    /// index, answers within `SAVE_P95_LIMIT` at the 95th percentile. The
+    /// limit is the app's, an optimised build's: the performance check builds
+    /// the tests so (`opt-level` 3, its own target folder) and asserts it
+    /// through `SAVE_TIMING_ENV`. An unoptimised test build, SQLite and
+    /// SHA-256 included, runs about ten times slower and shares the machine
+    /// with the other tests, so there the test saves and says its numbers.
+    #[test]
+    fn a_save_of_a_note_of_100_kb_answers_within_its_limit() {
+        const TITLE: &str = "# Замер записи\n\n";
+        let space = space();
+        let mut body = String::from(TITLE);
+        let mut sentence = 0;
+        while body.len() < TIMED_NOTE_BYTES {
+            body.push_str("Предложение заметки для замера записи с **жирным**, `кодом` и [ссылкой](https://example.com). ");
+            sentence += 1;
+            if sentence % 6 == 0 {
+                body.push_str("\n\n");
+            }
+        }
+        let path = note(&space, "Timed", &format!("{FRONT}{body}"));
+        let mut timings = Vec::with_capacity(TIMED_SAVES);
+        for index in 0..TIMED_SAVES {
+            let mut next = body.clone();
+            next.insert(TITLE.len(), char::from(b'a' + u8::try_from(index % 26).unwrap()));
+            let started = std::time::Instant::now();
+            let saved = save(&space, "Timed", &body, &next).unwrap();
+            timings.push(started.elapsed());
+            assert!(!saved.unchanged);
+            body = next;
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), format!("{FRONT}{body}"));
+        timings.sort();
+        let p95 = timings[(timings.len() * 95).div_ceil(100) - 1];
+        let median = timings[timings.len() / 2];
+        let asserted = std::env::var(SAVE_TIMING_ENV).is_ok_and(|value| value == "assert");
+        eprintln!(
+            "save_note_body, {} B: median {median:?}, p95 {p95:?}, limit {SAVE_P95_LIMIT:?}{}",
+            body.len(),
+            if asserted { ", asserted" } else { ", reported" },
+        );
+        if asserted {
+            assert!(p95 <= SAVE_P95_LIMIT, "save_note_body p95 {p95:?} over {SAVE_P95_LIMIT:?} (median {median:?})");
+        }
+    }
 }

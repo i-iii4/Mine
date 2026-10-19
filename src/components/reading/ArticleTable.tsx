@@ -121,9 +121,15 @@ export function ArticleTable({
       setLayout(null);
       return undefined;
     }
+    // The block's width the columns were laid out for: only its width and
+    // the font decide them, and a long table drawn in part changes its
+    // height on every scroll (SPEC_EDITING.md, Л9.12), where measuring the
+    // text of all its rows again would cost a frame.
+    let laidWidth: number | null = null;
     const lay = () => {
       const measure = pageMeasure(table);
-      const budget = measure ? wrapper.clientWidth - measure.outerBorder : 0;
+      laidWidth = wrapper.clientWidth;
+      const budget = measure ? laidWidth - measure.outerBorder : 0;
       if (!measure || budget <= 0) return;
       const next = layoutTableColumns(measureTableColumns(columns, measure), budget, measure.ch, measure.cellPadding);
       setLayout((current) => (sameLayout(current, next) ? current : next));
@@ -132,7 +138,9 @@ export function ArticleTable({
     measuredFor.current = freezeKey;
     // Frozen widths follow neither the block nor the font.
     if (freezeKey !== null) return undefined;
-    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(lay);
+    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+      if (wrapper.clientWidth !== laidWidth) lay();
+    });
     resize?.observe(wrapper);
     // The article's font is the page's choice (`data-font-content`).
     const font = new MutationObserver(lay);

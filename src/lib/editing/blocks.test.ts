@@ -137,3 +137,26 @@ describe("a block's source (Л8.1)", () => {
     expect(nested.slice(source.toDocument(letAt), source.toDocument(letAt) + 3)).toBe("let");
   });
 });
+
+describe("the limitation of a table in a mixed body (SPEC_EDITING.md, Л9, «Ограничение О1»)", () => {
+  // A body of mixed line endings keeps the `\r` before `\n` as a sign of its
+  // line (Л0.3). `@lezer/markdown` 1.7.2 takes no table whose header row or
+  // delimiter row ends with that sign; the reading mode reads `\r\n` as a
+  // line ending and draws the table. This test pins the behaviour: when the
+  // parser takes such a table, the limitation and this test go.
+  it("does not see a table whose header or delimiter row ends with a lone \\r, which the reading mode draws", () => {
+    const delimiterCr = "Абзац.\n\n| a | b |\n|---|---|\r\n| 1 | 2 |\n";
+    expect(describeBlocks(delimiterCr)).toEqual([]);
+    expect(editorSegments(delimiterCr)).toEqual(["paragraph@1", "paragraph@3"]);
+    expect(readingSegments(delimiterCr)).toEqual(["paragraph@1", "table@3"]);
+    const headerCr = "Абзац.\n\n| a | b |\r\n|---|---|\n| 1 | 2 |\n";
+    expect(describeBlocks(headerCr)).toEqual([]);
+    expect(readingSegments(headerCr)).toEqual(["paragraph@1", "table@3"]);
+  });
+
+  it("sees the table when only its body rows end with \\r", () => {
+    const rowsCr = "Абзац.\r\n\r\n| a | b |\n|---|---|\n| 1 | 2 |\r\n| 3 | 4 |\r\n";
+    expect(describeBlocks(rowsCr)).toEqual(["table@3-6"]);
+    expect(readingSegments(rowsCr)).toEqual(["paragraph@1", "table@3"]);
+  });
+});

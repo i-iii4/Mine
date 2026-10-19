@@ -44,11 +44,12 @@ describe("the table cases of the editing page (SPEC_EDITING.md, Л9, Л17)", () 
     expect(wide?.columns).toBe(30);
   });
 
-  it("answers nothing while no editor is on the page", () => {
+  it("answers nothing while no editor is on the page", async () => {
     const handle = editingTableHandle();
-    expect(handle.active()).toBeNull();
-    expect(handle.cellText()).toBe("");
-    expect(handle.menu()).toEqual([]);
-    expect(handle.command("insert-row-below")).toBe(false);
+    expect(await handle.active()).toBeNull();
+    expect(await handle.cellText()).toBe("");
+    expect(await handle.rangeCells()).toEqual([]);
+    expect(await handle.menu()).toEqual([]);
+    expect(await handle.command("insert-row-below")).toBe(false);
   });
 });

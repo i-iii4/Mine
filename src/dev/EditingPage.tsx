@@ -3,15 +3,24 @@
 // switch, over a made-up backend that keeps the note's body in memory and
 // checks every write against its base. The browser check of row 50.29 drives
 // it through `window.__editing`; a person can try the editor in a browser
-// without the app. Dev only: `main.tsx` reaches it only under `import.meta.env.DEV`.
+// without the app. The performance check of row 50.28 builds this page for
+// production and measures the editor on it (Л14). Dev only: `main.tsx`
+// reaches it only under `import.meta.env.DEV`.
+//
+// `?body=` picks the note (a variant of the fixture, a table case, a set of
+// the performance check), `?theme=light|dark` the theme, `?editing=off`
+// starts with the editor's switch off, `?open=off` with no card open.
 
-import { useMemo } from "react";
+import { useSyncExternalStore } from "react";
 import { DndContext } from "@dnd-kit/core";
 import { Detail } from "@/components/Detail";
 import { NoteEditingSwitch } from "@/components/editing/noteEditingSwitch";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import type { MineTextSelectionDragPayload } from "@/lib/textSelectionDrag";
 import type { IndexedBlock, NoteLinkQuery, SaveNoteBodyParams } from "@/types";
 import fixture from "../../scripts/fixtures/reading-mode.md?raw";
+import { editingEditorHandle, type EditingEditorHandle } from "./editingEditorHandle";
+import { perfSetBody } from "./editingPerfSets";
 import { editingTableHandle, tableCaseBody, type EditingTableHandle } from "./editingTables";
 
 /** The note the page edits, and the note its embeds and links name. */
@@ -19,14 +28,15 @@ export const EDITING_PAGE_SLUG = "Cards/Проверка просмотрщик�
 const EMBED_SLUG = "Cards/Пример заметки";
 
 /** The fixture's body: the file after its front matter. A variant of it
- *  (line endings, a byte order mark) or a table case (`tables`,
- *  `tables-crlf`, `large-table`, `wide-table`, `editingTables.ts`) comes as
+ *  (line endings, a byte order mark), a table case (`tables`,
+ *  `tables-crlf`, `large-table`, `wide-table`, `editingTables.ts`) or a set
+ *  of the performance check (`editingPerfSets.ts`) comes as
  *  `?body=<name>`. */
 function fixtureBody(): string {
   const body = fixture.replace(/^---\n[\s\S]*?\n---\n/, "");
   const variant = new URLSearchParams(window.location.search).get("body");
-  const tableCase = tableCaseBody(variant);
-  if (tableCase !== null) return tableCase;
+  const generated = tableCaseBody(variant) ?? perfSetBody(variant);
+  if (generated !== null) return generated;
   switch (variant) {
     case "crlf":
       return body.replace(/\n/g, "\r\n");
@@ -70,13 +80,56 @@ const NEUTRAL_CARD: Omit<IndexedBlock, "slug" | "body" | "body_hash" | "display_
   tags: [],
 };
 
+/** What a check switches on the page: the editor's switch (the modes of row
+ *  50.12 wait for the decision ЛВ1), the open card, or none, and the place
+ *  it opened at (Л11.8). */
+interface PageControls {
+  editing: boolean;
+  card: IndexedBlock | null;
+  anchor: string | null;
+}
+
+let controls: PageControls = {
+  editing: new URLSearchParams(window.location.search).get("editing") !== "off",
+  card: null,
+  anchor: null,
+};
+const controlListeners = new Set<() => void>();
+
+function setControls(next: Partial<PageControls>) {
+  controls = { ...controls, ...next };
+  for (const listener of controlListeners) listener();
+}
+
+function subscribeControls(listener: () => void): () => void {
+  controlListeners.add(listener);
+  return () => {
+    controlListeners.delete(listener);
+  };
+}
+
+/** What crosses Tauri's IPC is serialized there and parsed on the other
+ *  side: the made-up backend does the same work in the page, so a check of
+ *  the page pays for a body of megabytes what the app pays (Л14.3), and an
+ *  answer is a copy of its own. */
+function throughIpc<T>(value: T): T {
+  if (value === undefined) return value;
+  // The value is the command's own answer, parsed back into its own shape.
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 /** What the page's made-up backend recorded. */
 interface EditingRecord {
-  writes: Array<{ base: string; body: string; accepted: boolean }>;
+  /** Every write with its base, whether it went over it and its length;
+   *  the body only of the last one: a check of a note of megabytes would
+   *  otherwise hold every body it typed (Л14). */
+  writes: Array<{ base: string; accepted: boolean; length: number; body?: string }>;
   sessions: string[];
   calls: string[];
   /** What went to the system's clipboard as HTML with its text (Л9.7). */
   clipboard: Array<{ html: string; text: string }>;
+  /** Selections dropped to make an element of, with the collection (Л11.2). */
+  extractions: Array<{ payload: MineTextSelectionDragPayload; tag: string }>;
 }
 
 type EventHandler = (event: { event: string; id: number; payload: unknown }) => void;
@@ -97,6 +150,17 @@ interface EditingWindow {
     emit(event: string, payload: unknown): void;
     /** The table editor (Л9). */
     table: EditingTableHandle;
+    /** The note's editor: its document, its selection (Л17). */
+    editor: EditingEditorHandle;
+    /** The editor's switch on or off: off, the card shows its article. */
+    setEditing(on: boolean): void;
+    /** The card open, as the file holds it now, or closed: closed, nothing
+     *  of it stays drawn. */
+    setOpen(on: boolean): void;
+    /** Open the card at the place after `#` of a link (Л11.8). */
+    jump(anchor: string | null): void;
+    /** How long a write takes to answer, as a disk and the IPC would. */
+    setSaveDelay(ms: number): void;
   };
 }
 
@@ -106,13 +170,13 @@ function nextHash(): string {
   return `hash-${hashes}`;
 }
 
-/** Install the made-up backend before anything asks it. */
-function installBackend(initialBody: string) {
+/** Install the made-up backend before anything asks it; what it records. */
+function installBackend(initialBody: string): EditingRecord {
   // The page's window carries the made-up internals of Tauri and the handle
   // of the browser check; nothing else of the app reads these names.
   const target = window as unknown as EditingWindow;
-  if (target.__editing) return;
-  const record: EditingRecord = { writes: [], sessions: [], calls: [], clipboard: [] };
+  if (target.__editing) return target.__editing.record;
+  const record: EditingRecord = { writes: [], sessions: [], calls: [], clipboard: [], extractions: [] };
   let card: IndexedBlock = {
     ...NEUTRAL_CARD,
     slug: EDITING_PAGE_SLUG,
@@ -134,16 +198,28 @@ function installBackend(initialBody: string) {
   const notes: Record<string, string> = { "Пример заметки": EMBED_SLUG, "Проверка просмотрщика": EDITING_PAGE_SLUG };
   const callbacks = new Map<number, EventHandler>();
   let gone = false;
+  let saveDelayMs = 0;
   const listeners = new Map<number, { event: string; handler: number }>();
   let nextId = 1;
+  // A listener that goes takes its callback with it, as Tauri's own event
+  // plugin does: a closed card's session is not kept alive by the page.
+  const forget = (id: number) => {
+    const listener = listeners.get(id);
+    if (listener) callbacks.delete(listener.handler);
+    listeners.delete(id);
+  };
   const emit = (event: string, payload: unknown) => {
     for (const [id, listener] of listeners) {
       if (listener.event !== event) continue;
       callbacks.get(listener.handler)?.({ event, id, payload });
     }
   };
-  const invoke = async (command: string, args: Record<string, unknown> = {}): Promise<unknown> => {
+  const invoke = async (command: string, raw: Record<string, unknown> = {}): Promise<unknown> => {
     record.calls.push(command);
+    const args = throughIpc(raw);
+    return throughIpc(await answer(command, args));
+  };
+  const answer = async (command: string, args: Record<string, unknown>): Promise<unknown> => {
     switch (command) {
       case "get_block":
         return args.slug === card.slug ? card : args.slug === EMBED_SLUG ? embedded : null;
@@ -157,8 +233,11 @@ function installBackend(initialBody: string) {
         // The editor sends `{ params }` of this shape (commands.ts).
         const params = args.params as SaveNoteBodyParams;
         if (gone) throw { kind: "source_not_found", source_slug: card.slug };
+        if (saveDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, saveDelayMs));
         const accepted = params.base_body_hash === card.body_hash;
-        record.writes.push({ base: params.base_body_hash, body: params.body, accepted });
+        const last = record.writes[record.writes.length - 1];
+        if (last) delete last.body;
+        record.writes.push({ base: params.base_body_hash, accepted, length: params.body.length, body: params.body });
         if (!accepted) {
           throw { kind: "stale_body", source_slug: card.slug, disk_body: card.body, disk_body_hash: card.body_hash };
         }
@@ -202,7 +281,7 @@ function installBackend(initialBody: string) {
         return id;
       }
       case "plugin:event|unlisten":
-        listeners.delete(Number(args.eventId));
+        forget(Number(args.eventId));
         return null;
       case "plugin:log|log":
       case "plugin:clipboard-manager|write_text":
@@ -226,8 +305,9 @@ function installBackend(initialBody: string) {
     convertFileSrc: (path: string) => `${location.origin}/media/${encodeURIComponent(path.split("/").pop() ?? path)}`,
     metadata: { currentWindow: { label: "editing" }, currentWebview: { label: "editing" } },
   };
+  if (new URLSearchParams(window.location.search).get("open") !== "off") controls = { ...controls, card };
   target.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
-    unregisterListener: (_event: string, id: number) => listeners.delete(id),
+    unregisterListener: (_event: string, id: number) => forget(id),
   };
   target.__editing = {
     record,
@@ -242,35 +322,47 @@ function installBackend(initialBody: string) {
     },
     emit,
     table: editingTableHandle(),
+    editor: editingEditorHandle(),
+    setEditing: (on) => setControls({ editing: on }),
+    setOpen: (on) => setControls({ card: on ? card : null }),
+    jump: (anchor) => setControls({ anchor }),
+    setSaveDelay(ms) {
+      saveDelayMs = ms;
+    },
   };
+  return record;
+}
+
+/** The page's theme: `?theme=light|dark`, else the system's. */
+function applyTheme() {
+  const theme = new URLSearchParams(window.location.search).get("theme");
+  if (theme === "light" || theme === "dark") document.documentElement.setAttribute("data-theme", theme);
 }
 
 const noop = () => undefined;
 
 // The made-up backend stands before the page draws: `Detail` reads the card
 // and the editor opens its session at once.
-const PAGE_BODY = fixtureBody();
-installBackend(PAGE_BODY);
+const PAGE_RECORD = installBackend(fixtureBody());
+applyTheme();
+
+/** A selection dropped to make an element of (Л11.2): the page notes it. */
+function recordExtraction(payload: MineTextSelectionDragPayload, tag: string) {
+  PAGE_RECORD.extractions.push({ payload, tag });
+}
 
 /** `/__editing`: the open card in the editor over the made-up backend. */
 export function EditingPage() {
-  const body = PAGE_BODY;
-  const card = useMemo<IndexedBlock>(() => ({
-    ...NEUTRAL_CARD,
-    slug: EDITING_PAGE_SLUG,
-    display_title: "Проверка просмотрщика",
-    fallback_label: "Проверка просмотрщика",
-    body,
-    body_hash: "hash-1",
-  }), [body]);
+  const { editing, card, anchor } = useSyncExternalStore(subscribeControls, () => controls, () => controls);
   return (
     <TooltipProvider>
       <DndContext>
-        <NoteEditingSwitch.Provider value>
+        <NoteEditingSwitch.Provider value={editing}>
           <div style={{ display: "flex", height: "100vh" }}>
             <main style={{ position: "relative", flex: "1", minWidth: 0 }}>
-              <Detail
+              {card && <Detail
                 block={card}
+                scrollAnchor={anchor}
                 vaultPath="/vault"
                 thumbsRootPath="/thumbs"
                 tags={[]}
@@ -282,7 +374,8 @@ export function EditingPage() {
                 onRequestRename={noop}
                 onRequestDelete={noop}
                 onOpenRelatedNote={noop}
-              />
+                onTextSelectionDrop={recordExtraction}
+              />}
             </main>
           </div>
         </NoteEditingSwitch.Provider>

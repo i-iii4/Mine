@@ -117,7 +117,14 @@ export function wikilinkHref(name: string): string {
   return `${WIKILINK_HREF_PREFIX}${encodeURIComponent(name)}`;
 }
 
+/** Both kinds of wikilink start with it: a body without it has none, and
+ *  is not parsed for its code and math only to find so (a table of the
+ *  editor drawn in part takes this path on every scroll, SPEC_EDITING.md,
+ *  Л9.12). */
+const WIKILINK_OPENER = "[[";
+
 function computePreprocessedBody(body: string): PreprocessedBody {
+  if (!body.includes(WIKILINK_OPENER)) return { text: body, rewrites: [] };
   const verbatim = verbatimRanges(body);
   const found: Array<{ start: number; end: number; replacement: string }> = [];
   for (const match of body.matchAll(WIKILINK_EMBED)) {

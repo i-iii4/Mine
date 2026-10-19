@@ -3,9 +3,13 @@
 // `wide-table`, and the handle the browser check of row 50.29 drives the
 // table editor by: its state, its commands (the structure has no visible
 // controls until the decision ЛВ7), the text of the active cell. Dev only.
+//
+// The handle loads the editor's modules when the check first asks: the page
+// imports nothing of CodeMirror itself, so a build of the page splits the
+// editor off as the app does, and the performance check measures the load
+// of that part (Л0.6, Л14.3).
 
-import { EditorView } from "@codemirror/view";
-import { activeCellText, activeTable, rangeCells, runTableCommand, tableMenuCommands, type TableCommandId } from "@/lib/editing/tableEditor";
+import type { TableCommandId } from "@/lib/editing/tableEditor";
 import tables from "../../scripts/fixtures/editing-tables.md?raw";
 
 /** Rows of the long table: past the window's threshold (Л9.12, Л14.2). */
@@ -39,51 +43,53 @@ export function tableCaseBody(variant: string | null): string | null {
   }
 }
 
-/** The note's editor: by its root, whose first content is its own, not a
+/** The note's editor and the table editor's functions, loaded on demand.
+ *  The editor is found by its root, whose first content is its own, not a
  *  cell editor's inside one of its tables. */
-function mainEditor(): EditorView | null {
+async function mainEditor() {
+  const [{ EditorView }, table] = await Promise.all([import("@codemirror/view"), import("@/lib/editing/tableEditor")]);
   const root = document.querySelector<HTMLElement>(".mine-note-editor");
-  return root ? EditorView.findFromDOM(root) : null;
+  return { view: root ? EditorView.findFromDOM(root) : null, table };
 }
 
 /** What the browser check reads and drives of the table editor. */
 export interface EditingTableHandle {
   /** The active table: its place in the document and its owner. */
-  active(): { from: number; to: number; owner: unknown } | null;
+  active(): Promise<{ from: number; to: number; owner: unknown } | null>;
   /** What the active cell shows. */
-  cellText(): string;
+  cellText(): Promise<string>;
   /** What the cells of the range show, row by row. */
-  rangeCells(): string[][];
+  rangeCells(): Promise<string[][]>;
   /** The commands the open card's `Table` menu offers now. */
-  menu(): string[];
+  menu(): Promise<string[]>;
   /** Run a command of the active table, as its menu does. */
-  command(id: string): boolean;
+  command(id: string): Promise<boolean>;
 }
 
 /** The handle of `window.__editing.table`. */
 export function editingTableHandle(): EditingTableHandle {
   return {
-    active() {
-      const view = mainEditor();
-      const active = view ? activeTable(view.state) : null;
+    async active() {
+      const { view, table } = await mainEditor();
+      const active = view ? table.activeTable(view.state) : null;
       return active ? { from: active.from, to: active.to, owner: active.owner } : null;
     },
-    cellText() {
-      const view = mainEditor();
-      return view ? activeCellText(view.state) : "";
+    async cellText() {
+      const { view, table } = await mainEditor();
+      return view ? table.activeCellText(view.state) : "";
     },
-    rangeCells() {
-      const view = mainEditor();
-      return view ? rangeCells(view.state) : [];
+    async rangeCells() {
+      const { view, table } = await mainEditor();
+      return view ? table.rangeCells(view.state) : [];
     },
-    menu() {
-      const view = mainEditor();
-      return view ? tableMenuCommands(view.state).map((command) => command.id) : [];
+    async menu() {
+      const { view, table } = await mainEditor();
+      return view ? table.tableMenuCommands(view.state).map((command) => command.id) : [];
     },
-    command(id) {
-      const view = mainEditor();
+    async command(id) {
+      const { view, table } = await mainEditor();
       // The check names the commands as the menu does (`tableMenuCommands`).
-      return view ? runTableCommand(view, id as TableCommandId) : false;
+      return view ? table.runTableCommand(view, id as TableCommandId) : false;
     },
   };
 }

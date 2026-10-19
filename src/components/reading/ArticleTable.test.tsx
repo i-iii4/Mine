@@ -166,6 +166,40 @@ describe("ArticleTable: the edges that hide columns dissolve", () => {
     expect(block.style.cssText).toBe(expected);
   });
 
+  it("lays its columns out again when its block's width changes, not its height alone (SPEC_EDITING.md, Л9.12)", () => {
+    const saved = globalThis.ResizeObserver;
+    const callbacks: ResizeObserverCallback[] = [];
+    globalThis.ResizeObserver = class {
+      constructor(callback: ResizeObserverCallback) {
+        callbacks.push(callback);
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+    // Every layout measures the text on a canvas of its own.
+    const canvases = vi.mocked(HTMLCanvasElement.prototype.getContext);
+    try {
+      const { container } = renderTable(WIDE_TABLE);
+      const block = scrollBlock(container);
+      geometry(block, { scrollLeft: 0, clientWidth: 680, scrollWidth: WIDE });
+      const resize = () => act(() => {
+        for (const callback of callbacks) callback([], {} as ResizeObserver);
+      });
+      resize();
+      const laid = canvases.mock.calls.length;
+      // A long table drawn in part grows and shrinks as it scrolls.
+      resize();
+      resize();
+      expect(canvases.mock.calls.length).toBe(laid);
+      geometry(block, { scrollLeft: 0, clientWidth: 600, scrollWidth: WIDE });
+      resize();
+      expect(canvases.mock.calls.length).toBeGreaterThan(laid);
+    } finally {
+      globalThis.ResizeObserver = saved;
+    }
+  });
+
   it("follows a resize across the table's width", () => {
     const saved = globalThis.ResizeObserver;
     const callbacks: ResizeObserverCallback[] = [];

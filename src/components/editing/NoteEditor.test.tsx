@@ -290,6 +290,73 @@ describe("NoteEditor (SPEC_EDITING.md, Л2.8, Л3)", () => {
   });
 });
 
+describe("NoteEditor's accessibility (SPEC_EDITING.md, Л16)", () => {
+  function editorWith(fileName: string) {
+    return (
+      <NoteEditor
+        slug={SLUG}
+        body="- [ ] Задача из списка\n\nАбзац."
+        bodyHash="hash-0"
+        fileName={fileName}
+        vaultPath="/vault"
+        thumbsRootPath="/thumbs"
+        noteEmbeds={new NoteEmbedLookups(SLUG)}
+        image={TestImage}
+        onOpenNote={vi.fn()}
+        onSaved={vi.fn()}
+        omittedEmbed={null}
+        fallback={<p data-testid="reading">reading</p>}
+      />
+    );
+  }
+
+  it("is a multiline text box labelled by the note's file, and the label follows a rename", async () => {
+    vi.mocked(beginNoteEdit).mockResolvedValue(card("- [ ] Задача из списка\n\nАбзац.", "hash-0"));
+    const { rerender } = render(editorWith("Note.md"));
+    const view = await editorView();
+    expect(view.contentDOM).toHaveAttribute("role", "textbox");
+    expect(view.contentDOM).toHaveAttribute("aria-multiline", "true");
+    expect(screen.getByRole("textbox", { name: "Text of Note.md" })).toBe(view.contentDOM);
+    rerender(editorWith("Renamed note.md"));
+    await waitFor(() => expect(view.contentDOM).toHaveAttribute("aria-label", "Text of Renamed note.md"));
+  });
+
+  it("labels a task's box by the task's text (Ч12.7)", async () => {
+    vi.mocked(beginNoteEdit).mockResolvedValue(card("- [ ] Задача из списка\n\nАбзац.", "hash-0"));
+    render(editorWith("Note.md"));
+    await editorView();
+    const box = await screen.findByRole("checkbox");
+    const label = document.getElementById(box.getAttribute("aria-labelledby") ?? "");
+    expect(label?.textContent?.trim()).toBe("Задача из списка");
+  });
+
+  it("gives Tab to the text, and after an Escape with nothing to close lets Tab move the focus (CodeMirror's rule)", async () => {
+    vi.mocked(beginNoteEdit).mockResolvedValue(card("- [ ] Задача из списка\n\nАбзац.", "hash-0"));
+    pendingSaves();
+    render(editorWith("Note.md"));
+    const view = await editorView();
+    const paragraph = view.state.doc.length;
+    act(() => {
+      view.dispatch({ selection: { anchor: paragraph }, userEvent: "select" });
+      view.focus();
+    });
+    const press = (key: string, keyCode: number) => {
+      const event = new KeyboardEvent("keydown", { key, keyCode, bubbles: true, cancelable: true });
+      act(() => {
+        view.contentDOM.dispatchEvent(event);
+      });
+      return event;
+    };
+    const tab = press("Tab", 9);
+    expect(tab.defaultPrevented).toBe(true);
+    expect(view.state.doc.toString()).toBe("- [ ] Задача из списка\n\nАбзац.\t");
+    press("Escape", 27);
+    const leaving = press("Tab", 9);
+    expect(leaving.defaultPrevented).toBe(false);
+    expect(view.state.doc.toString()).toBe("- [ ] Задача из списка\n\nАбзац.\t");
+  });
+});
+
 describe("what a failure means and says (Л2.8, Л3.8, Л4.3, Л4.9)", () => {
   it("stops at a conflict and a note that is gone, and tries passing failures again", () => {
     expect(noteSaveDisposition({ kind: "stale_body", source_slug: SLUG, disk_body: "", disk_body_hash: "h" })).toBe("conflict");

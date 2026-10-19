@@ -1,8 +1,16 @@
 import { readFileSync } from "node:fs";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { parseReadingSyntax } from "@/lib/reading/syntax";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import type { Nodes } from "mdast";
 import { decodeLocalMarkdownUrl } from "./markdownUrl";
+// The reading parser, watched: a body without wikilinks is not parsed to
+// find none.
+vi.mock("@/lib/reading/syntax", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/lib/reading/syntax")>();
+  return { ...original, parseReadingSyntax: vi.fn(original.parseReadingSyntax) };
+});
+
 import {
   decodeLocalMarkdownUrl as reexportedDecode,
   decodeWikilinkHref,
@@ -139,6 +147,16 @@ describe("preprocessWikilinks", () => {
   it("is a no-op for bodies without wikilinks", () => {
     const input = "plain paragraph\n\nwith **bold** and `code`";
     expect(preprocessWikilinks(input)).toBe(input);
+  });
+
+  it("does not parse a body without `[[` to find no wikilink in it", () => {
+    vi.mocked(parseReadingSyntax).mockClear();
+    const table = "| a | b |\n|---|---|\n| 1 | `[x]` |";
+    expect(preprocessWikilinksWithMap(table)).toEqual({ text: table, rewrites: [] });
+    expect(parseReadingSyntax).not.toHaveBeenCalled();
+    // With one, code still keeps its wikilink as written.
+    expect(preprocessWikilinks("`[[a]]` and [[b]]")).toBe(`\`[[a]]\` and [b](${"#mine-wikilink:b"})`);
+    expect(parseReadingSyntax).toHaveBeenCalled();
   });
 
   it("keeps an embed whose filename contains a bracket", () => {

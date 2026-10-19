@@ -59,9 +59,9 @@ async function waitForServer(url, child, readLogs) {
   throw new Error(`Vite did not become ready within ${STARTUP_TIMEOUT_MS} ms.\n${readLogs()}`);
 }
 
-function runAudit(script, env, onChildChange) {
+function runAudit(script, env, onChildChange, args = []) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script], {
+    const child = spawn(process.execPath, [script, ...args], {
       cwd: process.cwd(),
       env: { ...process.env, ...env },
       detached: process.platform !== "win32",
@@ -220,6 +220,10 @@ async function main() {
     // Start and stop a Vite of their own (audit-vite.mjs).
     await runAudit("scripts/narrow-window-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/reading-mode-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/editing-audit.mjs", {}, onAuditChildChange);
+    // The browser's measures only: the Rust test of the save's time builds
+    // the tests optimised and runs with `bun run test:editing-perf`.
+    await runAudit("scripts/editing-perf-audit.mjs", {}, onAuditChildChange, ["--skip-rust"]);
   } finally {
     process.removeListener("SIGINT", interrupt);
     process.removeListener("SIGTERM", terminate);

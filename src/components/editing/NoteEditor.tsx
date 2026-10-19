@@ -17,7 +17,7 @@ import { useEffect, useMemo, useRef, useState, type ComponentProps, type Compone
 import type { ExtraProps } from "react-markdown";
 import { history, insertNewline, standardKeymap } from "@codemirror/commands";
 import { LanguageSupport, syntaxTree } from "@codemirror/language";
-import { EditorState, Prec, type Text } from "@codemirror/state";
+import { Compartment, EditorState, Prec, type Extension, type Text } from "@codemirror/state";
 import { EditorView, highlightSpecialChars, keymap } from "@codemirror/view";
 import type { NoteEmbedLookups } from "@/components/reading/NoteEmbed";
 import { ARTICLE_ROOT_CLASSES, NOTE_LINK_LOOKUP_FAILED_TITLE } from "@/components/reading/ArticleMarkdown";
@@ -109,6 +109,12 @@ const editorKeymap = Prec.high(keymap.of([
 ]));
 
 const motionKeymap = keymap.of(standardKeymap.filter((binding) => binding.key !== "Enter"));
+
+/** The field's label (Л16): CodeMirror makes its text a `textbox` with
+ *  `aria-multiline`, the label names the note's file. */
+function fieldLabel(fileName: string): Extension {
+  return EditorView.contentAttributes.of({ "aria-label": `Text of ${fileName}` });
+}
 
 /** A card with its whole body read and hashed: what a session edits. */
 type EditableCard = IndexedBlock & { body_hash: string };
@@ -316,6 +322,9 @@ interface SessionHandle {
   /** The open card shows a body of this hash: the file is asked when it is
    *  not the base (Л4.1). */
   cardBody(bodyHash: string): void;
+  /** The note's file has this name now (a rename, Л4.8): the field's label
+   *  follows it (Л16). */
+  relabel(fileName: string): void;
 }
 
 /** One edit session: the view, its queue and what it hears. */
@@ -536,6 +545,7 @@ function EditorSession({
     let published: string | null = null;
 
     let composing = false;
+    const label = new Compartment();
     editor = new EditorView({
       parent,
       state: EditorState.create({
@@ -582,8 +592,8 @@ function EditorSession({
           EditorView.contentAttributes.of({
             class: cn(ARTICLE_ROOT_CLASSES, "leading-5"),
             "data-content-font": "",
-            "aria-label": `Text of ${latest.current.fileName}`,
           }),
+          label.of(fieldLabel(latest.current.fileName)),
           EditorView.updateListener.of((update) => {
             if (update.view.composing !== composing) {
               composing = update.view.composing;
@@ -659,7 +669,13 @@ function EditorSession({
       });
     }
 
-    sessionRef.current = { queue, view: created, bom: loaded.bom, mode: loaded.mode, cardBody };
+    let labelled = latest.current.fileName;
+    const relabel = (fileName: string) => {
+      if (ended || fileName === labelled) return;
+      labelled = fileName;
+      created.dispatch({ effects: label.reconfigure(fieldLabel(fileName)) });
+    };
+    sessionRef.current = { queue, view: created, bom: loaded.bom, mode: loaded.mode, cardBody, relabel };
     setView(created);
 
     // The backend's flush (Л3.9): write now, then answer.
@@ -726,6 +742,12 @@ function EditorSession({
     if (first === bodyHash) return;
     sessionRef.current?.cardBody(bodyHash);
   }, [bodyHash]);
+
+  // The field's label names the file the note has now (Л16).
+  const { fileName } = props;
+  useEffect(() => {
+    sessionRef.current?.relabel(fileName);
+  }, [fileName]);
 
   // The place the card opened at (Л11.8), once per note and place: a body
   // written later keeps the reader where they are.

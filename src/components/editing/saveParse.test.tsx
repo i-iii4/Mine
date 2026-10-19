@@ -5,6 +5,7 @@ import { EditorView } from "@codemirror/view";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { Detail } from "@/components/Detail";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { deriveCardContent } from "@/lib/cardLayout";
 import { beginNoteEdit, noteBodyState, saveNoteBody } from "@/lib/commands";
 import { parseReadingSyntax } from "@/lib/reading/syntax";
 import { indexedBlock } from "@/test/blocks";
@@ -13,9 +14,15 @@ import type { IndexedBlock, SaveNoteBodyParams } from "@/types";
 import { NoteEditingSwitch } from "./noteEditingSwitch";
 
 // SPEC_EDITING.md, Л14: while the editor holds the note, a keystroke's write
-// parses no whole body anywhere on its way through the open card: the
-// reading mode's derivations keep the body they read, the editor's pictures
-// count their place only when an action asks.
+// parses no whole body anywhere on its way through the open card, and no
+// derivation of the card's content goes through it: the reading mode's
+// derivations keep the card they read, the editor's pictures count their
+// place only when an action asks.
+
+vi.mock("@/lib/cardLayout", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/lib/cardLayout")>();
+  return { ...original, deriveCardContent: vi.fn(original.deriveCardContent) };
+});
 
 vi.mock("@/lib/reading/syntax", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/reading/syntax")>();
@@ -101,8 +108,14 @@ function wholeBodyParses(): number {
   return inputs.filter((text) => text.length >= BODY.length / 2).length;
 }
 
+/** The derivations of the card's content (its preview text, its media) from
+ *  a whole body since the spies were cleared. */
+function wholeBodyDerivations(): number {
+  return vi.mocked(deriveCardContent).mock.calls.filter(([card]) => card.body.length >= BODY.length / 2).length;
+}
+
 describe("a keystroke's write while editing (SPEC_EDITING.md, Л14)", () => {
-  it("parses no whole body in the open card", async () => {
+  it("parses no whole body in the open card and derives nothing from one", async () => {
     const { container } = render(
       <TooltipProvider>
         <DndContext>
@@ -140,6 +153,7 @@ describe("a keystroke's write while editing (SPEC_EDITING.md, Л14)", () => {
     for (let key = 0; key < 3; key += 1) {
       vi.mocked(parseReadingSyntax).mockClear();
       vi.mocked(fromMarkdown).mockClear();
+      vi.mocked(deriveCardContent).mockClear();
       const at = view.state.doc.line(1).to;
       act(() => view.dispatch({ changes: { from: at, insert: "x" }, userEvent: "input.type" }));
       await waitFor(() => expect(disk.body.split("\n")[0]).toBe(`Абзац перед таблицей.${"x".repeat(key + 1)}`));
@@ -147,6 +161,7 @@ describe("a keystroke's write while editing (SPEC_EDITING.md, Л14)", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       });
       expect(wholeBodyParses()).toBe(0);
+      expect(wholeBodyDerivations()).toBe(0);
     }
   });
 });

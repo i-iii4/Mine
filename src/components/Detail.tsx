@@ -457,12 +457,12 @@ export function Detail({
   const [fullBlock, setFullBlock] = useState<IndexedBlock | null>(
     isIndexedBlock(block) ? block : null,
   );
-  // The body the reading mode's derivations read (SPEC_EDITING.md, Л14):
-  // every body the card is read with, but not the editor's own writes,
-  // which change the file on every keystroke while the editor holds the
-  // text. The lead media, the content's width and the article's own data
-  // are derived from it, so a keystroke parses none of them again.
-  const [readingBody, setReadingBody] = useState<string>((isIndexedBlock(block) ? block : null)?.body ?? block.body);
+  // The card the reading mode's derivations read (SPEC_EDITING.md, Л14):
+  // every card the note is read with, but not the cards of the editor's own
+  // writes, which come on every keystroke while the editor holds the text.
+  // The lead media, the content's kind and width and the article's own data
+  // are derived from it, so a keystroke goes through none of the body.
+  const [readingCard, setReadingCard] = useState<LightBlock | IndexedBlock>(block);
   const [topMenuRequestSequence, setTopMenuRequestSequence] = useState(0);
   const [topMenuOpen, setTopMenuOpen] = useState(false);
   const displayBlock = fullBlock ?? block;
@@ -482,13 +482,9 @@ export function Detail({
     && lonePictureOwnSize.mediaRef === displayBlock.media_file
     ? lonePictureOwnSize.size
     : null;
-  const layoutBlock = useMemo(
-    () => (displayBlock.body === readingBody ? displayBlock : { ...displayBlock, body: readingBody }),
-    [displayBlock, readingBody],
-  );
   const contentWidth = useMemo(
-    () => detailContentFullWidth(layoutBlock, viewportHeight, pictureOwnSize),
-    [layoutBlock, viewportHeight, pictureOwnSize],
+    () => detailContentFullWidth(readingCard, viewportHeight, pictureOwnSize),
+    [readingCard, viewportHeight, pictureOwnSize],
   );
   const isStackedLayout = detailLayoutMetrics !== null
     && detailLayout(detailLayoutMetrics.width, detailLayoutMetrics.pad, contentWidth).mode === "stacked";
@@ -510,7 +506,7 @@ export function Detail({
 
   useEffect(() => {
     setFullBlock(isIndexedBlock(block) ? block : null);
-    setReadingBody(block.body);
+    setReadingCard(block);
   }, [block]);
 
   useEffect(() => {
@@ -544,7 +540,7 @@ export function Detail({
         }
         dismissActionFailure("read-element");
         setFullBlock(full);
-        setReadingBody(full.body);
+        setReadingCard(full);
       },
       (error: unknown) => {
         if (currentBlockSlugRef.current !== slug) return;
@@ -569,18 +565,18 @@ export function Detail({
   const handleBodyWritten = useCallback((written: IndexedBlock) => {
     if (currentBlockSlugRef.current !== written.slug) return;
     setFullBlock(written);
-    setReadingBody(written.body);
+    setReadingCard(written);
   }, []);
   // The editor wrote its text: the card's fields follow it (the panel, the
-  // chrome, Л3.7); the reading mode's derivations keep the body they read
+  // chrome, Л3.7); the reading mode's derivations keep the card they read
   // (Л14), the editor holds the text.
   const handleEditedBodyWritten = useCallback((written: IndexedBlock) => {
     if (currentBlockSlugRef.current === written.slug) setFullBlock(written);
   }, []);
-  // Without the editor the card's text is the reading mode's again.
+  // Without the editor the card is the reading mode's again.
   const editingSwitch = useContext(NoteEditingSwitch);
   useEffect(() => {
-    if (!editingSwitch && fullBlock) setReadingBody(fullBlock.body);
+    if (!editingSwitch && fullBlock) setReadingCard(fullBlock);
   }, [editingSwitch, fullBlock]);
   const handleBodyStale = useCallback(() => {
     refreshFullBlock(block.slug, block);
@@ -744,7 +740,7 @@ export function Detail({
                 onCreateChannelAndTextSelectionCard={onCreateChannelAndTextSelectionCard}
                 onTextSelectionDelete={onTextSelectionDelete}
                 onLonePictureOwnSize={setLonePictureOwnSize}
-                readingBody={readingBody}
+                readingCard={readingCard}
                 onBodyWritten={handleBodyWritten}
                 onEditedBodyWritten={handleEditedBodyWritten}
                 onBodyStale={handleBodyStale}
@@ -1887,15 +1883,15 @@ function BlockContent({
   onCreateChannelAndTextSelectionCard,
   onTextSelectionDelete,
   onLonePictureOwnSize,
-  readingBody,
+  readingCard,
   onBodyWritten,
   onEditedBodyWritten,
   onBodyStale,
 }: {
   block: LightBlock | IndexedBlock;
   fullBlock: IndexedBlock | null;
-  /** The body the reading mode's derivations read (Л14). */
-  readingBody: string;
+  /** The card the reading mode's derivations read (Л14). */
+  readingCard: LightBlock | IndexedBlock;
   scrollAnchor?: string | null;
   vaultPath: string;
   thumbsRootPath?: string;
@@ -1933,16 +1929,13 @@ function BlockContent({
     [rawPreviewManifest],
   );
   // The record's source decides how the open card shows its media; the feed
-  // card's look does not (SPEC_CARD_UNIFIED.md, Е1).
-  const content = useMemo(
-    () => deriveCardContent(fullBlock ?? block),
-    [block, fullBlock],
-  );
+  // card's look does not (SPEC_CARD_UNIFIED.md, Е1). While the editor writes
+  // the text, the reading mode keeps the card it read (Л14).
+  const content = useMemo(() => deriveCardContent(readingCard), [readingCard]);
   // The whole text comes with the card read from its file (`fullBlock`,
   // read by Detail, which reports a read that fails); until then the feed's
-  // start of it. While the editor writes the text, the reading mode keeps
-  // the body it read (Л14).
-  const body = readingBody;
+  // start of it.
+  const body = readingCard.body;
   const description = "description" in block ? (block as IndexedBlock).description : null;
   const displayTitle = getDisplayTitle(block);
   const navigationLabel = getNavigationLabel(block);

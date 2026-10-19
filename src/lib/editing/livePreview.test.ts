@@ -7,10 +7,14 @@ import {
   blockField,
   counterSink,
   editorEnvironment,
+  expectedBlockHeight,
+  knownBlockHeight,
   livePreview,
   presentationCounters,
   presentationPlugin,
+  rememberBlockHeight,
   selectedBlock,
+  SOURCE_LINE_HEIGHT_PX,
   type EditorWidgetHost,
   type HostedWidget,
   type PresentationCounters,
@@ -177,6 +181,18 @@ describe("blocks (Л5.3, Л8)", () => {
     view.destroy();
   });
 
+  it("keeps a block's container at its expected height until the host draws into it (Л5.6, Л8.2)", async () => {
+    const { view, host } = makeView(BODY);
+    const [dom] = [...host.mounted.keys()];
+    if (!dom) throw new Error("one widget");
+    // Three lines of source at the article's line, nothing measured.
+    expect(dom.style.minHeight).toBe(`${3 * SOURCE_LINE_HEIGHT_PX}px`);
+    dom.appendChild(document.createElement("div"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(dom.style.minHeight).toBe("");
+    view.destroy();
+  });
+
   it("chooses a block with ↓ from the line above, shows its source with Enter, chooses it again with Escape and leaves it with Escape", () => {
     const { view, host } = makeView(BODY);
     view.dispatch({ selection: EditorSelection.cursor(2), userEvent: "select" });
@@ -216,5 +232,25 @@ describe("blocks (Л5.3, Л8)", () => {
     expect(after.from).toBe(after.to);
     expect(after.from).toBe(view.state.doc.line(3).to);
     view.destroy();
+  });
+});
+
+describe("the expected height of a block not yet drawn (Л8.2)", () => {
+  // A width no other test measures at: the sums are the module's own.
+  const WIDTH = 613;
+
+  it("takes a block's own measured height, else its lines at the height a line of its kind was measured at", () => {
+    expect(expectedBlockHeight(WIDTH, "table", 22)).toBe(22 * SOURCE_LINE_HEIGHT_PX);
+    rememberBlockHeight(WIDTH, "| a |\n|---|\n| 1 |", 90, "table", 3);
+    rememberBlockHeight(WIDTH, "| b |\n|---|\n| 2 |\n| 3 |", 120, "table", 4);
+    expect(knownBlockHeight(WIDTH, "| a |\n|---|\n| 1 |")).toBe(90);
+    // (90 + 120) / (3 + 4) = 30 a line of a table.
+    expect(expectedBlockHeight(WIDTH, "table", 22)).toBe(660);
+    // Another kind and another width know nothing of tables at this width.
+    expect(expectedBlockHeight(WIDTH, "code", 10)).toBe(10 * SOURCE_LINE_HEIGHT_PX);
+    expect(expectedBlockHeight(WIDTH + 1, "table", 22)).toBe(22 * SOURCE_LINE_HEIGHT_PX);
+    // A block measured again counts once, at its new height.
+    rememberBlockHeight(WIDTH, "| a |\n|---|\n| 1 |", 120, "table", 3);
+    expect(expectedBlockHeight(WIDTH, "table", 7)).toBe(240);
   });
 });

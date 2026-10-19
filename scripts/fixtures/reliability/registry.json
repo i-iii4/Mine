@@ -4349,7 +4349,8 @@
         "src/components/editing/noteEditMessages.ts",
         "src/components/editing/noteEditingSwitch.ts",
         "src/dev/EditingPage.tsx",
-        "src/dev/EditingPage.test.tsx"
+        "src/dev/EditingPage.test.tsx",
+        "src/dev/editingEditorHandle.ts"
       ],
       "requirement": "SPEC_EDITING.md### Л3. Сохранение",
       "tests": [
@@ -4427,6 +4428,37 @@
         "src/components/editing/openCard.test.tsx"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/dev/editingPerfSets.ts",
+        "src/dev/editingPerfSets.test.ts"
+      ],
+      "requirement": "SPEC_EDITING.md### Л14. Производительность и загрузка",
+      "tests": [
+        "src/dev/editingPerfSets.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/editing-perf-audit.mjs"
+      ],
+      "requirement": "SPEC_EDITING.md### Л14. Производительность и загрузка",
+      "tests": [
+        "scripts/editing-perf-audit.mjs"
+      ],
+      "command": "test:editing-perf"
+    },
+    {
+      "paths": [
+        "scripts/editing-audit.mjs"
+      ],
+      "requirement": "SPEC_EDITING.md### Л17. Проверки",
+      "tests": [
+        "scripts/editing-audit.mjs"
+      ],
+      "command": "test:editing"
     }
   ],
   "release": null
