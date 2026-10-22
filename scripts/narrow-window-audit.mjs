@@ -2,7 +2,8 @@
 // У7, У12; PLAN 47.3c): the production sidebar (Sidebar, useSidebarResize,
 // useSidebarOverlay, SidebarOverlay, the styles) in the page's frame, at the
 // widths of the plan. Beside the feed the sidebar keeps its target until the
-// feed reaches its narrowest, then squeezes to its own; below 740 px it
+// feed reaches its narrowest, then squeezes, past `S_min` and through the
+// compact items, to the tab bar's lead (169 at the standard chrome); below 559 px it
 // leaves the row, the feed takes the window, and the sidebar lies over the
 // feed when opened: the window less the 40 px strip wide, from the sidebar's top to
 // the window's bottom, the space switcher in it and not in the top row, the feed under a
@@ -175,7 +176,9 @@ try {
   // Where the sidebar beside the feed ends: the sidebar over the feed ends
   // there too (user's decision of 15.10.2026).
   let besideBottom = null;
-  for (const [width, sidebar] of [[1200, 360], [750, 360], [749, 359], [740, 350]]) {
+  // Past S_min (350 at 740) it keeps squeezing to S_beside, 169 at 559
+  // (user's decision of 22.10.2026).
+  for (const [width, sidebar] of [[1200, 360], [750, 360], [749, 359], [740, 350], [739, 349], [600, 210], [559, 169]]) {
     await resize(width);
     const layout = await read();
     besideBottom ??= layout.aside?.bottom ?? null;
@@ -192,7 +195,7 @@ try {
   }
 
   // Over the feed (У1, У4, У12): closed at first, the feed the whole window.
-  for (const width of [739, 400, 390]) {
+  for (const width of [558, 400, 390]) {
     await resize(width);
     let layout = await read();
     assert.equal(layout.aside, null, `${width}: no sidebar beside the feed`);
@@ -300,10 +303,10 @@ try {
     const aside = [...document.querySelectorAll("aside")].find((element) => !element.closest("[data-sidebar-overlay]"));
     return aside && aside.getBoundingClientRect().width === target && getComputedStyle(aside).transitionDuration === "0s";
   }, TARGET, { timeout: 2000 });
-  await resize(739);
+  await resize(558);
   await settle();
   motionNow = await asideMotion();
-  assert.equal(motionNow?.duration, "0.2s", "800 → 739: the sidebar moves out of the row");
+  assert.equal(motionNow?.duration, "0.2s", "800 → 558: the sidebar moves out of the row");
   await page.waitForFunction(() => ![...document.querySelectorAll("aside")].some((element) => !element.closest("[data-sidebar-overlay]")), null, { timeout: 2000 });
   // A resize that crosses nothing moves nothing.
   await resize(1000);
@@ -312,18 +315,18 @@ try {
   await settle();
   assert.equal((await asideMotion())?.duration, "0s", "1000 → 900: no motion within the row");
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await resize(739);
+  await resize(558);
   await settle();
-  assert.equal(await asideMotion(), null, "reduced motion, 900 → 739: gone at once");
+  assert.equal(await asideMotion(), null, "reduced motion, 900 → 558: gone at once");
   await resize(800);
   await settle();
   motionNow = await asideMotion();
-  assert.equal(motionNow?.width, TARGET, "reduced motion, 739 → 800: at its width at once");
+  assert.equal(motionNow?.width, TARGET, "reduced motion, 558 → 800: at its width at once");
   // global.css holds every transition to 0.01 ms with reduced motion.
   assert.ok(Number.parseFloat(motionNow.duration) < 0.001, "reduced motion: no motion");
   await resize(400);
   await read();
-  console.log("PASS 400 ↔ 800 ↔ 739: across the threshold the sidebar moves out and in over 200 ms, at once with reduced motion");
+  console.log("PASS 400 ↔ 800 ↔ 558: across the threshold the sidebar moves out and in over 200 ms, at once with reduced motion");
 
   // Widened with the sidebar open over the feed, it stands beside the feed
   // (У7); narrowed again, it comes over the feed closed.
@@ -332,9 +335,9 @@ try {
   layout = await read();
   assert.equal(layout.overlay, null, "800: nothing over the feed");
   assert.equal(layout.aside?.width, TARGET, "800: the sidebar beside the feed at its target");
-  await resize(739);
-  assert.equal((await read()).overlay, null, "739: closed after narrowing");
-  console.log("PASS 739 → 800 → 739: open over the feed becomes beside it, then over it closed");
+  await resize(558);
+  assert.equal((await read()).overlay, null, "558: closed after narrowing");
+  console.log("PASS 558 → 800 → 558: open over the feed becomes beside it, then over it closed");
 
   // A sidebar collapsed beside the feed stays collapsed across the narrow
   // window (У7).
@@ -410,8 +413,15 @@ try {
   // is the name's own (DESIGN_SYSTEM.md, «Строка боковой панели: три зоны»).
   // A zone runs from the row's edge or a guideline's far edge to the next
   // guideline or the row's other edge; each inset is measured in its zone.
+  // The trial orders the three zones of the wide rows: the sidebar, still
+  // collapsed above, opens, and since one of 360 is compact (narrower than
+  // 380, PLAN 50.36) the trial is read at 420.
   await resize(1200);
+  await toggle();
   await settle();
+  await page.evaluate(() => document.documentElement.style.setProperty("--sidebar-width", "420px"));
+  await settle();
+  assert.equal(await page.evaluate(() => [...document.querySelectorAll("aside")].find((element) => !element.closest("[data-sidebar-overlay]")).getBoundingClientRect().width), 420, "1200: the sidebar open at 420 px");
   const readColumns = () => page.evaluate(() => {
     const aside = [...document.querySelectorAll("aside")].find((element) => !element.closest("[data-sidebar-overlay]"));
     const nav = aside.querySelector("[data-sidebar-scroll]");
@@ -543,7 +553,7 @@ try {
   await settle();
   const columns = await readColumns();
   assert.deepEqual(columns, columnsBefore, "back to the default: the rows as they were");
-  console.log("PASS 1200: the sidebar rows follow the six orders and hidden columns, every column keeping its insets, and come back as they were");
+  console.log("PASS 1200, sidebar 420: the sidebar rows follow the six orders and hidden columns, every column keeping its insets, and come back as they were");
 
   assert.deepEqual(errors, []);
 } finally {

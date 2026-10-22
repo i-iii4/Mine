@@ -144,7 +144,9 @@ try {
   // the graph's and an open card with a long name stay in one row at any
   // width, the name ending in an ellipsis.
   const LONG_NAME = "пытаюсь использовать топологический анализ данных для поиска структуры в эмбеддингах";
-  for (const width of [1200, 740]) {
+  // 559 is the narrowest window with the sidebar beside the feed (169 + 390 at the standard chrome,
+  // user's decision of 22.10.2026; it was 740).
+  for (const width of [1200, 559]) {
     await page.setViewportSize({ width, height: 700 });
     for (const [label, setup] of [
       ["feed", () => { window.auditOpenCard(null); window.auditView("grid"); }],
@@ -157,12 +159,12 @@ try {
       assert.equal(state.barInHeader, true, `${width} ${label}: the half stays in the row`);
       assert.equal(state.mainTop, state.headerBottom + 1, `${width} ${label}: the feed under the row's line`);
     }
-    if (width === 740) {
+    if (width === 559) {
       const nameCut = await page.evaluate(() => {
         const name = document.querySelector("[data-secondary-detail-card-name]");
         return name.scrollWidth > name.clientWidth;
       });
-      assert.equal(nameCut, true, "740 open card: the long name ends in an ellipsis");
+      assert.equal(nameCut, true, "559 open card: the long name ends in an ellipsis");
     }
     console.log(`PASS ${width}: feed, graph and an open card with a long name keep one row`);
   }
@@ -173,7 +175,7 @@ try {
   // no switcher and no path's line before it, the name ending in an
   // ellipsis. Wide again, the switcher stands before the open card's name.
   const readPathSettled = async () => { await settle(); return page.evaluate(readPath); };
-  for (const width of [739, 600, 390]) {
+  for (const width of [558, 480, 390]) {
     await page.setViewportSize({ width, height: 700 });
     await page.evaluate(() => window.auditOpenCard(null));
     let path = await readPathSettled();
@@ -197,7 +199,7 @@ try {
     assert.ok(more.right <= close.left + 0.5, `${width} open card: ⋯ before ×`);
     assert.ok(close.right <= width && close.right >= width - 16, `${width} open card: × at the row's right end`);
     assert.equal(path.nameEllipsis, "ellipsis", `${width} open card: a name that does not fit ends in an ellipsis`);
-    // The whole row nearly holds the long name at 739; narrower, it is cut.
+    // The long name does not fit the whole row at any narrow width.
     if (width <= 600) assert.equal(path.nameCut, true, `${width} open card: the long name does not fit`);
     console.log(`PASS ${width}: no card, the place starts the row; an open card's name, ⋯ and × take the whole row`);
   }

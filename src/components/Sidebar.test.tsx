@@ -835,9 +835,9 @@ describe("Sidebar", () => {
     expect(alphaAction).toHaveStyle({ width: "calc(var(--sidebar-zone) - 16px)" });
     expect(betaAction).toHaveStyle({ width: "calc(var(--sidebar-zone) - 16px)" });
     // 8px from the meta zone, which a trial order may move (PLAN 47.6).
-    expect(betaAction.style.right).toBe("calc(var(--sidebar-meta-right, 0px) + 8px)");
+    expect(betaAction.style.right).toBe("calc(var(--sidebar-meta-right, 0px) + var(--sidebar-action-inset, 8px))");
     expect(alphaAction).toHaveClass("absolute");
-    expect(alphaAction.style.right).toBe("calc(var(--sidebar-meta-right, 0px) + 8px)");
+    expect(alphaAction.style.right).toBe("calc(var(--sidebar-meta-right, 0px) + var(--sidebar-action-inset, 8px))");
     expect(alphaAction.closest("a")).toBeNull();
     expect(screen.getByText("5")).not.toHaveClass("opacity-0");
     expect(betaAction).toHaveClass("opacity-0");
@@ -2050,6 +2050,69 @@ describe("sidebar thumbnail placeholders while previews load", () => {
       expect(strip.querySelectorAll("[data-sidebar-preview-thumbnail]")).toHaveLength(1);
       expect(strip.querySelectorAll("[data-sidebar-preview-placeholder]")).toHaveLength(3);
     });
+  });
+});
+
+describe("sidebar compact rows (PLAN 50.36)", () => {
+  const thumb = (slug: string) => ({
+    slug,
+    url: `asset://localhost/thumbs/${slug}.jpg`,
+    text: false,
+    hasThumb: true,
+  });
+  const stackOf = (container: HTMLElement, rowKey: string) =>
+    container.querySelector(`[data-sidebar-row-key="${rowKey}"] [data-sidebar-compact-stack]`);
+
+  it("stacks the first three thumbnails at the item's end, the 7.23 stack at 32px", () => {
+    const { container } = renderSidebar({
+      ...defaultProps,
+      orderedTags: [tag("alpha", 5)],
+      channelPreviews: new Map([["alpha", ["a", "b", "c", "d"].map((slug) => thumb(`alpha-${slug}`))]]),
+    });
+    const stack = stackOf(container, "tag:alpha") as HTMLElement;
+    expect(stack.closest("[data-sidebar-meta-cell]")).not.toBeNull();
+    expect(stack.style.height).toBe("32px");
+    const cards = stack.querySelectorAll<HTMLElement>('[data-sidebar-stack-card="trigger"]');
+    expect(cards).toHaveLength(3);
+    // One projection: every card laid out at the front one's place, moved
+    // toward the vanishing point and scaled by 0.88^d; on hover the bottom
+    // card stays and the ones above slide toward the name, the top one 3px:
+    // only the place moves.
+    expect(cards[0]!.style.width).toBe("32px");
+    expect(new Set(Array.from(cards, (card) => card.style.left))).toEqual(new Set(["0px"]));
+    const place = (x: string, y: string, scale: string) => `translate(${x}px, ${y}px) scale(${scale})`;
+    expect(cards[2]!.style.transformOrigin).toBe("center");
+    expect(cards[2]!.style.getPropertyValue("--channel-icon-rest")).toBe(place("0", "0", "1"));
+    expect(cards[2]!.style.getPropertyValue("--channel-icon-hover")).toBe(place("-3", "0", "1"));
+    expect(cards[1]!.style.getPropertyValue("--channel-icon-rest")).toBe(place("7.594", "0", "0.88"));
+    expect(cards[1]!.style.getPropertyValue("--channel-icon-hover")).toBe(place("6.19", "0", "0.88"));
+    expect(cards[0]!.style.getPropertyValue("--channel-icon-rest")).toBe(place("14.276", "0", "0.774"));
+    expect(cards[0]!.style.getPropertyValue("--channel-icon-hover")).toBe(place("14.276", "0", "0.774"));
+    expect(stack.style.getPropertyValue("--channel-icon-easing")).toMatch(/^linear\(0, .*, 1\)$/);
+    expect(stack.style.getPropertyValue("--channel-icon-duration")).toBe("441ms");
+    // The strip keeps its own tiles; the stack's are not counted among them.
+    expect(container.querySelectorAll('[data-sidebar-row-key="tag:alpha"] [data-sidebar-preview-thumbnail="trigger"]')).toHaveLength(4);
+  });
+
+  it("keeps the count one node of the item and draws no stack without cards", () => {
+    const { container } = renderSidebar({
+      ...defaultProps,
+      orderedTags: [tag("empty", 0), tag("alpha", 5)],
+      channelPreviews: new Map([["empty", []], ["alpha", [thumb("alpha-a")]]]),
+    });
+    expect(screen.getByText("5")).toHaveAttribute("data-sidebar-meta-count");
+    expect(container.querySelector('[data-sidebar-row-key="tag:alpha"] [data-sidebar-row-body]')).not.toBeNull();
+    expect(stackOf(container, "tag:empty")).toBeNull();
+    const single = stackOf(container, "tag:alpha")!.querySelector<HTMLElement>("[data-channel-icon-card]")!;
+    expect(single.style.getPropertyValue("--channel-icon-hover")).toBe(single.style.getPropertyValue("--channel-icon-rest"));
+  });
+
+  it("holds placeholder cards while the thumbnails are on the way", () => {
+    const { container } = renderSidebar({
+      ...defaultProps,
+      orderedTags: [tag("alpha", 2)],
+    });
+    expect(stackOf(container, "tag:alpha")!.querySelectorAll("[data-sidebar-stack-placeholder]")).toHaveLength(2);
   });
 });
 

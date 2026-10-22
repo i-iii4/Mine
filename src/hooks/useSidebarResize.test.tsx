@@ -1,7 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SidebarLayout } from "@/types";
-import { SIDEBAR_MAX_WIDTH_PX, SIDEBAR_MIN_WIDTH_PX } from "@/lib/appLayout";
+import { SIDEBAR_MAX_WIDTH_PX, SIDEBAR_MIN_WIDTH_PX, sidebarBesideMinWidthPx } from "@/lib/appLayout";
 import { SIDEBAR_WIDTH_MOTION_MS, useSidebarResize } from "./useSidebarResize";
 
 const commands = vi.hoisted(() => ({
@@ -13,7 +13,9 @@ vi.mock("@/lib/commands", () => ({
 }));
 
 describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", () => {
-  const min = () => SIDEBAR_MIN_WIDTH_PX;
+  // A drag and a stored width go down to the compact item's minimum
+  // (PLAN 50.36); a page that is not a tab still starts at S_min.
+  const min = () => sidebarBesideMinWidthPx();
 
   const wideWindow = window.innerWidth;
 
@@ -286,8 +288,8 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
 
   it("keeps the layout in memory on a page that is not a tab, and nothing in localStorage", () => {
     const { result } = renderHook(() => useSidebarResize(null));
-    // The first-run width is the window's; without a window, the minimum.
-    expect(result.current.width).toBe(min());
+    // The first-run width is the window's; without a window, S_min.
+    expect(result.current.width).toBe(SIDEBAR_MIN_WIDTH_PX);
 
     act(() => result.current.toggleCollapsed());
 

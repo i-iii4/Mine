@@ -4610,6 +4610,35 @@
         "scripts/clipper-worker-smoke.mjs"
       ],
       "command": "test:clipper-worker"
+    },
+    {
+      "paths": [
+        "src/components/ChannelIcon.tsx",
+        "src/lib/channelIcon.ts",
+        "src/lib/channelIcon.test.ts",
+        "src/lib/textClip.ts",
+        "src/lib/textClip.test.ts",
+        "src/components/ChannelIcon.test.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#### Компактная строка боковой панели (22.10.2026)",
+      "tests": [
+        "src/components/Sidebar.test.tsx",
+        "src/lib/channelIcon.test.ts",
+        "src/lib/textClip.test.ts",
+        "src/components/ChannelIcon.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/hooks/useChromeRowHeight.ts",
+        "src/hooks/useChromeRowHeight.test.tsx"
+      ],
+      "requirement": "SPEC_NARROW_WINDOW.md### Правила",
+      "tests": [
+        "src/hooks/useChromeRowHeight.test.tsx"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

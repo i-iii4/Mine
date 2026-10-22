@@ -1,65 +1,24 @@
-import type { PreviewCard } from "@/types";
+import type { ComponentPropsWithoutRef } from "react";
+import { cn } from "@/lib/utils";
+import { channelIconBoxStyle } from "@/lib/channelIcon";
 
-interface ChannelIconProps {
-  cards: PreviewCard[];
-  hovered?: boolean;
-}
+// The PLAN 7.23 stack of mini-cards, the previews of a compact sidebar item;
+// its geometry lives in src/lib/channelIcon.ts.
 
-const CARD = 24;
-const SPREAD = 4; // px horizontal spread between cards
-const MAX_CARDS = 3;
-const FIXED_W = CARD + SPREAD * (MAX_CARDS - 1); // always 32px
+/** The mini-card's own look: square (user's decision of 22.10.2026: sharp
+ *  corners, as the table's), on the feed skeleton's fill, with the light
+ *  shadow of the floating layers' scale (К11, `shadow-sm`). Its edge is the
+ *  buttons' (К10), drawn over the image by global.css («Compact rows»). */
+export const CHANNEL_ICON_CARD_CLASS = "absolute top-0 overflow-hidden rounded-0 bg-accent shadow-sm";
 
-export function ChannelIcon({ cards, hovered = false }: ChannelIconProps) {
-  // No cards — reserve space but render nothing
-  if (cards.length === 0) {
-    return <div className="shrink-0" style={{ width: FIXED_W, height: CARD }} />;
-  }
-
-  const items = cards.slice(0, 3);
-  // Animate only when multiple cards can spread
-  const canAnimate = items.length > 1;
-
+/** The stack's box; the cards inside are placed by `channelIconCardStyle`. */
+export function ChannelIcon({ style, className, ...props }: ComponentPropsWithoutRef<"span">) {
   return (
-    <div
-      className="relative shrink-0"
-      style={{ width: FIXED_W, height: CARD }}
-    >
-      {items.map((card, i) => (
-        <div
-          key={i}
-          className="absolute top-0 overflow-hidden rounded-2 border border-background"
-          style={{
-            left: (items.length - 1 - i) * SPREAD,
-            width: CARD,
-            height: CARD,
-            zIndex: i,
-            transition: canAnimate ? "transform 350ms cubic-bezier(0.4, 0, 0.2, 1)" : "none",
-            ...(i === items.length - 1
-              ? {
-                  transformOrigin: "center right",
-                  transform: canAnimate && hovered ? "translateX(-1px) rotate(-1deg)" : "none",
-                }
-              : {
-                  transformOrigin: "bottom left",
-                  transform: canAnimate && hovered
-                    ? `translateX(${(items.length - 1 - i) + (items.length - 1 - i >= 2 ? 1 : 0)}px) rotate(${(items.length - 1 - i) * 2 + (items.length - 1 - i) * 1}deg)`
-                    : `rotate(${(items.length - 1 - i) * 2}deg)`,
-                }),
-          }}
-        >
-          <MiniCard card={card} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function MiniCard({ card }: { card: PreviewCard }) {
-  return (
-    <div
-      className="h-full w-full bg-accent bg-cover bg-center"
-      style={{ backgroundImage: `url(${card.url})` }}
+    <span
+      {...props}
+      className={cn("relative shrink-0", className)}
+      style={{ ...style, ...channelIconBoxStyle() }}
+      data-channel-icon=""
     />
   );
 }

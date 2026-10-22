@@ -37,3 +37,40 @@ export function applyChromeRowHeight(height: number): void {
   if (height === TALL_CHROME_ROW_HEIGHT) root.setAttribute("data-chrome-height", "40");
   else root.removeAttribute("data-chrome-height");
 }
+
+/** The page's top rows' content height now, as its root shows it. */
+export function currentChromeRowHeight(): number {
+  if (typeof document === "undefined") return TALL_CHROME_ROW_HEIGHT;
+  return document.documentElement.getAttribute("data-chrome-height") === "40"
+    ? TALL_CHROME_ROW_HEIGHT
+    : STANDARD_CHROME_ROW_HEIGHT;
+}
+
+/** Call `onChange` whenever the page's top rows change height. */
+export function subscribeToChromeRowHeight(onChange: () => void): () => void {
+  if (typeof MutationObserver === "undefined") return () => {};
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-chrome-height"] });
+  return () => observer.disconnect();
+}
+
+/** The traffic lights' reserve at the standard row (TabBar.tsx): the lights
+ *  move right by half of what the row grows, and the reserve with them
+ *  (SPEC_TABS.md, В83). */
+export const TRAFFIC_LIGHT_RESERVE_PX = 80;
+
+export function trafficLightReservePx(row: number): number {
+  return TRAFFIC_LIGHT_RESERVE_PX + (row - STANDARD_CHROME_ROW_HEIGHT) / 2;
+}
+
+/** The tab bar's lead before the first tab's line (TabBar.tsx): the lights'
+ *  reserve, the sidebar's toggle, back and forward (`chrome-icon`, 24 each,
+ *  `gap-1` apart) and `pr-2` to the line. 168 at the standard row, 172.5 at
+ *  the tall one. */
+const CHROME_ICON_PX = 24;
+const CHROME_ICON_GAP_PX = 4;
+const TAB_BAR_LEAD_END_PAD_PX = 8;
+
+export function tabBarLeadWidthPx(row: number): number {
+  return trafficLightReservePx(row) + 3 * CHROME_ICON_PX + 2 * CHROME_ICON_GAP_PX + TAB_BAR_LEAD_END_PAD_PX;
+}

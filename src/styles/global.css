@@ -1605,6 +1605,232 @@ body {
   width: auto;
 }
 
+/* The name's dissolve toward its zone's end (Sidebar.tsx publishes it), only
+   while the name does not fit (textClip.ts): a name that ends inside its
+   zone stays whole (user's decision of 22.10.2026). */
+[data-sidebar-name-cell][data-text-clipped] {
+  -webkit-mask-image: var(--sidebar-name-mask);
+  mask-image: var(--sidebar-name-mask);
+}
+
+/* Compact rows (PLAN 50.36, experiment of 22.10.2026; DESIGN_SYSTEM.md,
+   «Компактная строка боковой панели»). A list narrower than 366.2px (a panel
+   narrower than 367.2px) shows fewer than 2.8 thumbnails before the
+   previews' edge (user's decision of 22.10.2026) (appLayout.ts, sidebarCompactRowsBelowPx; MUST equal the
+   number below, sidebarColumns.test.ts holds both). There the list is
+   shadcn/ui's Sidebar menu with its own sizes, on Mine's tokens: the group's
+   inset `p-2` (--spacing-plate), items `gap-1` apart (--spacing-surface), each
+   item a `size="lg"` menu button: 48 tall (--spacing-s6), `p-2`, `gap-2`, the
+   name and under it the count, the 7.23 stack at the right in the avatar's
+   place, the row's state layer (`state-active`, `rounded-1`) over the whole
+   item on hover and on the open collection. No zones, guidelines or seams.
+   Connect, Connected and Disconnect stand as `SidebarMenuAction` does,
+   `right-1` (--spacing-surface), over the stack. The container is the list's
+   scrollport (and the lifted copy of a row), not the panel, so the curtain of
+   a collapse moves the layout no earlier than the list narrows. Above the
+   threshold nothing here applies. */
+[data-sidebar-scroll],
+[data-sidebar-drag-row] {
+  container: sidebar-rows / inline-size;
+}
+[data-sidebar-compact-stack] {
+  display: none;
+}
+[data-sidebar-count-noun] {
+  display: none;
+}
+@container sidebar-rows (width < 366.2px) {
+  /* SidebarGroup `p-2` holding the menu; items 1px apart (user's decision
+     of 22.10.2026, instead of shadcn's `gap-1`). */
+  [data-sidebar-rows] {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: var(--spacing-plate);
+  }
+  [data-sidebar-guidelines],
+  [data-sidebar-editable-row-guideline],
+  [data-sidebar-preview-rail] {
+    display: none;
+  }
+  [data-sidebar-row-surface]::after {
+    display: none;
+  }
+  /* Insets of an item: the button's padding is its rows' inset, the zones'
+     leads and the trial's offsets are gone, actions stand at `right-1`. */
+  [data-sidebar-row],
+  [data-sidebar-tag-drag-preview] {
+    --sidebar-row-pad-x: var(--spacing-plate);
+    --sidebar-name-lead: 0px;
+    --sidebar-meta-lead: 0px;
+    --sidebar-meta-right: 0px;
+    --sidebar-action-inset: var(--spacing-surface);
+  }
+  /* SidebarMenuButton `size="lg"`: the name and «N elements» under it
+     (shadcn's `leading-tight` block) beside the stack. */
+  [data-sidebar-row-body] {
+    --sidebar-row-pad-x: 0px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    /* The name's 16px line, the surface gap, the count's 12px line: 32
+       inside the padding, as before. */
+    grid-template-rows: var(--text-sm--line-height) var(--text-sm);
+    row-gap: var(--spacing-surface);
+    column-gap: var(--spacing-plate);
+    align-content: center;
+    min-height: var(--spacing-s6);
+    padding: var(--spacing-plate);
+    border-radius: var(--radius-1);
+  }
+  /* The lifted copy draws its own 1px frame: the same text inside it. */
+  [data-sidebar-tag-drag-preview] > [data-sidebar-row-body] {
+    min-height: 0;
+    padding-block: 0;
+    padding-inline: calc(var(--spacing-plate) - 1px);
+  }
+  /* First line: the name, primary. It dissolves at its end by the wide
+     rows' rule (--sidebar-name-mask: the same fade and clear tail), before
+     the stack, or before Connect while it is there (user's decision of
+     22.10.2026; no ellipsis). The optical pixel stays in its padding, so
+     names keep their 17px. */
+  [data-sidebar-name-cell] {
+    grid-column: 1;
+    grid-row: 1;
+    width: auto;
+    min-width: 0;
+    line-height: var(--text-sm--line-height);
+    color: var(--foreground);
+  }
+  /* An empty collection has no second line: its name stands in the middle
+     of the item, as a one-line menu button's does. */
+  [data-sidebar-row-body]:has(> [data-sidebar-meta-count]:empty) [data-sidebar-name-cell] {
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+  /* Second line: «N elements», `text-sm` mono on the tertiary step
+     (shadcn's `truncate text-xs`), 12px whatever the interface size, its line
+     as tall as its font, dissolving at its end as the name does. It no
+     longer gives way to Connect. */
+  [data-sidebar-meta-count] {
+    position: static;
+    grid-column: 1;
+    grid-row: 2;
+    display: block;
+    width: auto;
+    min-width: 0;
+    padding-left: 1px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-align: left;
+    translate: none;
+    opacity: 1;
+    font-size: var(--text-sm);
+    line-height: var(--text-sm);
+  }
+  /* The count dissolves as the name does, only while it does not fit. */
+  [data-sidebar-meta-count][data-text-clipped] {
+    -webkit-mask-image: var(--sidebar-name-mask);
+    mask-image: var(--sidebar-name-mask);
+  }
+  /* The tertiary step (SPEC_COLOR_RULES.md, К8): quieter than the name
+     by two steps, whatever state the item is in. */
+  [data-sidebar-row] [data-sidebar-meta-count][data-sidebar-row-text][data-sidebar-meta-count][data-sidebar-meta-count] {
+    color: var(--tertiary-foreground);
+  }
+  /* The stack in the avatar's place, across both lines. */
+  [data-sidebar-meta-cell] {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    width: auto;
+  }
+  [data-sidebar-compact-stack] {
+    display: block;
+  }
+  [data-sidebar-count-noun] {
+    display: inline;
+  }
+  /* While Connect, Disconnect or Connected is there, the lines end
+     `gap-2` before it (shadcn's `pr-8` beside a SidebarMenuAction): the
+     column under the action is the action's width less the inset it gains
+     by standing at `right-1` instead of on the padding. */
+  [data-sidebar-row]:has(> [data-sidebar-link-action]) [data-sidebar-meta-cell],
+  [data-sidebar-row]:has(> [data-sidebar-row-connected-pill][data-state="on"]) [data-sidebar-meta-cell] {
+    min-width: calc(var(--sidebar-zone) - 2 * var(--spacing-plate) - var(--spacing-plate) + var(--spacing-surface));
+  }
+  /* The state layer over the whole item: the pointer's or the keyboard's
+     row at once, the state that lifts a wide row's name (С7.10), and the open
+     collection. Only the stack's fan waits for the hover-intent engine
+     (below). The weight never changes (user's decision of 22.10.2026). */
+  [data-sidebar-scroll][data-sidebar-row-focus-mode="true"] [data-sidebar-row-focused="true"] > [data-sidebar-row-body],
+  [data-sidebar-scroll][data-sidebar-row-focus-mode="true"] [data-sidebar-row-focused="true"] [data-sidebar-create-channel-row-body],
+  [data-sidebar-scroll]:not([data-sidebar-link-editor-mode="true"]) [data-sidebar-row-active="true"] > [data-sidebar-row-body] {
+    @apply state-active;
+  }
+  /* New Collection and a name being typed: items of the same step. */
+  [data-sidebar-create-channel-row-body],
+  [data-sidebar-editable-row-body] {
+    min-height: var(--spacing-s6);
+    padding-bottom: 0;
+    border-radius: var(--radius-1);
+  }
+  /* Hidden columns of the trial (PLAN 47.6) stay hidden; the order has
+     nothing to order here. Hiding the count leaves the stack. */
+  :root[data-sidebar-hide-meta]:not([data-sidebar-hide-previews]) [data-sidebar-meta-cell] {
+    display: flex;
+  }
+  :root[data-sidebar-hide-previews] [data-sidebar-compact-stack] {
+    display: none;
+  }
+}
+/* The deck opens on the hover-intent engine's lift answer, the feed cards'
+   rule (С8.6; user's decision of 22.10.2026): at once below the lifting
+   speed and held while the pointer stays on the item, so only a fast pass
+   moves no card; the keyboard's row at once (`data-sidebar-row-answer`,
+   Sidebar.tsx, SidebarAnswerRowContext). It moves on one critically damped
+   spring both ways (src/lib/channelIcon.ts: `--channel-icon-easing`, a
+   `linear()` computed from the spring's equation, and
+   `--channel-icon-duration`, its settling time); a transition retargets from
+   the current place, so an interrupted move goes on from where it is. The
+   bottom card stays; the cards above it slide toward the name. Only the place
+   moves; sizes and shadows stay, nothing turns. With "Reduce motion" the
+   cards stay at rest. */
+/* The mini-card's edge is the buttons' (user's decision of 22.10.2026;
+   SPEC_COLOR_RULES.md, К10; buttons.css, «Buttons: macOS»): a 0.5px stroke
+   inside the box, a step and a half of the quiet line brighter than the
+   card's face (its own fill, --accent), `--macos-outline-step` per theme.
+   Drawn over the image, which would cover an inset shadow on the card, and
+   inside the box, so the card keeps its size. */
+[data-channel-icon-card]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  box-shadow: inset 0 0 0 0.5px oklch(from var(--accent) clamp(0, calc(l + var(--macos-outline-step)), 1) 0 0);
+  pointer-events: none;
+}
+/* The card under the pointer, by the thumbnail preview's intent rule (its
+   preview is the one shown, С7.10), works its edge out from the face with the
+   state layer, as a hovered button's does (buttons.css: --macos-outline-from
+   on hover; К10), at once, as the buttons' edge changes. */
+[data-channel-icon-card][data-sidebar-preview-active="true"]::after {
+  box-shadow: inset 0 0 0 0.5px oklch(from color-mix(in srgb, var(--accent), var(--foreground) var(--active-alpha)) clamp(0, calc(l + var(--macos-outline-step)), 1) 0 0);
+}
+[data-channel-icon-card] {
+  transform: var(--channel-icon-rest);
+  transition: transform var(--channel-icon-duration) var(--channel-icon-easing);
+}
+[data-sidebar-scroll] [data-sidebar-row-answer="true"] [data-channel-icon-card] {
+  transform: var(--channel-icon-hover);
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-sidebar-scroll] [data-sidebar-row-answer="true"] [data-channel-icon-card] {
+    transform: var(--channel-icon-rest);
+  }
+}
+
 /* The sidebar over the feed in a narrow window (SPEC_NARROW_WINDOW.md, У4,
    У5; SidebarOverlay.tsx). Its scrim is the shared one (`.modal-scrim`
    above) over the feed and the strip; here it only fades in and out while

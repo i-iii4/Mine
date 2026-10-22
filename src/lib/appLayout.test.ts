@@ -5,8 +5,11 @@ import {
   APP_MIN_WIDTH_PX,
   SIDEBAR_MIN_WIDTH_PX,
   SIDEBAR_OVERLAY_STRIP_PX,
+  sidebarBesideMinWidthPx,
   sidebarEqualZonesWidth,
+  sidebarOverlayBelowPx,
 } from "./appLayout";
+import { STANDARD_CHROME_ROW_HEIGHT, TALL_CHROME_ROW_HEIGHT, tabBarLeadWidthPx } from "./chromeHeight";
 
 /** The value of `pub const <name>: u32 = <value>;` in the Rust source. */
 function rustConstant(source: string, name: string): number {
@@ -39,6 +42,25 @@ describe("window widths", () => {
     expect(rust).toContain("pub const WINDOW_MIN_WIDTH: f64 = WINDOW_MIN_WIDTH_PX as f64;");
     expect(APP_MIN_WIDTH_PX).toBe(390);
     expect(APP_MIN_WIDTH_PX).toBeGreaterThanOrEqual(SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX);
+  });
+
+  it("restate the narrowest sidebar beside the feed in Rust, and go narrow below it plus the feed (22.10.2026)", () => {
+    // The tab bar's lead before the first tab and the panel's border.
+    expect(sidebarBesideMinWidthPx(STANDARD_CHROME_ROW_HEIGHT)).toBe(169);
+    expect(sidebarBesideMinWidthPx(TALL_CHROME_ROW_HEIGHT)).toBe(173.5);
+    // Rust keeps the widest, rounded up.
+    expect(Math.ceil(sidebarBesideMinWidthPx(TALL_CHROME_ROW_HEIGHT))).toBe(rustConstant(rust, "SIDEBAR_BESIDE_MIN_WIDTH_PX"));
+    expect(sidebarOverlayBelowPx(STANDARD_CHROME_ROW_HEIGHT)).toBe(559);
+    expect(sidebarOverlayBelowPx(TALL_CHROME_ROW_HEIGHT)).toBe(563.5);
+    // The narrowest window is always narrow.
+    expect(APP_MIN_WIDTH_PX).toBeLessThan(sidebarOverlayBelowPx(STANDARD_CHROME_ROW_HEIGHT));
+    expect(rust).toContain("&& WINDOW_MIN_WIDTH_PX < SIDEBAR_BESIDE_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX");
+  });
+
+  it("put the sidebar's edge under the first tab's line at either chrome height", () => {
+    expect(tabBarLeadWidthPx(STANDARD_CHROME_ROW_HEIGHT)).toBe(80 + 3 * 24 + 2 * 4 + 8);
+    expect(tabBarLeadWidthPx(TALL_CHROME_ROW_HEIGHT)).toBe(84.5 + 3 * 24 + 2 * 4 + 8);
+    expect(sidebarBesideMinWidthPx(TALL_CHROME_ROW_HEIGHT) - 1).toBe(tabBarLeadWidthPx(TALL_CHROME_ROW_HEIGHT));
   });
 
   it("make the feed's minimum the window's, one value for both (16.10.2026)", () => {

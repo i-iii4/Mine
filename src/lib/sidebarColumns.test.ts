@@ -4,11 +4,18 @@ import {
   SIDEBAR_COLUMN_MIN_PX,
   SIDEBAR_ROW_ACTION_BUTTON_PX,
   SIDEBAR_ROW_ACTION_GAP_PX,
+  sidebarBesideMinWidthPx,
+  SIDEBAR_NAME_MAX_PX,
+  sidebarCompactRowsBelowPx,
   sidebarEqualZonesWidth,
+  sidebarNameColumnPx,
+  sidebarPreviewCellPx,
+  sidebarThreeThumbnailsCellPx,
   sidebarNameFloor,
   sidebarReserved,
   sidebarZoneWidth,
 } from "./appLayout";
+import { TALL_CHROME_ROW_HEIGHT } from "./chromeHeight";
 
 /// The sidebar row reads as three zones: name, previews, meta. A zone is the
 /// distance between two guidelines — or between a guideline and the panel edge
@@ -62,5 +69,24 @@ describe("sidebar zone contract", () => {
 
   it("splits every extra pixel of width evenly between name and previews", () => {
     expect(css).toContain("(var(--sidebar-width) - var(--sidebar-equal-zones-width)) / 2");
+  });
+
+  it("goes compact where the previews stop showing 2.8 thumbnails (PLAN 50.36, 22.10.2026)", () => {
+    const below = sidebarCompactRowsBelowPx();
+    // Two 32px tiles with their 4px gaps and 0.8 of a third, the 1px
+    // guideline and 4px gap before them, the 24px dissolve and the 4px edge
+    // gap after them.
+    expect(sidebarThreeThumbnailsCellPx()).toBeCloseTo(1 + 4 + 2 * 36 + 0.8 * 32 + 24 + 4, 6);
+    expect(below).toBe(366.2);
+    expect(sidebarPreviewCellPx(below)).toBeCloseTo(sidebarThreeThumbnailsCellPx(), 6);
+    expect(sidebarPreviewCellPx(below - 1)).toBeLessThan(sidebarThreeThumbnailsCellPx());
+    // Solved on the name's growing stretch, which the threshold lies on.
+    expect(sidebarNameColumnPx(below)).toBeLessThan(SIDEBAR_NAME_MAX_PX);
+    expect(css).toContain(`@container sidebar-rows (width < ${below}px)`);
+  });
+
+  it("drags down to the tab bar's lead, always compact (PLAN 50.36)", () => {
+    // The list is the panel less its border, at the widest chrome.
+    expect(sidebarBesideMinWidthPx(TALL_CHROME_ROW_HEIGHT) - 1).toBeLessThan(sidebarCompactRowsBelowPx());
   });
 });

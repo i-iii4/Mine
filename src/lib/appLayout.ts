@@ -1,3 +1,6 @@
+import { currentChromeRowHeight, tabBarLeadWidthPx } from "./chromeHeight";
+import { EDGE_FADE_WIDTH } from "./edgeFade";
+
 // The widths a window is laid out by (SPEC_NARROW_WINDOW.md, «Величины»).
 // The backend owns the ones it needs itself: SIDEBAR_MIN_WIDTH_PX,
 // WINDOW_MIN_WIDTH_PX (and APP_MAIN_MIN_WIDTH_PX, the same value) and
@@ -118,6 +121,87 @@ export function sidebarReserved(): number {
 export function sidebarEqualZonesWidth(): number {
   // Three zones, the two guidelines between them, and the nav's own insets.
   return sidebarZoneWidth() * 3 + 2 + SIDEBAR_NAV_PAD_PX * 2;
+}
+
+// ── Compact rows ────────────────────────────────────────────────────────────
+// Experiment of 22.10.2026 (PLAN 50.36, DESIGN_SYSTEM.md, «Компактная строка
+// боковой панели»): below a width the rows drop the three zones, the count goes
+// under the name and the previews become the 7.23 stack of three mini-cards
+// in the meta zone. The width is not chosen; it is where the previews stop
+// showing three thumbnails clear of their edge.
+
+/// One tile of the thumbnail strip (`size-8`) and the gap between two (`gap-1`).
+const SIDEBAR_PREVIEW_TILE_PX = 32;
+const SIDEBAR_PREVIEW_TILE_GAP_PX = 4;
+/// The panel's own right border (`border-r` on the sidebar): the rows are this
+/// much narrower than `--sidebar-width`.
+const SIDEBAR_PANEL_BORDER_PX = 1;
+
+/** The previews' cell that shows 2.8 thumbnails before its edge: the
+ *  guideline's pixel and the divider gap before them, the three tiles and two
+ *  gaps, the 24px dissolve the strip ends in (`EDGE_FADE_WIDTH`) and the
+ *  divider gap the dark theme keeps after it (global.css, «Previews' right
+ *  edge»). One geometry for both themes: the light theme cuts the strip where
+ *  the dark one dissolves it. */
+/// How many thumbnails the strip shows when the rows turn compact: 2.8
+/// (user's decision of 22.10.2026), two whole tiles and most of a third.
+const SIDEBAR_COMPACT_VISIBLE_THUMBNAILS = 2.8;
+
+export function sidebarThreeThumbnailsCellPx(): number {
+  const whole = Math.floor(SIDEBAR_COMPACT_VISIBLE_THUMBNAILS);
+  const tiles = whole * (SIDEBAR_PREVIEW_TILE_PX + SIDEBAR_PREVIEW_TILE_GAP_PX)
+    + (SIDEBAR_COMPACT_VISIBLE_THUMBNAILS - whole) * SIDEBAR_PREVIEW_TILE_PX;
+  return 1 + SIDEBAR_PREVIEW_DIVIDER_GAP_PX + tiles + EDGE_FADE_WIDTH + SIDEBAR_PREVIEW_DIVIDER_GAP_PX;
+}
+
+/** The rows' width below which they are compact (the `sidebar-rows`
+ *  container query in global.css). The previews' cell is what the row leaves
+ *  after the name's zone and the meta zone with its guideline:
+ *  `R − (pad + nameCol) − (1 + zone)`, and in the narrow panels this concerns
+ *  the name's column is `floor + (W − equal)/2` with `W = R + border`
+ *  (`--sidebar-name-col`). Solved for the cell that shows three thumbnails.
+ *  MUST equal the number in global.css; `sidebarColumns.test.ts` holds both. */
+export function sidebarCompactRowsBelowPx(): number {
+  const cell = sidebarThreeThumbnailsCellPx();
+  const rows = 2 * (cell + SIDEBAR_ROW_PAD_PX + sidebarNameFloor() + 1 + sidebarZoneWidth())
+    + SIDEBAR_PANEL_BORDER_PX
+    - sidebarEqualZonesWidth();
+  // To a tenth of a pixel, as global.css writes it.
+  return Math.round(rows * 10) / 10;
+}
+
+/** The name's column in rows `rowsWidth` wide, as `--sidebar-name-col` gives
+ *  it from the panel's width. */
+export function sidebarNameColumnPx(rowsWidth: number): number {
+  const panel = rowsWidth + SIDEBAR_PANEL_BORDER_PX;
+  return Math.min(SIDEBAR_NAME_MAX_PX, Math.max(sidebarNameFloor(), sidebarNameFloor() + (panel - sidebarEqualZonesWidth()) / 2));
+}
+
+/** The previews' cell in rows `rowsWidth` wide. */
+export function sidebarPreviewCellPx(rowsWidth: number): number {
+  return rowsWidth - (SIDEBAR_ROW_PAD_PX + sidebarNameColumnPx(rowsWidth)) - (1 + sidebarZoneWidth());
+}
+
+/** Narrowest the sidebar beside the feed gets (`S_beside`), where a drag of
+ *  the edge and a narrow window's squeeze both stop: the tab bar's lead
+ *  before the first tab and the panel's border, so the sidebar's edge stands
+ *  under the first tab's line (user's decision of 22.10.2026). It follows the
+ *  chrome's height: 169 at the standard row, 173.5 at the tall one. A width
+ *  this narrow is always compact. domain/windows.rs restates the tall one,
+ *  rounded up, as `SIDEBAR_BESIDE_MIN_WIDTH_PX`; appLayout.test.ts holds the
+ *  two equal. */
+export function sidebarBesideMinWidthPx(chromeRow: number = currentChromeRowHeight()): number {
+  return tabBarLeadWidthPx(chromeRow) + SIDEBAR_PANEL_BORDER_PX;
+}
+
+/** The window's width below which the sidebar leaves the row and lies over the
+ *  feed, and the whole window goes narrow (SPEC_NARROW_WINDOW.md, У1, У12,
+ *  У13, У15): the narrowest sidebar beside the feed and the narrowest feed,
+ *  `S_beside + F_min`. User's decision of 22.10.2026: the window goes narrow
+ *  only once the sidebar, compact, can shrink no further (it was
+ *  `S_min + F_min`, 740). */
+export function sidebarOverlayBelowPx(chromeRow: number = currentChromeRowHeight()): number {
+  return sidebarBesideMinWidthPx(chromeRow) + APP_MAIN_MIN_WIDTH_PX;
 }
 
 // The first-run width is the window's: the backend starts every window's

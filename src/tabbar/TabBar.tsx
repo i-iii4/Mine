@@ -45,6 +45,7 @@ import {
   toggleWindowSidebar,
 } from "@/lib/commands";
 import { motionDuration } from "@/lib/motion";
+import { STANDARD_CHROME_ROW_HEIGHT, TRAFFIC_LIGHT_RESERVE_PX } from "@/lib/chromeHeight";
 import { cn } from "@/lib/utils";
 import type { DropHover, TabBarState, TabBarTab, TabId } from "@/types";
 import { DROP_MARKER_WIDTH_PX, TAB_REORDER_EASING, TAB_REORDER_MOTION_MS } from "./constants";
@@ -91,6 +92,12 @@ export const BACK_LABEL = "Back";
 export const FORWARD_LABEL = "Forward";
 export const SETTINGS_MENU_LABEL = "Mine settings";
 export const SEARCH_LABEL = "Find elements";
+
+/** The traffic lights' reserve, as trafficLightReservePx gives it, on the
+ *  row's own height. */
+const TRAFFIC_LIGHT_RESERVE_STYLE = {
+  width: `calc(${TRAFFIC_LIGHT_RESERVE_PX}px + (var(--chrome-row-content-height) - ${STANDARD_CHROME_ROW_HEIGHT}px) / 2)`,
+};
 
 const PRIMARY_BUTTON = 0;
 const MIDDLE_BUTTON = 1;
@@ -572,14 +579,16 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
         <div
           {...windowDrag}
           data-traffic-light-reserve=""
-          className="h-full w-[calc(80px+(var(--chrome-row-content-height)-30px)/2)] shrink-0"
+          className="h-full shrink-0"
+          style={TRAFFIC_LIGHT_RESERVE_STYLE}
         />
       )}
       <div
         {...windowDrag}
         className={cn(
           // Icon buttons 4px apart; the first tab's line 8px past the last
-          // one (DESIGN_SYSTEM.md, «Иконочные кнопки хрома»).
+          // one (DESIGN_SYSTEM.md, «Иконочные кнопки хрома»). The sidebar's
+          // narrowest width follows this lead (tabBarLeadWidthPx).
           "flex h-full shrink-0 items-center gap-1 pr-2",
           // Without the reserve the first button stands on the chrome's edge
           // inset, like the last one at the right edge.

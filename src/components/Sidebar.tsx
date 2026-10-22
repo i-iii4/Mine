@@ -57,10 +57,12 @@ import { buttonVariants } from "@/components/ui/button";
 import {
   CONNECT_ACTION_BUTTON_CLASS,
   SIDEBAR_PREVIEW_DIVIDER_GAP_PX,
+  sidebarBesideMinWidthPx,
   SIDEBAR_PREVIEW_SLOTS,
   SIDEBAR_ROW_ACTION_GAP_PX,
 } from "@/lib/appLayout";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
+import { observeTextClip } from "@/lib/textClip";
 import {
   applySelectionMembership,
   setHoveredCollectionRow,
@@ -73,12 +75,29 @@ import { SIDEBAR_THUMBNAIL_DRAG_ID_PREFIX, type BlockDragData } from "@/lib/bloc
 import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
 import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
 import { TopFadeScrim } from "./TopFadeScrim";
+import { useChromeRowHeight } from "@/hooks/useChromeRowHeight";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { SIDEBAR_WIDTH_MOTION_MS } from "@/hooks/useSidebarResize";
 import { ReadOnlyCardPreview } from "./Card";
 import { MicroPreviewThumbnail, microPreviewFromPreviewCard } from "./MicroPreviewThumbnail";
+import { CHANNEL_ICON_CARD_CLASS, ChannelIcon } from "./ChannelIcon";
+import { CHANNEL_ICON_MAX_CARDS, channelIconCardStyle } from "@/lib/channelIcon";
 
 const SIDEBAR_PREVIEW_WIDTH = 240;
+/// The panel's box. The nav freezes at the three equal zones, as it always
+/// did, or at the panel's own width when a drag took it narrower (compact
+/// items, PLAN 50.36), never below the compact item's minimum: a collapse
+/// slides the curtain over the list at the width it had, down to that. The
+/// panel's 1px border is outside the nav. Computed here, on the panel, so the
+/// sidebar over the feed reads its own `--sidebar-width`.
+function sidebarPanelStyle(widthAnimating: boolean, chromeRow: number): CSSProperties {
+  // A custom property by construction; CSSProperties has no key for it.
+  return {
+    width: "var(--sidebar-width)",
+    transition: widthAnimating ? `width ${SIDEBAR_WIDTH_MOTION_MS}ms ease` : "none",
+    "--sidebar-nav-min-width": `max(${sidebarBesideMinWidthPx(chromeRow) - 1}px, min(var(--sidebar-equal-zones-width), var(--sidebar-width) - 1px))`,
+  } as CSSProperties;
+}
 const SIDEBAR_PREVIEW_FALLBACK_HEIGHT = 320;
 const SIDEBAR_PREVIEW_GAP = 8;
 const SIDEBAR_PREVIEW_VIEWPORT_MARGIN = 16;
@@ -101,7 +120,9 @@ const SIDEBAR_ROW_ACTION_BUTTON_INSET = SIDEBAR_ROW_ACTION_BUTTON_GAP;
 /// Where Connect and Connected stand from the row's right edge: the inset
 /// from the meta zone's edge, the zone moved by a trial order of the columns
 /// (`--sidebar-meta-right`, sidebarColumnLayout.ts, PLAN 47.6; 0 by default).
-const SIDEBAR_ROW_META_ACTION_RIGHT = `calc(var(--sidebar-meta-right, 0px) + ${SIDEBAR_ROW_ACTION_BUTTON_INSET}px)`;
+/// A compact item stands them as shadcn stands `SidebarMenuAction`, `right-1`
+/// (`--sidebar-action-inset`, global.css, «Compact rows»).
+const SIDEBAR_ROW_META_ACTION_RIGHT = `calc(var(--sidebar-meta-right, 0px) + var(--sidebar-action-inset, ${SIDEBAR_ROW_ACTION_BUTTON_INSET}px))`;
 const SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 /// The air between the previews and the right guideline, set by the theme:
@@ -155,10 +176,21 @@ const SIDEBAR_NAME_OPTICAL_SHIFT_PX = 1;
 /// ends on the guideline (the next column owns its pixel), so the tail stays
 /// inside the name's own zone wherever the column stands.
 const SIDEBAR_NAME_CLEAR_TAIL = SIDEBAR_PREVIEW_DIVIDER_GAP - SIDEBAR_NAME_OPTICAL_SHIFT_PX;
-const SIDEBAR_ROW_TEXT_MASK_STYLE = createRightFadeMaskStyle(
-  SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH,
-  SIDEBAR_NAME_CLEAR_TAIL,
-);
+/// The name's dissolve, published as a custom property that global.css
+/// applies (`[data-sidebar-name-cell][data-text-clipped]`), the compact
+/// item's count with it («Compact rows»).
+const SIDEBAR_ROW_TEXT_MASK_STYLE = {
+  "--sidebar-name-mask": String(
+    createRightFadeMaskStyle(SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH, SIDEBAR_NAME_CLEAR_TAIL).maskImage,
+  ),
+} as CSSProperties;
+
+/// A name or count cell dissolves only while its text does not fit
+/// (`data-text-clipped`, global.css); a text that ends inside it stays whole.
+/// A callback ref: React runs the teardown it returns.
+function trackTextClip(cell: HTMLElement | null) {
+  return cell ? observeTextClip(cell, SIDEBAR_NAME_CLEAR_TAIL) : undefined;
+}
 
 /// The previews' dissolve toward their own cell's end, with no tail: the cell
 /// itself stops short of the guideline by the divider gap, and nothing of the
@@ -287,6 +319,19 @@ interface SidebarProps {
  *  a prop through the row components. */
 const SidebarOpenElsewhereContext = createContext<((to: string, newWindow: boolean) => void) | null>(null);
 
+/** The row a compact item's stack opens for (PLAN 50.36; user's decisions
+ *  of 22.10.2026: a quick pass over the list moves no card, and an arriving
+ *  pointer opens it at once). For the pointer it is the hover-intent
+ *  engine's `raised`, the feed cards' lift rule (SPEC_CARD_STATES.md, С8.6):
+ *  at once below the lifting speed, held while the pointer stays on the row
+ *  at any speed, so only a sweep across the list opens nothing. The
+ *  keyboard, a drop target and a name being typed answer at once
+ *  (`immediate`). The wide rows' names keep answering the raw pointer at once
+ *  (С7.10, user's decision of 02.10.2026). A context, not a prop: it changes
+ *  only with the engine's answer, and only the rows' frames read it. */
+type SidebarAnswerRows = { pointer: string | null; immediate: string | null };
+const SidebarAnswerRowContext = createContext<SidebarAnswerRows>({ pointer: null, immediate: null });
+
 export function Sidebar(props: SidebarProps) {
   const { over } = useDndContext();
   const dropOverId = props.isDropDragging && over?.id != null ? String(over.id) : null;
@@ -329,6 +374,9 @@ const SidebarCore = memo(function SidebarCore({
   detailChromeClosing = false,
   scrollEdgeFade = false,
 }: SidebarProps & { dropOverId: string | null }) {
+  // The panel's narrowest follows the tab bar's lead, which the chrome's
+  // height moves (sidebarBesideMinWidthPx).
+  const chromeRow = useChromeRowHeight();
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const navRef = useRef<HTMLElement>(null);
   const topFade = useTopFadeMask(navRef, scrollEdgeFade);
@@ -375,8 +423,10 @@ const SidebarCore = memo(function SidebarCore({
   // its collection (С3) and the big preview of a thumbnail. The row's own
   // name, count and button answer the pointer at once (С7.10, user's
   // decision of 02.10.2026): they are the most responsive part of the list.
-  const rowIntent = useHoverIntent(({ chosen }) => {
+  const [stackRowKey, setStackRowKey] = useState<string | null>(null);
+  const rowIntent = useHoverIntent(({ chosen, raised }) => {
     setHoveredCollectionRow(feedRowKey(chosen));
+    setStackRowKey(raised);
   });
   // The big preview's delay, resting pointer and warm window (С7.10).
   const previewOpener = useHoverPreviewOpener(rowIntent.isSlow);
@@ -595,17 +645,23 @@ const SidebarCore = memo(function SidebarCore({
       deactivateSidebarRowFocusMode();
       return;
     }
+    setRowFocusFromPointer(false);
     activateSidebarRowFocus(rowKey);
   }, [activateSidebarRowFocus, deactivateSidebarRowFocusMode]);
 
   // The row a slow pointer is over lights its name; a fast sweep lights none.
   const pointerRowFocusRef = useRef(false);
+  // The focused row came from the pointer, not the keyboard: a compact item
+  // then opens its stack on the engine's answer instead (SidebarAnswerRowContext).
+  const [rowFocusFromPointer, setRowFocusFromPointer] = useState(false);
   applyPointerRowFocusRef.current = (rowKey) => {
     if (rowKey !== null) {
       pointerRowFocusRef.current = true;
+      setRowFocusFromPointer(true);
       activateSidebarRowFocus(rowKey);
     } else if (pointerRowFocusRef.current) {
       pointerRowFocusRef.current = false;
+      setRowFocusFromPointer(false);
       deactivateSidebarRowFocusMode();
     }
   };
@@ -656,6 +712,7 @@ const SidebarCore = memo(function SidebarCore({
     if (!rowIsVisible) return;
 
     clearSidebarKeyboardFocusTimer();
+    setRowFocusFromPointer(false);
     activateSidebarRowFocus(rowKey);
     if (keyboardNavigationFocusPersistent) {
       return;
@@ -835,20 +892,25 @@ const SidebarCore = memo(function SidebarCore({
     }
   }, [hoveredPreview, hoverPreviewBlock, hoverPreviewPosition]);
 
+  const immediateAnswerRowKey = editingRowKey
+    ?? dropOverRowKey
+    ?? (sidebarRowFocusMode && !rowFocusFromPointer ? sidebarRowFocusKey : null);
+  const answerRows = useMemo<SidebarAnswerRows>(
+    () => ({ pointer: stackRowKey, immediate: immediateAnswerRowKey }),
+    [stackRowKey, immediateAnswerRowKey],
+  );
+
   return (
     <aside
       className={cn(
         // overflow-hidden is always on: below the minimum width the panel keeps
-        // narrowing while the nav holds --sidebar-equal-zones-width, so the right edge
-        // clips the frozen menu like a curtain.
+        // narrowing while the nav holds `--sidebar-nav-min-width`, so the right
+        // edge clips the frozen menu like a curtain.
         // bg-sidebar also re-bases --surface for the zone, so every fill and
         // hover inside the panel lifts from the sidebar surface, not the page.
         "relative flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar",
       )}
-      style={{
-        width: "var(--sidebar-width)",
-        transition: widthAnimating ? `width ${SIDEBAR_WIDTH_MOTION_MS}ms ease` : "none",
-      }}
+      style={sidebarPanelStyle(widthAnimating, chromeRow)}
     >
       {/* Navigation. The wrapper exists so the fade band can be a sibling of
           the scrollport: inside the nav it would inherit its padding and settle
@@ -856,13 +918,13 @@ const SidebarCore = memo(function SidebarCore({
       {/* Matches the nav's frozen min-width: the band is sized by this wrapper,
           and a narrower wrapper would leave the right edge of the rows
           uncovered as the panel is resized down. */}
-      <div className="relative flex min-h-0 min-w-[var(--sidebar-equal-zones-width)] flex-1 flex-col">
+      <div className="relative flex min-h-0 min-w-[var(--sidebar-nav-min-width)] flex-1 flex-col">
       <nav
         ref={topFade.ref}
         className={cn(
-          // min-width freezes the menu at the three-equal-columns layout: below
-          // it the nav keeps this width and the panel's overflow-hidden clips it.
-          "relative min-w-[var(--sidebar-equal-zones-width)] flex-1 overflow-y-auto",
+          // min-width freezes the menu (`--sidebar-nav-min-width`): below it the
+          // nav keeps this width and the panel's overflow-hidden clips it.
+          "relative min-w-[var(--sidebar-nav-min-width)] flex-1 overflow-y-auto",
           "pb-8",
           // The table sits flush to the divider and edges; rows carry the
           // inner padding.
@@ -887,6 +949,7 @@ const SidebarCore = memo(function SidebarCore({
       >
         <HoverIntentDragWatch intent={rowIntent} />
 
+        <SidebarAnswerRowContext.Provider value={answerRows}>
         <div className="relative" data-sidebar-rows>
           <div className="pointer-events-none absolute inset-0" data-sidebar-guidelines>
             <span
@@ -1002,6 +1065,7 @@ const SidebarCore = memo(function SidebarCore({
           </SortableContext>
 
         </div>
+        </SidebarAnswerRowContext.Provider>
 
 
       </nav>
@@ -1077,6 +1141,23 @@ function computeSidebarPreviewPosition(
   const canOpenDown =
     triggerRect.bottom + SIDEBAR_PREVIEW_GAP + previewHeight <=
     viewportHeight - SIDEBAR_PREVIEW_VIEWPORT_MARGIN;
+  const canOpenUp =
+    triggerRect.top - SIDEBAR_PREVIEW_GAP - previewHeight >= SIDEBAR_PREVIEW_VIEWPORT_MARGIN;
+  // Too tall for either side: the preview stands beside the thumbnail
+  // instead, so it never covers the thumbnail it answers (user's remark of
+  // 22.10.2026).
+  if (!canOpenDown && !canOpenUp) {
+    const besideRight = triggerRect.right + SIDEBAR_PREVIEW_GAP;
+    const sideLeft = besideRight + SIDEBAR_PREVIEW_WIDTH <= viewportWidth - SIDEBAR_PREVIEW_VIEWPORT_MARGIN
+      ? besideRight
+      : Math.max(SIDEBAR_PREVIEW_VIEWPORT_MARGIN, triggerRect.left - SIDEBAR_PREVIEW_GAP - SIDEBAR_PREVIEW_WIDTH);
+    const centred = triggerRect.top + triggerRect.height / 2 - previewHeight / 2;
+    const sideTop = Math.max(
+      SIDEBAR_PREVIEW_VIEWPORT_MARGIN,
+      Math.min(centred, viewportHeight - SIDEBAR_PREVIEW_VIEWPORT_MARGIN - previewHeight),
+    );
+    return { top: sideTop, left: sideLeft };
+  }
   const top = canOpenDown
     ? triggerRect.bottom + SIDEBAR_PREVIEW_GAP
     : Math.max(
@@ -1144,6 +1225,8 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
     assignRef(forwardedRef, node);
     nodeRef?.(node);
   }, [forwardedRef, nodeRef]);
+  const answerRows = useContext(SidebarAnswerRowContext);
+  const isAnswerRow = rowKey === answerRows.pointer || rowKey === answerRows.immediate;
 
   return (
     <div
@@ -1153,6 +1236,8 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
       {...domProps}
       // A slow pointer is on this row (С7.10): its button shows.
       data-sidebar-row-intent={isIntentRow ? "true" : undefined}
+      // A compact item's stack opens for this (SidebarAnswerRowContext).
+      data-sidebar-row-answer={isAnswerRow ? "true" : undefined}
       data-sidebar-row=""
       data-sidebar-row-surface=""
       data-sidebar-row-key={rowKey}
@@ -1189,6 +1274,7 @@ function SidebarRowTitleCell({
 }) {
   return (
     <span
+      ref={trackTextClip}
       data-sidebar-row-text=""
       data-sidebar-name-cell=""
       data-sidebar-title-fade-width={String(SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH)}
@@ -1212,7 +1298,7 @@ function SidebarRowTitleCell({
 /// in the row's flow (`SidebarMetaCell`), so this one ends where the next
 /// guideline begins instead of running under the count and Connect and being
 /// masked off there (user's decision of 07.10.2026).
-function SidebarPreviewRail({ children }: { children: ReactNode }) {
+function SidebarPreviewRail({ children, meta }: { children: ReactNode; meta?: ReactNode }) {
   return (
     <>
       <div
@@ -1233,7 +1319,7 @@ function SidebarPreviewRail({ children }: { children: ReactNode }) {
       >
         {children}
       </div>
-      <SidebarMetaCell />
+      <SidebarMetaCell>{meta}</SidebarMetaCell>
     </>
   );
 }
@@ -1241,14 +1327,17 @@ function SidebarPreviewRail({ children }: { children: ReactNode }) {
 /// The meta zone's cell, the count and Connect, with the guideline's pixel
 /// before it (`--sidebar-meta-lead`, none when a trial order puts it first).
 /// It holds nothing in the flow (the count and the buttons are placed over
-/// it); it is here so the previews' cell ends on the guideline.
-function SidebarMetaCell() {
+/// it); it is here so the previews' cell ends on the guideline. A compact
+/// item shows its stack of mini-cards here, at its right end (`children`).
+function SidebarMetaCell({ children }: { children?: ReactNode }) {
   return (
     <span
       aria-hidden="true"
       data-sidebar-meta-cell=""
       className="w-[calc(var(--sidebar-meta-lead,1px)+var(--sidebar-zone))] shrink-0 self-stretch"
-    />
+    >
+      {children}
+    </span>
   );
 }
 
@@ -1339,6 +1428,29 @@ function SidebarRowBody({
     e.preventDefault();
     onDoubleClick();
   } : undefined;
+  // What stands in the meta zone under Connect and Connected: the count, or a
+  // compact row's stack. Either gives way to them the same way.
+  const metaAnswerClass = isLinkEditor
+    ? cn(
+        ROW_INTENT_FADE,
+        linkButtonPinned
+          ? "opacity-0"
+          : ROW_INTENT_HIDES,
+      )
+    : cn(ROW_INTENT_FADE, showConnectedPill ? cn("opacity-0", ANSWER_ON) : cn("opacity-100", ANSWER_OFF));
+  const previewHandlers = {
+    count,
+    previewsPending,
+    previewKeyPrefix,
+    rowKey,
+    sourceTag,
+    onPreviewEnter,
+    onPreviewLeave,
+    onPreviewClick,
+    onPreviewContextMenu,
+    onPreviewTriggerRef,
+    activePreviewKey,
+  };
 
   return (
     <>
@@ -1355,24 +1467,27 @@ function SidebarRowBody({
           SIDEBAR_ROW_BOX_CLASS,
           "font-sans text-base text-muted-foreground",
         )}
+        data-sidebar-row-body=""
       >
         <SidebarRowTitleCell>
           {label}
         </SidebarRowTitleCell>
-        <SidebarPreviewRail>
+        <SidebarPreviewRail
+          meta={(
+            <SidebarCompactStack
+              cards={cards}
+              {...previewHandlers}
+              allowHoverPreview
+              // Connect, Connected and Disconnect cover the stack as they
+              // cover the count; under the reference `Connected`, which lets
+              // the pointer through, the faded cards must not answer it.
+              className={cn(metaAnswerClass, (showConnectedPill || linkButtonPinned) && "pointer-events-none")}
+            />
+          )}
+        >
           <SidebarPreviewStrip
             cards={cards}
-            count={count}
-            previewsPending={previewsPending}
-            previewKeyPrefix={previewKeyPrefix}
-            rowKey={rowKey}
-            sourceTag={sourceTag}
-            onPreviewEnter={onPreviewEnter}
-            onPreviewLeave={onPreviewLeave}
-            onPreviewClick={onPreviewClick}
-            onPreviewContextMenu={onPreviewContextMenu}
-            onPreviewTriggerRef={onPreviewTriggerRef}
-            activePreviewKey={activePreviewKey}
+            {...previewHandlers}
             allowHoverPreview
           />
         </SidebarPreviewRail>
@@ -1380,19 +1495,16 @@ function SidebarRowBody({
           className={cn(
             "absolute inset-y-0 right-[calc(var(--sidebar-meta-right,0px)+var(--sidebar-row-pad-x))] flex w-8 items-center justify-end text-right text-sm font-mono text-muted-foreground",
             "-translate-x-px",
-            isLinkEditor
-              ? cn(
-                  ROW_INTENT_FADE,
-                  linkButtonPinned
-                    ? "opacity-0"
-                    : ROW_INTENT_HIDES,
-                )
-              : cn(ROW_INTENT_FADE, showConnectedPill ? cn("opacity-0", ANSWER_ON) : cn("opacity-100", ANSWER_OFF)),
+            metaAnswerClass,
           )}
           data-sidebar-row-text=""
           data-sidebar-meta-count=""
+          ref={trackTextClip}
+          // A compact item's second line dissolves as the name does (global.css).
+          style={SIDEBAR_ROW_TEXT_MASK_STYLE}
         >
           {count || ""}
+          {count ? <SidebarCountNoun count={count} /> : null}
         </span>
       </NavLink>
       {/* Always mounted: pill and count cross-fade in place instead of
@@ -2005,7 +2117,10 @@ function SidebarPreviewThumbnail({
   onPreviewClick,
   onPreviewContextMenu,
   onPreviewTriggerRef,
+  stackStyle,
 }: {
+  /** Set, the thumbnail is a card of a compact row's stack, placed by it. */
+  stackStyle?: CSSProperties;
   card: PreviewCard;
   target: SidebarPreviewTarget;
   /** The row's collection; absent on Everything. */
@@ -2041,10 +2156,13 @@ function SidebarPreviewThumbnail({
     // and a button, and the keyboard reaches the list by its rows.
     <div
       ref={setTileRef}
+      style={stackStyle}
       className={cn(
-        SIDEBAR_PREVIEW_TILE_CLASS,
-        "outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
-        isPreviewActive &&
+        stackStyle ? CHANNEL_ICON_CARD_CLASS : SIDEBAR_PREVIEW_TILE_CLASS,
+        // A stack's card answers with its own edge, as a button's does
+        // (global.css, «Compact rows»); a strip's tile with the outline.
+        !stackStyle && "outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
+        !stackStyle && isPreviewActive &&
           "outline-1 -outline-offset-1 outline-component-fill-hover",
         // The source dims as a dragged feed card does.
         isDragging && "opacity-30",
@@ -2068,7 +2186,11 @@ function SidebarPreviewThumbnail({
         // belongs to the card, and the row it stands in does not move.
         event.stopPropagation();
       }}
-      data-sidebar-preview-thumbnail="trigger"
+      // A stack's card answers as the strip's thumbnail does, under a name
+      // of its own: the strip's tiles are what the strip counts.
+      data-sidebar-preview-thumbnail={stackStyle ? undefined : "trigger"}
+      data-sidebar-stack-card={stackStyle ? "trigger" : undefined}
+      data-channel-icon-card={stackStyle ? "" : undefined}
       data-sidebar-preview-active={isPreviewActive ? "true" : undefined}
       data-sidebar-preview-dragging={isDragging ? "true" : undefined}
     >
@@ -2179,6 +2301,87 @@ function SidebarPreviewStrip({
         />
       ))}
     </div>
+  );
+}
+
+/// The word after a compact item's count: «Element» is the product's name
+/// for a card (Open element, Find elements). Wider rows show the bare number,
+/// so the style lays the word out in compact rows only (global.css,
+/// «Compact rows»).
+function SidebarCountNoun({ count }: { count: number }) {
+  return <span data-sidebar-count-noun="">{count === 1 ? " element" : " elements"}</span>;
+}
+
+/// A compact item's previews: the 7.23 stack of up to three mini-cards at the
+/// item's right end (DESIGN_SYSTEM.md, «Компактная строка боковой панели»).
+/// Its cards are the strip's first thumbnails and behave as they do: a hover opens the card's preview, a click the card, a right click
+/// its menu, a drag carries it. While the thumbnails are on the way the stack
+/// holds placeholder cards as the strip holds placeholder tiles. Shown only by
+/// the compact rows' style; above the threshold it is not laid out and its
+/// images are not asked for.
+function SidebarCompactStack({
+  cards,
+  count,
+  previewsPending = false,
+  previewKeyPrefix,
+  rowKey,
+  sourceTag,
+  onPreviewEnter,
+  onPreviewLeave,
+  onPreviewClick,
+  onPreviewContextMenu,
+  onPreviewTriggerRef,
+  activePreviewKey,
+  allowHoverPreview = false,
+  className,
+}: Parameters<typeof SidebarPreviewStrip>[0] & { className?: string }) {
+  const pending = cards === undefined;
+  const thumbnails = pending ? [] : cards.filter((card) => card.hasThumb).slice(0, CHANNEL_ICON_MAX_CARDS);
+  const placeholderCount = pending || previewsPending
+    ? Math.min(CHANNEL_ICON_MAX_CARDS - thumbnails.length, sidebarPreviewPlaceholderCount(count, thumbnails.length))
+    : 0;
+  const total = thumbnails.length + placeholderCount;
+  if (total === 0) return null;
+  return (
+    <ChannelIcon className={className} data-sidebar-compact-stack="">
+      {thumbnails.map((card, index) => {
+        const previewKey = `${previewKeyPrefix}:stack:${card.slug ?? index}:${index}`;
+        const style = channelIconCardStyle(index, total);
+        if (!allowHoverPreview || !card.slug) {
+          // The lifted copy of a row draws its media without behaviour.
+          return (
+            <div key={previewKey} className={CHANNEL_ICON_CARD_CLASS} style={style} data-channel-icon-card="">
+              <MicroPreviewThumbnail preview={microPreviewFromPreviewCard(card)} loading="lazy" draggable={false} />
+            </div>
+          );
+        }
+        return (
+          <SidebarPreviewThumbnail
+            key={previewKey}
+            card={card}
+            target={{ key: previewKey, rowKey, slug: card.slug }}
+            sourceTag={sourceTag}
+            isPreviewActive={activePreviewKey === previewKey}
+            onPreviewEnter={onPreviewEnter}
+            onPreviewLeave={onPreviewLeave}
+            onPreviewClick={onPreviewClick}
+            onPreviewContextMenu={onPreviewContextMenu}
+            onPreviewTriggerRef={onPreviewTriggerRef}
+            stackStyle={style}
+          />
+        );
+      })}
+      {Array.from({ length: placeholderCount }, (_, offset) => (
+        <div
+          key={`placeholder:${offset}`}
+          aria-hidden="true"
+          className={CHANNEL_ICON_CARD_CLASS}
+          style={channelIconCardStyle(thumbnails.length + offset, total)}
+          data-channel-icon-card=""
+          data-sidebar-stack-placeholder=""
+        />
+      ))}
+    </ChannelIcon>
   );
 }
 
@@ -2335,36 +2538,46 @@ export function SidebarTagRowDragPreview({
   /** The same flag the row gets, so the lifted copy keeps the row's placeholders. */
   previewsPending?: boolean;
 }) {
+  const strip = {
+    cards,
+    count,
+    previewsPending,
+    previewKeyPrefix: "drag-preview",
+    rowKey: "drag-preview",
+    onPreviewEnter: DRAG_PREVIEW_NOOP,
+    onPreviewLeave: DRAG_PREVIEW_NOOP,
+    onPreviewClick: DRAG_PREVIEW_NOOP,
+    onPreviewTriggerRef: DRAG_PREVIEW_NOOP,
+    activePreviewKey: null,
+  };
   return (
+    // As wide as the row it lifts (the overlay takes the row's box), so the
+    // compact rows' threshold reads the same width here as in the list
+    // (global.css, «Compact rows»); the border is inside it.
+    <div className="h-full w-full" data-sidebar-drag-row="">
     <div
       className="flex h-full w-full items-center rounded-1 border border-border bg-sidebar shadow-md"
       data-sidebar-tag-drag-preview=""
     >
       {/* The row's inset is the name cell's own, as in the resting row. */}
-      <div className="relative flex w-full min-w-0 items-center py-1 font-sans text-base text-muted-foreground">
+      <div className="relative flex w-full min-w-0 items-center py-1 font-sans text-base text-muted-foreground" data-sidebar-row-body="">
         <SidebarRowTitleCell>{label}</SidebarRowTitleCell>
-        <SidebarPreviewRail>
-          <SidebarPreviewStrip
-            cards={cards}
-            count={count}
-            previewsPending={previewsPending}
-            previewKeyPrefix="drag-preview"
-            rowKey="drag-preview"
-            onPreviewEnter={DRAG_PREVIEW_NOOP}
-            onPreviewLeave={DRAG_PREVIEW_NOOP}
-            onPreviewClick={DRAG_PREVIEW_NOOP}
-            onPreviewTriggerRef={DRAG_PREVIEW_NOOP}
-            activePreviewKey={null}
-          />
+        <SidebarPreviewRail meta={<SidebarCompactStack {...strip} />}>
+          <SidebarPreviewStrip {...strip} />
         </SidebarPreviewRail>
         <span
           className="absolute inset-y-0 right-[calc(var(--sidebar-meta-right,0px)+var(--sidebar-row-pad-x))] flex w-8 -translate-x-px items-center justify-end text-right font-mono text-sm"
           data-sidebar-row-text=""
           data-sidebar-meta-count=""
+          ref={trackTextClip}
+          // A compact item's second line dissolves as the name does (global.css).
+          style={SIDEBAR_ROW_TEXT_MASK_STYLE}
         >
           {count || ""}
+          {count ? <SidebarCountNoun count={count} /> : null}
         </span>
       </div>
+    </div>
     </div>
   );
 }

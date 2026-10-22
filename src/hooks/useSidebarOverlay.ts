@@ -16,6 +16,7 @@ import { listenPage } from "@/lib/pageEvents";
 import { sidebarOverlaid } from "@/lib/sidebarPlacement";
 import { useTabVisible } from "@/lib/tabVisibility";
 import type { SidebarIntent, SidebarOverlay } from "@/types";
+import { useChromeRowHeight } from "./useChromeRowHeight";
 
 /** The backend hands this tab a toggle or a swipe for its sidebar over the
  *  feed (domain/windows.rs `SidebarIntent`). */
@@ -64,6 +65,7 @@ export function useSidebarOverlay({
   onBesideIntent,
 }: UseSidebarOverlayOptions): SidebarOverlayControls {
   const [narrow, setNarrow] = useState(narrowNow);
+  const chromeRow = useChromeRowHeight();
   const [requestedOpen, setRequestedOpen] = useState(false);
   const visible = useTabVisible();
   const open = narrow && requestedOpen && visible;
@@ -88,9 +90,12 @@ export function useSidebarOverlay({
       setRequestedOpen(false);
       setNarrow(next);
     };
+    // The chrome's height moves the threshold: the window may cross it
+    // without a resize.
+    follow();
     window.addEventListener("resize", follow);
     return () => window.removeEventListener("resize", follow);
-  }, []);
+  }, [chromeRow]);
 
   // A hidden tab shows its sidebar over the feed closed when it comes back (У8).
   useEffect(() => {

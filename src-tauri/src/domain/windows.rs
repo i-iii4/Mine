@@ -135,19 +135,32 @@ pub const WINDOW_MIN_WIDTH_PX: u32 = 390;
 /// narrowest, one value for both (user's decision of 16.10.2026, instead of
 /// the smallest card and two side insets, 304).
 pub const APP_MAIN_MIN_WIDTH_PX: u32 = WINDOW_MIN_WIDTH_PX;
-/// Narrowest the sidebar gets (`S_min`): the narrowest window less the strip,
-/// so the sidebar over the feed of the narrowest window is exactly this wide
-/// (user's decision of 16.10.2026, instead of the three equal zones, 314;
-/// SPEC_NARROW_WINDOW.md, «Величины»). The rows' three equal zones stay a
-/// layout of their own, never wider than this (`sidebarEqualZonesWidth()` in
-/// src/lib/appLayout.ts). It does not follow the font.
+/// The sidebar over the feed of the narrowest window (`S_min`): the
+/// narrowest window less the strip (user's decision of 16.10.2026;
+/// SPEC_NARROW_WINDOW.md, «Величины»); a page that is not a tab starts at it.
+/// The rows' three equal zones stay a layout of their own, never wider than
+/// this (`sidebarEqualZonesWidth()` in src/lib/appLayout.ts). It does not
+/// follow the font. The sidebar beside the feed gets narrower than this,
+/// down to [`SIDEBAR_BESIDE_MIN_WIDTH_PX`].
 pub const SIDEBAR_MIN_WIDTH_PX: u32 = WINDOW_MIN_WIDTH_PX - SIDEBAR_OVERLAY_STRIP_PX;
+/// Narrowest the sidebar beside the feed gets (`S_beside`), the drag's lower
+/// bound (PLAN 50.36; user's decisions of 22.10.2026: the window goes narrow
+/// only once the sidebar can shrink no further, and the sidebar's edge stands
+/// under the first tab's line). The page derives it from the tab bar's lead
+/// and the chrome's height (`sidebarBesideMinWidthPx()` in
+/// src/lib/appLayout.ts): 169 at the standard row, 173.5 at the tall one. This
+/// restates the tall one rounded up, the widest; appLayout.test.ts holds the
+/// two equal. The backend stores widths as the page gives them and decides
+/// nothing by them but this check.
+pub const SIDEBAR_BESIDE_MIN_WIDTH_PX: u32 = 174;
 // The narrowest window holds the narrowest sidebar over the feed with its
 // strip, and is narrower than the threshold of the sidebar over the feed
-// (`S_min + F_min`, 740), so it always shows the sidebar over the feed.
+// (`S_beside + F_min`, 559 or 563.5), so it always shows the sidebar over
+// the feed.
 const _: () = assert!(
     WINDOW_MIN_WIDTH_PX >= SIDEBAR_MIN_WIDTH_PX + SIDEBAR_OVERLAY_STRIP_PX
-        && WINDOW_MIN_WIDTH_PX < SIDEBAR_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX
+        && WINDOW_MIN_WIDTH_PX < SIDEBAR_BESIDE_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX
+        && SIDEBAR_BESIDE_MIN_WIDTH_PX <= SIDEBAR_MIN_WIDTH_PX
 );
 /// Smallest content size of a tab window. Across: [`WINDOW_MIN_WIDTH_PX`].
 /// Down: the old main window's minimum and the tab bar above it.

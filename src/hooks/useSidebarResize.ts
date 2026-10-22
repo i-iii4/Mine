@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, startTransition } from "react";
 import { setWindowSidebar } from "@/lib/commands";
+import { SIDEBAR_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { motionDuration } from "@/lib/motion";
 import {
   clampSidebarTarget,
@@ -7,6 +8,7 @@ import {
   sidebarWidthCss,
 } from "@/lib/sidebarPlacement";
 import type { SidebarLayout } from "@/types";
+import { useChromeRowHeight } from "./useChromeRowHeight";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -32,7 +34,9 @@ export const SIDEBAR_WIDTH_MOTION_MS = 200;
 // sidebar grows back to exactly the target.
 
 function initialLayout(windowSidebar: SidebarLayout | null): { width: number; collapsed: boolean } {
-  if (!windowSidebar) return { width: clampSidebarTarget(0), collapsed: false };
+  // A page that is not a tab starts at `S_min`, as it always did; a drag
+  // takes it lower (PLAN 50.36).
+  if (!windowSidebar) return { width: SIDEBAR_MIN_WIDTH_PX, collapsed: false };
   return {
     width: clampSidebarTarget(windowSidebar.width_px),
     collapsed: windowSidebar.collapsed,
@@ -100,6 +104,7 @@ export function useSidebarResize(
   const [storedWidth, setStoredWidth] = useState(() => initialLayout(windowSidebar).width);
   const [collapsed, setCollapsed] = useState(() => initialLayout(windowSidebar).collapsed);
   const [isResizing, setIsResizing] = useState(false);
+  const chromeRow = useChromeRowHeight();
   const [dragWidth, setDragWidth] = useState(() => {
     const { width, collapsed: c } = initialLayout(windowSidebar);
     return c ? 0 : width;
@@ -177,7 +182,8 @@ export function useSidebarResize(
     }
     writeCssVar(target);
     return undefined;
-  }, [collapsed, crossing, overlaid, storedWidth, isResizing]);
+    // The chrome's height moves the narrowest width the target is held to.
+  }, [chromeRow, collapsed, crossing, overlaid, storedWidth, isResizing]);
 
   // The window's layout changed: another tab, the tab bar's button, the View
   // menu or the two-finger swipe (В56). A drag in progress here keeps the
