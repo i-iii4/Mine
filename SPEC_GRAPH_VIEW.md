@@ -596,9 +596,14 @@ camera.
 проверяется тестом, который проходит весь диапазон по пикселю и требует, чтобы
 наибольший шаг оставался малым.
 
-**Карточка получает обводку по наведению** — ту же, что пилюли коллекций:
-`hoverOutline` толщиной в один пиксель по тому же скруглённому контуру. Ховер и
-выбор дают одну подсветку; своей толщины у выбора нет.
+**Обводка карточки та же, что у кнопок** (К10; решение пользователя
+22.10.2026, DESIGN_SYSTEM.md, «Обводка миниатюр»): линия 0,5 px внутри
+скруглённого контура, в покое на полтора тихих шага линии ярче лица
+`--chrome` (`cardOutline`), при наведении выведена из лица со слоем состояния
+(`cardHoverOutline`). Ховер и выбор дают одну подсветку; своей толщины у
+выбора нет. До 22.10.2026 рамка была в один пиксель: `--border` в покое,
+`hoverOutline` (`--component-fill-hover`, как у пилюль коллекций) при
+наведении.
 
 ### Rearranging Around An Opened Collection
 
@@ -674,8 +679,10 @@ Rules:
 
 - avoid category rainbow as the default visual language;
 - use muted fills and ring/border strokes;
-- hovered card nodes add the one-CSS-pixel `hoverOutline` on the existing
-  rounded contour; opacity, label visibility, size and link styling stay fixed;
+- every card node carries the buttons' 0.5 CSS px edge inside its rounded
+  contour (`cardOutline`); a hovered or selected node works it out with the
+  state layer (`cardHoverOutline`); opacity, label visibility, size and link
+  styling stay fixed;
 - hovered collection labels keep the same shape and fill but switch text to
   `text-foreground` and the outline to `--component-fill-hover`;
 - the opened collection, the keyboard-selected one and the hovered one share
@@ -838,7 +845,8 @@ Rules:
   по разделу «Приглушение при наведении на коллекцию» (решение пользователя
   16.10.2026, заменяет прежнее «do not dim nodes or links»);
 - do not change card size, opacity, border, label visibility or link color on
-  card hover; the only canvas change is the shared one-CSS-pixel `hoverOutline`;
+  card hover; the only canvas change is the card's 0.5 CSS px edge turning to
+  `cardHoverOutline`;
 - after the configured delay, fetch the full block with `get_block`;
 - render `ReadOnlyCardPreview` with width `240`: the feed's own card unfolded,
   everything its lift brings up shown without the lift, nothing to press (SPEC_CARD_STATES.md, С10, since
@@ -1346,7 +1354,7 @@ Use Playwright for real Canvas verification:
 - Graph View first paint is nonblank in dark and light themes.
 - Resizing Sidebar/Detail changes canvas dimensions without remounting.
 - Hovering a card for the cold delay shows the sidebar-style micro preview and
-  changes only the card's one-CSS-pixel outline, not any other canvas pixels.
+  changes only the card's 0.5 CSS px edge, not any other canvas pixels.
 - Наведение на коллекцию (тёмная тема): пиксель карточки другой коллекции
   приглушается до карточки под долей подложки холста, пиксель карточки этой
   коллекции не меняется, после ухода указателя пиксель прежний.
@@ -1364,7 +1372,7 @@ The executable acceptance is `bun run test:graph` against the dev-only
 `/__graph-audit` route. It runs both dark and light themes and verifies settled
 first paint, raw Canvas pixels, automatic route switching, resize without
 remount, absence of removed Graph controls, bounded image requests, real delayed
-hover with a one-CSS-pixel outline and zero pixel changes outside its mask,
+hover with the card's 0.5 CSS px edge and zero pixel changes outside its mask,
 collection hover dimming (ПН1, ПН3) and pan/zoom timing. Hover comparison waits for a settled canvas rather than
 assuming the force simulation has stopped after a fixed delay.
 

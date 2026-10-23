@@ -1,5 +1,5 @@
 // A card on the graph: the chrome's plane and the foreground's text for a text
-// thumbnail, the frame of a secondary button (DESIGN_SYSTEM.md, «Граф»).
+// thumbnail, the buttons' 0.5px edge (DESIGN_SYSTEM.md, «Граф»; 22.10.2026).
 
 import { describe, expect, it } from "vitest";
 import { GRAPH_CONTEXT_OPACITY } from "@/lib/colorLaw";
@@ -12,7 +12,9 @@ const THEME: GraphCanvasTheme = {
   border: "border",
   mutedText: "muted",
   foregroundText: "foreground",
-  hoverOutline: "hover",
+  hoverOutline: "pill-hover",
+  cardOutline: "edge",
+  cardHoverOutline: "edge-hover",
   canvasFill: "canvas",
 };
 
@@ -88,37 +90,37 @@ function paintRecorded(
 }
 
 describe("paintCardNode", () => {
-  it("lays a text thumbnail on the chrome, its text over it, and frames it with the line", () => {
-    expect(paint(card("text"), true)).toEqual(["fill chrome", "image", "stroke border"]);
+  it("lays a text thumbnail on the chrome, its text over it, and gives it the buttons' edge", () => {
+    expect(paint(card("text"), true)).toEqual(["fill chrome", "image", "stroke edge"]);
   });
 
   it("gives a card with no picture the same plane and frame", () => {
-    expect(paint(card("image"), false)).toEqual(["fill chrome", "stroke border"]);
+    expect(paint(card("image"), false)).toEqual(["fill chrome", "stroke edge"]);
   });
 
-  it("frames a picture at rest with the same line", () => {
-    expect(paint(card("image"), true)).toEqual(["image", "stroke border"]);
+  it("gives a picture at rest the same edge", () => {
+    expect(paint(card("image"), true)).toEqual(["image", "stroke edge"]);
   });
 
-  it("lights the frame under the pointer and while selected, on every card", () => {
-    expect(paint(card("image"), true, { hovered: true })).toEqual(["image", "stroke hover"]);
-    expect(paint(card("text"), true, { selected: true })).toEqual(["fill chrome", "image", "stroke hover"]);
+  it("works the edge out with the state layer under the pointer and while selected, on every card", () => {
+    expect(paint(card("image"), true, { hovered: true })).toEqual(["image", "stroke edge-hover"]);
+    expect(paint(card("text"), true, { selected: true })).toEqual(["fill chrome", "image", "stroke edge-hover"]);
   });
 
   it("draws a dimmed card as itself under the canvas: the canvas first, then the card at the dimmed opacity", () => {
     // SPEC_GRAPH_VIEW.md, «Приглушение при наведении на коллекцию»: the
     // footprint is covered first so the lines beneath do not show through.
     const picture = paintRecorded(card("image"), true, { opacity: GRAPH_CONTEXT_OPACITY });
-    expect(picture.calls).toEqual(["fill canvas", "image", "stroke border"]);
+    expect(picture.calls).toEqual(["fill canvas", "image", "stroke edge"]);
     expect(picture.alphas).toEqual([1, GRAPH_CONTEXT_OPACITY, GRAPH_CONTEXT_OPACITY]);
     const text = paintRecorded(card("text"), true, { opacity: GRAPH_CONTEXT_OPACITY, selected: true });
-    expect(text.calls).toEqual(["fill canvas", "fill chrome", "image", "stroke hover"]);
+    expect(text.calls).toEqual(["fill canvas", "fill chrome", "image", "stroke edge-hover"]);
     expect(text.alphas).toEqual([1, GRAPH_CONTEXT_OPACITY, GRAPH_CONTEXT_OPACITY, GRAPH_CONTEXT_OPACITY]);
   });
 
   it("paints an undimmed card without the canvas underlay or any change of alpha", () => {
     const rest = paintRecorded(card("text"), true, { opacity: 1 });
-    expect(rest.calls).toEqual(["fill chrome", "image", "stroke border"]);
+    expect(rest.calls).toEqual(["fill chrome", "image", "stroke edge"]);
     expect(rest.alphas).toEqual([1, 1, 1]);
   });
 });

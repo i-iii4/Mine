@@ -37,3 +37,17 @@ describe("channel icon depth", () => {
     expect(CHANNEL_ICON_WIDTH_PX).toBeCloseTo(CHANNEL_ICON_CARD_PX + 2 * (CHANNEL_ICON_CARD_PX / 6), 0);
   });
 });
+
+describe("the large stack (PLAN 50.38)", () => {
+  it("scales the whole projection with the card, the hover's shift kept", async () => {
+    const { CHANNEL_ICON_LARGE_CARD_PX, channelIconBoxStyle, channelIconCardStyle } = await import("./channelIcon");
+    const k = CHANNEL_ICON_LARGE_CARD_PX / CHANNEL_ICON_CARD_PX;
+    expect(CHANNEL_ICON_LARGE_CARD_PX).toBe(40);
+    expect(channelIconBoxStyle(40)).toMatchObject({ width: CHANNEL_ICON_WIDTH_PX * k, height: 40 });
+    const middle = channelIconCardStyle(1, 3, 40) as Record<string, unknown>;
+    expect(middle.width).toBe(40);
+    expect(middle["--channel-icon-rest"]).toBe(`translate(${Math.round(channelIconDepth(1).x * k * 1000) / 1000}px, 0px) scale(0.88)`);
+    const top = channelIconCardStyle(2, 3, 40) as Record<string, unknown>;
+    expect(top["--channel-icon-hover"]).toBe("translate(-3px, 0px) scale(1)");
+  });
+});

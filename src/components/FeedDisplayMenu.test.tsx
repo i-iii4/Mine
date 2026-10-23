@@ -63,8 +63,9 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     expect(checkedIn("Sort")).toEqual(["Newest first"]);
     expect(checkedIn("Show")).toEqual(["Cards"]);
     expect(checkedIn("Spacing")).toEqual(["32"]);
-    // Two between the feed's groups and one before each trial group.
-    expect(screen.getAllByRole("separator")).toHaveLength(4);
+    // Two between the feed's groups, one before each of the three trial
+    // sections and three inside the compact stack's (PLAN 50.38).
+    expect(screen.getAllByRole("separator")).toHaveLength(8);
   });
 
   it("marks the stored presentation when it opens (Д18)", async () => {

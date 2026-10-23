@@ -341,6 +341,16 @@ import { followNoteRename, isNoteHeldForEditing, noteMissingFromIndex } from "@/
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useSidebarOverlay } from "@/hooks/useSidebarOverlay";
 import { SIDEBAR_COLUMNS_STORAGE_KEY, reloadSidebarColumnLayout } from "@/lib/sidebarColumnLayout";
+import {
+  COMPACT_STACK_EDGE_STORAGE_KEY,
+  COMPACT_STACK_STORAGE_KEY,
+  SIDEBAR_STYLE_STORAGE_KEY,
+  THUMB_CORNERS_STORAGE_KEY,
+  reloadCompactStack,
+  reloadCompactStackEdge,
+  reloadSidebarStyle,
+  reloadThumbCorners,
+} from "@/lib/compactStack";
 import { LIGHT_CANVAS_STORAGE_KEY, reloadLightCanvas } from "@/lib/lightCanvas";
 import { useTopRowWrap } from "@/hooks/useTopRowWrap";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
@@ -1532,10 +1542,6 @@ export function AppWithVault({
   });
   const sidebarNarrow = sidebarOverlay.narrow;
   const closeSidebarOverlay = sidebarOverlay.close;
-  // In a narrow window an open card's name takes the whole top row: the
-  // place's switcher leaves it while the name stands there, through the
-  // name's exit (SPEC_NARROW_WINDOW.md, У15).
-  const topRowPlaceShown = topRowShowsPlace(sidebarNarrow, renderedDetailBlock !== null);
   bottomBarScrollsRef.current = sidebarNarrow;
   // Into a narrow window or out of it: the bar shows everything in its
   // scrolling row, or hides entries by priority again (У13).
@@ -1565,6 +1571,16 @@ export function AppWithVault({
   // The sidebar is on screen: beside the feed unless collapsed, over the
   // feed when open.
   const sidebarShown = sidebarNarrow ? sidebarOverlay.open : !sidebarCollapsed;
+  // An open card's name stands in the top row without the place's switcher
+  // in a narrow window (SPEC_NARROW_WINDOW.md, У15) and while the sidebar
+  // beside the feed shows the place (user's decision of 23.10.2026), through
+  // the name's exit.
+  const topRowPlaceShown = topRowShowsPlace({
+    narrow: sidebarNarrow,
+    sidebarBeside: !sidebarNarrow && !sidebarCollapsed,
+    cardOpen: renderedDetailBlock !== null,
+  });
+  const placeReplaced = !topRowPlaceShown;
   // The bottom bar's button and ⌃⌘S outside the app shell act on the
   // sidebar where it stands; in the app the backend routes them (У4).
   const toggleSidebar = sidebarNarrow ? sidebarOverlay.toggle : toggleCollapsed;
@@ -2689,6 +2705,13 @@ export function AppWithVault({
   useEffect(() => {
     reporterRef.current?.schedule();
   }, [currentPlaceKey, mainViewMode, pendingScroll, selectedBlock?.slug, sidebarSearchQuery]);
+  // What the tab says, its place or its open card (В47), goes out at once:
+  // the tab's label changes with the top row's path, not up to a report's
+  // interval later (user's remark of 23.10.2026).
+  const selectedBlockLabel = selectedBlock ? getNavigationLabel(selectedBlock) : null;
+  useEffect(() => {
+    reporterRef.current?.flush();
+  }, [currentPlaceKey, selectedBlock?.slug, selectedBlockLabel]);
 
   // The space was opened from outside and this tab shows it (В72).
   useEffect(() => {
@@ -3095,6 +3118,18 @@ export function AppWithVault({
       } else if (key === SIDEBAR_COLUMNS_STORAGE_KEY) {
         // TRIAL (PLAN 47.6): the sidebar rows' columns set in another tab.
         reloadSidebarColumnLayout();
+      } else if (key === COMPACT_STACK_STORAGE_KEY) {
+        // TRIAL (PLAN 50.38): the compact stack chosen in another tab.
+        reloadCompactStack();
+      } else if (key === COMPACT_STACK_EDGE_STORAGE_KEY) {
+        // TRIAL (PLAN 50.38): the compact stack's edge chosen in another tab.
+        reloadCompactStackEdge();
+      } else if (key === THUMB_CORNERS_STORAGE_KEY) {
+        // TRIAL (PLAN 50.38): the sidebar thumbnails' corners chosen in another tab.
+        reloadThumbCorners();
+      } else if (key === SIDEBAR_STYLE_STORAGE_KEY) {
+        // TRIAL (PLAN 50.38): the sidebar's look chosen in another tab.
+        reloadSidebarStyle();
       } else if (key === CONTENT_FONT_STORAGE_KEY) {
         applyContentFont(getStoredContentFont());
       } else if (key === INTERFACE_FONT_STORAGE_KEY) {
@@ -4952,20 +4987,22 @@ export function AppWithVault({
             {renderSidebarFilterRow(sidebarCollapsed)}
           </div>
         )}
-        <div ref={topRowWrap.rowRef} data-tauri-drag-region className="flex h-full min-w-0 flex-1 items-center">
-          {/* In a narrow window an open card's name takes the place's room
-              (SPEC_NARROW_WINDOW.md, У15). */}
-          {topRowPlaceShown && (
-            <TopCollectionSwitcher
-              currentTag={currentTag}
-              currentAuthor={currentLocation.kind === "author" ? currentLocation.author : undefined}
-              orderedTags={orderedTags}
-              onNavigate={handleTopCollectionNavigate}
-              onCreateCollection={handleWindowCreateCollection}
-              onCheckCollectionName={checkNewCollectionName}
-              joinsNext
-            />
-          )}
+        <div ref={topRowWrap.rowRef} data-tauri-drag-region className="relative flex h-full min-w-0 flex-1 items-center">
+          {/* An open card's name takes the place's room in a narrow window
+              (SPEC_NARROW_WINDOW.md, У15) and beside the open sidebar. */}
+          {/* While an open card's name has the place's room (23.10.2026), the
+              place's switcher fades out of the row's flow and back in. */}
+          <TopCollectionSwitcher
+            shown={!(placeReplaced && detailChromeEntered)}
+            overlay={placeReplaced}
+            currentTag={currentTag}
+            currentAuthor={currentLocation.kind === "author" ? currentLocation.author : undefined}
+            orderedTags={orderedTags}
+            onNavigate={handleTopCollectionNavigate}
+            onCreateCollection={handleWindowCreateCollection}
+            onCheckCollectionName={checkNewCollectionName}
+            joinsNext
+          />
           {/* No third row: what it held over the feed joins this row after
               the collection switcher; a line parts each step of the path, the
               sidebar open or collapsed (DESIGN_SYSTEM.md, «Верхние ряды»). */}

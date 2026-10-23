@@ -70,12 +70,16 @@ export function microPreviewFromLightBlock(
 
 export function MicroPreviewThumbnail({
   preview,
+  fill = false,
   className,
   onLoad,
   onError,
   ...imgProps
 }: Omit<ComponentPropsWithoutRef<"img">, "src"> & {
   preview: MicroPreviewModel;
+  /** Fill the slot instead of the strip's 32px: a stack's card, which the
+   *  trial's large stack makes 40 (PLAN 50.38). */
+  fill?: boolean;
 }) {
   const imageRef = useRef<HTMLImageElement>(null);
   // Whether the picture is in. Stays true when the URL is cache-busted: the
@@ -112,7 +116,7 @@ export function MicroPreviewThumbnail({
   // still on the way; an early card fill would read as a blank tile.
   return (
     <span
-      className={cn("block size-8 overflow-hidden", preview.text && loaded && "bg-card")}
+      className={cn("block overflow-hidden", fill ? "size-full" : "size-8", preview.text && loaded && "bg-card")}
       data-micro-preview-state={missing ? "missing" : loaded ? "loaded" : "loading"}
     >
       {!missing && (
@@ -130,7 +134,7 @@ export function MicroPreviewThumbnail({
           }}
           src={src}
           className={cn(
-            "size-8 object-cover",
+            fill ? "size-full object-cover" : "size-8 object-cover",
             preview.text ? "dark:invert" : "rounded-none",
             className,
           )}

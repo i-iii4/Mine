@@ -162,6 +162,9 @@ export function applySidebarColumnLayout(layout: SidebarColumnLayout, root: HTML
   for (const column of SIDEBAR_COLUMNS) {
     root.toggleAttribute(`data-sidebar-hide-${column}`, layout.hidden.includes(column));
   }
+  // TRIAL (PLAN 50.38): a compact item's stack stands on the previews' side
+  // of the name (global.css, «Compact rows»).
+  root.toggleAttribute("data-sidebar-stack-left", layout.order.indexOf("previews") < layout.order.indexOf("name"));
 }
 
 // ── Store ───────────────────────────────────────────────────────────────────

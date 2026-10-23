@@ -2433,19 +2433,19 @@ describe("AppWithVault", () => {
         // The segment's line is the only one: nothing after it draws another.
         const pathRest = segment.nextElementSibling as HTMLElement;
         const collection = screen.getByRole("button", { name: "Switch collection: Everything" });
-        expect(pathRest.firstElementChild).toBe(collection);
+        expect(pathRest.firstElementChild).toBe(collection.closest("[data-top-collection-switcher-slot]"));
         expect(pathRest).not.toHaveClass("border-l");
         expect(collection).not.toHaveClass("border-l");
         // 8 px from the line, the path going on after it.
         expect(collection).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-0");
         // No card open: no line after the collection.
-        expect(contentSegment().previousElementSibling).toBe(collection);
+        expect(contentSegment().previousElementSibling).toBe(collection.closest("[data-top-collection-switcher-slot]"));
         expect(contentSegment()).not.toHaveAttribute("data-path-card-line");
         expect(contentSegment()).not.toHaveClass("border-l");
         expect(pathLines()).toHaveLength(1);
       });
 
-      it(`parts collection and the open card's name by the same line with the sidebar ${mode}`, async () => {
+      it(`parts collection and the open card's name by the same line with the sidebar collapsed, the name alone with it open (${mode})`, async () => {
         await renderPath();
 
         const collection = screen.getByRole("button", { name: "Switch collection: Everything" });
@@ -2455,6 +2455,27 @@ describe("AppWithVault", () => {
         await waitFor(() => {
           expect(document.querySelector("[data-secondary-detail-top-menu]")).toHaveAttribute("data-entered", "true");
         });
+        if (!collapsed) {
+          // The open sidebar shows the place: the card's name stands alone
+          // after the segment's line (user's decision of 23.10.2026), and the
+          // place comes back once the name has left the row.
+          // The switcher has faded out where it stands, out of the row's flow, inert.
+          expect(screen.queryByRole("button", { name: "Switch collection: Everything" })).toBeNull();
+          const slot = document.querySelector("[data-top-collection-switcher-slot]") as HTMLElement;
+          expect(slot).toHaveAttribute("inert");
+          expect(slot).toHaveClass("absolute");
+          expect(contentSegment()).not.toHaveAttribute("data-path-card-line");
+          expect(contentSegment()).not.toHaveClass("border-l");
+          expect(contentSegment()).toHaveTextContent("alpha-block");
+          expect(pathLines()).toHaveLength(1);
+          fireEvent.click(screen.getByRole("button", { name: "Close" }));
+          await waitFor(() => {
+            expect(document.querySelector("[data-secondary-detail-top-menu]")).toBeNull();
+          });
+          expect(screen.getByRole("button", { name: "Switch collection: Everything" }).className).toBe(collectionClass);
+          expect(pathLines()).toHaveLength(1);
+          return;
+        }
         // The column's line, 8 px past the collection's pill.
         expect(contentSegment()).toHaveAttribute("data-path-card-line", "");
         expect(contentSegment()).toHaveClass(
@@ -5288,10 +5309,15 @@ describe("AppWithVault", () => {
         expect(spacer()).not.toBeNull();
       });
 
-      it("gives an open card's name the whole top row, and the place back with no card or in a wide window (У15)", async () => {
+      it("gives an open card's name the whole top row, in a narrow window and beside the open sidebar, and the place back with no card (У15)", async () => {
         renderTab();
         await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
-        const place = () => document.querySelector("[data-top-collection-switcher]");
+        // The place's switcher stays in the page; away, it is inert, faded out
+        // and out of the row's flow (23.10.2026).
+        const place = () => {
+          const slot = document.querySelector("[data-top-collection-switcher-slot]");
+          return slot && !slot.hasAttribute("inert") ? slot : null;
+        };
         const contentSegment = () =>
           document.querySelector("[data-main-secondary-top-bar-content-segment]") as HTMLElement;
         const detailLayer = () => document.querySelector("[data-secondary-detail-top-menu]") as HTMLElement | null;
@@ -5304,7 +5330,8 @@ describe("AppWithVault", () => {
         // The card's name with its menu and close button take the row:
         // nothing stands before them, so no path's line either.
         expect(place()).toBeNull();
-        expect(contentSegment().previousElementSibling).toBeNull();
+        // Before the half only the place's faded-out slot, out of the flow.
+        expect(contentSegment().previousElementSibling).toHaveAttribute("inert");
         expect(contentSegment()).toHaveClass("flex-1");
         expect(contentSegment()).not.toHaveAttribute("data-path-card-line");
         expect(contentSegment()).not.toHaveClass("border-l");
@@ -5314,10 +5341,11 @@ describe("AppWithVault", () => {
         expect(name).toHaveClass("truncate");
         expect(within(detailLayer() as HTMLElement).getByRole("button", { name: "Close" })).toBeInTheDocument();
 
-        // A wide window: the place stands before the name, past its line.
+        // A wide window with the sidebar open beside the feed: the sidebar
+        // shows the place, the name keeps the row (23.10.2026).
         resizeWindow(1200);
-        expect(place()).not.toBeNull();
-        expect(contentSegment()).toHaveAttribute("data-path-card-line", "");
+        expect(place()).toBeNull();
+        expect(contentSegment()).not.toHaveAttribute("data-path-card-line");
 
         // Narrow again, the card closes: the place comes back once the name
         // has left the row.

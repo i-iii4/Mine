@@ -99,15 +99,16 @@ export function paintCardNode(
     }
   }
 
-  // The frame of a secondary button on every card, a picture too
-  // (DESIGN_SYSTEM.md, «Карточка на графе», user's decision of 09.10.2026):
-  // `--border` at rest, `--component-fill-hover` under the pointer and while
-  // selected, 1px on the card's own outline, the path its picture is clipped
-  // to (the graph audit holds hover to that path).
+  // The buttons' edge on every card, a picture too (user's decision of
+  // 22.10.2026, the sidebar's thumbnails alike; it was the secondary
+  // button's 1px frame of 09.10.2026): 0.5px inside the card's outline, a
+  // step off the face at rest, off the face with the state layer under the
+  // pointer and while selected.
   const highlighted = options.selected || options.hovered;
-  roundedRectPath(ctx, x, y, size, size, radius);
-  ctx.lineWidth = 1 / options.globalScale;
-  ctx.strokeStyle = highlighted ? options.canvasTheme.hoverOutline : options.canvasTheme.border;
+  const edge = 0.5 / options.globalScale;
+  roundedRectPath(ctx, x + edge / 2, y + edge / 2, size - edge, size - edge, Math.max(0, radius - edge / 2));
+  ctx.lineWidth = edge;
+  ctx.strokeStyle = highlighted ? options.canvasTheme.cardHoverOutline : options.canvasTheme.cardOutline;
   ctx.stroke();
 }
 
@@ -319,6 +320,11 @@ export function readGraphCanvasTheme(mode: "light" | "dark"): GraphCanvasTheme {
   probe.style.outlineColor = "var(--component-fill-hover)";
   probe.style.outlineStyle = "solid";
   probe.style.outlineWidth = "1px";
+  // The cards' edge, the buttons' (К10), off the card's face `--chrome`.
+  probe.style.textDecorationColor =
+    "oklch(from var(--chrome) clamp(0, calc(l + var(--macos-outline-step)), 1) 0 0)";
+  probe.style.columnRuleColor =
+    "oklch(from color-mix(in srgb, var(--chrome), var(--foreground) var(--active-alpha)) clamp(0, calc(l + var(--macos-outline-step)), 1) 0 0)";
   // The canvas paints labels itself and needs the muted step as an opaque
   // colour: its composite over the chrome surface (global.css, surface-fills).
   probe.style.color = "var(--muted-foreground-opaque)";
@@ -329,6 +335,8 @@ export function readGraphCanvasTheme(mode: "light" | "dark"): GraphCanvasTheme {
   const border = resolvedCanvasColor(mutedStyle.borderTopColor, fallback.border);
   const mutedText = resolvedCanvasColor(mutedStyle.color, fallback.mutedText);
   const hoverOutline = resolvedCanvasColor(mutedStyle.outlineColor, fallback.hoverOutline);
+  const cardOutline = resolvedCanvasColor(mutedStyle.textDecorationColor, fallback.cardOutline);
+  const cardHoverOutline = resolvedCanvasColor(mutedStyle.columnRuleColor, fallback.cardHoverOutline);
 
   probe.style.color = "var(--foreground)";
   const foregroundText = resolvedCanvasColor(
@@ -351,6 +359,8 @@ export function readGraphCanvasTheme(mode: "light" | "dark"): GraphCanvasTheme {
     mutedText,
     foregroundText,
     hoverOutline,
+    cardOutline,
+    cardHoverOutline,
     canvasFill,
   };
 }
@@ -365,6 +375,8 @@ function graphCanvasThemeFallback(mode: "light" | "dark"): GraphCanvasTheme {
         mutedText: "#9a9a9a",
         foregroundText: "#fafafa",
         hoverOutline: "#343434",
+        cardOutline: "#2b2b2b",
+        cardHoverOutline: "#363636",
         canvasFill: "#090909",
       }
     : {
@@ -375,6 +387,8 @@ function graphCanvasThemeFallback(mode: "light" | "dark"): GraphCanvasTheme {
         mutedText: "#777777",
         foregroundText: "#0a0a0a",
         hoverOutline: "#e7e7e7",
+        cardOutline: "#ececec",
+        cardHoverOutline: "#e2e2e2",
         canvasFill: "#ffffff",
       };
 }

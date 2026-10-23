@@ -662,6 +662,28 @@ CSS из этих токенов сами. Тёмная тема не меняе
 смене по `settings-changed`. После решения пользователя проба удаляется или
 выбранный холст становится К1.
 
+### Временные пробы компактного меню
+
+Пробы по просьбам пользователя 22.10.2026 и 23.10.2026 (PLAN 50.38): после
+его решения каждая удаляется или выбранный вариант становится правилом. В
+той же панели Display (лента и граф) после «Sidebar columns» четыре группы
+`CompactStackMenu.tsx`, у каждой своя подпись: Sidebar style (Table или
+List), Compact stack size (Standard или Large), Compact stack edge (Shadow
+или Ring), Thumbnail corners (Square или Rounded). Что меняет каждый вариант,
+описано в DESIGN_SYSTEM.md, «Компактная строка боковой панели», «Пробы в
+панели Display». `src/lib/compactStack.ts` хранит каждый выбор своим ключом
+(`mine.sidebar.style`, `mine.sidebar.compactStack`,
+`mine.sidebar.compactStackEdge`, `mine.sidebar.thumbCorners`) в
+`localStorage` с try/catch, ставит атрибут на корень документа
+(`data-sidebar-list`, `data-sidebar-stack-large`, `data-sidebar-stack-ring`,
+`data-sidebar-thumbs-rounded`; правила в `global.css`), отдаёт выбор React
+через `useSyncExternalStore`; другие вкладки и окна перечитывают его по
+`settings-changed`. Значения по умолчанию на корень ничего не пишут. Сторона
+стопки не проба: она следует порядку «Sidebar columns»
+(`data-sidebar-stack-left` из `sidebarColumnLayout.ts`). Проверки:
+`CompactStackMenu.test.tsx`, `Sidebar.test.tsx`, `channelIcon.test.ts`,
+`FeedDisplayMenu.test.tsx`.
+
 ### Sidebar
 
 Sidebar uses one table-like row contract in both compact and non-compact

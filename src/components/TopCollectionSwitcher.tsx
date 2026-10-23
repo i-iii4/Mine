@@ -31,6 +31,13 @@ type CollectionSwitcherItem = {
 };
 
 interface TopCollectionSwitcherProps {
+  /// False while an open card's name stands in its place (topRowPath.ts):
+  /// the switcher fades out where it stands and back in, and nothing of it
+  /// answers meanwhile (global.css, «The top rows' motion»).
+  shown?: boolean;
+  /// Out of the row's flow, at its start: the card's name has the place's
+  /// room while the switcher fades.
+  overlay?: boolean;
   currentTag?: string;
   /// The author whose cards the feed shows, as written on the card the
   /// person came from: the path names it, and no listed place is current
@@ -68,6 +75,8 @@ export function TopCollectionSwitcher({
   onCreateCollection,
   onCheckCollectionName,
   joinsNext = false,
+  shown = true,
+  overlay = false,
 }: TopCollectionSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -210,6 +219,17 @@ export function TopCollectionSwitcher({
   return (
     <>
       <DropdownMenu open={open} onOpenChange={handleOpenChange}>
+        <div
+          className={cn(
+            "flex h-full min-w-0 max-w-[50%] shrink-0",
+            overlay && "absolute inset-y-0 left-0",
+          )}
+          data-top-collection-switcher-slot=""
+          data-top-row-fade=""
+          data-entered={shown ? "true" : "false"}
+          inert={!shown}
+          aria-hidden={shown ? undefined : true}
+        >
         <DropdownMenuTrigger asChild>
           <MenuTextTrigger
             aria-label={`Switch collection: ${label}`}
@@ -220,7 +240,7 @@ export function TopCollectionSwitcher({
             data-top-collection-switcher=""
             {...topChromeTrigger.triggerProps}
             className={cn(
-              "max-w-[50%]",
+              "max-w-full",
               // Label text = this padding + 8px inner pill padding: 16 px
               // from the line before it, the sidebar open or collapsed
               // (11.10.2026), like the space switcher's from the window edge.
@@ -229,6 +249,7 @@ export function TopCollectionSwitcher({
             )}
           />
         </DropdownMenuTrigger>
+        </div>
         <DropdownMenuContent
           align="start"
           side="bottom"

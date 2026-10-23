@@ -714,59 +714,30 @@ body {
   line-height: 20px;
 }
 
-.detail-top-bar-enter {
+/* The top rows' motion (user's decision of 23.10.2026): everything in the
+   row fades in and out where it stands, the place's switcher and an open
+   card's name too; nothing slides or scales. In over --hover-intent-fade-in,
+   out over the shorter --hover-intent-fade-out, the hover answers' values;
+   with "Reduce motion" both are instant. */
+.detail-top-bar-enter,
+.detail-top-bar-line-enter,
+.main-secondary-bar-layer,
+[data-top-row-fade] {
   opacity: 0;
-  transform: translateY(-12px);
-  transition:
-    opacity 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: opacity, transform;
+  transition: opacity var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1);
 }
-
-.detail-top-bar-enter[data-entered="true"] {
+.detail-top-bar-enter[data-entered="true"],
+.detail-top-bar-line-enter[data-entered="true"],
+.main-secondary-bar-layer[data-entered="true"],
+[data-top-row-fade][data-entered="true"] {
   opacity: 1;
-  transform: translateY(0);
+  transition-duration: var(--hover-intent-fade-in);
 }
-
 .main-secondary-bar-layer {
-  opacity: 0;
-  transform: translateY(6px);
-  transition:
-    opacity 140ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 170ms cubic-bezier(0.22, 1, 0.36, 1);
   pointer-events: none;
-  will-change: opacity, transform;
 }
-
 .main-secondary-bar-layer[data-entered="true"] {
-  opacity: 1;
-  transform: translateY(0);
   pointer-events: auto;
-}
-
-[data-secondary-sidebar-link-mode-bar].main-secondary-bar-layer,
-[data-secondary-detail-top-menu].main-secondary-bar-layer {
-  transform: translateY(-8px);
-}
-
-[data-secondary-sidebar-link-mode-bar].main-secondary-bar-layer[data-entered="true"],
-[data-secondary-detail-top-menu].main-secondary-bar-layer[data-entered="true"] {
-  transform: translateY(0);
-}
-
-.detail-top-bar-line-enter {
-  opacity: 0;
-  transform: scaleX(0.9);
-  transition:
-    opacity 220ms 80ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 260ms 80ms cubic-bezier(0.22, 1, 0.36, 1);
-  transform-origin: center;
-  will-change: opacity, transform;
-}
-
-.detail-top-bar-line-enter[data-entered="true"] {
-  opacity: 1;
-  transform: scaleX(1);
 }
 
 /* The scrim under a layer over the page (SPEC_COLOR_RULES.md, 3.9.1; user's
@@ -1653,7 +1624,15 @@ body {
   [data-sidebar-preview-rail] {
     display: none;
   }
+  /* Dividers between items (user's request of 22.10.2026): the wide rows'
+     line, in the 1px between two items, inset as the item's content is, by
+     its padding, not from edge to edge; none after the last item. */
   [data-sidebar-row-surface]::after {
+    inset-inline: var(--spacing-plate);
+    bottom: -1px;
+  }
+  [data-sidebar-rows] > :last-child [data-sidebar-row-surface]::after,
+  [data-sidebar-rows] > [data-sidebar-row-surface]:last-child::after {
     display: none;
   }
   /* Insets of an item: the button's padding is its rows' inset, the zones'
@@ -1688,7 +1667,8 @@ body {
     padding-block: 0;
     padding-inline: calc(var(--spacing-plate) - 1px);
   }
-  /* First line: the name, primary. It dissolves at its end by the wide
+  /* First line: the name, muted as a wide row's until the pointer, the
+     keyboard or the open collection lights it. It dissolves at its end by the wide
      rows' rule (--sidebar-name-mask: the same fade and clear tail), before
      the stack, or before Connect while it is there (user's decision of
      22.10.2026; no ellipsis). The optical pixel stays in its padding, so
@@ -1699,7 +1679,6 @@ body {
     width: auto;
     min-width: 0;
     line-height: var(--text-sm--line-height);
-    color: var(--foreground);
   }
   /* An empty collection has no second line: its name stands in the middle
      of the item, as a one-line menu button's does. */
@@ -1749,6 +1728,33 @@ body {
   [data-sidebar-compact-stack] {
     display: block;
   }
+  /* TRIAL (PLAN 50.38): the large stack, 40px cards 4px inside the item
+     instead of 8: its cell reaches 4px into the item's padding above, below
+     and at the right, so the name's lines keep their places. */
+  :root[data-sidebar-stack-large] [data-sidebar-meta-cell] {
+    margin-block: calc(var(--spacing-surface) - var(--spacing-plate));
+    margin-right: calc(var(--spacing-surface) - var(--spacing-plate));
+  }
+  /* TRIAL (PLAN 50.38): the stack before the name when the sidebar's
+     columns put the previews before it (sidebarColumnLayout.ts), the
+     avatar's place in shadcn's menu button; the lines follow it after the
+     same `gap-2`, and
+     the large stack reaches into the item's padding at the left. */
+  :root[data-sidebar-stack-left] [data-sidebar-row-body] {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  :root[data-sidebar-stack-left] [data-sidebar-meta-cell] {
+    grid-column: 1;
+    justify-content: flex-start;
+  }
+  :root[data-sidebar-stack-left] [data-sidebar-name-cell],
+  :root[data-sidebar-stack-left] [data-sidebar-meta-count] {
+    grid-column: 2;
+  }
+  :root[data-sidebar-stack-left][data-sidebar-stack-large] [data-sidebar-meta-cell] {
+    margin-right: 0;
+    margin-left: calc(var(--spacing-surface) - var(--spacing-plate));
+  }
   [data-sidebar-count-noun] {
     display: inline;
   }
@@ -1760,15 +1766,10 @@ body {
   [data-sidebar-row]:has(> [data-sidebar-row-connected-pill][data-state="on"]) [data-sidebar-meta-cell] {
     min-width: calc(var(--sidebar-zone) - 2 * var(--spacing-plate) - var(--spacing-plate) + var(--spacing-surface));
   }
-  /* The state layer over the whole item: the pointer's or the keyboard's
-     row at once, the state that lifts a wide row's name (С7.10), and the open
-     collection. Only the stack's fan waits for the hover-intent engine
-     (below). The weight never changes (user's decision of 22.10.2026). */
-  [data-sidebar-scroll][data-sidebar-row-focus-mode="true"] [data-sidebar-row-focused="true"] > [data-sidebar-row-body],
-  [data-sidebar-scroll][data-sidebar-row-focus-mode="true"] [data-sidebar-row-focused="true"] [data-sidebar-create-channel-row-body],
-  [data-sidebar-scroll]:not([data-sidebar-link-editor-mode="true"]) [data-sidebar-row-active="true"] > [data-sidebar-row-body] {
-    @apply state-active;
-  }
+  /* The pointer's, the keyboard's and the open collection's item answer as
+     a wide row does (user's decisions of 22.10.2026): the name, muted at
+     rest, lights up (С7.10, the rules above), with no plate. The weight
+     never changes. */
   /* New Collection and a name being typed: items of the same step. */
   [data-sidebar-create-channel-row-body],
   [data-sidebar-editable-row-body] {
@@ -1785,25 +1786,25 @@ body {
     display: none;
   }
 }
-/* The deck opens on the hover-intent engine's lift answer, the feed cards'
-   rule (С8.6; user's decision of 22.10.2026): at once below the lifting
-   speed and held while the pointer stays on the item, so only a fast pass
-   moves no card; the keyboard's row at once (`data-sidebar-row-answer`,
-   Sidebar.tsx, SidebarAnswerRowContext). It moves on one critically damped
-   spring both ways (src/lib/channelIcon.ts: `--channel-icon-easing`, a
-   `linear()` computed from the spring's equation, and
-   `--channel-icon-duration`, its settling time); a transition retargets from
-   the current place, so an interrupted move goes on from where it is. The
-   bottom card stays; the cards above it slide toward the name. Only the place
-   moves; sizes and shadows stay, nothing turns. With "Reduce motion" the
-   cards stay at rest. */
-/* The mini-card's edge is the buttons' (user's decision of 22.10.2026;
-   SPEC_COLOR_RULES.md, К10; buttons.css, «Buttons: macOS»): a 0.5px stroke
-   inside the box, a step and a half of the quiet line brighter than the
-   card's face (its own fill, --accent), `--macos-outline-step` per theme.
-   Drawn over the image, which would cover an inset shadow on the card, and
-   inside the box, so the card keeps its size. */
-[data-channel-icon-card]::after {
+/* The deck opens for the item under the pointer at once, with no speed
+   gate (user's decision of 22.10.2026), and for the keyboard's item at once
+   (`data-sidebar-row-answer`, Sidebar.tsx, SidebarAnswerRowContext). It
+   moves on one critically damped spring both ways (src/lib/channelIcon.ts:
+   `--channel-icon-easing`, a `linear()` computed from the spring's equation,
+   and `--channel-icon-duration`, its settling time); a transition retargets
+   from the current place, so an interrupted move goes on from where it is.
+   The bottom card stays; the cards above it slide toward the name. Only the
+   place moves; sizes and shadows stay, nothing turns. With "Reduce motion"
+   the cards stay at rest. */
+/* Thumbnail edge. Every sidebar thumbnail, a stack's mini-card and a
+   strip's tile alike, has the buttons' edge (user's decisions of 22.10.2026;
+   SPEC_COLOR_RULES.md, К10; buttons.css, «Buttons: macOS»; the graph's cards
+   paint the same, graph/canvas.ts): a 0.5px stroke inside the box, a step
+   and a half of the quiet line brighter than the thumbnail's face (its own
+   fill, --accent), `--macos-outline-step` per theme. Drawn over the image,
+   which would cover an inset shadow, and inside the box, so the thumbnail
+   keeps its size. */
+[data-thumb-edge]::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -1811,12 +1812,28 @@ body {
   box-shadow: inset 0 0 0 0.5px oklch(from var(--accent) clamp(0, calc(l + var(--macos-outline-step)), 1) 0 0);
   pointer-events: none;
 }
-/* The card under the pointer, by the thumbnail preview's intent rule (its
+/* The thumbnail under the pointer, by the preview's intent rule (its
    preview is the one shown, С7.10), works its edge out from the face with the
    state layer, as a hovered button's does (buttons.css: --macos-outline-from
    on hover; К10), at once, as the buttons' edge changes. */
-[data-channel-icon-card][data-sidebar-preview-active="true"]::after {
+[data-thumb-edge][data-sidebar-preview-active="true"]::after {
   box-shadow: inset 0 0 0 0.5px oklch(from color-mix(in srgb, var(--accent), var(--foreground) var(--active-alpha)) clamp(0, calc(l + var(--macos-outline-step)), 1) 0 0);
+}
+/* TRIAL (PLAN 50.38): Rounded corners, the buttons' (`rounded-1`), on every
+   sidebar thumbnail, the table's strip and the compact stack alike; the
+   edge, the shadow and the ring follow them. */
+:root[data-sidebar-thumbs-rounded] [data-thumb-edge] {
+  border-radius: var(--radius-1);
+}
+[data-thumb-edge]::after {
+  border-radius: inherit;
+}
+/* TRIAL (PLAN 50.38): the Ring edge. No shadow; outside the buttons' edge a
+   1px ring of the item's fill (`--surface`: the panel's, or the plate's under
+   the pointer, the keyboard and the open collection), so a card above cuts
+   its outline out of the one below. */
+:root[data-sidebar-stack-ring] [data-channel-icon-card] {
+  box-shadow: 0 0 0 1px var(--surface);
 }
 [data-channel-icon-card] {
   transform: var(--channel-icon-rest);
@@ -1828,6 +1845,51 @@ body {
 @media (prefers-reduced-motion: reduce) {
   [data-sidebar-scroll] [data-sidebar-row-answer="true"] [data-channel-icon-card] {
     transform: var(--channel-icon-rest);
+  }
+}
+
+/* List sidebar. TRIAL (PLAN 50.38, user's request of 23.10.2026, after a
+   reference list): in place of the compact rows, below the same width (a
+   wider sidebar stays the table), the collections' names alone, with no
+   previews, counts, stack, guidelines, lines or plates; muted at rest and lit
+   under the pointer and the keyboard as a table row's (С7.10); the open
+   collection lit, with a dot after its name. Rows step 24px. The panel
+   keeps its divider. */
+@container sidebar-rows (width < 366.2px) {
+  :root[data-sidebar-list] :is(
+    [data-sidebar-preview-rail],
+    [data-sidebar-meta-cell],
+    [data-sidebar-meta-count],
+    [data-sidebar-compact-stack],
+    [data-sidebar-guidelines]
+  ) {
+    display: none !important;
+  }
+  :root[data-sidebar-list] [data-sidebar-row-surface]::after {
+    display: none;
+  }
+  :root[data-sidebar-list] [data-sidebar-rows] {
+    --sidebar-row-height: var(--spacing-s4);
+    gap: 0;
+  }
+  :root[data-sidebar-list] [data-sidebar-row-body] {
+    display: flex;
+    min-height: var(--spacing-s4);
+    padding-block: 0;
+  }
+  :root[data-sidebar-list] [data-sidebar-name-cell] {
+    flex: 1 1 auto;
+    width: auto;
+  }
+  :root[data-sidebar-list] [data-sidebar-scroll]:not([data-sidebar-link-editor-mode="true"]) [data-sidebar-row-active="true"] [data-sidebar-name-cell]::after {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-left: var(--spacing-plate);
+    border-radius: 9999px;
+    background-color: currentColor;
+    vertical-align: middle;
   }
 }
 

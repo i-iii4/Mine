@@ -332,10 +332,13 @@ async function waitForGraphRest(page, canvas) {
 }
 
 async function installCardHoverProbe(canvas, target) {
-  // Trace the thumbnail's real clipping path, not its hover paint. The only
-  // permitted pixel changes are a one-CSS-pixel stroke of that same path.
-  // This catches enlargement, inner-image changes and changes to other nodes
-  // without allowing an arbitrary percentage of the canvas to change.
+  // Trace the card's real edge, not its hover paint: the stroke the card
+  // draws right after its picture, the buttons' 0.5 CSS px edge inside the
+  // thumbnail's clipping path (DESIGN_SYSTEM.md, «Карточка на графе»; user's
+  // decision of 22.10.2026). The only permitted pixel changes are that
+  // stroke. This catches enlargement, inner-image changes and changes to
+  // other nodes without allowing an arbitrary percentage of the canvas to
+  // change.
   await canvas.evaluate((node, point) => {
     const context = node.getContext("2d");
     const mask = document.createElement("canvas");
@@ -344,17 +347,18 @@ async function installCardHoverProbe(canvas, target) {
     const maskContext = mask.getContext("2d");
     const colorProbe = document.createElement("span");
     colorProbe.className = "bg-chrome";
-    colorProbe.style.outlineColor = "var(--component-fill-hover)";
-    colorProbe.style.borderColor = "var(--border)";
-    colorProbe.style.borderStyle = "solid";
-    colorProbe.style.borderWidth = "1px";
+    // Every card carries the buttons' edge at rest, a step and a half of the
+    // quiet line off its face `--chrome`, and the pointer works it out from
+    // the face with the state layer (SPEC_COLOR_RULES.md, К10): the rest
+    // edge on the same path is allowed, only the lit one counts.
+    colorProbe.style.textDecorationColor =
+      "oklch(from var(--chrome) clamp(0, calc(l + var(--macos-outline-step)), 1) 0 0)";
+    colorProbe.style.columnRuleColor =
+      "oklch(from color-mix(in srgb, var(--chrome), var(--foreground) var(--active-alpha)) clamp(0, calc(l + var(--macos-outline-step)), 1) 0 0)";
     document.body.appendChild(colorProbe);
-    // Every card carries a frame at rest, `--border`, and the pointer lights
-    // it, `--component-fill-hover` (DESIGN_SYSTEM.md, «Карточка на графе»):
-    // the rest frame on the same path is allowed, only the lit one counts.
-    maskContext.strokeStyle = getComputedStyle(colorProbe).borderTopColor;
+    maskContext.strokeStyle = getComputedStyle(colorProbe).textDecorationColor;
     const restColor = maskContext.strokeStyle;
-    maskContext.strokeStyle = getComputedStyle(colorProbe).outlineColor;
+    maskContext.strokeStyle = getComputedStyle(colorProbe).columnRuleColor;
     const expectedColor = maskContext.strokeStyle;
     colorProbe.remove();
 
@@ -364,7 +368,8 @@ async function installCardHoverProbe(canvas, target) {
       context[name] = wrapper(context[name]);
     };
     let commands = [];
-    let thumbnailPath = null;
+    // The audit card's picture is drawn and its edge comes next.
+    let edgeNext = false;
     const probe = { strokes: 0, errors: [], finish: null };
     replace("beginPath", (original) => function (...args) {
       commands = [];
@@ -376,20 +381,20 @@ async function installCardHoverProbe(canvas, target) {
         return original.apply(this, args);
       });
     }
-    const pathKey = () => JSON.stringify([commands, context.getTransform().toString()]);
     replace("drawImage", (original) => function (image, ...args) {
       if (image instanceof HTMLImageElement && image.src.includes("/audit-2.svg")
         && this.isPointInPath(point.x, point.y)) {
-        thumbnailPath = pathKey();
+        edgeNext = true;
       }
       return original.call(this, image, ...args);
     });
     replace("stroke", (original) => function (...args) {
-      if (thumbnailPath && pathKey() === thumbnailPath) {
+      if (edgeNext && this.isPointInPath(point.x, point.y)) {
+        edgeNext = false;
         const transform = this.getTransform();
         const cssScale = Math.hypot(transform.a, transform.b) / devicePixelRatio;
         const lit = this.strokeStyle === expectedColor;
-        if (Math.abs(this.lineWidth * cssScale - 1) > 1e-6
+        if (Math.abs(this.lineWidth * cssScale - 0.5) > 1e-6
           || (!lit && this.strokeStyle !== restColor) || this.globalAlpha !== 1
           || this.getLineDash().length !== 0 || this.shadowBlur !== 0
           || this.shadowOffsetX !== 0 || this.shadowOffsetY !== 0
@@ -404,7 +409,7 @@ async function installCardHoverProbe(canvas, target) {
         maskContext.resetTransform();
         maskContext.clearRect(0, 0, mask.width, mask.height);
         maskContext.setTransform(transform);
-        maskContext.lineWidth = 1 / cssScale;
+        maskContext.lineWidth = 0.5 / cssScale;
         maskContext.strokeStyle = "white";
         maskContext.beginPath();
         for (const [name, ...values] of commands) maskContext[name](...values);
@@ -441,14 +446,14 @@ async function verifyCardHoverOutline(page) {
   }
   if (!probe) throw new Error("Graph route reloaded during hover verification");
   if (probe.strokes === 0 || probe.errors.length > 0) {
-    throw new Error(`Card hover must outline its thumbnail path at 1px: ${JSON.stringify({
+    throw new Error(`Card hover must work out its 0.5px edge: ${JSON.stringify({
       strokes: probe.strokes, errors: probe.errors,
     })}`);
   }
   const mask = Buffer.from(probe.mask.split(",", 2)[1], "base64");
   const changed = changedPixels(before, after, mask);
   if (changed.ratio === 0 || changed.outsideOutline !== 0) {
-    throw new Error(`Card hover changed outside its 1px outline: ${JSON.stringify(changed)}`);
+    throw new Error(`Card hover changed outside its 0.5px edge: ${JSON.stringify(changed)}`);
   }
   await page.mouse.move(box.x + 8, box.y + 8);
   return changed.ratio;

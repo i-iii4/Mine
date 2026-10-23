@@ -41,6 +41,12 @@ export type GraphCanvasTheme = GraphPalette & {
   mutedText: string;
   foregroundText: string;
   hoverOutline: string;
+  /// A card's edge, the buttons' (SPEC_COLOR_RULES.md, К10; user's decision
+  /// of 22.10.2026): a step and a half of the quiet line off the card's face
+  /// (`--chrome`), and under the pointer or selected the same step off the
+  /// face with the state layer.
+  cardOutline: string;
+  cardHoverOutline: string;
   /// `--background`, the canvas under the graph: a dimmed node covers its
   /// footprint with it first, so nothing beneath shows through.
   canvasFill: string;

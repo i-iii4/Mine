@@ -82,6 +82,7 @@ import { ReadOnlyCardPreview } from "./Card";
 import { MicroPreviewThumbnail, microPreviewFromPreviewCard } from "./MicroPreviewThumbnail";
 import { CHANNEL_ICON_CARD_CLASS, ChannelIcon } from "./ChannelIcon";
 import { CHANNEL_ICON_MAX_CARDS, channelIconCardStyle } from "@/lib/channelIcon";
+import { COMPACT_STACK_CARD_PX, useCompactStack } from "@/lib/compactStack";
 
 const SIDEBAR_PREVIEW_WIDTH = 240;
 /// The panel's box. The nav freezes at the three equal zones, as it always
@@ -209,7 +210,7 @@ const SIDEBAR_PREVIEW_MASK_STYLE = { "--sidebar-preview-mask": SIDEBAR_PREVIEW_M
 /// take and nothing moves when the picture arrives. The fill is the feed
 /// skeleton's quiet `bg-accent`: it is what a placeholder shows, and what a
 /// real tile shows behind its image until that image has decoded.
-const SIDEBAR_PREVIEW_TILE_CLASS = "size-8 shrink-0 overflow-hidden bg-accent";
+const SIDEBAR_PREVIEW_TILE_CLASS = "relative size-8 shrink-0 overflow-hidden bg-accent";
 
 type SidebarPreviewTarget = {
   key: string;
@@ -319,16 +320,13 @@ interface SidebarProps {
  *  a prop through the row components. */
 const SidebarOpenElsewhereContext = createContext<((to: string, newWindow: boolean) => void) | null>(null);
 
-/** The row a compact item's stack opens for (PLAN 50.36; user's decisions
- *  of 22.10.2026: a quick pass over the list moves no card, and an arriving
- *  pointer opens it at once). For the pointer it is the hover-intent
- *  engine's `raised`, the feed cards' lift rule (SPEC_CARD_STATES.md, С8.6):
- *  at once below the lifting speed, held while the pointer stays on the row
- *  at any speed, so only a sweep across the list opens nothing. The
+/** The row a compact item's stack opens for (PLAN 50.36; user's decision
+ *  of 22.10.2026: at once, with no speed gate). For the pointer it is the row
+ *  under it, the same answer that lights the name (С7.10). The
  *  keyboard, a drop target and a name being typed answer at once
  *  (`immediate`). The wide rows' names keep answering the raw pointer at once
- *  (С7.10, user's decision of 02.10.2026). A context, not a prop: it changes
- *  only with the engine's answer, and only the rows' frames read it. */
+ *  (С7.10, user's decision of 02.10.2026). A context, not a prop: only the
+ *  rows' frames read it. */
 type SidebarAnswerRows = { pointer: string | null; immediate: string | null };
 const SidebarAnswerRowContext = createContext<SidebarAnswerRows>({ pointer: null, immediate: null });
 
@@ -423,10 +421,8 @@ const SidebarCore = memo(function SidebarCore({
   // its collection (С3) and the big preview of a thumbnail. The row's own
   // name, count and button answer the pointer at once (С7.10, user's
   // decision of 02.10.2026): they are the most responsive part of the list.
-  const [stackRowKey, setStackRowKey] = useState<string | null>(null);
-  const rowIntent = useHoverIntent(({ chosen, raised }) => {
+  const rowIntent = useHoverIntent(({ chosen }) => {
     setHoveredCollectionRow(feedRowKey(chosen));
-    setStackRowKey(raised);
   });
   // The big preview's delay, resting pointer and warm window (С7.10).
   const previewOpener = useHoverPreviewOpener(rowIntent.isSlow);
@@ -896,8 +892,8 @@ const SidebarCore = memo(function SidebarCore({
     ?? dropOverRowKey
     ?? (sidebarRowFocusMode && !rowFocusFromPointer ? sidebarRowFocusKey : null);
   const answerRows = useMemo<SidebarAnswerRows>(
-    () => ({ pointer: stackRowKey, immediate: immediateAnswerRowKey }),
-    [stackRowKey, immediateAnswerRowKey],
+    () => ({ pointer: intentRowKey, immediate: immediateAnswerRowKey }),
+    [intentRowKey, immediateAnswerRowKey],
   );
 
   return (
@@ -911,6 +907,7 @@ const SidebarCore = memo(function SidebarCore({
         "relative flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar",
       )}
       style={sidebarPanelStyle(widthAnimating, chromeRow)}
+      data-sidebar-panel=""
     >
       {/* Navigation. The wrapper exists so the fade band can be a sibling of
           the scrollport: inside the nav it would inherit its padding and settle
@@ -2159,11 +2156,8 @@ function SidebarPreviewThumbnail({
       style={stackStyle}
       className={cn(
         stackStyle ? CHANNEL_ICON_CARD_CLASS : SIDEBAR_PREVIEW_TILE_CLASS,
-        // A stack's card answers with its own edge, as a button's does
-        // (global.css, «Compact rows»); a strip's tile with the outline.
-        !stackStyle && "outline-0 outline-transparent hover:outline-1 hover:-outline-offset-1 hover:outline-component-fill-hover",
-        !stackStyle && isPreviewActive &&
-          "outline-1 -outline-offset-1 outline-component-fill-hover",
+        // A stack's card and a strip's tile answer with their own edge, as a
+        // button's does (global.css, «Thumbnail edge»).
         // The source dims as a dragged feed card does.
         isDragging && "opacity-30",
       )}
@@ -2191,11 +2185,13 @@ function SidebarPreviewThumbnail({
       data-sidebar-preview-thumbnail={stackStyle ? undefined : "trigger"}
       data-sidebar-stack-card={stackStyle ? "trigger" : undefined}
       data-channel-icon-card={stackStyle ? "" : undefined}
+      data-thumb-edge=""
       data-sidebar-preview-active={isPreviewActive ? "true" : undefined}
       data-sidebar-preview-dragging={isDragging ? "true" : undefined}
     >
       <MicroPreviewThumbnail
         preview={microPreviewFromPreviewCard(card)}
+        fill={stackStyle !== undefined}
         loading="lazy"
         draggable={false}
       />
@@ -2268,6 +2264,7 @@ function SidebarPreviewStrip({
               key={previewKey}
               className={SIDEBAR_PREVIEW_TILE_CLASS}
               data-sidebar-preview-thumbnail="placeholder"
+              data-thumb-edge=""
             >
               <MicroPreviewThumbnail
                 preview={microPreviewFromPreviewCard(card)}
@@ -2298,6 +2295,7 @@ function SidebarPreviewStrip({
           aria-hidden="true"
           className={SIDEBAR_PREVIEW_TILE_CLASS}
           data-sidebar-preview-placeholder=""
+          data-thumb-edge=""
         />
       ))}
     </div>
@@ -2336,22 +2334,26 @@ function SidebarCompactStack({
   className,
 }: Parameters<typeof SidebarPreviewStrip>[0] & { className?: string }) {
   const pending = cards === undefined;
+  // TRIAL (PLAN 50.38): the stack's size.
+  const cardPx = COMPACT_STACK_CARD_PX[useCompactStack()];
   const thumbnails = pending ? [] : cards.filter((card) => card.hasThumb).slice(0, CHANNEL_ICON_MAX_CARDS);
   const placeholderCount = pending || previewsPending
     ? Math.min(CHANNEL_ICON_MAX_CARDS - thumbnails.length, sidebarPreviewPlaceholderCount(count, thumbnails.length))
     : 0;
   const total = thumbnails.length + placeholderCount;
   if (total === 0) return null;
+  // The collection's first card is the deck's top one: depth follows order.
+  const deckStyle = (slot: number) => channelIconCardStyle(total - 1 - slot, total, cardPx);
   return (
-    <ChannelIcon className={className} data-sidebar-compact-stack="">
+    <ChannelIcon card={cardPx} className={className} data-sidebar-compact-stack="">
       {thumbnails.map((card, index) => {
         const previewKey = `${previewKeyPrefix}:stack:${card.slug ?? index}:${index}`;
-        const style = channelIconCardStyle(index, total);
+        const style = deckStyle(index);
         if (!allowHoverPreview || !card.slug) {
           // The lifted copy of a row draws its media without behaviour.
           return (
-            <div key={previewKey} className={CHANNEL_ICON_CARD_CLASS} style={style} data-channel-icon-card="">
-              <MicroPreviewThumbnail preview={microPreviewFromPreviewCard(card)} loading="lazy" draggable={false} />
+            <div key={previewKey} className={CHANNEL_ICON_CARD_CLASS} style={style} data-channel-icon-card="" data-thumb-edge="">
+              <MicroPreviewThumbnail preview={microPreviewFromPreviewCard(card)} fill loading="lazy" draggable={false} />
             </div>
           );
         }
@@ -2376,8 +2378,9 @@ function SidebarCompactStack({
           key={`placeholder:${offset}`}
           aria-hidden="true"
           className={CHANNEL_ICON_CARD_CLASS}
-          style={channelIconCardStyle(thumbnails.length + offset, total)}
+          style={deckStyle(thumbnails.length + offset)}
           data-channel-icon-card=""
+          data-thumb-edge=""
           data-sidebar-stack-placeholder=""
         />
       ))}

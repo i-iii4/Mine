@@ -1,4 +1,4 @@
-import type { ComponentPropsWithoutRef } from "react";
+import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
 import { channelIconBoxStyle } from "@/lib/channelIcon";
 
@@ -12,12 +12,17 @@ import { channelIconBoxStyle } from "@/lib/channelIcon";
 export const CHANNEL_ICON_CARD_CLASS = "absolute top-0 overflow-hidden rounded-0 bg-accent shadow-sm";
 
 /** The stack's box; the cards inside are placed by `channelIconCardStyle`. */
-export function ChannelIcon({ style, className, ...props }: ComponentPropsWithoutRef<"span">) {
+export function ChannelIcon({
+  card,
+  style,
+  className,
+  ...props
+}: ComponentProps<"span"> & { card?: number }) {
   return (
     <span
       {...props}
       className={cn("relative shrink-0", className)}
-      style={{ ...style, ...channelIconBoxStyle() }}
+      style={{ ...style, ...channelIconBoxStyle(card) }}
       data-channel-icon=""
     />
   );

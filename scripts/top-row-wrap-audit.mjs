@@ -45,9 +45,12 @@ const vite = await startAuditVite([{
         const [count,setCount]=React.useState(0);
         const [card,setCard]=React.useState(null);
         const [view,setView]=React.useState("grid");
-        React.useEffect(()=>{ window.auditSelect=setCount; window.auditOpenCard=setCard; window.auditView=setView; },[]);
+        // Whether the sidebar beside the feed is collapsed: only the path
+        // reads it here (topRowPath.ts, 23.10.2026).
+        const [collapsed,setCollapsed]=React.useState(false);
+        React.useEffect(()=>{ window.auditSelect=setCount; window.auditOpenCard=setCard; window.auditView=setView; window.auditCollapse=setCollapsed; },[]);
         const detailBlock=card?{slug:card,title:card,tags:[]}:null;
-        const placeShown=topRowShowsPlace(narrow,Boolean(card));
+        const placeShown=topRowShowsPlace({narrow,sidebarBeside:!narrow&&!collapsed,cardOpen:Boolean(card)});
         const blocks=Array.from({length:count},(_,index)=>({slug:"card-"+index}));
         const commands=h(GroupSelectionCommands,{selectedBlocks:blocks,tags:[],currentTag:"Inbox",
           onLoadBlockTags:async()=>new Map(),onBatchSetTag:async()=>true,onCreateAndAssignBatch:noop,
@@ -56,8 +59,10 @@ const vite = await startAuditVite([{
           h(ChromeRow,{as:"header",separator:"bottom",className:"bg-chrome"},
             narrow?null:h("div",{"data-audit-sidebar-segment":"",className:"h-full shrink-0 border-r border-sidebar-border",style:{width:"var(--sidebar-width)"}}),
             h("div",{ref:wrap.rowRef,className:"flex h-full min-w-0 flex-1 items-center"},
-              placeShown?h(TopCollectionSwitcher,{currentTag:"Inbox",orderedTags:[{tag:"Inbox",count:3}],onNavigate:noop,
-                onCreateCollection:async()=>undefined,joinsNext:true}):null,
+              // As App.tsx has it: away, the switcher stays in the page, out
+              // of the row's flow, faded out and inert.
+              h(TopCollectionSwitcher,{shown:placeShown||!card,overlay:!placeShown,currentTag:"Inbox",orderedTags:[{tag:"Inbox",count:3}],onNavigate:noop,
+                onCreateCollection:async()=>undefined,joinsNext:true}),
               h(MainSecondaryTopBar,{viewMode:view,detailBlock,detailEntered:Boolean(card),placeBefore:placeShown,onViewModeChange:noop,vaultPath:"",tags:[],onToggleTag:noop,
                 onCreateAndAssign:noop,onRequestRename:noop,onRenameFile:async()=>undefined,onCheckFileName:async()=>null,
                 onRequestDelete:noop,onDetailClose:noop,detailMenuOpenRequestSequence:0,selectionActive:count>0,
@@ -93,7 +98,7 @@ function readPath() {
   return {
     fit: document.querySelector("[data-chrome-shell]").getAttribute("data-top-row"),
     header: box("header"),
-    place: box("[data-top-collection-switcher]"),
+    place: box("[data-top-collection-switcher-slot]:not([inert]) [data-top-collection-switcher]"),
     bar: box("[data-top-row-bar]"),
     layer: box("[data-secondary-detail-top-menu]"),
     name: box("[data-secondary-detail-card-name]"),
@@ -173,7 +178,7 @@ try {
   // A narrow window (У15): with no card the place's switcher starts the row;
   // an open card's name with its menu and close button takes the whole row,
   // no switcher and no path's line before it, the name ending in an
-  // ellipsis. Wide again, the switcher stands before the open card's name.
+  // ellipsis.
   const readPathSettled = async () => { await settle(); return page.evaluate(readPath); };
   for (const width of [558, 480, 390]) {
     await page.setViewportSize({ width, height: 700 });
@@ -203,13 +208,21 @@ try {
     if (width <= 600) assert.equal(path.nameCut, true, `${width} open card: the long name does not fit`);
     console.log(`PASS ${width}: no card, the place starts the row; an open card's name, ⋯ and × take the whole row`);
   }
+  // Wide with the sidebar open beside the feed, the sidebar shows the place:
+  // the open card's name stands alone after the sidebar's segment (user's
+  // decision of 23.10.2026). With the sidebar collapsed the switcher stands
+  // before the name, past the path's line.
   await page.setViewportSize({ width: 1200, height: 700 });
-  const widePath = await readPathSettled();
-  assert.notEqual(widePath.place, null, "1200 open card: the place's switcher stands");
-  assert.equal(widePath.pathLine, true, "1200 open card: the path's line before the name");
-  assert.ok(widePath.layer.left > widePath.place.right, "1200 open card: the name past the place");
-  await page.evaluate(() => window.auditOpenCard(null));
-  console.log("PASS 1200: the place's switcher stands before an open card's name");
+  let widePath = await readPathSettled();
+  assert.equal(widePath.place, null, "1200 open card beside the open sidebar: no place's switcher");
+  assert.equal(widePath.pathLine, false, "1200 open card beside the open sidebar: no path's line");
+  await page.evaluate(() => window.auditCollapse(true));
+  widePath = await readPathSettled();
+  assert.notEqual(widePath.place, null, "1200 open card, sidebar collapsed: the place's switcher stands");
+  assert.equal(widePath.pathLine, true, "1200 open card, sidebar collapsed: the path's line before the name");
+  assert.ok(widePath.layer.left > widePath.place.right, "1200 open card, sidebar collapsed: the name past the place");
+  await page.evaluate(() => { window.auditCollapse(false); window.auditOpenCard(null); });
+  console.log("PASS 1200: an open card's name alone beside the open sidebar, past the place's switcher with it collapsed");
 
   // Wide, with a selection: one row while the commands fit, the feed right
   // under it. A count that ends in an ellipsis alone keeps one row.

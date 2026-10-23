@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
+import { setCompactStack } from "@/lib/compactStack";
 import type { ComponentProps } from "react";
 import {
   DndContext,
@@ -2063,6 +2064,23 @@ describe("sidebar compact rows (PLAN 50.36)", () => {
   const stackOf = (container: HTMLElement, rowKey: string) =>
     container.querySelector(`[data-sidebar-row-key="${rowKey}"] [data-sidebar-compact-stack]`);
 
+  it("draws the trial's large stack at 40px when chosen (PLAN 50.38)", () => {
+    act(() => setCompactStack("large"));
+    try {
+      const { container } = renderSidebar({
+        ...defaultProps,
+        orderedTags: [tag("alpha", 5)],
+        channelPreviews: new Map([["alpha", ["a", "b", "c"].map((slug) => thumb(`alpha-${slug}`))]]),
+      });
+      const stack = stackOf(container, "tag:alpha") as HTMLElement;
+      expect(stack.style.height).toBe("40px");
+      expect(stack.querySelector<HTMLElement>('[data-sidebar-stack-card="trigger"]')!.style.width).toBe("40px");
+      expect(document.documentElement.hasAttribute("data-sidebar-stack-large")).toBe(true);
+    } finally {
+      act(() => setCompactStack("standard"));
+    }
+  });
+
   it("stacks the first three thumbnails at the item's end, the 7.23 stack at 32px", () => {
     const { container } = renderSidebar({
       ...defaultProps,
@@ -2081,13 +2099,15 @@ describe("sidebar compact rows (PLAN 50.36)", () => {
     expect(cards[0]!.style.width).toBe("32px");
     expect(new Set(Array.from(cards, (card) => card.style.left))).toEqual(new Set(["0px"]));
     const place = (x: string, y: string, scale: string) => `translate(${x}px, ${y}px) scale(${scale})`;
-    expect(cards[2]!.style.transformOrigin).toBe("center");
-    expect(cards[2]!.style.getPropertyValue("--channel-icon-rest")).toBe(place("0", "0", "1"));
-    expect(cards[2]!.style.getPropertyValue("--channel-icon-hover")).toBe(place("-3", "0", "1"));
+    // The collection's first card is the deck's top one.
+    expect(cards[0]!.style.zIndex).toBe("2");
+    expect(cards[0]!.style.transformOrigin).toBe("center");
+    expect(cards[0]!.style.getPropertyValue("--channel-icon-rest")).toBe(place("0", "0", "1"));
+    expect(cards[0]!.style.getPropertyValue("--channel-icon-hover")).toBe(place("-3", "0", "1"));
     expect(cards[1]!.style.getPropertyValue("--channel-icon-rest")).toBe(place("7.594", "0", "0.88"));
     expect(cards[1]!.style.getPropertyValue("--channel-icon-hover")).toBe(place("6.19", "0", "0.88"));
-    expect(cards[0]!.style.getPropertyValue("--channel-icon-rest")).toBe(place("14.276", "0", "0.774"));
-    expect(cards[0]!.style.getPropertyValue("--channel-icon-hover")).toBe(place("14.276", "0", "0.774"));
+    expect(cards[2]!.style.getPropertyValue("--channel-icon-rest")).toBe(place("14.276", "0", "0.774"));
+    expect(cards[2]!.style.getPropertyValue("--channel-icon-hover")).toBe(place("14.276", "0", "0.774"));
     expect(stack.style.getPropertyValue("--channel-icon-easing")).toMatch(/^linear\(0, .*, 1\)$/);
     expect(stack.style.getPropertyValue("--channel-icon-duration")).toBe("441ms");
     // The strip keeps its own tiles; the stack's are not counted among them.
