@@ -14,6 +14,7 @@
 
 import "@/styles/editor.css";
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type ComponentType, type ReactNode } from "react";
+import { useDetailMotionGate } from "../detailMotionGate";
 import type { ExtraProps } from "react-markdown";
 import { history, insertNewline, standardKeymap } from "@codemirror/commands";
 import { LanguageSupport, syntaxTree } from "@codemirror/language";
@@ -262,6 +263,9 @@ export function NoteEditor(props: NoteEditorProps) {
   const { slug } = props;
   const [opened, setOpened] = useState<OpenedSession | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
+  // In the card's window the session opens once the window rests, and the
+  // window waits a moment for it before it starts (detailMotionGate.ts).
+  const motionGate = useDetailMotionGate();
   const follows = opened !== null && (opened.slug === slug || opened.previous === slug);
 
   useEffect(() => {
@@ -270,8 +274,8 @@ export function NoteEditor(props: NoteEditorProps) {
     // coming back to its note opens a session anew.
     setOpened(null);
     let current = true;
-    beginNoteEdit(slug).then(
-      (block) => {
+    motionGate.track(beginNoteEdit(slug)).then(
+      (block) => motionGate.defer(() => {
         if (!current) {
           // The card went before the session opened: it ends at once.
           void endNoteEdit(slug).catch((error: unknown) => logFailure(NOTE_SESSION_LOG, error));
@@ -287,18 +291,18 @@ export function NoteEditor(props: NoteEditorProps) {
         nextSessionKey += 1;
         setRefused(null);
         setOpened({ key: nextSessionKey, slug, previous: null, block });
-      },
-      (error: unknown) => {
+      }),
+      (error: unknown) => motionGate.defer(() => {
         if (!current) return;
         const line = noteEditErrorLine(asNoteEditError(error));
         if (line) reportActionFailure({ kind: "note-edit", title: NOTE_EDIT_FAILED_TITLE, messages: [line] });
         setRefused(slug);
-      },
+      }),
     );
     return () => {
       current = false;
     };
-  }, [follows, slug]);
+  }, [follows, motionGate, slug]);
 
   // The open card caught up with the rename: the old name is forgotten.
   useEffect(() => {

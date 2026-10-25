@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { topRowShowsPlace } from "./topRowPath";
+import { topRowCard, topRowShowsPlace } from "./topRowPath";
 
 describe("topRowShowsPlace (SPEC_NARROW_WINDOW.md, У15; 23.10.2026)", () => {
   it.each([
@@ -16,5 +16,18 @@ describe("topRowShowsPlace (SPEC_NARROW_WINDOW.md, У15; 23.10.2026)", () => {
     { narrow: false, sidebarBeside: false, cardOpen: false, shown: true },
   ])("narrow $narrow, sidebar beside $sidebarBeside, card open $cardOpen: the place shown $shown", ({ shown, ...state }) => {
     expect(topRowShowsPlace(state)).toBe(shown);
+  });
+});
+
+describe("topRowCard (SPEC_CARD_PEEK.md, О5)", () => {
+  it("leaves the row as with no card while the card stands in its window", () => {
+    expect(topRowCard("card", "peek")).toBeNull();
+    // With the row's card gone, the place stays in every window.
+    expect(topRowShowsPlace({ narrow: false, sidebarBeside: true, cardOpen: topRowCard("card", "peek") !== null })).toBe(true);
+  });
+
+  it("shows the card full page, and nothing with no card", () => {
+    expect(topRowCard("card", "full")).toBe("card");
+    expect(topRowCard(null, "full")).toBeNull();
   });
 });

@@ -5,7 +5,7 @@ import { renderMermaid, type MermaidRender } from "@/lib/reading/mermaid";
 import { MERMAID_FAILED_LINE, MermaidDiagram } from "./MermaidDiagram";
 
 vi.mock("@/lib/reading/mermaid", () => ({
-  readMermaidTheme: vi.fn((_host: HTMLElement, dark: boolean) => ({ dark, fontFamily: "system-ui", width: 680, variables: {} })),
+  readMermaidLayout: vi.fn(() => ({ fontFamily: "system-ui", fontFamilyMono: "ui-monospace", width: 680 })),
   renderMermaid: vi.fn(),
 }));
 vi.mock("@/lib/appLog", () => ({ logFailure: vi.fn() }));
@@ -51,17 +51,21 @@ describe("MermaidDiagram", () => {
     expect(container.querySelector("[data-code-block]")).not.toBeNull();
   });
 
-  it("draws again in a new theme and keeps the last drawing until then", async () => {
-    vi.mocked(renderMermaid).mockResolvedValueOnce({ kind: "rendered", svg: "<svg data-light></svg>" });
+  it("keeps its drawing in a new theme: the colours are the theme's variables", async () => {
+    vi.mocked(renderMermaid).mockResolvedValue({ kind: "rendered", svg: "<svg data-drawn></svg>" });
     const { container } = renderDiagram();
-    await waitFor(() => expect(container.querySelector("svg[data-light]")).not.toBeNull());
-    let resolve: (render: MermaidRender) => void = () => undefined;
-    vi.mocked(renderMermaid).mockReturnValue(new Promise((done) => { resolve = done; }));
+    await waitFor(() => expect(container.querySelector("svg[data-drawn]")).not.toBeNull());
     await act(async () => document.documentElement.setAttribute("data-theme", "dark"));
+    expect(renderMermaid).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("svg[data-drawn]")).not.toBeNull();
+  });
+
+  it("draws again when its text changes", async () => {
+    vi.mocked(renderMermaid).mockResolvedValue({ kind: "rendered", svg: "<svg></svg>" });
+    const { rerender } = renderDiagram("graph A");
+    await waitFor(() => expect(renderMermaid).toHaveBeenCalledTimes(1));
+    rerender(<TooltipProvider><MermaidDiagram source="graph B" /></TooltipProvider>);
     await waitFor(() => expect(renderMermaid).toHaveBeenCalledTimes(2));
-    expect(vi.mocked(renderMermaid).mock.calls[1]?.[1]).toMatchObject({ dark: true });
-    expect(container.querySelector("svg[data-light]")).not.toBeNull();
-    await act(async () => resolve({ kind: "rendered", svg: "<svg data-dark></svg>" }));
-    expect(container.querySelector("svg[data-dark]")).not.toBeNull();
+    expect(vi.mocked(renderMermaid).mock.calls[1]?.[0]).toBe("graph B");
   });
 });

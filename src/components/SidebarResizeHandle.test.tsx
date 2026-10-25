@@ -13,8 +13,8 @@ describe("SidebarResizeHandle", () => {
   const props = () => ({
     isResizing: false,
     topRowHost: topRow,
-    // jsdom's window is 1024 wide: the bounds are 169 (the tab bar's lead
-    // at the standard chrome, PLAN 50.36) and 600.
+    // jsdom's window is 1024 wide: the bounds are 280 (S_beside, 25.10.2026)
+    // and 634, what the window leaves beside the narrowest feed.
     width: 400,
     disabled: false,
     onResizeStart: vi.fn(),
@@ -78,10 +78,10 @@ describe("SidebarResizeHandle", () => {
   });
 
   it("points the cursor back at a bound", () => {
-    const { container, rerender } = render(<SidebarResizeHandle {...props()} width={169} />);
+    const { container, rerender } = render(<SidebarResizeHandle {...props()} width={280} />);
     const { top, body } = parts(container);
     for (const element of [top, body]) expect(element).toHaveClass("cursor-e-resize");
-    rerender(<SidebarResizeHandle {...props()} width={600} />);
+    rerender(<SidebarResizeHandle {...props()} width={634} />);
     for (const element of [top, body]) expect(element).toHaveClass("cursor-w-resize");
   });
 
@@ -124,7 +124,7 @@ describe("SidebarResizeHandle", () => {
     fireEvent.keyDown(line, { key: "ArrowRight" });
     fireEvent.keyDown(line, { key: "Home" });
     fireEvent.keyDown(line, { key: "End" });
-    expect(p.onResizeTo.mock.calls).toEqual([[384], [416], [169], [600]]);
+    expect(p.onResizeTo.mock.calls).toEqual([[384], [416], [280], [634]]);
     expect(parentKey).not.toHaveBeenCalled();
     document.body.removeEventListener("keydown", parentKey);
   });
@@ -159,7 +159,7 @@ describe("SidebarResizeHandle", () => {
         window.dispatchEvent(new Event("resize"));
       });
       expect(line).toHaveAttribute("aria-valuenow", "480");
-      expect(line).toHaveAttribute("aria-valuemax", "600");
+      expect(line).toHaveAttribute("aria-valuemax", "810");
     } finally {
       window.innerWidth = wide;
     }

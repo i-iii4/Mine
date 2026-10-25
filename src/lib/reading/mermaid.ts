@@ -1,326 +1,254 @@
-// Mermaid diagrams (SPEC_READING_MODE.md, Ч7). `mermaid` 12.1.0 loads by a
-// dynamic import, only for an article that holds a diagram; it is part of the
-// build, and nothing comes from the network (Mine's CSP would refuse it).
-// Diagrams draw one at a time (`mermaid.render` keeps shared state), each with
-// an id of its own, and the finished SVG is kept by text and theme for the
-// life of the page.
+// Mermaid diagrams (SPEC_READING_MODE.md, Ч7), drawn by Pele. `pele/lazy`
+// loads by a dynamic import, only for an article that holds a diagram, and
+// then the part of one diagram type at a time; it is part of the build, and
+// nothing comes from the network (Mine's CSP would refuse it). Pele draws an
+// SVG whose colours are CSS variables, which `article.css` ties to the
+// theme's tokens: a new theme recolours a diagram without drawing it again.
+// A diagram draws in well under a millisecond once its type is loaded, so
+// nothing is cached; diagrams draw in the order asked, a few milliseconds of
+// the main thread at a time.
 
-import type { Mermaid, MermaidConfig } from "mermaid";
+import type { RenderOptions } from "pele";
 
 /** A diagram drawn, or why it was not. */
 export type MermaidRender =
   | { kind: "rendered"; svg: string }
   | { kind: "failed"; message: string };
 
-/** The colours of a diagram's series, in the order they are given out
- *  (SPEC_READING_MODE.md, Ч7; user's decision of 18.10.2026 on В3 (в)). */
-export const MERMAID_SERIES = ["red", "orange", "yellow", "green", "cyan", "blue", "purple"] as const;
-
-/** One colour of the series. */
-export type MermaidSeriesColor = (typeof MERMAID_SERIES)[number];
-
-/** The colours and font a diagram is drawn with: the theme's tokens. */
-export interface MermaidTheme {
-  dark: boolean;
+/** What a diagram's layout depends on: Pele measures its text and fits it to
+ *  the width at drawing time, so these are part of the drawing, unlike the
+ *  colours. */
+export interface MermaidLayout {
+  /** The article's font, as the page computes it on the diagram's block. */
   fontFamily: string;
-  /** The width of the block the diagram stands in: a Gantt chart is laid
-   *  out to it, not to the width of the page Mermaid draws in. */
+  /** The font of code in the article (`--article-code-font`). */
+  fontFamilyMono: string;
+  /** The width of the block the diagram stands in. */
   width: number;
-  /** Mermaid's theme variables, colours as `#rrggbb`. */
-  variables: Readonly<Record<string, string>>;
-  /** The series colours (`--series-*`) as `#rrggbb`; empty where there was
-   *  no canvas to read them. */
-  series: Readonly<Partial<Record<MermaidSeriesColor, string>>>;
 }
 
-/** Finished diagrams kept, the oldest used one goes first. */
-export const MERMAID_CACHE_LIMIT = 64;
-/** The longest diagram text Mermaid is given: its own default. Longer text
+/** The longest diagram text Pele is given: its own default. Longer text
  *  shows as code (Ч7, «Сбой»). */
 export const MERMAID_MAX_TEXT_SIZE = 50_000;
 /** The message of a diagram whose text is longer than that. */
 export const MERMAID_TEXT_TOO_LONG = "The diagram is longer than Mermaid draws.";
+/** The message of a drawing that is no SVG. */
+export const MERMAID_NOT_SVG = "The diagram renderer gave no SVG.";
 /** The size of a diagram's text, `--text-base`. */
-const MERMAID_FONT_SIZE = "14px";
-/** Mermaid's own secure keys, then the keys of colour and font: a directive
- *  inside a diagram does not change them (no values outside the palette),
- *  any other setting of its own it may. */
-const MERMAID_SECURE_KEYS = [
-  "secure",
-  "securityLevel",
-  "startOnLoad",
-  "maxTextSize",
-  "suppressErrorRendering",
-  "maxEdges",
-  "theme",
-  "themeVariables",
-  "themeCSS",
-  "darkMode",
-  "fontFamily",
-  "look",
-];
-const MERMAID_ID_PREFIX = "mine-mermaid-";
+const MERMAID_FONT_SIZE = 14;
+/** How long diagrams draw one after another before the queue gives the main
+ *  thread back: an article of a hundred diagrams does not stall a frame. */
+const MERMAID_SLICE_MS = 8;
 
-/** The tokens a diagram's variables take (Ч7, the table of variables). The
- *  muted step is read opaque, over the page: Mermaid's colour library cannot
- *  composite. Lines and frames carry the diagram's meaning, so they take the
- *  secondary text step, 4.5:1, not the interface's `--border`: the frames of
- *  pie slices and Gantt bars too, which Mermaid draws black, grey or pink. */
-const MERMAID_TOKEN_VARIABLES: ReadonlyArray<readonly [token: string, variables: readonly string[]]> = [
-  ["--background", ["background", "edgeLabelBackground", "tertiaryColor"]],
-  ["--card", ["primaryColor", "mainBkg"]],
-  ["--muted", ["secondaryColor", "clusterBkg", "noteBkgColor"]],
-  ["--foreground", ["primaryTextColor", "textColor", "noteTextColor", "titleColor"]],
-  [
-    "--muted-foreground-opaque",
-    [
-      "lineColor",
-      "primaryBorderColor",
-      "nodeBorder",
-      "clusterBorder",
-      "noteBorderColor",
-      "pieStrokeColor",
-      "pieOuterStrokeColor",
-      "activeTaskBorderColor",
-      "doneTaskBorderColor",
-      "critBorderColor",
-    ],
-  ],
-];
+/** The settings Pele draws every diagram with (Ч7, «Настройка»): the
+ *  article's fonts at `--text-base`, fitted to the block, and no links or
+ *  pictures of any kind: a link would leave the app from a diagram, a picture
+ *  would ask for a file. `safeDiagramSvg` holds the drawing to that again. */
+export function mermaidOptions(layout: MermaidLayout): RenderOptions {
+  return {
+    fontFamily: layout.fontFamily,
+    fontFamilyMono: layout.fontFamilyMono,
+    fontSize: MERMAID_FONT_SIZE,
+    ...(layout.width > 0 ? { maxWidth: layout.width } : {}),
+    limit: MERMAID_MAX_TEXT_SIZE,
+    links: false,
+    images: false,
+    linkSchemes: [],
+    imageSchemes: [],
+  };
+}
 
-/** How many colours each of Mermaid's palettes of series holds: slices of a
- *  pie, sections of a mindmap or timeline (`cScale`), branches of a git
- *  graph, sections of a journey (`fillType`), sets of a Venn diagram. */
-const SERIES_SLOTS: ReadonlyArray<readonly [prefix: string, first: number, count: number]> = [
-  ["pie", 1, 12],
-  ["cScale", 0, 12],
-  ["git", 0, 8],
-  ["fillType", 0, 8],
-  ["venn", 1, 8],
-];
-/** The bars of a Gantt chart by their state: Mermaid's own red for the
- *  critical ones, a task blue, an active one cyan, a done one green. */
-const GANTT_BARS: ReadonlyArray<readonly [variable: string, color: MermaidSeriesColor]> = [
-  ["taskBkgColor", "blue"],
-  ["activeTaskBkgColor", "cyan"],
-  ["doneTaskBkgColor", "green"],
-  ["critBkgColor", "red"],
-];
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+/** The elements of a drawing: shapes, text and their groups. Anything else
+ *  Pele could write (a picture, embedded HTML) is taken out with what it
+ *  holds. */
+const DRAWING_ELEMENTS = new Set([
+  "svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon", "text", "tspan", "title", "desc",
+]);
+/** A link: its contents stay, the link goes. */
+const LINK_ELEMENT = "a";
+/** Attributes that run code or ask for a resource. */
+const UNSAFE_ATTRIBUTE = /^(?:on|href$|xlink:href$|src$)/i;
 
 /**
- * The theme variables of a diagram's series (Ч7, «Цвета серий»): every
- * palette Mermaid gives out to series takes the series colours in their
- * order, again from the first after the last; a Gantt bar takes the colour
- * of its state, an XY chart's lines and bars the list. A slice is drawn
- * opaque, so it shows the token and not a mix of it with the page. Lines and
- * text keep the tokens of the table of variables.
+ * `svg` holding only a drawing (Ч7, «Что Pele не даёт в SVG»), the second
+ * guard behind Pele's own settings, so that a Pele that writes more than it
+ * promises (1.2.0 kept a relative link or picture) still cannot: a link keeps
+ * its contents and loses itself, so a click on a node goes nowhere; a
+ * picture, embedded HTML or a script goes with what it holds; no attribute
+ * runs code or names a resource. `null` when the text is no SVG at all.
  */
-export function mermaidSeriesVariables(series: MermaidTheme["series"]): Record<string, unknown> {
-  const colors = MERMAID_SERIES.flatMap((name) => {
-    const color = series[name];
-    return color === undefined ? [] : [color];
-  });
-  if (colors.length < MERMAID_SERIES.length) return {};
-  const variables: Record<string, unknown> = { pieOpacity: "1" };
-  for (const [prefix, first, count] of SERIES_SLOTS) {
-    for (let slot = 0; slot < count; slot += 1) variables[`${prefix}${first + slot}`] = colors[slot % colors.length];
+export function safeDiagramSvg(svg: string): string | null {
+  const parsed = new DOMParser().parseFromString(svg, "image/svg+xml");
+  const root = parsed.documentElement;
+  const broken = parsed.getElementsByTagName("parsererror").length > 0;
+  if (broken || root.namespaceURI !== SVG_NAMESPACE || root.localName !== "svg") return null;
+  // From the last element to the first, so that a link's contents are seen
+  // before the link gives them to its parent.
+  for (const element of [...root.querySelectorAll("*")].reverse()) {
+    if (element.namespaceURI === SVG_NAMESPACE && element.localName === LINK_ELEMENT) {
+      element.replaceWith(...element.childNodes);
+    } else if (element.namespaceURI !== SVG_NAMESPACE || !DRAWING_ELEMENTS.has(element.localName)) {
+      element.remove();
+    }
   }
-  for (const [variable, color] of GANTT_BARS) variables[variable] = series[color];
-  variables.xyChart = { plotColorPalette: colors.join(",") };
-  return variables;
-}
-
-/** `color` as sRGB `#rrggbb`, laid over `under` on one pixel of a canvas;
- *  `null` where there is no canvas to ask. */
-function srgbHex(context: CanvasRenderingContext2D, color: string, under: string): string | null {
-  context.clearRect(0, 0, 1, 1);
-  context.fillStyle = under;
-  context.fillRect(0, 0, 1, 1);
-  context.fillStyle = color;
-  context.fillRect(0, 0, 1, 1);
-  const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
-  if (red === undefined || green === undefined || blue === undefined) return null;
-  return `#${[red, green, blue].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+  for (const element of [root, ...root.querySelectorAll("*")]) {
+    for (const attribute of [...element.attributes]) {
+      if (UNSAFE_ATTRIBUTE.test(attribute.name)) element.removeAttribute(attribute.name);
+    }
+  }
+  return new XMLSerializer().serializeToString(root);
 }
 
 /**
- * The theme a diagram inside `host` is drawn with: the tokens as the page
- * computes them there, read from a probe as the graph reads its own
- * (`readGraphCanvasTheme`), each made `#rrggbb` by one canvas pixel, because
- * Mermaid's colour library (`khroma`) cannot read `oklch()`.
+ * The layout of a diagram inside `host`: the fonts the page computes there,
+ * the code font read from a probe, and the block's width.
  */
-export function readMermaidTheme(host: HTMLElement, dark: boolean): MermaidTheme {
-  const probe = host.ownerDocument.createElement("span");
+export function readMermaidLayout(host: HTMLElement): MermaidLayout {
+  const probe = host.ownerDocument.createElement("code");
   probe.style.position = "absolute";
   probe.style.width = "0";
   probe.style.height = "0";
   probe.style.overflow = "hidden";
   probe.style.pointerEvents = "none";
+  probe.style.fontFamily = "var(--article-code-font)";
   host.appendChild(probe);
-  const canvas = host.ownerDocument.createElement("canvas");
-  canvas.width = 1;
-  canvas.height = 1;
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  const read = (token: string) => {
-    probe.style.color = `var(${token})`;
-    return getComputedStyle(probe).color;
-  };
-  const page = read("--background");
-  const variables: Record<string, string> = {};
-  for (const [token, names] of MERMAID_TOKEN_VARIABLES) {
-    const hex = context ? srgbHex(context, read(token), page) : null;
-    if (hex) for (const name of names) variables[name] = hex;
-  }
-  const series: Partial<Record<MermaidSeriesColor, string>> = {};
-  for (const name of MERMAID_SERIES) {
-    const hex = context ? srgbHex(context, read(`--series-${name}`), page) : null;
-    if (hex) series[name] = hex;
-  }
-  const fontFamily = getComputedStyle(host).fontFamily;
+  const fontFamilyMono = getComputedStyle(probe).fontFamily;
   probe.remove();
   return {
-    dark,
-    fontFamily,
+    fontFamily: getComputedStyle(host).fontFamily,
+    fontFamilyMono,
     width: Math.round(host.clientWidth),
-    variables: { ...variables, fontFamily, fontSize: MERMAID_FONT_SIZE },
-    series,
   };
 }
 
-/** The settings of every diagram in `theme` (Ч7, «Настройка»): no HTML,
- *  clicks or scripts in labels, the base theme over the tokens, the classic
- *  look and dagre: Mermaid 12 defaults to ELK, which on a simple flowchart
- *  loads 2274 KB against dagre's 844 KB. A diagram that asks for
- *  `layout: elk` still gets it, in a chunk of its own. */
-export function mermaidConfig(theme: MermaidTheme): MermaidConfig {
-  return {
-    startOnLoad: false,
-    securityLevel: "strict",
-    suppressErrorRendering: true,
-    maxTextSize: MERMAID_MAX_TEXT_SIZE,
-    theme: "base",
-    themeVariables: { ...theme.variables, ...mermaidSeriesVariables(theme.series), darkMode: theme.dark },
-    darkMode: theme.dark,
-    fontFamily: theme.fontFamily,
-    look: "classic",
-    layout: "dagre",
-    secure: MERMAID_SECURE_KEYS,
-    ...(theme.width > 0 ? { gantt: { useWidth: theme.width } } : {}),
-  };
+/** Pele's own reading of a directive, `%%{name: args}%%`: what it takes out
+ *  of the text, the same expression, so that the text keeps everything Pele
+ *  would have kept. */
+const DIRECTIVE = /%{2}{\s*(?:(\w+)\s*:|(\w+))\s*(?:(\w+)|((?:(?!}%{2}).|\r?\n)*))?\s*(?:}%{2})?/gi;
+/** The directives that carry settings; `wrap` and the others stay. */
+const SETTING_DIRECTIVES = new Set(["init", "initialize"]);
+/** The opening or closing line of front matter, after its indentation. */
+const FRONT_MATTER_FENCE = /^---[^\S\r\n]*$/;
+/** The key of the settings in front matter. */
+const FRONT_MATTER_CONFIG = /^(?:config|"config"|'config')[^\S\r\n]*:/;
+
+/** `text` with each of its characters but the line breaks taken out, so that
+ *  the lines after it keep their numbers in Pele's messages. */
+function lineBreaksOf(text: string): string {
+  return text.replace(/[^\r\n]/g, "");
 }
 
-function themeKey(theme: MermaidTheme): string {
-  return JSON.stringify(theme);
-}
-
-let mermaid: Promise<Mermaid> | null = null;
-let initializedTheme: string | null = null;
-let renderSequence = 0;
-let queueTail: Promise<unknown> = Promise.resolve();
-const finished = new Map<string, MermaidRender>();
-const pending = new Map<string, Promise<MermaidRender>>();
-
-function loadMermaid(): Promise<Mermaid> {
-  mermaid ??= import("mermaid").then(
-    (module) => module.default,
-    (error: unknown) => {
-      // A failed load is tried again by the next diagram, not remembered.
-      mermaid = null;
-      throw error;
-    },
-  );
-  return mermaid;
-}
-
-function remember(key: string, result: MermaidRender) {
-  finished.delete(key);
-  finished.set(key, result);
-  while (finished.size > MERMAID_CACHE_LIMIT) {
-    const oldest = finished.keys().next().value;
-    if (oldest === undefined) break;
-    finished.delete(oldest);
+/** Front matter without its top-level `config` key and the lines under it. */
+function frontMatterWithoutConfig(lines: string[], indent: string): string[] {
+  const kept: string[] = [];
+  let inConfig = false;
+  for (const line of lines) {
+    const own = line.startsWith(indent) ? line.slice(indent.length) : line;
+    const topLevel = own !== "" && !/^[\s}\],]/.test(own);
+    if (topLevel) inConfig = FRONT_MATTER_CONFIG.test(own);
+    kept.push(inConfig ? "" : line);
   }
+  return kept;
+}
+
+/**
+ * `source` without the settings a diagram gives itself (Ч7, «Настройка»):
+ * the `init` and `initialize` directives and the `config` key of its front
+ * matter. Pele takes no colour or font of Mermaid's themes from them, but
+ * some settings still reach the drawing (`sankey.linkColor` paints links,
+ * `gantt.fontSize` sizes text), and the colour law allows no value outside
+ * the palette. The title and `displayMode` of the front matter stay, and so
+ * does every line number.
+ */
+export function withoutDiagramSettings(source: string): string {
+  const lines = source.split("\n");
+  const first = lines[0] ?? "";
+  const indent = /^[^\S\r\n]*/.exec(first)?.[0] ?? "";
+  let text = source;
+  if (FRONT_MATTER_FENCE.test(first.slice(indent.length).replace(/\r$/, ""))) {
+    const close = lines.findIndex(
+      (line, index) => index > 0 && line.startsWith(indent) && FRONT_MATTER_FENCE.test(line.slice(indent.length).replace(/\r$/, "")),
+    );
+    if (close > 0) {
+      const body = frontMatterWithoutConfig(lines.slice(1, close), indent);
+      text = [first, ...body, ...lines.slice(close)].join("\n");
+    }
+  }
+  if (!text.includes("%%{")) return text;
+  return text.replace(DIRECTIVE, (directive: string, named?: string, bare?: string) => {
+    const name = (named ?? bare ?? "").toLowerCase();
+    return SETTING_DIRECTIVES.has(name) ? lineBreaksOf(directive) : directive;
+  });
+}
+
+type Pele = typeof import("pele/lazy");
+
+let pele: Promise<Pele> | null = null;
+let queueTail: Promise<unknown> = Promise.resolve();
+let sliceStart = 0;
+
+function loadPele(): Promise<Pele> {
+  pele ??= import("pele/lazy").catch((error: unknown) => {
+    // A failed load is tried again by the next diagram, not remembered.
+    pele = null;
+    throw error;
+  });
+  return pele;
 }
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** The nodes Mermaid puts in the document while it draws `id`: the
- *  diagram, its enclosing `d…` box and the `i…` frame of the sandbox. */
-function removeTemporaryNodes(id: string) {
-  for (const nodeId of [id, `d${id}`, `i${id}`]) {
-    document.getElementById(nodeId)?.remove();
-  }
+/** Gives the main thread back once the diagrams drawn since the last time
+ *  have taken their slice. */
+async function yieldWhenSliceIsOver() {
+  if (performance.now() - sliceStart < MERMAID_SLICE_MS) return;
+  await new Promise<void>((resume) => setTimeout(resume, 0));
+  sliceStart = performance.now();
 }
 
-async function draw(source: string, theme: MermaidTheme): Promise<MermaidRender> {
-  const engine = await loadMermaid();
-  const key = themeKey(theme);
-  if (initializedTheme !== key) {
-    // Once per theme, not per diagram: the settings are the page's.
-    engine.initialize(mermaidConfig(theme));
-    initializedTheme = key;
-  }
+async function draw(source: string, layout: MermaidLayout): Promise<MermaidRender> {
+  const engine = await loadPele();
+  const text = withoutDiagramSettings(source);
+  let type: ReturnType<Pele["detectType"]> = null;
   try {
-    await engine.parse(source);
+    type = engine.detectType(text);
+  } catch {
+    // Text whose type cannot be read: rendering below says why.
+  }
+  // The part of this diagram type; a failed load rejects, as a failed load
+  // of Pele itself does.
+  await engine.load(type);
+  await yieldWhenSliceIsOver();
+  try {
+    const svg = safeDiagramSvg(engine.render(text, mermaidOptions(layout)).svg);
+    return svg === null ? { kind: "failed", message: MERMAID_NOT_SVG } : { kind: "rendered", svg };
   } catch (error) {
     return { kind: "failed", message: errorText(error) };
-  }
-  renderSequence += 1;
-  const id = `${MERMAID_ID_PREFIX}${renderSequence}`;
-  try {
-    const { svg } = await engine.render(id, source);
-    return { kind: "rendered", svg };
-  } catch (error) {
-    return { kind: "failed", message: errorText(error) };
-  } finally {
-    removeTemporaryNodes(id);
   }
 }
 
 /**
- * The SVG of the diagram `source` in `theme`, from the cache when drawn
- * before. Diagrams draw one at a time in the order asked; the same text and
- * theme asked twice draw once. A diagram Mermaid cannot read or draw, or one
- * longer than `MERMAID_MAX_TEXT_SIZE`, comes back `failed` with the reason.
- * Rejects only when Mermaid could not be loaded, which is not kept.
+ * The SVG of the diagram `source` laid out as `layout` says. Diagrams draw in
+ * the order asked. A diagram Pele cannot read or draw, or one longer than
+ * `MERMAID_MAX_TEXT_SIZE`, comes back `failed` with the reason. Rejects only
+ * when Pele or the part of the diagram's type could not be loaded, which is
+ * not kept.
  */
-export function renderMermaid(source: string, theme: MermaidTheme): Promise<MermaidRender> {
+export function renderMermaid(source: string, layout: MermaidLayout): Promise<MermaidRender> {
   if (source.length > MERMAID_MAX_TEXT_SIZE) {
     return Promise.resolve({ kind: "failed", message: MERMAID_TEXT_TOO_LONG });
   }
-  const key = `${themeKey(theme)}\u0000${source}`;
-  const done = finished.get(key);
-  if (done) {
-    remember(key, done);
-    return Promise.resolve(done);
-  }
-  const waiting = pending.get(key);
-  if (waiting) return waiting;
-  const run = queueTail.then(() => draw(source, theme));
+  const run = queueTail.then(() => draw(source, layout));
   queueTail = run.catch(() => undefined);
-  const tracked = run.then(
-    (result) => {
-      pending.delete(key);
-      remember(key, result);
-      return result;
-    },
-    (error: unknown) => {
-      pending.delete(key);
-      throw error;
-    },
-  );
-  pending.set(key, tracked);
-  return tracked;
+  return run;
 }
 
-/** Forget every finished diagram and the settings; for tests. */
+/** Forget the loaded engine and the queue; for tests. */
 export function resetMermaidForTests(): void {
-  finished.clear();
-  pending.clear();
-  mermaid = null;
-  initializedTheme = null;
-  renderSequence = 0;
+  pele = null;
   queueTail = Promise.resolve();
+  sliceStart = 0;
 }

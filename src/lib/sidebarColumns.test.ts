@@ -15,7 +15,6 @@ import {
   sidebarReserved,
   sidebarZoneWidth,
 } from "./appLayout";
-import { TALL_CHROME_ROW_HEIGHT } from "./chromeHeight";
 
 /// The sidebar row reads as three zones: name, previews, meta. A zone is the
 /// distance between two guidelines — or between a guideline and the panel edge
@@ -85,8 +84,9 @@ describe("sidebar zone contract", () => {
     expect(css).toContain(`@container sidebar-rows (width < ${below}px)`);
   });
 
-  it("drags down to the tab bar's lead, always compact (PLAN 50.36)", () => {
-    // The list is the panel less its border, at the widest chrome.
-    expect(sidebarBesideMinWidthPx(TALL_CHROME_ROW_HEIGHT) - 1).toBeLessThan(sidebarCompactRowsBelowPx());
+  it("drags down to 280, always compact (PLAN 50.36, 25.10.2026)", () => {
+    // The list is the panel less its border.
+    expect(sidebarBesideMinWidthPx()).toBe(280);
+    expect(sidebarBesideMinWidthPx() - 1).toBeLessThan(sidebarCompactRowsBelowPx());
   });
 });

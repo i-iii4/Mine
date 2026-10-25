@@ -481,14 +481,20 @@ Vault-пикер — не маршрут, а состояние: если `vault
 - Ширины по SPEC_NARROW_WINDOW.md, У1 (15.10.2026): пока окно не уже
   `S_target + 390`, меню шириной `S_target` (ширина последнего
   перетаскивания), лента берёт остальное; уже этого лента держит `390px`, а
-  меню сжимается до `W − 390`, но не уже `350px`. Сжатие делает CSS:
+  меню сжимается до `W − 390`, но не уже `280px` (`S_beside`, решение
+  пользователя 25.10.2026; до 22.10.2026 `350px`, с 23.10.2026 `240px`). Сжатие делает CSS:
   `--sidebar-width` равна `min(S_target px, 100vw - 390px)`
   (`sidebarWidthCss` в `src/lib/sidebarPlacement.ts`), изменение окна не
-  вызывает рендер и не меняет `S_target`. Чистая функция `sidebarPlacement`
+  вызывает рендер и не меняет `S_target`. Переменная не наследуется: она
+  стоит на корне и на элементах, которые раскладываются по ней
+  (`writeSidebarWidth`, `sidebarWidthHost` в `src/lib/sidebarWidth.ts`;
+  SPEC_NARROW_WINDOW.md, «Как ширина доходит до раскладки»). Чистая функция `sidebarPlacement`
   там же описывает три состояния таблицы У1, `sidebarDragBounds` пределы
   перетаскивания.
-- Уже `563,5px` при хроме 40 и `559px` при хроме 30 (наименьшее меню рядом
-  с лентой, по левому блоку полосы вкладок, и `390px` наименьшей ленты; решение пользователя 22.10.2026, было `740px`)
+- Уже `670px` (наименьшее меню рядом с лентой `280px` и `390px` наименьшей
+  ленты; решения пользователя 22.10.2026, 23.10.2026 и 25.10.2026, было
+  `740px`, с 22.10.2026 `563,5px` по левому блоку полосы вкладок, с
+  23.10.2026 `630px`)
   меню уходит из ряда: лента занимает всё окно, а меню ложится поверх неё, когда
   открыто (раздел «Меню поверх ленты»).
 - Минимальная ширина desktop window: `390px`, ширина макета обычного
@@ -506,8 +512,9 @@ Vault-пикер — не маршрут, а состояние: если `vault
   меню на `40px` уже (решение пользователя 16.10.2026: наименьшая ширина меню равна наименьшей ширине окна минус 40 px). Три равные зоны строк меню остаются своей
   раскладкой шириной `314px` (`sidebarEqualZonesWidth()`, CSS
   `--sidebar-equal-zones-width`, до 16.10.2026 `sidebarMinWidth()` и
-  `--sidebar-min-width`): колонки замирают на ней, а меню не бывает уже
-  `350px`, поэтому вид строк не меняется.
+  `--sidebar-min-width`): колонки замирают на ней. Уже порога компактных
+  строк (меню `367,2px`) меню показывает вид List, пока компактная таблица
+  отложена (раздел «Временные пробы компактного меню»).
 - Группа действий выделения, которую не вмещает верхний ряд над лентой,
   уходит во второй ряд; ничто другое в ряду во второй ряд не уходит, а
   сокращается с многоточием (SPEC_NARROW_WINDOW.md, У10;
@@ -557,7 +564,8 @@ SPEC_NARROW_WINDOW.md, У4 по У8, У11, У12; PLAN 47.3b и 47.3c (15.10.2026
   `ChromeShell` (`relative`), подложка тоже до низа, нижний бар под ней
   `inert`. В панели строка фильтра (переключатель
   пространства, поиск коллекций, New Collection) на месте верхнего ряда и
-  список коллекций под ней; `--sidebar-width` панели равна её ширине, поэтому
+  список коллекций под ней; части списка берут ширину панели из
+  `SidebarOverlayWidthContext` (`--sidebar-width` не наследуется), поэтому
   колонки строк раскладываются по ней. Список стоит в ряду
   (`data-sidebar-overlay-body`), как тело страницы рядом с лентой: `aside`
   меню не сжимается, и в столбце панели он принимал высоту всего списка,
@@ -608,7 +616,7 @@ SPEC_NARROW_WINDOW.md, У4 по У8, У11, У12; PLAN 47.3b и 47.3c (15.10.2026
   незаконченное переименование теряются (риск плана).
 - Браузерная проверка `bun run test:narrow-window`
   (`scripts/narrow-window-audit.mjs`, свой Vite): ширины 1200, 750, 749, 740,
-  739, 600 и 559 рядом с лентой, 558, 400 и 390 (обычный хром) поверх неё, полоса, Escape, коллекция, движение, переходы через порог,
+  739, 700 и 670 рядом с лентой, 669, 400 и 390 поверх неё, полоса, Escape, коллекция, движение, переходы через порог,
   наименьшая ширина.
 
 ### Временная настройка столбцов меню
@@ -629,7 +637,7 @@ Connected). Порядок меняется перетаскиванием (`@dn
 строки, направляющие и поднятая строка перетаскивания следуют сразу, без
 пропсов. По умолчанию (нынешний порядок, всё показано) на корень не пишется
 ничего, и строки те же, что прежде. Показанные столбцы делят ширину строки:
-без превью название забирает их место; наименьшая ширина меню 350 px и три
+без превью название забирает их место; три
 равные зоны (`sidebarEqualZonesWidth()`) не меняются. Каждый столбец несёт
 свои отступы в любом порядке и при скрытых соседях (замечание пользователя
 16.10.2026: при порядке Previews, Name название вставало вплотную к
@@ -646,43 +654,45 @@ Connected). Порядок меняется перетаскиванием (`@dn
 
 ### Временный переключатель фона светлой темы
 
-Проба по просьбе пользователя 16.10.2026 (PLAN 47.7): белый холст ленты
-светится слишком ярко. В той же панели Display группа «Light canvas»
-(`LightCanvasMenu.tsx`): White (L 1, К1, по умолчанию) и Soft (L 0.975).
-`src/lib/lightLadder.ts` выводит по закону цвета (SPEC_COLOR_RULES.md) все
-светлые токены, которые следуют за холстом: зоны, текстовые доли, тихие
-сигналы, линии, кольца фокуса, разрушительную кнопку и стекло зоны броска;
-при холсте 1 вывод совпадает с нынешним светлым блоком `global.css`, это
-проверяет `colorLaw.test.ts`, он же проверяет вывод для 0.975.
-`src/lib/lightCanvas.ts` ставит выведенные значения на корень документа только
-пока на экране светлая тема (явная или системная) и снимает их, как только тема
-становится тёмной; заливки, подложка `--scrim-color` и карта высот выводятся в
-CSS из этих токенов сами. Тёмная тема не меняется. Хранение ключом
-`mine.lightCanvas`, страницы вкладок, полоса вкладок и окно настроек узнают о
-смене по `settings-changed`. После решения пользователя проба удаляется или
-выбранный холст становится К1.
+Проба по просьбе пользователя 16.10.2026 (PLAN 47.7), группа «Light canvas»
+панели Display (White или Soft), удалена вместе с `LightCanvasMenu.tsx` и
+`src/lib/lightCanvas.ts`: холст светлой темы прежний, L 1 (К1). Вывод светлых
+токенов из холста `src/lib/lightLadder.ts` остался: `colorLaw.test.ts`
+проверяет по нему, что светлый блок `global.css` следует закону цвета.
 
 ### Временные пробы компактного меню
 
 Пробы по просьбам пользователя 22.10.2026 и 23.10.2026 (PLAN 50.38): после
 его решения каждая удаляется или выбранный вариант становится правилом. В
-той же панели Display (лента и граф) после «Sidebar columns» четыре группы
-`CompactStackMenu.tsx`, у каждой своя подпись: Sidebar style (Table или
-List), Compact stack size (Standard или Large), Compact stack edge (Shadow
-или Ring), Thumbnail corners (Square или Rounded). Что меняет каждый вариант,
-описано в DESIGN_SYSTEM.md, «Компактная строка боковой панели», «Пробы в
-панели Display». `src/lib/compactStack.ts` хранит каждый выбор своим ключом
-(`mine.sidebar.style`, `mine.sidebar.compactStack`,
-`mine.sidebar.compactStackEdge`, `mine.sidebar.thumbCorners`) в
-`localStorage` с try/catch, ставит атрибут на корень документа
-(`data-sidebar-list`, `data-sidebar-stack-large`, `data-sidebar-stack-ring`,
-`data-sidebar-thumbs-rounded`; правила в `global.css`), отдаёт выбор React
-через `useSyncExternalStore`; другие вкладки и окна перечитывают его по
-`settings-changed`. Значения по умолчанию на корень ничего не пишут. Сторона
-стопки не проба: она следует порядку «Sidebar columns»
+той же панели Display (лента и граф) после «Sidebar columns» группы
+`CompactStackMenu.tsx`, у каждой своя подпись. Компактная таблица отложена
+(решение пользователя 23.10.2026, `COMPACT_TABLE_POSTPONED` в
+`src/lib/compactStack.ts`): ниже порога компактных строк меню всегда в виде
+List, на корне всегда `data-sidebar-list`, группы Sidebar style (Table или
+List) и Compact stack edge (Shadow или Ring) скрыты, их сохранённый выбор
+ждёт возвращения к таблице. Видны List spacing (Tight или Table) и List style
+(Plain или Contents). Пробы Compact stack size и Thumbnail corners удалены.
+Что меняет каждый вариант, описано в DESIGN_SYSTEM.md, «Компактная строка
+боковой панели», «Пробы в панели Display». `src/lib/compactStack.ts` хранит
+каждый выбор своим ключом (`mine.sidebar.style`,
+`mine.sidebar.compactStackEdge`, `mine.sidebar.listSpacing`,
+`mine.sidebar.listStyle`) в `localStorage` с try/catch, ставит атрибут на
+корень документа (`data-sidebar-list`, `data-sidebar-stack-ring`,
+`data-sidebar-list-roomy`, `data-sidebar-list-toc`; правила в `global.css`),
+отдаёт выбор React через `useSyncExternalStore` (`trialChoice`); другие
+вкладки и окна перечитывают его по `settings-changed`. Значения по умолчанию
+на корень ничего не пишут, кроме `data-sidebar-list`, пока таблица отложена.
+В виде Contents кнопки Connect, Connected и Disconnect стоят словами на
+месте числа; указатель над кнопкой отмечает `data-sidebar-link-pointer`
+(`Sidebar.tsx`), а не `:hover`, который WebKit называет только на следующем
+движении. Сторона стопки не проба: она следует порядку «Sidebar columns»
 (`data-sidebar-stack-left` из `sidebarColumnLayout.ts`). Проверки:
 `CompactStackMenu.test.tsx`, `Sidebar.test.tsx`, `channelIcon.test.ts`,
-`FeedDisplayMenu.test.tsx`.
+`FeedDisplayMenu.test.tsx`, `test:sidebar-actions`.
+
+Группа «Card view» той же панели (Full page или Peek, ширина окна Fit card
+или Fill; `CardViewMenu.tsx`, состояние в `src/lib/cardView.ts`) описана в
+[SPEC_CARD_PEEK.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_PEEK.md>), О1.
 
 ### Sidebar
 
@@ -697,8 +707,10 @@ must not expose a channel display-mode selector.
 Обычный режим:
 1. Пункт `Everything` — навигация на `/`
 2. Список каналов (из `listTaxonomySnapshot()`) — навигация на `/channel/:tag`
-3. Каждый канал: название + счётчик блоков + до 20 превью-карточек
-   (thumbnails)
+3. Каждый канал: название + счётчик блоков + лента превью-карточек
+   (thumbnails): столько, сколько помещается в ширину ленты, `N(W)`, из
+   полного списка коллекции; своего предела у числа нет (24.10.2026,
+   PLAN 50.41, [SPEC_SIDEBAR_STRIP.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SIDEBAR_STRIP.md>)).
 
 Активный route сохраняется в router state, но sidebar navigation rows,
 включая `Everything` и строки каналов, не получают визуальную hover/active
@@ -974,7 +986,7 @@ preview strip, и только после этого начинает ужима
 
 **Виртуализация.** CSS-native подход: `content-visibility: auto` + `contain-intrinsic-size: auto 42px` на каждом `TagNavItem`. WKWebView на macOS 14.4+ пропускает layout/paint для offscreen channel rows автоматически. Отключается во время любого drag-to-channel (`isDropDragging || isDragging`), чтобы `getBoundingClientRect` в dnd-kit возвращал реальную геометрию. Для sidebar drop-target применяется `sidebarPointerWithin`: фактический row под курсором берётся через `document.elementsFromPoint()` и `[data-sidebar-row]`, после чего fallback идёт в `pointerWithin`. Это защищает drop/hover от stale droppable rects при sidebar scroll/перерисовке и привязывает цель к реальному положению курсора. Drag-over карточки, inline-media или выделенного фрагмента над channel row визуально равен обычному sidebar row hover/focus-mode: `data-sidebar-row-focus-mode`, `data-sidebar-row-focused` и seam accent; отдельный `ring-2 ring-ring ring-inset` для sidebar drop target запрещён. `SortableContext` получает полный список channels IDs независимо от видимости.
 
-**Event-driven previews.** Превью карточек в sidebar обновляются через Tauri events (`block:added`, `block:removed`, `thumb:updated`, `vault-changed`), а не через polling. Initial state и event refresh идут через `listChannelPreviews(20)`; `useChannelPreviewsEvents` коалесцирует события и фильтрует `has_thumb=false` как defense-in-depth. Cache-bust: initial load использует `?m=<mtime>` из SQLite `thumb_mtime`, real-time updates используют `?v=<counter>` (per-slug version counter, инкрементируется на `thumb:updated`). Два механизма дополняют друг друга: `?m=` покрывает межсессионные изменения (Phase 2 worker перезаписал PNG→JPEG), `?v=` покрывает live-обновления внутри сессии.
+**Event-driven previews.** Превью карточек в sidebar обновляются через Tauri events (`block:added`, `block:removed`, `thumb:updated`, `vault-changed`), а не через polling. Initial state и event refresh идут через `listChannelPreviews()`: полный список каждой коллекции и `__all__` без предела ([SPEC_SIDEBAR_STRIP.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SIDEBAR_STRIP.md>), ЛМ1); ответ перерисовывает только строки, чей список изменился; `useChannelPreviewsEvents` коалесцирует события и фильтрует `has_thumb=false` как defense-in-depth. Cache-bust: initial load использует `?m=<mtime>` из SQLite `thumb_mtime`, real-time updates используют `?v=<counter>` (per-slug version counter, инкрементируется на `thumb:updated`). Два механизма дополняют друг друга: `?m=` покрывает межсессионные изменения (Phase 2 worker перезаписал PNG→JPEG), `?v=` покрывает live-обновления внутри сессии.
 
 **Нет файла превью** (11.10.2026, SPEC_THUMBNAILS.md, «Нет файла
 миниатюры»). Карточка сохранена только что или превью ещё собирается: ошибка
@@ -982,16 +994,18 @@ preview strip, и только после этого начинает ужима
 картинки нет. После `thumb:updated` своей карточки файл грузится снова с
 меткой `retry=<n>` (`withRetry` в `src/lib/assets.ts`). Случай принадлежит
 общему хуку `usePreviewFileRetry` (`src/hooks/usePreviewFileRetry.ts`), им
-пользуются `MicroPreviewThumbnail` (боковое меню, строки поиска, связанные
-заметки, окно слияния) и подложка превью открытой карточки
+пользуются `MicroPreviewThumbnail` (строки поиска, связанные заметки, окно
+слияния, стопка компактного меню), плитки лент бокового меню через
+`useMicroPreviewPicture` того же файла (картинка стоит прямо в плитке) и подложка превью открытой карточки
 (`data-detail-preview-backing` в `Detail.tsx`); своих обработчиков ошибки у
 вызывающих нет.
 
 **Sidebar hover preview.** С 06.10.2026 превью мини-карточки бокового меню
 показывает ту же карточку, что лента, в итоговом виде наведения и без
 активных элементов (SPEC_CARD_STATES.md, С10), с галереей из
-`preview_manifest.tiles`, как в ленте. Сама полоса мини-карточек по-прежнему
-берёт одну подтверждённую миниатюру `<slug>.jpg`.
+`preview_manifest.tiles`, как в ленте. Сама полоса мини-карточек берёт уровень
+`micro` подтверждённой миниатюры, `<slug>.micro.jpg`, с `decoding="async"`, а
+не полную миниатюру 640 px ([SPEC_SIDEBAR_STRIP.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SIDEBAR_STRIP.md>), ЛМ4).
 
 **Main secondary top bar + sidebar inset.** На главной под permanent top chrome
 есть второй structural bar `h-8`, split на sidebar/content segments. Sidebar
@@ -1121,8 +1135,10 @@ article-card без media (8 lines × widest single-column inner width). Fronten
 
 Хранится ширина последнего перетаскивания (`S_target`, SPEC_NARROW_WINDOW.md,
 У2); узкое окно показывает меньше неё (раздел «Layout»). Перетаскивание,
-стрелки, Home и End начинают с показанной ширины и держат её от `350px` до
-`min(600, W − 390)`; конец перетаскивания и клавиши задают новую `S_target`.
+стрелки, Home и End начинают с показанной ширины и держат её от `280px`
+(`S_beside`, решение пользователя 25.10.2026) до `W − 390`: своего предела у меню рядом с лентой нет
+(решение пользователя 23.10.2026, было `min(600, W − 390)`); конец
+перетаскивания и клавиши задают новую `S_target`.
 Значение разделителя (`aria-valuenow`, `aria-valuemax`) и курсор у пределов
 ручка берёт из ширины окна сама, рендерится только она. Ширина меню
 анимируется (`200ms`) только при сворачивании и разворачивании кнопкой,
@@ -1536,8 +1552,9 @@ Image media expansion:
 - При свернутом Sidebar левый top chrome segment не следует за
   `--sidebar-width: 0px` и не держит пустой слот под скрытый search. Он
   shrink-wrap'ится через CSS intrinsic sizing: `80px` traffic-light reserve +
-  `1px` separator + `VaultSwitcher` в collapsed mode с `max-w-[159px]`; весь
-  segment capped by `max-w-[240px]`. Space selector остаётся видимым, channel
+  `1px` separator + `VaultSwitcher` в collapsed mode; переключатель capped by `max-w-[200px]`, ширина вкладки `TAB_MAX_WIDTH_PX`
+  (решение пользователя 25.10.2026, было `240px`); у развёрнутого меню
+  `max-w-[min(50%,200px)]`. Space selector остаётся видимым, channel
   search скрывается, а правая часть top chrome начинается сразу после compact
   collapsed segment. Hidden measurement/probe и вычисление ширины по visible
   `[data-vault-switcher]` запрещены. Короткие имена пространства не получают
@@ -2008,10 +2025,14 @@ Image media expansion:
 - **Р2. Рядом с панелью** (решение пользователя 16.10.2026): содержимое
   всегда стоит по центру свободного места между боковым меню (левым краем
   открытой карточки) и колонкой панели. Сетка `grid w-full` с колонками
-  `minmax(pad,1fr) | W | minmax(pad,1fr) | 20rem | pad`, где `pad` это
+  `minmax(pad,1fr) | W | minmax(pad,1fr) | 321px + 2 × pad`, где `pad` это
   `--card-content-pad`: две гибкие колонки по бокам содержимого всегда
-  равны, каждая `(ширина - W - 320 - pad) / 2`, а панель занимает постоянную
-  колонку `20rem` (`320px`) в `pad` от правого края. Колонка содержимого
+  равны, каждая `(ширина - W - 321 - 2 × pad) / 2`, а колонка панели
+  постоянна: слева вертикальная линия `--border` 1 px на всю высоту под
+  верхним рядом, затем `pad`, панель `20rem` (`320px`) и `pad` до правого
+  края; колонка залита фоном бокового меню `--sidebar` (решения
+  пользователя 24.10.2026), в полном виде и в окне карточки
+  ([SPEC_CARD_PEEK.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_PEEK.md>), О7). Колонка содержимого
   своих боковых отступов не добавляет; содержимое уже `W` (видео в колонке
   чтения, файл без превью) стоит по центру колонки, поэтому тоже по центру
   свободного места. Слой прокрутки и неподвижный слой панели строятся по
@@ -2019,17 +2040,21 @@ Image media expansion:
 - **Р3. Переход в мобильный вид** (решение пользователя 16.10.2026): при
   сужении окна поля слева и справа от содержимого сужаются одинаково, и
   панель уходит под содержимое только тогда, когда поля дошли до
-  наименьшего отступа `pad`: при ширине меньше `3 × pad + W + 320` вид
+  наименьшего отступа `pad`: при ширине меньше `4 × pad + W + 321` вид
   сразу мобильный, без промежуточного сжатия содержимого (`detailLayout`).
-  У колонки чтения `680` при `pad` 32 это `1096` (решение пользователя
-  16.10.2026: 680 вместо 768, прежде `1184`).
+  У колонки чтения `680` при `pad` 32 это `1129` (решения пользователя
+  16.10.2026: 680 вместо 768, прежде `1184`; 24.10.2026: линия перед
+  панелью и поле с обеих её сторон, прежде `1096`).
   Поля считаются от нарисованного содержимого (Р1), а не от колонки
   чтения, поэтому одна узкая картинка и одно узкое видео стоят рядом с
   панелью дольше статьи.
 - **Р4. Мобильный вид** (решение пользователя 16.10.2026): сетка
   `grid-cols-[var(--card-content-pad)_minmax(0,1fr)_var(--card-content-pad)]`.
   Содержимое по центру шириной `W`, а в узком окне по ширине между
-  отступами. Под ним с отступом `mt-[var(--card-content-pad)]` карточки
+  отступами. Под ним с отступом `mt-[var(--card-content-pad)]` горизонтальная
+  линия `--border` во всю ширину открытой карточки, ниже полоса до низа
+  карточки, залитая `--sidebar`, как колонка панели в Р2
+  (решение пользователя 24.10.2026). В полосе в `pad` под линией карточки
   панели (сведения с кнопками, Related notes, блоки связей) по центру и не
   шире колонки чтения `680` (решения пользователя 16.10.2026, включая 680
   вместо 768): та же одна постоянная `DETAIL_CONTENT_MAX_WIDTH_PX`, что у

@@ -336,22 +336,18 @@ pub fn get_block_indexed_at_map(
     Ok(entries.into_iter().collect())
 }
 
-/// Return the newest previewable blocks across the whole vault.
-pub fn list_preview_blocks(conn: &Connection, limit: usize) -> Result<Vec<PreviewBlock>> {
-    if limit == 0 {
-        return Ok(Vec::new());
-    }
-
-    let limit = i64::try_from(limit).context("preview limit does not fit i64")?;
+/// Return every previewable block of the vault, newest first: the sidebar's
+/// `Everything` strip takes as many as its width shows (SPEC_SIDEBAR_STRIP.md,
+/// ЛМ1).
+pub fn list_preview_blocks(conn: &Connection) -> Result<Vec<PreviewBlock>> {
     let mut stmt = conn.prepare(
         "SELECT slug, thumb_format, thumb_mtime, preview_manifest
          FROM blocks
          WHERE slug != '' AND card_kind != 'channel' AND thumb_format IS NOT NULL
-         ORDER BY saved_at DESC
-         LIMIT ?1",
+         ORDER BY saved_at DESC",
     )?;
 
-    let rows = stmt.query_map([limit], |row| row_to_preview_block(row, 0))?;
+    let rows = stmt.query_map([], |row| row_to_preview_block(row, 0))?;
     let previews = rows.collect::<Result<Vec<_>, _>>()?;
     Ok(previews)
 }
@@ -452,40 +448,24 @@ pub fn list_media_files(conn: &Connection) -> Result<Vec<(String, String)>> {
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
-/// Return the newest previewable blocks per collection, members only
-/// ([`collection_membership_join_sql`]).
+/// Return every previewable block of each collection, newest first, members
+/// only ([`collection_membership_join_sql`]): a strip takes as many as its
+/// width shows (SPEC_SIDEBAR_STRIP.md, ЛМ1). A collection without one has no
+/// key here.
 pub fn list_preview_blocks_by_tag(
     conn: &Connection,
-    limit: usize,
 ) -> Result<std::collections::HashMap<String, Vec<PreviewBlock>>> {
-    if limit == 0 {
-        return Ok(std::collections::HashMap::new());
-    }
-
-    let limit = i64::try_from(limit).context("preview limit does not fit i64")?;
     let membership = collection_membership_join_sql("bt", "page");
     let mut stmt = conn.prepare(&format!(
-        "SELECT tag, slug, thumb_format, thumb_mtime, preview_manifest
-         FROM (
-             SELECT page.tag AS tag,
-                    b.slug AS slug,
-                    b.thumb_format AS thumb_format,
-                    b.thumb_mtime AS thumb_mtime,
-                    b.preview_manifest AS preview_manifest,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY page.tag
-                        ORDER BY b.saved_at DESC
-                    ) AS row_num
-             FROM block_tags bt
-             {membership}
-             JOIN blocks b ON b.id = bt.block_id
-             WHERE b.slug != '' AND b.card_kind != 'channel' AND b.thumb_format IS NOT NULL
-         )
-         WHERE row_num <= ?1
-         ORDER BY tag, row_num"
+        "SELECT page.tag, b.slug, b.thumb_format, b.thumb_mtime, b.preview_manifest
+         FROM block_tags bt
+         {membership}
+         JOIN blocks b ON b.id = bt.block_id
+         WHERE b.slug != '' AND b.card_kind != 'channel' AND b.thumb_format IS NOT NULL
+         ORDER BY page.tag, b.saved_at DESC"
     ))?;
 
-    let rows = stmt.query_map([limit], |row| {
+    let rows = stmt.query_map([], |row| {
         Ok((row.get::<_, String>(0)?, row_to_preview_block(row, 1)?))
     })?;
 

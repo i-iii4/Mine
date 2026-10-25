@@ -1,38 +1,40 @@
-// TRIAL (PLAN 50.38, user's request of 22.10.2026): «Compact stack» in the
-// Display panel: Standard or Large, Shadow or Ring, and the sidebar
-// thumbnails' corners, Square or Rounded (src/lib/compactStack.ts).
-// Once the user decides, this group either goes or the chosen stack becomes
-// the rule.
+// TRIAL (PLAN 50.38, user's requests of 22.10.2026 and 23.10.2026): the
+// sidebar's groups in the Display panel (src/lib/compactStack.ts): List
+// spacing and List style, and, while the narrow table is not postponed,
+// Sidebar style and Compact stack edge. Once the user decides, these groups
+// either go or the chosen look becomes the rule.
 
 import { useId } from "react";
 import { DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import {
-  COMPACT_STACK_CHOICES,
   COMPACT_STACK_EDGES,
+  COMPACT_TABLE_POSTPONED,
   COMPACT_STACK_EDGE_LABELS,
   COMPACT_STACK_EDGE_STORAGE_KEY,
-  COMPACT_STACK_LABELS,
-  COMPACT_STACK_STORAGE_KEY,
+  LIST_SPACINGS,
+  LIST_STYLES,
+  LIST_STYLE_LABELS,
+  LIST_STYLE_STORAGE_KEY,
+  LIST_SPACING_LABELS,
+  LIST_SPACING_STORAGE_KEY,
   SIDEBAR_STYLES,
   SIDEBAR_STYLE_LABELS,
   SIDEBAR_STYLE_STORAGE_KEY,
-  THUMB_CORNERS,
-  THUMB_CORNERS_LABELS,
-  THUMB_CORNERS_STORAGE_KEY,
-  setCompactStack,
   setCompactStackEdge,
+  setListSpacing,
+  setListStyle,
   setSidebarStyle,
-  setThumbCorners,
-  useCompactStack,
   useCompactStackEdge,
+  useListSpacing,
+  useListStyle,
   useSidebarStyle,
-  useThumbCorners,
 } from "@/lib/compactStack";
 import { broadcastSettingsChange } from "@/lib/settingsChanged";
 import { DisplayGroupCaption } from "./DisplayMenu";
 
-/** One captioned radio group of the trial, kept open between choices. */
-function TrialRadios<T extends string>({
+/** One captioned radio group of a trial, kept open between choices; the
+ *  panel's other trials use it too (CardViewMenu.tsx). */
+export function TrialRadios<T extends string>({
   value,
   choices,
   labels,
@@ -76,12 +78,16 @@ function TrialRadios<T extends string>({
 /** The trial groups of the Display panel: the compact sidebar item's stack,
  *  each named by its caption. */
 export function CompactStackMenu() {
-  const stack = useCompactStack();
   const edge = useCompactStackEdge();
-  const thumbCorners = useThumbCorners();
   const sidebarStyle = useSidebarStyle();
+  const listSpacing = useListSpacing();
+  const listStyle = useListStyle();
   return (
     <div data-compact-stack-menu="">
+      {/* POSTPONED (compactStack.ts, COMPACT_TABLE_POSTPONED): the narrow
+          table's choices are put aside while the List is developed. */}
+      {!COMPACT_TABLE_POSTPONED && (
+      <>
       <TrialRadios
         value={sidebarStyle}
         choices={SIDEBAR_STYLES}
@@ -93,16 +99,31 @@ export function CompactStackMenu() {
         }}
       />
       <DropdownMenuSeparator />
+      </>
+      )}
       <TrialRadios
-        value={stack}
-        choices={COMPACT_STACK_CHOICES}
-        labels={COMPACT_STACK_LABELS}
-        caption="Compact stack size"
+        value={listSpacing}
+        choices={LIST_SPACINGS}
+        labels={LIST_SPACING_LABELS}
+        caption="List spacing"
         onChoose={(choice) => {
-          setCompactStack(choice);
-          broadcastSettingsChange(COMPACT_STACK_STORAGE_KEY);
+          setListSpacing(choice);
+          broadcastSettingsChange(LIST_SPACING_STORAGE_KEY);
         }}
       />
+      <DropdownMenuSeparator />
+      <TrialRadios
+        value={listStyle}
+        choices={LIST_STYLES}
+        labels={LIST_STYLE_LABELS}
+        caption="List style"
+        onChoose={(choice) => {
+          setListStyle(choice);
+          broadcastSettingsChange(LIST_STYLE_STORAGE_KEY);
+        }}
+      />
+      {!COMPACT_TABLE_POSTPONED && (
+      <>
       <DropdownMenuSeparator />
       <TrialRadios
         value={edge}
@@ -114,17 +135,8 @@ export function CompactStackMenu() {
           broadcastSettingsChange(COMPACT_STACK_EDGE_STORAGE_KEY);
         }}
       />
-      <DropdownMenuSeparator />
-      <TrialRadios
-        value={thumbCorners}
-        choices={THUMB_CORNERS}
-        labels={THUMB_CORNERS_LABELS}
-        caption="Thumbnail corners"
-        onChoose={(choice) => {
-          setThumbCorners(choice);
-          broadcastSettingsChange(THUMB_CORNERS_STORAGE_KEY);
-        }}
-      />
+      </>
+      )}
     </div>
   );
 }

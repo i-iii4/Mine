@@ -864,15 +864,52 @@ pub struct ChannelPreviewsSnapshot {
     pub previews: HashMap<String, Vec<PreviewItem>>,
 }
 
-/// Return preview items per channel for sidebar thumbnails.
-/// Includes `__all__` key for all blocks regardless of channel.
-/// Max `limit` thumbnails per channel.
+/// Every card with a thumbnail per collection, newest first, and under
+/// `__all__` every such card of the space: the whole list, never a page of it
+/// (SPEC_SIDEBAR_STRIP.md, ЛМ1). A strip draws as many as its width shows. A
+/// known collection without such cards has its key with an empty list, so the
+/// page tells "no thumbnails" from "not read yet".
+pub(crate) fn channel_previews(
+    conn: &rusqlite::Connection,
+) -> anyhow::Result<HashMap<String, Vec<PreviewItem>>> {
+    let collections = index::list_channels(conn)?;
+    let all_previews = index::list_preview_blocks(conn)?;
+    let per_tag_previews = index::list_preview_blocks_by_tag(conn)?;
+
+    let to_item = |preview: &index::PreviewBlock| -> PreviewItem {
+        PreviewItem {
+            slug: preview.slug.clone(),
+            // Text-ness comes from the preview manifest, not from the
+            // thumbnail's format: a transparent picture is stored as PNG as
+            // well.
+            text: preview.is_text,
+            mtime: preview.thumb_mtime,
+            has_thumb: preview.thumb_format.is_some(),
+        }
+    };
+
+    let mut previews = HashMap::new();
+    previews.insert(
+        "__all__".to_string(),
+        all_previews.iter().map(to_item).collect(),
+    );
+    for (tag, items) in per_tag_previews {
+        previews.insert(tag, items.iter().map(to_item).collect());
+    }
+    for collection in collections {
+        previews.entry(collection.tag).or_default();
+    }
+    Ok(previews)
+}
+
+/// Return preview items per channel for sidebar thumbnails
+/// ([`channel_previews`]): every card with a thumbnail, per collection and
+/// under `__all__` for the whole space.
 #[tauri::command]
 pub async fn list_channel_previews(
     webview: tauri::Webview,
     app: AppHandle,
     state: State<'_, AppState>,
-    limit: usize,
 ) -> Result<ChannelPreviewsSnapshot, CommandError> {
     let vault = tab_layout(&state, &webview)?;
     ensure_vault_fresh(&app, vault.clone()).await?;
@@ -882,37 +919,9 @@ pub async fn list_channel_previews(
                 Ok(projection::read_projection_snapshot(
                     conn,
                     |conn, generation| {
-                        let tags = index::get_all_tags(conn)?;
-                        let all_previews = index::list_preview_blocks(conn, limit)?;
-                        let per_tag_previews = index::list_preview_blocks_by_tag(conn, limit)?;
-
-                        let to_item = |preview: &index::PreviewBlock| -> PreviewItem {
-                            PreviewItem {
-                                slug: preview.slug.clone(),
-                                // Text-ness comes from the preview manifest, not
-                                // from the thumbnail's format: a transparent
-                                // picture is stored as PNG as well.
-                                text: preview.is_text,
-                                mtime: preview.thumb_mtime,
-                                has_thumb: preview.thumb_format.is_some(),
-                            }
-                        };
-
-                        let mut previews = HashMap::new();
-                        previews.insert(
-                            "__all__".to_string(),
-                            all_previews.iter().map(to_item).collect(),
-                        );
-                        for (tag, items) in per_tag_previews {
-                            previews.insert(tag, items.iter().map(to_item).collect());
-                        }
-                        for tag in &tags {
-                            previews.entry(tag.tag.clone()).or_default();
-                        }
-
                         Ok(ChannelPreviewsSnapshot {
                             generation,
-                            previews,
+                            previews: channel_previews(conn)?,
                         })
                     },
                 )?)
@@ -2144,5 +2153,153 @@ mod tests {
             refusal(check_collection_name_inner(&vs.conn, &vs.vault, None, "Photos")),
             "A collection named \"Photos\" already exists."
         );
+    }
+
+    // ── Sidebar previews (SPEC_SIDEBAR_STRIP.md, ЛМ1, ЛМВ1) ─────────────────
+
+    /// A card of the space in `collections`, saved `minute` minutes into
+    /// January 2026, with a thumbnail when `thumb`.
+    fn preview_card(conn: &rusqlite::Connection, slug: &str, minute: u32, collections: &[String], thumb: bool) {
+        let mut front = format!(
+            "---\ntype: image\nsaved_at: 2026-01-{:02}T{:02}:{:02}:00Z\n",
+            minute / 1440 + 1,
+            minute / 60 % 24,
+            minute % 60
+        );
+        if !collections.is_empty() {
+            front.push_str("Mine Collections:\n");
+            for collection in collections {
+                front.push_str(&format!("  - \"[[{collection}]]\"\n"));
+            }
+        }
+        front.push_str("---\n");
+        let fallback = DateTime::new("2026-01-01T00:00:00Z").unwrap();
+        let block = parse_markdown_document(slug, &front, fallback).unwrap().block;
+        index::upsert_block(conn, &block, None).unwrap();
+        if thumb {
+            conn.execute(
+                "UPDATE blocks SET thumb_format = 'jpeg', thumb_mtime = ?2 WHERE slug = ?1",
+                rusqlite::params![slug, i64::from(minute) + 1],
+            )
+            .unwrap();
+        }
+    }
+
+    fn preview_collections(conn: &rusqlite::Connection, names: &[String]) {
+        let created = DateTime::new("2026-01-01T00:00:00Z").unwrap();
+        for name in names {
+            index::upsert_channel(conn, &Channel::new(name, created.clone()).unwrap()).unwrap();
+        }
+    }
+
+    fn slugs(items: &[PreviewItem]) -> Vec<&str> {
+        items.iter().map(|item| item.slug.as_str()).collect()
+    }
+
+    /// ЛМ1, приёмка 1: the read has no limit. A collection of 100 cards with
+    /// thumbnails gives all 100, newest first; `__all__` every card of the
+    /// space with a thumbnail; a card without one is in no list; a collection
+    /// with none keeps its key with an empty list.
+    #[test]
+    fn the_preview_read_lists_every_card_with_a_thumbnail() {
+        let conn = db::open_memory().unwrap();
+        let names = ["Art", "Empty", "Plain"].map(String::from);
+        preview_collections(&conn, &names);
+        for minute in 0..100 {
+            preview_card(&conn, &format!("art-{minute:03}"), minute, &names[..1], true);
+        }
+        preview_card(&conn, "art-bare", 200, &names[..1], false);
+        preview_card(&conn, "plain-bare", 201, &names[2..], false);
+        preview_card(&conn, "loose", 150, &[], true);
+
+        let previews = channel_previews(&conn).unwrap();
+
+        let art: Vec<String> = (0..100).rev().map(|minute| format!("art-{minute:03}")).collect();
+        assert_eq!(slugs(&previews["Art"]), art.iter().map(String::as_str).collect::<Vec<_>>());
+        assert!(previews["Art"].iter().all(|item| item.has_thumb && item.mtime > 0));
+        let mut all = vec!["loose"];
+        all.extend(art.iter().map(String::as_str));
+        assert_eq!(slugs(&previews["__all__"]), all);
+        assert!(previews.values().flatten().all(|item| !item.slug.ends_with("-bare")));
+        assert!(previews["Empty"].is_empty());
+        assert!(previews["Plain"].is_empty());
+        assert_eq!(previews.len(), 4, "{:?}", previews.keys().collect::<Vec<_>>());
+    }
+
+    /// The set of the read's limit (ЛМВ1, приёмка 5): 10 000 cards with
+    /// thumbnails, 100 collections of 300 cards, each card in three.
+    const TIMED_CARDS: usize = 10_000;
+    const TIMED_COLLECTIONS: usize = 100;
+    const TIMED_MEMBERSHIPS: usize = 3;
+    /// Reads timed; the limit holds for the slowest of them.
+    const TIMED_READS: usize = 12;
+    /// ЛМВ1: a full read, the index read and its JSON for the page, on that
+    /// set.
+    const PREVIEW_READ_LIMIT: std::time::Duration = std::time::Duration::from_millis(PREVIEW_READ_LIMIT_MS);
+    const PREVIEW_READ_LIMIT_MS: u64 = 100;
+    /// Set to `assert` by the strip's check (`scripts/sidebar-strip-audit.mjs`),
+    /// which builds the tests optimised as the app is: the limit is asserted.
+    const PREVIEW_TIMING_ENV: &str = "MINE_SIDEBAR_PREVIEW_TIMING";
+    /// A copy of a real space's index to time the same read on (приёмка 5):
+    /// its numbers are said, the limit is the large set's.
+    const PREVIEW_SPACE_INDEX_ENV: &str = "MINE_SIDEBAR_PREVIEW_SPACE_INDEX";
+
+    /// The full read on `conn`, `TIMED_READS` times: the median, the
+    /// slowest, and the bytes of its JSON.
+    fn time_preview_reads(conn: &rusqlite::Connection) -> (std::time::Duration, std::time::Duration, usize) {
+        let mut timings = Vec::with_capacity(TIMED_READS);
+        let mut bytes = 0;
+        for _ in 0..TIMED_READS {
+            let started = std::time::Instant::now();
+            let previews = channel_previews(conn).unwrap();
+            bytes = serde_json::to_vec(&previews).unwrap().len();
+            timings.push(started.elapsed());
+        }
+        timings.sort();
+        (timings[timings.len() / 2], timings[timings.len() - 1], bytes)
+    }
+
+    /// ЛМВ1: the full preview read of a large space, the read and the JSON
+    /// that crosses the IPC, answers within `PREVIEW_READ_LIMIT`. The limit is
+    /// the app's, an optimised build's: the strip's check builds the tests so
+    /// and asserts it through `PREVIEW_TIMING_ENV`; an unoptimised build reads
+    /// and says its numbers.
+    #[test]
+    fn a_full_preview_read_of_a_large_space_answers_within_its_limit() {
+        let conn = db::open_memory().unwrap();
+        let names: Vec<String> = (0..TIMED_COLLECTIONS).map(|index| format!("Collection {index:03}")).collect();
+        preview_collections(&conn, &names);
+        conn.execute_batch("BEGIN").unwrap();
+        for card in 0..TIMED_CARDS {
+            let member: Vec<String> = (0..TIMED_MEMBERSHIPS)
+                .map(|offset| names[(card * TIMED_MEMBERSHIPS + offset) % TIMED_COLLECTIONS].clone())
+                .collect();
+            preview_card(&conn, &format!("card-{card:05}"), u32::try_from(card).unwrap(), &member, true);
+        }
+        conn.execute_batch("COMMIT").unwrap();
+
+        let previews = channel_previews(&conn).unwrap();
+        assert_eq!(previews["__all__"].len(), TIMED_CARDS);
+        assert!(names.iter().all(|name| previews[name].len() == TIMED_CARDS * TIMED_MEMBERSHIPS / TIMED_COLLECTIONS));
+        let (median, slowest, bytes) = time_preview_reads(&conn);
+        if let Ok(path) = std::env::var(PREVIEW_SPACE_INDEX_ENV) {
+            let space = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+            let previews = channel_previews(&space).unwrap();
+            let (space_median, space_slowest, space_bytes) = time_preview_reads(&space);
+            eprintln!(
+                "list_channel_previews on {path}: {} cards, {} keys, {space_bytes} B: median {space_median:?}, slowest {space_slowest:?}",
+                previews["__all__"].len(),
+                previews.len(),
+            );
+        }
+        let asserted = std::env::var(PREVIEW_TIMING_ENV).is_ok_and(|value| value == "assert");
+        eprintln!(
+            "list_channel_previews, {TIMED_CARDS} cards, {TIMED_COLLECTIONS}×{} members, {bytes} B: median {median:?}, slowest {slowest:?}, limit {PREVIEW_READ_LIMIT:?}{}",
+            TIMED_CARDS * TIMED_MEMBERSHIPS / TIMED_COLLECTIONS,
+            if asserted { ", asserted" } else { ", reported" },
+        );
+        if asserted {
+            assert!(slowest <= PREVIEW_READ_LIMIT, "list_channel_previews {slowest:?} over {PREVIEW_READ_LIMIT:?} (median {median:?})");
+        }
     }
 }

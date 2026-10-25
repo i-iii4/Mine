@@ -13,10 +13,15 @@ import {
   getStoredInterfaceFont,
 } from "@/lib/fontChoice";
 import { App } from "./App";
-import { getVaultPath, recordStartupMilestone, reportNativeShellSmoke } from "@/lib/commands";
+import { getVaultPath, recordStartupMilestone, reportNativeShellSmoke, tabPainted } from "@/lib/commands";
 import { installControlCharGuard } from "@/lib/controlCharGuard";
 import { scheduleAfterNextPaint } from "@/lib/startup";
+import { afterTwoFrames } from "@/lib/tabPage";
 import "./styles/global.css";
+
+// The page's script runs: its own first frame shows the tab (SPEC_TABS.md,
+// В26), and `public/tab-first-frame.js` stands aside.
+document.documentElement.dataset.appStarted = "";
 
 // A tab is a child page of its window, where the arrow keys can type stray
 // control characters into fields (SPEC_TABS.md, В80): one guard for the page.
@@ -46,6 +51,11 @@ class ErrorBoundary extends React.Component<
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error("[ErrorBoundary] React render crashed:", error, info.componentStack);
+    // A new tab waits unseen for its first frame (SPEC_TABS.md, В26): the
+    // error it shows instead is that frame.
+    afterTwoFrames(() => {
+      void tabPainted().catch(() => {});
+    });
   }
 
   render() {

@@ -1,4 +1,4 @@
-import { useCallback, useState, type CSSProperties } from "react";
+import { useCallback, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -12,6 +12,7 @@ import { arrayMove } from "@dnd-kit/sortable";
 import { MemoryRouter } from "react-router";
 import { Sidebar, SidebarTagRowDragPreview } from "@/components/Sidebar";
 import { sidebarPointerWithin } from "@/lib/sidebarDndCollision";
+import { writeSidebarWidth } from "@/lib/sidebarWidth";
 import {
   tagRowDropAnimation,
   TAG_ROW_OVERLAY_MODIFIERS,
@@ -23,6 +24,14 @@ import type { PreviewCard, TagCount } from "@/types";
 /// It mounts the production pieces — Sidebar, sensors, collision detection,
 /// overlay dressing — around a local optimistic reorder, so the Playwright
 /// audit measures the same gesture the app ships, minus the vault round trip.
+
+/** The sidebar's width on this page, written as useSidebarResize writes it
+ *  (sidebarWidth.ts): the parts laid out by it take it from there. Wide
+ *  enough for the table's rows with their thumbnail strips, which the drag's
+ *  overlay carries: below the compact threshold the sidebar is the List,
+ *  names alone, while the narrow table is postponed (compactStack.ts). */
+const AUDIT_SIDEBAR_WIDTH = "420px";
+writeSidebarWidth(AUDIT_SIDEBAR_WIDTH);
 
 const AUDIT_TAGS: TagCount[] = Array.from({ length: 12 }, (_, index) => ({
   tag: `c${String(index).padStart(2, "0")}-collection`,
@@ -87,11 +96,9 @@ function SidebarReorderAuditScene() {
     >
       <div
         className="flex h-screen w-screen bg-background text-foreground"
-        style={{ "--sidebar-width": "340px" } as CSSProperties}
         data-sidebar-reorder-audit-route=""
       >
         <Sidebar
-          width={340}
           collapsed={false}
           widthAnimating={false}
           vaultPath="/tmp/mine-sidebar-reorder-audit"

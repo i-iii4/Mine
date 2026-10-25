@@ -219,6 +219,9 @@ async function main() {
     }, onAuditChildChange);
     // Start and stop a Vite of their own (audit-vite.mjs).
     await runAudit("scripts/narrow-window-audit.mjs", {}, onAuditChildChange);
+    // Builds its page for production; the Rust test of the full read builds
+    // the tests optimised and runs with `bun run test:sidebar-strip`.
+    await runAudit("scripts/sidebar-strip-audit.mjs", {}, onAuditChildChange, ["--skip-rust"]);
     await runAudit("scripts/reading-mode-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/editing-audit.mjs", {}, onAuditChildChange);
     // The browser's measures only: the Rust test of the save's time builds

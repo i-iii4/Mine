@@ -1,7 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SidebarLayout } from "@/types";
-import { SIDEBAR_MAX_WIDTH_PX, SIDEBAR_MIN_WIDTH_PX, sidebarBesideMinWidthPx } from "@/lib/appLayout";
+import { APP_MAIN_MIN_WIDTH_PX, SIDEBAR_MAX_WIDTH_PX, SIDEBAR_MIN_WIDTH_PX, sidebarBesideMinWidthPx } from "@/lib/appLayout";
 import { SIDEBAR_WIDTH_MOTION_MS, useSidebarResize } from "./useSidebarResize";
 
 const commands = vi.hoisted(() => ({
@@ -93,12 +93,14 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
     expect(commands.setWindowSidebar).toHaveBeenLastCalledWith({ width_px: min(), collapsed: false });
   });
 
-  it("stops a drag at the maximum", () => {
+  it("stops a drag where the narrowest feed begins, with no cap of its own (23.10.2026)", () => {
+    window.innerWidth = 2560;
     const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
     act(() => result.current.startResize(480, 480));
     act(() => result.current.updateResize(480 + 5000));
     act(() => result.current.endResize());
-    expect(result.current.width).toBe(SIDEBAR_MAX_WIDTH_PX);
+    expect(result.current.width).toBe(2560 - APP_MAIN_MIN_WIDTH_PX);
+    expect(result.current.width).toBeGreaterThan(SIDEBAR_MAX_WIDTH_PX);
   });
 
   it("sets the width from the keyboard within the bounds, and stores it", () => {

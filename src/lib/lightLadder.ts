@@ -1,9 +1,8 @@
 // The light theme's tokens that follow its canvas, derived by the colour
 // rules (SPEC_COLOR_RULES.md, sections 2 and 3) from the canvas's lightness.
 // The canvas of 1 gives the light block of global.css (colorLaw.test.ts
-// holds the two equal); TRIAL (PLAN 47.7) applies the canvas 0.975 through
-// lightCanvas.ts. The dark theme is carried from the canvas of 1 and does not
-// follow.
+// holds the two equal). The dark theme is carried from the canvas of 1 and
+// does not follow.
 
 import {
   FORM_RATIO,

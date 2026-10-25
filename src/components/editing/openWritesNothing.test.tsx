@@ -20,7 +20,7 @@ import type { IndexedBlock } from "@/types";
 // is written, and the session never says it holds unsaved edits.
 
 vi.mock("@/lib/reading/mermaid", () => ({
-  readMermaidTheme: vi.fn(() => ({ dark: false, fontFamily: "system-ui", width: 680, variables: {} })),
+  readMermaidLayout: vi.fn(() => ({ fontFamily: "system-ui", fontFamilyMono: "ui-monospace", width: 680 })),
   renderMermaid: vi.fn(() => new Promise(() => undefined)),
 }));
 

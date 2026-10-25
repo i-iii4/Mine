@@ -30,6 +30,7 @@ const vite = await startAuditVite([{
       import {useSidebarOverlay} from "/src/hooks/useSidebarOverlay.ts";
       import {useTopRowWrap} from "/src/hooks/useTopRowWrap.ts";
       import {sidebarWidthCss} from "/src/lib/sidebarPlacement.ts";
+      import {sidebarWidthHost, writeSidebarWidth} from "/src/lib/sidebarWidth.ts";
       import {topRowShowsPlace} from "/src/lib/topRowPath.ts";
       import "/src/styles/global.css";
       const h=React.createElement, noop=()=>{};
@@ -39,7 +40,7 @@ const vite = await startAuditVite([{
         // and its segment leave the row, as App.tsx has them (У1, У12).
         const narrow=useSidebarOverlay({tab:false,onWidenWhileOpen:noop,onBesideIntent:noop}).narrow;
         React.useLayoutEffect(()=>{
-          document.documentElement.style.setProperty("--sidebar-width", narrow?"0px":sidebarWidthCss(360));
+          writeSidebarWidth(narrow?"0px":sidebarWidthCss(360));
         },[narrow]);
         const [host,setHost]=React.useState(null);
         const [count,setCount]=React.useState(0);
@@ -57,7 +58,7 @@ const vite = await startAuditVite([{
           onRequestDeleteSelection:noop,onMergeSelectedBlocks:noop,onClearSelection:()=>setCount(0)});
         return h(TooltipProvider,null,h(ChromeShell,{ref:wrap.hostRef,"data-top-row":wrap.fit},
           h(ChromeRow,{as:"header",separator:"bottom",className:"bg-chrome"},
-            narrow?null:h("div",{"data-audit-sidebar-segment":"",className:"h-full shrink-0 border-r border-sidebar-border",style:{width:"var(--sidebar-width)"}}),
+            narrow?null:h("div",{ref:sidebarWidthHost,"data-audit-sidebar-segment":"",className:"h-full shrink-0 border-r border-sidebar-border",style:{width:"var(--sidebar-width)"}}),
             h("div",{ref:wrap.rowRef,className:"flex h-full min-w-0 flex-1 items-center"},
               // As App.tsx has it: away, the switcher stays in the page, out
               // of the row's flow, faded out and inert.
@@ -68,7 +69,7 @@ const vite = await startAuditVite([{
                 onRequestDelete:noop,onDetailClose:noop,detailMenuOpenRequestSequence:0,selectionActive:count>0,
                 selectionHostRef:setHost}))),
           h("div",{className:"relative flex min-h-0 flex-1"},
-            narrow?null:h("aside",{"data-audit-sidebar":"",className:"shrink-0 border-r border-sidebar-border bg-sidebar",style:{width:"var(--sidebar-width)"}}),
+            narrow?null:h("aside",{ref:sidebarWidthHost,"data-audit-sidebar":"",className:"shrink-0 border-r border-sidebar-border bg-sidebar",style:{width:"var(--sidebar-width)"}}),
             h("main",{"data-below-top-row":"",className:"min-h-0 flex-1",style:{minWidth:390}})),
           host?createPortalTo(commands,host):null));
       }
@@ -149,9 +150,10 @@ try {
   // the graph's and an open card with a long name stay in one row at any
   // width, the name ending in an ellipsis.
   const LONG_NAME = "пытаюсь использовать топологический анализ данных для поиска структуры в эмбеддингах";
-  // 559 is the narrowest window with the sidebar beside the feed (169 + 390 at the standard chrome,
-  // user's decision of 22.10.2026; it was 740).
-  for (const width of [1200, 559]) {
+  // 670 is the narrowest window with the sidebar beside the feed (280 + 390,
+  // user's decisions of 22.10.2026 and 25.10.2026; it was 740, then 559,
+  // then 630).
+  for (const width of [1200, 670]) {
     await page.setViewportSize({ width, height: 700 });
     for (const [label, setup] of [
       ["feed", () => { window.auditOpenCard(null); window.auditView("grid"); }],
@@ -164,12 +166,12 @@ try {
       assert.equal(state.barInHeader, true, `${width} ${label}: the half stays in the row`);
       assert.equal(state.mainTop, state.headerBottom + 1, `${width} ${label}: the feed under the row's line`);
     }
-    if (width === 559) {
+    if (width === 670) {
       const nameCut = await page.evaluate(() => {
         const name = document.querySelector("[data-secondary-detail-card-name]");
         return name.scrollWidth > name.clientWidth;
       });
-      assert.equal(nameCut, true, "559 open card: the long name ends in an ellipsis");
+      assert.equal(nameCut, true, "670 open card: the long name ends in an ellipsis");
     }
     console.log(`PASS ${width}: feed, graph and an open card with a long name keep one row`);
   }
@@ -180,7 +182,7 @@ try {
   // no switcher and no path's line before it, the name ending in an
   // ellipsis.
   const readPathSettled = async () => { await settle(); return page.evaluate(readPath); };
-  for (const width of [558, 480, 390]) {
+  for (const width of [669, 480, 390]) {
     await page.setViewportSize({ width, height: 700 });
     await page.evaluate(() => window.auditOpenCard(null));
     let path = await readPathSettled();
@@ -205,7 +207,7 @@ try {
     assert.ok(close.right <= width && close.right >= width - 16, `${width} open card: × at the row's right end`);
     assert.equal(path.nameEllipsis, "ellipsis", `${width} open card: a name that does not fit ends in an ellipsis`);
     // The long name does not fit the whole row at any narrow width.
-    if (width <= 600) assert.equal(path.nameCut, true, `${width} open card: the long name does not fit`);
+    if (width <= 669) assert.equal(path.nameCut, true, `${width} open card: the long name does not fit`);
     console.log(`PASS ${width}: no card, the place starts the row; an open card's name, ⋯ and × take the whole row`);
   }
   // Wide with the sidebar open beside the feed, the sidebar shows the place:

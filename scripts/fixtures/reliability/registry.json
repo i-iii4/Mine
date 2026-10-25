@@ -3851,6 +3851,45 @@
     },
     {
       "paths": [
+        "src/components/Sidebar.tsx",
+        "src/components/SidebarStrip.test.tsx",
+        "src/components/Sidebar.test.tsx",
+        "src/hooks/useChannelPreviewsEvents.ts",
+        "src/hooks/useChannelPreviewsEvents.test.tsx",
+        "src/lib/sidebarStripWidth.ts",
+        "src/lib/sidebarStripWidth.test.tsx",
+        "src/lib/stripPictures.ts",
+        "src/lib/stripPictures.test.ts",
+        "src/lib/sidebarWidth.ts",
+        "src/lib/sidebarWidth.test.ts",
+        "src/lib/appLayout.ts",
+        "src/test/sidebarStrip.ts"
+      ],
+      "requirement": "SPEC_SIDEBAR_STRIP.md### Правила",
+      "tests": [
+        "src/components/SidebarStrip.test.tsx",
+        "src/components/Sidebar.test.tsx",
+        "src/hooks/useChannelPreviewsEvents.test.tsx",
+        "src/lib/sidebarStripWidth.test.tsx",
+        "src/lib/stripPictures.test.ts",
+        "src/lib/sidebarWidth.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/sidebar-strip-audit.mjs",
+        "src/components/Sidebar.tsx",
+        "src/hooks/useChannelPreviewsEvents.ts"
+      ],
+      "requirement": "SPEC_SIDEBAR_STRIP.md### Правила",
+      "tests": [
+        "scripts/sidebar-strip-audit.mjs"
+      ],
+      "command": "test:sidebar-strip"
+    },
+    {
+      "paths": [
         "src/components/ui/modal-scrim.test.tsx",
         "src/components/ImagePreviewOverlay.tsx"
       ],
@@ -3879,16 +3918,10 @@
     },
     {
       "paths": [
-        "src/lib/lightLadder.ts",
-        "src/lib/lightCanvas.ts",
-        "src/lib/lightCanvas.test.ts",
-        "src/components/LightCanvasMenu.tsx",
-        "src/components/LightCanvasMenu.test.tsx"
+        "src/lib/lightLadder.ts"
       ],
       "requirement": "SPEC_COLOR_RULES.md## Правила цвета Mine",
       "tests": [
-        "src/lib/lightCanvas.test.ts",
-        "src/components/LightCanvasMenu.test.tsx",
         "src/styles/colorLaw.test.ts"
       ],
       "command": "test:frontend"
@@ -4123,12 +4156,70 @@
         "src/lib/reading/mermaid.ts",
         "src/lib/reading/mermaid.test.ts",
         "src/components/reading/MermaidDiagram.tsx",
-        "src/components/reading/MermaidDiagram.test.tsx"
+        "src/components/reading/MermaidDiagram.test.tsx",
+        "src/lib/reading/mermaidSafety.test.ts"
       ],
       "requirement": "SPEC_READING_MODE.md### Ч7. Mermaid",
       "tests": [
         "src/lib/reading/mermaid.test.ts",
-        "src/components/reading/MermaidDiagram.test.tsx"
+        "src/components/reading/MermaidDiagram.test.tsx",
+        "src/lib/reading/mermaidSafety.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/CardPeek.tsx",
+        "src/components/CardViewMenu.tsx",
+        "src/components/DetailView.tsx",
+        "src/components/detailFrame.ts",
+        "src/components/detailMotionGate.ts",
+        "src/hooks/useCardAssociations.ts",
+        "src/lib/cardPeek.ts",
+        "src/lib/cardPeekSource.ts",
+        "src/lib/cardView.ts",
+        "src/components/CardPeek.test.tsx",
+        "src/components/CardViewMenu.test.tsx",
+        "src/components/DetailView.test.tsx",
+        "src/components/detailMotionGate.test.tsx",
+        "src/hooks/useCardAssociations.test.tsx",
+        "src/lib/cardPeek.test.ts",
+        "src/lib/cardPeekSource.test.ts",
+        "src/lib/cardView.test.ts"
+      ],
+      "requirement": "SPEC_CARD_PEEK.md### Правила",
+      "tests": [
+        "src/components/CardPeek.test.tsx",
+        "src/components/CardViewMenu.test.tsx",
+        "src/components/DetailView.test.tsx",
+        "src/components/detailMotionGate.test.tsx",
+        "src/hooks/useCardAssociations.test.tsx",
+        "src/lib/cardPeek.test.ts",
+        "src/lib/cardPeekSource.test.ts",
+        "src/lib/cardView.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "public/tab-first-frame.js",
+        "index.html",
+        "src/lib/tabFirstFrame.test.ts"
+      ],
+      "requirement": "SPEC_TABS.md#### Окно и страница",
+      "tests": [
+        "src/lib/tabFirstFrame.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/sidebarRowsMorph.ts",
+        "src/lib/sidebarRowsMorph.test.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#### Компактная строка боковой панели (22.10.2026)",
+      "tests": [
+        "src/lib/sidebarRowsMorph.test.ts"
       ],
       "command": "test:frontend"
     },

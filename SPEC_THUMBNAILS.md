@@ -99,7 +99,7 @@ Pipeline обязан удовлетворять **каждому** из эти�
 
 | Способ | Владелец | Чем красит |
 |---|---|---|
-| DOM | `MicroPreviewThumbnail` (`src/components/MicroPreviewThumbnail.tsx`) | `bg-card` на обёртке |
+| DOM | `MicroPreviewThumbnail` (`src/components/MicroPreviewThumbnail.tsx`) | `bg-card` на обёртке; у плитки ленты бокового меню на самой плитке (`useMicroPreviewPicture`, SPEC_SIDEBAR_STRIP.md) |
 | Canvas (граф) | `drawGraphCard` (`src/components/graph/canvas.ts`) | `textPreviewFill`, прочитанный из `--card` |
 
 Потребители подложку не выбирают. Пока выбирали — разошлись: боковая панель
@@ -834,7 +834,7 @@ No blocking errors. Pipeline is self-healing at next startup.
 
 ### Current behavior (to be replaced)
 
-`App.tsx` calls `loadPreviews()` → `listChannelPreviews(20)` → rebuilds entire `channelPreviews` Map. Triggered by initial load and by `loadData` on various events. Full refetch, O(channels × 10) IPC.
+`App.tsx` calls `loadPreviews()` → `listChannelPreviews()` → rebuilds the `channelPreviews` Map, keeping every list that did not change. Since 24.10.2026 the read has no limit: every card with a thumbnail per collection and under `__all__`, and each strip draws as many as its width holds from the `micro` level ([SPEC_SIDEBAR_STRIP.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SIDEBAR_STRIP.md>)). Triggered by initial load and by `loadData` on various events. Full refetch, O(channels × 10) IPC.
 
 ### New behavior
 
@@ -918,7 +918,7 @@ selected elements?` (`DeleteMediaPreviewGrid`), окна `Delete media file?`,
 
 ### Initial load
 
-At app startup, frontend still calls `listChannelPreviews(20)` once to populate initial state. After that, updates happen via events. Initial call needed because startup may load a vault with existing blocks that have no pending events.
+At app startup, frontend still calls `listChannelPreviews()` once to populate initial state: the full lists, with no limit ([SPEC_SIDEBAR_STRIP.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SIDEBAR_STRIP.md>), ЛМ1). After that, updates happen via events. Initial call needed because startup may load a vault with existing blocks that have no pending events.
 
 ## Virtualized Sidebar
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DETAIL_CONTENT_MAX_WIDTH_PX,
   DETAIL_MEDIA_MAX_HEIGHT_VAR,
+  DETAIL_RAIL_LINE_PX,
   DETAIL_RAIL_WIDTH_PX,
   detailLayout,
   detailMediaFrameStyle,
@@ -18,34 +19,35 @@ describe("detailLayout", () => {
   const pad = 32;
 
   it("stands the content beside the panel, centred, while both margins are at least the inset (Р2, Р3)", () => {
-    // 1400 = margin + 680 + margin + 320 + 32: each margin 184 (user's
-    // decision of 16.10.2026: the reading column 680 instead of 768).
+    // 1400 = margin + 680 + margin + (line 1 + 32 + 320 + 32): each margin
+    // 167.5 (user's decisions of 16.10.2026, the reading column 680 instead
+    // of 768, and of 24.10.2026, the line before the panel).
     const layout = detailLayout(1400, pad, DETAIL_CONTENT_MAX_WIDTH_PX);
-    expect(layout).toEqual({ mode: "rail", sideMarginPx: 184 });
+    expect(layout).toEqual({ mode: "rail", sideMarginPx: 167.5 });
     // Centred between the left edge and the panel: the same space on both sides.
     const contentLeft = layout.sideMarginPx!;
     const contentRight = contentLeft + DETAIL_CONTENT_MAX_WIDTH_PX;
-    const panelLeft = 1400 - pad - DETAIL_RAIL_WIDTH_PX;
+    const panelLeft = 1400 - 2 * pad - DETAIL_RAIL_WIDTH_PX - DETAIL_RAIL_LINE_PX;
     expect(panelLeft - contentRight).toBe(contentLeft);
   });
 
   it("narrows both margins equally and stacks once they would fall under the inset (Р3)", () => {
-    // 3 × 32 + 680 + 320 = 1096: both margins exactly the inset.
-    expect(detailLayout(1096, pad, 680)).toEqual({ mode: "rail", sideMarginPx: pad });
-    expect(detailLayout(1095, pad, 680)).toEqual({ mode: "stacked", sideMarginPx: null });
+    // 4 × 32 + 680 + 1 + 320 = 1129: both margins exactly the inset.
+    expect(detailLayout(1129, pad, 680)).toEqual({ mode: "rail", sideMarginPx: pad });
+    expect(detailLayout(1128, pad, 680)).toEqual({ mode: "stacked", sideMarginPx: null });
     // The margins follow the drawn content: a picture 544 wide stays beside
-    // the panel down to 3 × 32 + 544 + 320 = 960.
-    expect(detailLayout(1095, pad, 544)).toEqual({ mode: "rail", sideMarginPx: 99.5 });
-    expect(detailLayout(960, pad, 544).mode).toBe("rail");
-    expect(detailLayout(959, pad, 544).mode).toBe("stacked");
+    // the panel down to 4 × 32 + 544 + 1 + 320 = 993.
+    expect(detailLayout(1095, pad, 544)).toEqual({ mode: "rail", sideMarginPx: 83 });
+    expect(detailLayout(993, pad, 544).mode).toBe("rail");
+    expect(detailLayout(992, pad, 544).mode).toBe("stacked");
     // The inset follows the edge rhythm.
-    expect(detailLayout(3 * 16 + 680 + 320, 16, 680).mode).toBe("rail");
-    expect(detailLayout(3 * 16 + 680 + 319, 16, 680).mode).toBe("stacked");
+    expect(detailLayout(4 * 16 + 680 + 321, 16, 680).mode).toBe("rail");
+    expect(detailLayout(4 * 16 + 680 + 320, 16, 680).mode).toBe("stacked");
   });
 
   it("builds the rail columns as two equal flexible tracks round the content (Р2)", () => {
     expect(detailRailGridTemplate(544)).toBe(
-      "minmax(var(--card-content-pad),1fr) 544px minmax(var(--card-content-pad),1fr) 320px var(--card-content-pad)",
+      "minmax(var(--card-content-pad),1fr) 544px minmax(var(--card-content-pad),1fr) calc(321px + 2 * var(--card-content-pad))",
     );
   });
 });
@@ -81,6 +83,10 @@ describe("detail media frame", () => {
 
   it("carries the one height limit as a CSS variable (Р7)", () => {
     expect(detailMediaMaxHeightStyle()).toEqual({ [DETAIL_MEDIA_MAX_HEIGHT_VAR]: "85vh" });
+  });
+
+  it("takes the limit of the card's own frame in its window (SPEC_CARD_PEEK.md, О8)", () => {
+    expect(detailMediaMaxHeightStyle(600)).toEqual({ [DETAIL_MEDIA_MAX_HEIGHT_VAR]: "510px" });
   });
 
   it("tells a turned video from the record's rounding (Р6)", () => {

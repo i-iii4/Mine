@@ -8,11 +8,10 @@ import {
   sidebarWidthCss,
 } from "@/lib/sidebarPlacement";
 import type { SidebarLayout } from "@/types";
-import { useChromeRowHeight } from "./useChromeRowHeight";
+import { writeSidebarWidth } from "@/lib/sidebarWidth";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const CSS_VAR = "--sidebar-width";
 /** How long the sidebar takes to collapse or open by its button. */
 export const SIDEBAR_WIDTH_MOTION_MS = 200;
 
@@ -46,10 +45,6 @@ function initialLayout(windowSidebar: SidebarLayout | null): { width: number; co
 /** The sidebar beside the feed leaving the row or coming back into it as the
  *  window crosses the threshold of the sidebar over the feed. */
 type SidebarCrossing = "leave" | "enter";
-
-function writeCssVar(value: string): void {
-  document.documentElement.style.setProperty(CSS_VAR, value);
-}
 
 /** The width a drag or a key may give the sidebar in the window as it is now. */
 function clampToWindow(width: number): number {
@@ -104,7 +99,6 @@ export function useSidebarResize(
   const [storedWidth, setStoredWidth] = useState(() => initialLayout(windowSidebar).width);
   const [collapsed, setCollapsed] = useState(() => initialLayout(windowSidebar).collapsed);
   const [isResizing, setIsResizing] = useState(false);
-  const chromeRow = useChromeRowHeight();
   const [dragWidth, setDragWidth] = useState(() => {
     const { width, collapsed: c } = initialLayout(windowSidebar);
     return c ? 0 : width;
@@ -176,14 +170,13 @@ export function useSidebarResize(
     if (isResizing) return undefined;
     const target = collapsed || overlaid ? "0px" : sidebarWidthCss(storedWidth);
     if (crossing === "enter") {
-      writeCssVar("0px");
-      const frame = requestAnimationFrame(() => writeCssVar(target));
+      writeSidebarWidth("0px");
+      const frame = requestAnimationFrame(() => writeSidebarWidth(target));
       return () => cancelAnimationFrame(frame);
     }
-    writeCssVar(target);
+    writeSidebarWidth(target);
     return undefined;
-    // The chrome's height moves the narrowest width the target is held to.
-  }, [chromeRow, collapsed, crossing, overlaid, storedWidth, isResizing]);
+  }, [collapsed, crossing, overlaid, storedWidth, isResizing]);
 
   // The window's layout changed: another tab, the tab bar's button, the View
   // menu or the two-finger swipe (В56). A drag in progress here keeps the
@@ -219,7 +212,7 @@ export function useSidebarResize(
   const updateResize = useCallback((clientX: number) => {
     const { startX, startWidth } = startRef.current;
     const next = clampToWindow(startWidth + (clientX - startX));
-    writeCssVar(`${next}px`);
+    writeSidebarWidth(`${next}px`);
     pendingWidthRef.current = next;
 
     if (rafIdRef.current === null) {

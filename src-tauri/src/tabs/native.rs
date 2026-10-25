@@ -360,9 +360,9 @@ mod imp {
         });
     }
 
-    /// Let the window's background show through `page` until its own
-    /// content paints: a child webview's background colour is not applied
-    /// on macOS, and without this a new page flashes white (В26).
+    /// Let the window's background show through `page`, the tab bar's page,
+    /// until its own content paints: a child webview's `background_color`
+    /// is not applied on macOS.
     pub fn clear_page_background(page: &Webview) {
         let _ = page.with_webview(|view| {
             let ptr = view.inner() as usize;
@@ -374,6 +374,19 @@ mod imp {
             unsafe {
                 let _: () = objc2::msg_send![object, setValue: &*no, forKey: &*key];
             }
+        });
+    }
+
+    /// Let `page` draw unseen (`alphaValue` 0) or be seen (1). Unseen it
+    /// still draws its frames: WebKit counts a view as visible by its
+    /// window and `isHidden`, not by its alpha, while a hidden page draws
+    /// nothing (В26).
+    pub fn set_page_seen(page: &Webview, seen: bool) {
+        let _ = page.with_webview(move |view| {
+            let ptr = view.inner() as usize;
+            // SAFETY: a live WKWebView on the main thread.
+            let view: &NSView = unsafe { &*(ptr as *const NSView) };
+            view.setAlphaValue(if seen { 1.0 } else { 0.0 });
         });
     }
 
@@ -605,6 +618,7 @@ mod imp {
 
     pub fn order_below(_upper: &Webview, _lower: &Webview) {}
     pub fn clear_page_background(_page: &Webview) {}
+    pub fn set_page_seen(_page: &Webview, _seen: bool) {}
     pub fn keyboard_to_page(_window: &Window, _page: &Webview) {}
     pub fn set_window_background(_window: &Window, _rgb: (f64, f64, f64)) {}
     pub fn set_title_bar(_window: &Window, _title_bar: TitleBar) {}
@@ -649,6 +663,11 @@ pub fn keyboard_to_page(window: &Window, page: &Webview) {
 /// (SPEC_EDITING.md, Л12).
 pub fn send_system_edit_action(app: &AppHandle, command: EditMenuCommand) {
     imp::send_edit_action(app, command);
+}
+
+/// See the platform implementation.
+pub fn set_page_seen(page: &Webview, seen: bool) {
+    imp::set_page_seen(page, seen);
 }
 
 /// Paint `window`'s background with `hex` (`#rrggbb`); an unreadable colour

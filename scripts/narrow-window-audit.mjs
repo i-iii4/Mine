@@ -3,7 +3,7 @@
 // useSidebarOverlay, SidebarOverlay, the styles) in the page's frame, at the
 // widths of the plan. Beside the feed the sidebar keeps its target until the
 // feed reaches its narrowest, then squeezes, past `S_min` and through the
-// compact items, to the tab bar's lead (169 at the standard chrome); below 559 px it
+// compact items, to S_beside, 280 px; below 670 px it
 // leaves the row, the feed takes the window, and the sidebar lies over the
 // feed when opened: the window less the 40 px strip wide, from the sidebar's top to
 // the window's bottom, the space switcher in it and not in the top row, the feed under a
@@ -38,6 +38,8 @@ const vite = await startAuditVite([{
       import {TooltipProvider} from "/src/components/ui/tooltip.tsx";
       import {useSidebarOverlay} from "/src/hooks/useSidebarOverlay.ts";
       import {useSidebarResize} from "/src/hooks/useSidebarResize.ts";
+      import {sidebarWidthHost, writeSidebarWidth} from "/src/lib/sidebarWidth.ts";
+      window.auditWriteSidebarWidth=writeSidebarWidth;
       import {APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX} from "/src/lib/appLayout.ts";
       import "/src/styles/global.css";
       const h=React.createElement, noop=()=>{};
@@ -75,7 +77,7 @@ const vite = await startAuditVite([{
           onNavClick:overlay.close,onScrollToTop:overlay.close});
         return h(ChromeShell,{topEdge:false,className:"relative",style:{minWidth:APP_MIN_WIDTH_PX},"data-audit-place":location.pathname},
           h(ChromeRow,{as:"header",separator:"bottom",className:"bg-chrome",inert:overlay.open},
-            !besideMounted?null:h("div",{"data-app-top-sidebar-segment":"",className:"flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border"+(resize.widthAnimating?" transition-[width] duration-200 ease-out motion-reduce:transition-none":""),
+            !besideMounted?null:h("div",{ref:sidebarWidthHost,"data-app-top-sidebar-segment":"",className:"flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border"+(resize.widthAnimating?" transition-[width] duration-200 ease-out motion-reduce:transition-none":""),
               style:resize.collapsed?undefined:{width:"var(--sidebar-width)"}},h(FilterRow)),
             h("div",{"data-audit-top-row":"",className:"flex h-full min-w-0 flex-1 items-center px-2"},"Inbox")),
           h("div",{className:"relative flex min-h-0 flex-1"},
@@ -176,9 +178,9 @@ try {
   // Where the sidebar beside the feed ends: the sidebar over the feed ends
   // there too (user's decision of 15.10.2026).
   let besideBottom = null;
-  // Past S_min (350 at 740) it keeps squeezing to S_beside, 169 at 559
-  // (user's decision of 22.10.2026).
-  for (const [width, sidebar] of [[1200, 360], [750, 360], [749, 359], [740, 350], [739, 349], [600, 210], [559, 169]]) {
+  // Past S_min (350 at 740) it keeps squeezing to S_beside, 280 at 670
+  // (user's decisions of 22.10.2026 and 25.10.2026).
+  for (const [width, sidebar] of [[1200, 360], [750, 360], [749, 359], [740, 350], [739, 349], [700, 310], [670, 280]]) {
     await resize(width);
     const layout = await read();
     besideBottom ??= layout.aside?.bottom ?? null;
@@ -195,7 +197,7 @@ try {
   }
 
   // Over the feed (У1, У4, У12): closed at first, the feed the whole window.
-  for (const width of [558, 400, 390]) {
+  for (const width of [669, 400, 390]) {
     await resize(width);
     let layout = await read();
     assert.equal(layout.aside, null, `${width}: no sidebar beside the feed`);
@@ -303,10 +305,10 @@ try {
     const aside = [...document.querySelectorAll("aside")].find((element) => !element.closest("[data-sidebar-overlay]"));
     return aside && aside.getBoundingClientRect().width === target && getComputedStyle(aside).transitionDuration === "0s";
   }, TARGET, { timeout: 2000 });
-  await resize(558);
+  await resize(669);
   await settle();
   motionNow = await asideMotion();
-  assert.equal(motionNow?.duration, "0.2s", "800 → 558: the sidebar moves out of the row");
+  assert.equal(motionNow?.duration, "0.2s", "800 → 669: the sidebar moves out of the row");
   await page.waitForFunction(() => ![...document.querySelectorAll("aside")].some((element) => !element.closest("[data-sidebar-overlay]")), null, { timeout: 2000 });
   // A resize that crosses nothing moves nothing.
   await resize(1000);
@@ -315,18 +317,18 @@ try {
   await settle();
   assert.equal((await asideMotion())?.duration, "0s", "1000 → 900: no motion within the row");
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await resize(558);
+  await resize(669);
   await settle();
-  assert.equal(await asideMotion(), null, "reduced motion, 900 → 558: gone at once");
+  assert.equal(await asideMotion(), null, "reduced motion, 900 → 669: gone at once");
   await resize(800);
   await settle();
   motionNow = await asideMotion();
-  assert.equal(motionNow?.width, TARGET, "reduced motion, 558 → 800: at its width at once");
+  assert.equal(motionNow?.width, TARGET, "reduced motion, 669 → 800: at its width at once");
   // global.css holds every transition to 0.01 ms with reduced motion.
   assert.ok(Number.parseFloat(motionNow.duration) < 0.001, "reduced motion: no motion");
   await resize(400);
   await read();
-  console.log("PASS 400 ↔ 800 ↔ 558: across the threshold the sidebar moves out and in over 200 ms, at once with reduced motion");
+  console.log("PASS 400 ↔ 800 ↔ 669: across the threshold the sidebar moves out and in over 200 ms, at once with reduced motion");
 
   // Widened with the sidebar open over the feed, it stands beside the feed
   // (У7); narrowed again, it comes over the feed closed.
@@ -335,9 +337,9 @@ try {
   layout = await read();
   assert.equal(layout.overlay, null, "800: nothing over the feed");
   assert.equal(layout.aside?.width, TARGET, "800: the sidebar beside the feed at its target");
-  await resize(558);
-  assert.equal((await read()).overlay, null, "558: closed after narrowing");
-  console.log("PASS 558 → 800 → 558: open over the feed becomes beside it, then over it closed");
+  await resize(669);
+  assert.equal((await read()).overlay, null, "669: closed after narrowing");
+  console.log("PASS 669 → 800 → 669: open over the feed becomes beside it, then over it closed");
 
   // A sidebar collapsed beside the feed stays collapsed across the narrow
   // window (У7).
@@ -419,7 +421,7 @@ try {
   await resize(1200);
   await toggle();
   await settle();
-  await page.evaluate(() => document.documentElement.style.setProperty("--sidebar-width", "420px"));
+  await page.evaluate(() => window.auditWriteSidebarWidth("420px"));
   await settle();
   assert.equal(await page.evaluate(() => [...document.querySelectorAll("aside")].find((element) => !element.closest("[data-sidebar-overlay]")).getBoundingClientRect().width), 420, "1200: the sidebar open at 420 px");
   const readColumns = () => page.evaluate(() => {
@@ -456,7 +458,7 @@ try {
     const strip = box(row.querySelector("[data-sidebar-thumbnail-strip]"));
     // What each tile shows: the strip's own edge cuts it.
     const tiles = strip
-      ? [...row.querySelectorAll("[data-sidebar-thumbnail-strip] > *")].map((tile) => {
+      ? [...row.querySelectorAll("[data-sidebar-strip-track] > *")].map((tile) => {
         const r = tile.getBoundingClientRect();
         return { left: Math.max(Math.round(r.left), strip.left), right: Math.min(Math.round(r.right), strip.right) };
       }).filter((tile) => tile.right > tile.left)

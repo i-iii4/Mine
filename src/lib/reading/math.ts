@@ -1,7 +1,6 @@
 // Formulas (SPEC_READING_MODE.md, Ч9): KaTeX 0.16.47 and its stylesheet with
 // fonts load on demand at the first formula; Vite puts the fonts in the
-// build, so nothing comes from the network. One copy serves the article and
-// Mermaid, which depends on `katex ^0.16.47`.
+// build, so nothing comes from the network.
 
 type Katex = typeof import("katex").default;
 

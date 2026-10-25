@@ -44,13 +44,15 @@ const server = await createServer({
         // The app's layout: the half over the feed stands in the top row after
         // the collection switcher, with no row of its own (DESIGN_SYSTEM.md,
         // «Верхние ряды»).
+        // The sidebar's width as useSidebarResize writes it (sidebarWidth.ts).
+        document.documentElement.style.setProperty("--sidebar-width", "300px");
         function Fixture() {
           const [detail, setDetail] = React.useState(false);
           window.setDetail = setDetail;
           window.setActionStyle = applyActionButtonStyle;
           const block = { id: 1, slug: "audit", block_type: "article", card_kind: "article", display_title: "Audit", fallback_label: "Audit", saved_at: "2026-09-18T00:00:00Z", body: "Text", url: null, media_urls: null, author: null };
           const props = { ...secondaryProps, detailBlock: detail ? block : null, detailEntered: detail, onDetailClose: () => { window.closeCount = (window.closeCount || 0) + 1; } };
-          return React.createElement(ChromeShell, { style: { "--sidebar-width": "300px" } },
+          return React.createElement(ChromeShell, null,
           React.createElement(ChromeRow, { as: "header", separator: "bottom", className: "bg-chrome" },
             React.createElement(TopCollectionSwitcher, { orderedTags: [], onNavigate: noop, onCreateCollection: noop, joinsNext: true }),
             React.createElement(MainSecondaryTopBar, props),

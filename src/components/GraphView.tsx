@@ -55,6 +55,9 @@ import {
   type GraphPreviewTarget,
 } from "./graph/contracts";
 import {
+  cardCornerRadius,
+  cardNodeImage,
+  isTextPreview,
   paintCardNode,
   paintCollectionNode,
   readGraphCanvasTheme,
@@ -75,6 +78,7 @@ import {
 import { graphNodeScreenSize, graphZoomBounds } from "./graph/nodeSize";
 import { animateCamera, type CameraTarget } from "./graph/cameraAnimation";
 import { motionDuration } from "@/lib/motion";
+import { coverPeekRect, registerPeekGraphSource, usePeekHiddenSlug } from "@/lib/cardPeek";
 import { graphLinkCurvature, graphLinkLineDash } from "./graph/linkStyle";
 import {
   beginDimTransition,
@@ -1081,9 +1085,54 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     closePreview();
   }, [closePreview]);
 
+  // TRIAL (SPEC_CARD_PEEK.md, О14): the card the open card's window grew
+  // out of leaves its place empty while the window stands for it.
+  const peekHiddenSlug = usePeekHiddenSlug();
+  // Where a card's node stands and what it draws, for the open card's window
+  // to grow out of it and shrink back into it (О10, О11). Read through a ref:
+  // the reader is registered once.
+  const peekSourceStateRef = useRef({ nodes: graphData.nodes, canvasTheme, resolvedThumbsRoot, thumbVersions, renderThumbnails });
+  peekSourceStateRef.current = { nodes: graphData.nodes, canvasTheme, resolvedThumbsRoot, thumbVersions, renderThumbnails };
+  useEffect(() => registerPeekGraphSource((slug) => {
+    const graph = graphRef.current;
+    const container = containerRef.current;
+    const state = peekSourceStateRef.current;
+    const node = state.nodes.find((candidate) => candidate.id === `card:${slug}`);
+    if (!graph || !container || !node || !hasNodePosition(node)) return null;
+    const box = container.getBoundingClientRect();
+    const point = graph.graph2ScreenCoords(node.x, node.y);
+    const size = graphNodeScreenSize(graph.zoom());
+    const rect = { x: box.left + point.x - size / 2, y: box.top + point.y - size / 2, width: size, height: size };
+    const image = cardNodeImage(node, {
+      imageCache: imageCacheRef.current,
+      thumbsRootPath: state.resolvedThumbsRoot,
+      thumbVersion: state.thumbVersions.get(slug) ?? 0,
+      renderThumbnail: state.renderThumbnails,
+      targetScreenSize: size,
+    });
+    const picture = image && !isTextPreview(node) ? image : null;
+    return {
+      rect,
+      radius: cardCornerRadius(size),
+      // A card without a picture stands on the chrome's plane (canvas.ts).
+      fill: picture ? "var(--card)" : state.canvasTheme.chromeFill,
+      media: picture
+        ? {
+          drawable: picture,
+          naturalWidth: picture.naturalWidth,
+          naturalHeight: picture.naturalHeight,
+          clip: rect,
+          image: coverPeekRect(rect, picture.naturalWidth, picture.naturalHeight),
+          composite: false,
+        }
+        : null,
+    };
+  }), []);
+
   const nodeCanvasObject = useCallback(
     (node: GraphCanvasNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
       if (!hasNodePosition(node)) return;
+      if (node.slug && node.slug === peekHiddenSlug) return;
       const selected = selectedNodeId === node.id;
       // Hover alone decides it: a selected card or the opened collection
       // outside the hovered collection's part dims like any other node, and
@@ -1131,6 +1180,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     },
     [
       canvasTheme,
+      peekHiddenSlug,
       focusNodeId,
       hoverHighlight,
       hoveredCardId,

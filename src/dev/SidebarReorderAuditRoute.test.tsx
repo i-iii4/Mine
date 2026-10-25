@@ -14,8 +14,11 @@ describe("SidebarReorderAuditRoute", () => {
       </TooltipProvider>,
     );
     const route = document.querySelector<HTMLElement>("[data-sidebar-reorder-audit-route]");
-    expect(route?.style.getPropertyValue("--sidebar-width")).toBe("340px");
+    // The width as useSidebarResize writes it: on the root and on the panel,
+    // which it does not leave (sidebarWidth.ts).
+    expect(document.documentElement.style.getPropertyValue("--sidebar-width")).toBe("420px");
     const aside = route?.querySelector("aside");
+    expect(aside?.style.getPropertyValue("--sidebar-width")).toBe("420px");
     expect(aside).toHaveStyle({ width: "var(--sidebar-width)", transition: "none" });
     expect(screen.getByText("c00-collection")).toBeInTheDocument();
   });

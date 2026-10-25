@@ -62,15 +62,3 @@ export const TRAFFIC_LIGHT_RESERVE_PX = 80;
 export function trafficLightReservePx(row: number): number {
   return TRAFFIC_LIGHT_RESERVE_PX + (row - STANDARD_CHROME_ROW_HEIGHT) / 2;
 }
-
-/** The tab bar's lead before the first tab's line (TabBar.tsx): the lights'
- *  reserve, the sidebar's toggle, back and forward (`chrome-icon`, 24 each,
- *  `gap-1` apart) and `pr-2` to the line. 168 at the standard row, 172.5 at
- *  the tall one. */
-const CHROME_ICON_PX = 24;
-const CHROME_ICON_GAP_PX = 4;
-const TAB_BAR_LEAD_END_PAD_PX = 8;
-
-export function tabBarLeadWidthPx(row: number): number {
-  return trafficLightReservePx(row) + 3 * CHROME_ICON_PX + 2 * CHROME_ICON_GAP_PX + TAB_BAR_LEAD_END_PAD_PX;
-}

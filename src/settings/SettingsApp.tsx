@@ -3,7 +3,6 @@ import { cn } from "@/lib/utils";
 import { ChromeRow, ChromeShell } from "@/components/ChromeRow";
 import { SETTINGS_SECTIONS, isSettingsSection, type SettingsSection } from "@/lib/settingsSections";
 import { GRAPH_PREFERENCES_STORAGE_KEY, reloadGraphPreferences } from "@/lib/graphPreferences";
-import { LIGHT_CANVAS_STORAGE_KEY, reloadLightCanvas } from "@/lib/lightCanvas";
 import {
   adoptSettingsChange,
   SETTINGS_CHANGED_EVENT,
@@ -46,16 +45,6 @@ export function SettingsApp() {
       if (event.payload.key !== GRAPH_PREFERENCES_STORAGE_KEY) return;
       adoptSettingsChange(event.payload);
       reloadGraphPreferences();
-    });
-    return () => { void unlisten.then((stop) => stop()); };
-  }, []);
-
-  // TRIAL (PLAN 47.7): the light canvas chosen in a tab's Display panel.
-  useEffect(() => {
-    const unlisten = listen<SettingsChangedPayload>(SETTINGS_CHANGED_EVENT, (event) => {
-      if (event.payload.key !== LIGHT_CANVAS_STORAGE_KEY) return;
-      adoptSettingsChange(event.payload);
-      reloadLightCanvas();
     });
     return () => { void unlisten.then((stop) => stop()); };
   }, []);

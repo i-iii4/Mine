@@ -64,8 +64,10 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     expect(checkedIn("Show")).toEqual(["Cards"]);
     expect(checkedIn("Spacing")).toEqual(["32"]);
     // Two between the feed's groups, one before each of the three trial
-    // sections and three inside the compact stack's (PLAN 50.38).
-    expect(screen.getAllByRole("separator")).toHaveLength(8);
+    // sections and one inside the compact sidebar's while its table choices
+    // are put aside (PLAN 50.38); the third section is the open card's view
+    // (SPEC_CARD_PEEK.md, О1).
+    expect(screen.getAllByRole("separator")).toHaveLength(6);
   });
 
   it("marks the stored presentation when it opens (Д18)", async () => {

@@ -15,6 +15,8 @@
         html, body { background: oklch(0.14 0 0); }
       }
     </style>
+    <!-- A tab whose script fails to load is still shown (SPEC_TABS.md, В26). -->
+    <script src="/tab-first-frame.js"></script>
   </head>
   <body>
     <div id="root"></div>

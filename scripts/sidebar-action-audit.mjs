@@ -38,17 +38,19 @@ const vite = await startAuditVite([{
     server.middlewares.use(async (req, res, next) => {
       if (req.url !== route) return next();
       res.setHeader("Content-Type", "text/html");
-      res.end(await server.transformIndexHtml(req.url, `<html><body><div id="root" style="--sidebar-width:600px;height:600px"></div><script type="module" src="${entry}"></script></body></html>`));
+      res.end(await server.transformIndexHtml(req.url, `<html style="--sidebar-width:600px"><body><div id="root" style="height:600px"></div><script type="module" src="${entry}"></script></body></html>`));
     });
   },
 }]);
 
 /** The label the button shows: of its stacked labels, the one fully shown;
- *  nothing while the button itself is not fully shown. */
+ *  nothing while the button itself is not fully shown. The words stand in
+ *  their own box beside the Contents list's plus (Sidebar.tsx). */
 function shownLabel(button) {
   if (getComputedStyle(button).opacity !== "1") return "";
-  const stack = button.firstElementChild;
-  if (!stack) return button.textContent.trim();
+  const label = button.querySelector("[data-sidebar-link-label]");
+  const stack = label.firstElementChild;
+  if (!stack) return label.textContent.trim();
   return [...stack.children]
     .filter((label) => getComputedStyle(label).opacity === "1")
     .map((label) => label.textContent.trim())

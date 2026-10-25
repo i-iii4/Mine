@@ -9,9 +9,9 @@
 // | S_beside + F_min ≤ W < …  | beside, squeezed     | W − F_min      | F_min         |
 // | W < S_beside + F_min      | over the feed        | over the feed  | W             |
 //
-// `S_beside` is the tab bar's lead plus the panel's border (169 at the
-// standard chrome, 173.5 at the tall one), so the window goes narrow at 559 or
-// 563.5 (user's decisions of 22.10.2026; it was `S_min + F_min`, 740).
+// `S_beside` is 280, so the window goes narrow at 670 (user's decisions of
+// 22.10.2026, 23.10.2026 and 25.10.2026; it was `S_min + F_min`, 740, then
+// the tab bar's lead plus 390, 559 or 563.5, then 240 and 630).
 //
 // Narrowing, the feed gives way first, then the sidebar, then the sidebar
 // leaves the row; widening runs the other way, and the sidebar grows back to
@@ -44,9 +44,11 @@ export type SidebarPlacement =
 
 /** A width the person may give the sidebar: from `S_beside`
  *  (`sidebarBesideMinWidthPx`, below `S_min` since PLAN 50.36, 22.10.2026)
- *  to `S_max`. `S_min` still decides where the sidebar stands (У1). */
+ *  up, with no cap of its own: beside the feed only the window, which keeps
+ *  the narrowest feed, holds it (user's decision of 23.10.2026; it was
+ *  `S_max`, 600). `S_min` still decides where the sidebar stands (У1). */
 export function clampSidebarTarget(width: number): number {
-  return Math.min(SIDEBAR_MAX_WIDTH_PX, Math.max(sidebarBesideMinWidthPx(), width));
+  return Math.max(sidebarBesideMinWidthPx(), width);
 }
 
 /** Whether a window `windowWidth` wide is too narrow for the narrowest
@@ -80,11 +82,11 @@ export function sidebarPlacement({
 }
 
 /** The bounds a drag of the sidebar's edge keeps it in (У2): from `S_beside`
- *  (PLAN 50.36; it was `S_min`) to what the window leaves
- *  beside the narrowest feed, never past `S_max`. A window too narrow for the
- *  sidebar beside the feed gives no room above the minimum. */
+ *  (PLAN 50.36; it was `S_min`) to what the window leaves beside the
+ *  narrowest feed (23.10.2026: no `S_max` beside the feed). A window too
+ *  narrow for the sidebar beside the feed gives no room above the minimum. */
 export function sidebarDragBounds(windowWidth: number): { min: number; max: number } {
-  const max = Math.min(SIDEBAR_MAX_WIDTH_PX, windowWidth - APP_MAIN_MIN_WIDTH_PX);
+  const max = windowWidth - APP_MAIN_MIN_WIDTH_PX;
   const min = sidebarBesideMinWidthPx();
   return { min, max: Math.max(min, max) };
 }

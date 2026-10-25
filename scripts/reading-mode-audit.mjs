@@ -172,7 +172,7 @@ async function inspect(page) {
     canvas.width = 1;
     canvas.height = 1;
     const context = canvas.getContext('2d', { willReadFrequently: true });
-    /** A colour as `#rrggbb` over the page, as Mermaid is given it. */
+    /** A colour as `#rrggbb` over the page. */
     const hex = (color) => {
       context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--background');
       context.fillRect(0, 0, 1, 1);
@@ -242,13 +242,17 @@ async function inspect(page) {
     });
     const series = ['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple']
       .map((name) => hex(getComputedStyle(document.documentElement).getPropertyValue(`--series-${name}`)));
-    const pie = [...article.querySelectorAll('[data-mermaid-diagram] svg .pieCircle')].map((slice) => hex(getComputedStyle(slice).fill));
-    const ganttBars = [...article.querySelectorAll('[data-mermaid-diagram] svg rect.task')].map((bar) => hex(getComputedStyle(bar).fill));
+    const pie = [...article.querySelectorAll('[data-mermaid-diagram] svg .pele-slice')].map((slice) => hex(getComputedStyle(slice).fill));
+    const pieLabel = article.querySelector('[data-mermaid-diagram] svg .pele-slice-labels text');
+    const pieLabelColor = pieLabel ? hex(getComputedStyle(pieLabel).fill) : null;
+    // A task bar of no state (not active, done, critical or a milestone).
+    const ganttBars = [...article.querySelectorAll('[data-mermaid-diagram] svg .pele-task:not(.pele-active, .pele-done, .pele-crit, .pele-milestone) > rect')]
+      .map((bar) => hex(getComputedStyle(bar).fill));
     const keyword = article.querySelector('[data-code-block][data-code-language="typescript"] .hljs-keyword');
     const diagrams = [...article.querySelectorAll('[data-mermaid]')].map((host) => {
       const svg = host.querySelector('[data-mermaid-diagram] svg');
-      const shape = svg?.querySelector('.node rect, .node polygon, .node path');
-      const label = svg?.querySelector('.nodeLabel, .node text');
+      const shape = svg?.querySelector('.pele-node rect, .pele-node polygon, .pele-node path');
+      const label = svg?.querySelector('.pele-node .pele-label');
       return {
         drawn: Boolean(svg),
         failed: host.querySelector('[data-mermaid-failed]') !== null,
@@ -311,6 +315,7 @@ async function inspect(page) {
       }),
       series,
       pie,
+      pieLabelColor,
       ganttBars,
       keyword: keyword && { color: getComputedStyle(keyword).color, token: inkIn(keyword.parentElement, '--code-keyword'), text: inkIn(keyword.parentElement, '--foreground') },
       katex: article.querySelectorAll('.katex').length,
@@ -440,6 +445,7 @@ try {
       // series, a Gantt task bar the blue one.
       assert.deepEqual([...report.pie].sort(), report.series.slice(0, report.pie.length).sort(), `${label}: the pie's slices in the series colours`);
       assert(report.pie.length >= 4, `${label}: the pie's slices (${report.pie.length})`);
+      assert.equal(report.pieLabelColor, report.cardText.foreground, `${label}: the text on a slice is --foreground`);
       assert(report.ganttBars.length >= 3 && report.ganttBars.every((fill) => fill === report.series[5]), `${label}: Gantt's task bars in the series blue (${report.ganttBars})`);
       const broken = report.diagrams.find((diagram) => diagram.failed);
       assert(broken && broken.code && !broken.drawn, `${label}: the broken diagram stands as a code block under the quiet line`);

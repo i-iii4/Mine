@@ -19,6 +19,7 @@ import { FeedDisplayMenu } from "./FeedDisplayMenu";
 import { GraphDisplayMenu } from "./GraphDisplayMenu";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { sidebarWidthHost } from "@/lib/sidebarWidth";
 
 
 const MAIN_VIEW_MODE_OPTIONS: readonly { value: MainViewMode; label: string }[] = [
@@ -136,6 +137,9 @@ export function MainSecondaryTopBar({
       // `data-top-row`. Nothing else of the half ever does: an open card's
       // name ends in an ellipsis as before.
       data-top-row-bar=""
+      // In the second row it stands from the sidebar's width, which does
+      // not inherit (sidebarWidth.ts).
+      ref={sidebarWidthHost}
       data-path-card-line={pathCardLine ? "" : undefined}
       className={cn(
         "relative flex h-full min-w-0 flex-1 items-center overflow-hidden",
@@ -230,8 +234,9 @@ type FileNameCheck = (block: LightBlock | IndexedBlock, newStem: string) => Prom
 /// (16.10.2026): under the pointer its text brightens and the cursor is a
 /// text cursor, as over a field. A click that only makes an inactive window
 /// key never reaches the page (`acceptsFirstMouse` is off, SPEC_TABS.md,
-/// В85), so it opens nothing.
-function DetailCardFileName({
+/// В85), so it opens nothing. The open card's window names it the same way
+/// in its plate (CardPeek.tsx, SPEC_CARD_PEEK.md, О9).
+export function DetailCardFileName({
   block,
   onRename,
   onCheck,

@@ -1,6 +1,6 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_X_THREADS.md](SPEC_X_THREADS.md) | [SPEC_AUDIT_FIXES.md](SPEC_AUDIT_FIXES.md) | [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md) | [SPEC_TABS.md](SPEC_TABS.md) | [SPEC_CLIPPER_DRAFTS_REMOVAL.md](SPEC_CLIPPER_DRAFTS_REMOVAL.md) | [SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md) | [SPEC_CARD_UNIFIED.md](SPEC_CARD_UNIFIED.md) | [SPEC_CARD_ASSOCIATIONS.md](SPEC_CARD_ASSOCIATIONS.md) | [SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md) | [SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md) | [SPEC_NARROW_WINDOW.md](SPEC_NARROW_WINDOW.md) | [SPEC_KEYBOARD.md](SPEC_KEYBOARD.md) | [SPEC_READING_MODE.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_READING_MODE.md>) | [SPEC_EDITING.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_EDITING.md>)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_X_THREADS.md](SPEC_X_THREADS.md) | [SPEC_AUDIT_FIXES.md](SPEC_AUDIT_FIXES.md) | [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md) | [SPEC_TABS.md](SPEC_TABS.md) | [SPEC_CLIPPER_DRAFTS_REMOVAL.md](SPEC_CLIPPER_DRAFTS_REMOVAL.md) | [SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md) | [SPEC_CARD_UNIFIED.md](SPEC_CARD_UNIFIED.md) | [SPEC_CARD_ASSOCIATIONS.md](SPEC_CARD_ASSOCIATIONS.md) | [SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md) | [SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md) | [SPEC_NARROW_WINDOW.md](SPEC_NARROW_WINDOW.md) | [SPEC_KEYBOARD.md](SPEC_KEYBOARD.md) | [SPEC_READING_MODE.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_READING_MODE.md>) | [SPEC_EDITING.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_EDITING.md>) | [SPEC_CARD_PEEK.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_PEEK.md>) | [SPEC_SIDEBAR_STRIP.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SIDEBAR_STRIP.md>)
 
 ## Context
 
@@ -715,23 +715,30 @@ iOS UI contract:
   из них (порталом в верхний ряд, в теле на месте), беря высоту у элемента.
   Высота верхнего ряда (30 или 40px) и нижний бар поэтому не требуют
   согласования с ручкой (SPEC_FRONTEND.md, «Sidebar Resize»).
-- Наименьшая ширина меню рядом с лентой (`S_beside`) выводится из левого
-  блока полосы вкладок (`tabBarLeadWidthPx` в `chromeHeight.ts`) плюс граница
-  панели и потому зависит от высоты хрома: страница читает её из атрибута
-  `data-chrome-height` своего корня (`useChromeRowHeight`), и пределы
-  перетаскивания, сжатие и порог меню поверх ленты пересчитываются при смене
-  высоты без изменения окна. Бэкенд держит наибольшее значение только для
-  проверки при сборке (`SIDEBAR_BESIDE_MIN_WIDTH_PX`).
+- Наименьшая ширина меню рядом с лентой (`S_beside`) постоянная, 280 px
+  (`SIDEBAR_BESIDE_MIN_WIDTH_PX` в `appLayout.ts`, решение пользователя
+  25.10.2026, с 23.10.2026 было 240), и от высоты хрома не зависит: пределы
+  перетаскивания, сжатие и порог меню поверх ленты (670 px) высоту хрома не
+  читают. Бэкенд повторяет
+  значение одноимённой постоянной только для проверки при сборке. Наибольшего
+  значения у меню рядом с лентой нет, его держит наименьшая ширина ленты;
+  `S_max` (600 px) остался только у меню поверх ленты.
 - Компактный пункт меню рисует стопку мини-карточек (`ChannelIcon.tsx`):
   геометрия покоя и раскрытия и пружина посчитаны один раз в `channelIcon.ts`
   для заданной стороны карточки и переданы в CSS свойствами; стопка
   раскрывается для пункта под указателем сразу, тем же ответом, что зажигает
   название (с 22.10.2026, прежде ответ `raised` движка намерения).
-- Пробы компактного меню (PLAN 50.38) живут в `src/lib/compactStack.ts`:
+- Пробы меню (PLAN 50.38) живут в `src/lib/compactStack.ts`:
   каждый выбор хранится своим ключом `localStorage` и ставит атрибут на корень
   документа, CSS отвечает на атрибут, React читает выбор через
-  `useSyncExternalStore`; группы панели Display рисует
-  `CompactStackMenu.tsx`. Обводку миниатюр меню рисует CSS по атрибуту
+  `useSyncExternalStore` (`trialChoice`, им же хранит выбор проба вида
+  открытой карточки, `cardView.ts`); группы панели Display рисует
+  `CompactStackMenu.tsx`. Компактная таблица отложена
+  (`COMPACT_TABLE_POSTPONED`, решение пользователя 23.10.2026): ниже порога
+  компактных строк меню всегда в виде List, группы Sidebar style и Compact
+  stack edge скрыты, код таблицы, края стопки и перехода строк
+  (`sidebarRowsMorph.ts`) остаётся вне работы до возвращения к ней. Виды List
+  выбирают пробы List spacing (Tight, Table) и List style (Plain, Contents). Обводку миниатюр меню рисует CSS по атрибуту
   `data-thumb-edge`, граф рисует ту же обводку на холсте цветами
   `cardOutline` и `cardHoverOutline` темы холста.
 - Путь верхнего ряда решает одна функция `topRowShowsPlace`
@@ -868,7 +875,15 @@ iOS UI contract:
 - Превью по наведению на мини-карточку бокового меню с 06.10.2026 рисует ту
   же карточку, что лента, с галереей из `preview_manifest.tiles`, в итоговом
   виде наведения без активных элементов (SPEC_CARD_STATES.md, С10). Сама
-  полоса мини-карточек остаётся на `<slug>.jpg`.
+  полоса мини-карточек с 24.10.2026 берёт уровень `micro`, `<slug>.micro.jpg`,
+  и показывает столько карточек полного списка, сколько помещается в её
+  ширину (SPEC_SIDEBAR_STRIP.md). `list_channel_previews` отдаёт все карточки
+  с миниатюрой каждой коллекции без предела. Ширину каждой ленты один общий
+  `ResizeObserver` (`src/lib/sidebarStripWidth.ts`) передаёт в React в том же
+  кадре (`flushSync`), поэтому число плиток верно в кадре перетаскивания края,
+  движения свёртывания и сжатия окном; загруженные картинки лент держит кэш
+  страницы `src/lib/stripPictures.ts`, и расширенная снова лента не читает
+  файлы повторно.
 * Совместимость со старым пространством сохраняет `.arena/index.db`, его WAL и SHM, прежнюю историю и кэш на месте. Идентификатор можно перенести в `.mine`, а старые миниатюры скопировать в локальное производное хранилище. SQLite не копируется для миграции: отдельное поколение пересобирается из документов. Автоматического удаления старых поколений нет.
 - Startup backlog planner для Phase 2 (`list_pending_thumb_upgrades`) тоже
   больше не читает thumb-файлы на main thread. Он работает через отдельный
@@ -2171,11 +2186,11 @@ Canvas перезапускает симуляцию всякий раз, ког
 | rehype-raw | 7.0.0 | HTML заметок в элементы (`parse5` 7.3.0 через `hast-util-raw`), часть сборки `Detail` | MIT |
 | rehype-sanitize | 6.0.0 | Очистка HTML заметок по своей схеме поверх схемы GitHub (`hast-util-sanitize` 5.0.2) | MIT |
 | remark-math | 6.0.0 | Разбор `$$` формул; `$…$` разбирает своё расширение по правилу Obsidian | MIT |
-| katex | 0.16.47 | Формулы, по требованию; одна копия с Mermaid (`katex ^0.16.47`), шрифты в сборке | MIT |
+| katex | 0.16.47 | Формулы, по требованию, шрифты в сборке | MIT |
 | lowlight | 3.3.0 | Подсветка кода, по требованию, `highlight.js` 11.11.2, набор `common` | MIT |
 | @codemirror/state, view, commands, language, lang-markdown, autocomplete | 6.7.6, 6.43.13, 6.11.1, 6.12.4, 6.5.2, 6.20.3 | Редактор заметки, по требованию; язык собран без `markdown()`, поэтому `lang-html` в сборку не попадает (SPEC_EDITING.md) | MIT |
 | @lezer/markdown, common, highlight | 1.7.2, 1.5.3, 1.2.5 | Разбор Markdown редактора с расширениями Obsidian | MIT |
-| mermaid | 12.1.0 | Диаграммы, по требованию; dagre и `classic` настройкой, ELK только для диаграммы, которая его просит | MIT |
+| pele | 1.3.0 | Диаграммы Mermaid, по требованию (`pele/lazy`, часть на тип диаграммы), без зависимостей; цвета переменными CSS из токенов, ссылки и картинки выключены, SVG второй защитой очищает `safeDiagramSvg`, свои настройки диаграммы вынимаются (SPEC_READING_MODE.md, Ч7); заменил `mermaid` 12.1.0 24.10.2026 | MIT |
 | unified, remark-parse, hast-util-to-jsx-runtime, micromark-util-* | как у react-markdown | Прямые импорты конвейера чтения (разбор вики-ссылок, свои расширения, вывод подсветки), без новых пакетов в сборке | MIT |
 | @tailwindcss/typography | latest | Стилизация prose-контента | MIT |
 | Defuddle | bundled | Извлечение статей и Markdown-конвертация в content script | MIT |
@@ -2443,6 +2458,13 @@ feature `tooling`. В release acceptance shell p95 составил 216 мс, п
 5. **Права по меткам страниц** (`webviews` в
    [default.json](src-tauri/capabilities/default.json)): перенесённая
    страница сохраняет права, хотя её окно сменилось.
+6. **Новая страница видна по своему первому кадру** (SPEC_TABS.md, В26,
+   24.10.2026). Страницы вкладок непрозрачные; новая страница, под которой
+   нет другой, ставится с `alphaValue` 0 (`set_page_seen` в
+   [tabs/native.rs](src-tauri/src/tabs/native.rs)) и становится видна по
+   команде `tab_painted`. Не загрузившийся сценарий страницы заменяет
+   `public/tab-first-frame.js`, упавший рендер сообщает о кадре из
+   `ErrorBoundary`. Перемещение окна рамки страниц не пересчитывает (В3).
 
 | Вариант | Результат выбора |
 |---|---|
@@ -2450,6 +2472,7 @@ feature `tooling`. В release acceptance shell p95 составил 216 мс, п
 | Системные вкладки macOS | Не выбрано: высота, фон, шрифт и место полосы не настраиваются |
 | Все пространства в одной странице | Не выбрано: общая память, вынос в окно только переносом состояния |
 | Перетаскивание HTML5 для отрыва | Не выбрано: системный сеанс перетаскивания не даёт окну идти за указателем |
+| Прозрачный фон страницы до первого кадра (`drawsBackground = NO`, как было до 24.10.2026) | Не выбрано: под прозрачной страницей видно окно, а скрытая страница (`hide`) не рисует кадров вовсе, поэтому новая страница прячется прозрачностью |
 
 ### 051: Системные меню (отклонено 06.10.2026)
 
@@ -2668,26 +2691,34 @@ iCloud и реализация 11.10.2026 в Phase 45 ([PLAN.md](PLAN.md), эт�
 `WINDOW_MIN_WIDTH_PX` в `src-tauri/src/domain/windows.rs`.
 
 1. **Три состояния из четырёх чисел.** Ширина окна `W`, наименьшая ширина
-   меню `S_min` (350 px), наименьшая ширина ленты `F_min` (390 px) и ширина
-   последнего перетаскивания `S_target` дают место меню: рядом с лентой,
-   рядом и сжато, поверх ленты при `W < S_min + F_min` (740 px). Место не
-   хранится и не зависит от истории изменения окна.
+   меню рядом с лентой `S_beside` (280 px с 25.10.2026, 240 px с 23.10.2026;
+   до 22.10.2026 эту роль играл `S_min`, 350 px), наименьшая ширина ленты
+   `F_min` (390 px) и ширина последнего перетаскивания `S_target` дают место
+   меню: рядом с лентой, рядом и сжато, поверх ленты при
+   `W < S_beside + F_min` (670 px, было 740). Место не хранится и не зависит от истории изменения окна.
 2. **Ширину меню меняет только перетаскивание.** Узкое окно сжимает меню,
    но `S_target` не трогает: при расширении меню возвращается ровно к нему.
 3. **Один владелец наименьшей ширины.** Бэкенд держит `WINDOW_MIN_WIDTH_PX`
    (390 px), из неё выводятся `S_min`, `F_min` и `min_inner_size` окна;
-   проверка при сборке держит её между `S_min + 40` и `S_min + F_min`, тест
-   сверяет копию в TS с Rust.
+   проверка при сборке держит её не меньше `S_min + 40` и меньше
+   `S_beside + F_min`, тест сверяет копии в TS с Rust.
 4. **В ленте не меньше двух колонок** (`MASONRY_MIN_COLUMN_COUNT = 2`,
    [SPEC_GRID.md](SPEC_GRID.md), «Число колонок»): 220 px решают, когда
    добавить колонку, но не делают ленту одноколоночной; узкая колонка
    ограничивает текст под медиа двумя строками (`cardTextMaxLines`, У14).
+5. **Ширина меню не наследуется** (24.10.2026, SPEC_SIDEBAR_STRIP.md, ЛМ2).
+   `--sidebar-width` зарегистрирована без наследования и стоит на корне и
+   на элементах, которые раскладываются по ней (`src/lib/sidebarWidth.ts`):
+   наследуемое значение, меняющееся на корне в каждом кадре перетаскивания,
+   пересчитывало стиль всей страницы, и на широком меню с лентами миниатюр
+   кадр выходил из 16,7 мс.
 
 | Вариант | Результат выбора |
 |---|---|
 | Место как функция ширины окна | Принято: одно состояние на ширину, переход через порог анимируется, ширина меню не теряется |
 | Хранить свёрнутость от узкого окна в настройках | Не выбрано: расширенное окно показало бы меню свёрнутым без причины |
 | Одна колонка в узкой ленте | Не выбрано решением пользователя 16.10.2026: проба двух колонок стала правилом |
+| Наследуемая `--sidebar-width` на корне | Не выбрано с 24.10.2026: каждый кадр движения ширины пересчитывал стиль всех элементов страницы; сброс переменной на ленте пересчёт не останавливал |
 
 ### 059: Раскладку открытой карточки решает одна чистая функция
 
@@ -2790,7 +2821,7 @@ iCloud и реализация 11.10.2026 в Phase 45 ([PLAN.md](PLAN.md), эт�
    есть. Элементы React лежат в `src/components/reading/`; `ArticleBody` в
    `Detail.tsx` держит выделение текста и действия медиа.
 3. **Тяжёлое по требованию.** Подсветка (`lowlight`), KaTeX со шрифтами и
-   Mermaid грузятся динамическим `import()` из своих элементов, только для
+   диаграммы (Pele) грузятся динамическим `import()` из своих элементов, только для
    статьи, где они есть; всё в сборке, сеть не нужна. Лёгкие части в части
    сборки `Detail`; `decodeLocalMarkdownUrl` вынесена в `markdownUrl.ts`,
    чтобы лента не тянула разборщик в первый экран.
@@ -2835,3 +2866,43 @@ Phase 50 в [PLAN.md](PLAN.md). Источник требований: конт�
 | Весь файл как документ (как буфер Zed у Local MD) | Не выбрано: обходит владельцев полей Mine |
 | Редакторы с деревом документа и обратной записью Markdown | Не выбрано: переписывают нетронутые части файла |
 | Редактор Local MD на GPUI внутри Mine | Не выбрано: GPUI нельзя встроить в веб-страницу и в цикл событий приложения |
+
+### 064: Окно карточки рисуется по частям и движется одной пружиной
+
+Требования пользователя 23.10.2026 и 24.10.2026. Контракт:
+[SPEC_CARD_PEEK.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_PEEK.md>), О1 по О15.
+Проба «Card view: Peek» панели Display рядом с полным видом. Код:
+`src/components/CardPeek.tsx` (замеры и запись в DOM), `src/lib/cardPeek.ts`
+(правила движения), `src/lib/cardPeekSource.ts` (где стоят карточка и её
+картинка в ленте и на графе), `src/components/detailFrame.ts` и
+`detailMotionGate.ts` (связь окна с `Detail`), `src/components/DetailView.tsx`
+(часть сборки карточки), выбор в `src/lib/cardView.ts`.
+
+1. **Компонент измеряет, функции решают.** Где стоят окно и картинка
+   карточки в точке движения, как идёт пружина, когда показывается
+   содержимое, как идут открытие и закрытие, решают чистые функции
+   `cardPeek.ts`; `CardPeek.tsx` читает замеры и пишет преобразования.
+2. **Рамка по частям.** Окно растёт из карточки другой пропорции, а угол,
+   линия и тень не переносят неравномерного масштаба. Во время движения рамка
+   рисуется полосами заливки, четырьмя линиями и четырьмя углами, каждая
+   часть масштабируется только вдоль оси, где масштаб ничего не искажает;
+   содержимое обрезается коробкой по рамке и масштабируется обратно, буквы не
+   растягиваются. Картинка карточки идёт в своей обрезке с равномерным
+   масштабом.
+3. **Одна пружина на всё движение** (критическое демпфирование, отклик
+   0,25 с): рост, сжатие, появление в центре, смена ширины; любое движение
+   разворачивается из текущего положения.
+4. **Работа карточки не попадает в движение** (`detailMotionGate.ts`): то,
+   что открытая карточка узнаёт поздно (файл целиком, сеанс правки, размеры
+   картинок, связи), ждёт покоя окна; до старта окно немного ждёт эту
+   работу. `DetailView.tsx` грузит часть сборки карточки заранее, когда
+   выбран Peek, чтобы первое окно сеанса не росло вокруг пустой карточки.
+5. **Раскладку карточки решает место окна** (`detailFrame.ts`): карточка
+   сообщает окну ширину содержимого, окно сообщает карточке раскладку, и
+   окно сужается до содержимого, когда панель уходит под него. Вне окна
+   рамки нет, и карточка решает по своей ширине, как в полном виде.
+
+| Вариант | Результат выбора |
+|---|---|
+| Рамка по частям, содержимое в обратном масштабе | Принято: углы, линии и текст не искажаются на любом шаге роста |
+| Масштаб всего окна одной матрицей | Не выбрано: угол, линия и тень растягиваются неравномерно |

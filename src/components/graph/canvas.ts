@@ -19,6 +19,44 @@ import {
   type PositionedGraphCanvasNode,
 } from "./contracts";
 
+/**
+ * The decoded picture a card node draws, if any. Levels in order of
+ * preference for this size, then whatever else is already decoded. Falling
+ * back down a level is free; falling back to the full thumbnail is the last
+ * resort, and it exists because a card whose levels are missing entirely used
+ * to draw as a dark square. Chosen from where the size is heading, not from
+ * where it is: an animated size crosses the level threshold on its way, and
+ * picking by the current value would swap the picture back and forth during
+ * the transition. The open card's window reads the same picture to grow out
+ * of the node (SPEC_CARD_PEEK.md, О10).
+ */
+export function cardNodeImage(
+  node: GraphCanvasNode,
+  options: {
+    imageCache: Map<string, HTMLImageElement>;
+    thumbsRootPath: string;
+    thumbVersion: number;
+    renderThumbnail: boolean;
+    targetScreenSize: number;
+  },
+): HTMLImageElement | null {
+  const level = graphThumbLevelFor(options.targetScreenSize);
+  const candidates = node.slug && options.renderThumbnail
+    ? [
+      graphThumbnailUrl(options.thumbsRootPath, node.slug, options.thumbVersion, level),
+      ...(level === "zoom"
+        ? [graphThumbnailUrl(options.thumbsRootPath, node.slug, options.thumbVersion, "micro")]
+        : []),
+      graphFullThumbnailUrl(options.thumbsRootPath, node.slug, options.thumbVersion),
+    ]
+    : [];
+  for (const candidate of candidates) {
+    const found = options.imageCache.get(candidate);
+    if (found) return found;
+  }
+  return null;
+}
+
 export function paintCardNode(
   ctx: CanvasRenderingContext2D,
   node: PositionedGraphCanvasNode,
@@ -46,31 +84,7 @@ export function paintCardNode(
   const x = node.x - size / 2;
   const y = node.y - size / 2;
 
-  // Levels in order of preference for this size, then whatever else is
-  // already decoded. Falling back down a level is free; falling back to the
-  // full thumbnail is the last resort, and it exists because a card whose
-  // levels are missing entirely used to draw as a dark square.
-  // Chosen from where the size is heading, not from where it is: an animated
-  // size crosses the level threshold on its way, and picking by the current
-  // value would swap the picture back and forth during the transition.
-  const level = graphThumbLevelFor(options.targetScreenSize);
-  const candidates = node.slug && options.renderThumbnail
-    ? [
-      graphThumbnailUrl(options.thumbsRootPath, node.slug, options.thumbVersion, level),
-      ...(level === "zoom"
-        ? [graphThumbnailUrl(options.thumbsRootPath, node.slug, options.thumbVersion, "micro")]
-        : []),
-      graphFullThumbnailUrl(options.thumbsRootPath, node.slug, options.thumbVersion),
-    ]
-    : [];
-  let image: HTMLImageElement | null = null;
-  for (const candidate of candidates) {
-    const found = options.imageCache.get(candidate);
-    if (found) {
-      image = found;
-      break;
-    }
-  }
+  const image = cardNodeImage(node, options);
 
   // Corners round as the card grows. At 32 pixels a radius is noise; at the
   // ceiling a square corner reads as sharp against everything else in the
@@ -267,7 +281,9 @@ function collectionLabel(node: GraphCanvasNode): string {
   return collectionRefLabel(node.collection_ref ?? node.label);
 }
 
-function isTextPreview(node: GraphCanvasNode): boolean {
+/** Whether a card node's picture is a text thumbnail, drawn tinted on the
+ *  chrome's plane rather than as a picture. */
+export function isTextPreview(node: GraphCanvasNode): boolean {
   const manifest = parsePreviewManifest({ preview_manifest: node.preview_manifest });
   return manifest ? manifest.kind === "text" : false;
 }

@@ -16,7 +16,7 @@ import type { IndexedBlock, LightBlock, NoteEditError } from "@/types";
 // the reason the backend gives in the tab's notice.
 
 vi.mock("@/lib/reading/mermaid", () => ({
-  readMermaidTheme: vi.fn(() => ({ dark: false, fontFamily: "system-ui", width: 680, variables: {} })),
+  readMermaidLayout: vi.fn(() => ({ fontFamily: "system-ui", fontFamilyMono: "ui-monospace", width: 680 })),
   renderMermaid: vi.fn(() => new Promise(() => undefined)),
 }));
 

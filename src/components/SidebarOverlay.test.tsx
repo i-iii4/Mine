@@ -1,6 +1,12 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SIDEBAR_OVERLAY_LABEL, SIDEBAR_OVERLAY_MOTION_MS, SidebarOverlay } from "./SidebarOverlay";
+import { useContext } from "react";
+import { SIDEBAR_OVERLAY_LABEL, SIDEBAR_OVERLAY_MOTION_MS, SidebarOverlay, SidebarOverlayWidthContext } from "./SidebarOverlay";
+
+/** What a part of the list in the panel lays itself out by. */
+function ListWidth() {
+  return <output data-testid="list-width">{useContext(SidebarOverlayWidthContext)}</output>;
+}
 
 const motion = vi.hoisted(() => ({ reduced: false }));
 
@@ -18,6 +24,7 @@ function Overlay({ open, onClose }: { open: boolean; onClose: () => void }) {
         header={<input aria-label="Find or create collection" />}
       >
         <a href="#inbox">Inbox</a>
+        <ListWidth />
       </SidebarOverlay>
     </>
   );
@@ -39,8 +46,9 @@ describe("SidebarOverlay: the sidebar over the feed (SPEC_NARROW_WINDOW.md, У4 
     expect(panel).toHaveAttribute("aria-modal", "true");
     expect(panel).toContainElement(screen.getByRole("textbox", { name: "Find or create collection" }));
     expect(panel).toContainElement(screen.getByRole("link", { name: "Inbox" }));
-    // jsdom drops `min()` from `width`; the variable the panel is laid out by holds it.
-    expect(panel.style.getPropertyValue("--sidebar-width")).toBe("min(600px, 100vw - 40px)");
+    // jsdom drops `min()` from `width`; the list in the panel is laid out by
+    // the same width, which it takes from the panel (sidebarWidth.ts).
+    expect(screen.getByTestId("list-width")).toHaveTextContent("min(600px, 100vw - 40px)");
     expect(container.querySelector("[data-sidebar-overlay-scrim]")).not.toBeNull();
   });
 

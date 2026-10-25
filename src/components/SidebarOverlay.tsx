@@ -20,10 +20,16 @@
 // the focus unless something in it already has it, and the focus goes back
 // where it was when the panel closes.
 
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { isEditableKeyboardTarget } from "@/lib/keyboardTargets";
 import { motionDuration } from "@/lib/motion";
 import { sidebarOverlayWidthCss } from "@/lib/sidebarPlacement";
+
+/** The width, as CSS, that lays out the sidebar's list standing in this
+ *  panel, the panel's own; null beside the feed, where the sidebar's width
+ *  does (sidebarWidth.ts). The width does not inherit, so the parts laid out
+ *  by it take it from here. */
+export const SidebarOverlayWidthContext = createContext<string | null>(null);
 
 /** How long the sidebar takes to come over the feed or leave it. */
 export const SIDEBAR_OVERLAY_MOTION_MS = 200;
@@ -119,12 +125,7 @@ export function SidebarOverlay({ open, onClose, header, children }: SidebarOverl
   if (!mounted) return null;
 
   const width = sidebarOverlayWidthCss();
-  const panelStyle = {
-    width,
-    // The sidebar's columns are laid out from this variable; over the feed
-    // it is the panel's own width.
-    "--sidebar-width": width,
-  } as CSSProperties;
+  const panelStyle: CSSProperties = { width };
   const state = open && entered ? "open" : "closed";
 
   return (
@@ -156,7 +157,7 @@ export function SidebarOverlay({ open, onClose, header, children }: SidebarOverl
             over the bottom bar and never scroll. In a row it stretches to
             the height left under the filter row, and its list scrolls. */}
         <div className="flex min-h-0 flex-1" data-sidebar-overlay-body="">
-          {children}
+          <SidebarOverlayWidthContext.Provider value={width}>{children}</SidebarOverlayWidthContext.Provider>
         </div>
       </div>
     </div>

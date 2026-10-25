@@ -1434,7 +1434,10 @@ function GalleryTiles({
       : { gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr" };
 
   return (
-    <div className="absolute inset-0 grid gap-px bg-card" style={gridStyle}>
+    // The 1px seams between the tiles are the frame's line at rest, `--border`
+    // (user's decision of 24.10.2026); a state (keyboard focus, a lit row,
+    // selection) colours the outer frame only (25.10.2026).
+    <div className="absolute inset-0 grid gap-px bg-border" style={gridStyle}>
       {visibleItems.map((item, index) => {
         const tileStyle = count === 3 && index === 0 ? { gridRow: "1 / span 2" } : undefined;
 
@@ -1444,6 +1447,9 @@ function GalleryTiles({
             className="relative overflow-hidden bg-card"
             style={tileStyle}
             data-card-media-tile=""
+            // The open card's window finds the tile of its own picture by it
+            // (SPEC_CARD_PEEK.md, О10, п. 3).
+            data-card-media-source={item.sourcePath}
           >
             {!measurementMode && !item.isVideo && (
               <GalleryTileImage

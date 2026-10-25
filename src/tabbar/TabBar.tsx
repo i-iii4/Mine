@@ -587,8 +587,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
         {...windowDrag}
         className={cn(
           // Icon buttons 4px apart; the first tab's line 8px past the last
-          // one (DESIGN_SYSTEM.md, «Иконочные кнопки хрома»). The sidebar's
-          // narrowest width follows this lead (tabBarLeadWidthPx).
+          // one (DESIGN_SYSTEM.md, «Иконочные кнопки хрома»).
           "flex h-full shrink-0 items-center gap-1 pr-2",
           // Without the reserve the first button stands on the chrome's edge
           // inset, like the last one at the right edge.

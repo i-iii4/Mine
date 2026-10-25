@@ -376,9 +376,10 @@ export function VaultSwitcher({
                   // after it, the search separator or, collapsed, the
                   // segment's line before the collection (11.10.2026).
                   "justify-start pl-[var(--top-collection-pad-x)] pr-[var(--top-collection-pad-x)]",
-                  // Collapsed, it is the segment's only content and takes the
-                  // segment's whole cap; open, half the space and search zone.
-                  topChromeCollapsed ? "max-w-[240px]" : "max-w-[50%]",
+                  // Never wider than a tab, 200px (`TAB_MAX_WIDTH_PX`; user's
+                  // decision of 25.10.2026); open, also no more than half the
+                  // space and search zone.
+                  topChromeCollapsed ? "max-w-[200px]" : "max-w-[min(50%,200px)]",
                 )
               : undefined,
           )}

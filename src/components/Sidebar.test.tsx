@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { setCompactStack } from "@/lib/compactStack";
 import type { ComponentProps } from "react";
 import {
   DndContext,
@@ -20,11 +19,17 @@ import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
   HOVER_PREVIEW_WARM_WINDOW_MS,
 } from "@/lib/hoverPreviewTiming";
-import { SIDEBAR_PREVIEW_SLOTS } from "@/lib/appLayout";
+import { sidebarStripTileCount } from "@/lib/appLayout";
 import { isCardLitByCollection, resetCollectionHover, setCollectionMemberships, setHoveredCard, setSelectedCards } from "@/lib/collectionHover";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { NAME_REFUSAL_NOTICE_MS, NAME_REFUSED_SHAKE_MS } from "@/hooks/useNameEdit";
 import { indexedBlock } from "@/test/blocks";
+import { installSidebarStripWidth, setSidebarStripWidth } from "@/test/sidebarStrip";
+
+/** Every strip is as wide as the widest panel's (SPEC_SIDEBAR_STRIP.md,
+ *  `W_max`) unless a test says otherwise: it holds 53 tiles. */
+const WIDE_STRIP_PX = 1893;
+installSidebarStripWidth(WIDE_STRIP_PX);
 
 /** What the command layer throws for a refused name (`invoke`, commands.ts). */
 function refusedName(message: string): Error {
@@ -81,7 +86,6 @@ function tag(name: string, count = 3): TagCount {
 }
 
 const defaultProps = {
-  width: 300,
   collapsed: false,
   widthAnimating: false,
   orderedTags: [tag("alpha", 10), tag("beta", 5)],
@@ -187,7 +191,7 @@ describe("Sidebar", () => {
   });
 
   it("shows no new-channel row at rest: the command lives in the row above the list", () => {
-    const { container } = renderSidebar({ ...defaultProps, width: 600 });
+    const { container } = renderSidebar(defaultProps);
 
     expect(screen.queryByRole("button", { name: "New Collection" })).not.toBeInTheDocument();
     expect(container.querySelector("[data-sidebar-new-channel-row]")).toBeNull();
@@ -195,7 +199,7 @@ describe("Sidebar", () => {
   });
 
   it("renders the new-channel row at the top of the list, under Everything, while a card is dragged", () => {
-    const { container } = renderSidebar({ ...defaultProps, width: 600, isDropDragging: true });
+    const { container } = renderSidebar({ ...defaultProps, isDropDragging: true });
 
     const button = screen.getByRole("button", { name: "New Collection" });
     const row = button.closest("[data-sidebar-new-channel-row]") as HTMLElement;
@@ -231,7 +235,6 @@ describe("Sidebar", () => {
   it("starts the new name with the filter typed before the plus", () => {
     renderSidebar({
       ...defaultProps,
-      width: 600,
       isCreatingChannel: true,
       searchQuery: "  Arch ",
     });
@@ -246,7 +249,6 @@ describe("Sidebar", () => {
     // takes the name.
     renderSidebar({
       ...defaultProps,
-      width: 600,
       isCreatingChannel: true,
       onSetCreatingChannel,
       onCreateChannel,
@@ -296,7 +298,6 @@ describe("Sidebar", () => {
     const onCreateChannel = vi.fn();
     renderSidebar({
       ...defaultProps,
-      width: 600,
       isCreatingChannel: true,
       onSetCreatingChannel,
       onCreateChannel,
@@ -318,7 +319,6 @@ describe("Sidebar", () => {
     const onCreateChannel = vi.fn();
     renderSidebar({
       ...defaultProps,
-      width: 600,
       isCreatingChannel: true,
       onSetCreatingChannel,
       onCreateChannel,
@@ -352,7 +352,6 @@ describe("Sidebar", () => {
   it("opens the Create action available when the filter gave the name", () => {
     renderSidebar({
       ...defaultProps,
-      width: 600,
       isCreatingChannel: true,
       searchQuery: "Arch",
     });
@@ -362,7 +361,7 @@ describe("Sidebar", () => {
 
   it("keeps the Save action unavailable while the new name is empty", () => {
     const onRenameTag = vi.fn();
-    renderSidebar({ ...defaultProps, width: 600, onRenameTag });
+    renderSidebar({ ...defaultProps, onRenameTag });
 
     fireEvent.doubleClick(screen.getByRole("link", { name: /alpha/ }));
     const input = screen.getByRole("textbox", { name: "Переименовать alpha" });
@@ -383,7 +382,6 @@ describe("Sidebar", () => {
     const onRenameTag = vi.fn();
     const { container } = renderSidebar({
       ...defaultProps,
-      width: 600,
       onRenameTag,
     });
 
@@ -414,7 +412,7 @@ describe("Sidebar", () => {
     const reason = "A collection named \"beta\" already exists.";
 
     function startRenaming(props: Partial<typeof defaultProps> & Record<string, unknown>) {
-      renderSidebar({ ...defaultProps, width: 600, ...props });
+      renderSidebar({ ...defaultProps, ...props });
       fireEvent.doubleClick(screen.getByRole("link", { name: /alpha/ }));
       return screen.getByRole("textbox", { name: "Переименовать alpha" });
     }
@@ -540,7 +538,6 @@ describe("Sidebar", () => {
       });
       const props = {
         ...defaultProps,
-        width: 600,
         isCreatingChannel: true,
         onSetCreatingChannel,
         onCreateChannel,
@@ -586,7 +583,6 @@ describe("Sidebar", () => {
     dndContextState.over = { id: "create-channel" };
     const { container } = renderSidebar({
       ...defaultProps,
-      width: 600,
       isDropDragging: true,
     });
 
@@ -603,13 +599,13 @@ describe("Sidebar", () => {
   });
 
   it("aligns full sidebar rows to the navigation edges with monospace counts", () => {
-    renderSidebar({ ...defaultProps, width: 600 });
+    renderSidebar(defaultProps);
 
     const everythingLink = screen.getByRole("link", { name: /Everything/ });
     expect(everythingLink).not.toHaveClass("px-3");
     // The name's optical pixel is part of its cell's inset (a cell that ends
     // on the guideline in any order of the columns, PLAN 47.6).
-    expect(screen.getByText("Everything").style.paddingLeft).toBe("calc(var(--sidebar-name-lead, 0px) + var(--sidebar-row-pad-x) + 1px)");
+    expect(screen.getByText("Everything").closest<HTMLElement>("[data-sidebar-name-cell]")!.style.paddingLeft).toBe("calc(var(--sidebar-name-lead, 0px) + var(--sidebar-row-pad-x) + 1px)");
     expect(screen.getByText("17")).toHaveClass("font-mono");
     expect(screen.getByText("17")).toHaveClass("-translate-x-px");
     expect(screen.getByText("10")).toHaveClass("font-mono");
@@ -618,7 +614,7 @@ describe("Sidebar", () => {
 
   it("keeps rows muted by default while selected and focused rows use the bright sidebar state", () => {
     vi.useFakeTimers(INTENT_TIMERS);
-    const { container } = renderSidebar({ ...defaultProps, width: 600 }, ["/channel/alpha"]);
+    const { container } = renderSidebar(defaultProps, ["/channel/alpha"]);
 
     const everythingLink = screen.getByRole("link", { name: /Everything/ });
     const everythingRow = container.querySelector('[data-sidebar-row-key="all"]')!;
@@ -672,7 +668,7 @@ describe("Sidebar", () => {
 
   it("holds keyboard channel focus mode until one second after the last switch", () => {
     vi.useFakeTimers();
-    const props = { ...defaultProps, width: 600 };
+    const props = defaultProps;
     const { container, rerender } = renderSidebar({
       ...props,
       keyboardNavigationFocus: { rowKey: "tag:alpha", sequence: 1 },
@@ -705,7 +701,7 @@ describe("Sidebar", () => {
 
   it("keeps sidebar search keyboard focus persistent until App clears it", () => {
     vi.useFakeTimers();
-    const props = { ...defaultProps, width: 600 };
+    const props = defaultProps;
     const { container, rerender } = renderSidebar({
       ...props,
       keyboardNavigationFocus: { rowKey: "tag:alpha", sequence: 1 },
@@ -734,7 +730,7 @@ describe("Sidebar", () => {
 
   it("uses the normal row hover state for card drag-over targets", () => {
     dndContextState.over = { id: "tag:alpha" };
-    const { container } = renderSidebar({ ...defaultProps, width: 600, isDropDragging: true });
+    const { container } = renderSidebar({ ...defaultProps, isDropDragging: true });
 
     const nav = container.querySelector("[data-sidebar-scroll]")!;
     // A dragged card shows the create row at the top, between Everything and
@@ -793,7 +789,7 @@ describe("Sidebar", () => {
   });
 
   it("applies collapsed width via style", () => {
-    const { container } = renderSidebar({ ...defaultProps, width: 0, collapsed: true });
+    const { container } = renderSidebar({ ...defaultProps, collapsed: true });
     const aside = container.querySelector("aside");
     expect(aside).toHaveStyle({ width: "var(--sidebar-width)" });
   });
@@ -916,7 +912,6 @@ describe("Sidebar", () => {
 
     const { container } = renderSidebar({
       ...defaultProps,
-      width: 600,
       channelPreviews: previews,
     });
 
@@ -938,7 +933,6 @@ describe("Sidebar", () => {
     ]);
     const { container } = renderSidebar({
       ...defaultProps,
-      width: 600,
       channelPreviews: previews,
       onOpenCardMenu,
     });
@@ -968,7 +962,6 @@ describe("Sidebar", () => {
     ]);
     const { container } = renderSidebar({
       ...defaultProps,
-      width: 600,
       channelPreviews: previews,
       onOpenCardMenu: vi.fn(),
     });
@@ -984,7 +977,7 @@ describe("Sidebar", () => {
   it("reveals the collection's page in Finder from its menu (09.10.2026)", async () => {
     vi.mocked(invoke).mockImplementation(async (command) =>
       command === "collection_page_path" ? "/vault/Collections/alpha.md" : null);
-    const { container } = renderSidebar({ ...defaultProps, width: 600 });
+    const { container } = renderSidebar(defaultProps);
 
     const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLElement;
     fireEvent.contextMenu(row, { clientX: 32, clientY: 48 });
@@ -1007,7 +1000,7 @@ describe("Sidebar", () => {
         ? new Promise((resolve) => { answer = resolve; })
         : Promise.resolve(null)
     ));
-    const { container } = renderSidebar({ ...defaultProps, width: 600 });
+    const { container } = renderSidebar(defaultProps);
 
     const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLElement;
     fireEvent.contextMenu(row, { clientX: 32, clientY: 48 });
@@ -1023,7 +1016,7 @@ describe("Sidebar", () => {
   // outside Mine (or a name two pages share); the item stays unavailable.
   it("offers no Reveal in Finder when the page went while the menu opened", async () => {
     vi.mocked(invoke).mockImplementation(async () => null);
-    const { container } = renderSidebar({ ...defaultProps, width: 600 });
+    const { container } = renderSidebar(defaultProps);
 
     const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLElement;
     fireEvent.contextMenu(row, { clientX: 32, clientY: 48 });
@@ -1046,7 +1039,6 @@ describe("Sidebar", () => {
     ]);
     const props = {
       ...defaultProps,
-      width: 600,
       vaultPath: "/vault",
       thumbsRootPath: "/vault/.mine/cache/thumbs",
       channelPreviews: previews,
@@ -1164,7 +1156,6 @@ describe("Sidebar", () => {
     ]);
     const { container } = renderSidebar({
       ...defaultProps,
-      width: 600,
       vaultPath: "/vault",
       thumbsRootPath: "/vault/.mine/cache/thumbs",
       channelPreviews: previews,
@@ -1270,7 +1261,6 @@ describe("Sidebar", () => {
     ]);
     const { container } = renderSidebar({
       ...defaultProps,
-      width: 600,
       vaultPath: "/vault",
       thumbsRootPath: "/vault/.mine/cache/thumbs",
       channelPreviews: previews,
@@ -1312,7 +1302,6 @@ describe("Sidebar", () => {
     ]);
     const { container } = renderSidebar({
       ...defaultProps,
-      width: 600,
       vaultPath: "/vault",
       thumbsRootPath: "/vault/.mine/cache/thumbs",
       channelPreviews: previews,
@@ -1351,7 +1340,6 @@ describe("Sidebar", () => {
     ]);
     const baseProps = {
       ...defaultProps,
-      width: 600,
       vaultPath: "/vault",
       thumbsRootPath: "/vault/.mine/cache/thumbs",
       channelPreviews: previews,
@@ -1398,7 +1386,6 @@ describe("Sidebar", () => {
 
     const stripProps = {
       ...defaultProps,
-      width: 600,
       vaultPath: "/vault",
       thumbsRootPath: "/vault/.mine/cache/thumbs",
       channelPreviews: new Map([["alpha", [thumb("alpha-a"), thumb("alpha-b")]]]),
@@ -1527,7 +1514,6 @@ describe("Sidebar", () => {
     ]);
     const { container } = renderSidebar({
       ...defaultProps,
-      width: 600,
       channelPreviews: previews,
     });
 
@@ -1633,7 +1619,6 @@ describe("Sidebar", () => {
     ]);
     const props = {
       ...defaultProps,
-      width: 600,
       vaultPath: "/vault",
       thumbsRootPath: "/vault/.mine/cache/thumbs",
       channelPreviews: previews,
@@ -1721,7 +1706,7 @@ describe("dragging a thumbnail (SPEC_FRONTEND.md, «Перетаскивание
     const onDragEnd = vi.fn<(event: DragEndEvent) => void>();
     const view = render(
       <ThumbnailDragTree
-        props={{ ...defaultProps, width: 600, channelPreviews: previews, ...overrides }}
+        props={{ ...defaultProps, channelPreviews: previews, ...overrides }}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
       />,
@@ -1858,16 +1843,22 @@ describe("sidebar thumbnail placeholders while previews load", () => {
     hasThumb: true,
   });
 
+  /// A strip 700 px wide holds 20 tiles.
+  const STRIP_PX = 700;
+  const STRIP_TILES = sidebarStripTileCount(STRIP_PX);
+  afterEach(() => setSidebarStripWidth(WIDE_STRIP_PX));
+
   it("fills each slot with a placeholder, one per card up to what the strip holds", () => {
+    setSidebarStripWidth(STRIP_PX);
     const { container } = renderSidebar({
       ...defaultProps,
-      orderedTags: [tag("alpha", 3), tag("crowded", SIDEBAR_PREVIEW_SLOTS + 15)],
+      orderedTags: [tag("alpha", 3), tag("crowded", STRIP_TILES + 15)],
       totalBlocks: 17,
     });
 
     expect(stripOf(container, "tag:alpha")).toHaveAttribute("data-sidebar-previews", "pending");
     expect(placeholdersIn(container, "tag:alpha")).toHaveLength(3);
-    expect(placeholdersIn(container, "tag:crowded")).toHaveLength(SIDEBAR_PREVIEW_SLOTS);
+    expect(placeholdersIn(container, "tag:crowded")).toHaveLength(STRIP_TILES);
     expect(placeholdersIn(container, "all")).toHaveLength(17);
     expect(tilesIn(container, "tag:alpha")).toHaveLength(0);
   });
@@ -1933,25 +1924,28 @@ describe("sidebar thumbnail placeholders while previews load", () => {
       channelPreviews: new Map([["alpha", [thumb("alpha-text", true)]]]),
     });
     const tile = tilesIn(container, "tag:alpha")[0] as HTMLElement;
-    const textFill = tile.querySelector("[data-micro-preview-state]") as HTMLElement;
     const image = tile.querySelector("img") as HTMLImageElement;
+    // The tile is the picture's slot: no box of its own around the image.
+    expect(image.parentElement).toBe(tile);
 
     // Until the picture is in, only the placeholder fill shows: the text
     // card's own fill would read as a blank tile.
     expect(tile).toHaveClass("bg-accent");
-    expect(textFill).toHaveAttribute("data-micro-preview-state", "loading");
-    expect(textFill).not.toHaveClass("bg-card");
+    expect(tile).toHaveAttribute("data-micro-preview-state", "loading");
+    expect(tile).not.toHaveClass("bg-card");
 
     fireEvent.load(image);
 
-    expect(textFill).toHaveAttribute("data-micro-preview-state", "loaded");
-    expect(textFill).toHaveClass("bg-card");
+    // The card's fill arrives with its ink, in place of the tile's.
+    expect(tile).toHaveAttribute("data-micro-preview-state", "loaded");
+    expect(tile).toHaveClass("bg-card");
+    expect(tile).not.toHaveClass("bg-accent");
   });
 
   describe("while the space's previews are being built", () => {
     /// The strip's children in order: what each slot holds.
     const slotsIn = (container: HTMLElement, rowKey: string) =>
-      Array.from(stripOf(container, rowKey).children).map((child) =>
+      Array.from(stripOf(container, rowKey).querySelectorAll("[data-sidebar-strip-track] > *")).map((child) =>
         child.hasAttribute("data-sidebar-preview-placeholder") ? "placeholder" : "thumbnail",
       );
 
@@ -1976,16 +1970,17 @@ describe("sidebar thumbnail placeholders while previews load", () => {
     });
 
     it("draws no more slots than the strip holds", () => {
+      setSidebarStripWidth(STRIP_PX);
       const { container } = renderSidebar({
         ...defaultProps,
-        orderedTags: [tag("crowded", SIDEBAR_PREVIEW_SLOTS + 15)],
+        orderedTags: [tag("crowded", STRIP_TILES + 15)],
         channelPreviews: new Map([["crowded", [thumb("c-1"), thumb("c-2"), thumb("c-3")]]]),
         previewsPending: true,
       });
 
       expect(tilesIn(container, "tag:crowded")).toHaveLength(3);
-      expect(placeholdersIn(container, "tag:crowded")).toHaveLength(SIDEBAR_PREVIEW_SLOTS - 3);
-      expect(slotsIn(container, "tag:crowded")).toHaveLength(SIDEBAR_PREVIEW_SLOTS);
+      expect(placeholdersIn(container, "tag:crowded")).toHaveLength(STRIP_TILES - 3);
+      expect(slotsIn(container, "tag:crowded")).toHaveLength(STRIP_TILES);
     });
 
     it("draws no placeholder for a row whose thumbnails are all in", () => {
@@ -2064,23 +2059,6 @@ describe("sidebar compact rows (PLAN 50.36)", () => {
   const stackOf = (container: HTMLElement, rowKey: string) =>
     container.querySelector(`[data-sidebar-row-key="${rowKey}"] [data-sidebar-compact-stack]`);
 
-  it("draws the trial's large stack at 40px when chosen (PLAN 50.38)", () => {
-    act(() => setCompactStack("large"));
-    try {
-      const { container } = renderSidebar({
-        ...defaultProps,
-        orderedTags: [tag("alpha", 5)],
-        channelPreviews: new Map([["alpha", ["a", "b", "c"].map((slug) => thumb(`alpha-${slug}`))]]),
-      });
-      const stack = stackOf(container, "tag:alpha") as HTMLElement;
-      expect(stack.style.height).toBe("40px");
-      expect(stack.querySelector<HTMLElement>('[data-sidebar-stack-card="trigger"]')!.style.width).toBe("40px");
-      expect(document.documentElement.hasAttribute("data-sidebar-stack-large")).toBe(true);
-    } finally {
-      act(() => setCompactStack("standard"));
-    }
-  });
-
   it("stacks the first three thumbnails at the item's end, the 7.23 stack at 32px", () => {
     const { container } = renderSidebar({
       ...defaultProps,
@@ -2148,7 +2126,7 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
     container.querySelector(`[data-sidebar-row-key="${rowKey}"] [data-sidebar-row-connected-pill][data-state="on"]`);
 
   it("shows reference Connected pills instead of counts for the hovered card's collections and Everything", () => {
-    const { container } = renderSidebar({ ...defaultProps, width: 600 });
+    const { container } = renderSidebar(defaultProps);
     expect(pillIn(container, "all")).toBeNull();
     act(() => setHoveredCard(7));
     expect(pillIn(container, "all")).toHaveTextContent("Connected");
@@ -2173,7 +2151,6 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
   it("marks Everything as connected in an expanded card, without a button", () => {
     const { container } = renderSidebar({
       ...defaultProps,
-      width: 600,
       linkedBlockSlug: "open-block",
       linkedTags: ["alpha"],
       onToggleLinkedTag: vi.fn(),
@@ -2192,7 +2169,7 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
     });
 
     it("lights a collection's cards once the pointer rests on its row, anywhere on it", () => {
-      const { container } = renderSidebar({ ...defaultProps, width: 600 });
+      const { container } = renderSidebar(defaultProps);
       const nav = container.querySelector("[data-sidebar-scroll]")!;
       const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
       pointerTo(row, 10);
@@ -2213,7 +2190,7 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
     });
 
     it("lights nothing in the feed for the collection that is open", () => {
-      const { container } = renderSidebar({ ...defaultProps, width: 600 }, ["/channel/alpha"]);
+      const { container } = renderSidebar(defaultProps, ["/channel/alpha"]);
       const alpha = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
       const beta = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
       pointerTo(alpha, 10);
@@ -2226,7 +2203,7 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
     });
 
     it("lights nothing in the feed for Everything", () => {
-      const { container } = renderSidebar({ ...defaultProps, width: 600 });
+      const { container } = renderSidebar(defaultProps);
       const everything = container.querySelector('[data-sidebar-row-key="all"]')!;
       pointerTo(everything, 10);
       rest(HOVER_INTENT.velocityWindowMs + HOVER_INTENT.dwellMs + 20);
@@ -2234,7 +2211,7 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
     });
 
     it("once warm, a neighbour reached slowly takes over with no dark frame", () => {
-      const { container } = renderSidebar({ ...defaultProps, width: 600 });
+      const { container } = renderSidebar(defaultProps);
       const alpha = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
       const beta = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
       pointerTo(alpha, 10);
@@ -2248,7 +2225,6 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
     it("a fast sweep lights each row it crosses at once, but no card (02.10.2026)", () => {
       const { container } = renderSidebar({
         ...defaultProps,
-        width: 600,
         linkedBlockSlug: "open-block",
         linkedTags: [],
         onToggleLinkedTag: vi.fn(),
@@ -2271,7 +2247,7 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
     });
 
     it("stays silent while the list scrolls under a still pointer", () => {
-      const { container } = renderSidebar({ ...defaultProps, width: 600 });
+      const { container } = renderSidebar(defaultProps);
       const nav = container.querySelector("[data-sidebar-scroll]")!;
       const alpha = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
       const beta = container.querySelector('[data-sidebar-row-key="tag:beta"]')!;
@@ -2292,7 +2268,6 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
 describe("sidebar and the feed selection (SPEC_CARD_STATES.md, С6)", () => {
   const selectionProps = {
     ...defaultProps,
-    width: 600,
     orderedTags: [tag("alpha", 10), tag("beta", 5), tag("gamma", 3)],
   };
 

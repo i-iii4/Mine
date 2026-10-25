@@ -2650,7 +2650,7 @@ mod tests {
         )
         .unwrap();
 
-        let previews = list_preview_blocks(&conn, 10).unwrap();
+        let previews = list_preview_blocks(&conn).unwrap();
         let row = previews
             .iter()
             .find(|preview| preview.slug == "transparent-shot")
@@ -2664,7 +2664,7 @@ mod tests {
             [manifest_json(FeedPreviewKind::Text)],
         )
         .unwrap();
-        let previews = list_preview_blocks(&conn, 10).unwrap();
+        let previews = list_preview_blocks(&conn).unwrap();
         assert!(previews
             .iter()
             .any(|preview| preview.slug == "transparent-shot" && preview.is_text));
@@ -3222,7 +3222,7 @@ mod tests {
                 .unwrap()
                 .0
                 .len(),
-            previews: list_preview_blocks_by_tag(conn, 10).unwrap().contains_key(name),
+            previews: list_preview_blocks_by_tag(conn).unwrap().contains_key(name),
         }
     }
 
@@ -3421,7 +3421,7 @@ mod tests {
                 crate::storage::block_queries::list_block_collections(&conn).unwrap(),
                 vec![(card.id, "Collection".to_string())]
             );
-            assert_eq!(list_preview_blocks_by_tag(&conn, 10).unwrap()["Collection"].len(), 1);
+            assert_eq!(list_preview_blocks_by_tag(&conn).unwrap()["Collection"].len(), 1);
             assert_eq!(list_blocks_by_tag(&conn, "Collections/Collection").unwrap().len(), 1);
         }
     }
@@ -4953,7 +4953,7 @@ mod tests {
         assert!(sync_thumb_metadata(&conn, "design-a", &png_thumb, None).unwrap());
         assert!(sync_thumb_metadata(&conn, "design-b", &jpeg_thumb, None).unwrap());
 
-        let all = list_preview_blocks(&conn, 10).unwrap();
+        let all = list_preview_blocks(&conn).unwrap();
         assert_eq!(all.len(), 2);
         let all_by_slug = all
             .iter()
@@ -4963,7 +4963,7 @@ mod tests {
         assert_eq!(all_by_slug["design-b"], Some(ThumbFormat::Jpeg));
         assert!(all.iter().all(|item| item.thumb_mtime > 0));
 
-        let by_tag = list_preview_blocks_by_tag(&conn, 10).unwrap();
+        let by_tag = list_preview_blocks_by_tag(&conn).unwrap();
         let design = by_tag.get("design").unwrap();
         assert_eq!(design.len(), 2);
         let design_by_slug = design
@@ -4978,7 +4978,7 @@ mod tests {
         assert!(full_block.thumb_mtime > 0);
 
         assert!(clear_thumb_metadata(&conn, "design-a").unwrap());
-        let cleared = list_preview_blocks(&conn, 10).unwrap();
+        let cleared = list_preview_blocks(&conn).unwrap();
         assert!(cleared.iter().all(|item| item.slug != "design-a"));
         assert!(cleared.iter().any(|item| item.slug == "design-b"));
     }
@@ -4992,7 +4992,7 @@ mod tests {
         let conn = test_conn();
         upsert_block(&conn, &make_block("legacy-thumb", &["design"]), None).unwrap();
 
-        let before = list_preview_blocks(&conn, 10).unwrap();
+        let before = list_preview_blocks(&conn).unwrap();
         assert!(before.iter().all(|item| item.slug != "legacy-thumb"));
 
         std::fs::write(vault.thumb_path("legacy-thumb"), [0xFF, 0xD8, 0xFF, 0x00]).unwrap();
@@ -5000,7 +5000,7 @@ mod tests {
         let updated = backfill_missing_thumb_metadata(&conn, &vault).unwrap();
         assert_eq!(updated, 1);
 
-        let after = list_preview_blocks(&conn, 10).unwrap();
+        let after = list_preview_blocks(&conn).unwrap();
         let legacy_after = after
             .iter()
             .find(|item| item.slug == "legacy-thumb")

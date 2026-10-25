@@ -627,8 +627,10 @@ export const reorderChannels = (items: { tag: string; position: number }[]) =>
 export const deleteChannel = (tag: string) =>
   invoke<CollectionDeleted>("delete_channel", { tag });
 
-export const listChannelPreviews = (limit: number) =>
-  invoke<ChannelPreviewsSnapshot>("list_channel_previews", { limit });
+/** Every card with a thumbnail per collection and under `__all__`, the whole
+ *  list (SPEC_SIDEBAR_STRIP.md, ЛМ1). */
+export const listChannelPreviews = () =>
+  invoke<ChannelPreviewsSnapshot>("list_channel_previews");
 
 // Thumbnails (Phase 2 pipeline — see SPEC_THUMBNAILS.md)
 export interface TilePosterUpgrade {

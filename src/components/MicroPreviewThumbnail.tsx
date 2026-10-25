@@ -3,6 +3,7 @@ import {
   useRef,
   useState,
   type ComponentPropsWithoutRef,
+  type RefObject,
 } from "react";
 import { usePreviewFileRetry } from "@/hooks/usePreviewFileRetry";
 import { thumbnailLevelUrl } from "@/lib/assets";
@@ -68,6 +69,74 @@ export function microPreviewFromLightBlock(
   };
 }
 
+/// The addresses this page has loaded a picture from. A thumbnail mounted
+/// again at one of them (a sidebar strip widened after a narrowing) starts
+/// loaded, as its picture is in the page's cache: without a second render to
+/// learn it (SPEC_SIDEBAR_STRIP.md, ЛМ5).
+const loadedSources = new Set<string>();
+
+/** What a preview's picture shows now, and how its image reports: the
+ *  address to load (with a retry mark after a failure), whether the picture
+ *  is in or missing, and the handlers its image takes. */
+export interface MicroPreviewPicture {
+  src: string;
+  loaded: boolean;
+  missing: boolean;
+  /** `data-micro-preview-state` of the box the picture stands in. */
+  state: "loading" | "loaded" | "missing";
+  imageRef: RefObject<HTMLImageElement | null>;
+  onLoaded: () => void;
+  onFailed: () => void;
+}
+
+/** A preview's picture, for a box of the caller's: MicroPreviewThumbnail
+ *  wraps it in its own, a sidebar strip's tile stands it in the tile itself
+ *  (Sidebar.tsx), one element fewer per tile. */
+export function useMicroPreviewPicture(preview: MicroPreviewModel): MicroPreviewPicture {
+  const imageRef = useRef<HTMLImageElement>(null);
+  // A thumbnail file that is not there yet keeps the slot's loading fill and
+  // is asked again when this card's preview is ready.
+  const { src, missing, markMissing } = usePreviewFileRetry(preview.url, preview.slug);
+  // Whether the picture is in. Stays true when the URL is cache-busted: the
+  // browser keeps painting the old picture until the new one has loaded.
+  const [loaded, setLoaded] = useState(() => loadedSources.has(src));
+
+  // A picture already in the memory cache can be complete before the first
+  // paint; reading that here keeps such a tile from flashing the slot fill.
+  useLayoutEffect(() => {
+    const image = imageRef.current;
+    if (image?.complete && image.naturalWidth > 0) {
+      setLoaded(true);
+    }
+  }, []);
+
+  return {
+    src,
+    loaded,
+    missing,
+    state: missing ? "missing" : loaded ? "loaded" : "loading",
+    imageRef,
+    onLoaded: () => {
+      loadedSources.add(src);
+      setLoaded(true);
+    },
+    onFailed: () => {
+      setLoaded(false);
+      markMissing();
+    },
+  };
+}
+
+/** The classes of a preview's image: the box's size, cropped to it; a text
+ *  thumb inverts in the dark theme. */
+export function microPreviewImageClass(preview: MicroPreviewModel, fill: boolean, className?: string): string {
+  return cn(
+    fill ? "size-full object-cover" : "size-8 object-cover",
+    preview.text ? "dark:invert" : "rounded-none",
+    className,
+  );
+}
+
 export function MicroPreviewThumbnail({
   preview,
   fill = false,
@@ -81,22 +150,7 @@ export function MicroPreviewThumbnail({
    *  trial's large stack makes 40 (PLAN 50.38). */
   fill?: boolean;
 }) {
-  const imageRef = useRef<HTMLImageElement>(null);
-  // Whether the picture is in. Stays true when the URL is cache-busted: the
-  // browser keeps painting the old picture until the new one has loaded.
-  const [loaded, setLoaded] = useState(false);
-  // A thumbnail file that is not there yet keeps the slot's loading fill and
-  // is asked again when this card's preview is ready.
-  const { src, missing, markMissing } = usePreviewFileRetry(preview.url, preview.slug);
-
-  // A picture already in the memory cache can be complete before the first
-  // paint; reading that here keeps such a tile from flashing the slot fill.
-  useLayoutEffect(() => {
-    const image = imageRef.current;
-    if (image?.complete && image.naturalWidth > 0) {
-      setLoaded(true);
-    }
-  }, []);
+  const picture = useMicroPreviewPicture(preview);
 
   if (!preview.hasThumb) {
     return null;
@@ -116,28 +170,23 @@ export function MicroPreviewThumbnail({
   // still on the way; an early card fill would read as a blank tile.
   return (
     <span
-      className={cn("block overflow-hidden", fill ? "size-full" : "size-8", preview.text && loaded && "bg-card")}
-      data-micro-preview-state={missing ? "missing" : loaded ? "loaded" : "loading"}
+      className={cn("block overflow-hidden", fill ? "size-full" : "size-8", preview.text && picture.loaded && "bg-card")}
+      data-micro-preview-state={picture.state}
     >
-      {!missing && (
+      {!picture.missing && (
         <img
           {...imgProps}
-          ref={imageRef}
+          ref={picture.imageRef}
           onLoad={(event) => {
-            setLoaded(true);
+            picture.onLoaded();
             onLoad?.(event);
           }}
           onError={(event) => {
-            setLoaded(false);
-            markMissing();
+            picture.onFailed();
             onError?.(event);
           }}
-          src={src}
-          className={cn(
-            fill ? "size-full object-cover" : "size-8 object-cover",
-            preview.text ? "dark:invert" : "rounded-none",
-            className,
-          )}
+          src={picture.src}
+          className={microPreviewImageClass(preview, fill, className)}
         />
       )}
     </span>

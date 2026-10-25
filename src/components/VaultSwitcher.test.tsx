@@ -64,8 +64,8 @@ describe("VaultSwitcher", () => {
 
     const trigger = screen.getByRole("button", { name: /Switch space: Mine/ });
     expect(trigger).toHaveClass("bg-transparent");
-    expect(trigger).toHaveClass("max-w-[50%]");
-    expect(trigger).not.toHaveClass("max-w-[240px]");
+    expect(trigger).toHaveClass("max-w-[min(50%,200px)]");
+    expect(trigger).not.toHaveClass("max-w-[200px]");
     // First in the tab page's row: the label lands on the chrome edge inset
     // (SPEC_TABS.md, В43).
     expect(trigger).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-[var(--top-collection-pad-x)]");
@@ -124,8 +124,8 @@ describe("VaultSwitcher", () => {
     });
 
     const trigger = screen.getByRole("button", { name: /Switch space: Mine/ });
-    expect(trigger).toHaveClass("max-w-[240px]");
-    expect(trigger).not.toHaveClass("max-w-[50%]");
+    expect(trigger).toHaveClass("max-w-[200px]");
+    expect(trigger).not.toHaveClass("max-w-[min(50%,200px)]");
     expect(trigger).toHaveTextContent("Mine");
   });
 

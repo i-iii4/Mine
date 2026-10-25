@@ -12,17 +12,12 @@ import { channelIconBoxStyle } from "@/lib/channelIcon";
 export const CHANNEL_ICON_CARD_CLASS = "absolute top-0 overflow-hidden rounded-0 bg-accent shadow-sm";
 
 /** The stack's box; the cards inside are placed by `channelIconCardStyle`. */
-export function ChannelIcon({
-  card,
-  style,
-  className,
-  ...props
-}: ComponentProps<"span"> & { card?: number }) {
+export function ChannelIcon({ style, className, ...props }: ComponentProps<"span">) {
   return (
     <span
       {...props}
       className={cn("relative shrink-0", className)}
-      style={{ ...style, ...channelIconBoxStyle(card) }}
+      style={{ ...style, ...channelIconBoxStyle() }}
       data-channel-icon=""
     />
   );

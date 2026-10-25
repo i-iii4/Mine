@@ -23,3 +23,11 @@ export function topRowShowsPlace({
 }): boolean {
   return !(cardOpen && (narrow || sidebarBeside));
 }
+
+/** The open card the top row shows (SPEC_CARD_PEEK.md, О5): none while the
+ *  card stands in its window over the right part, so the row is as with no
+ *  card open, the place's switcher, the path, `Grid | Graph` and `Display`
+ *  where they stand; full page, the card itself. */
+export function topRowCard<T>(card: T | null, cardView: "full" | "peek"): T | null {
+  return cardView === "peek" ? null : card;
+}

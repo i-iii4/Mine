@@ -1,4 +1,3 @@
-import { currentChromeRowHeight, tabBarLeadWidthPx } from "./chromeHeight";
 import { EDGE_FADE_WIDTH } from "./edgeFade";
 
 // The widths a window is laid out by (SPEC_NARROW_WINDOW.md, «Величины»).
@@ -27,7 +26,9 @@ export const SIDEBAR_OVERLAY_STRIP_PX = 40;
  *  The rows' three equal zones (`sidebarEqualZonesWidth()`) are a layout of
  *  their own, never wider than this. */
 export const SIDEBAR_MIN_WIDTH_PX = APP_MIN_WIDTH_PX - SIDEBAR_OVERLAY_STRIP_PX;
-/** Widest a drag takes the sidebar (`S_max`). */
+/** Widest the sidebar over the feed gets (`S_max`, SPEC_NARROW_WINDOW.md,
+ *  У4). Beside the feed the sidebar has no cap of its own since 23.10.2026:
+ *  only the narrowest feed holds it (`sidebarDragBounds`). */
 export const SIDEBAR_MAX_WIDTH_PX = 600;
 
 // ── Sidebar column model ─────────────────────────────────────────────────────
@@ -63,12 +64,28 @@ export const SIDEBAR_ROW_ACTION_GAP_PX = 8;
 /// Clear pixels after the row's guideline, before the thumbnails begin.
 export const SIDEBAR_PREVIEW_DIVIDER_GAP_PX = 4;
 
-/// How many tiles one sidebar thumbnail strip holds: the preview read asks for
-/// this many cards per collection, and a strip still waiting for that read
-/// draws at most this many placeholder tiles. Even the widest panel shows
-/// fewer; the rest sit past the strip's clipped, faded edge, exactly where the
-/// real thumbnails will sit.
-export const SIDEBAR_PREVIEW_SLOTS = 20;
+/// One tile of the thumbnail strip (`size-8`, `t`) and the gap between two
+/// (`gap-1`, `g`) (SPEC_SIDEBAR_STRIP.md, «Величины»).
+export const SIDEBAR_PREVIEW_TILE_PX = 32;
+export const SIDEBAR_PREVIEW_TILE_GAP_PX = 4;
+
+/** How many tiles a thumbnail strip `width` wide holds, `N(W)`: every whole
+ *  tile and the one its edge cuts (SPEC_SIDEBAR_STRIP.md, ЛМ2). The number
+ *  follows from the width alone; a strip that is not laid out (the List look,
+ *  the column hidden) is 0 wide and holds none. */
+export function sidebarStripTileCount(width: number): number {
+  if (!(width > 0)) return 0;
+  const step = SIDEBAR_PREVIEW_TILE_PX + SIDEBAR_PREVIEW_TILE_GAP_PX;
+  return Math.floor((width + SIDEBAR_PREVIEW_TILE_GAP_PX) / step) + 1;
+}
+
+/** The width of `tiles` tiles in a row with their gaps between them: the
+ *  strip's track, which holds them at their places whatever the strip's own
+ *  width. */
+export function sidebarStripTrackWidth(tiles: number): number {
+  if (tiles <= 0) return 0;
+  return tiles * SIDEBAR_PREVIEW_TILE_PX + (tiles - 1) * SIDEBAR_PREVIEW_TILE_GAP_PX;
+}
 
 /// The row's edge inset: the space before the name and after the count
 /// (global.css, `--sidebar-row-pad-x`).
@@ -130,9 +147,6 @@ export function sidebarEqualZonesWidth(): number {
 // in the meta zone. The width is not chosen; it is where the previews stop
 // showing three thumbnails clear of their edge.
 
-/// One tile of the thumbnail strip (`size-8`) and the gap between two (`gap-1`).
-const SIDEBAR_PREVIEW_TILE_PX = 32;
-const SIDEBAR_PREVIEW_TILE_GAP_PX = 4;
 /// The panel's own right border (`border-r` on the sidebar): the rows are this
 /// much narrower than `--sidebar-width`.
 const SIDEBAR_PANEL_BORDER_PX = 1;
@@ -183,25 +197,24 @@ export function sidebarPreviewCellPx(rowsWidth: number): number {
 }
 
 /** Narrowest the sidebar beside the feed gets (`S_beside`), where a drag of
- *  the edge and a narrow window's squeeze both stop: the tab bar's lead
- *  before the first tab and the panel's border, so the sidebar's edge stands
- *  under the first tab's line (user's decision of 22.10.2026). It follows the
- *  chrome's height: 169 at the standard row, 173.5 at the tall one. A width
- *  this narrow is always compact. domain/windows.rs restates the tall one,
- *  rounded up, as `SIDEBAR_BESIDE_MIN_WIDTH_PX`; appLayout.test.ts holds the
- *  two equal. */
-export function sidebarBesideMinWidthPx(chromeRow: number = currentChromeRowHeight()): number {
-  return tabBarLeadWidthPx(chromeRow) + SIDEBAR_PANEL_BORDER_PX;
+ *  the edge and a narrow window's squeeze both stop: 280px (user's decision
+ *  of 25.10.2026; 240, the width of a thumbnail's preview, left the names
+ *  131px; before that the tab bar's lead, 173.5, let them shrink to
+ *  nothing). A width
+ *  this narrow is always compact. domain/windows.rs restates it as
+ *  `SIDEBAR_BESIDE_MIN_WIDTH_PX`; appLayout.test.ts holds the two equal. */
+export const SIDEBAR_BESIDE_MIN_WIDTH_PX = 280;
+
+export function sidebarBesideMinWidthPx(): number {
+  return SIDEBAR_BESIDE_MIN_WIDTH_PX;
 }
 
 /** The window's width below which the sidebar leaves the row and lies over the
  *  feed, and the whole window goes narrow (SPEC_NARROW_WINDOW.md, У1, У12,
  *  У13, У15): the narrowest sidebar beside the feed and the narrowest feed,
- *  `S_beside + F_min`. User's decision of 22.10.2026: the window goes narrow
- *  only once the sidebar, compact, can shrink no further (it was
- *  `S_min + F_min`, 740). */
-export function sidebarOverlayBelowPx(chromeRow: number = currentChromeRowHeight()): number {
-  return sidebarBesideMinWidthPx(chromeRow) + APP_MAIN_MIN_WIDTH_PX;
+ *  `S_beside + F_min`, 670. */
+export function sidebarOverlayBelowPx(): number {
+  return SIDEBAR_BESIDE_MIN_WIDTH_PX + APP_MAIN_MIN_WIDTH_PX;
 }
 
 // The first-run width is the window's: the backend starts every window's

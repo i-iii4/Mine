@@ -8,8 +8,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { sidebarDragBounds } from "@/lib/sidebarPlacement";
+import { sidebarWidthHost } from "@/lib/sidebarWidth";
 import { cn } from "@/lib/utils";
-import { useChromeRowHeight } from "@/hooks/useChromeRowHeight";
 
 // The divider between the sidebar and the feed is the handle itself, built as
 // the source design system's sidebar rail is (shadcn `SidebarRail`; user's
@@ -82,8 +82,6 @@ export function SidebarResizeHandle({
   // У1), and a drag, the keys and the separator's value start from what is
   // shown. Only this handle answers the window; the panel squeezes in CSS.
   const windowWidth = useSyncExternalStore(subscribeToWindowWidth, readWindowWidth, readWindowWidth);
-  // The narrowest width follows the chrome's height (sidebarBesideMinWidthPx).
-  useChromeRowHeight();
   const { min: minWidth, max: maxWidth } = sidebarDragBounds(windowWidth);
   const width = Math.min(maxWidth, Math.max(minWidth, targetWidth));
   const startXRef = useRef(0);
@@ -196,6 +194,9 @@ export function SidebarResizeHandle({
           meets the body's part without a gap. */}
       {topRowHost && createPortal(
         <div
+          // Placed by the sidebar's width, which does not inherit
+          // (sidebarWidth.ts).
+          ref={sidebarWidthHost}
           aria-hidden="true"
           data-sidebar-resize-handle=""
           className={catchClassName}
@@ -206,6 +207,7 @@ export function SidebarResizeHandle({
       )}
       {/* Body part, the one the keyboard reaches. */}
       <div
+        ref={sidebarWidthHost}
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize sidebar"

@@ -32,6 +32,7 @@ import { TabBar } from "@/tabbar/TabBar";
 import "@/tabbar/tabbar.css";
 import type { LightBlock, PreviewCard, TabBarState } from "@/types";
 import { publishNotificationBottom } from "@/lib/notificationPlacement";
+import { sidebarWidthHost, writeSidebarWidth } from "@/lib/sidebarWidth";
 
 // The tab bar and the space switcher talk to the backend: here they get
 // empty answers, and their event listeners a local bus.
@@ -52,10 +53,10 @@ const PAGE_HEIGHT = 800;
 const WINDOW_WIDTH = 1200;
 
 // A window's default rows are tall (SPEC_TABS.md, В83). The sidebar's width
-// lives on the root, where its columns are derived from it, as
-// useSidebarResize writes it.
+// is written as useSidebarResize writes it: on the root, where the parts laid
+// out by it take it from (sidebarWidth.ts).
 applyChromeRowHeight(TALL_CHROME_ROW_HEIGHT);
-document.documentElement.style.setProperty("--sidebar-width", `${SIDEBAR_WIDTH}px`);
+writeSidebarWidth(`${SIDEBAR_WIDTH}px`);
 
 const SIDEBAR_SEARCH_MASK_STYLE = createRightFadeMaskStyle(EDGE_FADE_WIDTH, 0);
 
@@ -271,6 +272,7 @@ function SpacePage({ path, blocks, totalBlocks, previews, indexing, previewsPend
           <ChromeShell topEdge={false} className="h-full w-full">
             <ChromeRow as="header" separator="bottom" className="bg-chrome">
               <div
+                ref={sidebarWidthHost}
                 data-app-top-sidebar-segment=""
                 className="flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border"
                 style={{ width: "var(--sidebar-width)" }}
@@ -336,7 +338,6 @@ function SpacePage({ path, blocks, totalBlocks, previews, indexing, previewsPend
 
             <div className="relative flex min-h-0 flex-1">
               <Sidebar
-                width={SIDEBAR_WIDTH}
                 collapsed={false}
                 widthAnimating={false}
                 vaultPath={path}

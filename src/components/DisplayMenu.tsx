@@ -14,9 +14,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
-import { LightCanvasMenu } from "./LightCanvasMenu";
 import { SidebarColumnsMenu } from "./SidebarColumnsMenu";
 import { CompactStackMenu } from "./CompactStackMenu";
+import { CardViewMenu } from "./CardViewMenu";
 
 /** Which view's options the panel holds. */
 export type DisplayPanel = "feed" | "graph";
@@ -54,14 +54,15 @@ export function DisplayMenu({
         data-display-panel={panel}
       >
         {children}
-        {/* TRIALS (PLAN 47.6, 50.38, 47.7): the sidebar rows' columns, the
-            compact stack and the light canvas, in both panels. */}
+        {/* TRIALS (PLAN 47.6, 50.38): the sidebar rows' columns and the
+            compact sidebar's looks, in both panels. */}
         <DropdownMenuSeparator />
         <SidebarColumnsMenu />
         <DropdownMenuSeparator />
         <CompactStackMenu />
+        {/* TRIAL (SPEC_CARD_PEEK.md, О1): the open card's view. */}
         <DropdownMenuSeparator />
-        <LightCanvasMenu />
+        <CardViewMenu />
       </DropdownMenuContent>
     </DropdownMenu>
   );

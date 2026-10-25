@@ -6,6 +6,7 @@ import {
   useRef,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   memo,
   forwardRef,
@@ -17,6 +18,7 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
+import { flushSync } from "react-dom";
 import { NavLink, useLocation } from "react-router";
 import { useDndContext, useDraggable, useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
@@ -58,9 +60,14 @@ import {
   CONNECT_ACTION_BUTTON_CLASS,
   SIDEBAR_PREVIEW_DIVIDER_GAP_PX,
   sidebarBesideMinWidthPx,
-  SIDEBAR_PREVIEW_SLOTS,
   SIDEBAR_ROW_ACTION_GAP_PX,
+  sidebarStripTileCount,
+  sidebarStripTrackWidth,
 } from "@/lib/appLayout";
+import { observeStripWidth } from "@/lib/sidebarStripWidth";
+import { sidebarWidthHost } from "@/lib/sidebarWidth";
+import { SidebarOverlayWidthContext } from "./SidebarOverlay";
+import { holdStripPicture } from "@/lib/stripPictures";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
 import { observeTextClip } from "@/lib/textClip";
 import {
@@ -75,28 +82,52 @@ import { SIDEBAR_THUMBNAIL_DRAG_ID_PREFIX, type BlockDragData } from "@/lib/bloc
 import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
 import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
 import { TopFadeScrim } from "./TopFadeScrim";
-import { useChromeRowHeight } from "@/hooks/useChromeRowHeight";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { SIDEBAR_WIDTH_MOTION_MS } from "@/hooks/useSidebarResize";
 import { ReadOnlyCardPreview } from "./Card";
-import { MicroPreviewThumbnail, microPreviewFromPreviewCard } from "./MicroPreviewThumbnail";
+import {
+  MicroPreviewThumbnail,
+  microPreviewFromPreviewCard,
+  microPreviewImageClass,
+  useMicroPreviewPicture,
+  type MicroPreviewPicture,
+  type MicroPreviewModel,
+} from "./MicroPreviewThumbnail";
 import { CHANNEL_ICON_CARD_CLASS, ChannelIcon } from "./ChannelIcon";
-import { CHANNEL_ICON_MAX_CARDS, channelIconCardStyle } from "@/lib/channelIcon";
-import { COMPACT_STACK_CARD_PX, useCompactStack } from "@/lib/compactStack";
+import { CHANNEL_ICON_MAX_CARDS, channelIconCardStyle, channelIconSpringStyle } from "@/lib/channelIcon";
+import { observeSidebarRowsMorph } from "@/lib/sidebarRowsMorph";
 
 const SIDEBAR_PREVIEW_WIDTH = 240;
-/// The panel's box. The nav freezes at the three equal zones, as it always
-/// did, or at the panel's own width when a drag took it narrower (compact
-/// items, PLAN 50.36), never below the compact item's minimum: a collapse
-/// slides the curtain over the list at the width it had, down to that. The
-/// panel's 1px border is outside the nav. Computed here, on the panel, so the
-/// sidebar over the feed reads its own `--sidebar-width`.
-function sidebarPanelStyle(widthAnimating: boolean, chromeRow: number): CSSProperties {
+/// Where a part of the sidebar laid out by its width takes it from: beside
+/// the feed the sidebar's width, written on the part itself
+/// (sidebarWidth.ts); over the feed the panel's own width
+/// (SidebarOverlay.tsx). The width does not inherit, so a frame of a drag
+/// restyles these parts and nothing under them.
+type SidebarWidthSource = {
+  ref: ((element: HTMLElement | null) => (() => void) | undefined) | undefined;
+  style: CSSProperties | undefined;
+};
+
+function useSidebarWidthSource(): SidebarWidthSource {
+  const overlayWidth = useContext(SidebarOverlayWidthContext);
+  return useMemo(() => (overlayWidth === null
+    ? { ref: sidebarWidthHost, style: undefined }
+    // A custom property by construction; CSSProperties has no key for it.
+    : { ref: undefined, style: { "--sidebar-width": overlayWidth } as CSSProperties }), [overlayWidth]);
+}
+
+/// The panel's box, as wide as the sidebar's width. The nav takes the panel's width less
+/// its 1px border, never less than the narrowest sidebar beside the feed
+/// less that border: a collapse slides the curtain over the list at that
+/// width (PLAN 50.36). Any wider panel holds the nav without the floor
+/// (`S_beside` is 280 since 25.10.2026), so the floor is a constant and no
+/// frame of a drag changes a value the rows inherit.
+function sidebarPanelStyle(widthAnimating: boolean): CSSProperties {
   // A custom property by construction; CSSProperties has no key for it.
   return {
     width: "var(--sidebar-width)",
     transition: widthAnimating ? `width ${SIDEBAR_WIDTH_MOTION_MS}ms ease` : "none",
-    "--sidebar-nav-min-width": `max(${sidebarBesideMinWidthPx(chromeRow) - 1}px, min(var(--sidebar-equal-zones-width), var(--sidebar-width) - 1px))`,
+    "--sidebar-nav-min-width": `${sidebarBesideMinWidthPx() - 1}px`,
   } as CSSProperties;
 }
 const SIDEBAR_PREVIEW_FALLBACK_HEIGHT = 320;
@@ -168,6 +199,10 @@ const ROW_INTENT_SHOWS = cn(
 /** Two labels stacked in one cell, so swapping them never moves the button's text. */
 const ROW_INTENT_LABEL_STACK = "grid place-items-center [&>*]:[grid-area:1/1]";
 const SIDEBAR_ROW_ACTION_BUTTON_CLASS = CONNECT_ACTION_BUTTON_CLASS;
+/// The Contents list's plus turns into a cross on the stack's spring
+/// (DESIGN_SYSTEM.md, компактный пункт): the hover's 150 ms ease-out put
+/// most of the turn into the first frames, too quick to be seen.
+const LINK_ICON_SPRING_STYLE = channelIconSpringStyle();
 /// The names' optical shift: a name stands a pixel further in than the row's
 /// inset (DESIGN_SYSTEM.md, «оптический сдвиг»), as the bottom bar's first
 /// plate under it expects.
@@ -210,7 +245,9 @@ const SIDEBAR_PREVIEW_MASK_STYLE = { "--sidebar-preview-mask": SIDEBAR_PREVIEW_M
 /// take and nothing moves when the picture arrives. The fill is the feed
 /// skeleton's quiet `bg-accent`: it is what a placeholder shows, and what a
 /// real tile shows behind its image until that image has decoded.
-const SIDEBAR_PREVIEW_TILE_CLASS = "relative size-8 shrink-0 overflow-hidden bg-accent";
+const SIDEBAR_PREVIEW_TILE_LAYOUT_CLASS = "relative size-8 shrink-0 overflow-hidden";
+const SIDEBAR_PREVIEW_TILE_FILL_CLASS = "bg-accent";
+const SIDEBAR_PREVIEW_TILE_CLASS = `${SIDEBAR_PREVIEW_TILE_LAYOUT_CLASS} ${SIDEBAR_PREVIEW_TILE_FILL_CLASS}`;
 
 type SidebarPreviewTarget = {
   key: string;
@@ -245,7 +282,6 @@ type SidebarKeyboardNavigationFocus = {
 };
 
 interface SidebarProps {
-  width: number;
   collapsed: boolean;
   /** The width is moving to a collapse or an opening: the only time it
    *  animates (useSidebarResize.ts). */
@@ -372,9 +408,7 @@ const SidebarCore = memo(function SidebarCore({
   detailChromeClosing = false,
   scrollEdgeFade = false,
 }: SidebarProps & { dropOverId: string | null }) {
-  // The panel's narrowest follows the tab bar's lead, which the chrome's
-  // height moves (sidebarBesideMinWidthPx).
-  const chromeRow = useChromeRowHeight();
+  const widthSource = useSidebarWidthSource();
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const navRef = useRef<HTMLElement>(null);
   const topFade = useTopFadeMask(navRef, scrollEdgeFade);
@@ -407,6 +441,8 @@ const SidebarCore = memo(function SidebarCore({
   // the pointer chooses the row.
   const [intentRowKey, setIntentRowKey] = useState<string | null>(null);
   const applyPointerRowFocusRef = useRef<(rowKey: string | null) => void>(() => {});
+  // The row a slow pointer is over lights its name; a fast sweep lights none.
+  const pointerRowFocusRef = useRef(false);
   // The open collection's row lights nothing: the feed already shows only its
   // cards, as Everything's row would light them all (С3).
   const pathnameRef = useRef(location.pathname);
@@ -460,6 +496,14 @@ const SidebarCore = memo(function SidebarCore({
       window.removeEventListener("pointerdown", recordPointerPoint, true);
       window.removeEventListener("contextmenu", recordPointerPoint, true);
     };
+  }, []);
+
+  // The rows move between the wide table and the narrow one as the list
+  // crosses the compact threshold (sidebarRowsMorph.ts).
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    return observeSidebarRowsMorph(nav);
   }, []);
 
   // Auto-scroll sidebar to the active channel (e.g. after Opt+Cmd+Arrow)
@@ -645,8 +689,6 @@ const SidebarCore = memo(function SidebarCore({
     activateSidebarRowFocus(rowKey);
   }, [activateSidebarRowFocus, deactivateSidebarRowFocusMode]);
 
-  // The row a slow pointer is over lights its name; a fast sweep lights none.
-  const pointerRowFocusRef = useRef(false);
   // The focused row came from the pointer, not the keyboard: a compact item
   // then opens its stack on the engine's answer instead (SidebarAnswerRowContext).
   const [rowFocusFromPointer, setRowFocusFromPointer] = useState(false);
@@ -662,27 +704,48 @@ const SidebarCore = memo(function SidebarCore({
     }
   };
 
+  // Connect answers the pointer by this mark, not by :hover: the button lets
+  // the pointer through until its row lights, and WebKit names :hover only on
+  // the next move. A pointer that lands right on it lights the row and shows
+  // the hovered word in one step, with no slide between (global.css).
+  const linkActionPointerRef = useRef<HTMLElement | null>(null);
+  const markLinkActionUnderPointer = useCallback((row: HTMLElement | null, x: number, y: number, instant: boolean) => {
+    const button = row?.querySelector<HTMLElement>("[data-sidebar-link-action]") ?? null;
+    const rect = button?.getBoundingClientRect();
+    const over = button && rect && x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
+      ? button
+      : null;
+    const previous = linkActionPointerRef.current;
+    if (previous === over) return;
+    previous?.removeAttribute("data-sidebar-link-pointer");
+    over?.setAttribute("data-sidebar-link-pointer", instant ? "instant" : "");
+    linkActionPointerRef.current = over;
+  }, []);
+
   const handleSidebarPointerMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    const row = event.target instanceof Element
+    const target = event.target instanceof Element
       ? event.target.closest<HTMLElement>("[data-sidebar-row]")
       : null;
-    const rowKey = row && event.currentTarget.contains(row) ? row.dataset.sidebarRowKey ?? null : null;
+    const row = target && event.currentTarget.contains(target) ? target : null;
+    const rowKey = row?.dataset.sidebarRowKey ?? null;
     rowIntent.move(rowKey, event.clientX, event.clientY);
     const last = lastPointerPointRowRef.current;
     const still = last !== null && last.x === event.clientX && last.y === event.clientY;
     lastPointerPointRowRef.current = { x: event.clientX, y: event.clientY };
     if (listSlidRef.current && still) return;
     listSlidRef.current = false;
+    markLinkActionUnderPointer(row, event.clientX, event.clientY, pointerRowKeyRef.current !== rowKey);
     setPointerRow(rowKey);
-  }, [rowIntent, setPointerRow]);
+  }, [markLinkActionUnderPointer, rowIntent, setPointerRow]);
 
   const handleSidebarPointerLeave = useCallback(() => {
+    markLinkActionUnderPointer(null, 0, 0, false);
     setPointerRow(null);
     lastPointerPointRowRef.current = null;
     pointerRowFocusRef.current = false;
     deactivateSidebarRowFocusMode();
     rowIntent.leave();
-  }, [deactivateSidebarRowFocusMode, rowIntent, setPointerRow]);
+  }, [deactivateSidebarRowFocusMode, markLinkActionUnderPointer, rowIntent, setPointerRow]);
 
   const handleSidebarFocusCapture = useCallback((event: ReactFocusEvent<HTMLElement>) => {
     focusSidebarRowFromTarget(event.target, event.currentTarget);
@@ -698,7 +761,10 @@ const SidebarCore = memo(function SidebarCore({
   useEffect(() => {
     if (!keyboardNavigationFocus) {
       clearSidebarKeyboardFocusTimer();
-      deactivateSidebarRowFocusMode();
+      // The pointer's row stays lit while the collections are read anew: the
+      // pointer has not left it, and its next move on the same row would not
+      // light it again.
+      if (!pointerRowFocusRef.current) deactivateSidebarRowFocusMode();
       return;
     }
     const rowKey = keyboardNavigationFocus.rowKey;
@@ -708,6 +774,7 @@ const SidebarCore = memo(function SidebarCore({
     if (!rowIsVisible) return;
 
     clearSidebarKeyboardFocusTimer();
+    pointerRowFocusRef.current = false;
     setRowFocusFromPointer(false);
     activateSidebarRowFocus(rowKey);
     if (keyboardNavigationFocusPersistent) {
@@ -898,6 +965,7 @@ const SidebarCore = memo(function SidebarCore({
 
   return (
     <aside
+      ref={widthSource.ref}
       className={cn(
         // overflow-hidden is always on: below the minimum width the panel keeps
         // narrowing while the nav holds `--sidebar-nav-min-width`, so the right
@@ -906,7 +974,7 @@ const SidebarCore = memo(function SidebarCore({
         // hover inside the panel lifts from the sidebar surface, not the page.
         "relative flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar",
       )}
-      style={sidebarPanelStyle(widthAnimating, chromeRow)}
+      style={{ ...sidebarPanelStyle(widthAnimating), ...widthSource.style }}
       data-sidebar-panel=""
     >
       {/* Navigation. The wrapper exists so the fade band can be a sibling of
@@ -938,6 +1006,7 @@ const SidebarCore = memo(function SidebarCore({
         onScroll={() => {
           // The list slid under the pointer: the next real move names the row.
           listSlidRef.current = true;
+          markLinkActionUnderPointer(null, 0, 0, false);
           setPointerRow(null);
           rowIntent.displace();
         }}
@@ -950,6 +1019,7 @@ const SidebarCore = memo(function SidebarCore({
         <div className="relative" data-sidebar-rows>
           <div className="pointer-events-none absolute inset-0" data-sidebar-guidelines>
             <span
+              ref={widthSource.ref}
               aria-hidden="true"
               data-sidebar-guideline="left"
               className="absolute inset-y-0 w-px bg-sidebar-border"
@@ -958,6 +1028,7 @@ const SidebarCore = memo(function SidebarCore({
               style={{
                 left: "var(--sidebar-guide-1-left, calc(var(--sidebar-row-pad-x) + var(--sidebar-name-col)))",
                 display: "var(--sidebar-guide-1-display, block)",
+                ...widthSource.style,
               }}
             />
             <span
@@ -1269,9 +1340,22 @@ function SidebarRowTitleCell({
   children: ReactNode;
   className?: string;
 }) {
+  // The name's column follows the sidebar's width, which the cell holds
+  // itself (global.css, `--sidebar-name-col`).
+  const widthSource = useSidebarWidthSource();
+  const widthRef = widthSource.ref;
+  const cellRef = useCallback((cell: HTMLSpanElement | null) => {
+    if (!cell) return undefined;
+    const stopClip = trackTextClip(cell);
+    const stopWidth = widthRef?.(cell);
+    return () => {
+      stopClip?.();
+      stopWidth?.();
+    };
+  }, [widthRef]);
   return (
     <span
-      ref={trackTextClip}
+      ref={cellRef}
       data-sidebar-row-text=""
       data-sidebar-name-cell=""
       data-sidebar-title-fade-width={String(SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH)}
@@ -1283,9 +1367,11 @@ function SidebarRowTitleCell({
       style={{
         ...SIDEBAR_ROW_TEXT_MASK_STYLE,
         paddingLeft: `calc(var(--sidebar-name-lead, 0px) + var(--sidebar-row-pad-x) + ${SIDEBAR_NAME_OPTICAL_SHIFT_PX}px)`,
+        ...widthSource.style,
       }}
     >
-      {children}
+      {/* The name's own text: the Contents list covers its leader with it (global.css). */}
+      <span data-sidebar-name-text="">{children}</span>
     </span>
   );
 }
@@ -1555,7 +1641,9 @@ function SidebarRowBody({
             width: SIDEBAR_ROW_ACTION_BUTTON_WIDTH,
           }}
           aria-label={`${linkEditor.checked ? "Disconnect" : "Connect"} ${label}`}
+          data-link-checked={linkEditor.checked ? "" : undefined}
         >
+          <span data-sidebar-link-label="">
           {linkEditor.checked ? (
             <span className={ROW_INTENT_LABEL_STACK}>
               <span className={cn(ROW_INTENT_FADE, ROW_INTENT_HIDES)}>Connected</span>
@@ -1571,6 +1659,10 @@ function SidebarRowBody({
           ) : (
             "Connect"
           )}
+          </span>
+          {/* The Contents list's hover mark (global.css): a plus that turns
+              into a cross once the collection can be disconnected. */}
+          <Plus aria-hidden="true" data-sidebar-link-icon="" style={LINK_ICON_SPRING_STYLE} />
         </button>
       )}
     </>
@@ -2086,12 +2178,97 @@ function SidebarCreateChannelRowBody({
 /// The command's own name, as on the plus over the list and in the bottom bar.
 const CREATE_COLLECTION_ROW_LABEL = "New Collection";
 
-/// How many placeholder tiles a row draws while its thumbnails are on the way:
-/// one per card not shown yet, up to what the strip holds. `shown` is the
-/// number of real thumbnails already in the strip; they keep the first slots
-/// and the placeholders fill the rest. A row with no cards draws none.
-function sidebarPreviewPlaceholderCount(count: number, shown: number): number {
-  return Math.max(0, Math.min(count, SIDEBAR_PREVIEW_SLOTS) - shown);
+/// How many placeholder tiles a strip draws while its thumbnails are on the
+/// way: one per card not shown yet, up to the `tiles` its width holds
+/// (SPEC_SIDEBAR_STRIP.md, ЛМ3). `shown` is the number of real thumbnails
+/// already in the strip; they keep the first slots and the placeholders fill
+/// the rest. A row with no cards draws none.
+function sidebarPreviewPlaceholderCount(count: number, shown: number, tiles: number): number {
+  return Math.max(0, Math.min(count, tiles) - shown);
+}
+
+/// The first `limit` cards of a row's list that have a thumbnail, in the
+/// list's order. The list holds every card of the collection; only what the
+/// strip shows is walked.
+function firstThumbnails(cards: PreviewCard[], limit: number): PreviewCard[] {
+  const shown: PreviewCard[] = [];
+  for (const card of cards) {
+    if (shown.length >= limit) break;
+    if (card.hasThumb) shown.push(card);
+  }
+  return shown;
+}
+
+/// How many tiles a strip holds, from its own width (SPEC_SIDEBAR_STRIP.md,
+/// ЛМ2), and the callback ref that measures it. The width is read once the
+/// strip is laid out, before its first frame paints, and again whenever its
+/// layout changes it (sidebarStripWidth.ts): only a strip whose count
+/// changed renders, and in the frame that draws its new width.
+function useStripTileCount(): [number, (strip: HTMLDivElement | null) => (() => void) | undefined] {
+  const [tiles, setTiles] = useState(0);
+  const measure = useCallback((strip: HTMLDivElement | null) => {
+    if (!strip) return undefined;
+    setTiles(sidebarStripTileCount(strip.getBoundingClientRect().width));
+    return observeStripWidth(strip, (width) => setTiles(sidebarStripTileCount(width)));
+  }, []);
+  return [tiles, measure];
+}
+
+/// A strip's tile holds its picture itself, with no box of its own around
+/// the image: a strip that widens adds dozens of tiles in a frame, and every
+/// element counts (SPEC_SIDEBAR_STRIP.md, ЛМ5). The tile is the slot
+/// MicroPreviewThumbnail would draw: its fill until the picture is in, then
+/// a text thumb's card fill with its ink (MicroPreviewThumbnail.tsx).
+function sidebarStripTileClass(preview: MicroPreviewModel, picture: MicroPreviewPicture): string {
+  return cn(
+    SIDEBAR_PREVIEW_TILE_LAYOUT_CLASS,
+    preview.text && picture.loaded ? "bg-card" : SIDEBAR_PREVIEW_TILE_FILL_CLASS,
+  );
+}
+
+/// A strip tile's image. A picture that loaded stays in the page's cache, so
+/// the tile a narrowing took off draws it again without reading the file
+/// (stripPictures.ts): the address as the tile set it, not as resolved.
+function SidebarStripTileImage({ preview, picture }: { preview: MicroPreviewModel; picture: MicroPreviewPicture }) {
+  if (picture.missing) return null;
+  return (
+    <img
+      ref={picture.imageRef}
+      src={picture.src}
+      className={microPreviewImageClass(preview, false)}
+      loading="lazy"
+      // Decoded off the main thread: until it is in, the tile shows its fill.
+      decoding="async"
+      draggable={false}
+      onLoad={() => {
+        picture.onLoaded();
+        holdStripPicture(picture.src);
+      }}
+      onError={picture.onFailed}
+    />
+  );
+}
+
+/// A strip tile without behaviour: the lifted copy of a row draws its media
+/// so.
+function SidebarStripStillTile({ card }: { card: PreviewCard }) {
+  const preview = microPreviewFromPreviewCard(card);
+  const picture = useMicroPreviewPicture(preview);
+  return (
+    <div
+      className={sidebarStripTileClass(preview, picture)}
+      data-sidebar-preview-thumbnail="placeholder"
+      data-thumb-edge=""
+      data-micro-preview-state={picture.state}
+    >
+      <SidebarStripTileImage preview={preview} picture={picture} />
+    </div>
+  );
+}
+
+/// A card a thumbnail can open, drag and preview: one the read named.
+function hasPreviewSlug(card: PreviewCard): card is PreviewCard & { slug: string } {
+  return !!card.slug;
 }
 
 /// The id a thumbnail drags under: the strip's own key for it, so the card
@@ -2103,10 +2280,13 @@ function sidebarThumbnailDragId(previewKey: string): string {
 /// A strip's live thumbnail: a hover opens the card's preview, a click the
 /// card, a right click its menu, and a drag past the feed's threshold carries
 /// the card to a collection like a feed card (SPEC_FRONTEND.md,
-/// «Перетаскивание миниатюры», 09.10.2026).
-function SidebarPreviewThumbnail({
+/// «Перетаскивание миниатюры», 09.10.2026). Memoised on plain props: a strip
+/// whose width took a tile more renders that tile alone, not every tile it
+/// already shows (SPEC_SIDEBAR_STRIP.md, ЛМ5).
+const SidebarPreviewThumbnail = memo(function SidebarPreviewThumbnail({
   card,
-  target,
+  previewKey,
+  rowKey,
   sourceTag,
   isPreviewActive,
   onPreviewEnter,
@@ -2118,8 +2298,11 @@ function SidebarPreviewThumbnail({
 }: {
   /** Set, the thumbnail is a card of a compact row's stack, placed by it. */
   stackStyle?: CSSProperties;
-  card: PreviewCard;
-  target: SidebarPreviewTarget;
+  /** A card with a thumbnail and a slug. */
+  card: PreviewCard & { slug: string };
+  /** The strip's own key for the thumbnail (`SidebarPreviewTarget.key`). */
+  previewKey: string;
+  rowKey: string;
   /** The row's collection; absent on Everything. */
   sourceTag?: string;
   isPreviewActive: boolean;
@@ -2129,25 +2312,23 @@ function SidebarPreviewThumbnail({
   onPreviewContextMenu?: (target: SidebarPreviewTarget, point: CardMenuPoint) => void;
   onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
 }) {
-  // Only the slug: the card itself is the feed's, or is read when the drag
-  // begins (App, handleDndStart).
-  const { listeners, setNodeRef, isDragging } = useDraggable({
-    id: sidebarThumbnailDragId(target.key),
-    data: {
-      type: "block",
-      slug: target.slug,
-      sourceTag,
-    } satisfies BlockDragData,
-  });
-  // dnd-kit types its listeners as a plain map of functions; with the pointer
-  // sensor alone the map holds `onPointerDown`, a React pointer handler.
-  const dragPointerListener = (listeners as {
-    onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void;
-  } | undefined)?.onPointerDown;
+  const target = useMemo<SidebarPreviewTarget>(
+    () => ({ key: previewKey, rowKey, slug: card.slug }),
+    [card.slug, previewKey, rowKey],
+  );
+  // The drag is bound on the first press, not when the tile mounts: a strip
+  // that widens adds dozens of tiles in one frame, and a draggable each would
+  // cost that frame (SPEC_SIDEBAR_STRIP.md, ЛМ5). The press itself starts it.
+  const preview = microPreviewFromPreviewCard(card);
+  const picture = useMicroPreviewPicture(preview);
+  const tileRef = useRef<HTMLDivElement | null>(null);
+  const [dragBound, setDragBound] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragPointerListenerRef = useRef<SidebarThumbnailPointerListener | undefined>(undefined);
   const setTileRef = useCallback((node: HTMLDivElement | null) => {
-    setNodeRef(node);
+    tileRef.current = node;
     onPreviewTriggerRef(target.key, node);
-  }, [onPreviewTriggerRef, setNodeRef, target.key]);
+  }, [onPreviewTriggerRef, target.key]);
   return (
     // No `attributes` from dnd-kit: they would make every thumbnail a tab stop
     // and a button, and the keyboard reaches the list by its rows.
@@ -2155,7 +2336,7 @@ function SidebarPreviewThumbnail({
       ref={setTileRef}
       style={stackStyle}
       className={cn(
-        stackStyle ? CHANNEL_ICON_CARD_CLASS : SIDEBAR_PREVIEW_TILE_CLASS,
+        stackStyle ? CHANNEL_ICON_CARD_CLASS : sidebarStripTileClass(preview, picture),
         // A stack's card and a strip's tile answer with their own edge, as a
         // button's does (global.css, «Thumbnail edge»).
         // The source dims as a dragged feed card does.
@@ -2175,7 +2356,8 @@ function SidebarPreviewThumbnail({
         onPreviewContextMenu(target, { x: event.clientX, y: event.clientY });
       }}
       onPointerDown={(event) => {
-        dragPointerListener?.(event);
+        if (!dragBound) flushSync(() => setDragBound(true));
+        dragPointerListenerRef.current?.(event);
         // The row behind is a sortable collection: a press on a thumbnail
         // belongs to the card, and the row it stands in does not move.
         event.stopPropagation();
@@ -2188,15 +2370,70 @@ function SidebarPreviewThumbnail({
       data-thumb-edge=""
       data-sidebar-preview-active={isPreviewActive ? "true" : undefined}
       data-sidebar-preview-dragging={isDragging ? "true" : undefined}
+      data-micro-preview-state={stackStyle ? undefined : picture.state}
     >
-      <MicroPreviewThumbnail
-        preview={microPreviewFromPreviewCard(card)}
-        fill={stackStyle !== undefined}
-        loading="lazy"
-        draggable={false}
-      />
+      {stackStyle
+        ? <MicroPreviewThumbnail preview={preview} fill loading="lazy" decoding="async" draggable={false} />
+        : <SidebarStripTileImage preview={preview} picture={picture} />}
+      {dragBound && (
+        <SidebarThumbnailDrag
+          dragId={sidebarThumbnailDragId(target.key)}
+          slug={target.slug}
+          sourceTag={sourceTag}
+          tileRef={tileRef}
+          pointerListenerRef={dragPointerListenerRef}
+          onDraggingChange={setIsDragging}
+        />
+      )}
     </div>
   );
+});
+
+/// dnd-kit types its listeners as a plain map of functions; with the pointer
+/// sensor alone the map holds `onPointerDown`, a React pointer handler.
+type SidebarThumbnailPointerListener = (event: ReactPointerEvent<HTMLDivElement>) => void;
+
+/// A thumbnail's drag, bound once the thumbnail is pressed: a drag past the
+/// feed's threshold carries the card to a collection like a feed card
+/// (SPEC_FRONTEND.md, «Перетаскивание миниатюры»). It draws nothing; the
+/// thumbnail's own element is the draggable node.
+function SidebarThumbnailDrag({
+  dragId,
+  slug,
+  sourceTag,
+  tileRef,
+  pointerListenerRef,
+  onDraggingChange,
+}: {
+  dragId: string;
+  slug: string;
+  sourceTag?: string;
+  /** The thumbnail's element, the draggable node. */
+  tileRef: { current: HTMLDivElement | null };
+  pointerListenerRef: { current: SidebarThumbnailPointerListener | undefined };
+  onDraggingChange: (dragging: boolean) => void;
+}) {
+  // Only the slug: the card itself is the feed's, or is read when the drag
+  // begins (App, handleDndStart).
+  const { listeners, setNodeRef, isDragging } = useDraggable({
+    id: dragId,
+    data: {
+      type: "block",
+      slug,
+      sourceTag,
+    } satisfies BlockDragData,
+  });
+  useLayoutEffect(() => {
+    setNodeRef(tileRef.current);
+    return () => setNodeRef(null);
+  }, [setNodeRef, tileRef]);
+  useLayoutEffect(() => {
+    pointerListenerRef.current = (listeners as { onPointerDown?: SidebarThumbnailPointerListener } | undefined)?.onPointerDown;
+  }, [listeners, pointerListenerRef]);
+  useLayoutEffect(() => {
+    onDraggingChange(isDragging);
+  }, [isDragging, onDraggingChange]);
+  return null;
 }
 
 function SidebarPreviewStrip({
@@ -2232,6 +2469,11 @@ function SidebarPreviewStrip({
   activePreviewKey: string | null;
   allowHoverPreview?: boolean;
 }) {
+  // The strip shows as many of the row's cards as its width holds, the whole
+  // tiles and the one its edge cuts: widening draws the next cards of the
+  // list it already has, narrowing takes the tiles past the edge off the page
+  // (SPEC_SIDEBAR_STRIP.md, ЛМ2).
+  const [tiles, measureStrip] = useStripTileCount();
   // The count reaches the row before the thumbnails do (startup, a space
   // opening). Until they arrive the strip holds placeholder tiles in the
   // thumbnails' own boxes rather than standing empty; the strip element itself
@@ -2240,45 +2482,39 @@ function SidebarPreviewStrip({
   // that exist, so the strip keeps placeholders after them for the cards still
   // waiting: each new thumbnail takes the next slot in place of one.
   const pending = cards === undefined;
-  const thumbnails = pending ? [] : cards.filter((card) => card.hasThumb);
+  const thumbnails = pending ? [] : firstThumbnails(cards, tiles);
   const placeholderCount = pending || previewsPending
-    ? sidebarPreviewPlaceholderCount(count, thumbnails.length)
+    ? sidebarPreviewPlaceholderCount(count, thumbnails.length, tiles)
     : 0;
   return (
     <div
+      ref={measureStrip}
       data-sidebar-thumbnail-strip=""
       data-sidebar-previews={pending ? "pending" : "ready"}
       data-sidebar-preview-fade-width={String(SIDEBAR_PREVIEW_MASK_FADE_WIDTH)}
-      className="flex h-8 min-w-0 flex-1 items-end gap-1 overflow-hidden"
+      className="h-8 min-w-0 flex-1 overflow-hidden"
       style={SIDEBAR_PREVIEW_MASK_STYLE}
     >
+      {/* The tiles stand in a track exactly as wide as they are: a width
+          that takes no tile on or off moves the strip's edge alone, and the
+          tiles are neither laid out nor painted again (ЛМ5). */}
+      <div
+        className="flex h-8 items-end gap-1"
+        style={{ width: sidebarStripTrackWidth(thumbnails.length + placeholderCount) }}
+        data-sidebar-strip-track=""
+      >
       {thumbnails.map((card, index) => {
         const previewKey = `${previewKeyPrefix}:${card.slug ?? index}:${index}`;
-        const canPreview = allowHoverPreview
-          && card.hasThumb
-          && !!card.slug;
-        if (!canPreview || !card.slug) {
+        if (!allowHoverPreview || !card.hasThumb || !hasPreviewSlug(card)) {
           // The lifted copy of a row draws its media without behaviour.
-          return (
-            <div
-              key={previewKey}
-              className={SIDEBAR_PREVIEW_TILE_CLASS}
-              data-sidebar-preview-thumbnail="placeholder"
-              data-thumb-edge=""
-            >
-              <MicroPreviewThumbnail
-                preview={microPreviewFromPreviewCard(card)}
-                loading="lazy"
-                draggable={false}
-              />
-            </div>
-          );
+          return <SidebarStripStillTile key={previewKey} card={card} />;
         }
         return (
           <SidebarPreviewThumbnail
             key={previewKey}
             card={card}
-            target={{ key: previewKey, rowKey, slug: card.slug }}
+            previewKey={previewKey}
+            rowKey={rowKey}
             sourceTag={sourceTag}
             isPreviewActive={activePreviewKey === previewKey}
             onPreviewEnter={onPreviewEnter}
@@ -2298,6 +2534,7 @@ function SidebarPreviewStrip({
           data-thumb-edge=""
         />
       ))}
+      </div>
     </div>
   );
 }
@@ -2334,22 +2571,21 @@ function SidebarCompactStack({
   className,
 }: Parameters<typeof SidebarPreviewStrip>[0] & { className?: string }) {
   const pending = cards === undefined;
-  // TRIAL (PLAN 50.38): the stack's size.
-  const cardPx = COMPACT_STACK_CARD_PX[useCompactStack()];
-  const thumbnails = pending ? [] : cards.filter((card) => card.hasThumb).slice(0, CHANNEL_ICON_MAX_CARDS);
+  const thumbnails = pending ? [] : firstThumbnails(cards, CHANNEL_ICON_MAX_CARDS);
+  // The stack holds its own three, whatever the strip's width.
   const placeholderCount = pending || previewsPending
-    ? Math.min(CHANNEL_ICON_MAX_CARDS - thumbnails.length, sidebarPreviewPlaceholderCount(count, thumbnails.length))
+    ? sidebarPreviewPlaceholderCount(count, thumbnails.length, CHANNEL_ICON_MAX_CARDS)
     : 0;
   const total = thumbnails.length + placeholderCount;
   if (total === 0) return null;
   // The collection's first card is the deck's top one: depth follows order.
-  const deckStyle = (slot: number) => channelIconCardStyle(total - 1 - slot, total, cardPx);
+  const deckStyle = (slot: number) => channelIconCardStyle(total - 1 - slot, total);
   return (
-    <ChannelIcon card={cardPx} className={className} data-sidebar-compact-stack="">
+    <ChannelIcon className={className} data-sidebar-compact-stack="">
       {thumbnails.map((card, index) => {
         const previewKey = `${previewKeyPrefix}:stack:${card.slug ?? index}:${index}`;
         const style = deckStyle(index);
-        if (!allowHoverPreview || !card.slug) {
+        if (!allowHoverPreview || !hasPreviewSlug(card)) {
           // The lifted copy of a row draws its media without behaviour.
           return (
             <div key={previewKey} className={CHANNEL_ICON_CARD_CLASS} style={style} data-channel-icon-card="" data-thumb-edge="">
@@ -2361,7 +2597,8 @@ function SidebarCompactStack({
           <SidebarPreviewThumbnail
             key={previewKey}
             card={card}
-            target={{ key: previewKey, rowKey, slug: card.slug }}
+            previewKey={previewKey}
+            rowKey={rowKey}
             sourceTag={sourceTag}
             isPreviewActive={activePreviewKey === previewKey}
             onPreviewEnter={onPreviewEnter}

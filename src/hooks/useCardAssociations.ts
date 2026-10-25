@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { listCardAssociations } from "@/lib/commands";
+import { useDetailMotionGate } from "@/components/detailMotionGate";
 import type { CardAssociationGroup } from "@/types";
 
 const NO_GROUPS: readonly CardAssociationGroup[] = [];
@@ -27,6 +28,8 @@ export function useCardAssociations(
   const acceptedRef = useRef<{ slug: string; generation: number } | null>(null);
 
   const excludeKey = excludeSlugs === null ? null : excludeSlugs.join("\u0000");
+  // In the card's window the groups land once the window rests.
+  const motionGate = useDetailMotionGate();
 
   useEffect(() => {
     const refresh = () => setRefreshTick((tick) => tick + 1);
@@ -44,7 +47,7 @@ export function useCardAssociations(
         const accepted = acceptedRef.current;
         if (accepted && accepted.slug === slug && associations.generation < accepted.generation) return;
         acceptedRef.current = { slug, generation: associations.generation };
-        setAnswer({ slug, groups: associations.groups });
+        motionGate.defer(() => setAnswer({ slug, groups: associations.groups }));
       })
       .catch((error: unknown) => {
         if (sequence !== requestSequenceRef.current) return;
@@ -52,7 +55,7 @@ export function useCardAssociations(
         console.error(`Could not read the associations of ${slug}:`, error);
         setAnswer({ slug, groups: NO_GROUPS });
       });
-  }, [excludeKey, refreshTick, slug]);
+  }, [excludeKey, motionGate, refreshTick, slug]);
 
   return answer && answer.slug === slug ? answer.groups : NO_GROUPS;
 }

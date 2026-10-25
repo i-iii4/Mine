@@ -168,6 +168,40 @@
 .mine-article [data-code-block] .hljs-addition { color: var(--code-addition); background-color: var(--code-addition-fill); }
 .mine-article [data-code-block] .hljs-deletion { color: var(--code-deletion); background-color: var(--code-deletion-fill); }
 
+/* Ч7. Pele's colours are CSS variables, tied here to the theme's tokens, so a
+   new theme recolours a diagram without drawing it again. Lines, frames and
+   secondary text take the secondary text step (4.5:1, not --border's 1.2:1),
+   in its opaque form, as the graph's; a series takes the system colours in
+   their order, the eighth again red. The text font is the one Pele measured
+   with; the code font is the article's. */
+.mine-article [data-mermaid-diagram] {
+  --pele-bg: var(--background);
+  --pele-fg: var(--foreground);
+  --pele-muted: var(--muted-foreground-opaque);
+  --pele-line: var(--muted-foreground-opaque);
+  --pele-border: var(--muted-foreground-opaque);
+  --pele-surface: var(--card);
+  --pele-surface-alt: var(--muted);
+  --pele-accent: var(--series-blue);
+  --pele-critical: var(--series-red);
+  --pele-font-mono: var(--article-code-font);
+  --pele-series-1: var(--series-red);
+  --pele-series-2: var(--series-orange);
+  --pele-series-3: var(--series-yellow);
+  --pele-series-4: var(--series-green);
+  --pele-series-5: var(--series-cyan);
+  --pele-series-6: var(--series-blue);
+  --pele-series-7: var(--series-purple);
+  --pele-series-8: var(--series-red);
+}
+
+/* Ч7. Text Pele lays on a series or a task bar takes the page's colour; a
+   series is an area under the foreground text (К5), so that text takes the
+   foreground instead. */
+.mine-article [data-mermaid-diagram] svg :is(text, tspan, g)[fill="var(--_bg)"] {
+  fill: var(--foreground);
+}
+
 /* Ч7. A diagram stands centred in the column and shrinks to it. */
 .mine-article [data-mermaid-diagram] svg {
   display: block;

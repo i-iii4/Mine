@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listChannelPreviews } from "@/lib/commands";
-import type { ChannelPreviewsSnapshot } from "@/types";
+import type { ChannelPreviewsSnapshot, PreviewCard } from "@/types";
 import { useChannelPreviewsEvents } from "./useChannelPreviewsEvents";
 import {
   createProjectionRevisionOwner,
@@ -29,7 +29,6 @@ function Probe({
 }) {
   const { channelPreviews } = useChannelPreviewsEvents({
     thumbsRootPath,
-    limit: 20,
     revisionOwner,
   });
   return (
@@ -37,6 +36,16 @@ function Probe({
       {JSON.stringify(Array.from(channelPreviews.entries()))}
     </output>
   );
+}
+
+/** What the last render of `Holder` returned, for identity checks. */
+const held = { previews: new Map<string, PreviewCard[]>(), refresh: async () => {} };
+
+function Holder() {
+  const { channelPreviews, refresh } = useChannelPreviewsEvents({ thumbsRootPath: "/thumbs" });
+  held.previews = channelPreviews;
+  held.refresh = refresh;
+  return null;
 }
 
 describe("useChannelPreviewsEvents", () => {
@@ -136,5 +145,41 @@ describe("useChannelPreviewsEvents", () => {
 
     await waitFor(() => expect(listChannelPreviews).toHaveBeenCalledTimes(1));
     expect(screen.getByTestId("previews")).not.toHaveTextContent("stale");
+  });
+
+  it("reads the whole list, with no limit, and points each card at its micro level", async () => {
+    vi.mocked(listChannelPreviews).mockResolvedValue({
+      generation: 1,
+      previews: { "__all__": [{ slug: "photo", text: false, mtime: 3, has_thumb: true }] },
+    });
+
+    render(<Holder />);
+
+    await waitFor(() => expect(held.previews.get("__all__")).toHaveLength(1));
+    expect(listChannelPreviews).toHaveBeenCalledWith();
+    expect(held.previews.get("__all__")?.[0]?.url).toBe("asset://localhost//thumbs/photo.micro.jpg?m=3");
+  });
+
+  it("keeps the lists, and the map, a read did not change", async () => {
+    const card = (slug: string, mtime = 1) => ({ slug, text: false, mtime, has_thumb: true });
+    vi.mocked(listChannelPreviews)
+      .mockResolvedValueOnce({ generation: 1, previews: { "__all__": [card("a"), card("b")], Art: [card("a")], City: [card("b")] } })
+      .mockResolvedValueOnce({ generation: 2, previews: { "__all__": [card("a"), card("b")], Art: [card("a")], City: [card("b")] } })
+      .mockResolvedValueOnce({ generation: 3, previews: { "__all__": [card("a"), card("b", 2)], Art: [card("a")], City: [card("b", 2)] } });
+
+    render(<Holder />);
+    await waitFor(() => expect(held.previews.size).toBe(3));
+    const first = held.previews;
+
+    await act(async () => { await held.refresh(); });
+    expect(held.previews).toBe(first);
+
+    await act(async () => { await held.refresh(); });
+    expect(held.previews).not.toBe(first);
+    expect(held.previews.get("Art")).toBe(first.get("Art"));
+    expect(held.previews.get("City")).not.toBe(first.get("City"));
+    // One card object per card, shared by every row it stands in.
+    expect(held.previews.get("__all__")?.[0]).toBe(held.previews.get("Art")?.[0]);
+    expect(held.previews.get("City")?.[0]?.url).toMatch(/b\.micro\.jpg\?m=2$/);
   });
 });

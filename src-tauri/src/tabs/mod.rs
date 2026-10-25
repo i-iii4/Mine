@@ -184,6 +184,9 @@ struct Live {
     pages: Vec<TabId>,
     /// First frames reported by pages being shown (В5).
     painted: BTreeMap<TabId, Instant>,
+    /// New pages alone in their window, drawing unseen until their first
+    /// frame (В26).
+    unseen: BTreeSet<TabId>,
     /// Spaces refreshed on focus, and when (В42).
     refreshed: BTreeMap<String, Instant>,
     /// Folders asked to open before the windows were restored (В72).
@@ -738,9 +741,10 @@ fn furnish_window(app: &AppHandle, window: &Window, saved: &SavedWindow) -> anyh
     lock(&shell(app).live)
         .shown
         .insert(saved.id.clone(), saved.active_tab.clone());
+    let fresh = app.get_webview(&saved.active_tab.label()).is_none();
     match create_page(app, window, &saved.active_tab) {
         Ok(page) => {
-            let _ = page.show();
+            show_alone(app, &saved.active_tab, &page, fresh);
             set_tab_visible(app, &saved.active_tab, true);
             layout(app, &saved.id);
             emit_bar_state(app, &saved.id);
@@ -798,7 +802,6 @@ fn create_page(app: &AppHandle, window: &Window, tab: &TabId) -> Result<Webview,
         .map_err(|error| TabError::PageCreate {
             reason: error.to_string(),
         })?;
-    native::clear_page_background(&page);
     crate::frame_context_menu::register_page(&page);
     route_file_drags(app, &page, tab);
     let shell = shell(app);
@@ -894,7 +897,12 @@ fn on_window_event(app: &AppHandle, window_id: &WindowId, event: &WindowEvent) {
     let shell = shell(app);
     match event {
         WindowEvent::Resized(_) | WindowEvent::Moved(_) => {
-            layout(app, window_id);
+            // A move keeps the size, so the pages' frames stay (SPEC_TABS.md,
+            // В3): laying them out again on every step of a drag only made
+            // the pages redraw.
+            if matches!(event, WindowEvent::Resized(_)) {
+                layout(app, window_id);
+            }
             if let Some(window) = app.get_window(&window_id.label()) {
                 let fullscreen = window.is_fullscreen().unwrap_or(false);
                 let was_fullscreen = shell
@@ -1179,6 +1187,7 @@ pub fn activate(app: &AppHandle, tab: &TabId) {
     if let Some(saved) = shell.snapshot().window(&window_id) {
         crate::commands::window_chrome::reflect_sidebar(app, tab_sidebar_shown(app, saved, &saved.active_tab));
     }
+    let fresh = app.get_webview(&tab.label()).is_none();
     let page = match create_page(app, &window, tab) {
         Ok(page) => page,
         // The tab stays in its bar, why in the log; selecting it again
@@ -1206,7 +1215,7 @@ pub fn activate(app: &AppHandle, tab: &TabId) {
     layout(app, &window_id);
     app.state::<AppState>().tabs.touch(&tab.label());
     let Some(previous) = previous else {
-        let _ = page.show();
+        show_alone(app, tab, &page, fresh);
         let _ = page.set_focus();
         set_tab_visible(app, tab, true);
         emit_bar_state(app, &window_id);
@@ -1216,7 +1225,10 @@ pub fn activate(app: &AppHandle, tab: &TabId) {
     if let Some(old_page) = &old_page {
         native::order_below(old_page, &page);
     }
-    let _ = page.show();
+    // Under a page that is itself still unseen, nothing covers the new
+    // page: it waits for its own first frame as a page alone does (В26).
+    let covered = !lock(&shell.live).unseen.contains(&previous);
+    show_alone(app, tab, &page, fresh && !covered);
     set_tab_visible(app, tab, true);
     emit_bar_state(app, &window_id);
     project_current_space(app);
@@ -1267,10 +1279,34 @@ fn shell_of(app: &AppHandle) -> tauri::State<'_, TabShell> {
     app.state::<TabShell>()
 }
 
-/// The page `label` drew its first frame since it was shown (В5).
+/// Show `page`, the page of `tab` with no page under it in its window. A
+/// new page draws unseen until its first frame (В26): an opaque page that
+/// has drawn nothing shows WebKit's white, while the window's background
+/// under it is the chrome's colour. A page that has drawn shows at once.
+fn show_alone(app: &AppHandle, tab: &TabId, page: &Webview, fresh: bool) {
+    if fresh {
+        native::set_page_seen(page, false);
+        lock(&shell(app).live).unseen.insert(tab.clone());
+    }
+    let _ = page.show();
+}
+
+/// The page `label` drew its first frame since it was shown (В5); a new
+/// page alone in its window is seen from now on (В26).
 pub fn page_painted(app: &AppHandle, label: &str) {
     if let Some(tab) = TabId::from_label(label) {
-        lock(&shell(app).live).painted.insert(tab, Instant::now());
+        let shell = shell(app);
+        let unseen = {
+            let mut live = lock(&shell.live);
+            live.painted.insert(tab.clone(), Instant::now());
+            live.unseen.remove(&tab)
+        };
+        if unseen {
+            if let Some(page) = app.get_webview(label) {
+                native::set_page_seen(&page, true);
+                log::info!("tab page seen after its first frame: {label}");
+            }
+        }
     }
 }
 
@@ -1298,6 +1334,7 @@ fn forget_page(app: &AppHandle, tab: &TabId) -> String {
         let mut live = lock(&shell.live);
         live.pages.retain(|candidate| candidate != tab);
         live.shown.retain(|_, shown| shown != tab);
+        live.unseen.remove(tab);
         live.history.remove(tab);
         live.sidebar_overlay.remove(tab);
     }

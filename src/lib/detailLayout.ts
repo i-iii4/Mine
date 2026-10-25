@@ -13,6 +13,11 @@ export const DETAIL_CONTENT_MAX_WIDTH_PX = 680;
 /** The panel's column beside the content, `20rem`. */
 export const DETAIL_RAIL_WIDTH_PX = 320;
 
+/** The line before the panel (Р2; user's decisions of 24.10.2026): the
+ *  panel's column is the panel with an inset on either side and this line at
+ *  its left, full page and in the card's window alike. */
+export const DETAIL_RAIL_LINE_PX = 1;
+
 /** A picture or a video in the open card is at most this share of the
  *  window's height, in `vh` (Р7; user's decision of 16.10.2026: the limit
  *  stays). The one owner of the limit: the content's width is computed from
@@ -27,11 +32,16 @@ export const DETAIL_MEDIA_MAX_HEIGHT_VAR = "--detail-media-max-height";
  *  within it, a turned phone video does not (Р6). */
 export const DETAIL_MEDIA_PROPORTION_TOLERANCE = 0.01;
 
-/** The open card root's style: the height limit as a CSS length. */
-export function detailMediaMaxHeightStyle(): CSSProperties {
+/** The open card root's style: the height limit as a CSS length, of the
+ *  app window's height, or of `frameHeightPx` when the card stands in a
+ *  frame of its own (the card's window, SPEC_CARD_PEEK.md, О8). */
+export function detailMediaMaxHeightStyle(frameHeightPx: number | null = null): CSSProperties {
+  const limit = frameHeightPx === null
+    ? `${DETAIL_MEDIA_MAX_HEIGHT_VH}vh`
+    : `${(DETAIL_MEDIA_MAX_HEIGHT_VH * frameHeightPx) / 100}px`;
   // A custom property is not among the keys React's CSSProperties lists; the
   // value is a plain CSS length, which is what the style object carries.
-  return { [DETAIL_MEDIA_MAX_HEIGHT_VAR]: `${DETAIL_MEDIA_MAX_HEIGHT_VH}vh` } as CSSProperties;
+  return { [DETAIL_MEDIA_MAX_HEIGHT_VAR]: limit } as CSSProperties;
 }
 
 /** A picture's or a video's own size, in pixels. */
@@ -92,14 +102,16 @@ export interface DetailLayout {
  * the panel while the equal margins on either side of it are at least the
  * content inset `contentPadPx`; once they would be narrower, the panel goes
  * under the content at once. `contentWidth` is the drawn content's full
- * width (Р1), so the margins are those of what the reader sees.
+ * width (Р1), so the margins are those of what the reader sees. The
+ * panel's column holds its own insets and its line.
  */
 export function detailLayout(
   containerWidth: number,
   contentPadPx: number,
   contentWidth: number,
 ): DetailLayout {
-  const sideMarginPx = (containerWidth - contentWidth - DETAIL_RAIL_WIDTH_PX - contentPadPx) / 2;
+  const railColumnPx = DETAIL_RAIL_WIDTH_PX + DETAIL_RAIL_LINE_PX + 2 * contentPadPx;
+  const sideMarginPx = (containerWidth - contentWidth - railColumnPx) / 2;
   return sideMarginPx >= contentPadPx
     ? { mode: "rail", sideMarginPx }
     : { mode: "stacked", sideMarginPx: null };
@@ -109,5 +121,5 @@ export function detailLayout(
  *  two flexible tracks round the content, the panel an inset off the right
  *  edge. The scroll layer and the fixed panel layer share it. */
 export function detailRailGridTemplate(contentWidth: number): string {
-  return `minmax(var(--card-content-pad),1fr) ${contentWidth}px minmax(var(--card-content-pad),1fr) ${DETAIL_RAIL_WIDTH_PX}px var(--card-content-pad)`;
+  return `minmax(var(--card-content-pad),1fr) ${contentWidth}px minmax(var(--card-content-pad),1fr) calc(${DETAIL_RAIL_WIDTH_PX + DETAIL_RAIL_LINE_PX}px + 2 * var(--card-content-pad))`;
 }

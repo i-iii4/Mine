@@ -93,8 +93,12 @@ import { reconcileBlocks } from "@/lib/blockIdentity";
 import { refreshPageLimit } from "@/lib/gridPaging";
 import { MASONRY_MIN_COLUMN_COUNT } from "@/lib/masonryLayout";
 import { createPreviewRowQueue } from "@/lib/previewRowQueue";
-import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX, SIDEBAR_PREVIEW_SLOTS } from "@/lib/appLayout";
-import { topRowShowsPlace } from "@/lib/topRowPath";
+import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
+import { sidebarWidthHost } from "@/lib/sidebarWidth";
+import { topRowCard, topRowShowsPlace } from "@/lib/topRowPath";
+import { CARD_VIEW_STORAGE_KEY, PEEK_WIDTH_STORAGE_KEY, cardViewForOpening, getCardView, reloadCardView, reloadPeekWidth, useCardView, type CardView } from "@/lib/cardView";
+import { lastPeekInput, peekOpeningFrom, type CardPeekExit } from "@/lib/cardPeek";
+import { listenPeekInput } from "@/lib/cardPeekSource";
 import { cn } from "@/lib/utils";
 import { commandById } from "@/lib/commandRegistry";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
@@ -148,6 +152,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { CardPointMenu } from "@/components/CardHoverMenu";
 import { MainSecondaryTopBar } from "@/components/MainSecondaryChrome";
+import { CardPeek, CardPeekArea, CardPeekPlate, type CardPeekOpening } from "@/components/CardPeek";
+import { DetailView, preloadDetail } from "@/components/DetailView";
 
 type CardActionsMenuTarget = {
   block: LightBlock | IndexedBlock;
@@ -343,15 +349,14 @@ import { useSidebarOverlay } from "@/hooks/useSidebarOverlay";
 import { SIDEBAR_COLUMNS_STORAGE_KEY, reloadSidebarColumnLayout } from "@/lib/sidebarColumnLayout";
 import {
   COMPACT_STACK_EDGE_STORAGE_KEY,
-  COMPACT_STACK_STORAGE_KEY,
+  LIST_SPACING_STORAGE_KEY,
+  LIST_STYLE_STORAGE_KEY,
   SIDEBAR_STYLE_STORAGE_KEY,
-  THUMB_CORNERS_STORAGE_KEY,
-  reloadCompactStack,
   reloadCompactStackEdge,
+  reloadListSpacing,
+  reloadListStyle,
   reloadSidebarStyle,
-  reloadThumbCorners,
 } from "@/lib/compactStack";
-import { LIGHT_CANVAS_STORAGE_KEY, reloadLightCanvas } from "@/lib/lightCanvas";
 import { useTopRowWrap } from "@/hooks/useTopRowWrap";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
 import { useChannelPreviewsEvents } from "@/hooks/useChannelPreviewsEvents";
@@ -428,10 +433,6 @@ import {
 import { COPY_PATH_FAILED_TITLE, copyTextToClipboard } from "@/lib/clipboard";
 import { setCollectionMemberships } from "@/lib/collectionHover";
 
-const Detail = lazy(async () => {
-  const mod = await import("@/components/Detail");
-  return { default: mod.Detail };
-});
 
 
 const DropZone = lazy(async () => {
@@ -1130,6 +1131,28 @@ export function AppWithVault({
     useState<PendingCreateChannelDrop | null>(null);
   const [renamingBlock, setRenamingBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
+  const selectedBlockRef = useRef(selectedBlock);
+  selectedBlockRef.current = selectedBlock;
+  // TRIAL (SPEC_CARD_PEEK.md, О1): the view the open card opened in, Full
+  // page or its window over the right part, kept until it closes; how its
+  // window's latest opening began, and how the window goes when it closes.
+  const [detailView, setDetailView] = useState<CardView>("full");
+  const detailViewRef = useRef(detailView);
+  detailViewRef.current = detailView;
+  const [peekOpening, setPeekOpening] = useState<CardPeekOpening | null>(null);
+  const [peekExit, setPeekExit] = useState<CardPeekExit>("return");
+  const peekOpeningSequenceRef = useRef(0);
+  // Read when a card opens; set where the narrow window is known.
+  const sidebarNarrowRef = useRef(false);
+  // The right part the card's window stands over (SPEC_CARD_PEEK.md, О3).
+  const peekAreaRef = useRef<HTMLDivElement>(null);
+  // With the window the chosen view, the open card's module is loaded after
+  // the first frame, before any card opens (О12).
+  const chosenCardView = useCardView();
+  useEffect(() => {
+    if (chosenCardView !== "peek") return;
+    preloadDetail().catch((error: unknown) => console.error("Could not load the open card:", error));
+  }, [chosenCardView]);
   const [cardActionsMenuTarget, setCardActionsMenuTarget] =
     useState<CardActionsMenuTarget | null>(null);
   const [selectedBlockAnchor, setSelectedBlockAnchor] = useState<string | null>(null);
@@ -1315,7 +1338,25 @@ export function AppWithVault({
   const openDetailBlock = useCallback((
     block: LightBlock | IndexedBlock,
     anchor: string | null = null,
+    restored = false,
   ) => {
+    // A card opening while none is open takes the view chosen now; one that
+    // replaces an open card keeps the open card's view (SPEC_CARD_PEEK.md,
+    // О1, О2). What opened it decides how its window comes (О10).
+    if (selectedBlockRef.current === null) {
+      const view = cardViewForOpening(getCardView(), sidebarNarrowRef.current);
+      setDetailView(view);
+      setPeekExit("return");
+      if (view === "peek") {
+        peekOpeningSequenceRef.current += 1;
+        setPeekOpening({
+          sequence: peekOpeningSequenceRef.current,
+          slug: block.slug,
+          from: peekOpeningFrom(lastPeekInput(), block.slug, performance.now()),
+          restored,
+        });
+      }
+    }
     cancelPendingDetailClose();
     setCardActionsMenuTarget(null);
     setSelectedBlockAnchor(anchor);
@@ -1512,6 +1553,10 @@ export function AppWithVault({
       return;
     }
     cancelPendingDetailClose();
+    // In another place the card's window shrinks into the card if the new
+    // feed shows it, else leaves as a dialog does (SPEC_CARD_PEEK.md, О5,
+    // О11): the window decides as its closing starts.
+    setPeekExit("return");
     setSelectedBlock(null);
     setSelectedBlockAnchor(null);
     setGridFocusRestore(null);
@@ -1541,6 +1586,11 @@ export function AppWithVault({
     },
   });
   const sidebarNarrow = sidebarOverlay.narrow;
+  sidebarNarrowRef.current = sidebarNarrow;
+  // TRIAL (SPEC_CARD_PEEK.md, О1): a card open in its window stays there
+  // when the window narrows until the sidebar lies over the feed (user's
+  // decision of 23.10.2026); only a card opened in a narrow window opens
+  // full (cardViewForOpening).
   const closeSidebarOverlay = sidebarOverlay.close;
   bottomBarScrollsRef.current = sidebarNarrow;
   // Into a narrow window or out of it: the bar shows everything in its
@@ -1575,10 +1625,13 @@ export function AppWithVault({
   // in a narrow window (SPEC_NARROW_WINDOW.md, У15) and while the sidebar
   // beside the feed shows the place (user's decision of 23.10.2026), through
   // the name's exit.
+  // The card in its window leaves the top row as with no card open
+  // (SPEC_CARD_PEEK.md, О5).
+  const topRowDetailBlock = topRowCard(renderedDetailBlock, detailView);
   const topRowPlaceShown = topRowShowsPlace({
     narrow: sidebarNarrow,
     sidebarBeside: !sidebarNarrow && !sidebarCollapsed,
-    cardOpen: renderedDetailBlock !== null,
+    cardOpen: topRowDetailBlock !== null,
   });
   const placeReplaced = !topRowPlaceShown;
   // The bottom bar's button and ⌃⌘S outside the app shell act on the
@@ -1616,7 +1669,6 @@ export function AppWithVault({
 
   const { channelPreviews, refresh: loadPreviews, bumpThumbVersion } = useChannelPreviewsEvents({
     thumbsRootPath: vaultReady ? thumbsRootPath : null,
-    limit: SIDEBAR_PREVIEW_SLOTS,
     revisionOwner: projectionRevisionOwner,
   });
 
@@ -2381,8 +2433,6 @@ export function AppWithVault({
 
   // ── Tab memory (SPEC_TABS.md, В18, В31, В40, В78) ───────────────────────
 
-  const selectedBlockRef = useRef(selectedBlock);
-  selectedBlockRef.current = selectedBlock;
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
 
@@ -2462,8 +2512,9 @@ export function AppWithVault({
     void getBlock(card.slug)
       .then((full) => {
         if (cancelled || !full) return;
-        // A card that is gone stays closed (В18).
-        openDetailBlock(full);
+        // A card that is gone stays closed (В18). It stands at once, in its
+        // window too (SPEC_CARD_PEEK.md, О10).
+        openDetailBlock(full, null, true);
       })
       .catch((error: unknown) => console.error("Could not reopen the tab's card:", error))
       .finally(finish);
@@ -3112,24 +3163,27 @@ export function AppWithVault({
       } else if (key === FEED_SORT_STORAGE_KEY || key === FEED_SHOW_STORAGE_KEY) {
         // Sort and Show chosen in another tab (SPEC_DEEP_AUDIT.md, Е6.7).
         reloadFeedDisplay();
-      } else if (key === LIGHT_CANVAS_STORAGE_KEY) {
-        // TRIAL (PLAN 47.7): the light canvas chosen in another tab.
-        reloadLightCanvas();
+      } else if (key === CARD_VIEW_STORAGE_KEY) {
+        // TRIAL (SPEC_CARD_PEEK.md, О1): the open card's view chosen in another tab.
+        reloadCardView();
+      } else if (key === PEEK_WIDTH_STORAGE_KEY) {
+        // TRIAL (SPEC_CARD_PEEK.md, О3): the Peek window's width chosen in another tab.
+        reloadPeekWidth();
       } else if (key === SIDEBAR_COLUMNS_STORAGE_KEY) {
         // TRIAL (PLAN 47.6): the sidebar rows' columns set in another tab.
         reloadSidebarColumnLayout();
-      } else if (key === COMPACT_STACK_STORAGE_KEY) {
-        // TRIAL (PLAN 50.38): the compact stack chosen in another tab.
-        reloadCompactStack();
       } else if (key === COMPACT_STACK_EDGE_STORAGE_KEY) {
         // TRIAL (PLAN 50.38): the compact stack's edge chosen in another tab.
         reloadCompactStackEdge();
-      } else if (key === THUMB_CORNERS_STORAGE_KEY) {
-        // TRIAL (PLAN 50.38): the sidebar thumbnails' corners chosen in another tab.
-        reloadThumbCorners();
       } else if (key === SIDEBAR_STYLE_STORAGE_KEY) {
         // TRIAL (PLAN 50.38): the sidebar's look chosen in another tab.
         reloadSidebarStyle();
+      } else if (key === LIST_SPACING_STORAGE_KEY) {
+        // TRIAL (PLAN 50.38): the List look's row step chosen in another tab.
+        reloadListSpacing();
+      } else if (key === LIST_STYLE_STORAGE_KEY) {
+        // TRIAL (PLAN 50.38): the List look's style chosen in another tab.
+        reloadListStyle();
       } else if (key === CONTENT_FONT_STORAGE_KEY) {
         applyContentFont(getStoredContentFont());
       } else if (key === INTERFACE_FONT_STORAGE_KEY) {
@@ -3249,6 +3303,28 @@ export function AppWithVault({
     requestGridFocusRestore,
   ]);
   handleDetailCloseRef.current = handleDetailClose;
+
+  // TRIAL (SPEC_CARD_PEEK.md, О5): over the card's window the top row's view
+  // switch works as with no card open; it closes the window first, into the
+  // card where the other view shows it, else as a dialog leaves (О11).
+  const handleTopRowViewModeChange = useCallback((next: MainViewMode) => {
+    if (selectedBlockRef.current && detailViewRef.current === "peek") {
+      setPeekExit("return");
+      handleDetailClose();
+    }
+    handleMainViewModeChange(next);
+  }, [handleDetailClose, handleMainViewModeChange]);
+
+  // TRIAL (SPEC_CARD_PEEK.md, О9): the window and its blur fade where they
+  // stand, and the same card stands full page; the chosen view stays.
+  const handlePeekExpand = useCallback(() => {
+    setPeekExit("fade");
+    setDetailView("full");
+  }, []);
+
+  // TRIAL (SPEC_CARD_PEEK.md, О10): the input that opened a card decides how
+  // its window comes.
+  useEffect(() => listenPeekInput(() => mainRef.current), []);
 
   const handleScrollToTop = useCallback(() => {
     if (selectedBlock) {
@@ -4729,7 +4805,6 @@ export function AppWithVault({
   const sidebarList = (
     <Sidebar
       onOpenElsewhere={tabPage ? handleOpenRouteElsewhere : undefined}
-      width={sidebarWidth}
       previewsPending={previewsPending}
       collapsed={sidebarCollapsed}
       widthAnimating={sidebarWidthAnimating}
@@ -4928,6 +5003,51 @@ export function AppWithVault({
     </>
   );
 
+  // The open card's body, full page or in its window over the right part
+  // (SPEC_CARD_PEEK.md, О8): the same card sized by the window or its frame.
+  const renderDetail = (
+    block: LightBlock | IndexedBlock,
+    isClosing: boolean,
+    sizedBy: "window" | "frame",
+  ) => (
+    <Suspense fallback={null}>
+      <DetailView
+        block={block}
+        scrollAnchor={selectedBlockAnchor}
+        vaultPath={vaultPath}
+        thumbsRootPath={thumbsRootPath ?? undefined}
+        isClosing={isClosing}
+        scrollEdgeFade={scrollEdgeFade}
+        topChromeMode="external"
+        sizedBy={sizedBy}
+        onClose={handleDetailClose}
+        onNavigate={handleDetailNavigate}
+        tags={orderedTags}
+        currentTag={currentTag}
+        onToggleTag={handleToggleTag}
+        onCreateAndAssign={handleCreateTagFromMenu}
+        onRequestRename={setRenamingBlock}
+        onRequestDelete={requestDeleteBlock}
+        onCreateMediaAssetCard={handleMediaAssetCreateCard}
+        onCreateChannelAndMediaAssetCard={handleMediaAssetCreateChannelAndCard}
+        onRenameMediaAsset={handleMediaAssetRename}
+        onRemoveMediaAssetFromCard={handleMediaAssetRemoveFromCard}
+        onDeleteMediaAsset={handleMediaAssetDelete}
+        onDeleteSourceVideo={handleSourceVideoDelete}
+        onSourceVideoDownloaded={handleSourceVideoDownloaded}
+        onOpenImagePreview={setImagePreview}
+        onOpenRelatedNote={handleOpenRelatedNote}
+        onOpenAuthorFeed={handleOpenAuthorFeed}
+        onTextSelectionDrop={handleTextSelectionDrop}
+        onCreateChannelAndTextSelectionCard={handleTextSelectionCreateChannelAndCard}
+        onTextSelectionDelete={handleTextSelectionDelete}
+        onTagsChanged={() => {
+          void reloadAllSnapshots();
+        }}
+      />
+    </Suspense>
+  );
+
   return (
     // Cards tell a preview still being built from a lost file (SPEC_CARD_MEDIA_GEOMETRY.md).
     <PreviewsPendingContext.Provider value={previewsPending}>
@@ -4966,6 +5086,9 @@ export function AppWithVault({
             switcher (SPEC_NARROW_WINDOW.md, У12). */}
         {sidebarBesideMounted && (
           <div
+            // Laid out by the sidebar's width, which does not inherit
+            // (sidebarWidth.ts).
+            ref={sidebarWidthHost}
             data-tauri-drag-region
             data-app-top-sidebar-segment=""
             className={cn(
@@ -5008,11 +5131,11 @@ export function AppWithVault({
               sidebar open or collapsed (DESIGN_SYSTEM.md, «Верхние ряды»). */}
           <MainSecondaryTopBar
             placeBefore={topRowPlaceShown}
-            detailBlock={renderedDetailBlock}
+            detailBlock={topRowDetailBlock}
             detailEntered={detailChromeEntered}
             viewMode={feedViewMode}
             viewModeSwitch={!onAuthorPlace}
-            onViewModeChange={handleMainViewModeChange}
+            onViewModeChange={handleTopRowViewModeChange}
             vaultPath={vaultPath}
             tags={orderedTags}
             currentTag={currentTag}
@@ -5143,43 +5266,8 @@ export function AppWithVault({
           <OpenCollectionDropTarget tag={currentTag} />
         )}
 
-        {renderedDetailBlock && (
-          <Suspense fallback={null}>
-            <Detail
-              block={renderedDetailBlock}
-              scrollAnchor={selectedBlockAnchor}
-              vaultPath={vaultPath}
-              thumbsRootPath={thumbsRootPath ?? undefined}
-              isClosing={detailChromeClosing}
-              scrollEdgeFade={scrollEdgeFade}
-              topChromeMode="external"
-              onClose={handleDetailClose}
-              onNavigate={handleDetailNavigate}
-              tags={orderedTags}
-              currentTag={currentTag}
-              onToggleTag={handleToggleTag}
-              onCreateAndAssign={handleCreateTagFromMenu}
-              onRequestRename={setRenamingBlock}
-              onRequestDelete={requestDeleteBlock}
-              onCreateMediaAssetCard={handleMediaAssetCreateCard}
-              onCreateChannelAndMediaAssetCard={handleMediaAssetCreateChannelAndCard}
-              onRenameMediaAsset={handleMediaAssetRename}
-              onRemoveMediaAssetFromCard={handleMediaAssetRemoveFromCard}
-              onDeleteMediaAsset={handleMediaAssetDelete}
-              onDeleteSourceVideo={handleSourceVideoDelete}
-              onSourceVideoDownloaded={handleSourceVideoDownloaded}
-              onOpenImagePreview={setImagePreview}
-              onOpenRelatedNote={handleOpenRelatedNote}
-              onOpenAuthorFeed={handleOpenAuthorFeed}
-              onTextSelectionDrop={handleTextSelectionDrop}
-              onCreateChannelAndTextSelectionCard={handleTextSelectionCreateChannelAndCard}
-              onTextSelectionDelete={handleTextSelectionDelete}
-              onTagsChanged={() => {
-                void reloadAllSnapshots();
-              }}
-            />
-          </Suspense>
-        )}
+        {renderedDetailBlock && detailView === "full" && renderDetail(renderedDetailBlock, detailChromeClosing, "window")}
+
 
         <DeleteBlockDialog
           open={deleteTargetSlug !== null}
@@ -5350,6 +5438,47 @@ export function AppWithVault({
         />
       ) : null}
     </div>{/* end body */}
+
+        {/* TRIAL (SPEC_CARD_PEEK.md): the card in its window over the right
+            part, from the top rows' top to the bottom bar beside the sidebar
+            (user's decision of 23.10.2026). It outlives its card while it
+            leaves. */}
+        <CardPeekArea areaRef={peekAreaRef} top={topRowHost} sides={mainRef}>
+        <CardPeek
+          block={detailView === "peek" ? selectedBlock : null}
+          opening={peekOpening}
+          exit={peekExit}
+          areaRef={peekAreaRef}
+          onClose={handleDetailClose}
+          onReopen={openDetailBlock}
+        >
+          {(block) => (
+            // The header stands above the card, which fills the rest (О9).
+            <div className="absolute inset-0 flex flex-col">
+              <CardPeekPlate
+                block={block}
+                vaultPath={vaultPath}
+                tags={orderedTags}
+                currentTag={currentTag}
+                onToggleTag={handleToggleTag}
+                onCreateAndAssign={handleCreateTagFromMenu}
+                onRequestRename={setRenamingBlock}
+                onRequestDelete={requestDeleteBlock}
+                onRenameFile={handleRenameBlock}
+                onCheckFileName={handleCheckFileName}
+                onExpand={handlePeekExpand}
+                onClose={handleDetailClose}
+                menuOpenRequestSequence={detailMenuOpenRequestSequence}
+              />
+              {/* The window fades its content itself (О11): the card stays
+                  drawn while it leaves. */}
+              <div className="relative min-h-0 flex-1">
+                {renderDetail(block, false, "frame")}
+              </div>
+            </div>
+          )}
+        </CardPeek>
+        </CardPeekArea>
 
 
       {!bottomActionBarHidden && (

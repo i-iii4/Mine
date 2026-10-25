@@ -168,6 +168,8 @@ import { mediaControlsClasses } from "./reading/mediaControls";
 import { useNoteEmbedLookups } from "./reading/NoteEmbed";
 import { useTaskToggles } from "./reading/TaskCheckbox";
 import { NoteEditingSwitch } from "./editing/noteEditingSwitch";
+import { useDetailMotionGate } from "./detailMotionGate";
+import { useDetailFrame } from "./detailFrame";
 import type { EditorTextSelection } from "./editing/NoteEditor";
 import { EditorImagePlacementContext } from "./editing/editorImagePlacement";
 import { actOnReadingElement, clickEvent } from "./reading/readingIntents";
@@ -205,8 +207,9 @@ const DETAIL_RAIL_GRID_CLASSES = "grid w-full pt-[var(--card-content-pad)]";
 /// panel's column is bounded by it and scrolls its own cards (Р8). The top
 /// inset lives inside the panel's scroll, as the content's does.
 const DETAIL_PANEL_LAYER_GRID_CLASSES = "grid h-full w-full grid-rows-[minmax(0,1fr)]";
+/// Stacked, the panel's band fills the rest of the card's height.
 const DETAIL_STACKED_LAYOUT_CLASSES =
-  "grid w-full grid-cols-[var(--card-content-pad)_minmax(0,1fr)_var(--card-content-pad)] pt-[var(--card-content-pad)]";
+  "grid min-h-full w-full grid-cols-[var(--card-content-pad)_minmax(0,1fr)_var(--card-content-pad)] grid-rows-[auto_1fr] pt-[var(--card-content-pad)]";
 /// Stacked, the panel's cards are no wider than the reading column (Р4).
 const DETAIL_STACKED_PANEL_STYLE: CSSProperties = { maxWidth: DETAIL_CONTENT_MAX_WIDTH_PX };
 /// `--card-content-pad` until its probe is measured: the default edge rhythm.
@@ -258,6 +261,10 @@ interface DetailProps {
   onTextSelectionDelete?: (payload: MineTextSelectionDragPayload) => void | Promise<void>;
   /** Dissolve content into transparency as it scrolls up under the top menu. */
   scrollEdgeFade?: boolean;
+  /** What the sizes the layout takes from the window read (Р1, Р3, Р7): the
+   *  app window (`window`, full page) or the open card's own frame
+   *  (`frame`, the card's window over the right part, SPEC_CARD_PEEK.md, О8). */
+  sizedBy?: "window" | "frame";
 }
 
 function isIndexedBlock(block: LightBlock | IndexedBlock): block is IndexedBlock {
@@ -386,8 +393,9 @@ function loneMediaSize(
 }
 
 /** The open card's container width, `--card-content-pad` and the window's
- *  height, kept current as the window and the edge rhythm change. */
-function useDetailLayoutMetrics() {
+ *  height (or the container's own, when the card is sized by its frame),
+ *  kept current as the window and the edge rhythm change. */
+function useDetailLayoutMetrics(sizedBy: "window" | "frame") {
   const containerRef = useRef<HTMLDivElement>(null);
   const padProbeRef = useRef<HTMLDivElement>(null);
   const [metrics, setMetrics] = useState<
@@ -402,7 +410,7 @@ function useDetailLayoutMetrics() {
       const next = {
         width: getElementLayoutWidth(node),
         pad: pad > 0 ? pad : DETAIL_CONTENT_PAD_FALLBACK_PX,
-        viewportHeight: window.innerHeight,
+        viewportHeight: sizedBy === "frame" ? node.clientHeight : window.innerHeight,
       };
       setMetrics((current) => (
         current
@@ -422,7 +430,7 @@ function useDetailLayoutMetrics() {
       window.removeEventListener("resize", measure);
       observer?.disconnect();
     };
-  }, []);
+  }, [sizedBy]);
 
   return { containerRef, padProbeRef, metrics };
 }
@@ -455,6 +463,7 @@ export function Detail({
   onCreateChannelAndTextSelectionCard = noopTextSelectionCreate,
   onTextSelectionDelete,
   scrollEdgeFade = false,
+  sizedBy = "window",
 }: DetailProps) {
   const [fullBlock, setFullBlock] = useState<IndexedBlock | null>(
     isIndexedBlock(block) ? block : null,
@@ -473,7 +482,7 @@ export function Detail({
     containerRef: detailLayoutRef,
     padProbeRef: detailPadProbeRef,
     metrics: detailLayoutMetrics,
-  } = useDetailLayoutMetrics();
+  } = useDetailLayoutMetrics(sizedBy);
   const viewportHeight = detailLayoutMetrics?.viewportHeight ?? window.innerHeight;
   // A lone picture whose record has a wrong size corrects its frame when the
   // original loads (Р6); the content's width follows (Р1), for that picture
@@ -488,8 +497,23 @@ export function Detail({
     () => detailContentFullWidth(readingCard, viewportHeight, pictureOwnSize),
     [readingCard, viewportHeight, pictureOwnSize],
   );
-  const isStackedLayout = detailLayoutMetrics !== null
-    && detailLayout(detailLayoutMetrics.width, detailLayoutMetrics.pad, contentWidth).mode === "stacked";
+  // In the card's window the window's place decides the layout and the
+  // window narrows to the content it is told of (SPEC_CARD_PEEK.md, О3,
+  // О8); full page the card's own width decides.
+  const detailFrame = useDetailFrame();
+  const frameLayout = sizedBy === "frame" ? detailFrame?.layout ?? null : null;
+  const isStackedLayout = frameLayout !== null
+    ? frameLayout === "stacked"
+    : detailLayoutMetrics !== null
+      && detailLayout(detailLayoutMetrics.width, detailLayoutMetrics.pad, contentWidth).mode === "stacked";
+  const reportToFrame = sizedBy === "frame" ? detailFrame?.report : undefined;
+  // Told once the frame's height is measured, the width follows it (Р7),
+  // and again for every card the frame shows.
+  const framePad = detailLayoutMetrics?.pad ?? null;
+  const framedSlug = displayBlock.slug;
+  useLayoutEffect(() => {
+    if (reportToFrame && framePad !== null) reportToFrame(contentWidth, framePad);
+  }, [contentWidth, framePad, framedSlug, reportToFrame]);
   const layoutClasses = isStackedLayout
     ? DETAIL_STACKED_LAYOUT_CLASSES
     : DETAIL_RAIL_GRID_CLASSES;
@@ -534,15 +558,21 @@ export function Detail({
   // The card's file, read whole: the feed's light card carries only the start
   // of its text. A read that fails is the tab's notice, which says when the
   // text shown is only that start (SPEC_DEEP_AUDIT.md, Н11, Е6.13).
+  // In the card's window the whole file lands once the window rests, and the
+  // window waits a moment for it before it starts (detailMotionGate.ts).
+  const motionGate = useDetailMotionGate();
   const refreshFullBlock = useCallback((slug: string, shown: LightBlock | IndexedBlock) => {
-    void getBlock(slug).then(
+    void motionGate.track(getBlock(slug)).then(
       (full) => {
         if (!full || currentBlockSlugRef.current !== slug) {
           return;
         }
-        dismissActionFailure("read-element");
-        setFullBlock(full);
-        setReadingCard(full);
+        motionGate.defer(() => {
+          if (currentBlockSlugRef.current !== slug) return;
+          dismissActionFailure("read-element");
+          setFullBlock(full);
+          setReadingCard(full);
+        });
       },
       (error: unknown) => {
         if (currentBlockSlugRef.current !== slug) return;
@@ -554,7 +584,7 @@ export function Detail({
         );
       },
     );
-  }, []);
+  }, [motionGate]);
 
   useEffect(() => {
     if (isIndexedBlock(block)) return;
@@ -647,7 +677,9 @@ export function Detail({
         isClosing ? "pointer-events-none bg-transparent" : "bg-background",
         "flex flex-col",
       )}
-      style={DETAIL_ROOT_STYLE}
+      style={sizedBy === "frame" && detailLayoutMetrics
+        ? detailMediaMaxHeightStyle(detailLayoutMetrics.viewportHeight)
+        : DETAIL_ROOT_STYLE}
       role="dialog"
       aria-modal="false"
       aria-label={filename}
@@ -717,7 +749,9 @@ export function Detail({
           data-detail-top-fade={topFade.scrolled ? "true" : undefined}
         >
           <div
-            className={cn(layoutClasses, DETAIL_BOTTOM_SAFE_SPACE_CLASS)}
+            // Stacked, the panel's band carries the bottom space, so its
+            // fill reaches the card's bottom.
+            className={cn(layoutClasses, !isStackedLayout && DETAIL_BOTTOM_SAFE_SPACE_CLASS)}
             style={layoutStyle}
             data-detail-layout-grid="scroll"
           >
@@ -753,11 +787,19 @@ export function Detail({
               // The panel's cards under the content, centred and no wider
               // than the reading column, whatever the content's width; in a
               // narrower window across the width between the insets (Р4).
+              // Its band runs the card's width under a line, an inset on
+              // either side of the line, the sidebar's fill under it, as
+              // the panel's column beside the content (Р4; user's decision of
+              // 24.10.2026).
               <div
-                className="col-start-2 mx-auto mt-[var(--card-content-pad)] w-full min-w-0"
-                style={DETAIL_STACKED_PANEL_STYLE}
+                className={cn(
+                  "col-span-full mt-[var(--card-content-pad)] border-t border-border px-[var(--card-content-pad)] pt-[var(--card-content-pad)]",
+                  DETAIL_BOTTOM_SAFE_SPACE_CLASS,
+                  "bg-sidebar",
+                )}
                 data-detail-stacked-metadata-row
               >
+                <div className="mx-auto w-full min-w-0" style={DETAIL_STACKED_PANEL_STYLE} data-detail-stacked-panel>
                 <MetadataPanel
                   block={block}
                   fullBlock={fullBlock}
@@ -773,6 +815,7 @@ export function Detail({
                   onOpenRelatedNote={onOpenRelatedNote}
                   onOpenAuthorFeed={onOpenAuthorFeed}
                 />
+                </div>
               </div>
             ) : (
               <div
@@ -798,7 +841,14 @@ export function Detail({
               data-detail-layout-grid="metadata"
             >
               <div className="col-start-2 min-w-0" />
-              <div className="relative col-start-4 flex min-w-0 flex-col" data-detail-panel-column>
+              <div
+                className={cn(
+                  // The line before the panel, an inset on either side, the
+                  // sidebar's fill (Р2).
+                  "relative col-start-4 flex min-w-0 flex-col border-l border-border bg-sidebar px-[var(--card-content-pad)]",
+                )}
+                data-detail-panel-column
+              >
                 {/* As tall as its cards and insets, up to the open card's
                     height; under a short panel the content scrolls as
                     before. */}
@@ -826,7 +876,7 @@ export function Detail({
                     />
                   </div>
                 </div>
-                <TopFadeScrim scrolled={panelTopFade.scrolled} surface="detail-panel" color="var(--background)" />
+                <TopFadeScrim scrolled={panelTopFade.scrolled} surface="detail-panel" color="var(--sidebar)" />
               </div>
             </div>
           </div>
@@ -893,6 +943,7 @@ function MetadataPanel({
   const associationGroups = useCardAssociations(displayBlock.slug, associationExclusions);
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const [relatedNoteBlocks, setRelatedNoteBlocks] = useState<Map<string, IndexedBlock | null> | null>(null);
+  const motionGate = useDetailMotionGate();
   const [hoveredRelatedNote, setHoveredRelatedNote] = useState<HoveredRelatedNote | null>(null);
   const [hoverPreviewPosition, setHoverPreviewPosition] = useState<HoverPreviewPosition | null>(null);
 
@@ -909,15 +960,17 @@ function MetadataPanel({
         return { slug: baseSlug, block: await getBlock(baseSlug) };
       }),
     ).then((results) => {
-      if (cancelled) return;
-      setRelatedNoteBlocks(
-        new Map(results.map(({ slug, block }) => [slug, block])),
-      );
+      motionGate.defer(() => {
+        if (cancelled) return;
+        setRelatedNoteBlocks(
+          new Map(results.map(({ slug, block }) => [slug, block])),
+        );
+      });
     });
     return () => {
       cancelled = true;
     };
-  }, [relatedNotes, relatedNotesKey]);
+  }, [motionGate, relatedNotes, relatedNotesKey]);
 
   const openRelatedNotePreview = useCallback((note: HoveredRelatedNote) => {
     setHoveredRelatedNote(null);
@@ -1795,6 +1848,16 @@ function recordedVideoSize(
     ?? (sourcePath === block.media_file ? detailMediaSize(block.width, block.height) : null);
 }
 
+/** A media file as the card's preview names it, the name its feed tile
+ *  carries (Card.tsx, `GalleryTiles`). */
+function detailMediaSource(
+  manifest: ReturnType<typeof normalizeDetailPreviewManifest>,
+  sourcePath: string | null | undefined,
+): string | null {
+  if (!sourcePath) return null;
+  return findPreviewTileForSource(manifest, sourcePath)?.sourcePath ?? sourcePath;
+}
+
 /** Where the lead video's own image starts in `processedBody`: the first image
  * whose source resolves to `source`, the one `bodyHasMoreThanEmbed` sets aside
  * and the body under the player leaves out. `null` when the body has none.
@@ -1987,6 +2050,7 @@ function BlockContent({
                   key={primaryLocalVideo}
                   src={primaryLocalVideo}
                   recordedSize={recordedVideoSize(block, previewManifest, block.media_file)}
+                  mediaSource={detailMediaSource(previewManifest, block.media_file)}
                   controls
                 />
               </MediaAssetActionFrame>
@@ -2201,6 +2265,7 @@ function BlockContent({
                     key={localSrc}
                     src={localSrc}
                     recordedSize={videoSize}
+                    mediaSource={detailMediaSource(previewManifest, videoSourcePath)}
                     controls
                     autoPlay
                     muted
@@ -3350,6 +3415,7 @@ function MediaAssetReferenceCards({
     [references],
   );
   const [relatedNoteBlocks, setRelatedNoteBlocks] = useState<Map<string, IndexedBlock | null> | null>(null);
+  const motionGate = useDetailMotionGate();
   const [hoveredRelatedNote, setHoveredRelatedNote] = useState<HoveredRelatedNote | null>(null);
   const [hoverPreviewPosition, setHoverPreviewPosition] = useState<HoverPreviewPosition | null>(null);
 
@@ -3366,15 +3432,17 @@ function MediaAssetReferenceCards({
         return { slug: baseSlug, block: await getBlock(baseSlug) };
       }),
     ).then((results) => {
-      if (cancelled) return;
-      setRelatedNoteBlocks(
-        new Map(results.map(({ slug, block }) => [slug, block])),
-      );
+      motionGate.defer(() => {
+        if (cancelled) return;
+        setRelatedNoteBlocks(
+          new Map(results.map(({ slug, block }) => [slug, block])),
+        );
+      });
     });
     return () => {
       cancelled = true;
     };
-  }, [relatedNotes, relatedNotesKey]);
+  }, [motionGate, relatedNotes, relatedNotesKey]);
 
   const openRelatedNotePreview = useCallback((note: HoveredRelatedNote) => {
     setHoveredRelatedNote(null);
@@ -3470,11 +3538,32 @@ function MediaAssetReferenceCards({
 // ─── Markdown renderer for article body ─────────────────────────────────────
 
 /** The editor, its own part of the bundle, loaded when it is first shown
- *  (SPEC_EDITING.md, Л0.6). */
-const NoteEditor = lazy(async () => {
-  const module = await import("./editing/NoteEditor");
-  return { default: module.NoteEditor };
-});
+ *  (SPEC_EDITING.md, Л0.6), or before that when the card's window asks for
+ *  it (`preloadNoteEditor`). */
+let loadedNoteEditor: typeof import("./editing/NoteEditor").NoteEditor | null = null;
+let noteEditorModule: Promise<typeof import("./editing/NoteEditor")> | null = null;
+function loadNoteEditor() {
+  noteEditorModule ??= import("./editing/NoteEditor").then((module) => {
+    loadedNoteEditor = module.NoteEditor;
+    return module;
+  });
+  return noteEditorModule;
+}
+const LazyNoteEditor = lazy(async () => ({ default: (await loadNoteEditor()).NoteEditor }));
+
+/** Loads the editor's part of the bundle ahead of its first showing: the
+ *  card's window opens a card in it without waiting on the module in the
+ *  middle of its motion (SPEC_CARD_PEEK.md, О12). */
+export function preloadNoteEditor(): Promise<unknown> {
+  return loadNoteEditor();
+}
+
+/** The editor, at once when its module is loaded (a lazy component waits a
+ *  render for a module it has not met, even a loaded one). */
+function NoteEditor(props: ComponentProps<typeof LazyNoteEditor>) {
+  const Loaded = loadedNoteEditor;
+  return Loaded ? <Loaded {...props} /> : <LazyNoteEditor {...props} />;
+}
 
 function ArticleBody({
   omittedEmbed = null,
@@ -3968,6 +4057,7 @@ function ArticleBodyImage({ node, src, alt, ...props }: ComponentProps<"img"> & 
           key={originalSrc}
           src={originalSrc}
           recordedSize={detailMediaSize(previewTile?.width, previewTile?.height)}
+          mediaSource={resolvedSrc}
           controls
           autoPlay
           muted
@@ -4006,6 +4096,7 @@ function ArticleBodyImage({ node, src, alt, ...props }: ComponentProps<"img"> & 
         sourceHeight={previewTile?.height}
         previewSrc={previewSrc}
         previewSlug={sourceSlug}
+        mediaSource={resolvedSrc}
         alt={alt ?? ""}
         className="rounded-0"
         {...props}
@@ -4304,6 +4395,7 @@ function DetailImage({
   previewSlug = null,
   contentInCloud = false,
   mediaRef = null,
+  mediaSource = null,
   alt,
   className,
   onOwnSize,
@@ -4321,6 +4413,10 @@ function DetailImage({
   contentInCloud?: boolean;
   /// The card's media reference, for asking the system about its download.
   mediaRef?: string | null;
+  /// The source file the picture shows, as the card's preview names it: the
+  /// card's window lands in the feed tile of the same file (SPEC_CARD_PEEK.md,
+  /// О10, п. 3).
+  mediaSource?: string | null;
   alt: string;
   /// Called with the picture's own size when it replaces a recorded size of
   /// another proportion (Р6), so the content's width can follow the frame.
@@ -4343,6 +4439,9 @@ function DetailImage({
   // Two versions may load before the next render: the size they compare
   // with is the latest one set, not the one rendered.
   const sizeRef = useRef(size);
+  // In the card's window a picture that loads while the window moves shows
+  // once it rests (detailMotionGate.ts).
+  const motionGate = useDetailMotionGate();
   const rememberSize = (image: HTMLImageElement, isOriginal: boolean) => {
     const natural = detailMediaSize(image.naturalWidth, image.naturalHeight);
     if (!natural) return;
@@ -4351,9 +4450,11 @@ function DetailImage({
     // a thin one would read as another proportion.
     if (current && (!isOriginal || sameMediaProportion(current, natural))) return;
     sizeRef.current = natural;
-    setSize(natural);
-    // Past the check above a recorded size is always one being corrected.
-    if (recordedSize) onOwnSize?.(natural);
+    motionGate.defer(() => {
+      setSize(natural);
+      // Past the check above a recorded size is always one being corrected.
+      if (recordedSize) onOwnSize?.(natural);
+    });
   };
   // Late like the card badge: a file that arrives quickly must not flash a
   // notice about waiting. See SPEC_CLOUD_STORAGE.md Х6, Х9.
@@ -4404,7 +4505,7 @@ function DetailImage({
   }, [showDownloading, mediaRef, attempt]);
 
   return (
-    <DetailMediaFrame size={size} data-detail-image="">
+    <DetailMediaFrame size={size} data-detail-image="" data-detail-media-source={mediaSource ?? undefined}>
       {previewSrc && !originalReady && (
         <DetailPreviewBacking
           src={previewSrc}
@@ -4434,8 +4535,10 @@ function DetailImage({
             if (!image.isConnected) return;
           }
           rememberSize(image, true);
-          setOriginalReady(true);
-          setFailed(false);
+          motionGate.defer(() => {
+            setOriginalReady(true);
+            setFailed(false);
+          });
         }}
         onError={(e) => {
           // Contents held in iCloud is a state of the file, not a broken card:
@@ -4520,6 +4623,7 @@ function DetailMediaFrame({
 function DetailVideo({
   src,
   recordedSize,
+  mediaSource = null,
   controls = false,
   autoPlay = false,
   muted = false,
@@ -4527,14 +4631,17 @@ function DetailVideo({
 }: {
   src: string;
   recordedSize: DetailMediaSize | null;
+  /// The source file, as the card's preview names it (`DetailImage`).
+  mediaSource?: string | null;
   controls?: boolean;
   autoPlay?: boolean;
   muted?: boolean;
   loop?: boolean;
 }) {
   const [size, setSize] = useState<DetailMediaSize | null>(recordedSize);
+  const motionGate = useDetailMotionGate();
   return (
-    <DetailMediaFrame size={size} data-detail-video="">
+    <DetailMediaFrame size={size} data-detail-video="" data-detail-media-source={mediaSource ?? undefined}>
       <VideoFromBlob
         src={src}
         controls={controls}
@@ -4548,7 +4655,9 @@ function DetailVideo({
         onLoadedMetadata={(video) => {
           const own = detailMediaSize(video.videoWidth, video.videoHeight);
           if (!own) return;
-          setSize((current) => (current && sameMediaProportion(current, own) ? current : own));
+          motionGate.defer(() => {
+            setSize((current) => (current && sameMediaProportion(current, own) ? current : own));
+          });
         }}
       />
     </DetailMediaFrame>
