@@ -1631,11 +1631,14 @@ export function Grid({
       return;
     }
     lastRestoreFocusSequenceRef.current = restoreFocusSequence;
+    // The closed card takes the keyboard's focus back only while the feed is
+    // worked with the keyboard: a card opened and closed with the pointer
+    // lands unlit (user's decision of 26.10.2026).
+    if (feedInteractionMode !== "keyboard") return;
     if (blocksBySlug.has(restoreFocusSlug)) {
-      setFeedInteractionMode("keyboard");
       setFocusedSlug(restoreFocusSlug);
     }
-  }, [blocksBySlug, restoreFocusSequence, restoreFocusSlug]);
+  }, [blocksBySlug, feedInteractionMode, restoreFocusSequence, restoreFocusSlug]);
 
   useEffect(() => {
     if (feedInteractionMode !== "keyboard") return;

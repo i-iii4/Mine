@@ -85,14 +85,6 @@ export function peekNudgeTransform(share: number): string {
   return `translateY(${Math.round(CARD_PEEK_NUDGE_OFFSET_PX * share * 1e3) / 1e3}px) scale(${Math.round(scale * 1e6) / 1e6})`;
 }
 
-/** What undoes `peekNudgeTransform(share)` about the same centre: a piece
- *  inside the stepped window that stays where the card is. */
-export function peekNudgeUndoTransform(share: number): string {
-  if (Math.abs(share) < 1e-4) return "";
-  const scale = 1 - (1 - CARD_PEEK_NUDGE_SCALE) * share;
-  return `scale(${Math.round(1e6 / scale) / 1e6}) translateY(${-Math.round(CARD_PEEK_NUDGE_OFFSET_PX * share * 1e3) / 1e3}px)`;
-}
-
 /** The window's spring (SPEC_CARD_PEEK.md, «Величины»): critically damped,
  *  response 0.25 s (user's decision of 24.10.2026: faster than the compact
  *  stack's 0.3 s, `SPRING_RESPONSE_S` in channelIcon.ts, which keeps it). */
@@ -361,6 +353,26 @@ export function peekMediaTransforms(
   };
 }
 
+/** As `peekMediaTransforms`, for a picture laid out in its clip at its own
+ *  box `laidImage` (relative to the clip's origin), not over the whole
+ *  clip: laid at the card's place, it is drawn there as the card draws it,
+ *  with no transform at all. */
+export function peekLaidMediaTransforms(
+  laid: PeekRect,
+  laidImage: PeekRect,
+  clip: PeekRect,
+  image: PeekRect,
+): { clip: string; image: string } {
+  const scaleX = side(clip.width) / side(laid.width);
+  const scaleY = side(clip.height) / side(laid.height);
+  const x = (image.x - clip.x) / scaleX;
+  const y = (image.y - clip.y) / scaleY;
+  return {
+    clip: peekBoxTransform(laid, clip),
+    image: `translate(${round(x - laidImage.x)}px, ${round(y - laidImage.y)}px) scale(${round(side(image.width) / scaleX / side(laidImage.width))}, ${round(side(image.height) / scaleY / side(laidImage.height))})`,
+  };
+}
+
 /** Where the card's picture stands at one end of the motion: the part shown
  *  (`clip`) and the whole picture (`image`). */
 export interface PeekMediaPlace {
@@ -388,6 +400,114 @@ export function carriedPeekMediaPlace(
     height: cardMedia.clip.height * scaleY,
   };
   return { clip, image: coverPeekRect(clip, naturalWidth, naturalHeight) };
+}
+
+/** A box laid out in the card's frame `card`, carried by the frame as it
+ *  shows as `shown`: the card's part at the same place, stretched as the
+ *  frame is (a gallery's tile with no picture of its own in the window and
+ *  the seams' plate under the tiles, О10, п. 3). */
+export function carriedPeekRect(card: PeekRect, shown: PeekRect, box: PeekRect): PeekRect {
+  const scaleX = shown.width / side(card.width);
+  const scaleY = shown.height / side(card.height);
+  return {
+    x: shown.x + (box.x - card.x) * scaleX,
+    y: shown.y + (box.y - card.y) * scaleY,
+    width: box.width * scaleX,
+    height: box.height * scaleY,
+  };
+}
+
+/** A tile's picture carried with its clip as the frame carries the clip
+ *  from `from` to `clip`: scaled alike on both axes, by the larger of the
+ *  clip's two, so it covers the clip as it covered the tile, never
+ *  stretched, and in the same place against the clip's centre (О10, п. 3). */
+export function carriedPeekImage(from: PeekMediaPlace, clip: PeekRect): PeekRect {
+  const scale = Math.max(clip.width / side(from.clip.width), clip.height / side(from.clip.height));
+  const fromX = from.clip.x + from.clip.width / 2;
+  const fromY = from.clip.y + from.clip.height / 2;
+  return {
+    x: clip.x + clip.width / 2 + (from.image.x - fromX) * scale,
+    y: clip.y + clip.height / 2 + (from.image.y - fromY) * scale,
+    width: from.image.width * scale,
+    height: from.image.height * scale,
+  };
+}
+
+/** The seams a gallery tile borders, from the tiles' boxes as the card
+ *  shows them: a side another tile faces across a gap no wider than
+ *  `maxSeam`, along any common stretch; each tile takes half the gap. */
+export function peekTileEdges(boxes: readonly PeekRect[], maxSeam = 2): PeekTileEdge[][] {
+  const overlap = (a0: number, a1: number, b0: number, b1: number) => Math.min(a1, b1) - Math.max(a0, b0) > 0;
+  return boxes.map((box) => {
+    const edges: PeekTileEdge[] = [];
+    const facing = (side: PeekTileEdge["side"], gapOf: (other: PeekRect) => number, along: (other: PeekRect) => boolean) => {
+      const facingBoxes = boxes
+        .map((other, index) => ({ index, gap: other !== box && along(other) ? gapOf(other) : -1 }))
+        .filter(({ gap }) => gap > 0 && gap <= maxSeam);
+      if (facingBoxes.length > 0) {
+        edges.push({ side, width: Math.min(...facingBoxes.map(({ gap }) => gap)) / 2, across: facingBoxes.map(({ index }) => index) });
+      }
+    };
+    const across = (other: PeekRect) => overlap(box.y, box.y + box.height, other.y, other.y + other.height);
+    const down = (other: PeekRect) => overlap(box.x, box.x + box.width, other.x, other.x + other.width);
+    facing("left", (other) => box.x - (other.x + other.width), across);
+    facing("right", (other) => other.x - (box.x + box.width), across);
+    facing("top", (other) => box.y - (other.y + other.height), down);
+    facing("bottom", (other) => other.y - (box.y + box.height), down);
+    return edges;
+  });
+}
+
+/** Where a tile's half seams stand around its clip `clip`, the tile laid
+ *  out as `from`: each keeps its own width on screen however the clip is
+ *  scaled, but one `carried` with the tile, which is scaled with it; the
+ *  seams along the top and the bottom reach over the side ones, so the
+ *  seams' crossing is whole. */
+export function peekTileEdgeRects(clip: PeekRect, edges: readonly PeekTileEdge[], from: PeekRect = clip): PeekRect[] {
+  const scaleX = clip.width / side(from.width);
+  const scaleY = clip.height / side(from.height);
+  const width = (name: PeekTileEdge["side"]) => {
+    const edge = edges.find((candidate) => candidate.side === name);
+    if (!edge) return 0;
+    return edge.carried ? edge.width * (name === "left" || name === "right" ? scaleX : scaleY) : edge.width;
+  };
+  const left = width("left");
+  const right = width("right");
+  return edges.map(({ side: name }) => {
+    const w = width(name);
+    switch (name) {
+      case "left": return { x: clip.x - w, y: clip.y, width: w, height: clip.height };
+      case "right": return { x: clip.x + clip.width, y: clip.y, width: w, height: clip.height };
+      case "top": return { x: clip.x - left, y: clip.y - w, width: clip.width + left + right, height: w };
+      case "bottom": return { x: clip.x - left, y: clip.y + clip.height, width: clip.width + left + right, height: w };
+    }
+  });
+}
+
+/** Which of the window's media each gallery tile flies to (О10, п. 3): the
+ *  first one of its file that the window shows at the movement's start and
+ *  no tile before took, by the file's name, never by order; -1, none. */
+export function pairPeekGallery(
+  tiles: readonly string[],
+  frames: readonly { source: string | null; shown: boolean }[],
+): number[] {
+  const taken = new Set<number>();
+  return tiles.map((source) => {
+    const index = frames.findIndex((frame, at) => frame.shown && frame.source === source && !taken.has(at));
+    if (index >= 0) taken.add(index);
+    return index;
+  });
+}
+
+/** The gallery tile that flies (О10, п. 3), by `pairPeekGallery`'s
+ *  pairs: the one paired with the first of the window's media, the main
+ *  picture if a tile has it; -1, none. */
+export function mainPeekTile(pairs: readonly number[]): number {
+  let lead = -1;
+  pairs.forEach((at, index) => {
+    if (at >= 0 && (lead < 0 || at < (pairs[lead] ?? Infinity))) lead = index;
+  });
+  return lead;
 }
 
 // ─── The spring ─────────────────────────────────────────────────────────
@@ -441,6 +561,18 @@ export function peekContentOpacity(direction: "in" | "out", elapsedMs: number, s
   );
 }
 
+/** The opacity of the card's parts that ride along with no place of their
+ *  own in the window (a gallery's tiles with no picture there, the card's
+ *  text) `elapsedMs` into an opening (`in`) or a closing (`out`) that began
+ *  with them at `startOpacity` (О10, п. 3; О11, п. 2): in, they are gone by
+ *  the end of the first third, as a closing's content is; out, they show
+ *  over the first third, as the content goes, so the card flies back whole,
+ *  and never dim below where they were (user's decision of 26.10.2026). */
+export function peekRideOpacity(direction: "in" | "out", elapsedMs: number, startOpacity: number): number {
+  if (direction === "in") return startOpacity * clampUnit(1 - elapsedMs / CARD_PEEK_CONTENT_FADE_MS);
+  return Math.max(startOpacity, clampUnit(elapsedMs / CARD_PEEK_CONTENT_FADE_MS));
+}
+
 // ─── How it opens and closes ────────────────────────────────────────────
 
 /** How the window moves: out of a card and back (`card`), out of the right
@@ -486,9 +618,11 @@ export function peekOpeningKind({
   reducedMotion: boolean;
 }): PeekMotionKind {
   if (restored) return "instant";
+  // A key opens at once, in the frame it is pressed in, as Escape closes
+  // (user's decision of 26.10.2026).
+  if (from === "keyboard") return "instant";
   if (reducedMotion) return "fade";
   if (from === "card") return "card";
-  if (from === "keyboard") return "fade";
   return "center";
 }
 
@@ -566,39 +700,61 @@ export interface PeekSource {
   /** The card's fill, a CSS colour. */
   fill: string;
   media: PeekSourceMedia | null;
+  /** A card with several media (Card.tsx, `GalleryTiles`): its tiles, each
+   *  carried on its own (О10, п. 3), in place of `media`. */
+  gallery?: PeekSourceGallery;
   /** The line the card draws under its media (Card.tsx,
-   *  `data-card-media-outline`): a copy of it, styled as the card styles
-   *  it, and its box (viewport px). */
-  outline?: { element: HTMLElement; rect: PeekRect };
+   *  `data-card-media-outline`, the frame's line mirrored there): the row
+   *  it stands on (viewport px) and its colour. */
+  underline?: { y: number; height: number; colour: string };
+  /** The card's text part (Card.tsx, `CardTextStack`): a copy of it to
+   *  carry as the card's own, and its box (viewport px). */
+  text?: { element: HTMLElement; rect: PeekRect };
 }
 
 /** The card's picture: what draws it, its own size and its place. A
- *  `composite` is several pictures as one (a gallery whose tiles hold no
- *  picture of the window's, as a copy of its tiles): the window has no
- *  single frame for it, so it fades under the content at the end. A gallery's tile of the window's
- *  own picture is the picture alone, and `rest` is what stands round it. */
+ *  `composite` is several pictures drawn as one (a card that is no gallery,
+ *  a video over its poster): the window has no single frame for it, so it
+ *  fades under the content at the end. */
 export interface PeekSourceMedia extends PeekMediaPlace {
-  /** What draws it; null for a gallery that flies whole as `copy`. */
-  drawable: CanvasImageSource | null;
-  /** A gallery's own elements to carry in place of a canvas: flying whole
-   *  (`composite`), a copy of its tiles laid out from `clip`'s origin,
-   *  `naturalWidth` by `naturalHeight` CSS px (`clip`'s size); from its
-   *  tile, a copy of the tile's picture. */
-  copy?: HTMLElement;
+  drawable: CanvasImageSource;
   naturalWidth: number;
   naturalHeight: number;
   composite: boolean;
-  rest?: PeekSourceRest;
 }
 
-/** A gallery's other tiles and the seams between them, a copy of what the
- *  card shows round the tile the picture flies from, laid out from `rect`'s
- *  origin and clipped by it (viewport px): they stay at the card's place
- *  while the window moves (О10, п. 3; О11, п. 2). The tile itself is left
- *  clear. */
-export interface PeekSourceRest {
-  element: HTMLElement;
-  rect: PeekRect;
+/** A gallery card's media (viewport px): the part of its slot the card
+ *  shows (a lifted card shows less of it, SPEC_CARD_STATES.md, С8), the
+ *  seams' colour and the tiles the card shows. */
+export interface PeekSourceGallery {
+  clip: PeekRect;
+  seams: string;
+  tiles: PeekSourceTile[];
+}
+
+/** A side of a gallery tile that borders another tile across a seam, and
+ *  its half of the seam: each tile carries its half, and the two halves
+ *  meet into the card's seam when the tiles land (О10, п. 3). */
+export interface PeekTileEdge {
+  side: "left" | "right" | "top" | "bottom";
+  width: number;
+  /** The tiles across it, by their index among the boxes given. */
+  across: number[];
+  /** Carried with the tile: the seam between two tiles the frame carries
+   *  together stretches with them, as the gap between them does (no gap
+   *  the window's fill shows through). Else it keeps its width on screen. */
+  carried?: boolean;
+}
+
+/** A gallery's tile: its media file, the part of the tile the card shows
+ *  and its picture as the tile crops it (`object-cover`), and a copy of
+ *  that picture, the card's own file, to carry. */
+export interface PeekSourceTile extends PeekMediaPlace {
+  source: string;
+  edges: PeekTileEdge[];
+  picture: HTMLImageElement;
+  naturalWidth: number;
+  naturalHeight: number;
 }
 
 type GraphSourceReader = (slug: string) => PeekSource | null;

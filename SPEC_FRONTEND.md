@@ -2282,7 +2282,9 @@ Image media expansion:
 - Автоподскрол идёт по `layout.positions` и scroll container, без
   `scrollIntoView`/DOM lookup.
 - При закрытии Detail фокус возвращается на последнюю просмотренную карточку
-  по slug.
+  по slug, только если лента в режиме клавиатуры (`feedInteractionMode`
+  `keyboard`). Карточка, открытая и закрытая указателем, садится без
+  подсветки (решение пользователя 26.10.2026).
 
 #### Grid Group Selection
 

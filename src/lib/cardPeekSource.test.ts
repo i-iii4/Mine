@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { detailPeekMediaSource, readFeedPeekSource } from "./cardPeekSource";
+import { detailPeekMediaFrames, readFeedPeekSource } from "./cardPeekSource";
 import type { PeekRect } from "./cardPeek";
 
 function place(element: Element, rect: PeekRect) {
@@ -56,103 +56,76 @@ afterEach(() => {
 const SOURCES = ["Media/a.jpg", "Media/b.jpg", "Media/c.jpg", "Media/d.jpg"];
 
 describe("a gallery card as the window's source (SPEC_CARD_PEEK.md, О10, п. 3)", () => {
-  it("gives the tile of the window's own file, cropped as the tile crops it, and the gallery round it", () => {
+  it("gives every tile on its own, by its file, cropped as the tile crops it, and no single picture", () => {
     const { frame, tiles } = galleryCard(SOURCES);
-    const media = readFeedPeekSource(frame, "Media/d.jpg").media!;
-    expect(media.composite).toBe(false);
-    expect(media.drawable).toBe(tiles[3]!.querySelector("img"));
-    expect(media.clip).toEqual({ x: 201, y: 151, width: 100, height: 100 });
+    const source = readFeedPeekSource(frame);
+    expect(source.media).toBeNull();
+    const gallery = source.gallery!;
+    expect(gallery.clip).toEqual(SLOT);
+    expect(gallery.seams).toBe("rgb(10, 20, 30)");
+    expect(gallery.tiles.map((tile) => tile.source)).toEqual(SOURCES);
+    const last = gallery.tiles[3]!;
+    expect(last.clip).toEqual({ x: 201, y: 151, width: 100, height: 100 });
     // A 3:2 picture covering a square tile: as tall as it, wider by half.
-    expect(media.image).toEqual({ x: 176, y: 151, width: 150, height: 100 });
-    expect(media.rest?.rect).toEqual(SLOT);
+    expect(last.image).toEqual({ x: 176, y: 151, width: 150, height: 100 });
+    expect([last.naturalWidth, last.naturalHeight]).toEqual([600, 400]);
+    // A copy of the tile's own picture to carry, shown at once.
+    expect(last.picture).not.toBe(tiles[3]!.querySelector("img"));
+    expect([last.picture.loading, last.picture.decoding]).toEqual(["eager", "sync"]);
   });
 
-  it("copies the gallery round the tile as the feed shows it, the tile's place cut out", () => {
-    const { frame, tiles } = galleryCard(SOURCES);
-    const copy = readFeedPeekSource(frame, "Media/d.jpg").media!.rest!.element;
-    expect(copy.style.backgroundColor).toBe("rgb(10, 20, 30)");
-    expect([copy.style.left, copy.style.top, copy.style.width, copy.style.height]).toEqual(["0px", "0px", "201px", "201px"]);
-    expect(copy.style.clipPath).toContain("M101 101H201V201H101Z");
-    const copies = [...copy.children] as HTMLElement[];
-    expect(copies.map((element) => element.style.visibility)).toEqual(["", "", "", "hidden"]);
-    // No tile of the feed's: the feed's own tiles alone answer for the card.
-    expect(copy.querySelector("[data-card-media-tile], [data-card-media-source]")).toBeNull();
-    const pictures = [...copy.querySelectorAll("img")];
-    expect(pictures.map((picture) => [picture.loading, picture.decoding])).toEqual(Array(4).fill(["eager", "sync"]));
-    expect(tiles[0]!.querySelector("img")?.loading).not.toBe("eager");
-  });
-
-  it("finds the tile by its file, never by its place in the gallery", () => {
-    const { frame } = galleryCard(["Media/b.jpg", "Media/c.jpg", "Media/a.jpg", "Media/d.jpg"]);
-    expect(readFeedPeekSource(frame, "Media/a.jpg").media?.clip).toEqual({ x: 100, y: 151, width: 100, height: 100 });
-  });
-
-  it("gives the whole gallery as one picture when no tile shows the window's file", () => {
+  it("gives each tile its halves of the seams it borders, none on the gallery's outer sides", () => {
     const { frame } = galleryCard(SOURCES);
-    for (const source of ["Media/e.jpg", null]) {
-      const media = readFeedPeekSource(frame, source).media!;
-      expect(media.composite).toBe(true);
-      expect(media.clip).toEqual(SLOT);
-      expect(media.image).toEqual(SLOT);
-      expect(media.rest).toBeUndefined();
-      // No canvas: a copy of every tile, none cut out.
-      expect(media.drawable).toBeNull();
-      const copy = media.copy!;
-      expect([copy.style.left, copy.style.top, copy.style.width, copy.style.height]).toEqual(["0px", "0px", "201px", "201px"]);
-      expect(copy.style.clipPath).toBe("");
-      expect([...copy.children].map((element) => (element as HTMLElement).style.visibility)).toEqual(["", "", "", ""]);
-      expect(copy.querySelectorAll("img")).toHaveLength(4);
-      expect(copy.querySelector("[data-card-media-tile], [data-card-media-source]")).toBeNull();
-    }
+    const tiles = readFeedPeekSource(frame).gallery!.tiles;
+    expect(tiles.map((tile) => tile.edges)).toEqual([
+      [{ side: "right", width: 0.5, across: [1] }, { side: "bottom", width: 0.5, across: [2] }],
+      [{ side: "left", width: 0.5, across: [0] }, { side: "bottom", width: 0.5, across: [3] }],
+      [{ side: "right", width: 0.5, across: [3] }, { side: "top", width: 0.5, across: [0] }],
+      [{ side: "left", width: 0.5, across: [2] }, { side: "top", width: 0.5, across: [1] }],
+    ]);
   });
 
-  it("gives the whole gallery when the tile's picture is not drawn yet", () => {
+  it("leaves out a tile whose picture is not drawn yet", () => {
     const { frame } = galleryCard(SOURCES, { unloaded: "Media/b.jpg" });
-    expect(readFeedPeekSource(frame, "Media/b.jpg").media?.composite).toBe(true);
+    expect(readFeedPeekSource(frame).gallery?.tiles.map((tile) => tile.source)).toEqual(["Media/a.jpg", "Media/c.jpg", "Media/d.jpg"]);
   });
 
-  it("keeps to the part a lifted card shows (С8), the whole gallery when the tile is out of it", () => {
+  it("keeps to the part a lifted card shows (С8), and leaves out a tile it hides whole", () => {
     const lift = { x: SLOT.x, y: SLOT.y, width: SLOT.width, height: 140 };
-    const { frame } = galleryCard(SOURCES, { lift });
-    const media = readFeedPeekSource(frame, "Media/c.jpg").media!;
-    expect(media.clip).toEqual({ x: 100, y: 151, width: 100, height: 39 });
-    expect(media.rest?.rect).toEqual(lift);
-    const hidden = galleryCard(SOURCES, { lift: { ...lift, height: 90 } });
-    expect(readFeedPeekSource(hidden.frame, "Media/c.jpg").media?.composite).toBe(true);
+    const shown = readFeedPeekSource(galleryCard(SOURCES, { lift }).frame).gallery!;
+    expect(shown.clip).toEqual(lift);
+    expect(shown.tiles[2]?.clip).toEqual({ x: 100, y: 151, width: 100, height: 39 });
+    // The lift hides the bottom row's lower part: no seam there; the seam
+    // over it shows.
+    expect(shown.tiles[2]?.edges).toEqual([{ side: "right", width: 0.5, across: [3] }, { side: "top", width: 0.5, across: [0] }]);
+    const hidden = readFeedPeekSource(galleryCard(SOURCES, { lift: { ...lift, height: 90 } }).frame).gallery!;
+    expect(hidden.tiles.map((tile) => tile.source)).toEqual(["Media/a.jpg", "Media/b.jpg"]);
   });
 });
 
 describe("the card's line under its media", () => {
-  it("is copied with the card's own values and box, to land on the card with it", () => {
+  it("is the row its bottom edge stands on, and its colour, as the card has them", () => {
     const { frame } = galleryCard(SOURCES);
     const ring = document.createElement("span");
     ring.setAttribute("data-card-media-outline", "under-text");
     ring.style.border = "1px solid rgb(1, 2, 3)";
-    ring.style.borderRadius = "8px";
-    ring.style.clipPath = "inset(8px 0px 0px)";
-    place(ring, { x: 99, y: 235, width: 203, height: 16 });
+    place(ring, { x: 99, y: 250, width: 203, height: 2 });
     frame.append(ring);
-    const outline = readFeedPeekSource(frame, "Media/b.jpg").outline!;
-    expect(outline.rect).toEqual({ x: 99, y: 235, width: 203, height: 16 });
-    expect(outline.element.hasAttribute("data-card-media-outline")).toBe(false);
-    expect(outline.element.style.borderTop).toBe("1px solid rgb(1, 2, 3)");
-    expect(outline.element.style.clipPath).toBe("inset(8px 0px 0px)");
+    expect(readFeedPeekSource(frame).underline).toEqual({ y: 251, height: 1, colour: "rgb(1, 2, 3)" });
   });
 
   it("is none for a card with no picture to carry", () => {
     const frame = document.createElement("div");
-    frame.innerHTML = `<span data-card-media-outline="under-text"></span>`;
+    frame.innerHTML = `<span data-card-media-outline="under-text" style="border: 1px solid red"></span>`;
     document.body.append(frame);
-    expect(readFeedPeekSource(frame).outline).toBeUndefined();
+    expect(readFeedPeekSource(frame).underline).toBeUndefined();
   });
 });
 
-describe("the open card's own picture file", () => {
-  it("is read from its media frame in the article column", () => {
+describe("the open card's media frames", () => {
+  it("are read in the article's order with the file each shows", () => {
     const content = document.createElement("div");
-    content.innerHTML = `<div data-detail-article-column><div data-detail-image data-detail-media-source="Media/c.jpg"></div></div>`;
-    expect(detailPeekMediaSource(content)).toBe("Media/c.jpg");
-    content.innerHTML = `<div data-detail-article-column><div data-detail-image></div></div>`;
-    expect(detailPeekMediaSource(content)).toBeNull();
+    content.innerHTML = `<div data-detail-article-column><div data-detail-image data-detail-media-source="Media/c.jpg"></div><p></p><div data-detail-video data-detail-media-source="Media/v.mp4"></div><div data-detail-image></div></div>`;
+    expect(detailPeekMediaFrames(content).map((entry) => entry.source)).toEqual(["Media/c.jpg", "Media/v.mp4", null]);
   });
 });

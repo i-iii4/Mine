@@ -785,7 +785,13 @@ describe("Grid — no collapse after add / revisit", () => {
     setBlockHeight(9102, 220);
     setBlockHeight(9103, 240);
 
-    render(
+    const view = render(<Grid {...BASE_PROPS} blocks={blocks} />);
+    await flushAsync();
+    // The card returns to the keyboard's focus only while the feed is worked
+    // with the keyboard.
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    await flushAsync();
+    view.rerender(
       <Grid
         {...BASE_PROPS}
         blocks={blocks}
@@ -810,6 +816,27 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(scroll).toHaveAttribute("data-feed-grid-focus-mode", "true");
     expect(focusedWrapper).toHaveAttribute("data-feed-grid-item-focused", "true");
     expect(focusedWrapper?.querySelector("[data-feed-grid-focus-frame]")).toBeNull();
+  });
+
+  it("lands a card closed with the pointer unlit", async () => {
+    vi.useFakeTimers();
+
+    const blocks = [makeBlock(9111), makeBlock(9112)];
+    setBlockHeight(9111, 200);
+    setBlockHeight(9112, 220);
+
+    render(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks}
+        restoreFocusSlug="block-9112"
+        restoreFocusSequence={1}
+      />,
+    );
+    await flushAsync();
+
+    expect(gridItemForSlug("block-9112")).not.toHaveAttribute("data-feed-grid-item-focused", "true");
+    expect(document.querySelector("[data-grid-scroll]")).not.toHaveAttribute("data-feed-grid-focus-mode", "true");
   });
 
   it("uses the same content-box width source on mount and ResizeObserver updates", async () => {

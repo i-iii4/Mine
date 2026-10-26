@@ -7,12 +7,15 @@
 import {
   coverPeekRect,
   intersectPeekRect,
+  peekTileEdges,
   peekRectsOverlap,
   readPeekGraphSource,
   recordPeekInput,
   type PeekRect,
   type PeekSource,
+  type PeekSourceGallery,
   type PeekSourceMedia,
+  type PeekSourceTile,
 } from "./cardPeek";
 
 /** The feed's cards stand in its scroll (Grid.tsx). */
@@ -80,119 +83,79 @@ function compositeOf(pictures: readonly (HTMLImageElement | HTMLVideoElement)[],
   return canvas;
 }
 
-/** The gallery tile of the media file `source` (Card.tsx, `GalleryTiles`),
- *  by the file's own name, never by its order. */
-function galleryTileOf(slot: HTMLElement, source: string): HTMLElement | null {
-  for (const tile of slot.querySelectorAll<HTMLElement>("[data-card-media-tile]")) {
-    if (tile.dataset.cardMediaSource === source) return tile;
-  }
-  return null;
+/** The clip of a card's media slot: the part the card shows now (a lifted
+ *  card shows less of it, SPEC_CARD_STATES.md, С8). */
+function slotClipOf(slot: HTMLElement): PeekRect {
+  const slotRect = rectOf(slot);
+  const lift = slot.querySelector("[data-card-lift='window']");
+  return lift ? intersectPeekRect(slotRect, rectOf(lift)) : slotRect;
 }
 
-/** What a gallery `grid` shows: the seams in the frame's colour and the
- *  tiles with their pictures and marks, a copy of the feed's own (Card.tsx,
- *  `GalleryTiles`) laid out from `clip`'s origin; the place of the tile
- *  `cut`, when given, is left clear. The copy is elements, not a picture
- *  drawn once: its pictures are the feed's own files, painted as the feed
- *  paints them, with no canvas. */
-function galleryCopyOf(grid: HTMLElement, clip: PeekRect, cut: HTMLElement | null, radius: string): HTMLElement {
-  const gridBox = rectOf(grid);
-  const copy = grid.cloneNode(true) as HTMLElement;
-  Object.assign(copy.style, {
-    left: `${gridBox.x - clip.x}px`,
-    top: `${gridBox.y - clip.y}px`,
-    width: `${gridBox.width}px`,
-    height: `${gridBox.height}px`,
-    // The seams take the frame's colour from the card (`--card-frame-color`),
-    // which the copy stands outside of.
-    backgroundColor: getComputedStyle(grid).backgroundColor,
-    // The slot's corner, which clips the tiles in the card.
-    borderRadius: radius,
-    overflow: "hidden",
-  });
-  if (cut) {
-    const tileBox = rectOf(cut);
-    const x = tileBox.x - gridBox.x;
-    const y = tileBox.y - gridBox.y;
-    // The tile's place, seams' colour included, cut out of the copy.
-    copy.style.clipPath = `path(evenodd, "M0 0H${gridBox.width}V${gridBox.height}H0Z M${x} ${y}H${x + tileBox.width}V${y + tileBox.height}H${x}Z")`;
-  }
-  const tiles = [...grid.querySelectorAll<HTMLElement>(":scope > [data-card-media-tile]")];
-  const copies = [...copy.querySelectorAll<HTMLElement>(":scope > [data-card-media-tile]")];
-  copies.forEach((element, index) => {
-    if (tiles[index] === cut) element.style.visibility = "hidden";
-    // A copy is no tile of the feed's.
-    element.removeAttribute("data-card-media-tile");
-    element.removeAttribute("data-card-media-source");
-  });
-  for (const picture of copy.querySelectorAll("img")) {
-    // Shown in the frame it is put on the page in, not when the feed's
-    // scroll would reach it.
-    picture.loading = "eager";
-    picture.decoding = "sync";
-  }
-  return copy;
-}
-
-/** A gallery's tile of the window's own picture: the picture alone, in the
- *  part of the tile the card shows, and the gallery round it (`rest`). */
-function galleryTileMedia(tile: HTMLElement, clip: PeekRect, radius: string): PeekSourceMedia | null {
-  const picture = [...tile.querySelectorAll<HTMLImageElement | HTMLVideoElement>("img, video")].find(painted);
-  if (!picture) return null;
-  const tileClip = intersectPeekRect(clip, rectOf(tile));
-  if (tileClip.width <= 0 || tileClip.height <= 0) return null;
-  // `painted` kept only pictures that have a size.
-  const size = drawnSize(picture)!;
-  const grid = tile.parentElement;
-  const rest = grid ? galleryCopyOf(grid, clip, tile, radius) : null;
-  // What flies when the window has no picture of its own to carry: the
-  // tile's own file, not a canvas.
-  const copy = picture instanceof HTMLImageElement ? picture.cloneNode() as HTMLImageElement : null;
-  if (copy) {
+/** A gallery card's media (Card.tsx, `GalleryTiles`): its slot's shown part,
+ *  corner and seams, and every tile the card shows any part of, with its
+ *  picture drawn, as the tile crops it (О10, п. 3). A tile the lifted card
+ *  hides whole is none of them: it shows with the window's content. Null
+ *  for a card that is no gallery. */
+function feedCardGallery(slot: HTMLElement): PeekSourceGallery | null {
+  const tiles = [...slot.querySelectorAll<HTMLElement>("[data-card-media-tile]")];
+  const grid = tiles[0]?.parentElement;
+  if (!grid) return null;
+  const clip = slotClipOf(slot);
+  // The seams between the tiles, from the whole tiles, the lifted card's
+  // hidden part included: a seam it hides lies outside its shown part.
+  const edges = peekTileEdges(tiles.map(rectOf));
+  const shown: PeekSourceTile[] = [];
+  // Each tile's index among the shown ones, for the tiles across a seam.
+  const shownIndex = new Map<number, number>();
+  for (const [index, tile] of tiles.entries()) {
+    const source = tile.dataset.cardMediaSource;
+    const tileClip = intersectPeekRect(clip, rectOf(tile));
+    const picture = tile.querySelector("img");
+    if (!source || tileClip.width <= 0 || tileClip.height <= 0 || !picture || !painted(picture)) continue;
+    // `painted` kept only pictures that have a size.
+    const size = drawnSize(picture)!;
+    // The card's own file to carry, shown in the frame it is put on the
+    // page in, not when a scroll would reach it.
+    const copy = picture.cloneNode() as HTMLImageElement;
     copy.loading = "eager";
     copy.decoding = "sync";
+    // A seam the lift hides is no edge of the shown part.
+    const shownEdges = (edges[index] ?? []).filter(({ side }) => (
+      side === "left" ? tileClip.x > clip.x
+        : side === "right" ? tileClip.x + tileClip.width < clip.x + clip.width
+          : side === "top" ? tileClip.y > clip.y
+            : tileClip.y + tileClip.height < clip.y + clip.height
+    ));
+    shownIndex.set(index, shown.length);
+    shown.push({
+      source,
+      edges: shownEdges,
+      clip: tileClip,
+      image: coverPeekRect(rectOf(picture), size.width, size.height),
+      picture: copy,
+      naturalWidth: size.width,
+      naturalHeight: size.height,
+    });
+  }
+  for (const tile of shown) {
+    tile.edges = tile.edges.map((edge) => ({
+      ...edge,
+      across: edge.across.map((index) => shownIndex.get(index) ?? -1).filter((index) => index >= 0),
+    }));
   }
   return {
-    drawable: picture,
-    ...(copy ? { copy } : {}),
-    naturalWidth: size.width,
-    naturalHeight: size.height,
-    clip: tileClip,
-    image: coverPeekRect(rectOf(picture), size.width, size.height),
-    composite: false,
-    ...(rest ? { rest: { element: rest, rect: clip } } : {}),
+    clip,
+    seams: getComputedStyle(grid).backgroundColor,
+    tiles: shown,
   };
 }
 
-/** A feed card's picture: the part of its media slot the card shows now (a
- *  lifted card shows less of it, SPEC_CARD_STATES.md, С8) and the whole
- *  picture as the slot crops it (`object-cover`). A gallery with a tile of
- *  `windowSource`, the window's own picture, gives that tile (О10, п. 3);
- *  any other gallery, all its pictures as one. */
-function feedCardMedia(frame: HTMLElement, windowSource: string | null): PeekSourceMedia | null {
-  const slot = frame.querySelector<HTMLElement>("[data-card-media-clip]");
-  if (!slot) return null;
-  const slotRect = rectOf(slot);
-  const window = slot.querySelector("[data-card-lift='window']");
-  const clip = window ? intersectPeekRect(slotRect, rectOf(window)) : slotRect;
+/** A feed card's picture that is no gallery: the part of its media slot the
+ *  card shows now and the whole picture as the slot crops it
+ *  (`object-cover`). */
+function feedCardMedia(slot: HTMLElement): PeekSourceMedia | null {
+  const clip = slotClipOf(slot);
   if (clip.width <= 0 || clip.height <= 0) return null;
-  const radius = getComputedStyle(slot).borderTopLeftRadius;
-  const tile = windowSource ? galleryTileOf(slot, windowSource) : null;
-  const tileMedia = tile ? galleryTileMedia(tile, clip, radius) : null;
-  if (tileMedia) return tileMedia;
-  // Any other gallery flies whole, as a copy of its tiles.
-  const grid = slot.querySelector("[data-card-media-tile]")?.parentElement ?? null;
-  if (grid) {
-    return {
-      drawable: null,
-      copy: galleryCopyOf(grid, clip, null, radius),
-      naturalWidth: clip.width,
-      naturalHeight: clip.height,
-      clip,
-      image: clip,
-      composite: true,
-    };
-  }
   const pictures = [...slot.querySelectorAll<HTMLImageElement | HTMLVideoElement>("img, video")].filter(painted);
   if (pictures.length === 0) return null;
   if (pictures.length === 1) {
@@ -221,51 +184,65 @@ function feedCardMedia(frame: HTMLElement, windowSource: string | null): PeekSou
 }
 
 /** The line a feed card draws under its media, the frame's line mirrored
- *  there (global.css, `[data-card-media-outline]`), copied with the card's
- *  own values: the copy stands outside the card, whose variables it reads. */
-function feedCardOutline(frame: HTMLElement): { element: HTMLElement; rect: PeekRect } | null {
+ *  there (global.css, `[data-card-media-outline]`): the row its bottom edge,
+ *  all of it the card shows, stands on, and its colour, as the card has
+ *  them. */
+function feedCardUnderline(frame: HTMLElement): { y: number; height: number; colour: string } | null {
   const ring = frame.querySelector<HTMLElement>("[data-card-media-outline]");
   if (!ring) return null;
   const rect = rectOf(ring);
-  if (rect.width <= 0 || rect.height <= 0) return null;
   const style = getComputedStyle(ring);
-  const line = document.createElement("span");
-  Object.assign(line.style, {
-    position: "absolute",
-    inset: "0",
-    boxSizing: "border-box",
-    border: `${style.borderTopWidth} ${style.borderTopStyle} ${style.borderTopColor}`,
-    borderRadius: `${style.borderTopLeftRadius} ${style.borderTopRightRadius} ${style.borderBottomRightRadius} ${style.borderBottomLeftRadius}`,
-    clipPath: style.clipPath,
-    pointerEvents: "none",
-  });
-  return { element: line, rect };
+  const height = Number.parseFloat(style.borderBottomWidth);
+  if (rect.width <= 0 || !(height > 0)) return null;
+  return { y: rect.y + rect.height - height, height, colour: style.borderBottomColor };
+}
+
+/** A feed card's text part (Card.tsx, `CardTextStack`), copied to be
+ *  carried with the window's frame: the card's title and text come back
+ *  with the card as the window lands, not at once after it (О11, п. 2). The
+ *  copy is no lift and holds no line under the media: the window draws
+ *  that line itself. */
+function feedCardText(frame: HTMLElement): { element: HTMLElement; rect: PeekRect } | null {
+  const text = frame.querySelector<HTMLElement>("[data-card-lift='text']");
+  if (!text) return null;
+  const rect = intersectPeekRect(rectOf(text), rectOf(frame));
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  const copy = text.cloneNode(true) as HTMLElement;
+  for (const ring of copy.querySelectorAll("[data-card-media-outline]")) ring.remove();
+  for (const element of [copy, ...copy.querySelectorAll<HTMLElement>("[data-card-lift]")]) element.removeAttribute("data-card-lift");
+  Object.assign(copy.style, { width: `${rectOf(text).width}px`, transform: "none" });
+  copy.setAttribute("aria-hidden", "true");
+  return { element: copy, rect: rectOf(text) };
 }
 
 /** A feed card as the window grows out of it: its frame, its corner, the
- *  card's fill and its picture (`windowSource`: the window's own picture's
- *  file, `detailPeekMediaSource`). */
-export function readFeedPeekSource(frame: HTMLElement, windowSource: string | null = null): PeekSource {
+ *  card's fill, its picture or its gallery, and the line under them. */
+export function readFeedPeekSource(frame: HTMLElement): PeekSource {
   const radius = Number.parseFloat(getComputedStyle(frame).borderTopLeftRadius);
-  const media = feedCardMedia(frame, windowSource);
-  const outline = media ? feedCardOutline(frame) : null;
+  const slot = frame.querySelector<HTMLElement>("[data-card-media-clip]");
+  const gallery = slot ? feedCardGallery(slot) : null;
+  const media = slot && !gallery ? feedCardMedia(slot) : null;
+  const underline = media || gallery ? feedCardUnderline(frame) : null;
+  const text = feedCardText(frame);
   return {
     rect: rectOf(frame),
     radius: Number.isFinite(radius) ? radius : 0,
     fill: "var(--card)",
     media,
-    ...(outline ? { outline } : {}),
+    ...(gallery ? { gallery } : {}),
+    ...(underline ? { underline } : {}),
+    ...(text ? { text } : {}),
   };
 }
 
 /** Where the card `slug` stands, if any of it is on screen in the right
  *  part `area` (which lies over the feed, not round it): in the feed, else
- *  on the graph. `windowSource` is the window's own picture's file. */
-export function findPeekSource(area: HTMLElement, slug: string, windowSource: string | null = null): PeekSource | null {
+ *  on the graph. */
+export function findPeekSource(area: HTMLElement, slug: string): PeekSource | null {
   const areaRect = rectOf(area);
   const frame = area.ownerDocument.querySelector<HTMLElement>(feedCardSelector(slug));
   if (frame) {
-    const source = readFeedPeekSource(frame, windowSource);
+    const source = readFeedPeekSource(frame);
     if (peekRectsOverlap(source.rect, areaRect)) return source;
   }
   const graph = readPeekGraphSource(slug);
@@ -280,10 +257,13 @@ export function detailPeekMediaFrame(content: HTMLElement): HTMLElement | null {
   );
 }
 
-/** The media file the open card's media frame shows, as the card's
- *  preview names it (Detail.tsx, `data-detail-media-source`). */
-export function detailPeekMediaSource(content: HTMLElement): string | null {
-  return detailPeekMediaFrame(content)?.dataset.detailMediaSource ?? null;
+/** Every media frame of the open card in the article column, in the
+ *  article's order, with the file each shows as the card's preview names it
+ *  (Detail.tsx, `data-detail-media-source`). */
+export function detailPeekMediaFrames(content: HTMLElement): { frame: HTMLElement; source: string | null }[] {
+  return [...content.querySelectorAll<HTMLElement>(
+    "[data-detail-article-column] :is([data-detail-image], [data-detail-video])",
+  )].map((frame) => ({ frame, source: frame.dataset.detailMediaSource ?? null }));
 }
 
 /** What draws the picture of an open card's media frame now: the original,

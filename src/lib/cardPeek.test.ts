@@ -13,6 +13,8 @@ import {
   CARD_PEEK_NUDGE_SCALE,
   cardPeekStackedMaxWidth,
   carriedPeekMediaPlace,
+  carriedPeekImage,
+  carriedPeekRect,
   centerPeekRect,
   centredPeekRect,
   coverPeekRect,
@@ -24,9 +26,15 @@ import {
   peekFrameCut,
   peekFramePieceBoxes,
   peekFrameTransforms,
+  peekLaidMediaTransforms,
   peekMediaTransforms,
   peekOpeningFrom,
   peekOpeningKind,
+  peekRideOpacity,
+  mainPeekTile,
+  pairPeekGallery,
+  peekTileEdgeRects,
+  peekTileEdges,
   peekSpringSettled,
   peekSurfaceTransforms,
   peekNudgeTransform,
@@ -146,6 +154,85 @@ describe("card peek content timing (О10, п. 4; О11, п. 1)", () => {
   it("goes on from where a reversal found it", () => {
     expect(peekContentOpacity("in", 10, 0.4)).toBe(0.4);
     expect(peekContentOpacity("out", CARD_PEEK_CONTENT_FADE_MS / 2, 0.4)).toBeCloseTo(0.2, 5);
+  });
+});
+
+describe("card peek gallery tiles (О10, п. 3; О11, п. 2)", () => {
+  it("fades the riding parts out over an opening's first third and in over a closing's first", () => {
+    expect(peekRideOpacity("in", 0, 1)).toBe(1);
+    expect(peekRideOpacity("in", CARD_PEEK_CONTENT_FADE_MS / 2, 1)).toBeCloseTo(0.5, 5);
+    expect(peekRideOpacity("in", CARD_PEEK_CONTENT_FADE_MS, 1)).toBe(0);
+    // Back with the card from the closing's start: whole by its first third.
+    expect(peekRideOpacity("out", 0, 0)).toBe(0);
+    expect(peekRideOpacity("out", CARD_PEEK_CONTENT_FADE_MS / 2, 0)).toBeCloseTo(0.5, 5);
+    expect(peekRideOpacity("out", CARD_PEEK_CONTENT_FADE_MS, 0)).toBe(1);
+    // A reversal goes on from where it found them.
+    expect(peekRideOpacity("out", 10, 0.4)).toBe(0.4);
+  });
+
+  it("pairs each tile with the first media of its file the window shows, by the file, not the order", () => {
+    const frames = [
+      { source: "b", shown: true },
+      { source: "a", shown: true },
+      { source: "c", shown: false },
+      { source: "a", shown: true },
+    ];
+    expect(pairPeekGallery(["a", "b", "c", "d"], frames)).toEqual([1, 0, -1, -1]);
+    // A second tile of the same file takes the next media of it.
+    expect(pairPeekGallery(["a", "a", "a"], frames)).toEqual([1, 3, -1]);
+  });
+
+  it("flies the tile of the window's first picture a tile has, the main one if any has it", () => {
+    expect(mainPeekTile([1, 0, -1, -1])).toBe(1);
+    expect(mainPeekTile([-1, 2, 1, -1])).toBe(2);
+    expect(mainPeekTile([-1, -1])).toBe(-1);
+  });
+
+  it("carries a tile with the card's frame, stretched as the frame is, landing on itself", () => {
+    const card = { x: 100, y: 100, width: 200, height: 300 };
+    const tile = { x: 150, y: 120, width: 50, height: 60 };
+    expect(carriedPeekRect(card, card, tile)).toEqual(tile);
+    expect(carriedPeekRect(card, { x: 0, y: 0, width: 400, height: 900 }, tile)).toEqual({ x: 100, y: 60, width: 100, height: 180 });
+  });
+
+  it("finds the seams between tiles and lays each half along its tile, the crossing whole", () => {
+    const boxes = [
+      { x: 0, y: 0, width: 100, height: 100 },
+      { x: 101, y: 0, width: 100, height: 100 },
+      { x: 0, y: 101, width: 100, height: 100 },
+      { x: 101, y: 101, width: 100, height: 100 },
+    ];
+    const edges = peekTileEdges(boxes);
+    expect(edges[0]).toEqual([{ side: "right", width: 0.5, across: [1] }, { side: "bottom", width: 0.5, across: [2] }]);
+    expect(edges[3]).toEqual([{ side: "left", width: 0.5, across: [2] }, { side: "top", width: 0.5, across: [1] }]);
+    expect(peekTileEdgeRects(boxes[0]!, edges[0]!)).toEqual([
+      { x: 100, y: 0, width: 0.5, height: 100 },
+      // Under the tile and across its own half of the seam beside it.
+      { x: 0, y: 100, width: 100.5, height: 0.5 },
+    ]);
+    // Twice the size: the halves keep their width on screen, but one
+    // carried with the tile, which doubles with it.
+    const twice = { x: 0, y: 0, width: 200, height: 200 };
+    expect(peekTileEdgeRects(twice, edges[0]!, boxes[0])[0]).toEqual({ x: 200, y: 0, width: 0.5, height: 200 });
+    const carried = edges[0]!.map((edge) => ({ ...edge, carried: true }));
+    expect(peekTileEdgeRects(twice, carried, boxes[0])[0]).toEqual({ x: 200, y: 0, width: 1, height: 200 });
+  });
+
+  it("keeps a carried tile's picture unstretched, covering its box as it covered the tile", () => {
+    const from = { clip: { x: 0, y: 0, width: 100, height: 100 }, image: { x: -25, y: 0, width: 150, height: 100 } };
+    expect(carriedPeekImage(from, from.clip)).toEqual(from.image);
+    // Stretched twice across, three times down: scaled three times both ways.
+    expect(carriedPeekImage(from, { x: 0, y: 0, width: 200, height: 300 })).toEqual({ x: -125, y: 0, width: 450, height: 300 });
+  });
+
+  it("draws a picture laid out at its card place with no transform there", () => {
+    const clip = { x: 10, y: 20, width: 100, height: 80 };
+    const image = { x: -5, y: 20, width: 130, height: 80 };
+    const laidImage = { x: -15, y: 0, width: 130, height: 80 };
+    expect(peekLaidMediaTransforms(clip, laidImage, clip, image)).toEqual({
+      clip: "translate(0px, 0px) scale(1, 1)",
+      image: "translate(0px, 0px) scale(1, 1)",
+    });
   });
 });
 
@@ -335,7 +422,8 @@ describe("card peek opening and closing (О10, О11, О13)", () => {
 
   it("grows out of a clicked card, fades for a key, comes out of the centre otherwise", () => {
     expect(peekOpeningKind({ from: "card", restored: false, reducedMotion: false })).toBe("card");
-    expect(peekOpeningKind({ from: "keyboard", restored: false, reducedMotion: false })).toBe("fade");
+    expect(peekOpeningKind({ from: "keyboard", restored: false, reducedMotion: false })).toBe("instant");
+    expect(peekOpeningKind({ from: "keyboard", restored: false, reducedMotion: true })).toBe("instant");
     expect(peekOpeningKind({ from: "elsewhere", restored: false, reducedMotion: false })).toBe("center");
     expect(peekOpeningKind({ from: "card", restored: false, reducedMotion: true })).toBe("fade");
     expect(peekOpeningKind({ from: "card", restored: true, reducedMotion: false })).toBe("instant");

@@ -35,6 +35,7 @@
 // The window's size is heard by a ResizeObserver, never read in a frame.
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -60,22 +61,28 @@ import {
   PEEK_FRAME_CORNERS,
   PEEK_FRAME_PIECES,
   carriedPeekMediaPlace,
+  carriedPeekImage,
+  carriedPeekRect,
   cardPeekStackedMaxWidth,
   centerPeekRect,
   centredPeekRect,
   clampUnit,
   intersectPeekRect,
   lerpPeekRect,
+  mainPeekTile,
+  pairPeekGallery,
   peekClosingKind,
   peekContentOpacity,
   peekFrameCut,
   peekFrameTransforms,
+  peekLaidMediaTransforms,
   peekMediaTransforms,
   peekNudgeTransform,
-  peekNudgeUndoTransform,
   peekOpeningKind,
+  peekRideOpacity,
   peekSpringSettled,
   peekSurfaceTransforms,
+  peekTileEdgeRects,
   peekWindowLayout,
   lerp,
   relativePeekRect,
@@ -91,10 +98,11 @@ import {
   type PeekRect,
   type PeekSource,
   type PeekSpring,
+  type PeekTileEdge,
 } from "@/lib/cardPeek";
 import {
   detailPeekMediaFrame,
-  detailPeekMediaSource,
+  detailPeekMediaFrames,
   feedCardSelector,
   findPeekSource,
   rectOf,
@@ -164,18 +172,14 @@ interface PeekMotion {
   elapsed: number;
   contentStart: number;
   content: number;
+  /** The share the card's riding parts show at (`peekRideOpacity`), and
+   *  where it stood when the motion took its direction. */
+  rideStart: number;
+  ride: number;
   /** The card's frame, in the window's space (`card` only). */
   card: PeekRect | null;
-  cardMedia: PeekMediaPlace | null;
-  windowMedia: PeekMediaPlace | null;
-  /** The picture's place in the window is not one of the window's own
-   *  frames (a gallery, no frame at all): it fades under the content. */
-  mediaFades: boolean;
-  /** The window's own picture, hidden while the card's rides over it. */
-  hiddenFrame: HTMLElement | null;
-  /** Where the carried picture is laid out: its place at the window's end,
-   *  so it is drawn no larger than it lands (null: the whole window). */
-  mediaLaid: PeekRect | null;
+  /** The pictures it carries, in the order they stand on the page. */
+  flights: PeekFlight[];
   /** `resize`: the window's width at either end of the spring, 0 and 1;
    *  null, the end it goes to, follows the window's place. */
   widths: [number | null, number | null];
@@ -203,26 +207,82 @@ function frameMaxWidth(frame: PeekFrameLayout | null, width: PeekWidth): string 
   return frame?.layout === "stacked" ? cardPeekStackedMaxWidth(frame.contentWidth) : CARD_PEEK_MAX_WIDTH;
 }
 
+/** One picture a movement carries (О10, п. 3), in the window's space:
+ *  from the card's place to the window's own frame for it (`fly`), or
+ *  carried by the window's frame (`ride`, a gallery's tile with no picture
+ *  of its own in the window). A gallery's tile carries its halves of the
+ *  seams round it (`edges`). */
+interface PeekFlight {
+  kind: "fly" | "ride";
+  from: PeekMediaPlace;
+  /** The window's frame for it (`fly`). */
+  to: PeekMediaPlace | null;
+  /** Where it is laid out (null: the whole window). */
+  laid: PeekRect | null;
+  /** Where its picture is laid out in it, from its origin (null: over the
+   *  whole of it). A `ride` is laid out as the card shows it, so it lands
+   *  as the card draws it. */
+  laidImage: PeekRect | null;
+  /** The picture's own size: a `ride` covers the box the frame carries. */
+  naturalWidth: number;
+  naturalHeight: number;
+  /** It fades under the content (no frame of its own in the window), or by
+   *  the window's share (`ride`). */
+  fades: "content" | "share" | null;
+  edges: PeekTileEdge[];
+  /** A `ride` held beside this flight, the gallery's main picture: it goes
+   *  with it as one piece, offset and scaled as it is (О10, п. 3); with
+   *  none, it rides the window's frame. */
+  follows?: number;
+  /** A `ride`'s picture keeps its own size at its clip's top left (the
+   *  card's text, as the window's content does), not covering the clip. */
+  fixed?: boolean;
+  /** The card's line under its media where it runs along the bottom of
+   *  this picture: its offset from the clip's bottom and its height. It
+   *  goes with the picture, and is the card's: it fades as the card does. */
+  underline: { offset: number; height: number } | null;
+  /** The window's own picture it stands for, hidden while it rides over it. */
+  hidden: HTMLElement | null;
+}
+
+/** What a flight shows on the page: its picture, its half seams in the
+ *  seams' colour, and the window's original it is, by its address, kept
+ *  for the closing. */
+interface PeekFlyer {
+  kind: PeekFlight["kind"];
+  picture: PeekPicture | null;
+  /** The card's own picture under the window's original it carries, drawn
+   *  alike: a large original WebKit has not drawn yet in its first frame
+   *  leaves the tile's picture showing, never the window's fill. */
+  backing: PeekPicture | null;
+  edges: number;
+  seams: string | null;
+  /** The colour of the card's line under its media, when the flight
+   *  carries a part of it. */
+  underline: string | null;
+  laid: PeekRect | null;
+  laidImage: PeekRect | null;
+  original: string | null;
+}
+
 /** Waiting, before a movement, for the card to be whole. */
 interface PeekPreparation {
   frame: number | null;
-  /** The picture the movement carries, once decoded (null while it is
-   *  decoding, or when there is none to carry). */
-  picture: PeekPicture | null;
-  /** The picture is still decoding. */
-  decoding: boolean;
+  /** The window's originals the movement carries, once decoded, by their
+   *  addresses. */
+  pictures: Map<string, PeekPicture>;
+  /** How many are still decoding. */
+  decoding: number;
 }
 
 /** The picture a movement carries: an `<img>` decoded before the start (the
- *  window's own original, so the end needs no swap), a canvas drawn from
- *  what the card shows when the window has no picture of its own, or a
- *  gallery's copy of its tiles, laid out at the card's size on `stage` and
- *  scaled to the carried box. */
+ *  window's own original, so the end needs no swap), a copy of a gallery
+ *  tile's picture, or a canvas drawn from what the card shows when the
+ *  window has no picture of its own. */
 interface PeekPicture {
   element: HTMLElement;
   naturalWidth: number;
   naturalHeight: number;
-  stage?: HTMLElement;
 }
 
 /** What stands on the page while the window moves. */
@@ -240,12 +300,15 @@ interface PeekPieces {
    *  move alike. */
   frame: { element: HTMLElement; piece: PeekFramePiece }[];
   weights: HTMLElement[];
-  mediaClip: HTMLElement | null;
-  mediaImage: HTMLElement | null;
-  /** A gallery's other tiles and seams, at the card's place. */
-  rest: HTMLElement | null;
-  /** The card's line under its media, carried with the frame. */
-  outline: HTMLElement | null;
+  /** Each flight's clip, picture, half seams and line, by the motion's
+   *  flights. */
+  flights: ({
+    clip: HTMLElement;
+    image: HTMLElement | null;
+    backing: HTMLElement | null;
+    edges: HTMLElement[];
+    underline: HTMLElement | null;
+  } | null)[];
 }
 
 /** The longest side a canvas picture is drawn at, in device pixels. */
@@ -268,9 +331,7 @@ const FRAME_PIECE_CLASS = "pointer-events-none absolute origin-top-left transiti
  *  the movement only (they are on the page only while it lasts). */
 const FLYER_CLASS = "pointer-events-none absolute origin-top-left will-change-transform transition-none";
 
-/** A gallery's other tiles and seams: still, at the card's place, they only
- *  fade, on a layer for the movement only. */
-const REST_CLASS = "pointer-events-none absolute overflow-hidden will-change-[opacity] transition-none";
+
 
 /** What the motion writes moves only by the spring: no CSS transition of
  *  its own, the 0.01 ms one "Reduce motion" gives every element included
@@ -333,7 +394,7 @@ function cornerShapeStyle(corner: PeekFrameCorner, cut: PeekFrameCut, radius: nu
  *  of the two corner shapes the one that covers more lies on top and takes
  *  its own share, so every frame of a corner is one of the two shapes or
  *  between them (О10, п. 2). */
-function PeekFrameUnder({ view, cut, children }: { view: PeekMotionView; cut: PeekFrameCut; children?: ReactNode }) {
+function PeekFrameUnder({ view, cut }: { view: PeekMotionView; cut: PeekFrameCut }) {
   const cardOnTop = view.cardRadius <= view.windowRadius;
   const shape = (owner: "card" | "window", corner: PeekFrameCorner, weighted: boolean) => (
     <div
@@ -345,18 +406,6 @@ function PeekFrameUnder({ view, cut, children }: { view: PeekMotionView; cut: Pe
       data-peek-weight={weighted ? owner : undefined}
     />
   );
-  // The corners' two shapes, the one under (unweighted) and the one over it
-  // (weighted), drawn as two passes of the same pieces.
-  const corners = (owner: "card" | "window", weighted: boolean) => PEEK_FRAME_CORNERS.map((corner) => (
-    <div
-      key={`${owner}-${corner}`}
-      className={cn(FRAME_PIECE_CLASS, "overflow-hidden")}
-      style={pieceStyle(corner, cut)}
-      data-peek-piece={corner}
-    >
-      {shape(owner, corner, weighted)}
-    </div>
-  ));
   return (
     <>
       <div
@@ -375,12 +424,6 @@ function PeekFrameUnder({ view, cut, children }: { view: PeekMotionView; cut: Pe
           />
         ))}
       </div>
-      {corners(cardOnTop ? "window" : "card", false)}
-      {cardOnTop && corners("card", true)}
-      {/* What stands under the window and over the card's fill (a gallery's
-          other tiles, О11, п. 2): over the corners' card shape too, so the
-          card's corner shows it at the end, under the window's fill. */}
-      {children}
       <div className={cn("pointer-events-none absolute inset-0", MOVED_CLASS)} data-peek-fill="window" data-peek-weight="window">
         {(["bandAcross", "bandDown"] as const).map((piece) => (
           <div
@@ -391,7 +434,17 @@ function PeekFrameUnder({ view, cut, children }: { view: PeekMotionView; cut: Pe
           />
         ))}
       </div>
-      {!cardOnTop && corners("window", true)}
+      {PEEK_FRAME_CORNERS.map((corner) => (
+        <div
+          key={corner}
+          className={cn(FRAME_PIECE_CLASS, "overflow-hidden")}
+          style={pieceStyle(corner, cut)}
+          data-peek-piece={corner}
+        >
+          {shape(cardOnTop ? "window" : "card", corner, false)}
+          {shape(cardOnTop ? "card" : "window", corner, true)}
+        </div>
+      ))}
     </>
   );
 }
@@ -498,19 +551,6 @@ function canvasPicture(drawable: CanvasImageSource, naturalWidth: number, natura
   return { element: canvas, naturalWidth, naturalHeight };
 }
 
-/** A gallery's copy of its tiles (cardPeekSource.ts) as a carried picture:
- *  laid out at its own size, `naturalWidth` by `naturalHeight`, so its seams
- *  stay 1 px when it lands. */
-function copyPicture(copy: HTMLElement, naturalWidth: number, naturalHeight: number): PeekPicture {
-  const stage = document.createElement("div");
-  stage.className = "absolute left-0 top-0 origin-top-left overflow-hidden";
-  Object.assign(stage.style, { width: `${naturalWidth}px`, height: `${naturalHeight}px` });
-  stage.append(copy);
-  const element = document.createElement("div");
-  element.append(stage);
-  return { element, naturalWidth, naturalHeight, stage };
-}
-
 /** An `<img>` of `source`, decoded off the main thread; null when it cannot
  *  be. */
 function decodedPicture(source: string): Promise<PeekPicture | null> {
@@ -532,15 +572,36 @@ function flyerBox(laid: PeekRect | null): CSSProperties {
 
 /** The card's frame as a source, in the window's space. */
 function sourcePlace(source: PeekSource, origin: { x: number; y: number }) {
-  const rest = source.media?.rest;
+  const gallery = source.gallery;
+  const relative = (box: PeekRect) => relativePeekRect(box, origin);
   return {
-    rect: relativePeekRect(source.rect, origin),
+    rect: relative(source.rect),
     media: source.media
-      ? { clip: relativePeekRect(source.media.clip, origin), image: relativePeekRect(source.media.image, origin) }
+      ? { clip: relative(source.media.clip), image: relative(source.media.image) }
       : null,
-    rest: rest ? { element: rest.element, rect: relativePeekRect(rest.rect, origin) } : null,
-    outline: source.outline ? { element: source.outline.element, rect: relativePeekRect(source.outline.rect, origin) } : null,
+    gallery: gallery
+      ? {
+        ...gallery,
+        clip: relative(gallery.clip),
+        tiles: gallery.tiles.map((tile) => ({ ...tile, clip: relative(tile.clip), image: relative(tile.image) })),
+      }
+      : null,
+    underline: source.underline ? { ...source.underline, y: source.underline.y - origin.y } : null,
+    text: source.text ? { element: source.text.element, rect: relative(source.text.rect) } : null,
   };
+}
+
+/** The window's originals the flights carry, by their addresses. */
+function carriedOriginals(flyers: readonly PeekFlyer[]): Map<string, PeekPicture> {
+  const kept = new Map<string, PeekPicture>();
+  for (const flyer of flyers) if (flyer.original && flyer.picture) kept.set(flyer.original, flyer.picture);
+  return kept;
+}
+
+/** The address of a window media frame's original picture. */
+function originalOf(frame: HTMLElement | null): string | null {
+  const original = frame?.querySelector<HTMLImageElement>("img:not([data-detail-preview-backing])");
+  return original ? original.currentSrc || original.src || null : null;
 }
 
 /** The open card's window over the right part. */
@@ -552,23 +613,10 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
   const [view, setView] = useState<PeekMotionView | null>(null);
   const [flyer, setFlyer] = useState<{
     id: number;
-    picture: PeekPicture;
-    laid: PeekRect | null;
-    /** A gallery's other tiles and seams, in the window's space. */
-    rest: { element: HTMLElement; rect: PeekRect } | null;
-    /** The card's line under its media, in the window's space. */
-    outline: { element: HTMLElement; rect: PeekRect } | null;
+    flights: PeekFlyer[];
   } | null>(null);
-  const flyerRef = useRef<PeekPicture | null>(null);
-  flyerRef.current = flyer?.picture ?? null;
-  const flyerLaidRef = useRef<PeekRect | null>(null);
-  flyerLaidRef.current = flyer?.laid ?? null;
-  const flyerRestRef = useRef<HTMLElement | null>(null);
-  flyerRestRef.current = flyer?.rest?.element ?? null;
-  const flyerRestBoxRef = useRef<PeekRect | null>(null);
-  flyerRestBoxRef.current = flyer?.rest?.rect ?? null;
-  const flyerOutlineRef = useRef<{ element: HTMLElement; rect: PeekRect } | null>(null);
-  flyerOutlineRef.current = flyer?.outline ?? null;
+  const flyerRef = useRef<PeekFlyer[]>([]);
+  flyerRef.current = flyer?.flights ?? [];
   const [closing, setClosing] = useState(false);
   const [preparing, setPreparing] = useState(false);
   // Whether the content takes the page's renders: not while the window moves.
@@ -582,15 +630,16 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
   const sizeRef = useRef({ width: 0, height: 0 });
   const hiddenCardRef = useRef<HTMLElement | null>(null);
   const handoverRef = useRef<number | null>(null);
-  // The picture an opening carried, kept decoded for the closing.
-  const restPictureRef = useRef<PeekPicture | null>(null);
+  // The window's originals an opening carried, kept decoded for the
+  // closing, by their addresses.
+  const restPicturesRef = useRef<Map<string, PeekPicture>>(new Map());
   const scrimRef = useRef<HTMLDivElement>(null);
   const anchorRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const mediaClipRef = useRef<HTMLDivElement>(null);
-  const restRef = useRef<HTMLDivElement>(null);
-  const outlineRef = useRef<HTMLDivElement>(null);
+  const flightClipsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const flightEdgesRef = useRef<(HTMLDivElement | null)[][]>([]);
+  const flightLinesRef = useRef<(HTMLDivElement | null)[]>([]);
   const viewRef = useRef<PeekMotionView | null>(null);
   viewRef.current = view;
   const exitRef = useRef(exit);
@@ -711,7 +760,7 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
   };
 
   const restoreHiddenFrame = (motion: PeekMotion | null) => {
-    if (motion?.hiddenFrame) motion.hiddenFrame.style.visibility = "";
+    for (const flight of motion?.flights ?? []) if (flight.hidden) flight.hidden.style.visibility = "";
   };
 
   /** Back to the plain surface's place: no transform, no fade. */
@@ -732,17 +781,8 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
     const motion = motionRef.current;
     const carried = motion && motion.kind !== "resize" ? clampUnit(motion.spring.position) : 1;
     const nudge = nudgeSpringRef.current;
-    const share = nudge.spring.position * carried;
-    const transform = peekNudgeTransform(share);
+    const transform = peekNudgeTransform(nudge.spring.position * carried);
     wrap.style.transform = transform;
-    // A gallery's other tiles stand at the card's place, not stepped back.
-    const rest = restRef.current;
-    const restBox = flyerRestBoxRef.current;
-    if (rest && restBox) {
-      const { width, height } = sizeRef.current;
-      rest.style.transformOrigin = `${width / 2 - restBox.x}px ${height / 2 - restBox.y}px`;
-      rest.style.transform = peekNudgeUndoTransform(share);
-    }
     wrap.style.willChange = transform !== "" && (nudge.frame !== null || (motion !== null && motion.kind !== "resize"))
       ? "transform"
       : "";
@@ -815,9 +855,6 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
   /** The window's place, from the size its observer heard. */
   const laid = (): PeekRect => ({ x: 0, y: 0, ...sizeRef.current });
 
-  /** The file of the window's own picture: a gallery card gives the tile
-   *  of that file (О10, п. 3). */
-  const windowSource = () => (contentRef.current ? detailPeekMediaSource(contentRef.current) : null);
 
   /** The window's own picture, where it stands in the window's space: read
    *  once, when a movement starts. */
@@ -841,6 +878,35 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
     const { width, height } = sizeRef.current;
     const interior = { x: 1, y: 1, width: width - 2, height: height - 2 };
     return { frame, place: { clip: intersectPeekRect(image, interior), image } };
+  }, []);
+
+  /** Every media frame of the open card where it stands in the window's
+   *  space, read once, when a movement starts: the part the window shows
+   *  of it now (inside the window and the content's scroll), and its
+   *  original's address. */
+  const readWindowFrames = useCallback(() => {
+    const contentElement = contentRef.current;
+    if (!contentElement) return [];
+    const contentBox = rectOf(contentElement);
+    // As `readWindowMedia`: the step's scale taken out.
+    const scale = 1 - (1 - CARD_PEEK_NUDGE_SCALE) * nudgeSpringRef.current.spring.position;
+    const inWindow = (box: PeekRect): PeekRect => ({
+      x: (box.x - contentBox.x) / scale + 1,
+      y: (box.y - contentBox.y) / scale + 1,
+      width: box.width / scale,
+      height: box.height / scale,
+    });
+    const { width, height } = sizeRef.current;
+    const interior = { x: 1, y: 1, width: width - 2, height: height - 2 };
+    return detailPeekMediaFrames(contentElement).map(({ frame, source }) => {
+      const image = inWindow(rectOf(frame));
+      let seen = interior;
+      for (let element = frame.parentElement; element && element !== contentElement; element = element.parentElement) {
+        if (getComputedStyle(element).overflowY !== "visible") seen = intersectPeekRect(seen, inWindow(rectOf(element)));
+      }
+      const clip = intersectPeekRect(image, seen);
+      return { frame, source, place: { clip, image }, shown: clip.width > 0 && clip.height > 0, original: originalOf(frame) };
+    });
   }, []);
 
   /** Writes one frame of the movement. */
@@ -888,28 +954,64 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
     surface.style.transform = surfaceTransforms.surface;
     contentElement.style.transform = surfaceTransforms.content;
     contentElement.style.opacity = String(motion.kind === "card" ? motion.content : 1);
-    if (pieces.mediaClip && pieces.mediaImage && motion.cardMedia && motion.windowMedia) {
-      const clip = lerpPeekRect(motion.cardMedia.clip, motion.windowMedia.clip, p);
-      const image = lerpPeekRect(motion.cardMedia.image, motion.windowMedia.image, p);
-      const media = peekMediaTransforms(motion.mediaLaid ?? place, clip, image);
-      pieces.mediaClip.style.transform = media.clip;
-      pieces.mediaImage.style.transform = media.image;
-      pieces.mediaClip.style.opacity = String(motion.mediaFades ? 1 - motion.content : 1);
-    }
-    // With the scrim, as the card under it shows again (О11, п. 2).
-    if (pieces.rest) pieces.rest.style.opacity = String(1 - p);
-    // The card's line under its media goes with the card's frame, from the
-    // card's place in it to the same place in the window's, along itself
-    // only, and is the card's: it fades as the card's corner does.
-    const outlineBox = flyerOutlineRef.current?.rect;
-    if (pieces.outline && outlineBox && motion.card) {
-      const scaleX = shown.width / Math.max(motion.card.width, 1e-3);
-      const scaleY = shown.height / Math.max(motion.card.height, 1e-3);
-      const x = shown.x + (outlineBox.x - motion.card.x) * scaleX - outlineBox.x;
-      const y = shown.y + (outlineBox.y - motion.card.y) * scaleY - outlineBox.y;
-      pieces.outline.style.transform = `translate(${x}px, ${y}px) scaleX(${scaleX})`;
-      pieces.outline.style.opacity = String(1 - p);
-    }
+    const card = motion.card;
+    motion.flights.forEach((flight, index) => {
+      const piece = pieces.flights[index];
+      if (!piece || !card) return;
+      let clip: PeekRect;
+      let image: PeekRect;
+      // Its whole box before the frame cuts it: its seams go by it.
+      let whole: PeekRect;
+      if (flight.to) {
+        clip = lerpPeekRect(flight.from.clip, flight.to.clip, p);
+        image = lerpPeekRect(flight.from.image, flight.to.image, p);
+        whole = clip;
+      } else {
+        // Carried beside the gallery's main picture as one piece with it, or
+        // by the frame, stretched as it is, and inside the frame; its
+        // picture is not stretched, and covers the box it is carried in
+        // (О10, п. 3).
+        const lead = flight.follows !== undefined ? motion.flights[flight.follows] : undefined;
+        whole = lead?.to
+          ? carriedPeekRect(lead.from.clip, lerpPeekRect(lead.from.clip, lead.to.clip, p), flight.from.clip)
+          : carriedPeekRect(card, shown, flight.from.clip);
+        clip = intersectPeekRect(whole, shown);
+        image = flight.fixed
+          ? { x: whole.x, y: whole.y, width: flight.from.image.width, height: flight.from.image.height }
+          : carriedPeekImage(flight.from, whole);
+      }
+      const media = flight.laidImage
+        ? peekLaidMediaTransforms(flight.laid ?? place, flight.laidImage, clip, image)
+        : peekMediaTransforms(flight.laid ?? place, clip, image);
+      piece.clip.style.transform = media.clip;
+      if (piece.image) piece.image.style.transform = media.image;
+      if (piece.backing) piece.backing.style.transform = media.image;
+      const opacity = String(flight.fades === "content" ? 1 - motion.content : flight.fades === "share" ? motion.ride : 1);
+      piece.clip.style.opacity = opacity;
+      // Its halves of the seams stand at its sides, their own width on
+      // screen however far the tile is scaled.
+      const pixelBox = (element: HTMLElement, box: PeekRect) => {
+        element.style.transform = `translate(${box.x}px, ${box.y}px) scale(${box.width}, ${box.height})`;
+      };
+      peekTileEdgeRects(whole, flight.edges, flight.from.clip).forEach((box, edge) => {
+        const element = piece.edges[edge];
+        if (!element) return;
+        // Inside the frame, as the tile is.
+        pixelBox(element, intersectPeekRect(box, shown));
+        element.style.opacity = opacity;
+      });
+      if (piece.underline && flight.underline) {
+        // Across the picture and its half seams, its own height on screen.
+        const side = (name: PeekTileEdge["side"]) => flight.edges.find((edge) => edge.side === name)?.width ?? 0;
+        pixelBox(piece.underline, intersectPeekRect({
+          x: whole.x - side("left"),
+          y: whole.y + whole.height + flight.underline.offset,
+          width: whole.width + side("left") + side("right"),
+          height: flight.underline.height,
+        }, shown));
+        piece.underline.style.opacity = flight.fades === "share" ? opacity : String(1 - p);
+      }
+    });
   }, [writeNudge]);
 
   /** At rest the carried picture goes once the window's own original shows
@@ -932,16 +1034,18 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
     const dropPicture = () => {
       handoverRef.current = null;
       handoverFrameRef.current = null;
-      // A resize carries no picture: the opening's stays kept.
-      if (flyerRef.current) restPictureRef.current = flyerRef.current;
+      // A resize carries no picture: the opening's stay kept.
+      if (flyerRef.current.length > 0) restPicturesRef.current = carriedOriginals(flyerRef.current);
       flushSync(() => setFlyer(null));
       handoverRef.current = requestAnimationFrame(dropLayers);
     };
     const step = (now: number) => {
       handoverRef.current = null;
-      const frame = motion.hiddenFrame;
-      const original = frame?.querySelector<HTMLImageElement>("img:not([data-detail-preview-backing])") ?? null;
-      const shown = !original || (original.complete && original.naturalWidth > 0 && original.style.opacity !== "0");
+      // Every picture stood for: each of the window's own shows under its own.
+      const shown = motion.flights.every((flight) => {
+        const original = flight.hidden?.querySelector<HTMLImageElement>("img:not([data-detail-preview-backing])") ?? null;
+        return !original || (original.complete && original.naturalWidth > 0 && original.style.opacity !== "0");
+      });
       if (!shown && now - since < PICTURE_HANDOVER_MAX_MS) {
         handoverRef.current = requestAnimationFrame(step);
         return;
@@ -1001,7 +1105,7 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
         motion.frame = null;
         if (motionRef.current !== motion) return;
         motionRef.current = null;
-        restPictureRef.current = null;
+        restPicturesRef.current = new Map();
         releaseGate();
         flushSync(() => {
           setView(null);
@@ -1023,6 +1127,7 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
     motion.last = now;
     motion.spring = stepPeekSpring(motion.spring, step);
     motion.elapsed += step;
+    motion.ride = peekRideOpacity(motion.direction, motion.elapsed, motion.rideStart);
     motion.content = motion.kind === "card"
       ? peekContentOpacity(motion.direction, motion.elapsed, motion.contentStart)
       : 1;
@@ -1030,6 +1135,7 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
     if (settled) {
       motion.spring = { position: motion.spring.target, velocity: 0, target: motion.spring.target };
       motion.content = motion.spring.target;
+      motion.ride = 1 - motion.spring.target;
     }
     paint();
     if (settled) {
@@ -1058,25 +1164,25 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
    *  itself, О10, п. 1). */
   const gatherAndPaint = useCallback(() => {
     const anchor = anchorRef.current;
-    const clip = mediaClipRef.current;
-    const picture = flyerRef.current;
-    if (picture && clip && clip.firstChild !== picture.element) {
-      const element = picture.element;
-      element.className = cn(FLYER_CLASS, "inset-0 size-full");
-      element.setAttribute("data-peek-media", "");
-      clip.replaceChildren(element);
-      if (picture.stage) {
-        // The copy stands at the card's size in the carried box.
-        const box = flyerLaidRef.current ?? sizeRef.current;
-        picture.stage.style.transform = `scale(${box.width / picture.naturalWidth}, ${box.height / picture.naturalHeight})`;
+    const flights = flyerRef.current.map((flight, index) => {
+      const clip = flightClipsRef.current[index];
+      if (!clip) return null;
+      const element = flight.picture?.element ?? null;
+      const backing = flight.backing?.element ?? null;
+      if (element && clip.lastChild !== element) {
+        const box = flight.laidImage;
+        for (const picture of [backing, element]) {
+          if (!picture) continue;
+          picture.className = cn(FLYER_CLASS, !box && "inset-0 size-full");
+          // Wider than its clip, as the card's picture is: no clamp to it.
+          if (box) Object.assign(picture.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.width}px`, height: `${box.height}px`, maxWidth: "none", maxHeight: "none" });
+        }
+        element.setAttribute("data-peek-media", "");
+        clip.replaceChildren(...(backing ? [backing, element] : [element]));
       }
-    }
-    const rest = restRef.current;
-    const restPicture = flyerRestRef.current;
-    if (rest && restPicture && rest.firstChild !== restPicture) rest.replaceChildren(restPicture);
-    const outline = outlineRef.current;
-    const outlineLine = flyerOutlineRef.current?.element ?? null;
-    if (outline && outlineLine && outline.firstChild !== outlineLine) outline.replaceChildren(outlineLine);
+      const edges = (flightEdgesRef.current[index] ?? []).slice(0, flight.edges).filter((edge): edge is HTMLDivElement => edge !== null);
+      return { clip, image: element, backing, edges, underline: flight.underline ? flightLinesRef.current[index] ?? null : null };
+    });
     if (!anchor) {
       piecesRef.current = null;
       return;
@@ -1089,10 +1195,7 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
     piecesRef.current = {
       frame,
       weights: [...anchor.querySelectorAll<HTMLElement>("[data-peek-weight]")],
-      mediaClip: clip,
-      mediaImage: picture ? picture.element : null,
-      rest,
-      outline,
+      flights,
     };
     const motion = motionRef.current;
     if (!motion) return;
@@ -1109,14 +1212,15 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
 
   /** Sets a movement going from where `spring` is, in the frame at `now`:
    *  its ends are measured here, once, and its first frame is written before
-   *  this frame is painted. `picture` is what it carries for a card. */
+   *  this frame is painted. `pictures` are the window's originals decoded
+   *  for it to carry for a card, by their addresses. */
   const start = useCallback((
     kind: MovingKind,
     slug: string,
     spring: PeekSpring,
     contentStart: number,
     source: PeekSource | null,
-    picture: PeekPicture | null,
+    pictures: ReadonlyMap<string, PeekPicture>,
     now: number,
     windowWidth: number | null = null,
   ) => {
@@ -1127,24 +1231,139 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
     stopLoop(previous);
     restoreHiddenFrame(previous);
     const box = rectOf(anchor);
-    const place = source ? sourcePlace(source, box) : null;
-    const measured = kind === "card" && place?.media ? readWindowMedia() : null;
-    const sourceMedia = source?.media ?? null;
-    // The card's own picture, when the window has none decoded to carry:
-    // a gallery's copy of its elements, else a canvas.
-    const own = (): PeekPicture | null => {
-      if (!sourceMedia) return null;
-      const { copy, drawable, naturalWidth, naturalHeight } = sourceMedia;
-      if (copy) return sourceMedia.composite ? copyPicture(copy, naturalWidth, naturalHeight) : { element: copy, naturalWidth, naturalHeight };
-      return drawable ? canvasPicture(drawable, naturalWidth, naturalHeight) : null;
+    const place = kind === "card" && source ? sourcePlace(source, box) : null;
+    const flights: PeekFlight[] = [];
+    const flyers: PeekFlyer[] = [];
+    const used = new Set<PeekPicture>();
+    const original = (address: string | null) => {
+      const picture = address ? pictures.get(address) : undefined;
+      if (!picture || used.has(picture)) return null;
+      used.add(picture);
+      return picture;
     };
-    // A gallery flying whole carries itself: the window's own picture is
-    // only one of its tiles (О10, п. 3).
-    const carried = (sourceMedia?.composite ? null : picture) ?? own();
-    const windowMedia = place?.media && sourceMedia
-      ? measured?.place ?? carriedPeekMediaPlace(place.rect, place.media, laid(), sourceMedia.naturalWidth, sourceMedia.naturalHeight)
-      : null;
-    const mediaFades = Boolean(sourceMedia?.composite) || measured === null;
+    // The card's line under its media, where it runs along the bottom of a
+    // picture's part: within the seam's reach of it.
+    const underlineOf = (clip: PeekRect) => {
+      const line = place?.underline;
+      if (!line) return null;
+      const offset = line.y - (clip.y + clip.height);
+      return Math.abs(offset) <= 2 ? { offset, height: line.height } : null;
+    };
+    // The card's title and text go with its main picture as one piece with
+    // it (with no picture, with the frame), under all its pictures, and come
+    // back with the card (О11, п. 2).
+    if (place?.text) {
+      const box = place.text.rect;
+      const wrap = document.createElement("div");
+      wrap.append(place.text.element);
+      flights.push({
+        kind: "ride", from: { clip: box, image: box }, to: null, laid: box, laidImage: { x: 0, y: 0, width: box.width, height: box.height },
+        naturalWidth: box.width, naturalHeight: box.height, fades: "share", hidden: null, edges: [], fixed: true, underline: null,
+      });
+      flyers.push({
+        kind: "ride", picture: { element: wrap, naturalWidth: box.width, naturalHeight: box.height }, backing: null,
+        edges: 0, seams: null, underline: null, laid: box, laidImage: { x: 0, y: 0, width: box.width, height: box.height }, original: null,
+      });
+    }
+    if (place?.gallery) {
+      // A gallery: each tile whose picture the window shows now flies to
+      // it, the others and the seams ride the frame (О10, п. 3; О11, п. 2).
+      const gallery = place.gallery;
+      const frames = readWindowFrames();
+      const pairs = pairPeekGallery(gallery.tiles.map((tile) => tile.source), frames);
+      type Tile = (typeof gallery.tiles)[number];
+      const tilePicture = (tile: Tile): PeekPicture => ({
+        element: tile.picture, naturalWidth: tile.naturalWidth, naturalHeight: tile.naturalHeight,
+      });
+      // The card's own picture is laid out as the card shows it, so it is
+      // drawn there from the first frame and lands as the card draws it.
+      const laidAtCard = (tile: Tile) => ({ x: tile.image.x - tile.clip.x, y: tile.image.y - tile.clip.y, width: tile.image.width, height: tile.image.height });
+      // Only the main tile flies: the one of the first of the window's
+      // pictures it shows that a tile has (the window's main picture, else
+      // the first under it). The others stay by it as one piece with it
+      // (О10, п. 3; user's decision of 26.10.2026).
+      const lead = mainPeekTile(pairs);
+      const rides = (index: number) => index !== lead;
+      // The gallery goes as one piece: each seam goes with its tiles, whole,
+      // drawn once by the first of them (two halves meeting at a fraction
+      // of a pixel let the window's fill show between them).
+      const seamsOf = (tile: Tile, index: number) => tile.edges.flatMap((edge) => (
+        edge.across.every((other) => other > index) ? [{ ...edge, width: edge.width * 2, carried: true }] : []
+      ));
+      gallery.tiles.forEach((tile, index) => {
+        if (!rides(index)) return;
+        const laidImage = laidAtCard(tile);
+        const edges = seamsOf(tile, index);
+        flights.push({
+          kind: "ride", from: tile, to: null, laid: tile.clip, laidImage,
+          naturalWidth: tile.naturalWidth, naturalHeight: tile.naturalHeight, fades: "share", hidden: null,
+          edges, underline: underlineOf(tile.clip),
+        });
+        flyers.push({
+          kind: "ride", picture: tilePicture(tile), backing: null, edges: edges.length, seams: gallery.seams,
+          underline: underlineOf(tile.clip) ? place.underline?.colour ?? null : null, laid: tile.clip, laidImage, original: null,
+        });
+      });
+      const flying = gallery.tiles
+        .map((tile, index) => ({ tile, index, frame: index === lead ? frames[pairs[index] ?? -1] : undefined }))
+        .filter((entry): entry is { tile: Tile; index: number; frame: NonNullable<typeof entry.frame> } => entry.frame !== undefined);
+      for (const { tile, index, frame } of flying) {
+        const edges = seamsOf(tile, index);
+        const carried = original(frame.original);
+        // The window's original is laid out where it lands, in the part of
+        // it the window shows (a frame laid out past the window's edge shows
+        // blank in WebKit in its first frame); the card's own picture, when
+        // none is decoded, where it starts.
+        const laidBox = carried ? frame.place.clip : tile.clip;
+        const laidImage = carried
+          ? { ...frame.place.image, x: frame.place.image.x - frame.place.clip.x, y: frame.place.image.y - frame.place.clip.y }
+          : laidAtCard(tile);
+        flights.push({
+          kind: "fly", from: tile, to: frame.place, laid: laidBox, laidImage,
+          naturalWidth: tile.naturalWidth, naturalHeight: tile.naturalHeight, fades: null, hidden: frame.frame,
+          edges, underline: underlineOf(tile.clip),
+        });
+        flyers.push({
+          kind: "fly", picture: carried ?? tilePicture(tile), backing: carried ? tilePicture(tile) : null, edges: edges.length, seams: gallery.seams,
+          underline: underlineOf(tile.clip) ? place.underline?.colour ?? null : null,
+          laid: laidBox, laidImage, original: carried ? frame.original : null,
+        });
+        frame.frame.style.visibility = "hidden";
+      }
+      // The other tiles stay by the main one, as one piece with it.
+      const leadFlight = flying.length > 0 ? flights.length - 1 : -1;
+      if (leadFlight >= 0) for (const flight of flights) if (flight.kind === "ride") flight.follows = leadFlight;
+    } else if (place?.media && source?.media) {
+      const sourceMedia = source.media;
+      const measured = readWindowMedia();
+      const address = measured ? originalOf(measured.frame) : null;
+      // A picture drawn as one carries itself: the window's own picture is
+      // only one of its parts.
+      const decoded = sourceMedia.composite ? null : original(address);
+      const carried = decoded ?? canvasPicture(sourceMedia.drawable, sourceMedia.naturalWidth, sourceMedia.naturalHeight);
+      const to = measured?.place
+        ?? carriedPeekMediaPlace(place.rect, place.media, laid(), sourceMedia.naturalWidth, sourceMedia.naturalHeight);
+      const fades = sourceMedia.composite || measured === null;
+      const hidden = measured && !fades ? measured.frame : null;
+      if (hidden) hidden.style.visibility = "hidden";
+      const underline = underlineOf(place.media.clip);
+      flights.push({
+        kind: "fly", from: place.media, to, laid: to.image, laidImage: null,
+        naturalWidth: sourceMedia.naturalWidth, naturalHeight: sourceMedia.naturalHeight, fades: fades ? "content" : null, hidden,
+        edges: [], underline,
+      });
+      flyers.push({
+        kind: "fly", picture: carried, backing: null, edges: 0, seams: null, underline: underline ? place.underline?.colour ?? null : null,
+        laid: to.image, laidImage: null, original: decoded ? address : null,
+      });
+      // The card's text goes with its picture, as one piece with it.
+      for (const flight of flights) if (flight.kind === "ride") flight.follows = flights.length - 1;
+    }
+    // A movement that takes another's place carries the riding parts'
+    // share on; else they show as much as the card does.
+    const rideFrom = previous && previous.slug === slug && previous.kind === "card"
+      ? previous.ride
+      : 1 - clampUnit(spring.position);
     const motion: PeekMotion = {
       kind,
       slug,
@@ -1156,20 +1375,14 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
       elapsed: 0,
       contentStart,
       content: contentStart,
+      rideStart: rideFrom,
+      ride: rideFrom,
       card: place?.rect ?? null,
-      cardMedia: kind === "card" ? place?.media ?? null : null,
-      windowMedia: kind === "card" ? windowMedia : null,
-      mediaFades,
-      hiddenFrame: null,
-      mediaLaid: kind === "card" && windowMedia ? windowMedia.image : null,
+      flights,
       widths: [null, null],
       windowWidth,
       frame: null,
     };
-    if (measured && !mediaFades && kind === "card") {
-      measured.frame.style.visibility = "hidden";
-      motion.hiddenFrame = measured.frame;
-    }
     motionRef.current = motion;
     holdGate();
     const windowRadius = readWindowRadius();
@@ -1184,9 +1397,7 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
       && current.windowRadius === nextView.windowRadius && current.fill === nextView.fill;
     flushSync(() => {
       if (!keep) setView({ ...nextView, id });
-      setFlyer(kind === "card" && motion.cardMedia && carried
-        ? { id, picture: carried, laid: motion.mediaLaid, rest: place?.rest ?? null, outline: place?.outline ?? null }
-        : null);
+      setFlyer(flyers.length > 0 ? { id, flights: flyers } : null);
       setClosing(spring.target === 0);
       setPreparing(false);
       setLive(false);
@@ -1194,7 +1405,7 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
     gatherAndPaint();
   // `hideCard`, `holdGate`, `laid` and `viewFor` read only refs, the store
   // and their arguments.
-  }, [gatherAndPaint, readWindowMedia]);
+  }, [gatherAndPaint, readWindowFrames, readWindowMedia]);
 
   /** The width a resize shows now, of a window laid out `laidWidth` wide. */
   const resizeWidth = (motion: PeekMotion, laidWidth: number) => {
@@ -1220,12 +1431,10 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
       elapsed: 0,
       contentStart: 1,
       content: 1,
+      rideStart: 0,
+      ride: 0,
       card: null,
-      cardMedia: null,
-      windowMedia: null,
-      mediaFades: false,
-      hiddenFrame: null,
-      mediaLaid: null,
+      flights: [],
       widths: [fromWidth, null],
       windowWidth: null,
       frame: null,
@@ -1322,15 +1531,16 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
 
   /** Lays the card out unseen and waits for it, `CARD_PEEK_PREPARE_MAX_MS`
    *  at most, before `begin` starts the movement in a frame: until the card's
-   *  module is in, its work done (`track`) and a frame past it, and `picture`
-   *  (when asked) decoded. */
+   *  module is in, its work done (`track`) and a frame past it, and the
+   *  pictures asked for (`wantsPictures`, by their addresses: one to decode,
+   *  or one decoded already) decoded. */
   const prepare = useCallback((
-    begin: (now: number, picture: PeekPicture | null) => void,
-    wantsPicture: () => string | PeekPicture | null,
+    begin: (now: number, pictures: ReadonlyMap<string, PeekPicture>) => void,
+    wantsPictures: () => ReadonlyMap<string, string | PeekPicture>,
     needsCard: boolean,
   ) => {
     cancelPreparation();
-    const preparation: PeekPreparation = { frame: null, picture: null, decoding: false };
+    const preparation: PeekPreparation = { frame: null, pictures: new Map(), decoding: 0 };
     preparationRef.current = preparation;
     let asked = false;
     // Counted from the input's own commit, so the wait is bounded from the
@@ -1340,17 +1550,18 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
       preparation.frame = null;
       if (preparationRef.current !== preparation) return;
       if (!asked) {
-        const wanted = wantsPicture();
-        if (wanted && typeof wanted !== "string") {
-          // Decoded already: nothing to wait for.
-          asked = true;
-          preparation.picture = wanted;
-        } else if (wanted) {
-          asked = true;
-          preparation.decoding = true;
-          void decodedPicture(wanted).then((picture) => {
-            preparation.picture = picture;
-            preparation.decoding = false;
+        const wanted = wantsPictures();
+        asked = wanted.size > 0;
+        for (const [address, picture] of wanted) {
+          if (typeof picture !== "string") {
+            // Decoded already: nothing to wait for.
+            preparation.pictures.set(address, picture);
+            continue;
+          }
+          preparation.decoding += 1;
+          void decodedPicture(picture).then((decoded) => {
+            if (decoded) preparation.pictures.set(address, decoded);
+            preparation.decoding -= 1;
           });
         }
       }
@@ -1367,10 +1578,10 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
       const ready = cardIn
         && gateState.pending === 0
         && now - gateState.settledAt >= CARD_PEEK_FRAME_STEP_MS
-        && !preparation.decoding;
+        && preparation.decoding === 0;
       if (ready || now - since >= CARD_PEEK_PREPARE_MAX_MS) {
         preparationRef.current = null;
-        begin(now, preparation.picture);
+        begin(now, preparation.pictures);
         return;
       }
       preparation.frame = requestAnimationFrame(step);
@@ -1583,7 +1794,7 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
         return;
       }
       // A new opening: a window still leaving is gone at once (О11).
-      restPictureRef.current = null;
+      restPicturesRef.current = new Map();
       cancelPreparation();
       cancelHandover();
       if (motion) {
@@ -1612,7 +1823,9 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
         reducedMotion: prefersReducedMotion(),
       });
       if (kind === "card" && !(area && findPeekSource(area, block.slug))) kind = "center";
-      openedAsRef.current = kind;
+      // A window a key opened at once still fades in place when it closes
+      // other than by Escape (О11).
+      openedAsRef.current = from === "keyboard" && kind === "instant" && !(opening?.restored ?? false) ? "fade" : kind;
       if (kind === "instant") {
         setPreparing(false);
         return;
@@ -1628,15 +1841,26 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
       const slug = block.slug;
       const movingKind: MovingKind = kind;
       prepare(
-        (now, picture) => {
-          const source = movingKind === "card" && area ? findPeekSource(area, slug, windowSource()) : null;
-          start(source || movingKind !== "card" ? movingKind : "center", slug, { position: 0, velocity: 0, target: 1 }, 0, source, picture, now);
+        (now, pictures) => {
+          const source = movingKind === "card" && area ? findPeekSource(area, slug) : null;
+          start(source || movingKind !== "card" ? movingKind : "center", slug, { position: 0, velocity: 0, target: 1 }, 0, source, pictures, now);
         },
         () => {
-          if (movingKind !== "card" || !contentRef.current) return null;
-          const frame = detailPeekMediaFrame(contentRef.current);
-          const original = frame?.querySelector<HTMLImageElement>("img:not([data-detail-preview-backing])");
-          return original?.currentSrc || original?.src || null;
+          const wanted = new Map<string, string>();
+          if (movingKind !== "card" || !contentRef.current) return wanted;
+          // The window's own originals the card's pictures fly to: its one
+          // picture, or each of a gallery's the window shows.
+          const tiles = preparedSource?.gallery?.tiles.map((tile) => tile.source);
+          if (tiles) {
+            const frames = readWindowFrames();
+            const pairs = pairPeekGallery(tiles, frames);
+            const address = frames[pairs[mainPeekTile(pairs)] ?? -1]?.original;
+            if (address) wanted.set(address, address);
+          } else {
+            const address = originalOf(detailPeekMediaFrame(contentRef.current));
+            if (address) wanted.set(address, address);
+          }
+          return wanted;
         },
         true,
       );
@@ -1664,7 +1888,7 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
       }
       const moving = motionRef.current;
       const reducedMotion = prefersReducedMotion();
-      const source = openedAsRef.current === "card" && area ? findPeekSource(area, held.slug, windowSource()) : null;
+      const source = openedAsRef.current === "card" && area ? findPeekSource(area, held.slug) : null;
       const kind = peekClosingKind({
         openedAs: openedAsRef.current,
         exit: exitRef.current,
@@ -1693,11 +1917,12 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
           moving.direction = "out";
           moving.elapsed = 0;
           moving.contentStart = moving.content;
+          moving.rideStart = moving.ride;
           setClosing(true);
           moving.frame = requestAnimationFrame(tick);
           return;
         }
-        start(kind, slug, spring, moving.content, kind === "card" ? source : null, flyer?.picture ?? null, performance.now());
+        start(kind, slug, spring, moving.content, kind === "card" ? source : null, carriedOriginals(flyerRef.current), performance.now());
         return;
       }
       // A fade has no edges to carry the width: the window fades at its
@@ -1712,17 +1937,17 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
       // the feed through; the movement starts from the next frame on, once
       // the card's own work is done (`prepare`). A picture still handing
       // over is the one to carry back.
-      const keptFlyer = flyerRef.current;
+      const keptFlyer = carriedOriginals(flyerRef.current);
       cancelHandover();
       holdGate();
       setLive(false);
       setClosing(true);
       const openedAs = openedAsRef.current;
       prepare(
-        (now, picture) => {
+        (now, pictures) => {
           // Where the card stands as the closing starts, the feed or the
           // graph after a change of place included (О11).
-          const place = openedAs === "card" && area ? findPeekSource(area, slug, windowSource()) : null;
+          const place = openedAs === "card" && area ? findPeekSource(area, slug) : null;
           const kindNow = peekClosingKind({ openedAs, exit: exitRef.current, reducedMotion, cardOnScreen: place !== null });
           if (kindNow === "none") {
             vanish();
@@ -1732,21 +1957,24 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
             leaveAsDialog();
             return;
           }
-          start(kindNow, slug, { position: 1, velocity: 0, target: 0 }, 1, kindNow === "card" ? place : null, kindNow === "card" ? picture : null, now, restWidth);
+          start(kindNow, slug, { position: 1, velocity: 0, target: 0 }, 1, kindNow === "card" ? place : null, kindNow === "card" ? pictures : new Map(), now, restWidth);
         },
         () => {
-          if (openedAs !== "card" || !contentRef.current) return null;
-          const frame = detailPeekMediaFrame(contentRef.current);
-          // The picture the opening carried is still decoded: the closing
-          // carries it back when the window's frame is still of that file.
-          // Else it carries the card's own picture (`start`): decoding the
-          // window's file once more while the window shows it leaves the
-          // window's picture blank in WebKit until that decode ends.
-          const kept = restPictureRef.current ?? keptFlyer;
-          const keptSrc = kept?.element instanceof HTMLImageElement ? kept.element.currentSrc || kept.element.src : null;
-          const original = frame?.querySelector<HTMLImageElement>("img:not([data-detail-preview-backing])");
-          if (kept && original && keptSrc && keptSrc === (original.currentSrc || original.src)) return kept;
-          return null;
+          const wanted = new Map<string, PeekPicture>();
+          if (openedAs !== "card" || !contentRef.current) return wanted;
+          // The pictures the opening carried are still decoded: the closing
+          // carries each back to its tile while the window's frame is still
+          // of that file. Else it carries the card's own picture (`start`):
+          // decoding the window's file once more while the window shows it
+          // leaves the window's picture blank in WebKit until that decode
+          // ends.
+          const kept = new Map([...restPicturesRef.current, ...keptFlyer]);
+          for (const { frame } of detailPeekMediaFrames(contentRef.current)) {
+            const address = originalOf(frame);
+            const picture = address ? kept.get(address) : undefined;
+            if (address && picture) wanted.set(address, picture);
+          }
+          return wanted;
         },
         false,
       );
@@ -1827,6 +2055,46 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
 
   if (!held) return null;
   const cut = view && view.kind !== "fade" ? peekFrameCut(view.cardRadius, view.windowRadius) : null;
+  /** A flight on the page: its clip, its halves of the seams and its part
+   *  of the card's line under its media. */
+  const renderFlight = (flight: PeekFlyer, index: number) => (
+    <Fragment key={`${flyer?.id ?? 0}-${index}`}>
+      <div
+        ref={(element) => {
+          flightClipsRef.current[index] = element;
+        }}
+        className={cn(FLYER_CLASS, "overflow-hidden")}
+        style={flyerBox(flight.laid)}
+        data-peek-media-clip=""
+        data-peek-flight={flight.kind}
+      />
+      {/* Its halves of the seams, a pixel box each, scaled to stand. */}
+      {Array.from({ length: flight.edges }, (_, edge) => (
+        <div
+          key={edge}
+          ref={(element) => {
+            const edges = flightEdgesRef.current[index] ?? [];
+            edges[edge] = element;
+            flightEdgesRef.current[index] = edges;
+          }}
+          className={cn(FRAME_PIECE_CLASS, "left-0 top-0 size-px")}
+          style={{ background: flight.seams ?? undefined }}
+          data-peek-media-edge=""
+        />
+      ))}
+      {flight.underline && (
+        <div
+          ref={(element) => {
+            flightLinesRef.current[index] = element;
+          }}
+          className={cn(FRAME_PIECE_CLASS, "left-0 top-0 size-px")}
+          style={{ background: flight.underline }}
+          data-peek-media-underline=""
+        />
+      )}
+    </Fragment>
+  );
+
   return (
     <div
       className="pointer-events-none absolute inset-0 z-10"
@@ -1878,27 +2146,10 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
         {/* The window as one, stepped back while the pointer rests on the
             scrim (О15). */}
         <div ref={nudgeRef} className={cn("pointer-events-none absolute inset-0 origin-center", MOVED_CLASS)} data-card-peek-nudge="">
-        {view && cut && (
-          <PeekFrameUnder view={view} cut={cut}>
-            {/* Over the card's fill, under the window's: the scrim's share
-                shows it through the window as the card comes back, and the
-                window's edges uncover it where the card lies past them
-                (О11, п. 2). */}
-            {flyer?.rest && (
-              <div
-                ref={restRef}
-                className={REST_CLASS}
-                style={{
-                  left: flyer.rest.rect.x,
-                  top: flyer.rest.rect.y,
-                  width: flyer.rest.rect.width,
-                  height: flyer.rest.rect.height,
-                }}
-                data-peek-media-rest=""
-              />
-            )}
-          </PeekFrameUnder>
-        )}
+        {view && cut && <PeekFrameUnder view={view} cut={cut} />}
+        {/* A gallery's tiles riding the frame, under the window's content
+            showing in (О10, п. 3). */}
+        {flyer?.flights.map((flight, index) => (flight.kind === "ride" ? renderFlight(flight, index) : null))}
         <div
           ref={surfaceRef}
           className={cn(
@@ -1923,27 +2174,8 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
             </DetailMotionGateContext.Provider>
           </div>
         </div>
-        {flyer && (
-          <div
-            ref={mediaClipRef}
-            className={cn(FLYER_CLASS, "overflow-hidden")}
-            style={flyerBox(flyer.laid)}
-            data-peek-media-clip=""
-          />
-        )}
-        {flyer?.outline && (
-          <div
-            ref={outlineRef}
-            className={FRAME_PIECE_CLASS}
-            style={{
-              left: flyer.outline.rect.x,
-              top: flyer.outline.rect.y,
-              width: flyer.outline.rect.width,
-              height: flyer.outline.rect.height,
-            }}
-            data-peek-media-outline=""
-          />
-        )}
+        {/* The tiles flying to the window's own pictures, over its content. */}
+        {flyer?.flights.map((flight, index) => (flight.kind === "fly" ? renderFlight(flight, index) : null))}
         {view && cut && <PeekFrameOver view={view} cut={cut} />}
         </div>
       </div>

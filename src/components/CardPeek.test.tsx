@@ -93,6 +93,30 @@ describe("CardPeek", () => {
     expect(getPeekHiddenSlug()).toBeNull();
   });
 
+  it("stands a card opened with a key in its window at once, with its scrim, and fades it in place when it closes (О10, О11)", () => {
+    const frames = handFrames();
+    try {
+      const view = peek({ block, opening: { sequence: 1, slug: block.slug, from: "keyboard", restored: false } });
+      // In the frame of the key: no preparing, no fade, nothing moving.
+      const scrim = view.container.querySelector<HTMLElement>("[data-card-peek-scrim]")!;
+      const window = view.container.querySelector<HTMLElement>("[data-card-peek-window]")!;
+      expect(view.container.querySelector("[data-card-peek-preparing]")).toBeNull();
+      expect(scrim.style.opacity).toBe("");
+      expect(window.style.opacity).toBe("");
+      expect(view.container.querySelector("[data-peek-piece]")).toBeNull();
+      // Closed by its ×, it fades in place: the scrim and the window by the spring.
+      view.rerenderWith({ block: null, opening: null });
+      const opacities: string[] = [];
+      for (let frame = 0; frame < 120 && view.container.querySelector("[data-card-peek]"); frame += 1) {
+        opacities.push(frames.run(() => view.container.querySelector<HTMLElement>("[data-card-peek-window]")?.style.opacity ?? ""));
+      }
+      expect(opacities.some((opacity) => opacity !== "" && Number(opacity) > 0 && Number(opacity) < 1)).toBe(true);
+      expect(view.container.querySelector("[data-peek-piece]")).toBeNull();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("stands `M` off every edge of the right part (О3)", () => {
     const { container } = peek({ block, opening: restored });
     const window = container.querySelector<HTMLElement>("[data-card-peek-window]");
