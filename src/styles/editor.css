@@ -5,6 +5,13 @@
    like the blocks they stand for: every colour is a token, every size the
    article's own or Typography's for that element. */
 
+/* CodeMirror makes its scroller focusable (`tabindex="-1"`) for its own
+   pointer handling, in the note and in a table's cell. A focus that lands
+   there is the editor's, and the editor draws no ring (Л15). */
+.mine-note-editor .cm-scroller {
+  outline: none;
+}
+
 /* CodeMirror keeps the caret beside a hidden range with an empty `img`;
    Typography's margins of pictures must not reach it. */
 .mine-note-editor .cm-widgetBuffer {

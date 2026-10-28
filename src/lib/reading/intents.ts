@@ -74,13 +74,16 @@ function follow(to: NoteLinkTarget): NoteInteractionIntent {
  *  there (Л5.3). */
 function editorBlock(element: NoteElement, interaction: NoteInteraction): NoteInteractionIntent {
   switch (element.kind) {
-    // A picture and a note embed are chosen first, Enter shows the source;
-    // ⌘-click opens them as a click does when reading (Л10.1, Л11.5).
+    // A picture and a note embed open at a click and a ⌘-click, as when
+    // reading; their source shows while the caret stands on their line, so
+    // Enter is the text's (the user's decision of 27.10.2026; Л5.3, Л10.1,
+    // Л11.5).
     case "image":
     case "embed":
-      if (interaction.event === "click") return { kind: "SelectBlock" };
-      if (interaction.event === "command-click") return element.kind === "image" ? { kind: "OpenImagePreview" } : { kind: "OpenEmbed" };
-      return interaction.event === "enter" && interaction.selected ? { kind: "RevealBlock" } : NOTHING;
+      if (interaction.event === "click" || interaction.event === "command-click") {
+        return element.kind === "image" ? { kind: "OpenImagePreview" } : { kind: "OpenEmbed" };
+      }
+      return NOTHING;
     // A table opens a cell: its editor, not its source (Л9.2).
     case "table":
       if (interaction.event === "click") return { kind: "EnterTableCell" };
@@ -100,8 +103,8 @@ function editorBlock(element: NoteElement, interaction: NoteInteraction): NoteIn
  * - a link opens with a click in the reading mode and, in the editor, while
  *   it is drawn; a revealed link takes the caret, ⌘-click opens it there;
  * - a task box changes with a click and Space, not Enter (WAI-ARIA);
- * - a picture opens its preview in the reading mode, a note embed its note;
- *   in the editor a click chooses them as blocks and ⌘-click opens them;
+ * - a picture opens its preview and a note embed its note at a click and a
+ *   ⌘-click on both surfaces;
  * - code, a diagram, a formula, a callout and HTML show their source in the
  *   editor at a click; a table opens a cell;
  * - anything else takes the caret in the editor and does nothing in the

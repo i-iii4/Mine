@@ -420,7 +420,11 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
       data-card-lift-pinned={lifts && actionsPinned ? "" : undefined}
       style={lifts ? cardLiftStyle(descriptor) : undefined}
       className={cn(
-        "h-full",
+        // The card's keyboard focus is the feed's (`data-feed-grid-item-focused`,
+        // SPEC_CARD_STATES.md, С1). DOM focus lands here only from a press,
+        // and WebKit turns :focus-visible on at the next key, so the card
+        // draws no ring of its own.
+        "h-full outline-none",
         // `group` scopes the hover buttons' `group-hover`: an unarmed card is
         // no group, so a sweep shows no buttons on it.
         hoverArmed && "group",

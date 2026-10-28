@@ -515,6 +515,7 @@ bun run test:detail-image-geometry # Рамка изображения Detail: �
 bun run test:x-thread          # Сборка расширения и цепочка автора X во временном Chromium, сеть перехвачена
 bun run test:reading-mode      # Режим чтения статьи: фикстура scripts/fixtures/reading-mode.md в Detail, обе темы, 1600 и 900 в ширину, перенос, код, маркер, HTML, таблицы, Mermaid, выноски, KaTeX, сноски, вставки, флажки, без сетевых запросов (свой Vite)
 bun run test:browser           # Сам поднимает Vite и запускает все browser gates
+bun run test:focus-ring        # WebKit: ни одной рамки фокуса браузера в главном окне (свой Vite)
 bun run test:native-shell      # Packaged macOS WKWebView + real Tauri invoke smoke
 bun run test:clipper-worker    # Собранное расширение/CSP/WASM и цепочка X (x-thread-smoke) в отдельном headless Chromium
 bun run bindings:generate      # Обновить committed Rust/Specta TypeScript bindings

@@ -2722,6 +2722,8 @@ type MediaAssetDialog = "rename" | "remove" | "delete";
 interface MediaMenuKit {
   Item: ComponentType<{
     variant?: "default" | "destructive" | "detach";
+    disabled?: boolean;
+    className?: string;
     onSelect?: (event: Event) => void;
     children?: ReactNode;
   }>;
@@ -2796,6 +2798,7 @@ function MediaAssetMenuItems({
         </SubTrigger>
         <SubContent widthRole="search" className={COLLECTION_PICKER_CONTENT_CLASS}>
           <MediaAssetCollectionPicker
+            Item={Item}
             asset={asset}
             tags={tags}
             currentTag={currentTag}
@@ -2902,12 +2905,16 @@ function MediaAssetMoreMenu({
 }
 
 export function MediaAssetCollectionPicker({
+  Item,
   asset,
   tags,
   currentTag,
   onConnect,
   onCreateAndConnect,
 }: {
+  /** The row of the menu the picker opens in: a dropdown's row has no menu
+   *  inside a context menu, and React throws on it. */
+  Item: MediaMenuKit["Item"];
   asset: MediaAssetRef;
   tags: TagCount[];
   currentTag?: string;
@@ -2916,6 +2923,7 @@ export function MediaAssetCollectionPicker({
 }) {
   return (
     <CreateCardCollectionPicker
+      Item={Item}
       payload={asset}
       tags={tags}
       currentTag={currentTag}
@@ -2940,6 +2948,7 @@ function TextSelectionCollectionPicker({
 }) {
   return (
     <CreateCardCollectionPicker
+      Item={DropdownMenuItem}
       payload={payload}
       tags={tags}
       currentTag={currentTag}
@@ -2950,12 +2959,14 @@ function TextSelectionCollectionPicker({
 }
 
 function CreateCardCollectionPicker<TPayload>({
+  Item,
   payload,
   tags,
   currentTag,
   onConnect,
   onCreateAndConnect,
 }: {
+  Item: MediaMenuKit["Item"];
   payload: TPayload;
   tags: TagCount[];
   currentTag?: string;
@@ -3026,7 +3037,7 @@ function CreateCardCollectionPicker<TPayload>({
         {filtered.map((item) => {
           const pending = pendingTag === item.tag;
           return (
-            <DropdownMenuItem
+            <Item
               key={item.tag || "__everything__"}
               className="h-[var(--menu-row-height)] py-0"
               disabled={pendingTag !== null}
@@ -3036,12 +3047,12 @@ function CreateCardCollectionPicker<TPayload>({
               }}
             >
               <span className="truncate">{pending ? "Creating..." : item.title}</span>
-            </DropdownMenuItem>
+            </Item>
           );
         })}
 
         {canCreate && (
-          <DropdownMenuItem
+          <Item
             className="h-[var(--menu-row-height)] py-0"
             disabled={pendingTag !== null}
             onSelect={(event) => {
@@ -3051,7 +3062,7 @@ function CreateCardCollectionPicker<TPayload>({
           >
             <Plus className="size-[13px] shrink-0" />
             <span>Create &ldquo;{trimmed}&rdquo;</span>
-          </DropdownMenuItem>
+          </Item>
         )}
 
         {filtered.length === 0 && !canCreate && (

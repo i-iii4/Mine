@@ -712,12 +712,24 @@ const SidebarCore = memo(function SidebarCore({
   const markLinkActionUnderPointer = useCallback((row: HTMLElement | null, x: number, y: number, instant: boolean) => {
     const button = row?.querySelector<HTMLElement>("[data-sidebar-link-action]") ?? null;
     const rect = button?.getBoundingClientRect();
-    const over = button && rect && x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
+    const previous = linkActionPointerRef.current;
+    // Once the word has stepped left for its mark, it answers where it
+    // stands: its box reaches as far left as the word went (global.css).
+    const reach = button && button === previous ? linkWordStep(button) : 0;
+    const over = button && rect && x >= rect.left - reach && x < rect.right && y >= rect.top && y < rect.bottom
       ? button
       : null;
-    const previous = linkActionPointerRef.current;
+    // Whether the word, stepped left for its mark, would stand over the
+    // name's last line: only then a fade comes before it (global.css). The
+    // state may change under a resting pointer (a click connects), so it is
+    // asked on every move.
+    if (over && row) {
+      if (nameRunsUnderLinkWord(row, over)) over.setAttribute("data-sidebar-link-over-name", "");
+      else over.removeAttribute("data-sidebar-link-over-name");
+    }
     if (previous === over) return;
     previous?.removeAttribute("data-sidebar-link-pointer");
+    previous?.removeAttribute("data-sidebar-link-over-name");
     over?.setAttribute("data-sidebar-link-pointer", instant ? "instant" : "");
     linkActionPointerRef.current = over;
   }, []);
@@ -1548,7 +1560,9 @@ function SidebarRowBody({
         // the meta zone's edge, so a trial order of the columns keeps both.
         className={cn(
           SIDEBAR_ROW_BOX_CLASS,
-          "font-sans text-base text-muted-foreground",
+          // Its focus look is the focused row's, its words brightened
+          // (global.css), never the browser's ring.
+          "font-sans text-base text-muted-foreground outline-none",
         )}
         data-sidebar-row-body=""
       >
@@ -1674,6 +1688,34 @@ function SidebarRowBody({
 /// words; never the console only (SPEC_DEEP_AUDIT.md, Н11).
 function collectionNameRefusal(error: unknown): string {
   return nameRefusal(error) ?? errorMessage(error);
+}
+
+/// Whether a row's name, on its last line, reaches under its Connect word
+/// once the word steps left for its mark (the Contents list, global.css):
+/// the name's last line against the word's place at rest less the mark's
+/// room, the mark's width and the label's own inset.
+function nameRunsUnderLinkWord(row: HTMLElement, button: HTMLElement): boolean {
+  const name = row.querySelector<HTMLElement>("[data-sidebar-name-text]");
+  const label = button.querySelector<HTMLElement>("[data-sidebar-link-label]");
+  if (!name || !label) return false;
+  const range = document.createRange();
+  range.selectNodeContents(name);
+  const lines = [...range.getClientRects()];
+  const last = lines[lines.length - 1];
+  if (!last) return false;
+  const nameEnd = Math.max(...lines.filter((line) => Math.abs(line.bottom - last.bottom) < 1).map((line) => line.right));
+  const labelAtRest = button.getBoundingClientRect().left + label.offsetLeft;
+  return nameEnd > labelAtRest - linkWordStep(button);
+}
+
+/// How far a Connect word steps left for its mark under the pointer: the
+/// mark's own width and the label's inset (the cross is the plus turned, and
+/// a turned box measures wider than the room the word steps aside for).
+function linkWordStep(button: HTMLElement): number {
+  const label = button.querySelector<HTMLElement>("[data-sidebar-link-label]");
+  const mark = button.querySelector<SVGElement>("[data-sidebar-link-icon]");
+  if (!label || !mark) return 0;
+  return Number.parseFloat(getComputedStyle(mark).width) + Number.parseFloat(getComputedStyle(label).paddingLeft);
 }
 
 /// The reason a typed name is refused, right under the row being named: the

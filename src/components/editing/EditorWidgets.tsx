@@ -108,12 +108,14 @@ const WidgetSourceContext = createContext<WidgetSource | null>(null);
 const WidgetViewContext = createContext<EditorView | null>(null);
 
 /** Controls inside a widget keep their own clicks: links, buttons, folds,
- *  boxes. A note embed's card is no control in the editor: a click chooses
- *  its block (Л5.3). */
+ *  boxes. A note embed's card opens its note at a click, as the intent
+ *  decides (Л11.5), while the focus stays in the editor. */
 const WIDGET_CONTROLS = "a, button:not([data-note-embed-open]), summary, input, label, [role='checkbox']";
 
-/** A picture or an embed among words. */
-const INLINE_MEDIA_ELEMENT: NoteElement = { kind: "image" };
+/** The room of a widget of pictures, or of a picture among words, beside
+ *  and under them: the line of their source, where a click puts the caret
+ *  (Л5.3). */
+const PICTURE_LINE_ELEMENT: NoteElement = { kind: "text" };
 
 function isControl(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(WIDGET_CONTROLS) !== null;
@@ -211,7 +213,8 @@ function WidgetArticle({ view, source, components }: { view: EditorView; source:
 /** The element of the note a click in a widget hit (Л11.1). */
 function widgetElement(target: EventTarget | null, fallback: NoteElement): NoteElement {
   if (!(target instanceof Element)) return fallback;
-  if (target.closest("[data-note-embed]")) return { kind: "embed" };
+  // A note embed is its card: the room round the card is the line's.
+  if (target.closest("[data-note-embed-open]")) return { kind: "embed" };
   if (target.closest("[data-detail-media-action-frame], img, video")) return { kind: "image" };
   return fallback;
 }
@@ -243,11 +246,12 @@ function widgetIntentOwner(intent: NoteInteractionIntent): "editor" | "element" 
 }
 
 /** Clicks on a widget's own content are the editor's (Л5.3): the block's
- *  source, its choice, the caret; its controls keep theirs, and ⌘-click on a
- *  picture or an embed opens it as a click does when reading (Л10.1,
- *  Л11.1). The listener runs in the capture phase, before the elements' own
- *  handlers. */
-function useWidgetClicks(dom: HTMLElement, element: NoteElement, activate: () => void) {
+ *  source, its choice, the caret; its controls keep theirs, and a click on a
+ *  picture or an embed opens it as when reading (Л10.1, Л11.1, Л11.5). The
+ *  listener runs in the capture phase, before the elements' own handlers;
+ *  the press keeps the caret and the focus in the editor in every case, so
+ *  a picture opened does not first take the caret to its line. */
+function useWidgetClicks(dom: HTMLElement, element: NoteElement, activate: (intent: NoteInteractionIntent) => void) {
   useEffect(() => {
     const intentOf = (event: MouseEvent) => noteInteractionIntent({
       surface: "editing",
@@ -261,11 +265,12 @@ function useWidgetClicks(dom: HTMLElement, element: NoteElement, activate: () =>
     };
     const onClick = (event: MouseEvent) => {
       if (event.button !== 0 || isControl(event.target)) return;
-      const owner = widgetIntentOwner(intentOf(event));
+      const intent = intentOf(event);
+      const owner = widgetIntentOwner(intent);
       if (owner === "element") return;
       event.preventDefault();
       event.stopPropagation();
-      if (owner === "editor") activate();
+      if (owner === "editor") activate(intent);
     };
     dom.addEventListener("mousedown", onMouseDown, true);
     dom.addEventListener("click", onClick, true);
@@ -281,10 +286,11 @@ function BlockWidgetView({ view, dom, widget }: { view: EditorView; dom: HTMLEle
     text: widget.source,
     toDocument: (offset) => blockDocumentPosition(view, dom, widget, offset),
   }), [dom, view, widget]);
-  const activate = useMemo(() => () => {
-    activateBlockWidget(view, dom);
+  const activate = useMemo(() => (intent: NoteInteractionIntent) => {
+    activateBlockWidget(view, dom, intent);
   }, [dom, view]);
-  const element = useMemo(() => blockElement(widget.kind), [widget.kind]);
+  // Beside its pictures a widget of pictures is the line of their source.
+  const element = useMemo(() => (widget.kind === "media" ? PICTURE_LINE_ELEMENT : blockElement(widget.kind)), [widget.kind]);
   useWidgetClicks(dom, element, activate);
   return <WidgetArticle view={view} source={source} />;
 }
@@ -294,13 +300,14 @@ function InlineMediaView({ view, dom, source: text }: { view: EditorView; dom: H
     text,
     toDocument: (offset) => (dom.isConnected ? view.posAtDOM(dom) + offset : null),
   }), [dom, text, view]);
-  // A click on a picture among words shows its source: the caret goes to it.
+  // The picture among words opens at a click (Л11.1); beside it, a click
+  // puts the caret at it, which shows its source.
   const activate = useMemo(() => () => {
     if (!dom.isConnected) return;
     view.dispatch({ selection: EditorSelection.cursor(view.posAtDOM(dom)), userEvent: "select" });
     view.focus();
   }, [dom, view]);
-  useWidgetClicks(dom, INLINE_MEDIA_ELEMENT, activate);
+  useWidgetClicks(dom, PICTURE_LINE_ELEMENT, activate);
   return <WidgetArticle view={view} source={source} />;
 }
 

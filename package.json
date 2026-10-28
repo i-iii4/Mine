@@ -24,6 +24,7 @@
     "test:reading-mode": "node scripts/reading-mode-audit.mjs",
     "test:editing": "node scripts/editing-audit.mjs",
     "test:editing-perf": "node scripts/editing-perf-audit.mjs",
+    "test:focus-ring": "node scripts/focus-ring-audit.mjs",
     "test:native-shell": "node scripts/native-shell-smoke.mjs",
     "test:native-capture": "node scripts/native-capture-smoke.mjs",
     "test:clipper-worker": "bun run build:extension && node scripts/clipper-worker-smoke.mjs && node scripts/x-thread-smoke.mjs",

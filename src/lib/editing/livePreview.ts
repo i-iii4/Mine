@@ -680,10 +680,10 @@ export const blockField = StateField.define<BlockWidgets>({
     const counters = tr.state.facet(counterSink);
     const mapped = tr.docChanged ? value.set.map(tr.changes) : value.set;
     if (waits) {
-      if (!tr.docChanged && before.blocks === after.blocks) return value;
+      if (!tr.docChanged && before.blocks === after.blocks && before.pictures === after.pictures) return value;
       return { set: mapped, stale: true };
     }
-    const revealChanged = before.blocks !== after.blocks;
+    const revealChanged = before.blocks !== after.blocks || before.pictures !== after.pictures;
     if (!value.stale && !tr.docChanged && !revealChanged && !treeChanged) return value;
     let next: DecorationSet;
     if (value.stale || (treeChanged && !tr.docChanged)) {
@@ -693,7 +693,9 @@ export const blockField = StateField.define<BlockWidgets>({
       next = mapped;
       const changed = tr.docChanged ? changedRegion(tr) : null;
       if (changed) next = rebuildRegion(tr.state, next, changed);
-      const revealed = revealChanged ? revealRegion(tr.state, before.blocks, after.blocks) : null;
+      const revealed = revealChanged
+        ? revealRegion(tr.state, [...before.blocks, ...before.pictures], [...after.blocks, ...after.pictures])
+        : null;
       if (revealed) next = rebuildRegion(tr.state, next, revealed);
     }
     countWidgets(mapped, next, counters);
@@ -931,14 +933,14 @@ export function carryOutBlockIntent(view: EditorView, block: EditorBlock, intent
   }
 }
 
-/** A click on a block widget's own content (Л5.3): its source, its choice,
- *  or, for a table, its cell. */
-export function activateBlockWidget(view: EditorView, dom: HTMLElement): boolean {
+/** A click on a block widget's own content carries out what it means
+ *  (Л5.3): the block's source, its choice, a table's cell, or the caret on
+ *  the line of pictures beside them. */
+export function activateBlockWidget(view: EditorView, dom: HTMLElement, intent: NoteInteractionIntent): boolean {
   const pos = view.posAtDOM(dom);
   const block = blocksOf(view.state, pos, pos).find((candidate) => candidate.from === pos)
     ?? blocksOf(view.state, pos, pos).find((candidate) => candidate.from <= pos && pos <= candidate.to);
   if (!block) return false;
-  const intent = noteInteractionIntent({ surface: "editing", element: blockElement(block.kind), event: "click" });
   const handled = carryOutBlockIntent(view, block, intent);
   view.focus();
   return handled;
@@ -953,52 +955,67 @@ export function toggleTaskWidget(view: EditorView, dom: HTMLElement): boolean {
   return true;
 }
 
-/** ↑ and ↓ onto a block widget choose it; from a chosen block they go on to
- *  the line beyond it (Л5.3). */
+/** The caret on the line of a paragraph of pictures, which then shows its
+ *  source over them (Л5.3): its first line coming from above, its last
+ *  from below, at `column` of that line, or at the line's start from above
+ *  and its end from below. */
+function placeCaretOnPictures(view: EditorView, block: EditorBlock, fromAbove: boolean, column: number | null): boolean {
+  const line = view.state.doc.lineAt(fromAbove ? block.from : block.to);
+  const offset = column ?? (fromAbove ? 0 : line.length);
+  return placeCaret(view, line.from + Math.min(offset, line.length));
+}
+
+/** ↑ and ↓ onto a block widget choose it, and onto pictures put the caret
+ *  on their line; from a chosen block they go on to the line beyond it
+ *  (Л5.3). */
 function verticalMove(forward: boolean) {
   return (view: EditorView): boolean => {
     const state = view.state;
     const chosen = selectedBlock(state);
-    if (chosen) {
+    if (chosen && chosen.kind !== "media") {
       if (forward) {
         if (chosen.to >= state.doc.length) return placeCaret(view, chosen.to);
         const next = widgetBlockAt(state, chosen.to + 1, "starts");
-        return next ? selectBlock(view, next) : placeCaret(view, chosen.to + 1);
+        return next ? arriveAtBlock(view, next, true, 0) : placeCaret(view, chosen.to + 1);
       }
       if (chosen.from === 0) return placeCaret(view, 0);
       const previous = widgetBlockAt(state, chosen.from - 1, "ends");
-      return previous ? selectBlock(view, previous) : placeCaret(view, chosen.from - 1);
+      return previous ? arriveAtBlock(view, previous, false, null) : placeCaret(view, chosen.from - 1);
     }
     const main = state.selection.main;
     if (!main.empty) return false;
     const line = state.doc.lineAt(main.head);
+    const column = main.head - line.from;
     const target = view.moveVertically(main, forward);
     if (forward) {
       if (line.to >= state.doc.length || target.head <= line.to) return false;
       const next = widgetBlockAt(state, line.to + 1, "starts");
-      return next ? arriveAtBlock(view, next, true) : false;
+      return next ? arriveAtBlock(view, next, true, column) : false;
     }
     if (line.from === 0 || target.head >= line.from) return false;
     const previous = widgetBlockAt(state, line.from - 1, "ends");
-    return previous ? arriveAtBlock(view, previous, false) : false;
+    return previous ? arriveAtBlock(view, previous, false, column) : false;
   };
 }
 
-/** ↑ ↓ from the text beside a block: a table of the top level opens its
- *  header or its last row in the cell under the caret (Л9.6), any other
+/** ↑ ↓ onto a block: pictures take the caret on their line, at `column`
+ *  of the line the caret leaves (Л5.3); a table of the top level opens its
+ *  header or its last row in the cell under the caret (Л9.6); any other
  *  block is chosen (Л5.3). */
-function arriveAtBlock(view: EditorView, block: EditorBlock, fromAbove: boolean): boolean {
+function arriveAtBlock(view: EditorView, block: EditorBlock, fromAbove: boolean, column: number | null): boolean {
+  if (block.kind === "media") return placeCaretOnPictures(view, block, fromAbove, column);
   if (block.kind !== "table" || block.containers.length > 0) return selectBlock(view, block);
   const x = view.coordsAtPos(view.state.selection.main.head)?.left ?? null;
   return enterTableFromText(view, block, fromAbove, x);
 }
 
-/** ← and → at the edge of a line next to a block widget choose it. */
+/** ← and → at the edge of a line next to a block widget choose it, and
+ *  next to pictures put the caret at the near end of their line (Л5.3). */
 function horizontalMove(forward: boolean) {
   return (view: EditorView): boolean => {
     const state = view.state;
     const chosen = selectedBlock(state);
-    if (chosen) {
+    if (chosen && chosen.kind !== "media") {
       if (forward) return placeCaret(view, Math.min(state.doc.length, chosen.to + (chosen.to < state.doc.length ? 1 : 0)));
       return placeCaret(view, Math.max(0, chosen.from - (chosen.from > 0 ? 1 : 0)));
     }
@@ -1007,11 +1024,13 @@ function horizontalMove(forward: boolean) {
     const line = state.doc.lineAt(main.head);
     if (forward && main.head === line.to && line.to < state.doc.length) {
       const next = widgetBlockAt(state, line.to + 1, "starts");
-      return next ? selectBlock(view, next) : false;
+      if (!next) return false;
+      return next.kind === "media" ? placeCaretOnPictures(view, next, true, null) : selectBlock(view, next);
     }
     if (!forward && main.head === line.from && line.from > 0) {
       const previous = widgetBlockAt(state, line.from - 1, "ends");
-      return previous ? selectBlock(view, previous) : false;
+      if (!previous) return false;
+      return previous.kind === "media" ? placeCaretOnPictures(view, previous, false, null) : selectBlock(view, previous);
     }
     return false;
   };
@@ -1026,7 +1045,8 @@ function enterBlock(view: EditorView): boolean {
 }
 
 /** Escape from a block's source chooses the block; from a chosen block it
- *  puts the caret after it (Л5.3). Otherwise it is not the editor's. */
+ *  puts the caret after it (Л5.3). Pictures show their source by the caret
+ *  alone, as text does: Escape there is not the editor's. */
 function escapeBlock(view: EditorView): boolean {
   const state = view.state;
   const reveal = state.field(revealField);
@@ -1043,7 +1063,7 @@ function escapeBlock(view: EditorView): boolean {
     }
   }
   const chosen = selectedBlock(state);
-  if (!chosen) return false;
+  if (!chosen || chosen.kind === "media") return false;
   return placeCaret(view, Math.min(state.doc.length, chosen.to + (chosen.to < state.doc.length ? 1 : 0)));
 }
 

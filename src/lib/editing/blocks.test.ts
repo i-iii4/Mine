@@ -110,6 +110,19 @@ describe("collectBlocks (Л6, Л8)", () => {
     const inRange = collectBlocks(mineMarkdownParser.parse(READING_FIXTURE_BODY), doc, table.from, table.to);
     expect(inRange).toEqual([table]);
   });
+
+  it("finds a block in a list item or a quote by the start of its line, before its markers (Л5.3)", () => {
+    const body = "- над\n- ![[a.png]]\n\n> ![[b.png]]\n\n- над\n  - ![[c.png]]\n\n   ![[d.png]]";
+    const { doc, blocks } = blocksOfText(body);
+    const tree = mineMarkdownParser.parse(body);
+    expect(blocks).toHaveLength(4);
+    for (const block of blocks) {
+      // The block's own first position, the marker `- ` or `> ` there, and
+      // the end of the line above it touch it.
+      expect(collectBlocks(tree, doc, block.from, block.from)).toEqual([block]);
+      expect(collectBlocks(tree, doc, block.from - 1, block.from)).toEqual([block]);
+    }
+  });
 });
 
 describe("a block's source (Л8.1)", () => {

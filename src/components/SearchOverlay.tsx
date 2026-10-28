@@ -723,6 +723,9 @@ export function SearchOverlay({
                     role="button"
                     tabIndex={-1}
                     aria-label="Open element"
+                    // A press target only: the search field keeps the
+                    // overlay's focus look, so a press here draws no ring.
+                    className="outline-none"
                     onClick={() => onOpenBlock(activeBlock)}
                     data-search-overlay-preview
                   >

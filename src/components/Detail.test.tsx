@@ -15,6 +15,7 @@ import type { CardAssociationGroup, CardAssociationKind, IndexedBlock, LightBloc
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { COLLECTION_PICKER_CONTENT_CLASS } from "./CollectionPicker";
@@ -2181,6 +2182,53 @@ describe("Detail", () => {
     expect(fromRightClick).toEqual(["Create Element", "Reveal in Finder", "Copy Path", "Copy Media", "Rename Media...", "Remove from Element", "Delete Media"]);
   });
 
+  // The collection rows of Create Element are the rows of the menu they open
+  // in: a dropdown row in a context menu has no menu of its own and throws.
+  it("opens Create Element from the right click menu of a body video", async () => {
+    const onCreateMediaAssetCard = vi.fn().mockResolvedValue(undefined);
+    const b = block({
+      card_kind: "article",
+      block_type: "article",
+      source: "web-clipper",
+      url: "https://x.com/someone/status/1",
+      body: "A post.\n\n![[post-img0.mp4]]",
+    });
+    const { container } = render(
+      <Detail
+        block={b}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        tags={[{ tag: "Biology", count: 3 }]}
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={vi.fn()}
+        onCreateMediaAssetCard={onCreateMediaAssetCard}
+      />,
+    );
+    const frame = container.querySelector<HTMLElement>("[data-detail-media-action-frame][data-media-asset-ref]")!;
+    expect(frame.querySelector("video")).toBeTruthy();
+    fireEvent.contextMenu(frame, { clientX: 60, clientY: 40 });
+    const contextMenu = await screen.findByRole("menu");
+    expect(contextMenu).toHaveAttribute("data-slot", "context-menu-content");
+    fireEvent.click(within(contextMenu).getByText("Create Element"));
+    const picker = await screen.findByPlaceholderText("Search collections...");
+    const submenu = picker.closest("[data-slot='context-menu-sub-content']") as HTMLElement;
+    expect(submenu).toBeTruthy();
+    const rows = within(submenu).getAllByRole("menuitem");
+    expect(rows.map((row) => row.textContent)).toEqual(["Everything", "Biology"]);
+    rows.forEach((row) => expect(row).toHaveAttribute("data-slot", "context-menu-item"));
+    fireEvent.click(rows[1]!);
+    await waitFor(() => expect(onCreateMediaAssetCard).toHaveBeenCalledWith(
+      expect.objectContaining({ media_ref: "post-img0.mp4", media_kind: "video" }),
+      "Biology",
+    ));
+  });
+
   it("uses the shared quantized list height for Create Element from image", () => {
     const asset: MediaAssetRef = {
       media_ref: "photo.jpg",
@@ -2193,6 +2241,7 @@ describe("Detail", () => {
         <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
         <DropdownMenuContent className={COLLECTION_PICKER_CONTENT_CLASS}>
           <MediaAssetCollectionPicker
+            Item={DropdownMenuItem}
             asset={asset}
             tags={Array.from({ length: 12 }, (_, index) => ({
               tag: `channel-${index}`,

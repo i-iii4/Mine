@@ -447,7 +447,8 @@ export function ImagePreviewOverlay({
     <div
       ref={overlayRef}
       tabIndex={-1}
-      className="modal-scrim image-preview-secondary-plane fixed inset-0 z-[70] overflow-hidden text-black"
+      // Focused only to take the preview's keys: no ring around the window.
+      className="modal-scrim image-preview-secondary-plane fixed inset-0 z-[70] overflow-hidden text-black outline-none"
       role="dialog"
       aria-modal="false"
       aria-label="Image preview"

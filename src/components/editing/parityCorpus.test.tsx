@@ -281,9 +281,10 @@ const CORPUS_ROWS: Array<{ element: keyof typeof FIND; event: "click" | "command
   { element: "task", event: "click", reading: "ToggleTask", editing: "ToggleTask" },
   { element: "embed", event: "command-click", reading: "OpenEmbed", editing: "OpenEmbed" },
   { element: "picture", event: "command-click", reading: "OpenImagePreview", editing: "OpenImagePreview" },
-  // Л5.3: a click chooses a picture or an embed as a block in the editor.
-  { element: "embed", event: "click", reading: "OpenEmbed", editing: "SelectBlock", rule: "Л5.3" },
-  { element: "picture", event: "click", reading: "OpenImagePreview", editing: "SelectBlock", rule: "Л5.3" },
+  // A click opens a picture and an embed in the editor too; their source is
+  // the caret's (Л5.3, the user's decision of 27.10.2026).
+  { element: "embed", event: "click", reading: "OpenEmbed", editing: "OpenEmbed" },
+  { element: "picture", event: "click", reading: "OpenImagePreview", editing: "OpenImagePreview" },
   // Л5.3, Л11.1: code, a diagram, a formula, a callout and HTML show their
   // source at a click, which only the editor has.
   { element: "code", event: "click", reading: "none", editing: "RevealBlock", rule: "RevealBlock" },
@@ -366,9 +367,20 @@ describe("the parity corpus of the open card (SPEC_EDITING.md, Л11.1)", () => {
     cleanup();
 
     const editingSecond = await open("editing", SECOND_PART);
-    await click(must(FIND.picture?.editing(editingSecond.container), "picture"), { metaKey: true });
+    const secondView = editingSecond.view;
+    if (!secondView) throw new Error("no editor");
+    const caret = secondView.state.selection.main.head;
+    // A click opens the picture and the embed and leaves the caret, so no
+    // source shows behind the preview (Л5.3).
+    await click(must(FIND.picture?.editing(editingSecond.container), "picture"));
     expect(editingSecond.onOpenImagePreview).toHaveBeenCalledTimes(1);
-    await click(must(FIND.embed?.editing(editingSecond.container), "embed"), { metaKey: true });
+    expect(secondView.state.selection.main.head).toBe(caret);
+    expect(secondView.state.field(revealField).pictures).toEqual([]);
+    await click(must(FIND.embed?.editing(editingSecond.container), "embed"));
     expect(editingSecond.onOpenRelatedNote).toHaveBeenLastCalledWith(EMBED_SLUG);
+    await click(must(FIND.picture?.editing(editingSecond.container), "picture"), { metaKey: true });
+    expect(editingSecond.onOpenImagePreview).toHaveBeenCalledTimes(2);
+    await click(must(FIND.embed?.editing(editingSecond.container), "embed"), { metaKey: true });
+    expect(editingSecond.onOpenRelatedNote).toHaveBeenCalledTimes(2);
   });
 });

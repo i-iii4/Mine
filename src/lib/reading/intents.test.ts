@@ -29,14 +29,14 @@ describe("noteInteractionIntent (SPEC_EDITING.md, Л11.1)", () => {
     }
   });
 
-  it("opens a picture's preview and an embed's note when reading, and chooses them as blocks when editing (Л5.3)", () => {
-    expect(intent("reading", { kind: "image" }, "click")).toBe("OpenImagePreview");
-    expect(intent("reading", { kind: "embed" }, "click")).toBe("OpenEmbed");
+  it("opens a picture's preview and an embed's note at a click on both surfaces, and leaves Enter to the editor's text (Л5.3, the user's decision of 27.10.2026)", () => {
+    for (const surface of ["reading", "editing"] as const) {
+      expect(intent(surface, { kind: "image" }, "click")).toBe("OpenImagePreview");
+      expect(intent(surface, { kind: "embed" }, "click")).toBe("OpenEmbed");
+    }
     expect(intent("reading", { kind: "embed" }, "enter")).toBe("OpenEmbed");
-    expect(intent("editing", { kind: "image" }, "click")).toBe("SelectBlock");
-    expect(intent("editing", { kind: "embed" }, "click")).toBe("SelectBlock");
-    expect(intent("editing", { kind: "image" }, "enter", { selected: true })).toBe("RevealBlock");
-    expect(intent("editing", { kind: "embed" }, "enter")).toBe("Nothing");
+    expect(intent("editing", { kind: "image" }, "enter", { selected: true })).toBe("Nothing");
+    expect(intent("editing", { kind: "embed" }, "enter", { selected: true })).toBe("Nothing");
   });
 
   it("opens a picture and an embed with ⌘-click on both surfaces, as a click opens them when reading (Л10.1, Л11.5)", () => {

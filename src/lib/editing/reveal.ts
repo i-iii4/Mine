@@ -1,8 +1,11 @@
 // What the editor shows as source (SPEC_EDITING.md, Л5.2, Л5.3, Л5.5): the
 // element under the caret or inside the selection, one element and not its
 // whole line, and only after the person acted (the caret the editor opens
-// with reveals nothing); a block drawn as a widget only when it was opened by
-// a click or Enter, until the caret leaves it. While a change of what is shown
+// with reveals nothing); a paragraph of pictures while the caret stands on
+// its lines or a selection crosses it, its source over the pictures (the
+// user's decision of 27.10.2026, as Obsidian's Live Preview); any other block
+// drawn as a widget only when it was opened by a click or Enter, until the
+// caret leaves it. While a change of what is shown
 // must wait (a pressed mouse button over a selection, a composition, an
 // external change being applied), the selection reveal follows is carried
 // through the changes and not taken anew: what is drawn stays as it was until
@@ -23,8 +26,11 @@ export interface RevealState {
   /** The selection reveal follows: the editor's own, carried through the
    *  changes while a rebuild waits. */
   selection: EditorSelection;
-  /** The starts of the blocks shown as source (Л5.3). */
+  /** The starts of the blocks opened as source by a click or Enter (Л5.3). */
   blocks: readonly number[];
+  /** The starts of the paragraphs of pictures the selection stands on: they
+   *  show their source over their pictures (Л5.3). */
+  pictures: readonly number[];
   /** Why the shown set waits now. */
   waits: ReadonlySet<RevealWait>;
 }
@@ -62,6 +68,25 @@ function blocksKeptBy(state: EditorState, starts: readonly number[], selection: 
   });
 }
 
+/** The paragraphs of pictures `selection` stands on: a caret on one of their
+ *  lines, from its start to its end, or a selection over them. Every line of
+ *  such a paragraph holds `![`, so a caret on a line without it looks no
+ *  further. */
+function picturesUnder(state: EditorState, selection: EditorSelection): number[] {
+  const starts = new Set<number>();
+  for (const range of selection.ranges) {
+    if (range.empty && !state.doc.lineAt(range.head).text.includes("![")) continue;
+    for (const block of blocksOf(state, range.from, range.to)) {
+      if (block.kind !== "media") continue;
+      const under = range.empty
+        ? block.from <= range.head && range.head <= block.to
+        : range.from < block.to && range.to > block.from;
+      if (under) starts.add(block.from);
+    }
+  }
+  return [...starts].sort((a, b) => a - b);
+}
+
 function sameStarts(left: readonly number[], right: readonly number[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -69,13 +94,16 @@ function sameStarts(left: readonly number[], right: readonly number[]): boolean 
 /** The reveal state of the editor. */
 export const revealField = StateField.define<RevealState>({
   create(state) {
-    return { interacted: false, selection: state.selection, blocks: [], waits: NO_WAITS };
+    return { interacted: false, selection: state.selection, blocks: [], pictures: [], waits: NO_WAITS };
   },
   update(value, tr) {
     let waits = value.waits;
     let blocks = tr.docChanged
       ? [...new Set(value.blocks.map((start) => tr.changes.mapPos(start, -1)))]
       : value.blocks;
+    let pictures = tr.docChanged
+      ? [...new Set(value.pictures.map((start) => tr.changes.mapPos(start, -1)))]
+      : value.pictures;
     let explicit = false;
     for (const effect of tr.effects) {
       if (effect.is(revealWaitEffect)) {
@@ -98,15 +126,20 @@ export const revealField = StateField.define<RevealState>({
       const kept = blocksKeptBy(tr.state, blocks, selection);
       if (!sameStarts(kept, blocks)) blocks = kept;
     }
+    if (!waiting && interacted) {
+      const under = picturesUnder(tr.state, selection);
+      if (!sameStarts(under, pictures)) pictures = under;
+    }
     if (
       interacted === value.interacted
       && selection.eq(value.selection)
       && sameStarts(blocks, value.blocks)
+      && sameStarts(pictures, value.pictures)
       && waits === value.waits
     ) {
       return value;
     }
-    return { interacted, selection, blocks, waits };
+    return { interacted, selection, blocks, pictures, waits };
   },
 });
 
@@ -131,7 +164,7 @@ export function isRevealed(reveal: RevealState, from: number, to: number, reach:
 
 /** Whether `block` is shown as source. */
 export function isBlockRevealed(reveal: RevealState, block: EditorBlock): boolean {
-  return reveal.blocks.includes(block.from);
+  return block.kind === "media" ? reveal.pictures.includes(block.from) : reveal.blocks.includes(block.from);
 }
 
 /** Whether the main selection is exactly `block`: the block is chosen

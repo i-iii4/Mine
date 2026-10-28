@@ -217,6 +217,12 @@ select,
   color: var(--foreground);
 }
 
+/* A row link holding the keyboard's DOM focus (Tab with macOS keyboard
+   navigation) looks as the row the arrows focus: its words brighten. */
+[data-sidebar-scroll] [data-sidebar-row-body]:focus-visible [data-sidebar-row-text] {
+  color: var(--foreground);
+}
+
 [data-sidebar-scroll][data-sidebar-link-editor-mode="true"] [data-sidebar-row-linked="true"] [data-sidebar-row-text] {
   color: var(--foreground);
 }
@@ -2079,6 +2085,39 @@ body {
     padding-left: var(--spacing-surface);
     background-color: var(--sidebar);
     transition: translate var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  /* Where the stepped word stands over the name's last line, the name and
+     the leader under it fade into the word over the edge fade's width
+     (user's decision of 28.10.2026; Sidebar.tsx, nameRunsUnderLinkWord). A
+     name that ends before the word keeps the leader as it is. */
+  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-label]::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 100%;
+    /* The edge fade's width, 24px (EDGE_FADE_WIDTH, src/lib/edgeFade.ts). */
+    width: 24px;
+    background: linear-gradient(to left, var(--sidebar), transparent);
+    opacity: 0;
+    pointer-events: none;
+    /* Goes and comes with the word's step, on its timing. */
+    transition: opacity var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-action][data-sidebar-link-over-name]:is(:hover, [data-sidebar-link-pointer]) [data-sidebar-link-label]::before {
+    opacity: 1;
+    transition-duration: var(--hover-intent-fade-in);
+  }
+  /* The stepped word's box reaches as far left as the word went, so the
+     pointer on its first letter still holds it (Sidebar.tsx keeps the same
+     reach for its pointer mark). */
+  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-action]:is(:hover, [data-sidebar-link-pointer])::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 100%;
+    width: calc(var(--text-interface) + var(--spacing-surface));
   }
   :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-action]:is(:hover, [data-sidebar-link-pointer]) [data-sidebar-link-label] {
     translate: calc(-1 * (var(--text-interface) + var(--spacing-surface))) 0;

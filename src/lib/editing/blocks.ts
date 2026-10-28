@@ -150,6 +150,11 @@ function itemContentColumn(item: SyntaxNode, doc: Text, outside: readonly BlockC
 
 /** The blocks drawn as widgets among the children of `parent`, recursing
  *  into quotes and list items that are not widgets themselves. */
+/** Whether the line `node` starts on starts after `to`. */
+function startsAfter(node: SyntaxNode, doc: Text, to: number): boolean {
+  return node.from > to && doc.lineAt(node.from).from > to;
+}
+
 function collectIn(
   parent: SyntaxNode,
   doc: Text,
@@ -160,7 +165,9 @@ function collectIn(
 ) {
   for (let node = parent.firstChild; node; node = node.nextSibling) {
     if (node.to < from) continue;
-    if (node.from > to) break;
+    // A block starts at the start of its line, before the markers of its
+    // quotes and items and its indentation, where its node does not.
+    if (startsAfter(node, doc, to)) break;
     const kind = blockKind(node, doc);
     if (kind) {
       const end = kind === "html" ? htmlGroupEnd(node, doc) : node;
@@ -174,7 +181,7 @@ function collectIn(
       collectIn(node, doc, from, to, [...containers, { kind: "quote", contentColumn: 0 }], blocks);
     } else if (node.name === "BulletList" || node.name === "OrderedList") {
       for (let item = node.firstChild; item; item = item.nextSibling) {
-        if (item.name !== "ListItem" || item.to < from || item.from > to) continue;
+        if (item.name !== "ListItem" || item.to < from || startsAfter(item, doc, to)) continue;
         collectIn(item, doc, from, to, [...containers, { kind: "item", contentColumn: itemContentColumn(item, doc, containers) }], blocks);
       }
     }

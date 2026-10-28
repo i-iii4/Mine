@@ -2195,9 +2195,9 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
 }
 
 /** The window's header (О9): always shown at the window's top, the card
- *  under it, as the open card's top row stands over a full page: the same
- *  fill and line under it. Everything that row holds full page, and before
- *  it the way to full page. */
+ *  under it, on the top rows' fill, `--chrome` (user's decision of
+ *  28.10.2026), with a line under it. Everything the open card's top row holds full page, and
+ *  before it the way to full page. */
 export function CardPeekPlate({
   block,
   vaultPath,
@@ -2233,7 +2233,7 @@ export function CardPeekPlate({
   const menuBaselineRef = useRef(menuOpenRequestSequence);
   return (
     <header
-      className="flex shrink-0 flex-col bg-accent"
+      className="flex shrink-0 flex-col bg-chrome"
       style={{ height: CARD_PEEK_PLATE_HEIGHT_PX }}
       data-card-peek-plate=""
     >
