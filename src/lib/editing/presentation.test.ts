@@ -45,6 +45,7 @@ function present(text: string, options: Options = {}): string[] {
     interacted: options.interacted ?? caret >= 0,
     selection: state.selection,
     blocks: options.revealedBlocks ?? [],
+    pictures: [],
     waits: new Set(),
   };
   const numbers = footnoteNumbers(tree, state.doc);

@@ -3878,6 +3878,16 @@
     },
     {
       "paths": [
+        "scripts/focus-ring-audit.mjs"
+      ],
+      "requirement": "DESIGN_SYSTEM.md##### Своя рамка фокуса у каждого элемента",
+      "tests": [
+        "scripts/focus-ring-audit.mjs"
+      ],
+      "command": "test:focus-ring"
+    },
+    {
+      "paths": [
         "scripts/sidebar-strip-audit.mjs",
         "src/components/Sidebar.tsx",
         "src/hooks/useChannelPreviewsEvents.ts"
