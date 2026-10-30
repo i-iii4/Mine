@@ -65,6 +65,8 @@ notify = { version = "8", optional = true }
 # HTTP client (for Are.na import)
 ureq = { version = "2", features = ["json"] }
 url = "2"
+# `Retry-After` as a date (RFC 9110, 10.2.3); already in the tree.
+httpdate = "1"
 
 # Image processing
 image = "0.25"

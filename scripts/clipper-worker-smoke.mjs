@@ -1,7 +1,7 @@
 // Real packaged classic worker + CSP + WASM + IndexedDB persistence. OPFS lives
 // only in a disposable profile: this does not test OS folders/permissions or Dia.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -713,6 +713,117 @@ async function checkNativeHelperReplies() {
     await browser?.close();
     // Allocated above for this check only, never a user profile or helper.
     rmSync(sandbox, { recursive: true, force: true });
+  }
+}
+
+// The file of a picture from the browser (SPEC_CLIPPER.md, «Файл картинки из
+// браузера, отказ сайта и причина ошибки», Б1). A local site stands in for
+// the picture's server and counts every request; a local server stands in
+// for the helper's upload server. The bytes of a picture the tab shows reach
+// the upload byte for byte with no new request to the site: the picture
+// opened as the tab's document and a picture of a page from the same address.
+// A picture the cache does not keep and one the page does not show are left
+// to the helper's download, with no request from the browser either.
+async function checkPictureFileFromBrowser() {
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), randomBytes(600 * 1024)]);
+  const png = Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), randomBytes(64 * 1024)]);
+  const files = {
+    '/Harvest.jpg': { type: 'image/jpeg', body: jpeg, cache: 'public, max-age=3600' },
+    '/Gallery.png': { type: 'image/png', body: png, cache: 'public, max-age=3600' },
+    '/fresh.jpg': { type: 'image/jpeg', body: jpeg, cache: 'no-store' },
+    '/elsewhere.jpg': { type: 'image/jpeg', body: jpeg, cache: 'public, max-age=3600' },
+  };
+  const requests = new Map();
+  const site = createServer((request, response) => {
+    const path = new URL(request.url, 'http://127.0.0.1').pathname;
+    requests.set(path, (requests.get(path) ?? 0) + 1);
+    if (path === '/gallery.html') {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        .end('<!doctype html><html><head><meta charset="utf-8"><title>Gallery</title></head><body><img src="/Gallery.png"></body></html>');
+      return;
+    }
+    const file = files[path];
+    if (!file) {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, { 'content-type': file.type, 'content-length': file.body.length, 'cache-control': file.cache })
+      .end(file.body);
+  });
+  const uploads = [];
+  const token = randomBytes(16).toString('hex');
+  const uploadServer = createServer((request, response) => {
+    const parts = [];
+    request.on('data', (part) => parts.push(part));
+    request.on('end', () => {
+      if (request.headers.authorization !== `Bearer ${token}`) {
+        response.writeHead(403).end();
+        return;
+      }
+      const query = new URL(request.url, 'http://127.0.0.1').searchParams;
+      uploads.push({ query: Object.fromEntries(query), type: request.headers['content-type'], body: Buffer.concat(parts) });
+      const uploadId = randomBytes(16).toString('hex');
+      response.writeHead(200, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ ok: true, filename: `pending:${uploadId}`, upload_id: uploadId, size: Buffer.concat(parts).length }));
+    });
+  });
+  await new Promise((resolve) => site.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => uploadServer.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${site.address().port}`;
+  const uploadPort = uploadServer.address().port;
+  const transport = await quietTransportPage();
+  const tabs = [];
+  try {
+    const upload = async (pageUrl, pictureUrl) => {
+      const tabId = await transport.evaluate(async (address) =>
+        (await chrome.tabs.query({})).find((tab) => tab.url === address)?.id ?? null, pageUrl);
+      assert.equal(typeof tabId, 'number', `no tab shows ${pageUrl}`);
+      const { response, transportError } = await sendBackgroundMessage(transport, {
+        action: 'uploadBrowserFile',
+        payload: { tabId, url: pictureUrl, port: uploadPort, token, vaultPath: '/smoke-space' },
+      });
+      assert.equal(transportError, null);
+      return response;
+    };
+    const open = async (path) => {
+      const page = await context.newPage();
+      tabs.push(page);
+      await page.goto(`${origin}${path}`);
+      return page;
+    };
+
+    await open('/Harvest.jpg');
+    assert.equal(requests.get('/Harvest.jpg'), 1);
+    const opened = await upload(`${origin}/Harvest.jpg`, `${origin}/Harvest.jpg`);
+    assert.equal(opened?.ok, true, `the opened picture was not taken from the browser: ${JSON.stringify(opened)}`);
+    assert.equal(requests.get('/Harvest.jpg'), 1, 'the site was asked again for the opened picture');
+    assert.equal(uploads.length, 1);
+    assert.ok(uploads[0].body.equals(jpeg), 'the uploaded picture differs from the file');
+    assert.deepEqual(uploads[0].query, { filename: 'picture.jpg', source: 'browser_file', vault_path: '/smoke-space' });
+    assert.equal(uploads[0].type, 'image/jpeg');
+
+    const gallery = await open('/gallery.html');
+    await gallery.waitForFunction(() => document.images[0]?.complete && document.images[0].naturalWidth >= 0);
+    assert.equal(requests.get('/Gallery.png'), 1);
+    const shown = await upload(`${origin}/gallery.html`, `${origin}/Gallery.png`);
+    assert.equal(shown?.ok, true, `the picture of the page was not taken from the browser: ${JSON.stringify(shown)}`);
+    assert.equal(requests.get('/Gallery.png'), 1, 'the site was asked again for the picture of the page');
+    assert.ok(uploads[1].body.equals(png), 'the uploaded picture of the page differs from the file');
+
+    await open('/fresh.jpg');
+    const fresh = await upload(`${origin}/fresh.jpg`, `${origin}/fresh.jpg`);
+    assert.equal(fresh?.ok, false, 'a picture the cache does not keep was uploaded');
+    assert.equal(requests.get('/fresh.jpg'), 1, 'the browser asked the site for a picture it does not keep');
+
+    const elsewhere = await upload(`${origin}/gallery.html`, `${origin}/elsewhere.jpg`);
+    assert.deepEqual(elsewhere, { ok: false, reason: 'not_shown' });
+    assert.equal(requests.get('/elsewhere.jpg'), undefined, 'the browser asked the site for a picture the page does not show');
+    assert.equal(uploads.length, 2, 'a refused picture reached the upload server');
+  } finally {
+    for (const page of tabs) await page.close();
+    await transport.close();
+    await new Promise((resolve) => site.close(resolve));
+    await new Promise((resolve) => uploadServer.close(resolve));
   }
 }
 
@@ -1645,6 +1756,7 @@ try {
   await checkCollectionsArePages(worker);
   await checkXPostWithoutPageCache(worker);
   await checkPagesOnDiskAndLargeRecords(worker);
+  await checkPictureFileFromBrowser();
   await context.close();
   context = undefined;
   await checkXPageWorldAfterReload();
@@ -1672,6 +1784,7 @@ try {
     iconClickAfterContentScriptUpdateReloads: true, keptClipHoldsNoUpdateAndCrossesReload: true,
     liveClipperHoldsUpdateAndPageSaysSo: true,
     overlayStyledOnPageOnDisk: true, svgPageOpensClipperWindow: true, localStorageKeepsRecordPast10MB: true,
+    pictureFileFromBrowserWithoutRequest: true, pictureOutsideCacheLeftToHelper: true,
     filesystem: 'OPFS-not-OS-folder' });
 } catch (error) {
   report.error = error.stack ?? String(error);

@@ -2165,7 +2165,10 @@ fn perform_save_block_with_publisher(
                     }
                 }
                 Err(e) => {
-                    warning = Some(format!("failed to download media: {e}"));
+                    // The reason reaches the answer and the journal (Б3).
+                    let reason = media_download_reason(image_url, &e);
+                    host_log(&format!("save: media download failed: {reason} ({e:#})"));
+                    warning = Some(reason);
                 }
             }
         }
@@ -2225,6 +2228,14 @@ fn perform_save_block_with_publisher(
         }
     }
 
+    // A card that needs its file and did not get it says why: the reason of
+    // the failed download (or upload), not the core's MissingMedia, which
+    // stays for a request that named no file at all (Б3).
+    if bt == BlockType::Image && media_file.is_none() && thumbnail_file.is_none() {
+        if let Some(reason) = warning.take() {
+            return Err(MediaNotObtained { reason }.into());
+        }
+    }
     settle_prepared_media_name(source_vault, vault, &mut media_file)?;
     settle_prepared_media_name(source_vault, vault, &mut thumbnail_file)?;
     let mut link_paths = files::scan_vault_file_paths(source_vault)?;
@@ -2671,6 +2682,67 @@ const INLINE_DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 /// `cdn.syndication.twimg.com` would block `resolve_twitter_media` on the
 /// serial host until the OS socket timeout.
 const TWITTER_API_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The file of an image card was not obtained. `reason` is what the clipper
+/// shows, in English like its other errors (SPEC_CLIPPER.md, «Файл картинки
+/// из браузера, отказ сайта и причина ошибки», Б3).
+#[derive(Debug, thiserror::Error)]
+#[error("{reason}")]
+struct MediaNotObtained {
+    reason: String,
+}
+
+/// Why the download of `url` failed, as the clipper says it: the site, the
+/// HTTP code and, for a `429`, when the site allows the next request (Б3).
+/// A failure without an HTTP answer names the site and its cause.
+fn media_download_reason(url: &str, error: &anyhow::Error) -> String {
+    let refusal = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<net::HttpStatusError>());
+    let Some(refusal) = refusal else {
+        return format!("{} did not give the file: {}.", site_of(url), error.root_cause());
+    };
+    let site = refusal.host().unwrap_or_else(|| site_of(url));
+    if refusal.status != net::TOO_MANY_REQUESTS {
+        return format!("{site} did not give the file (HTTP {}).", refusal.status);
+    }
+    let when = refusal
+        .retry_after
+        .map_or_else(|| "later".to_string(), |wait| format!("in {}", wait_text(wait)));
+    format!("{site} is not giving the file right now (HTTP {}). Try again {when}.", refusal.status)
+}
+
+/// The host of `url` as a person names the site; the address itself when it
+/// has none.
+fn site_of(url: &str) -> String {
+    let host = host_from_url(url);
+    if host.is_empty() {
+        url.to_string()
+    } else {
+        host
+    }
+}
+
+/// A wait as the clipper says it: seconds under a minute, else whole minutes
+/// rounded up, hours from sixty minutes on.
+fn wait_text(wait: Duration) -> String {
+    const SECONDS_PER_MINUTE: u64 = 60;
+    const MINUTES_PER_HOUR: u64 = 60;
+    let seconds = wait.as_secs();
+    if seconds < SECONDS_PER_MINUTE {
+        return format!("{seconds} s");
+    }
+    let minutes = seconds.div_ceil(SECONDS_PER_MINUTE);
+    if minutes < MINUTES_PER_HOUR {
+        return format!("{minutes} min");
+    }
+    let (hours, rest) = (minutes / MINUTES_PER_HOUR, minutes % MINUTES_PER_HOUR);
+    if rest == 0 {
+        format!("{hours} h")
+    } else {
+        format!("{hours} h {rest} min")
+    }
+}
 
 /// Download a file from URL to local path.
 /// `referer` should be the page URL (not the image URL) — CDNs validate this.
@@ -3946,7 +4018,81 @@ fn start_upload_server() -> Option<UploadServer> {
 }
 
 static UPLOAD_VAULT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-const MAX_UPLOAD_BYTES: u64 = 25 * 1024 * 1024;
+/// Limit of a screenshot upload.
+const MAX_SCREENSHOT_UPLOAD_BYTES: u64 = 25 * 1024 * 1024;
+
+/// What an upload carries, named by its `source` query parameter. Builds
+/// before 29.10.2026 send none: their uploads are screenshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UploadSource {
+    /// A screenshot or a crop of the page.
+    Screenshot,
+    /// The bytes of a picture the browser already loaded (SPEC_CLIPPER.md,
+    /// «Файл картинки из браузера, отказ сайта и причина ошибки», Б1).
+    BrowserFile,
+}
+
+impl UploadSource {
+    /// The source an upload request names; an unknown name is refused.
+    fn of_request(url: &str) -> Result<Self, String> {
+        match query_param(url, "source").as_deref() {
+            None | Some("screenshot") => Ok(Self::Screenshot),
+            Some("browser_file") => Ok(Self::BrowserFile),
+            Some(other) => Err(format!("unknown upload source: {other}")),
+        }
+    }
+
+    /// The largest body of this source. A file from the browser has the
+    /// limit of the helper's own download, so how a file is obtained never
+    /// changes which files are saved (Б1).
+    fn limit(self) -> u64 {
+        match self {
+            Self::Screenshot => MAX_SCREENSHOT_UPLOAD_BYTES,
+            Self::BrowserFile => net::MAX_MEDIA_BYTES,
+        }
+    }
+}
+
+/// Why an upload was not taken: the HTTP status and the text of the answer.
+#[derive(Debug, PartialEq, Eq)]
+struct UploadRefusal {
+    status: u16,
+    message: String,
+}
+
+/// Status of an upload body over the limit of its source.
+const UPLOAD_TOO_LARGE: u16 = 413;
+
+/// Take an upload body into the pending uploads of `vault`: the body is
+/// written as it arrives, never held whole, and refused when the declared
+/// `content_length` or the bytes that came exceed the limit of `source`.
+fn store_upload_body(
+    vault: &VaultLayout,
+    source: UploadSource,
+    filename: &str,
+    content_type: Option<String>,
+    content_length: Option<u64>,
+    body: &mut dyn Read,
+) -> Result<serde_json::Value, UploadRefusal> {
+    let too_large = || UploadRefusal { status: UPLOAD_TOO_LARGE, message: "Upload too large".to_string() };
+    if content_length.is_some_and(|length| length > source.limit()) {
+        return Err(too_large());
+    }
+    let manifest = clipper_uploads::write_pending_upload_from(vault, filename, content_type, body, source.limit())
+        .map_err(|error| {
+            if clipper_uploads::UploadTooLarge::find(&error).is_some() {
+                too_large()
+            } else {
+                UploadRefusal { status: 500, message: format!("Write error: {error:#}") }
+            }
+        })?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "filename": format!("pending:{}", manifest.upload_id),
+        "upload_id": manifest.upload_id,
+        "size": manifest.size,
+    }))
+}
 
 fn form_url_decode(value: &str) -> String {
     let value = value.replace('+', " ");
@@ -4081,35 +4227,20 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
     // even an identity file.
     let vault_path = query_param(request.url(), "vault_path")
         .or_else(|| UPLOAD_VAULT.lock().ok().and_then(|v| v.clone()));
-
-    // Read body
-    let mut body = Vec::new();
-    if let Err(e) = request
-        .as_reader()
-        .take(MAX_UPLOAD_BYTES + 1)
-        .read_to_end(&mut body)
-    {
-        let response = tiny_http::Response::from_string(format!("Read error: {e}"))
-            .with_status_code(500)
+    let refuse = |request: tiny_http::Request, status: u16, message: String| {
+        let response = tiny_http::Response::from_string(message)
+            .with_status_code(status)
             .with_header(
                 "Access-Control-Allow-Origin: *"
                     .parse::<tiny_http::Header>()
                     .unwrap(),
             );
         let _ = request.respond(response);
-        return;
-    }
-    if body.len() as u64 > MAX_UPLOAD_BYTES {
-        let response = tiny_http::Response::from_string("Upload too large")
-            .with_status_code(413)
-            .with_header(
-                "Access-Control-Allow-Origin: *"
-                    .parse::<tiny_http::Header>()
-                    .unwrap(),
-            );
-        let _ = request.respond(response);
-        return;
-    }
+    };
+    let source = match UploadSource::of_request(request.url()) {
+        Ok(source) => source,
+        Err(message) => return refuse(request, 400, message),
+    };
 
     // Write to local derived pending storage. The source vault is touched only
     // when save_block commits the matching markdown file.
@@ -4119,17 +4250,7 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
     });
     let vault = match upload_space {
         Ok(vault) => vault,
-        Err(e) => {
-            let response = tiny_http::Response::from_string(e)
-                .with_status_code(500)
-                .with_header(
-                    "Access-Control-Allow-Origin: *"
-                        .parse::<tiny_http::Header>()
-                        .unwrap(),
-                );
-            let _ = request.respond(response);
-            return;
-        }
+        Err(e) => return refuse(request, 500, e),
     };
 
     let content_type = request
@@ -4137,29 +4258,12 @@ fn handle_upload_request(mut request: tiny_http::Request, token: &str) {
         .iter()
         .find(|h| h.field.as_str() == "Content-Type" || h.field.as_str() == "content-type")
         .map(|h| h.value.as_str().to_string());
-    let manifest =
-        match clipper_uploads::write_pending_upload(&vault, &filename, content_type, &body) {
-            Ok(manifest) => manifest,
-            Err(e) => {
-                let response = tiny_http::Response::from_string(format!("Write error: {e:#}"))
-                    .with_status_code(500)
-                    .with_header(
-                        "Access-Control-Allow-Origin: *"
-                            .parse::<tiny_http::Header>()
-                            .unwrap(),
-                    );
-                let _ = request.respond(response);
-                return;
-            }
-        };
-
-    let json = serde_json::json!({
-        "ok": true,
-        "filename": format!("pending:{}", manifest.upload_id),
-        "upload_id": manifest.upload_id,
-        "size": manifest.size,
-    })
-    .to_string();
+    let content_length = request.body_length().map(|length| length as u64);
+    let stored = store_upload_body(&vault, source, &filename, content_type, content_length, request.as_reader());
+    let json = match stored {
+        Ok(json) => json.to_string(),
+        Err(refusal) => return refuse(request, refusal.status, refusal.message),
+    };
     let response = tiny_http::Response::from_string(json)
         .with_header(
             "Content-Type: application/json"
@@ -4550,6 +4654,11 @@ mod e4_tests;
 #[cfg(test)]
 #[path = "../native_host_tests/cloud_tests.rs"]
 mod cloud_tests;
+
+/// Tests of the file of a picture card (SPEC_CLIPPER.md, Б1 and Б3).
+#[cfg(test)]
+#[path = "../native_host_tests/picture_file_tests.rs"]
+mod picture_file_tests;
 
 /// The stand-in web of the helper's tests.
 #[cfg(test)]

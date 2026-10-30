@@ -2990,7 +2990,7 @@ export function AppWithVault({
   // ── Vault switching ──────────────────────────────────────────────────────
 
   const handleSwitchVault = useCallback(async () => {
-    const selected = await openDialog({ directory: true, multiple: false });
+    const selected = await openDialog({ directory: true, multiple: false, canCreateDirectories: true });
     if (!selected) return;
     await selectVault(selected);
     navigate("/", { replace: true });
@@ -4814,7 +4814,7 @@ export function AppWithVault({
       currentTag={currentTag}
       orderedTags={orderedTags}
       channelPreviews={channelPreviews}
-      totalBlocks={totalBlocks}
+      totalBlocks={taxonomyLoaded ? totalBlocks : null}
       isDropDragging={
         blockDragActive
         || activeDragMediaAsset !== null

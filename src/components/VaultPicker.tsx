@@ -28,7 +28,7 @@ export function VaultPicker({ onVaultSelected, onBack }: VaultPickerProps) {
 
   const choose = async () => {
     setError(null);
-    const selected = await open({ directory: true, multiple: false });
+    const selected = await open({ directory: true, multiple: false, canCreateDirectories: true });
     if (!selected || typeof selected !== "string") return;
 
     setLoading(true);

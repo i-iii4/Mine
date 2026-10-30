@@ -70,6 +70,8 @@ function background(apiMode: BrowserApiMode, options: {
       reload: vi.fn(),
       onInstalled: eventSink<(details: { reason: string }) => void>((listener) => { installListeners.push(listener); }),
       onMessage: eventSink<MessageListener>((listener) => { receiveRuntimeMessage = listener; }),
+      // Ports of a picture file handed over from a page (SPEC_CLIPPER.md, Б1).
+      onConnect: eventSink(),
       sendMessage: vi.fn(() => Promise.resolve()),
     },
     scripting: { executeScript: vi.fn<ExecuteScript>() },
@@ -118,6 +120,7 @@ function background(apiMode: BrowserApiMode, options: {
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/extensionBuild.js"), "utf8"), context);
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/saveProtocol.js"), "utf8"), context);
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/youtubeSource.js"), "utf8"), context);
+  runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/browserFile.js"), "utf8"), context);
   runInContext(source, context);
 
   function dispatch(message: Message, sender: FakeSender = {}) {

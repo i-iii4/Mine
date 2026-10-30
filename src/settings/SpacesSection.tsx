@@ -296,7 +296,7 @@ export function SpacesSection() {
 
   const handleAddSpace = async () => {
     setError(null);
-    const selected = await open({ directory: true, multiple: false });
+    const selected = await open({ directory: true, multiple: false, canCreateDirectories: true });
     if (!selected) return;
     try {
       const vaults = await addKnownVault(selected);

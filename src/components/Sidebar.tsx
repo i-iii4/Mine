@@ -302,7 +302,7 @@ interface SidebarProps {
   /// waiting, up to what the strip holds. Without it a row shows only the
   /// thumbnails that exist.
   previewsPending?: boolean;
-  totalBlocks: number;
+  totalBlocks: number | null;
   isDropDragging: boolean;
   /// A collection row is being reordered. Separate from `isDropDragging`
   /// because the two gestures need opposite pointer behaviour: a drop reads
@@ -1464,7 +1464,7 @@ function SidebarRowBody({
   to: string;
   end?: boolean;
   label: string;
-  count: number;
+  count: number | null;
   /** `undefined` until the preview read has answered for this row. */
   cards: PreviewCard[] | undefined;
   /** The space's previews are still being built; see `SidebarProps`. */
@@ -1534,7 +1534,7 @@ function SidebarRowBody({
       )
     : cn(ROW_INTENT_FADE, showConnectedPill ? cn("opacity-0", ANSWER_ON) : cn("opacity-100", ANSWER_OFF));
   const previewHandlers = {
-    count,
+    count: count ?? 0,
     previewsPending,
     previewKeyPrefix,
     rowKey,
@@ -1600,8 +1600,8 @@ function SidebarRowBody({
           // A compact item's second line dissolves as the name does (global.css).
           style={SIDEBAR_ROW_TEXT_MASK_STYLE}
         >
-          {count || ""}
-          {count ? <SidebarCountNoun count={count} /> : null}
+          {count ?? ""}
+          {count === null ? null : <SidebarCountNoun count={count} />}
         </span>
       </NavLink>
       {/* Always mounted: pill and count cross-fade in place instead of
@@ -1809,7 +1809,7 @@ const NavItem = memo(function NavItem({
 }: {
   to: string;
   label: string;
-  count: number;
+  count: number | null;
   /** `undefined` until the preview read has answered for this row. */
   cards: PreviewCard[] | undefined;
   /** The space's previews are still being built; see `SidebarProps`. */
@@ -2855,8 +2855,8 @@ export function SidebarTagRowDragPreview({
           // A compact item's second line dissolves as the name does (global.css).
           style={SIDEBAR_ROW_TEXT_MASK_STYLE}
         >
-          {count || ""}
-          {count ? <SidebarCountNoun count={count} /> : null}
+          {count}
+          <SidebarCountNoun count={count} />
         </span>
       </div>
     </div>

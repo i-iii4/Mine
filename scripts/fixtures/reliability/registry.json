@@ -4753,6 +4753,57 @@
         "src/components/Sidebar.test.tsx"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "extension/popup/lib/postSourceUrl.ts",
+        "extension/popup/lib/postSourceUrl.test.ts"
+      ],
+      "requirement": "SPEC_CLIPPER.md### Ссылка карточки при сохранении фото (25.08.2026)",
+      "tests": [
+        "extension/popup/lib/postSourceUrl.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "extension/lib/browserFile.js",
+        "extension/lib/browserFile.test.ts",
+        "extension/popup/lib/pictureFile.ts",
+        "extension/popup/lib/pictureFile.test.ts"
+      ],
+      "requirement": "SPEC_CLIPPER.md### Файл картинки из браузера, отказ сайта и причина ошибки (29.10.2026)",
+      "tests": [
+        "extension/lib/browserFile.test.ts",
+        "extension/popup/lib/pictureFile.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/native_host_tests/picture_file_tests.rs",
+        "src-tauri/src/storage/clipper_uploads.rs",
+        "src-tauri/src/net.rs",
+        "src-tauri/src/native_host_tests/fake_web.rs"
+      ],
+      "requirement": "SPEC_CLIPPER.md### Файл картинки из браузера, отказ сайта и причина ошибки (29.10.2026)",
+      "tests": [
+        "src-tauri/src/native_host_tests/picture_file_tests.rs",
+        "src-tauri/src/bin/native_host.rs",
+        "src-tauri/src/storage/clipper_uploads.rs",
+        "src-tauri/src/net.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "scripts/clipper-worker-smoke.mjs"
+      ],
+      "requirement": "SPEC_CLIPPER.md### Файл картинки из браузера, отказ сайта и причина ошибки (29.10.2026)",
+      "tests": [
+        "scripts/clipper-worker-smoke.mjs"
+      ],
+      "command": "test:clipper-worker"
     }
   ],
   "release": null

@@ -88,7 +88,7 @@
 | fastembed | Локальные multilingual semantic embeddings для Hybrid Search |
 | whatlang | Определение языка текста (article speech prep) |
 | ureq | Синхронный HTTP-клиент (импорт Are.na) |
-| tiny_http + http-range + url + getrandom | Native host: локальный upload-сервер для бинарных файлов, валидация URL, upload-токены |
+| tiny_http + http-range + url + getrandom + httpdate | Native host: локальный upload-сервер для бинарных файлов, валидация URL, upload-токены, `Retry-After` отказа сайта |
 | pulldown-cmark | Native host: разбор CommonMark, чтобы примеры в коде не превращались во вставки медиа |
 | React 19 | UI-фреймворк |
 | react-router | Роутинг страницы вкладки |
@@ -132,7 +132,7 @@ local-arena/
 │   ├── src/
 │   │   ├── bin/
 │   │   │   └── native_host.rs  # Native messaging host для расширения (stdin/stdout JSON)
-│   │   ├── native_host_tests/  # Тестовые модули помощника: cloud_tests.rs, e4_tests.rs, fake_web.rs (поддельный веб-сервер)
+│   │   ├── native_host_tests/  # Тестовые модули помощника: cloud_tests.rs, e4_tests.rs, picture_file_tests.rs (файл картинки, отказ сайта), fake_web.rs (поддельный веб-сервер)
 │   │   ├── tooling/            # Остальные исполняемые файлы ([[bin]] в Cargo.toml)
 │   │   │   ├── mine_cli.rs     # CLI `mine` и MCP
 │   │   │   ├── clipper_runtime_install.rs, cli_runtime_install.rs # Установка помощника клиппера и CLI
@@ -361,7 +361,7 @@ local-arena/
 │   │   ├── hooks/              # useClipperState.ts
 │   │   └── lib/                # messaging.ts (типизированный native messaging), openClip.ts (открытый клип вкладки между загрузками страниц), overlayBounds.ts (место и размер оверлея)
 │   ├── dist/                   # Собранный попап (output Vite)
-│   ├── lib/                    # Вендорные библиотеки (Defuddle UMD), ядро сохранения (mineCore.js), extensionBuild.js (сборка работающего фона против сборки на диске) и др.
+│   ├── lib/                    # Вендорные библиотеки (Defuddle UMD), ядро сохранения (mineCore.js), extensionBuild.js (сборка работающего фона против сборки на диске), browserFile.js (файл картинки из кэша вкладки, SPEC_CLIPPER.md Б1) и др.
 │   ├── icons/                  # Иконки расширения
 │   └── manifest.json           # Manifest V3
 ├── core-ffi/                   # Rust FFI-слой для iOS (UniFFI)

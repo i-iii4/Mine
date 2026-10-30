@@ -1404,6 +1404,15 @@ checks the same operation ID before any retry. There is no desktop recovery
 surface. Unknown outcomes retain their material; the happy-path HTTP upload
 itself does not publish unreferenced media into the source vault.
 
+The same endpoint carries an image file the browser already holds
+(`source=browser_file`, SPEC_CLIPPER.md, Б1): when the tab shows the very file
+being saved, `extension/lib/browserFile.js` reads it from the page's HTTP cache
+(`only-if-cached`, same origin) and the background streams it in parts, so the
+site is not asked again. Its limit is the host download limit (500 MiB); a
+screenshot keeps 25 MiB. Otherwise the native host downloads `image_url`; a
+`429` is never retried, and a failed download names the site, the status and
+`Retry-After` instead of `MissingMedia` (Б2, Б3).
+
 ### 016: Filesystem-first visibility over SQLite-only route reads
 
 | Approach | Problem |
@@ -2167,6 +2176,7 @@ Canvas перезапускает симуляцию всякий раз, ког
 | url | 2.x | URL parsing and host classification in native host | MIT/Apache-2.0 |
 | getrandom | 0.3.x | OS random bytes for native-host upload tokens | MIT/Apache-2.0 |
 | tiny_http | latest | Local HTTP upload server for extension binary payloads | MIT/Apache-2.0 |
+| httpdate | 1.x | `Retry-After` as an HTTP date for a refused media download | MIT/Apache-2.0 |
 | pulldown-cmark | 0.13.x | Разбор CommonMark в помощнике клиппера: примеры `![…]` в коде не становятся вставками (SPEC_AUDIT_FIXES.md, Б4.4) | MIT |
 | react | 19.x | UI-фреймворк | MIT |
 | vite | latest | Сборщик | MIT |

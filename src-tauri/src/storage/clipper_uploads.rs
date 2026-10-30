@@ -63,6 +63,60 @@ pub fn write_pending_upload(
     content_type: Option<String>,
     body: &[u8],
 ) -> Result<PendingUploadManifest> {
+    write_pending_upload_from(vault, requested_filename, content_type, &mut &body[..], u64::MAX)
+}
+
+/// An upload body longer than the limit of its kind: a screenshot or a file
+/// the browser already had (SPEC_CLIPPER.md, «Upload Server (HTTP)», Б1).
+#[derive(Debug, thiserror::Error)]
+#[error("upload exceeds {limit} bytes")]
+pub struct UploadTooLarge {
+    pub limit: u64,
+}
+
+impl UploadTooLarge {
+    /// The limit `error` was refused for, when it is this refusal.
+    pub fn find(error: &anyhow::Error) -> Option<&Self> {
+        error.chain().find_map(|cause| {
+            cause.downcast_ref::<Self>().or_else(|| {
+                cause
+                    .downcast_ref::<std::io::Error>()
+                    .and_then(|io| io.get_ref())
+                    .and_then(|inner| inner.downcast_ref::<Self>())
+            })
+        })
+    }
+}
+
+/// A body that fails with [`UploadTooLarge`] once more than `limit` bytes
+/// came, so a too long upload stops while it streams.
+struct LimitedBody<'a> {
+    inner: &'a mut dyn std::io::Read,
+    limit: u64,
+    read: u64,
+}
+
+impl std::io::Read for LimitedBody<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let count = self.inner.read(buf)?;
+        self.read += count as u64;
+        if self.read > self.limit {
+            return Err(std::io::Error::other(UploadTooLarge { limit: self.limit }));
+        }
+        Ok(count)
+    }
+}
+
+/// [`write_pending_upload`] for a body read as it arrives, at most `limit`
+/// bytes. A longer body leaves nothing behind and fails with
+/// [`UploadTooLarge`].
+pub fn write_pending_upload_from(
+    vault: &VaultLayout,
+    requested_filename: &str,
+    content_type: Option<String>,
+    body: &mut dyn std::io::Read,
+    limit: u64,
+) -> Result<PendingUploadManifest> {
     let vault_binding = crate::storage::save_operations::binding_id(vault)?;
     let base_dir = pending_uploads_dir(vault);
     std::fs::create_dir_all(&base_dir)
@@ -75,15 +129,24 @@ pub fn write_pending_upload(
         .with_context(|| format!("failed to create pending upload {}", dir.display()))?;
 
     let payload_path = dir.join(&payload_filename);
-    write_create_new(&payload_path, body)
-        .with_context(|| format!("failed to write pending payload {}", payload_path.display()))?;
+    let mut limited = LimitedBody { inner: body, limit, read: 0 };
+    let size = match files::write_new_atomically_from(&payload_path, &mut limited) {
+        Ok(size) => size,
+        Err(error) => {
+            // Nothing was published in the folder made just now: it goes
+            // with the failed body (an empty folder only).
+            let _ = std::fs::remove_dir(&dir);
+            return Err(error
+                .context(format!("failed to write pending payload {}", payload_path.display())));
+        }
+    };
 
     let manifest = PendingUploadManifest {
         upload_id,
         original_filename: requested_filename.to_string(),
         payload_filename,
         content_type,
-        size: body.len() as u64,
+        size,
         created_at: crate::util::now_iso8601(),
         vault_binding: Some(vault_binding),
         finalization: None,
@@ -469,10 +532,6 @@ fn write_manifest(dir: &Path, manifest: &PendingUploadManifest) -> Result<()> {
     })
 }
 
-fn write_create_new(path: &Path, bytes: &[u8]) -> Result<()> {
-    files::write_new_atomically(path, bytes)
-}
-
 fn copy_create_new(src: &Path, dest: &Path) -> Result<()> {
     files::copy_new_atomically(src, dest)
 }
@@ -520,6 +579,25 @@ mod tests {
             std::fs::read(vault.new_media_path(&prepared.filename)).unwrap(),
             b"original bytes"
         );
+    }
+
+    /// Б1: a body within its limit is kept byte for byte; one byte more is
+    /// refused while it streams and leaves no upload behind.
+    #[test]
+    fn a_streamed_upload_keeps_its_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = vault_for(&dir);
+        let bytes = vec![7u8; 4096];
+
+        let kept = write_pending_upload_from(&vault, "a.jpg", None, &mut &bytes[..], 4096).unwrap();
+        assert_eq!(kept.size, 4096);
+        let payload = pending_upload_dir(&vault, &kept.upload_id).unwrap().join(&kept.payload_filename);
+        assert_eq!(std::fs::read(payload).unwrap(), bytes);
+
+        let error = write_pending_upload_from(&vault, "b.jpg", None, &mut &bytes[..], 4095).unwrap_err();
+        assert_eq!(UploadTooLarge::find(&error).map(|refusal| refusal.limit), Some(4095));
+        let uploads: Vec<_> = std::fs::read_dir(pending_uploads_dir(&vault)).unwrap().flatten().collect();
+        assert_eq!(uploads.len(), 1, "a refused body left an upload behind");
     }
 
     fn vault_for(dir: &TempDir) -> VaultLayout {

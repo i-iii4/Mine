@@ -294,7 +294,8 @@ Graph View не содержит собственного поиска, scope sw
   убирал пространство по нажатию пункта (SPEC_DEEP_AUDIT.md, Е6.9). Ошибки
   раздела говорят своими словами, без `Error:` (Е6.15).
 - `Add Space` внизу (`Button default`): нативный directory-picker
-  (plugin-dialog `open`) → `add_known_vault(path)` — добавляет в
+  (plugin-dialog `open`, `canCreateDirectories: true`: папку нового
+  пространства можно создать прямо в окне, решение пользователя 29.10.2026) → `add_known_vault(path)` — добавляет в
   `known_vaults` **без открытия** во вкладке.
 - Команды `add_known_vault(path)`, `forget_known_vault(path)`,
   `reorder_known_vaults(paths)` (set-equality с config) мутируют только

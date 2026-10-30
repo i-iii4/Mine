@@ -17,6 +17,7 @@ import {
   type NativeResponse,
   listKnownVaults,
   uploadFile,
+  uploadBrowserFile,
   cacheScreenshotUpload,
   getClipperLaunch,
   extractMetadata,
@@ -88,6 +89,7 @@ import {
 } from "../lib/articleExtractionState";
 import { applySaveImageContextMenu, linkTargetMetadata } from "../lib/contextMenuMetadata";
 import { pickImageCardUrl } from "../lib/postSourceUrl";
+import { pictureFileSource } from "../lib/pictureFile";
 import { isTwitterStatusUrl, isXPageUrl, syndicationShownText, xPostAddress } from "../lib/socialContent";
 import {
   parseTwitterPhotoUrl,
@@ -1866,7 +1868,17 @@ export function useClipperState() {
           error: "No image available — pick another type or capture a screenshot.",
         };
       }
-      payload.image_url = imageUrl;
+      // The helper takes the bytes the browser already has when the page
+      // shows this very file, and downloads it otherwise (Б1).
+      const port = uploadPortRef.current;
+      const token = uploadTokenRef.current;
+      const fromBrowser = chosenExecutor === "native" && supportsPendingUploadsRef.current && port && token
+        ? () => uploadBrowserFile({
+          tabId: tabIdRef.current === CONTENT_SCRIPT_CONTEXT ? null : tabIdRef.current,
+          url: imageUrl, port, token, vaultPath: chosenVault,
+        })
+        : null;
+      Object.assign(payload, await pictureFileSource(imageUrl, fromBrowser));
       payload.width = saveMetadata.imageWidth ?? null;
       payload.height = saveMetadata.imageHeight ?? null;
     } else if (saveMetadata.image && (currentType === "link" || saveMetadata.detectedType === "video")) {

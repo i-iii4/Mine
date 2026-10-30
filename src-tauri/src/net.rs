@@ -9,7 +9,7 @@
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{anyhow, bail, Context, Result};
 use url::{Host, Url};
@@ -29,8 +29,56 @@ const MAX_REDIRECTS: usize = 5;
 /// server is exactly what this vault exists to avoid.
 pub const MAX_MEDIA_BYTES: u64 = 500 * 1024 * 1024;
 
-/// How many times a download is attempted before it fails.
+/// How many times a download is attempted before it fails. A refusal for
+/// too many requests is never repeated (see [`TOO_MANY_REQUESTS`]).
 const DOWNLOAD_ATTEMPTS: u32 = 3;
+
+/// `429 Too Many Requests`: the site limits this client. Another attempt
+/// only prolongs the limit, so a download stops at the first such answer
+/// (SPEC_CLIPPER.md, «Файл картинки из браузера, отказ сайта и причина
+/// ошибки», Б2).
+pub const TOO_MANY_REQUESTS: u16 = 429;
+
+/// A server answered with an HTTP error status. Kept typed so the caller can
+/// tell a refusal from a broken connection and name the site, the code and,
+/// for [`TOO_MANY_REQUESTS`], when the site allows the next request.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("request to {url} failed with HTTP {status}")]
+pub struct HttpStatusError {
+    /// The address that answered with the status (after redirects).
+    pub url: String,
+    pub status: u16,
+    /// How long the server asks to wait, from its `Retry-After`.
+    pub retry_after: Option<Duration>,
+}
+
+impl HttpStatusError {
+    /// The error for `status` answered by `url`, reading `Retry-After` from
+    /// `header` relative to `now`.
+    pub fn new(url: &str, status: u16, retry_after_header: Option<&str>, now: SystemTime) -> Self {
+        Self {
+            url: url.to_string(),
+            status,
+            retry_after: retry_after_header.and_then(|value| parse_retry_after(value, now)),
+        }
+    }
+
+    /// The host that answered, as a person names the site.
+    pub fn host(&self) -> Option<String> {
+        Url::parse(&self.url).ok()?.host_str().map(str::to_string)
+    }
+}
+
+/// `Retry-After` (RFC 9110, 10.2.3): a number of seconds or an HTTP date. A
+/// date already past means now; a value of neither form is unknown.
+pub fn parse_retry_after(value: &str, now: SystemTime) -> Option<Duration> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let at = httpdate::parse_http_date(value).ok()?;
+    Some(at.duration_since(now).unwrap_or(Duration::ZERO))
+}
 
 /// Pause before the second attempt; each later attempt waits one step more.
 const DOWNLOAD_RETRY_BACKOFF: Duration = Duration::from_millis(500);
@@ -268,8 +316,8 @@ fn fetch_validated(
                 return Ok(resp);
             }
             // 4xx/5xx are returned by ureq as Err(Status); surface the code.
-            Err(ureq::Error::Status(status, _resp)) => {
-                bail!("request to {current} failed with HTTP {status}");
+            Err(ureq::Error::Status(status, resp)) => {
+                return Err(status_error(&current, status, &resp).into());
             }
             Err(err) => {
                 return Err(
@@ -281,6 +329,20 @@ fn fetch_validated(
     bail!("too many redirects (> {MAX_REDIRECTS}) starting from {url}")
 }
 
+/// The typed error for an HTTP error `status` answered by `url`.
+fn status_error(url: &str, status: u16, resp: &ureq::Response) -> HttpStatusError {
+    HttpStatusError::new(url, status, resp.header("Retry-After"), SystemTime::now())
+}
+
+/// Whether `error` is a refusal for too many requests, which no further
+/// attempt may repeat.
+fn is_too_many_requests(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .filter_map(|cause| cause.downcast_ref::<HttpStatusError>())
+        .any(|refusal| refusal.status == TOO_MANY_REQUESTS)
+}
+
 /// GET `url` and stream the body to `dest`, revalidating redirects and capping
 /// the body at [`MAX_MEDIA_BYTES`]. Bytes are streamed into a same-directory
 /// temp file, fsynced, then atomically linked under the final create-new name;
@@ -288,10 +350,13 @@ fn fetch_validated(
 ///
 /// `idle_timeout` bounds connecting and each read, not the whole transfer: a
 /// large video on a slow link finishes as long as bytes keep coming. Up to
-/// [`DOWNLOAD_ATTEMPTS`] attempts are made; when the server names the file with
-/// a strong `ETag` or a `Last-Modified` date and honours `Range`, a retry
-/// continues from the bytes already on disk instead of starting over. A 25 MB
-/// clip used to be thrown away at 22 MB when a total deadline ran out.
+/// [`DOWNLOAD_ATTEMPTS`] attempts are made, except after a
+/// [`TOO_MANY_REQUESTS`] answer, which ends the download at once; when the
+/// server names the file with a strong `ETag` or a `Last-Modified` date and
+/// honours `Range`, a retry continues from the bytes already on disk instead
+/// of starting over. A 25 MB clip used to be thrown away at 22 MB when a
+/// total deadline ran out. An HTTP error status reaches the caller as an
+/// [`HttpStatusError`] in the error's chain.
 pub fn download_validated_to_file(
     url: &str,
     dest: &Path,
@@ -447,6 +512,7 @@ fn fill_with_attempts(
         };
         let response = match fetch(resume) {
             Ok(response) => response,
+            Err(error) if is_too_many_requests(&error) => return Err(error),
             Err(error) => {
                 last_error = Some(error);
                 continue;
@@ -764,6 +830,111 @@ mod tests {
         .unwrap();
         assert_eq!(std::fs::metadata(&dest).unwrap().len(), 25_919_872);
         eprintln!("downloaded in {:?}", started.elapsed());
+    }
+
+    /// A local server that answers every request with `status` and
+    /// `headers`, closing each connection; it counts the requests it got.
+    /// Only this Mac is reached: the network is never asked.
+    fn refusing_server(status: &'static str, headers: &'static str) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::{BufRead, BufReader};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}/picture.jpg", listener.local_addr().unwrap());
+        let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = std::sync::Arc::clone(&requests);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                while reader.read_line(&mut line).is_ok_and(|read| read > 0) && line != "\r\n" {
+                    line.clear();
+                }
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\n{headers}Content-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+            }
+        });
+        (address, requests)
+    }
+
+    /// One attempt against `url` the way `download_validated_to_file_reporting`
+    /// makes it, without its public-address guard, which refuses this Mac.
+    fn local_attempt(url: &str) -> Result<DownloadResponse> {
+        match ureq::AgentBuilder::new().redirects(0).build().get(url).call() {
+            Ok(resp) => Ok(DownloadResponse {
+                status: resp.status(),
+                content_range_start: None,
+                validator: None,
+                body: Box::new(resp.into_reader()),
+            }),
+            Err(ureq::Error::Status(status, resp)) => Err(status_error(url, status, &resp).into()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Б2: a `429` is asked once, and its `Retry-After` reaches the caller.
+    #[test]
+    fn too_many_requests_is_asked_once_and_says_when_to_retry() {
+        let (url, requests) = refusing_server("429 Too Many Requests", "Retry-After: 600\r\n");
+        let dest = scratch();
+
+        let error = download_resumable(&dest, Duration::ZERO, &|| (), |_| local_attempt(&url)).unwrap_err();
+
+        assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 1, "a 429 was asked again");
+        let refusal = error.chain().find_map(|cause| cause.downcast_ref::<HttpStatusError>()).unwrap();
+        assert_eq!(refusal.status, TOO_MANY_REQUESTS);
+        assert_eq!(refusal.retry_after, Some(Duration::from_secs(600)));
+        assert_eq!(refusal.host().as_deref(), Some("127.0.0.1"));
+        assert!(!dest.exists());
+    }
+
+    /// Б2: every other failure keeps its three attempts.
+    #[test]
+    fn other_refusals_are_still_tried_three_times() {
+        let (url, requests) = refusing_server("503 Service Unavailable", "");
+        let dest = scratch();
+
+        let error = download_resumable(&dest, Duration::ZERO, &|| (), |_| local_attempt(&url)).unwrap_err();
+
+        assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), DOWNLOAD_ATTEMPTS as usize);
+        let refusal = error.chain().find_map(|cause| cause.downcast_ref::<HttpStatusError>()).unwrap();
+        assert_eq!(refusal.status, 503);
+        assert_eq!(refusal.retry_after, None);
+    }
+
+    /// Б2: a `429` met on a retry ends the download there too.
+    #[test]
+    fn a_429_on_a_retry_ends_the_download() {
+        let dest = scratch();
+        let mut attempts = 0;
+        let error = download_resumable(&dest, Duration::ZERO, &|| (), |_| {
+            attempts += 1;
+            if attempts == 1 {
+                Ok(response(200, None, None, cut(b"part")))
+            } else {
+                Err(HttpStatusError::new("https://cdn.test/a.jpg", TOO_MANY_REQUESTS, None, SystemTime::now()).into())
+            }
+        })
+        .unwrap_err();
+        assert_eq!(attempts, 2);
+        assert!(is_too_many_requests(&error));
+    }
+
+    #[test]
+    fn retry_after_reads_seconds_and_dates() {
+        let now = httpdate::parse_http_date("Thu, 29 Oct 2026 12:00:00 GMT").unwrap();
+        assert_eq!(parse_retry_after("600", now), Some(Duration::from_secs(600)));
+        assert_eq!(parse_retry_after(" 0 ", now), Some(Duration::ZERO));
+        assert_eq!(
+            parse_retry_after("Thu, 29 Oct 2026 12:10:00 GMT", now),
+            Some(Duration::from_secs(600))
+        );
+        // A date already past allows the next request now.
+        assert_eq!(parse_retry_after("Thu, 29 Oct 2026 11:00:00 GMT", now), Some(Duration::ZERO));
+        assert_eq!(parse_retry_after("soon", now), None);
+        assert_eq!(parse_retry_after("-5", now), None);
     }
 
     #[test]

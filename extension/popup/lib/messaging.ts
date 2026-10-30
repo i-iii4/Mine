@@ -509,6 +509,41 @@ export async function uploadFile(
   });
 }
 
+/** How long reading a picture from the page and uploading it (up to 500 MiB) may take in all. */
+const BROWSER_FILE_TIMEOUT_MS = 180_000;
+
+/**
+ * Upload the picture at `url` from the bytes the browser already has, when the
+ * page shows that very file (SPEC_CLIPPER.md, «Файл картинки из браузера,
+ * отказ сайта и причина ошибки», Б1). The background reads and uploads it;
+ * `tabId` names the page for the clipper window and is the sender's own tab
+ * for an overlay. Resolves to the upload id, or null when nothing was
+ * uploaded: the helper then downloads the file.
+ */
+export async function uploadBrowserFile(input: {
+  tabId: number | null;
+  url: string;
+  port: number;
+  token: string;
+  vaultPath: string | null;
+}): Promise<string | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), BROWSER_FILE_TIMEOUT_MS);
+    chrome.runtime.sendMessage(
+      { target: "background", action: "uploadBrowserFile", payload: input },
+      (response) => {
+        clearTimeout(timer);
+        if (chrome.runtime.lastError) {
+          resolve(null);
+          return;
+        }
+        const uploaded = response as { ok?: unknown; upload_id?: unknown } | undefined;
+        resolve(uploaded?.ok === true && typeof uploaded.upload_id === "string" ? uploaded.upload_id : null);
+      },
+    );
+  });
+}
+
 export async function cacheScreenshotUpload(dataUrl: string): Promise<string | null> {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(

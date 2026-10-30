@@ -401,7 +401,7 @@ describe("SpacesSection", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Add Space" }));
 
     await waitFor(() => {
-      expect(open).toHaveBeenCalledWith({ directory: true, multiple: false });
+      expect(open).toHaveBeenCalledWith({ directory: true, multiple: false, canCreateDirectories: true });
       expect(addKnownVault).toHaveBeenCalledWith("/Users/me/New Space");
     });
     expect(await screen.findByText("New Space")).toBeInTheDocument();

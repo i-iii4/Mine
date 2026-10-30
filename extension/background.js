@@ -23,7 +23,7 @@
 // answers the channel of a YouTube clip. dist/build-identity.js is the build
 // this worker's code belongs to, written by the extension build, and
 // lib/extensionBuild.js compares it with the build of the files on disk (К4).
-importScripts("dist/build-identity.js", "lib/extensionBuild.js", "generated/save-core/mine_core.js", "lib/mineCore.js", "lib/saveProtocol.js", "lib/standaloneVault.js", "lib/youtubeSource.js");
+importScripts("dist/build-identity.js", "lib/extensionBuild.js", "generated/save-core/mine_core.js", "lib/mineCore.js", "lib/saveProtocol.js", "lib/standaloneVault.js", "lib/youtubeSource.js", "lib/browserFile.js");
 
 const HOST_NAME = "com.mine.clipper.v1";
 // Must match extension/popup/popup-layout.css body { width: 360px }
@@ -1700,17 +1700,60 @@ async function ensureDefuddleInjected(sender) {
   return { ok: true };
 }
 
+/// How long a screenshot upload may take.
+const SCREENSHOT_UPLOAD_TIMEOUT_MS = 30_000;
+
+/// Why the helper's upload server cannot be asked with `port` and `token`;
+/// null when it can.
+/** @param {unknown} port @param {unknown} token @returns {string | null} */
+function uploadServerProblem(port, token) {
+  if (typeof port !== "number" || !Number.isInteger(port) || port <= 0 || port > 65535) {
+    return "Invalid upload port";
+  }
+  if (typeof token !== "string" || token.length === 0) return "Missing upload token";
+  return null;
+}
+
+/// POST `blob` to the helper's local upload server. Only this trusted
+/// extension context asks the loopback address, never a page
+/// (SPEC_CLIPPER.md, «Browser-origin boundary»).
+/**
+ * @param {{ port: number, token: string, params: URLSearchParams, contentType: string, blob: Blob, timeoutMs: number }} upload
+ * @returns {Promise<unknown>}
+ */
+async function postUpload({ port, token, params, contentType, blob, timeoutMs }) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let resp;
+  try {
+    resp = await fetch(
+      `http://127.0.0.1:${port}/upload?${params.toString()}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": contentType || blob.type || "application/octet-stream",
+        },
+        body: blob,
+        signal: controller.signal,
+      },
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
+  /** @type {unknown} */
+  const result = await resp.json();
+  return result;
+}
+
 /// Upload a cached screenshot to the helper's local upload server; `payload`
 /// is the request as the clipper sent it.
 /** @param {unknown} payload @returns {Promise<unknown>} */
 async function uploadFileToNativeHost(payload) {
   const { port, token, filename, screenshotId, vaultPath } = asRecord(payload);
-  if (typeof port !== "number" || !Number.isInteger(port) || port <= 0 || port > 65535) {
-    return { ok: false, error: "Invalid upload port" };
-  }
-  if (typeof token !== "string" || token.length === 0) {
-    return { ok: false, error: "Missing upload token" };
-  }
+  const problem = uploadServerProblem(port, token);
+  if (problem) return { ok: false, error: problem };
   if (typeof filename !== "string" || filename.length === 0) {
     return { ok: false, error: "Missing upload filename" };
   }
@@ -1729,32 +1772,183 @@ async function uploadFileToNativeHost(payload) {
     if (typeof vaultPath === "string" && vaultPath.length > 0) {
       params.set("vault_path", vaultPath);
     }
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-    let resp;
-    try {
-      resp = await fetch(
-        `http://127.0.0.1:${port}/upload?${params.toString()}`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": cached.contentType || blob.type || "application/octet-stream",
-          },
-          body: blob,
-          signal: controller.signal,
-        },
-      );
-    } finally {
-      clearTimeout(timeout);
-    }
-    if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
-    /** @type {unknown} */
-    const result = await resp.json();
+    const result = await postUpload({
+      port: /** @type {number} */ (port), token: /** @type {string} */ (token), params,
+      contentType: cached.contentType, blob, timeoutMs: SCREENSHOT_UPLOAD_TIMEOUT_MS,
+    });
     if (isRecord(result) && result.ok) screenshotUploads.delete(screenshotId);
     return result;
   } catch (e) {
     return { ok: false, error: String(e) };
+  }
+}
+
+// ── Picture file from the browser (SPEC_CLIPPER.md, «Файл картинки из
+// браузера, отказ сайта и причина ошибки», Б1) ─────────────────────────────
+//
+// When the page shows the very file a picture card saves, the bytes the
+// browser already loaded go to the helper through its upload server, as a
+// screenshot does, and the site is not asked again. lib/browserFile.js reads
+// them in the page's top frame from the cache and hands them over on a port,
+// one part at a time; this worker puts them together and uploads them. A
+// file it cannot get this way is downloaded by the helper, as before.
+
+/// How long the page may stay silent while it hands a file over.
+const BROWSER_FILE_IDLE_MS = 15_000;
+/// How long the upload of a file from the browser (up to 500 MiB) may take.
+const BROWSER_FILE_UPLOAD_TIMEOUT_MS = 120_000;
+
+/** @typedef {{ ok: true, blob: Blob } | { ok: false, reason: string }} BrowserFileResult */
+
+/// Transfers waiting for their page, by transfer id.
+/** @type {Map<string, (port: chrome.runtime.Port) => void>} */
+const browserFileReceivers = new Map();
+
+chrome.runtime.onConnect.addListener((port) => {
+  const prefix = globalThis.MineBrowserFile.PORT_PREFIX;
+  if (!port.name.startsWith(prefix)) return;
+  const receive = browserFileReceivers.get(port.name.slice(prefix.length));
+  if (!receive) {
+    port.disconnect();
+    return;
+  }
+  receive(port);
+});
+
+/// The bytes the page sent decoded from their base64 text.
+/** @param {string} data @returns {Promise<Blob>} */
+async function decodedPart(data) {
+  return (await fetch(`data:application/octet-stream;base64,${data}`)).blob();
+}
+
+/// Take a file from the top frame of `tabId` on `port`: a `start` with its
+/// type and size, its parts, an `end`. Anything else, a silence longer than
+/// BROWSER_FILE_IDLE_MS or another sender ends the transfer without a file.
+/**
+ * @param {chrome.runtime.Port} port
+ * @param {number} tabId
+ * @param {(result: BrowserFileResult) => void} done
+ */
+function receiveBrowserFile(port, tabId, done) {
+  let finished = false;
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let idle;
+  /** @param {BrowserFileResult} result */
+  const finish = (result) => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(idle);
+    port.disconnect();
+    done(result);
+  };
+  const awake = () => {
+    clearTimeout(idle);
+    idle = setTimeout(() => finish({ ok: false, reason: "stalled" }), BROWSER_FILE_IDLE_MS);
+  };
+  if (port.sender?.tab?.id !== tabId || port.sender.frameId !== 0) {
+    finish({ ok: false, reason: "other_sender" });
+    return;
+  }
+  /** @type {Blob[]} */
+  const parts = [];
+  let received = 0;
+  /** @type {{ contentType: string, size: number } | null} */
+  let header = null;
+  port.onDisconnect.addListener(() => finish({ ok: false, reason: "transfer_closed" }));
+  port.onMessage.addListener((/** @type {unknown} */ raw) => {
+    const message = asRecord(raw);
+    awake();
+    if (message.kind === "start" && header === null && typeof message.size === "number"
+      && typeof message.contentType === "string") {
+      if (message.size > globalThis.MineBrowserFile.MAX_BYTES) {
+        finish({ ok: false, reason: "too_large" });
+        return;
+      }
+      header = { contentType: message.contentType, size: message.size };
+      port.postMessage({ kind: "next" });
+    } else if (message.kind === "part" && header !== null && typeof message.data === "string") {
+      const expected = header.size;
+      decodedPart(message.data).then((part) => {
+        received += part.size;
+        if (received > expected) {
+          finish({ ok: false, reason: "size_mismatch" });
+          return;
+        }
+        parts.push(part);
+        if (!finished) port.postMessage({ kind: "next" });
+      }, () => finish({ ok: false, reason: "unreadable_part" }));
+    } else if (message.kind === "end" && header !== null) {
+      const blob = new Blob(parts, { type: header.contentType });
+      finish(blob.size === header.size && blob.size > 0
+        ? { ok: true, blob }
+        : { ok: false, reason: "size_mismatch" });
+    } else {
+      finish({ ok: false, reason: "unexpected_message" });
+    }
+  });
+  awake();
+}
+
+/// The bytes of `url` as the top frame of `tabId` already has them, or why
+/// not (lib/browserFile.js).
+/** @param {number} tabId @param {string} url @returns {Promise<BrowserFileResult>} */
+async function readBrowserFile(tabId, url) {
+  const transferId = crypto.randomUUID();
+  /** @type {Promise<BrowserFileResult>} */
+  const received = new Promise((resolve) => {
+    browserFileReceivers.set(transferId, (port) => receiveBrowserFile(port, tabId, resolve));
+  });
+  try {
+    const target = { tabId, frameIds: [0] };
+    await chrome.scripting.executeScript({ target, files: ["lib/browserFile.js"] });
+    const [injection] = await chrome.scripting.executeScript({
+      target,
+      func: (address, id) => globalThis.MineBrowserFile.send(address, id),
+      args: [url, transferId],
+    });
+    /** @type {unknown} */
+    const sent = injection?.result;
+    if (!isRecord(sent) || sent.ok !== true) {
+      return { ok: false, reason: typeof asRecord(sent).reason === "string" ? String(asRecord(sent).reason) : "not_read" };
+    }
+    return await received;
+  } catch (error) {
+    return { ok: false, reason: failureText(error) };
+  } finally {
+    browserFileReceivers.delete(transferId);
+  }
+}
+
+/// Upload the picture at `url` from the browser's own bytes; `payload` is the
+/// request as the clipper sent it, the tab is the sender's own for an overlay
+/// and named for the clipper window. A refusal carries the reason, and the
+/// clipper then asks the helper to download the file.
+/**
+ * @param {unknown} payload
+ * @param {chrome.runtime.MessageSender} sender
+ * @returns {Promise<unknown>}
+ */
+async function uploadBrowserFileToNativeHost(payload, sender) {
+  const { port, token, url, vaultPath, tabId } = asRecord(payload);
+  const problem = uploadServerProblem(port, token);
+  if (problem) return { ok: false, error: problem };
+  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return { ok: false, reason: "not_web_address" };
+  const tab = isExtensionPage(sender) ? tabId : sender.tab?.id;
+  if (typeof tab !== "number" || !Number.isInteger(tab) || tab < 0) return { ok: false, reason: "no_tab" };
+  const file = await readBrowserFile(tab, url);
+  if (!file.ok) return { ok: false, reason: file.reason };
+  try {
+    const params = new URLSearchParams({
+      filename: globalThis.MineBrowserFile.uploadName(url, file.blob.type),
+      source: "browser_file",
+    });
+    if (typeof vaultPath === "string" && vaultPath.length > 0) params.set("vault_path", vaultPath);
+    return await postUpload({
+      port: /** @type {number} */ (port), token: /** @type {string} */ (token), params,
+      contentType: file.blob.type, blob: file.blob, timeoutMs: BROWSER_FILE_UPLOAD_TIMEOUT_MS,
+    });
+  } catch (error) {
+    return { ok: false, error: failureText(error) };
   }
 }
 
@@ -2138,6 +2332,11 @@ chrome.runtime.onMessage.addListener((/** @type {unknown} */ message, sender, se
 
   if (msg.action === "uploadFile") {
     uploadFileToNativeHost(msg.payload ?? {}).then(sendResponse);
+    return true;
+  }
+
+  if (msg.action === "uploadBrowserFile") {
+    uploadBrowserFileToNativeHost(msg.payload ?? {}, sender).then(sendResponse);
     return true;
   }
 

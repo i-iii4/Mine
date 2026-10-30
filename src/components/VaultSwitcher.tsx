@@ -200,7 +200,7 @@ export function VaultSwitcher({
   }, [currentPath, handleReveal, resetMenuSearch]);
 
   const handleAddSpace = useCallback(async () => {
-    const selected = await openDialog({ directory: true, multiple: false });
+    const selected = await openDialog({ directory: true, multiple: false, canCreateDirectories: true });
     if (!selected) return;
     setOpen(false);
     resetMenuSearch();

@@ -578,12 +578,38 @@ pub fn write_new_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
     write_new_atomically_with_sync(path, bytes, sync_parent_directory)
 }
 
+/// [`write_new_atomically`] for bytes read from `source` as they come, so a
+/// large body never sits whole in memory. A read error publishes nothing and
+/// reaches the caller with the error inside. Returns the number of bytes
+/// written.
+pub fn write_new_atomically_from(path: &Path, source: &mut dyn std::io::Read) -> Result<u64> {
+    let _write = crate::storage::source_mutation::begin_write()?;
+    let mut written = 0;
+    write_new_atomically_with(
+        path,
+        |file| {
+            written = std::io::copy(source, file)?;
+            Ok(())
+        },
+        sync_parent_directory,
+    )?;
+    Ok(written)
+}
+
 fn write_new_atomically_with_sync(
     path: &Path,
     bytes: &[u8],
     confirm: impl FnOnce(&Path) -> Result<()>,
 ) -> Result<()> {
-    let tmp = prepare_temp_file(path, |file| file.write_all(bytes))?;
+    write_new_atomically_with(path, |file| file.write_all(bytes), confirm)
+}
+
+fn write_new_atomically_with(
+    path: &Path,
+    writer: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+    confirm: impl FnOnce(&Path) -> Result<()>,
+) -> Result<()> {
+    let tmp = prepare_temp_file(path, writer)?;
     // One exclusive rename, not link + unlink: hard links are unreliable in
     // cloud storage (iCloud Drive), and a crash between two steps would leave
     // a visible `name.tmp.*` duplicate in the space.

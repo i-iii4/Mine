@@ -22,6 +22,8 @@ pub enum Answer {
     },
     /// An HTTP error status, as `404` or `500`.
     Status(u16),
+    /// `429 Too Many Requests` with this `Retry-After`, if any.
+    TooManyRequests { retry_after: Option<&'static str> },
     /// The connection drops after these bytes, on every attempt.
     Cut(Vec<u8>),
     /// `200`, the bytes coming in `chunks` parts with `pause` before each.
@@ -60,19 +62,24 @@ fn unresolved(url: &str) -> anyhow::Error {
 pub fn head(url: &str) -> Option<&'static str> {
     match answer_for(url)? {
         Answer::Bytes { content_type, .. } => Some(content_type),
-        Answer::Slow { .. } | Answer::Cut(_) | Answer::Status(_) => None,
+        Answer::Slow { .. } | Answer::Cut(_) | Answer::Status(_) | Answer::TooManyRequests { .. } => None,
     }
 }
 
 /// Download `url` to the new file `dest`, as `net::download_validated_to_file`
 /// does: the file appears only complete, an existing one is never replaced,
-/// three attempts, and `progress` after every part that arrives.
+/// three attempts, and `progress` after every part that arrives. An HTTP
+/// error status fails with the same typed `net::HttpStatusError`.
 pub fn download(url: &str, dest: &Path, progress: &(dyn Fn() + Sync)) -> anyhow::Result<()> {
     let failed = |error: anyhow::Error| error.context(format!("download failed: {url}"));
+    let refused = |status: u16, retry_after: Option<&str>| {
+        failed(mine_lib::net::HttpStatusError::new(url, status, retry_after, std::time::SystemTime::now()).into())
+    };
     let body = match answer_for(url) {
         None => return Err(failed(unresolved(url))),
-        Some(Answer::Status(status)) => {
-            return Err(failed(anyhow::anyhow!("request to {url} failed with HTTP {status}")))
+        Some(Answer::Status(status)) => return Err(refused(status, None)),
+        Some(Answer::TooManyRequests { retry_after }) => {
+            return Err(refused(mine_lib::net::TOO_MANY_REQUESTS, retry_after))
         }
         Some(Answer::Cut(part)) => {
             for _ in 0..3 {
