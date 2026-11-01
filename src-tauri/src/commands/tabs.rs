@@ -4,7 +4,7 @@
 use tauri::{AppHandle, Manager, Webview};
 
 use super::state::CommandError;
-use crate::domain::windows::{ChromeRows, SidebarLayout, SidebarOverlay, TabId, TabSpace, TabView};
+use crate::domain::windows::{SidebarLayout, SidebarOverlay, TabId, TabSpace, TabView};
 use crate::tabs::{self, TabBarState, TabBootstrap};
 
 /// What the calling tab page needs to start. A page that starts again
@@ -37,12 +37,6 @@ pub fn report_tab_view(app: AppHandle, webview: Webview, view: TabView) {
 #[tauri::command]
 pub fn open_place(app: AppHandle, webview: Webview, view: TabView, new_window: bool) {
     tabs::open_place(&app, webview.label(), view, new_window);
-}
-
-/// Set the chrome rows of the calling bar's window (В83).
-#[tauri::command]
-pub fn set_chrome_rows(app: AppHandle, webview: Webview, rows: ChromeRows) {
-    tabs::set_chrome_rows(&app, webview.label(), rows);
 }
 
 /// Where the calling tab can step through its places (В81).

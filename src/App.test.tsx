@@ -1,5 +1,6 @@
 import { commandById, setCommandOverrides } from "@/lib/commandRegistry";
 import { getFeedDisplay, reloadFeedDisplay, setFeedSort } from "@/lib/feedDisplay";
+import { CARD_VIEW_STORAGE_KEY, getCardView, reloadCardView } from "@/lib/cardView";
 import {
   GRAPH_PREFERENCES_STORAGE_KEY,
   reloadGraphPreferences,
@@ -83,6 +84,7 @@ const commandMocks = vi.hoisted(() => ({
   removeTag: vi.fn(async (_slug: string, _tag: string) => undefined),
   setBlocksMembership: vi.fn(async (_slugs: string[], _tag: string, _connected: boolean) => undefined),
   checkCollectionName: vi.fn(async (_oldTag: string | null, _name: string): Promise<string | null> => null),
+  renameChannel: vi.fn(async (_oldTag: string, newTag: string) => ({ tag: newTag })),
   extractTextSelection: vi.fn(),
   deleteTextSelection: vi.fn(),
   openSettingsWindow: vi.fn<() => Promise<void>>(async () => {}),
@@ -156,7 +158,7 @@ vi.mock("@/lib/commands", () => ({
   reorderChannels: commandMocks.reorderChannels,
   deleteChannel: commandMocks.deleteChannel,
   reorderCollections: vi.fn(),
-  renameChannel: vi.fn(),
+  renameChannel: commandMocks.renameChannel,
   checkCollectionName: commandMocks.checkCollectionName,
   renameBlockFile: commandMocks.renameBlockFile,
   addTag: commandMocks.addTag,
@@ -497,6 +499,8 @@ vi.mock("@/components/Detail", () => ({
       </button>
     </div>
   ),
+  // Loaded ahead while Peek is the chosen view (SPEC_CARD_PEEK.md, О12).
+  preloadNoteEditor: () => Promise.resolve(),
 }));
 
 vi.mock("@/components/DropZone", () => ({
@@ -682,6 +686,15 @@ function bottomBarEntry(label: string): HTMLElement | null {
   if (!bar) return null;
   return Array.from(bar.querySelectorAll<HTMLElement>("button"))
     .find((entry) => entry.textContent?.includes(label)) ?? null;
+}
+
+/** The place's name in the top row's path (TopCollectionSwitcher): its box,
+ *  once it names `name`. */
+function topPlace(name: string): HTMLElement {
+  const place = document.querySelector<HTMLElement>("[data-top-collection-switcher]");
+  const shown = place?.querySelector("[data-top-collection-name]")?.textContent;
+  if (!place || shown !== name) throw new Error(`The top row names ${shown ?? "nothing"}, not ${name}`);
+  return place;
 }
 
 describe("AppWithVault", () => {
@@ -1011,7 +1024,8 @@ describe("AppWithVault", () => {
     expect(screen.queryByRole("dialog", { name: "alpha-block.md" })).toBeNull();
     expect(commandMocks.gridPlaces).toContainEqual({ kind: "author", author: "@kotecinho" });
     // The path names the author, the sidebar marks no row, no graph.
-    expect(screen.getByRole("button", { name: "Switch collection: @kotecinho" })).toBeInTheDocument();
+    // In plain text: an author's feed is no collection to rename (31.10.2026).
+    expect(topPlace("@kotecinho").querySelector("[data-top-place-plain]")).not.toBeNull();
     expect(screen.getByRole("link", { name: /Everything 2/ })).not.toHaveAttribute("aria-current", "page");
     expect(document.querySelector("[data-main-view-mode-switcher] [role='tablist']")).toBeNull();
 
@@ -1046,7 +1060,7 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1");
     });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Switch collection: alpha" })).toBeInTheDocument();
+      expect(topPlace("alpha")).toBeInTheDocument();
     });
     expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
     expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
@@ -1067,7 +1081,7 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Switch collection: Everything" })).toBeInTheDocument();
+      expect(topPlace("Everything")).toBeInTheDocument();
     });
     expect(commandMocks.startVaultSync).toHaveBeenCalledTimes(1);
     expect(commandMocks.listTaxonomySnapshot).toHaveBeenCalledTimes(1);
@@ -2124,6 +2138,54 @@ describe("AppWithVault", () => {
     expect(within(secondaryContentSegment!).getByRole("tablist", { name: "View mode" })).toBeInTheDocument();
   });
 
+  // SPEC_CARD_PEEK.md, О1, О9, О16 (user's decision of 30.10.2026): the open
+  // card's buttons choose «Card view», stored as the Display panel stores it,
+  // and the card follows it at once.
+  it("switches the open card between full page and its window by choosing «Card view»", async () => {
+    reloadCardView();
+    try {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+      });
+      expect(getCardView()).toBe("full");
+
+      fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+      await waitFor(() => {
+        expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
+      });
+      // Full page by «Card view»: the right part holds the window, so the way
+      // to it stands between the menu and the close.
+      const fullPage = document.querySelector<HTMLElement>("[data-secondary-detail-top-menu]")!;
+      const collapse = within(fullPage).getByRole("button", { name: "Collapse to window" });
+      expect(within(fullPage).getAllByRole("button").map((button) => button.getAttribute("aria-label")))
+        .toEqual(["Card actions", "Collapse to window", "Close"]);
+
+      fireEvent.click(collapse);
+      expect(localStorage.getItem(CARD_VIEW_STORAGE_KEY)).toBe("peek");
+      expect(getCardView()).toBe("peek");
+      // The card stands in its window at once; the top row is as with no card.
+      const window = document.querySelector<HTMLElement>("[data-card-peek]");
+      expect(window).not.toBeNull();
+      expect(within(window!).getByTestId("detail-title")).toHaveTextContent("alpha-block");
+      expect(document.querySelector("[data-secondary-detail-top-menu]")).toBeNull();
+
+      fireEvent.click(within(window!).getByRole("button", { name: "Open as full page" }));
+      expect(localStorage.getItem(CARD_VIEW_STORAGE_KEY)).toBe("full");
+      expect(getCardView()).toBe("full");
+      await waitFor(() => {
+        expect(document.querySelector("[data-secondary-detail-top-menu]")).not.toBeNull();
+      });
+    } finally {
+      localStorage.removeItem(CARD_VIEW_STORAGE_KEY);
+      reloadCardView();
+    }
+  });
+
   describe("a sidebar thumbnail dragged to a collection (SPEC_FRONTEND.md, «Перетаскивание миниатюры»)", () => {
     /// The app's drag threshold, the feed card's.
     const DRAG_DISTANCE_PX = 8;
@@ -2432,7 +2494,7 @@ describe("AppWithVault", () => {
         expect(segment).toHaveClass("border-r", "border-sidebar-border");
         // The segment's line is the only one: nothing after it draws another.
         const pathRest = segment.nextElementSibling as HTMLElement;
-        const collection = screen.getByRole("button", { name: "Switch collection: Everything" });
+        const collection = topPlace("Everything");
         expect(pathRest.firstElementChild).toBe(collection.closest("[data-top-collection-switcher-slot]"));
         expect(pathRest).not.toHaveClass("border-l");
         expect(collection).not.toHaveClass("border-l");
@@ -2448,7 +2510,7 @@ describe("AppWithVault", () => {
       it(`parts collection and the open card's name by the same line with the sidebar collapsed, the name alone with it open (${mode})`, async () => {
         await renderPath();
 
-        const collection = screen.getByRole("button", { name: "Switch collection: Everything" });
+        const collection = topPlace("Everything");
         const collectionClass = collection.className;
 
         fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
@@ -2460,8 +2522,8 @@ describe("AppWithVault", () => {
           // after the segment's line (user's decision of 23.10.2026), and the
           // place comes back once the name has left the row.
           // The switcher has faded out where it stands, out of the row's flow, inert.
-          expect(screen.queryByRole("button", { name: "Switch collection: Everything" })).toBeNull();
           const slot = document.querySelector("[data-top-collection-switcher-slot]") as HTMLElement;
+          expect(slot).toHaveAttribute("aria-hidden", "true");
           expect(slot).toHaveAttribute("inert");
           expect(slot).toHaveClass("absolute");
           expect(contentSegment()).not.toHaveAttribute("data-path-card-line");
@@ -2472,7 +2534,7 @@ describe("AppWithVault", () => {
           await waitFor(() => {
             expect(document.querySelector("[data-secondary-detail-top-menu]")).toBeNull();
           });
-          expect(screen.getByRole("button", { name: "Switch collection: Everything" }).className).toBe(collectionClass);
+          expect(topPlace("Everything").className).toBe(collectionClass);
           expect(pathLines()).toHaveLength(1);
           return;
         }
@@ -2566,7 +2628,7 @@ describe("AppWithVault", () => {
     expect(topSidebarSegment?.querySelector("[data-top-chrome-search-separator]")).not.toBeInTheDocument();
     expect(document.querySelector("[data-top-chrome-space-measure]")).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Find or create collection" })).not.toBeInTheDocument();
-    const collectionSwitcher = screen.getByRole("button", { name: "Switch collection: Everything" });
+    const collectionSwitcher = topPlace("Everything");
     // Collapsed, the segment's line still parts space and collection: the
     // collection keeps its inset from it, none before the content that
     // follows (11.10.2026).
@@ -2869,150 +2931,62 @@ describe("AppWithVault", () => {
     });
   });
 
-  it("shows a right top-chrome collection switcher without duplicating the current collection", async () => {
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-      </MemoryRouter>,
-    );
+  // User's decision of 31.10.2026: the place's name opens no menu; a
+  // collection's name renames it with a click, as the open card's file name.
+  describe("the place's name in the top row", () => {
+    async function renderAt(path: string, grid: string) {
+      render(
+        <MemoryRouter initialEntries={[path]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId("grid")).toHaveTextContent(grid);
+      });
+    }
 
-    await waitFor(() => {
-      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    it("names Everything in plain text with no menu, no chevron and nothing to press", async () => {
+      await renderAt("/", "__all__:2");
+      const place = topPlace("Everything");
+      // From the column's line the one inset; the content after it follows on.
+      expect(place).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-0");
+      const name = place.querySelector("[data-top-collection-name]") as HTMLElement;
+      expect(name).toHaveClass("font-mono", "text-sm", "text-muted-foreground");
+      expect(name).not.toHaveClass("hover:text-foreground", "cursor-text");
+      expect(place.querySelector("button, [data-menu-chevron]")).toBeNull();
+      fireEvent.click(name);
+      expect(screen.queryByRole("menu")).toBeNull();
+      expect(screen.queryByRole("textbox", { name: "Rename collection" })).toBeNull();
     });
 
-    const collectionSwitcher = screen.getByRole("button", { name: "Switch collection: Everything" });
-    // From the column's line the one inset; the content after it follows on.
-    expect(collectionSwitcher).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-0");
-    expect(collectionSwitcher).not.toHaveClass("px-3");
-    expect(collectionSwitcher).toHaveClass("font-mono");
-    expect(collectionSwitcher).toHaveClass("text-sm");
-    expect(collectionSwitcher).toHaveClass("text-muted-foreground");
-    expect(collectionSwitcher).not.toHaveClass("text-base");
-    const collectionPill = screen.getByText("Everything").parentElement as HTMLElement;
-    expect(collectionPill).toHaveClass("text-muted-foreground");
-    expect(collectionPill).toHaveClass("group-hover:text-foreground");
-    expect(collectionPill).toHaveClass("group-data-[state=open]:text-foreground");
-    fireEvent.click(collectionSwitcher);
-    await waitFor(() => {
-      expect(screen.getByRole("textbox", { name: "Search collections" })).toHaveFocus();
+    it("renames the collection with a click and Enter, by the sidebar's command and check", async () => {
+      await renderAt("/channel/alpha", "alpha:1");
+      const name = topPlace("alpha").querySelector("[data-top-collection-name]") as HTMLElement;
+      expect(name).toHaveClass("cursor-text", "hover:text-foreground");
+      fireEvent.click(name);
+      const field = await screen.findByRole("textbox", { name: "Rename collection" });
+      expect(field).toHaveFocus();
+      expect(field).toHaveValue("alpha");
+      fireEvent.change(field, { target: { value: "Alpha two" } });
+      await waitFor(() => expect(commandMocks.checkCollectionName).toHaveBeenCalledWith("alpha", "Alpha two"));
+      fireEvent.keyDown(field, { key: "Enter" });
+      await waitFor(() => expect(commandMocks.renameChannel).toHaveBeenCalledWith("alpha", "Alpha two"));
+      // Saved: the field closes and the collections are read again, as after
+      // a rename in the sidebar.
+      await waitFor(() => expect(screen.queryByRole("textbox", { name: "Rename collection" })).toBeNull());
+      await waitFor(() => expect(commandMocks.listTaxonomySnapshot.mock.calls.length).toBeGreaterThan(1));
     });
 
-    expect(screen.getByRole("menuitem", { name: "Create collection" })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Everything" })).not.toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "alpha" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "beta" })).toBeInTheDocument();
-
-    const search = screen.getByRole("textbox", { name: "Search collections" });
-    expect(search).toHaveAttribute("autocomplete", "off");
-    expect(search).toHaveAttribute("autocorrect", "off");
-    expect(search).toHaveAttribute("autocapitalize", "none");
-    expect(search).toHaveAttribute("spellcheck", "false");
-    fireEvent.pointerMove(screen.getByRole("menuitem", { name: "alpha" }));
-    expect(search).toHaveFocus();
-
-    fireEvent.change(search, { target: { value: "alpha" } });
-    expect(screen.getByRole("menuitem", { name: "Create collection" })).toBeInTheDocument();
-
-    fireEvent.change(search, { target: { value: "bet" } });
-    expect(screen.queryByRole("menuitem", { name: "alpha" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("menuitem", { name: "beta" }));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("grid")).toHaveTextContent("beta:1");
+    it("keeps the name on Escape and renames nothing", async () => {
+      await renderAt("/channel/alpha", "alpha:1");
+      fireEvent.click(topPlace("alpha").querySelector("[data-top-collection-name]") as HTMLElement);
+      const field = await screen.findByRole("textbox", { name: "Rename collection" });
+      fireEvent.change(field, { target: { value: "Something else" } });
+      fireEvent.keyDown(field, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("textbox", { name: "Rename collection" })).toBeNull());
+      expect(topPlace("alpha")).toBeInTheDocument();
+      expect(commandMocks.renameChannel).not.toHaveBeenCalled();
     });
-    expect(screen.getByRole("button", { name: "Switch collection: beta" })).not.toHaveFocus();
-  });
-
-  it("keeps collection search focused while arrow keys move the active descendant", async () => {
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Switch collection: Everything" }));
-    const search = await screen.findByRole("textbox", { name: "Search collections" });
-
-    fireEvent.keyDown(search, { key: "ArrowDown" });
-    await waitFor(() => {
-      expect(search).toHaveFocus();
-    });
-    expect(search).toHaveAttribute("aria-activedescendant");
-    expect(screen.getByRole("menuitem", { name: "alpha" })).toHaveAttribute(
-      "data-search-menu-action-active",
-      "true",
-    );
-
-    fireEvent.change(search, { target: { value: "b" } });
-    expect(search).toHaveFocus();
-    expect(search).not.toHaveAttribute("aria-activedescendant");
-
-    fireEvent.keyDown(search, { key: "ArrowDown" });
-    fireEvent.keyDown(search, { key: "Enter" });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("grid")).toHaveTextContent("beta:1");
-    });
-  });
-
-  it("omits the active channel from the right top-chrome collection dropdown", async () => {
-    render(
-      <MemoryRouter initialEntries={["/channel/alpha"]}>
-        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1");
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Switch collection: alpha" }));
-    await waitFor(() => {
-      expect(screen.getByRole("textbox", { name: "Search collections" })).toHaveFocus();
-    });
-
-    expect(screen.getByRole("menuitem", { name: "Everything" })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "alpha" })).not.toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "beta" })).toBeInTheDocument();
-  });
-
-  it("does not open the right top-chrome collection dropdown while starting a window drag", async () => {
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
-    });
-
-    const trigger = screen.getByRole("button", { name: "Switch collection: Everything" });
-    fireEvent.pointerDown(trigger, {
-      button: 0,
-      pointerId: 1,
-      clientX: 120,
-      clientY: 12,
-    });
-    fireEvent.pointerMove(window, {
-      pointerId: 1,
-      clientX: 132,
-      clientY: 12,
-    });
-    fireEvent.pointerUp(window, {
-      pointerId: 1,
-      clientX: 132,
-      clientY: 12,
-    });
-    fireEvent.click(trigger);
-
-    expect(screen.queryByRole("textbox", { name: "Search collections" })).not.toBeInTheDocument();
-    // The backend drags the tab's window (SPEC_TABS.md, В23).
-    expect(commandMocks.startWindowDrag).toHaveBeenCalledTimes(1);
   });
 
   it("creates a collection from the filter on Enter and opens one already called that", async () => {
@@ -3221,7 +3195,7 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
 
-    it("creates from the collection switcher the same way: no reorder, the place stays", async () => {
+    it("creates from the New collection window the same way: no reorder, the place stays", async () => {
       // The collection lists read after the creation hold its page.
       const taxonomy = await commandMocks.listTaxonomySnapshot();
       commandMocks.listTaxonomySnapshot.mockResolvedValue({
@@ -3229,10 +3203,11 @@ describe("AppWithVault", () => {
         tags: [{ tag: "gamma", count: 0 }, ...taxonomy.tags],
         channels: [{ ...taxonomy.channels[0]!, tag: "gamma", position: -1, block_count: 0 }, ...taxonomy.channels],
       });
+      // With the sidebar collapsed, ⇧⌘N opens the window.
+      sidebarResizeState.collapsed = true;
       await renderFeed();
 
-      fireEvent.click(screen.getByRole("button", { name: "Switch collection: Everything" }));
-      fireEvent.click(await screen.findByRole("menuitem", { name: "Create collection" }));
+      fireEvent.keyDown(window, { key: "N", code: "KeyN", metaKey: true, shiftKey: true });
       fireEvent.change(await screen.findByRole("textbox", { name: "Collection name" }), {
         target: { value: "gamma" },
       });
@@ -3246,18 +3221,18 @@ describe("AppWithVault", () => {
         await Promise.resolve();
       });
       expect(commandMocks.reorderChannels).not.toHaveBeenCalled();
-      expect(screen.getByRole("button", { name: "Switch collection: Everything" })).toBeInTheDocument();
+      expect(topPlace("Everything")).toBeInTheDocument();
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
 
-    it("refuses a taken name in the collection switcher by the one check, in the words of the dictionary", async () => {
+    it("refuses a taken name in the New collection window by the one check, in the words of the dictionary", async () => {
       commandMocks.checkCollectionName.mockImplementation(async (_oldTag, name) => (
         name.toLowerCase() === "alpha" ? "A collection named \"alpha\" already exists." : null
       ));
+      sidebarResizeState.collapsed = true;
       await renderFeed();
 
-      fireEvent.click(screen.getByRole("button", { name: "Switch collection: Everything" }));
-      fireEvent.click(await screen.findByRole("menuitem", { name: "Create collection" }));
+      fireEvent.keyDown(window, { key: "N", code: "KeyN", metaKey: true, shiftKey: true });
       fireEvent.change(await screen.findByRole("textbox", { name: "Collection name" }), {
         target: { value: "Alpha" },
       });
@@ -3297,7 +3272,7 @@ describe("AppWithVault", () => {
       });
     }
 
-    it("lists only the collection pages in the sidebar and the top switcher (К1, К9)", async () => {
+    it("lists only the collection pages in the sidebar (К1, К9)", async () => {
       withPagelessLink();
       render(
         <MemoryRouter initialEntries={["/"]}>
@@ -3312,12 +3287,6 @@ describe("AppWithVault", () => {
         "alpha",
         "beta",
       ]);
-
-      fireEvent.click(screen.getByRole("button", { name: "Switch collection: Everything" }));
-      await screen.findByRole("textbox", { name: "Search collections" });
-      expect(screen.getByRole("menuitem", { name: "alpha" })).toBeInTheDocument();
-      expect(screen.getByRole("menuitem", { name: "beta" })).toBeInTheDocument();
-      expect(screen.queryByRole("menuitem", { name: "pageless" })).not.toBeInTheDocument();
     });
 
     it("makes the place of a name without a page Everything (К1, В18)", async () => {
@@ -3329,7 +3298,7 @@ describe("AppWithVault", () => {
       );
 
       await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
-      expect(screen.getByRole("button", { name: "Switch collection: Everything" })).toBeInTheDocument();
+      expect(topPlace("Everything")).toBeInTheDocument();
     });
 
     it("creates the page before a card's Create collection connects the card (К5)", async () => {
@@ -4785,7 +4754,6 @@ describe("AppWithVault", () => {
       sidebar: { width_px: 360, collapsed: false },
       lead: true,
       fresh_start: false,
-      chrome_rows: { tab_bar: 30, page: 30 },
       ...overrides,
     });
     // Only for what must not happen: a whole interval passes with nothing

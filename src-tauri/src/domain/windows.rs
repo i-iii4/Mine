@@ -13,105 +13,15 @@ use serde::{Deserialize, Serialize};
 /// that reads only version 1 sets such a file aside as newer instead of
 /// reading it as corrupt. Version 1 is a subset and reads as it is.
 pub const SAVED_WINDOWS_VERSION: u32 = 2;
-/// Height of the tab bar row: 30 px of content and a 1 px separator, the
-/// rows of the chrome (DESIGN_SYSTEM.md, ChromeRow).
-pub const TAB_BAR_HEIGHT_PX: u32 = 31;
-/// Height of a top chrome row's content (`--chrome-row-content-height`): the
-/// standard one and the tall one (В83), the tall one a window's default since
-/// 07.10.2026. The tall row and its 1 px line step as a row of the sidebar's
-/// table, 40 px with its line (`--sidebar-row-height` in global.css;
-/// constants.test.ts checks).
-pub const CHROME_ROW_HEIGHT_PX: u32 = 30;
-pub const CHROME_ROW_TALL_HEIGHT_PX: u32 = 39;
-
-/// The tab bar's height for chrome rows `row_height` tall: the row and its
-/// 1 px separator.
-pub fn tab_bar_height(row_height: u32) -> u32 {
-    row_height + 1
-}
-
-/// A chrome row height the app knows; anything else reads as the standard.
-pub fn chrome_row_height(value: u32) -> u32 {
-    // 40 was the tall row's content before the line counted in its step.
-    if value == CHROME_ROW_TALL_HEIGHT_PX || value == 40 {
-        CHROME_ROW_TALL_HEIGHT_PX
-    } else {
-        CHROME_ROW_HEIGHT_PX
-    }
-}
-
-/// The title bar a window asks AppKit for (В83). AppKit centres the traffic
-/// lights in the title bar's height itself, in every layout, live resize and
-/// full screen included: 32 pt without a toolbar, the buttons 9 pt from the
-/// top, and 40 pt with an empty toolbar in the compact unified style, the
-/// buttons 13 pt from the top (measured on macOS 27.0, 04.10.2026). The tall
-/// row and its line make 40 px, so it takes the compact title bar; the
-/// standard row keeps the system one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TitleBar {
-    /// The system's own title bar, no toolbar.
-    Standard,
-    /// An empty toolbar in the compact unified style.
-    Compact,
-}
-
-/// The title bar for a tab bar row `row_height` tall.
-pub fn title_bar_for(row_height: u32) -> TitleBar {
-    if chrome_row_height(row_height) == CHROME_ROW_TALL_HEIGHT_PX {
-        TitleBar::Compact
-    } else {
-        TitleBar::Standard
-    }
-}
-
-/// The heights of the chrome rows (В83): the tab bar's row and the top rows
-/// of the tab pages, apart, so the bar can stay standard over tall pages.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub struct ChromeRows {
-    pub tab_bar: u32,
-    pub page: u32,
-}
-
-impl ChromeRows {
-    pub const STANDARD: Self = Self {
-        tab_bar: CHROME_ROW_HEIGHT_PX,
-        page: CHROME_ROW_HEIGHT_PX,
-    };
-    /// Both rows tall: a window's default (user's decision of 07.10.2026).
-    pub const TALL: Self = Self {
-        tab_bar: CHROME_ROW_TALL_HEIGHT_PX,
-        page: CHROME_ROW_TALL_HEIGHT_PX,
-    };
-
-    /// One of the two the app offers: the bar and the pages go together
-    /// (user's decision of 07.10.2026). The pages' row decides: a short bar
-    /// over tall pages, once offered as «Chrome Height 40, Tab Bar 30», reads
-    /// as tall, since the rows the person works in were tall already; a bar
-    /// never offered over standard pages reads as standard.
-    pub fn known(self) -> Self {
-        if chrome_row_height(self.page) == CHROME_ROW_TALL_HEIGHT_PX {
-            Self::TALL
-        } else {
-            Self::STANDARD
-        }
-    }
-}
-
-/// What a window has before the person picks other heights: the first window,
-/// a new window with none to take them from, and a window saved before rows
-/// had heights. A window's saved heights are kept.
-impl Default for ChromeRows {
-    fn default() -> Self {
-        Self::TALL
-    }
-}
-
-/// The `data-chrome-height` a page shows for its row `row_height` tall, the
-/// attribute global.css sizes the top rows by (chromeHeight.ts): `Some("40")`
-/// for the tall row, none for the standard one.
-pub fn chrome_height_attribute(row_height: u32) -> Option<&'static str> {
-    (chrome_row_height(row_height) == CHROME_ROW_TALL_HEIGHT_PX).then_some("40")
-}
+/// Height of a top chrome row's content (`--chrome-row-content-height` of a
+/// row closed by a line below it, global.css): the row and its 1 px line step
+/// as a row of the sidebar's table, 40 px (`--sidebar-row-height`;
+/// constants.test.ts checks). The one height since 30.10.2026 (user's
+/// decision: the 30 px chrome is gone, SPEC_TABS.md, В83).
+pub const CHROME_ROW_HEIGHT_PX: u32 = 39;
+/// Height of the tab bar: its row and its 1 px separator.
+pub const TAB_BAR_HEIGHT_PX: u32 = 40;
+const _: () = assert!(TAB_BAR_HEIGHT_PX == CHROME_ROW_HEIGHT_PX + 1);
 
 /// Narrowest a tab gets before the bar scrolls: four or five letters of its
 /// label and room for the close button.
@@ -225,7 +135,9 @@ pub struct SavedWindows {
     pub window_surface: Option<String>,
 }
 
-/// One tab window.
+/// One tab window. A window saved while the chrome had two heights still
+/// carries `chrome_rows`; the field is not read, the one height there is
+/// stands (30.10.2026).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SavedWindow {
     pub id: WindowId,
@@ -238,10 +150,6 @@ pub struct SavedWindow {
     /// The sidebar last set in this window: what a tab saved before tabs had
     /// a sidebar of their own takes (В56).
     pub sidebar: SidebarLayout,
-    /// The heights of this window's chrome rows (В83): each window has its
-    /// own, so two can stand side by side to compare.
-    #[serde(default)]
-    pub chrome_rows: ChromeRows,
 }
 
 impl SavedWindow {
@@ -498,7 +406,6 @@ impl SavedWindows {
                 }],
                 active_tab: tab,
                 sidebar: SidebarLayout::default(),
-                chrome_rows: ChromeRows::default(),
             }],
             window_surface: None,
         }
@@ -705,8 +612,6 @@ impl SavedWindows {
             return None;
         }
         let sidebar = source.tab_sidebar(tab);
-        // A torn tab takes its window's chrome along.
-        let chrome_rows = source.chrome_rows;
         let closed = self.close_tab(tab)?;
         self.add_window(SavedWindow {
             id: window,
@@ -715,7 +620,6 @@ impl SavedWindows {
             tabs: vec![closed.tab],
             active_tab: tab.clone(),
             sidebar,
-            chrome_rows,
         });
         Some(closed.now_visible)
     }
@@ -770,17 +674,6 @@ impl SavedWindows {
             self.set_space(tab, TabSpace::Picker);
         }
         tabs
-    }
-
-    /// Store the chrome rows of `window` (В83).
-    pub fn set_chrome_rows(&mut self, window: &WindowId, rows: ChromeRows) -> bool {
-        match self.window_mut(window) {
-            Some(target) => {
-                target.chrome_rows = rows.known();
-                true
-            }
-            None => false,
-        }
     }
 
     /// Store the sidebar of `tab` (В56). The window keeps it as its last.
@@ -982,9 +875,6 @@ pub fn normalize(
             TabSpace::Space { vault_id } => space(vault_id) == SpaceStatus::Known,
             TabSpace::Picker => true,
         });
-        // A height no longer offered (46 px tried on 03.10.2026) reads as
-        // standard; a short bar over tall pages reads as tall (07.10.2026).
-        window.chrome_rows = window.chrome_rows.known();
         for tab in &mut window.tabs {
             // A tab saved while the window owned the sidebar takes the window's.
             tab.sidebar.get_or_insert(window.sidebar);
@@ -1127,65 +1017,28 @@ mod tests {
     }
 
     #[test]
-    fn the_tall_row_takes_the_compact_title_bar() {
-        assert_eq!(title_bar_for(CHROME_ROW_HEIGHT_PX), TitleBar::Standard);
-        assert_eq!(title_bar_for(CHROME_ROW_TALL_HEIGHT_PX), TitleBar::Compact);
-        // The tall row's content before its line counted in its step.
-        assert_eq!(title_bar_for(40), TitleBar::Compact);
-        assert_eq!(title_bar_for(12), TitleBar::Standard);
-    }
-
-    #[test]
-    fn a_window_is_tall_by_default_and_keeps_saved_heights() {
-        // The first window and a window saved before rows had heights.
+    fn a_window_saved_with_either_chrome_height_reads_as_the_one_height() {
+        // Windows saved while the chrome offered 30 px and 40 px carry their
+        // rows' heights; the 30 px chrome is gone (30.10.2026), so both read
+        // as before, with nothing of the old heights kept.
         let fresh = SavedWindows::fresh(TabSpace::Picker, WindowId("w".into()), TabId("t".into()), &screen());
-        assert_eq!(fresh.windows[0].chrome_rows, ChromeRows::TALL);
-        assert_eq!(ChromeRows::default(), ChromeRows::TALL);
-        let mut without_rows = serde_json::to_value(&fresh.windows[0]).expect("the window writes");
-        without_rows.as_object_mut().expect("an object").remove("chrome_rows");
-        let read: SavedWindow = serde_json::from_value(without_rows).expect("the window reads");
-        assert_eq!(read.chrome_rows, ChromeRows::TALL);
-        // A window whose heights were saved keeps them, the standard ones too.
-        let mut standard = fresh.windows[0].clone();
-        standard.chrome_rows = ChromeRows::STANDARD;
-        let text = serde_json::to_string(&standard).expect("the window writes");
-        let read: SavedWindow = serde_json::from_str(&text).expect("the window reads");
-        assert_eq!(read.chrome_rows, ChromeRows::STANDARD);
+        for (tab_bar, page) in [(30, 30), (39, 39), (30, 39), (40, 40)] {
+            let mut value = serde_json::to_value(&fresh.windows[0]).expect("the window writes");
+            value
+                .as_object_mut()
+                .expect("an object")
+                .insert("chrome_rows".into(), serde_json::json!({ "tab_bar": tab_bar, "page": page }));
+            let read: SavedWindow = serde_json::from_value(value).expect("the window reads");
+            assert_eq!(read, fresh.windows[0]);
+            let written = serde_json::to_value(&read).expect("the window writes");
+            assert!(written.get("chrome_rows").is_none());
+        }
     }
 
     #[test]
-    fn the_bar_and_the_pages_go_together() {
-        let rows = |tab_bar, page| ChromeRows { tab_bar, page };
-        assert_eq!(rows(30, 30).known(), ChromeRows::STANDARD);
-        assert_eq!(rows(39, 39).known(), ChromeRows::TALL);
-        // The tall row's content before its line counted in its step.
-        assert_eq!(rows(40, 40).known(), ChromeRows::TALL);
-        // Once offered as «Chrome Height 40, Tab Bar 30»: the pages decide.
-        assert_eq!(rows(30, 39).known(), ChromeRows::TALL);
-        // Never offered, and a height no longer offered.
-        assert_eq!(rows(39, 30).known(), ChromeRows::STANDARD);
-        assert_eq!(rows(46, 46).known(), ChromeRows::STANDARD);
-
-        let mut model = saved(vec![window("w", vec![tab("t", "x")], "t")]);
-        assert!(model.set_chrome_rows(&WindowId("w".into()), rows(30, 39)));
-        assert_eq!(model.windows[0].chrome_rows, ChromeRows::TALL);
-    }
-
-    #[test]
-    fn a_session_saved_with_a_short_bar_over_tall_pages_reads_tall() {
-        let mut window = window("w", vec![tab("t", "x")], "t");
-        window.chrome_rows = ChromeRows { tab_bar: 30, page: 39 };
-        let text = serde_json::to_string(&saved(vec![window])).expect("the session writes");
-        let read = normalize(parse(&text).expect("the session reads"), &known, &screen(), &mut ids());
-        assert_eq!(read.windows[0].chrome_rows, ChromeRows::TALL);
-    }
-
-    #[test]
-    fn a_page_is_told_its_row_before_its_first_frame() {
-        assert_eq!(chrome_height_attribute(CHROME_ROW_TALL_HEIGHT_PX), Some("40"));
-        assert_eq!(chrome_height_attribute(40), Some("40"));
-        assert_eq!(chrome_height_attribute(CHROME_ROW_HEIGHT_PX), None);
-        assert_eq!(chrome_height_attribute(46), None);
+    fn the_tab_bar_steps_as_a_row_of_the_sidebar_table() {
+        assert_eq!(CHROME_ROW_HEIGHT_PX, 39);
+        assert_eq!(TAB_BAR_HEIGHT_PX, 40);
     }
 
     #[test]
@@ -1250,7 +1103,6 @@ mod tests {
             tabs,
             active_tab: TabId(active.into()),
             sidebar: SidebarLayout::default(),
-            chrome_rows: ChromeRows::STANDARD,
         }
     }
 

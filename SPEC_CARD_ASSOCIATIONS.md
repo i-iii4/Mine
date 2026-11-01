@@ -606,8 +606,8 @@ Related notes.
 
 - Путь в верхнем ряду: `Mine › @kotecinho`. Звено коллекции
   (`TopCollectionSwitcher`) показывает автора вместо `Everything` или имени
-  коллекции; его меню прежнее (Everything и коллекции), отмеченного пункта в
-  нём нет.
+  коллекции простым текстом. Меню у звена нет с 31.10.2026 (решение
+  пользователя, SPEC_FRONTEND.md); из ленты автора уходят через боковое меню.
 - Вкладка подписана автором. `TabBarTab.collection` становится
   `TabBarTab.place: Option<String>`: коллекция или автор; `tabLabel` берёт
   `card ?? place ?? space_name`.

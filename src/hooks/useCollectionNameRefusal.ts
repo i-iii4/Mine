@@ -4,6 +4,16 @@
 // same names for the same reasons, before anything is written.
 
 import { createContext, useContext, useEffect, useState } from "react";
+import { nameRefusal } from "@/lib/commands";
+import { errorMessage } from "@/lib/errorMessage";
+
+/// What a refused collection name shows under the name: the reason the
+/// command gave, or, for a failure that is no refusal of the name, its own
+/// words; never the console only (SPEC_DEEP_AUDIT.md, Н11). The sidebar's
+/// names and the top row's collection name say it alike.
+export function collectionNameRefusal(error: unknown): string {
+  return nameRefusal(error) ?? errorMessage(error);
+}
 
 /** The check of a typed name: the reason it is refused, or null. */
 export type CollectionNameCheck = (name: string) => Promise<string | null>;

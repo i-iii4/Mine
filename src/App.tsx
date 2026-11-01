@@ -26,7 +26,6 @@ import type { SettingsSection } from "@/lib/settingsSections";
 import { isTauri } from "@tauri-apps/api/core";
 import { listenPage } from "@/lib/pageEvents";
 import { getNavigationLabel } from "@/lib/displayTitle";
-import { applyChromeRowHeight, CHROME_ROWS_EVENT } from "@/lib/chromeHeight";
 import {
   SPACE_LEAD_CHANGED_EVENT,
   TAB_GO_EVERYTHING_EVENT,
@@ -96,8 +95,8 @@ import { createPreviewRowQueue } from "@/lib/previewRowQueue";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { sidebarWidthHost } from "@/lib/sidebarWidth";
 import { topRowCard, topRowShowsPlace } from "@/lib/topRowPath";
-import { CARD_VIEW_STORAGE_KEY, PEEK_WIDTH_STORAGE_KEY, cardViewForOpening, getCardView, reloadCardView, reloadPeekWidth, useCardView, type CardView } from "@/lib/cardView";
-import { lastPeekInput, peekOpeningFrom, type CardPeekExit } from "@/lib/cardPeek";
+import { CARD_VIEW_STORAGE_KEY, PEEK_WIDTH_STORAGE_KEY, getCardView, offersPeekCollapse, openCardView, reloadCardView, reloadPeekWidth, setCardView, useCardView, type CardView } from "@/lib/cardView";
+import { lastPeekInput, peekAreaHoldsWindow, peekOpeningFrom, type CardPeekExit } from "@/lib/cardPeek";
 import { listenPeekInput } from "@/lib/cardPeekSource";
 import { cn } from "@/lib/utils";
 import { commandById } from "@/lib/commandRegistry";
@@ -262,7 +261,6 @@ import type {
   SpaceRename,
   TabBootstrap,
   TabHistoryStep,
-  ChromeRows,
   TabLocation,
   TabView,
   TabVisibility,
@@ -418,6 +416,7 @@ import {
 import {
   SETTINGS_CHANGED_EVENT,
   adoptSettingsChange,
+  broadcastSettingsChange,
   type SettingsChangedPayload,
 } from "@/lib/settingsChanged";
 import { RenameBlockDialog } from "@/components/RenameBlockDialog";
@@ -628,8 +627,6 @@ export function App() {
       const bootstrap = await bootstrapRead;
       if (cancelled || bootstrapAdopted || !bootstrap) return;
       bootstrapAdopted = true;
-      // The tab bar above is as tall as the backend laid it out (В83).
-      applyChromeRowHeight(bootstrap.chrome_rows.page);
       const adopted = adoptLegacyTabState(bootstrap);
       setTab(bootstrap);
       setLead(bootstrap.lead);
@@ -703,7 +700,6 @@ export function App() {
         }
       }),
       listenPage<SpaceLead>(SPACE_LEAD_CHANGED_EVENT, (event) => setLead(event.payload.lead)),
-      listenPage<ChromeRows>(CHROME_ROWS_EVENT, (event) => applyChromeRowHeight(event.payload.page)),
       listenPage<SidebarLayout>(WINDOW_SIDEBAR_CHANGED_EVENT, (event) => setWindowSidebarLayout(event.payload)),
       listenPage(TAB_SPACE_FORGOTTEN_EVENT, () => {
         setCreatingNewSpace(false);
@@ -1133,17 +1129,26 @@ export function AppWithVault({
   const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const selectedBlockRef = useRef(selectedBlock);
   selectedBlockRef.current = selectedBlock;
-  // TRIAL (SPEC_CARD_PEEK.md, О1): the view the open card opened in, Full
-  // page or its window over the right part, kept until it closes; how its
-  // window's latest opening began, and how the window goes when it closes.
-  const [detailView, setDetailView] = useState<CardView>("full");
+  // TRIAL (SPEC_CARD_PEEK.md, О1, О9, О16): the «Card view» the open card
+  // stands by, Full page or Peek: the one chosen when it opened, or the one
+  // its own button chose since; whether the right part holds the window.
+  // From them the view it stands in (`openCardView`); how its window's
+  // latest opening began, and how the window goes when it closes.
+  const [detailCardView, setDetailCardView] = useState<CardView>("full");
+  const detailCardViewRef = useRef(detailCardView);
+  detailCardViewRef.current = detailCardView;
+  // Whether the right part holds the window, heard always (true until it
+  // tells its width, as before the rule); the open card's view follows it
+  // while the card is open and keeps it while the card leaves (О16).
+  const peekAreaHoldsRef = useRef(true);
+  const [detailAreaHolds, setDetailAreaHolds] = useState(true);
+  const detailViewInputs = { chosen: detailCardView, areaHolds: detailAreaHolds };
+  const detailView = openCardView(detailViewInputs);
   const detailViewRef = useRef(detailView);
   detailViewRef.current = detailView;
   const [peekOpening, setPeekOpening] = useState<CardPeekOpening | null>(null);
   const [peekExit, setPeekExit] = useState<CardPeekExit>("return");
   const peekOpeningSequenceRef = useRef(0);
-  // Read when a card opens; set where the narrow window is known.
-  const sidebarNarrowRef = useRef(false);
   // The right part the card's window stands over (SPEC_CARD_PEEK.md, О3).
   const peekAreaRef = useRef<HTMLDivElement>(null);
   // With the window the chosen view, the open card's module is loaded after
@@ -1344,8 +1349,9 @@ export function AppWithVault({
     // replaces an open card keeps the open card's view (SPEC_CARD_PEEK.md,
     // О1, О2). What opened it decides how its window comes (О10).
     if (selectedBlockRef.current === null) {
-      const view = cardViewForOpening(getCardView(), sidebarNarrowRef.current);
-      setDetailView(view);
+      const view = getCardView();
+      setDetailCardView(view);
+      setDetailAreaHolds(peekAreaHoldsRef.current);
       setPeekExit("return");
       if (view === "peek") {
         peekOpeningSequenceRef.current += 1;
@@ -1586,11 +1592,6 @@ export function AppWithVault({
     },
   });
   const sidebarNarrow = sidebarOverlay.narrow;
-  sidebarNarrowRef.current = sidebarNarrow;
-  // TRIAL (SPEC_CARD_PEEK.md, О1): a card open in its window stays there
-  // when the window narrows until the sidebar lies over the feed (user's
-  // decision of 23.10.2026); only a card opened in a narrow window opens
-  // full (cardViewForOpening).
   const closeSidebarOverlay = sidebarOverlay.close;
   bottomBarScrollsRef.current = sidebarNarrow;
   // Into a narrow window or out of it: the bar shows everything in its
@@ -3315,12 +3316,59 @@ export function AppWithVault({
     handleMainViewModeChange(next);
   }, [handleDetailClose, handleMainViewModeChange]);
 
-  // TRIAL (SPEC_CARD_PEEK.md, О9): the window and its blur fade where they
-  // stand, and the same card stands full page; the chosen view stays.
+  // TRIAL (SPEC_CARD_PEEK.md, О9, О16): the open card goes back to its
+  // window, which stands at its place at once.
+  const givePeekBack = useCallback((slug: string) => {
+    peekOpeningSequenceRef.current += 1;
+    setPeekOpening({ sequence: peekOpeningSequenceRef.current, slug, from: "full", restored: false });
+    setPeekExit("return");
+  }, []);
+
+  // TRIAL (SPEC_CARD_PEEK.md, О1, О9; user's decision of 30.10.2026): the
+  // open card's buttons choose «Card view» as the Display panel does, stored
+  // and told to every tab and window, and this card follows it at once.
+  const chooseOpenCardView = useCallback((next: CardView) => {
+    setCardView(next);
+    broadcastSettingsChange(CARD_VIEW_STORAGE_KEY);
+    setDetailCardView(next);
+  }, []);
+
+  // TRIAL (SPEC_CARD_PEEK.md, О9, О16): Full page chosen; the window and its
+  // blur fade where they stand, and the same card stands full page at any
+  // width of the right part.
   const handlePeekExpand = useCallback(() => {
     setPeekExit("fade");
-    setDetailView("full");
-  }, []);
+    chooseOpenCardView("full");
+  }, [chooseOpenCardView]);
+
+  // TRIAL (SPEC_CARD_PEEK.md, О9, О16): Peek chosen; the full page gives the
+  // card to its window, and the right part's width decides from now on.
+  const handlePeekCollapse = useCallback(() => {
+    const open = selectedBlockRef.current;
+    if (!open) return;
+    givePeekBack(open.slug);
+    chooseOpenCardView("peek");
+  }, [chooseOpenCardView, givePeekBack]);
+
+  // TRIAL (SPEC_CARD_PEEK.md, О16; user's decision of 30.10.2026): the
+  // right part's width alone decides whether a card standing by Peek is in
+  // its window or full page, live, both ways. Heard as the right part places
+  // itself, in the frame its width changes.
+  const handlePeekAreaWidth = useCallback((width: number) => {
+    const holds = peekAreaHoldsWindow(width);
+    if (holds === peekAreaHoldsRef.current) return;
+    const chosen = detailCardViewRef.current;
+    const before = openCardView({ chosen, areaHolds: peekAreaHoldsRef.current });
+    const after = openCardView({ chosen, areaHolds: holds });
+    peekAreaHoldsRef.current = holds;
+    const open = selectedBlockRef.current;
+    if (!open) return;
+    if (before !== after) {
+      if (after === "peek") givePeekBack(open.slug);
+      else setPeekExit("fade");
+    }
+    setDetailAreaHolds(holds);
+  }, [givePeekBack]);
 
   // TRIAL (SPEC_CARD_PEEK.md, О10): the input that opened a card decides how
   // its window comes.
@@ -5114,16 +5162,16 @@ export function AppWithVault({
           {/* An open card's name takes the place's room in a narrow window
               (SPEC_NARROW_WINDOW.md, У15) and beside the open sidebar. */}
           {/* While an open card's name has the place's room (23.10.2026), the
-              place's switcher fades out of the row's flow and back in. */}
+              place's name fades out of the row's flow and back in. A
+              collection's name renames it with a click, by the sidebar's
+              rename and its check (user's decision of 31.10.2026). */}
           <TopCollectionSwitcher
             shown={!(placeReplaced && detailChromeEntered)}
             overlay={placeReplaced}
             currentTag={currentTag}
             currentAuthor={currentLocation.kind === "author" ? currentLocation.author : undefined}
-            orderedTags={orderedTags}
-            onNavigate={handleTopCollectionNavigate}
-            onCreateCollection={handleWindowCreateCollection}
-            onCheckCollectionName={checkNewCollectionName}
+            onRename={handleRenameTag}
+            onCheckName={checkCollectionName}
             joinsNext
           />
           {/* No third row: what it held over the feed joins this row after
@@ -5146,6 +5194,7 @@ export function AppWithVault({
             onCheckFileName={handleCheckFileName}
             onRequestDelete={requestDeleteBlock}
             onDetailClose={handleDetailClose}
+            onDetailCollapse={offersPeekCollapse(detailViewInputs) ? handlePeekCollapse : undefined}
             detailMenuOpenRequestSequence={detailMenuOpenRequestSequence}
             selectionActive={hasSelection}
             selectionHostRef={setSelectionCommandsHost}
@@ -5443,7 +5492,7 @@ export function AppWithVault({
             part, from the top rows' top to the bottom bar beside the sidebar
             (user's decision of 23.10.2026). It outlives its card while it
             leaves. */}
-        <CardPeekArea areaRef={peekAreaRef} top={topRowHost} sides={mainRef}>
+        <CardPeekArea areaRef={peekAreaRef} top={topRowHost} sides={mainRef} onWidth={handlePeekAreaWidth}>
         <CardPeek
           block={detailView === "peek" ? selectedBlock : null}
           opening={peekOpening}

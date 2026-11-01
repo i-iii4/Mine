@@ -97,12 +97,6 @@ block_count: number }
 
 export type ChannelPreviewsSnapshot = { generation: ProjectionRevision; previews: Partial<{ [key in string]: PreviewItem[] }> }
 
-/**
- * The heights of the chrome rows (В83): the tab bar's row and the top rows
- * of the tab pages, apart, so the bar can stay standard over tall pages.
- */
-export type ChromeRows = { tab_bar: number; page: number }
-
 export type ClipboardPayload =
 /**
  * Files copied in Finder — their absolute paths.
@@ -993,11 +987,7 @@ export type TabBarState = { window_id: WindowId; tabs: TabBarTab[]; active_tab: 
  * The visible tab's sidebar is on screen, beside the feed or over it:
  * what the bar's button shows (В56; SPEC_NARROW_WINDOW.md, У4).
  */
-sidebar_shown: boolean; fullscreen: boolean;
-/**
- * The heights of the chrome rows' content (В83).
- */
-chrome_rows: ChromeRows }
+sidebar_shown: boolean; fullscreen: boolean }
 
 /**
  * One tab as the tab bar shows it (В47).
@@ -1039,11 +1029,7 @@ lead: boolean;
  * No saved windows were read at this launch: the page may carry its
  * old single-window settings over once (В79).
  */
-fresh_start: boolean;
-/**
- * The heights of the chrome rows' content (В83).
- */
-chrome_rows: ChromeRows }
+fresh_start: boolean }
 
 /**
  * What the shown tab hears of a file drag over its window.

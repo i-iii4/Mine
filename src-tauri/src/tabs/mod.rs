@@ -26,8 +26,8 @@ use crate::commands::space_events;
 use crate::commands::state::AppState;
 use crate::domain::windows::{
     cascaded_frame, centered_frame, normalize, route_sidebar_intent, sidebar_shown, RestoreStep, ScreenArea,
-    SavedTab, SavedWindow, SavedWindows, SidebarIntent, SidebarLayout, SidebarOverlay, SidebarRoute, ChromeRows,
-    TabId, TabSpace, TabView, WindowFrame, WindowId,
+    SavedTab, SavedWindow, SavedWindows, SidebarIntent, SidebarLayout, SidebarOverlay, SidebarRoute,
+    TabId, TabSpace, TabView, WindowFrame, WindowId, TAB_BAR_HEIGHT_PX,
     WINDOW_DEFAULT_HEIGHT, WINDOW_DEFAULT_WIDTH, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH,
 };
 use crate::storage::window_store::{load, Loaded, WindowStore};
@@ -127,8 +127,6 @@ pub struct TabBarState {
     /// what the bar's button shows (В56; SPEC_NARROW_WINDOW.md, У4).
     pub sidebar_shown: bool,
     pub fullscreen: bool,
-    /// The heights of the chrome rows' content (В83).
-    pub chrome_rows: ChromeRows,
 }
 
 /// What a tab page needs to start (`get_tab_bootstrap`).
@@ -145,8 +143,6 @@ pub struct TabBootstrap {
     /// No saved windows were read at this launch: the page may carry its
     /// old single-window settings over once (В79).
     pub fresh_start: bool,
-    /// The heights of the chrome rows' content (В83).
-    pub chrome_rows: ChromeRows,
 }
 
 /// `tab-visibility-changed`: the tab was shown or hidden (В41).
@@ -620,30 +616,8 @@ fn fresh_windows(app: &AppHandle, screens: &[ScreenArea]) -> SavedWindows {
     SavedWindows::fresh(space, WindowId(new_id()), TabId(new_id()), screens)
 }
 
-/// The chrome rows of the window `window_id` (В83).
-fn chrome_rows_of(app: &AppHandle, window_id: &WindowId) -> ChromeRows {
-    shell(app).snapshot().window(window_id).map_or_else(ChromeRows::default, |window| window.chrome_rows)
-}
-
-/// A script that shows a page's chrome row `row_height` tall from its first
-/// frame (В83): it sets the attribute global.css sizes the top rows by at
-/// document start, so a tall window's bar and pages never paint the standard
-/// row first and jump. The page's own bootstrap and `CHROME_ROWS_EVENT` keep
-/// the attribute after that.
-fn chrome_height_script(row_height: u32) -> String {
-    match crate::domain::windows::chrome_height_attribute(row_height) {
-        Some(value) => format!(
-            "document.documentElement && document.documentElement.setAttribute(\"data-chrome-height\", \"{value}\");"
-        ),
-        None => "document.documentElement && document.documentElement.removeAttribute(\"data-chrome-height\");"
-            .to_owned(),
-    }
-}
-
-/// The tab bar's height in `window_id`: its row and its line (В83).
-fn bar_height(app: &AppHandle, window_id: &WindowId) -> f64 {
-    f64::from(crate::domain::windows::tab_bar_height(chrome_rows_of(app, window_id).tab_bar))
-}
+/// The tab bar's height: its row and its line (В83).
+const BAR_HEIGHT: f64 = TAB_BAR_HEIGHT_PX as f64;
 
 /// The tab bar's height in the tab window whose native window is
 /// `ns_window`; `None` for any other window, the settings among them
@@ -654,37 +628,8 @@ pub fn bar_height_of_native_window(app: &AppHandle, ns_window: *const std::ffi::
         .into_values()
         .find(|window| window.ns_window().is_ok_and(|ptr| ptr.cast_const() == ns_window))
         .and_then(|window| WindowId::from_label(window.label()))
-        .map(|window_id| bar_height(app, &window_id))
+        .map(|_| BAR_HEIGHT)
 }
-
-/// Set the chrome rows of the window whose bar is `bar_label` (В83): store
-/// them, lay the window out again, move its traffic lights to the bar's row
-/// and tell its bar and its tab pages. Other windows keep theirs, so two can
-/// stand side by side to compare.
-pub fn set_chrome_rows(app: &AppHandle, bar_label: &str, rows: ChromeRows) {
-    let Some(window_id) = WindowId::from_label(bar_label) else {
-        return;
-    };
-    let shell = shell(app);
-    if !shell.change(|model| model.set_chrome_rows(&window_id, rows)) {
-        return;
-    }
-    layout(app, &window_id);
-    let rows = chrome_rows_of(app, &window_id);
-    if let Some(window) = app.get_window(&window_id.label()) {
-        native::set_title_bar(&window, crate::domain::windows::title_bar_for(rows.tab_bar));
-    }
-    let mut labels: Vec<String> = shell
-        .snapshot()
-        .window(&window_id)
-        .map(|window| window.tabs.iter().map(|tab| tab.id.label()).collect())
-        .unwrap_or_default();
-    labels.push(window_id.bar_label());
-    space_events::emit_to_labels(app, labels, CHROME_ROWS_EVENT, rows);
-}
-
-/// The event every bar and page re-reads the chrome rows' heights on (В83).
-pub const CHROME_ROWS_EVENT: &str = "chrome-rows-changed";
 
 /// Create the native window `saved` with its tab bar and its visible tab,
 /// taking the focus or not (Е2.7). A window that cannot be made with its bar
@@ -720,20 +665,15 @@ fn furnish_window(app: &AppHandle, window: &Window, saved: &SavedWindow) -> anyh
     // The title bar and its full screen presentation stand before the
     // window goes full screen: AppKit takes both when the window enters it.
     native::hide_toolbar_in_full_screen(window);
-    native::set_title_bar(window, crate::domain::windows::title_bar_for(saved.chrome_rows.tab_bar));
+    native::set_compact_title_bar(window);
     if saved.fullscreen {
         window.set_fullscreen(true)?;
     }
     if let Some(surface) = shell(app).snapshot().window_surface {
         native::set_window_background(window, &surface);
     }
-    let bar = WebviewBuilder::new(saved.id.bar_label(), WebviewUrl::App(TAB_BAR_PAGE.into()))
-        .initialization_script(chrome_height_script(saved.chrome_rows.tab_bar));
-    let bar = window.add_child(
-        bar,
-        LogicalPosition::new(0.0, 0.0),
-        LogicalSize::new(frame.width, bar_height(app, &saved.id)),
-    )?;
+    let bar = WebviewBuilder::new(saved.id.bar_label(), WebviewUrl::App(TAB_BAR_PAGE.into()));
+    let bar = window.add_child(bar, LogicalPosition::new(0.0, 0.0), LogicalSize::new(frame.width, BAR_HEIGHT))?;
     native::clear_page_background(&bar);
     let window_id = saved.id.clone();
     let handle = app.clone();
@@ -765,19 +705,15 @@ fn furnish_window(app: &AppHandle, window: &Window, saved: &SavedWindow) -> anyh
 /// when it shows.
 fn create_page(app: &AppHandle, window: &Window, tab: &TabId) -> Result<Webview, TabError> {
     let (width, height) = logical_size(window);
-    let window_id = WindowId::from_label(window.label());
-    let rows = window_id.as_ref().map_or_else(ChromeRows::default, |id| chrome_rows_of(app, id));
-    let bar = f64::from(crate::domain::windows::tab_bar_height(rows.tab_bar));
+    let bar = BAR_HEIGHT;
     if let Some(existing) = app.get_webview(&tab.label()) {
         if existing.window().label() == window.label() {
             return Ok(existing);
         }
         match existing.reparent(window) {
             Ok(()) => {
-                // The page keeps the frame of its old window until told, and
-                // the height of its old window's rows (В83).
+                // The page keeps the frame of its old window until told.
                 let _ = existing.set_bounds(bounds(0.0, bar, width, (height - bar).max(0.0)));
-                space_events::emit_to_labels(app, [tab.label()], CHROME_ROWS_EVENT, rows);
                 return Ok(existing);
             }
             Err(source) => {
@@ -794,8 +730,7 @@ fn create_page(app: &AppHandle, window: &Window, tab: &TabId) -> Result<Webview,
     }
     let page = window
         .add_child(
-            WebviewBuilder::new(tab.label(), WebviewUrl::App(tab_page_url().into()))
-                .initialization_script(chrome_height_script(rows.page)),
+            WebviewBuilder::new(tab.label(), WebviewUrl::App(tab_page_url().into())),
             LogicalPosition::new(0.0, bar),
             LogicalSize::new(width, height - bar),
         )
@@ -877,7 +812,7 @@ fn layout(app: &AppHandle, window_id: &WindowId) {
         return;
     };
     let (width, height) = logical_size(&window);
-    let bar = bar_height(app, window_id);
+    let bar = BAR_HEIGHT;
     if let Some(page) = app.get_webview(&window_id.bar_label()) {
         let _ = page.set_bounds(bounds(0.0, 0.0, width, bar));
     }
@@ -1123,7 +1058,6 @@ pub fn bar_state(app: &AppHandle, window_id: &WindowId) -> Option<TabBarState> {
         // The bar's sidebar button acts on the visible tab's sidebar (В56).
         sidebar_shown: tab_sidebar_shown(app, window, &window.active_tab),
         fullscreen: window.fullscreen,
-        chrome_rows: window.chrome_rows,
     })
 }
 
@@ -1157,7 +1091,6 @@ pub fn bootstrap(app: &AppHandle, label: &str) -> Option<TabBootstrap> {
         sidebar: window.tab_sidebar(&tab),
         lead: is_lead(app, label),
         fresh_start: shell(app).fresh_start.load(Ordering::SeqCst),
-        chrome_rows: window.chrome_rows,
     })
 }
 
@@ -1452,16 +1385,10 @@ pub fn new_window_at(app: &AppHandle, space: TabSpace, view: TabView) {
     let screens = screens(app);
     let last = shell.snapshot().last_window().cloned();
     let sidebar = last.as_ref().map_or_else(SidebarLayout::default, SavedWindow::active_sidebar);
-    // A new window opens with the chrome of the window it came from (В83).
-    let chrome_rows = last.as_ref().map_or_else(ChromeRows::default, |window| window.chrome_rows);
     // It steps from that window, one tab bar lower and to the right (В54);
     // from a full screen window or none it stands in the middle.
     let frame = match last.as_ref() {
-        Some(window) if !window.fullscreen => cascaded_frame(
-            &window.frame,
-            f64::from(crate::domain::windows::tab_bar_height(chrome_rows.tab_bar)),
-            &screens,
-        ),
+        Some(window) if !window.fullscreen => cascaded_frame(&window.frame, BAR_HEIGHT, &screens),
         _ => centered_frame(WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT, &screens),
     };
     let tab = TabId(new_id());
@@ -1477,7 +1404,6 @@ pub fn new_window_at(app: &AppHandle, space: TabSpace, view: TabView) {
         }],
         active_tab: tab,
         sidebar,
-        chrome_rows,
     };
     shell.change(|model| model.add_window(window.clone()));
     if let Err(error) = create_window(app, &window, true) {
@@ -2022,7 +1948,6 @@ mod tests {
             tabs,
             active_tab,
             sidebar: SidebarLayout::default(),
-            chrome_rows: ChromeRows::STANDARD,
         }
     }
 

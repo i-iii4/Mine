@@ -269,7 +269,7 @@ local-arena/
 │   │   ├── TabBarApp.tsx, TabBar.tsx # Ряд полосы: резерв светофоров, кнопка бокового меню, вкладки, +
 │   │   ├── useTabBarState.ts   # tabbar-state, window-sidebar-changed, tabbar-drop-hover
 │   │   ├── tabLayout.ts, tabLabel.ts, tabKeyboard.ts, tabMenu.ts, tabDrag.ts # Ширины и растворение краёв, подпись, клавиатура, нативное меню, перетаскивание
-│   │   ├── settingsMenu.ts     # Нативное меню логотипа: разделы настроек и высота хрома
+│   │   ├── settingsMenu.ts     # Нативное меню логотипа: разделы настроек и стили кнопок
 │   │   ├── constants.ts        # Геометрия и время полосы (сверяется с domain/windows.rs)
 │   │   └── appearance.ts, tabbar.css # Тема и шрифт по настройкам, поверхность хрома
 │   ├── settings/               # Окно настроек (второй Vite-entry: settings.html)
@@ -464,6 +464,15 @@ local-arena/
 - wasm-bindgen-cli: `cargo install wasm-bindgen-cli --version 0.2.120 --locked`
 - Bun: >= 1.2
 - Tauri CLI: `cargo install tauri-cli`
+- Наименьшая macOS всего Mine: 26.2 (решение пользователя 01.11.2026), первая
+  версия, чей WebKit умеет `field-sizing` (поле переименования в верхнем
+  ряду, DESIGN_SYSTEM.md, «Верхние ряды»). Единственный источник:
+  `bundle.macOS.minimumSystemVersion` в `src-tauri/tauri.conf.json`. Из него
+  Tauri пишет `LSMinimumSystemVersion` в Info.plist, а `src-tauri/build.rs`
+  передаёт то же значение rustc (`MACOSX_DEPLOYMENT_TARGET` для приложения,
+  native-host, CLI и служебных программ в любой сборке) и каждому вызову
+  `swiftc` (`-target <arch>-apple-macosx26.2`). Второго литерала нет;
+  `vtool -show-build <файл>` показывает `minos 26.2` (ARCHITECTURE.md, 065)
 - Xcode Command Line Tools (`swiftc`): обязательны — сборка компилирует
   iCloud-progress helper (`src-tauri/native/icloud_progress_helper.swift`) и
   помощник конфликтов iCloud (`src-tauri/native/icloud_conflicts_helper.swift`)

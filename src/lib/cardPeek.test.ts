@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { APP_MAIN_MIN_WIDTH_PX } from "./appLayout";
 import { CHANNEL_ICON_SPRING_MS, springSettleMs } from "./channelIcon";
 import {
+  CARD_PEEK_MARGIN_PX,
+  CARD_PEEK_MIN_AREA_WIDTH_PX,
+  peekAreaHoldsWindow,
+  holdPeekWheelGuard,
+  peekWheelDropped,
   CARD_PEEK_CENTER_SCALE,
   CARD_PEEK_CONTENT_FADE_MS,
   CARD_PEEK_CONTENT_IN_FROM_MS,
@@ -427,6 +433,21 @@ describe("card peek opening and closing (О10, О11, О13)", () => {
     expect(peekOpeningKind({ from: "elsewhere", restored: false, reducedMotion: false })).toBe("center");
     expect(peekOpeningKind({ from: "card", restored: false, reducedMotion: true })).toBe("fade");
     expect(peekOpeningKind({ from: "card", restored: true, reducedMotion: false })).toBe("instant");
+    // The full page gives the card back to its window at once, with
+    // "Reduce motion" too (О9, О16).
+    expect(peekOpeningKind({ from: "full", restored: false, reducedMotion: false })).toBe("instant");
+    expect(peekOpeningKind({ from: "full", restored: false, reducedMotion: true })).toBe("instant");
+  });
+
+  // О16 (user's decision of 30.10.2026): the window's place, the right part
+  // less `M` on either side, no narrower than `F_min`.
+  it("holds the window over a right part of 470 px and more, from `F_min` and `M` alone", () => {
+    expect(CARD_PEEK_MIN_AREA_WIDTH_PX).toBe(APP_MAIN_MIN_WIDTH_PX + 2 * CARD_PEEK_MARGIN_PX);
+    expect(CARD_PEEK_MIN_AREA_WIDTH_PX).toBe(470);
+    expect(peekAreaHoldsWindow(469)).toBe(false);
+    expect(peekAreaHoldsWindow(469.5)).toBe(false);
+    expect(peekAreaHoldsWindow(470)).toBe(true);
+    expect(peekAreaHoldsWindow(471)).toBe(true);
   });
 
   it("closes the way it came, to the centre when its card is gone", () => {
@@ -445,6 +466,59 @@ describe("card peek opening and closing (О10, О11, О13)", () => {
     expect(close({ openedAs: "fade", exit: "center" })).toBe("fade");
     expect(close({ exit: "fade" })).toBe("fade");
     expect(close({ reducedMotion: true })).toBe("fade");
-    expect(close({ exit: "none" })).toBe("none");
+  });
+});
+
+// О6 (user's request of 30.10.2026, «Исправь прокрутку»): the wheel aimed
+// under the card's window goes nowhere while the window is on the page.
+describe("the wheel under the card's window", () => {
+  function page() {
+    document.body.innerHTML = `
+      <aside data-sidebar><div data-sidebar-scroll><p id="sidebar">row</p></div></aside>
+      <main><div data-grid-scroll><p id="feed">card</p></div>
+        <div data-detail-root><p id="full">full page</p></div></main>
+      <div data-card-peek-area>
+        <div data-card-peek-scrim id="scrim"></div>
+        <div data-card-peek-surface><div data-detail-root><p id="window">card in its window</p></div></div>
+      </div>
+      <div role="menu" data-menu-surface><p id="menu">collection</p></div>`;
+    return (id: string) => document.getElementById(id)!;
+  }
+
+  function wheel(target: Element): WheelEvent {
+    const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 40 });
+    target.dispatchEvent(event);
+    return event;
+  }
+
+  it("drops the wheel aimed at the feed and the scrim, not the window, the sidebar, a menu or the full page", () => {
+    const at = page();
+    expect(peekWheelDropped(at("feed"))).toBe(true);
+    expect(peekWheelDropped(at("scrim"))).toBe(true);
+    expect(peekWheelDropped(at("window"))).toBe(false);
+    expect(peekWheelDropped(at("full"))).toBe(false);
+    expect(peekWheelDropped(at("sidebar"))).toBe(false);
+    expect(peekWheelDropped(at("menu"))).toBe(false);
+    expect(peekWheelDropped(null)).toBe(false);
+  });
+
+  it("holds the dropped wheel before anything under it hears it, and lets go once removed", () => {
+    const at = page();
+    const heard = vi.fn();
+    at("feed").addEventListener("wheel", heard);
+    const release = holdPeekWheelGuard();
+    try {
+      // Every event of a gesture, its momentum's too, is one more wheel event.
+      for (let event = 0; event < 3; event += 1) expect(wheel(at("feed")).defaultPrevented).toBe(true);
+      expect(heard).not.toHaveBeenCalled();
+      expect(wheel(at("scrim")).defaultPrevented).toBe(true);
+      expect(wheel(at("window")).defaultPrevented).toBe(false);
+      expect(wheel(at("sidebar")).defaultPrevented).toBe(false);
+    } finally {
+      release();
+    }
+    expect(wheel(at("feed")).defaultPrevented).toBe(false);
+    expect(heard).toHaveBeenCalledTimes(1);
+    document.body.innerHTML = "";
   });
 });

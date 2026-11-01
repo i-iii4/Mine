@@ -24,7 +24,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { APP_MAIN_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { PreviewsPendingContext } from "@/lib/cardPreviewState";
-import { applyChromeRowHeight, TALL_CHROME_ROW_HEIGHT } from "@/lib/chromeHeight";
 import { commandById } from "@/lib/commandRegistry";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
 import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
@@ -52,10 +51,8 @@ const SIDEBAR_WIDTH = 360;
 const PAGE_HEIGHT = 800;
 const WINDOW_WIDTH = 1200;
 
-// A window's default rows are tall (SPEC_TABS.md, В83). The sidebar's width
-// is written as useSidebarResize writes it: on the root, where the parts laid
-// out by it take it from (sidebarWidth.ts).
-applyChromeRowHeight(TALL_CHROME_ROW_HEIGHT);
+// The sidebar's width is written as useSidebarResize writes it: on the root,
+// where the parts laid out by it take it from (sidebarWidth.ts).
 writeSidebarWidth(`${SIDEBAR_WIDTH}px`);
 
 const SIDEBAR_SEARCH_MASK_STYLE = createRightFadeMaskStyle(EDGE_FADE_WIDTH, 0);
@@ -205,7 +202,6 @@ function tabBarState(spaceName: string | null): TabBarState {
     active_tab: "0".repeat(32),
     sidebar_shown: true,
     fullscreen: false,
-    chrome_rows: { tab_bar: TALL_CHROME_ROW_HEIGHT, page: TALL_CHROME_ROW_HEIGHT },
   };
 }
 
@@ -313,12 +309,7 @@ function SpacePage({ path, blocks, totalBlocks, previews, indexing, previewsPend
                 </div>
               </div>
               <div className="flex h-full min-w-0 flex-1 items-center">
-                <TopCollectionSwitcher
-                  orderedTags={[]}
-                  onNavigate={noop}
-                  onCreateCollection={async () => undefined}
-                  joinsNext
-                />
+                <TopCollectionSwitcher onRename={async () => undefined} joinsNext />
                 <MainSecondaryTopBar
                   viewMode="grid"
                   onViewModeChange={noop}

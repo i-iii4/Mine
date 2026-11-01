@@ -6,7 +6,6 @@
 use tauri::{AppHandle, Webview, Window};
 
 use crate::domain::edit_menu::EditMenuCommand;
-use crate::domain::windows::TitleBar;
 
 /// A colour `#rrggbb` as three channels from 0 to 1.
 pub fn parse_hex_color(hex: &str) -> Option<(f64, f64, f64)> {
@@ -290,7 +289,6 @@ mod imp {
     use tauri::{AppHandle, Webview, Window};
 
     use crate::domain::edit_menu::EditMenuCommand;
-    use crate::domain::windows::TitleBar;
 
     /// Send the system's action of `command` to the first responder of the
     /// key window, as the stock item of the Edit menu did: `undo:`, `redo:`
@@ -498,12 +496,12 @@ mod imp {
     /// NSWindowToolbarStyleUnifiedCompact.
     const TOOLBAR_STYLE_UNIFIED_COMPACT: isize = 4;
 
-    /// Give `window` the title bar `title_bar` (В83). The compact one is an
-    /// empty toolbar that exists only because its style sets the title bar's
-    /// height; AppKit places the traffic lights from that height itself, so
-    /// nothing in the title bar is moved by hand and nothing fights AppKit's
-    /// layout during a live resize.
-    pub fn set_title_bar(window: &Window, title_bar: TitleBar) {
+    /// Give `window` the compact title bar (В83): an empty toolbar that
+    /// exists only because its style sets the title bar's height; AppKit
+    /// places the traffic lights from that height itself, so nothing in the
+    /// title bar is moved by hand and nothing fights AppKit's layout during a
+    /// live resize.
+    pub fn set_compact_title_bar(window: &Window) {
         let window = window.clone();
         let _ = window.clone().run_on_main_thread(move || {
             let Ok(ptr) = window.ns_window() else {
@@ -512,25 +510,15 @@ mod imp {
             // SAFETY: the live NSWindow of this window, on the main thread.
             unsafe {
                 let ns_window: &AnyObject = &*(ptr as *const AnyObject);
-                match title_bar {
-                    TitleBar::Standard => {
-                        let _: () = objc2::msg_send![ns_window, setToolbar: std::ptr::null::<AnyObject>()];
-                    }
-                    TitleBar::Compact => {
-                        let current: *mut AnyObject = objc2::msg_send![ns_window, toolbar];
-                        if current.is_null() {
-                            let identifier = NSString::from_str("mine.title-bar");
-                            let allocated: Allocated<AnyObject> =
-                                objc2::msg_send![objc2::class!(NSToolbar), alloc];
-                            let toolbar: Retained<AnyObject> =
-                                objc2::msg_send![allocated, initWithIdentifier: &*identifier];
-                            let _: () = objc2::msg_send![&*toolbar, setAllowsUserCustomization: false];
-                            let _: () = objc2::msg_send![ns_window, setToolbar: &*toolbar];
-                        }
-                        let _: () =
-                            objc2::msg_send![ns_window, setToolbarStyle: TOOLBAR_STYLE_UNIFIED_COMPACT];
-                    }
+                let current: *mut AnyObject = objc2::msg_send![ns_window, toolbar];
+                if current.is_null() {
+                    let identifier = NSString::from_str("mine.title-bar");
+                    let allocated: Allocated<AnyObject> = objc2::msg_send![objc2::class!(NSToolbar), alloc];
+                    let toolbar: Retained<AnyObject> = objc2::msg_send![allocated, initWithIdentifier: &*identifier];
+                    let _: () = objc2::msg_send![&*toolbar, setAllowsUserCustomization: false];
+                    let _: () = objc2::msg_send![ns_window, setToolbar: &*toolbar];
                 }
+                let _: () = objc2::msg_send![ns_window, setToolbarStyle: TOOLBAR_STYLE_UNIFIED_COMPACT];
             }
         });
     }
@@ -612,7 +600,6 @@ mod imp {
     use tauri::{AppHandle, Webview, Window};
 
     use crate::domain::edit_menu::EditMenuCommand;
-    use crate::domain::windows::TitleBar;
 
     pub fn send_edit_action(_app: &AppHandle, _command: EditMenuCommand) {}
 
@@ -621,7 +608,7 @@ mod imp {
     pub fn set_page_seen(_page: &Webview, _seen: bool) {}
     pub fn keyboard_to_page(_window: &Window, _page: &Webview) {}
     pub fn set_window_background(_window: &Window, _rgb: (f64, f64, f64)) {}
-    pub fn set_title_bar(_window: &Window, _title_bar: TitleBar) {}
+    pub fn set_compact_title_bar(_window: &Window) {}
     pub fn hide_toolbar_in_full_screen(_window: &Window) {}
     pub fn hover_in_background() {}
 }
@@ -642,9 +629,9 @@ pub fn clear_page_background(page: &Webview) {
     imp::clear_page_background(page);
 }
 
-/// Give `window` the title bar `title_bar`, which places its traffic lights.
-pub fn set_title_bar(window: &Window, title_bar: TitleBar) {
-    imp::set_title_bar(window, title_bar);
+/// Give `window` the compact title bar, which places its traffic lights.
+pub fn set_compact_title_bar(window: &Window) {
+    imp::set_compact_title_bar(window);
 }
 
 /// Let `window`'s toolbar hide in full screen with the title bar, so the

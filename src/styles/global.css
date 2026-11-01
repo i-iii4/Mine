@@ -1557,18 +1557,19 @@ body {
 /* Every row gets the same free area. Separators live outside it in normal
    flow; ChromeShell, not individual rows, owns the window-edge boundaries. */
 :root {
+  /* A row with no line below it, the bottom bar; the top rows step as a
+     sidebar table row (below). */
   --chrome-row-content-height: 30px;
-  /* The step of a sidebar table row, its 1px line included. The tall chrome
-     takes the same step (SPEC_TABS.md, В83). */
+  /* The step of a sidebar table row, its 1px line included. The top rows take
+     the same step (SPEC_TABS.md, В83). */
   --sidebar-row-height: 40px;
   --chrome-control-plate-height: 24px;
 }
-/* The tall chrome, a window's default since 07.10.2026 (SPEC_TABS.md, В83):
-   the top rows, those closed by a line below them, the tab bar's too, step as
-   a row of the sidebar's table; the bottom bar keeps its height. Controls keep
-   their 24px plate, centred in the row. The backend sets the attribute before
-   a page's first frame. */
-:root[data-chrome-height="40"] .chrome-row[data-chrome-separator="bottom"] {
+/* The top rows, those closed by a line below them, the tab bar's too, step as
+   a row of the sidebar's table (SPEC_TABS.md, В83; one height since
+   30.10.2026); the bottom bar keeps its height. Controls keep their 24px
+   plate, centred in the row. */
+.chrome-row[data-chrome-separator="bottom"] {
   /* A row and its 1px line make one table row's step. */
   --chrome-row-content-height: calc(var(--sidebar-row-height) - 1px);
 }
@@ -2199,9 +2200,6 @@ body {
 :root {
   /* The second row and its line: the step of a chrome row closed by a line
      below it, as the top row is. */
-  --top-second-row-height: calc(var(--chrome-row-content-height) + 1px);
-}
-:root[data-chrome-height="40"] {
   --top-second-row-height: var(--sidebar-row-height);
 }
 [data-top-row="two"]:not([data-top-row-try]) [data-top-row-bar] {

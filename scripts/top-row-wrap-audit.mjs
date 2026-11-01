@@ -7,7 +7,8 @@
 // view, the graph's and an open card with a long name keep one row at any
 // width. In a narrow window (У15) an open card's name with its menu and close
 // button takes the whole row, the place's switcher out of it; with no card,
-// or wide, the switcher stands. Starts and stops its own Vite.
+// or wide, the switcher stands. A name's rename field is as wide as its text
+// up to what caps the name at rest (01.11.2026). Starts and stops its own Vite.
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 import { COLD_START_MS, startAuditVite } from "./audit-vite.mjs";
@@ -62,8 +63,8 @@ const vite = await startAuditVite([{
             h("div",{ref:wrap.rowRef,className:"flex h-full min-w-0 flex-1 items-center"},
               // As App.tsx has it: away, the switcher stays in the page, out
               // of the row's flow, faded out and inert.
-              h(TopCollectionSwitcher,{shown:placeShown||!card,overlay:!placeShown,currentTag:"Inbox",orderedTags:[{tag:"Inbox",count:3}],onNavigate:noop,
-                onCreateCollection:async()=>undefined,joinsNext:true}),
+              h(TopCollectionSwitcher,{shown:placeShown||!card,overlay:!placeShown,currentTag:"Inbox",onRename:async()=>undefined,
+                joinsNext:true}),
               h(MainSecondaryTopBar,{viewMode:view,detailBlock,detailEntered:Boolean(card),placeBefore:placeShown,onViewModeChange:noop,vaultPath:"",tags:[],onToggleTag:noop,
                 onCreateAndAssign:noop,onRequestRename:noop,onRenameFile:async()=>undefined,onCheckFileName:async()=>null,
                 onRequestDelete:noop,onDetailClose:noop,detailMenuOpenRequestSequence:0,selectionActive:count>0,
@@ -108,6 +109,37 @@ function readPath() {
     buttons: buttons.map((r) => ({ left: r.left, right: r.right })),
     pathLine: document.querySelector("[data-path-card-line]") !== null,
     mainTop: box("main").top,
+  };
+}
+
+/**
+ * A name's rename field in the path (`ChromeNameField`): its box, its
+ * padding, how far its text runs and where the text ends while the cursor
+ * stands after the last glyph. `limit` is the selector of what caps it.
+ */
+function readNameField({ marker, limit }) {
+  const input = document.querySelector(`[data-${marker}-input]`);
+  if (!input) return null;
+  const style = getComputedStyle(input);
+  const context = document.createElement("canvas").getContext("2d");
+  // The shorthand reads empty when a longhand has no shorthand form.
+  context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  context.letterSpacing = style.letterSpacing;
+  const textWidth = context.measureText(input.value).width;
+  const box = input.getBoundingClientRect();
+  const paddingLeft = parseFloat(style.paddingLeft);
+  return {
+    left: box.left,
+    right: box.right,
+    width: box.width,
+    paddingLeft,
+    paddingRight: parseFloat(style.paddingRight),
+    fieldSizing: style.fieldSizing,
+    textWidth,
+    scrolls: input.scrollWidth > input.clientWidth,
+    // The cursor stands at the end: the input is scrolled as far as it goes.
+    textRight: box.left + paddingLeft + textWidth - input.scrollLeft,
+    limit: document.querySelector(limit).getBoundingClientRect().toJSON(),
   };
 }
 
@@ -226,6 +258,68 @@ try {
   await page.evaluate(() => { window.auditCollapse(false); window.auditOpenCard(null); });
   console.log("PASS 1200: an open card's name alone beside the open sidebar, past the place's switcher with it collapsed");
 
+  // A name's rename field is as wide as its text with the name's 8 px on both
+  // sides, as at rest (field-sizing, user's decision of 01.11.2026), and what
+  // caps the name at rest caps the field: the place's half of the row for
+  // the collection, the room up to ⋯ for the open card. At the cap the text
+  // scrolls inside and the 8 px after its last glyph stay.
+  const SHORT_NAME = "Nogal";
+  const TYPED = " House on the hill";
+  // Longer than the row at 1200 px.
+  const OVERFLOW = " and the long road down to the river that runs past the old mill at dawn".repeat(3);
+  for (const { label, marker, limit, open } of [
+    { label: "collection", marker: "top-collection-name", limit: "[data-top-collection-switcher-slot]", open: () => window.auditOpenCard(null) },
+    { label: "open card", marker: "secondary-detail-card-name", limit: "[data-secondary-detail-top-menu] [data-chrome-actions]",
+      open: (name) => window.auditOpenCard(name) },
+  ]) {
+    await page.evaluate(open, SHORT_NAME);
+    await settle();
+    const rest = await page.locator(`[data-${marker}]`).boundingBox();
+    const slotAtRest = await page.locator("[data-top-collection-switcher-slot]").boundingBox();
+    await page.locator(`[data-${marker}]`).click();
+    await page.locator(`[data-${marker}-input]`).waitFor();
+    const readField = async () => { await settle(); return page.evaluate(readNameField, { marker, limit }); };
+    const fits = (field, what) => {
+      assert.equal(field.fieldSizing, "content", `${label} ${what}: the field follows its text`);
+      assert.equal(field.paddingLeft, 8, `${label} ${what}: 8 px before the text`);
+      assert.equal(field.paddingRight, 8, `${label} ${what}: 8 px after the text`);
+      assert.ok(Math.abs(field.width - (field.textWidth + 16)) <= 2,
+        `${label} ${what}: as wide as its text and the 8 px on both sides (${field.width} for ${field.textWidth})`);
+      assert.equal(field.scrolls, false, `${label} ${what}: the whole text shows`);
+    };
+    let field = await readField();
+    fits(field, "opened");
+    assert.ok(Math.abs(field.width - rest.width) <= 2, `${label}: the field as wide as the name at rest`);
+    assert.ok(Math.abs(field.left - rest.x) <= 0.5, `${label}: the field where the name stood`);
+    if (label === "collection") {
+      const slot = await page.locator("[data-top-collection-switcher-slot]").boundingBox();
+      assert.ok(Math.abs(slot.width - slotAtRest.width) <= 2, "collection: the place keeps its width when the field opens");
+    }
+    const opened = field.width;
+
+    await page.keyboard.type(TYPED);
+    field = await readField();
+    fits(field, "typed");
+    assert.ok(field.width > opened + 50, `${label}: the field grows with the typed text`);
+
+    await page.keyboard.type(OVERFLOW);
+    field = await readField();
+    assert.equal(field.scrolls, true, `${label} at the cap: the text scrolls inside`);
+    if (label === "collection") {
+      const half = await page.evaluate(() => document.querySelector("[data-top-collection-switcher-slot]").parentElement.getBoundingClientRect().width);
+      assert.ok(field.limit.width <= half / 2 + 0.5, "collection at the cap: the place keeps to half the row");
+      assert.ok(field.right <= field.limit.right + 0.5, "collection at the cap: the field ends inside the place");
+    } else {
+      assert.ok(Math.abs(field.right - (field.limit.left - 4)) <= 0.5, "open card at the cap: the field ends at the room up to ⋯");
+    }
+    assert.equal(field.paddingRight, 8, `${label} at the cap: 8 px after the text`);
+    assert.ok(field.textRight <= field.right - 8 + 1, `${label} at the cap: the last glyph keeps 8 px from the field's edge`);
+    console.log(`PASS 1200 ${label}: the rename field follows its text, ${Math.round(opened)} to ${Math.round(field.width)} px at the cap, 8 px after the last glyph`);
+    await page.keyboard.press("Escape");
+    await page.locator(`[data-${marker}]`).waitFor();
+  }
+  await page.evaluate(() => window.auditOpenCard(null));
+
   // Wide, with a selection: one row while the commands fit, the feed right
   // under it. A count that ends in an ellipsis alone keeps one row.
   await page.evaluate(() => window.auditSelect(12));
@@ -257,17 +351,15 @@ try {
     console.log(`PASS ${width}: two rows, the feed below them${row.cut.length ? "; the commands scroll in the second row" : ", the commands whole"}`);
   }
 
-  // The tall chrome (SPEC_TABS.md, В83): the second row steps as the row,
-  // a sidebar table row with its line.
+  // The chrome's one height (SPEC_TABS.md, В83): the second row steps as
+  // the row, a sidebar table row with its line.
   await page.setViewportSize({ width: 760, height: 700 });
-  await page.evaluate(() => { document.documentElement.dataset.chromeHeight = "40"; });
   row = await read();
-  assert.equal(row.fit, "two", "760 tall: two rows");
-  assert.equal(row.bar.bottom - row.bar.top, 40, "760 tall: the second row and its line make 40");
-  assert.equal(row.mainTop, row.bar.bottom, "760 tall: the feed moves down by the second row");
-  await page.evaluate(() => { delete document.documentElement.dataset.chromeHeight; });
+  assert.equal(row.fit, "two", "760: two rows");
+  assert.equal(row.bar.bottom - row.bar.top, 40, "760: the second row and its line make 40");
+  assert.equal(row.mainTop, row.bar.bottom, "760: the feed moves down by the second row");
   await page.setViewportSize({ width: 740, height: 700 });
-  console.log("PASS 760 tall: the second row steps 40");
+  console.log("PASS 760: the second row steps 40");
 
   // The selection ends: the view's controls fit in one row again.
   await page.evaluate(() => window.auditSelect(0));

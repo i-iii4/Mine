@@ -100,7 +100,6 @@ function barState(tabs: TabBarTab[], overrides: Partial<TabBarState> = {}): TabB
     active_tab: tabs[0]?.id ?? "",
     sidebar_shown: true,
     fullscreen: false,
-    chrome_rows: { tab_bar: 30, page: 30 },
     ...overrides,
   };
 }
@@ -196,8 +195,8 @@ describe("tab bar row (В43)", () => {
       const after = order[index];
       expect(before && after && before.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
-    // 80px at the 30px row, growing with the row as the lights' inset (В83).
-    expect((reserve as HTMLElement | null)?.style.width).toBe("calc(80px + (var(--chrome-row-content-height) - 30px) / 2)");
+    // The lights' room at the compact title bar (В83).
+    expect((reserve as HTMLElement | null)?.style.width).toBe("84.5px");
   });
 
   it("gives the traffic lights' place back in full screen", () => {

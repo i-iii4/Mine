@@ -2,9 +2,12 @@
 // card stands, chosen in the Display panel. Full page (today's: the whole
 // right part) or Peek (a window over the right part, the feed blurred round
 // it). Kept between launches in its own localStorage key; every tab and window
-// re-reads it on `settings-changed`. A change applies from the next opening:
-// an open card keeps the view it opened in. Once the user decides, this module
-// either goes or the chosen view becomes the rule.
+// re-reads it on `settings-changed`. The Display panel and the open card's
+// own buttons choose it (О9; user's decision of 30.10.2026). A change applies
+// from the next opening, except to the card whose button made it: an open
+// card keeps the choice it opened with or made itself. With Peek the right
+// part's width decides where it stands (О16). Once the user decides, this
+// module either goes or the chosen view becomes the rule.
 
 import { trialChoice } from "./compactStack";
 
@@ -23,11 +26,27 @@ export const setCardView = view.set;
 export const reloadCardView = view.reload;
 export const useCardView = view.use;
 
-/** The view a card opening now takes: Peek only where the sidebar stands
- *  beside the feed; in a narrow window, where it lies over the feed
- *  (SPEC_NARROW_WINDOW.md, У1), every card opens full (О1). */
-export function cardViewForOpening(chosen: CardView, narrow: boolean): CardView {
-  return chosen === "peek" && !narrow ? "peek" : "full";
+/** What decides the open card's view (О16; user's decisions of 30.10.2026):
+ *  the «Card view» it stands by (`chosen`: the one chosen when it opened,
+ *  О1, or the one its own button chose since, О9) and whether the right part
+ *  holds the window (`areaHolds`, `peekAreaHoldsWindow` in cardPeek.ts),
+ *  never the view it stands in now. */
+export interface OpenCardViewInputs {
+  chosen: CardView;
+  areaHolds: boolean;
+}
+
+/** The view the open card stands in: its window while it stands by Peek and
+ *  the right part holds the window; full page otherwise, Peek staying the
+ *  choice while the right part is too narrow. */
+export function openCardView({ chosen, areaHolds }: OpenCardViewInputs): CardView {
+  return chosen === "peek" && areaHolds ? "peek" : "full";
+}
+
+/** Whether the full page offers the way to the window (О9): whenever the
+ *  right part holds the window, whatever «Card view» the card stands by. */
+export function offersPeekCollapse(inputs: OpenCardViewInputs): boolean {
+  return inputs.areaHolds && openCardView(inputs) === "full";
 }
 
 /** TRIAL (SPEC_CARD_PEEK.md, О3; user's request of 24.10.2026): the Peek

@@ -7,9 +7,15 @@
 // restated here once and constants.test.ts reads the Rust source to keep the
 // two equal.
 
-/** Height of the bar page: a 30 px chrome row and its 1 px bottom separator
- *  (domain/windows.rs `TAB_BAR_HEIGHT_PX`, В44). */
-export const TAB_BAR_HEIGHT_PX = 31;
+/** Height of the bar page: a chrome row and its 1 px bottom separator, the
+ *  step of a sidebar table row (domain/windows.rs `TAB_BAR_HEIGHT_PX`, В44,
+ *  В83). */
+export const TAB_BAR_HEIGHT_PX = 40;
+
+/** The traffic lights' room at the bar's left end (В83): AppKit centres them
+ *  in the compact title bar, 40 pt tall, and the reserve covers them and the
+ *  gap after them. */
+export const TRAFFIC_LIGHT_RESERVE_PX = 84.5;
 
 /** Narrowest a tab gets before the strip scrolls (domain/windows.rs `TAB_MIN_WIDTH_PX`, В48). */
 export const TAB_MIN_WIDTH_PX = 72;

@@ -40,15 +40,13 @@ import {
   openSettingsWindow,
   openTabSearch,
   reportDropSlot,
-  setChromeRows,
   stepTabHistory,
   toggleWindowSidebar,
 } from "@/lib/commands";
 import { motionDuration } from "@/lib/motion";
-import { STANDARD_CHROME_ROW_HEIGHT, TRAFFIC_LIGHT_RESERVE_PX } from "@/lib/chromeHeight";
 import { cn } from "@/lib/utils";
 import type { DropHover, TabBarState, TabBarTab, TabId } from "@/types";
-import { DROP_MARKER_WIDTH_PX, TAB_REORDER_EASING, TAB_REORDER_MOTION_MS } from "./constants";
+import { DROP_MARKER_WIDTH_PX, TAB_REORDER_EASING, TAB_REORDER_MOTION_MS, TRAFFIC_LIGHT_RESERVE_PX } from "./constants";
 import {
   draggedOffset,
   dropMarkerLeft,
@@ -93,11 +91,8 @@ export const FORWARD_LABEL = "Forward";
 export const SETTINGS_MENU_LABEL = "Mine settings";
 export const SEARCH_LABEL = "Find elements";
 
-/** The traffic lights' reserve, as trafficLightReservePx gives it, on the
- *  row's own height. */
-const TRAFFIC_LIGHT_RESERVE_STYLE = {
-  width: `calc(${TRAFFIC_LIGHT_RESERVE_PX}px + (var(--chrome-row-content-height) - ${STANDARD_CHROME_ROW_HEIGHT}px) / 2)`,
-};
+/** The traffic lights' reserve (В83). */
+const TRAFFIC_LIGHT_RESERVE_STYLE = { width: TRAFFIC_LIGHT_RESERVE_PX };
 
 const PRIMARY_BUTTON = 0;
 const MIDDLE_BUTTON = 1;
@@ -262,10 +257,9 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   );
 
   // ── What the handlers below read at the moment they run ──────────────────
-  const chromeRows = bar.chrome_rows;
-  const latest = useRef({ tabs, sourceTabs, fullscreen, width, chromeRows });
+  const latest = useRef({ tabs, sourceTabs, fullscreen, width });
   useLayoutEffect(() => {
-    latest.current = { tabs, sourceTabs, fullscreen, width, chromeRows };
+    latest.current = { tabs, sourceTabs, fullscreen, width };
   });
 
   // ── Closing (В48, В53) ─────────────────────────────────────────────────
@@ -346,8 +340,6 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   const openSettingsMenu = useCallback((button: HTMLElement) => {
     settingsMenu.current ??= createSettingsMenu({
       openSection: (section) => run(openSettingsWindow(section), "open Settings"),
-      // The backend lays the windows out again and tells every page.
-      chooseChromeRows: (rows) => run(setChromeRows(rows), "change the height of the top rows"),
       // Dev button styles: this window only; its visible tab says what
       // is on.
       chooseButtonStyle: (style) => {
@@ -358,7 +350,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
     const pending = settingsMenu.current;
     const { left, bottom } = button.getBoundingClientRect();
     pending
-      .then((built) => built.open({ x: left, y: bottom }, latest.current.chromeRows))
+      .then((built) => built.open({ x: left, y: bottom }))
       .catch((error: unknown) => {
         if (settingsMenu.current === pending) settingsMenu.current = null;
         tellFailure("show the settings menu", error);
@@ -574,8 +566,6 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
     >
       {/* The traffic lights sit over this spot. */}
       {trafficLightReserve && (
-        // 80 px at the standard row; the lights move right by half of what
-        // the row grows, and the reserve with them (SPEC_TABS.md, В83).
         <div
           {...windowDrag}
           data-traffic-light-reserve=""

@@ -44,8 +44,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { IndexedBlock, LightBlock, TagCount, PreviewCard } from "@/types";
 import type { MembershipAnswer } from "@/components/CollectionPicker";
-import { collectionPagePath, getBlock, nameRefusal } from "@/lib/commands";
-import { errorMessage } from "@/lib/errorMessage";
+import { collectionPagePath, getBlock } from "@/lib/commands";
+import { collectionNameRefusal } from "@/hooks/useCollectionNameRefusal";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { NAME_REFUSED_SHAKE_MS, useNameEdit, type NameEdit } from "@/hooks/useNameEdit";
 import { collectionRefLabel } from "@/lib/collections";
@@ -1681,13 +1681,6 @@ function SidebarRowBody({
       )}
     </>
   );
-}
-
-/// What a refused collection name shows under the name: the reason the
-/// command gave, or, for a failure that is no refusal of the name, its own
-/// words; never the console only (SPEC_DEEP_AUDIT.md, Н11).
-function collectionNameRefusal(error: unknown): string {
-  return nameRefusal(error) ?? errorMessage(error);
 }
 
 /// Whether a row's name, on its last line, reaches under its Connect word

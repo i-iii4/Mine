@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createRef, useLayoutEffect } from "react";
 import type { LightBlock } from "@/types";
 import { CARD_PEEK_NUDGE_OFFSET_PX, getPeekHiddenSlug, peekNudgeTransform, registerPeekGraphSource } from "@/lib/cardPeek";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { setPeekWidth } from "@/lib/cardView";
-import { CardPeek, CardPeekPlate, type CardPeekOpening, type CardPeekProps } from "./CardPeek";
+import { CardPeek, CardPeekArea, CardPeekPlate, type CardPeekOpening, type CardPeekProps } from "./CardPeek";
 import { useDetailFrame } from "./detailFrame";
 import { TooltipProvider } from "./ui/tooltip";
+import { ViewToggleIcon } from "./ViewToggleIcon";
 
 const block = { slug: "Cards/One", id: 1 } as unknown as LightBlock;
 
@@ -117,6 +118,71 @@ describe("CardPeek", () => {
     }
   });
 
+  it("stands a card its full page gives back in its window at once, and fades it in place when it closes (О9, О16)", () => {
+    const frames = handFrames();
+    try {
+      const view = peek({ block, opening: { sequence: 1, slug: block.slug, from: "full", restored: false } });
+      // In the frame of the switch: no preparing, no fade, nothing moving.
+      const scrim = view.container.querySelector<HTMLElement>("[data-card-peek-scrim]")!;
+      const window = view.container.querySelector<HTMLElement>("[data-card-peek-window]")!;
+      expect(view.container.querySelector("[data-card-peek-preparing]")).toBeNull();
+      expect(scrim.style.opacity).toBe("");
+      expect(window.style.opacity).toBe("");
+      expect(view.container.querySelector("[data-peek-piece]")).toBeNull();
+      expect(getPeekHiddenSlug()).toBeNull();
+      // Closed by its ×, it fades in place: no pieces, no growth back.
+      view.rerenderWith({ block: null, opening: null });
+      const opacities: string[] = [];
+      for (let frame = 0; frame < 120 && view.container.querySelector("[data-card-peek]"); frame += 1) {
+        opacities.push(frames.run(() => view.container.querySelector<HTMLElement>("[data-card-peek-window]")?.style.opacity ?? ""));
+      }
+      expect(opacities.some((opacity) => opacity !== "" && Number(opacity) > 0 && Number(opacity) < 1)).toBe(true);
+      expect(view.container.querySelector("[data-peek-piece]")).toBeNull();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("stands at once from the full page with reduced motion too (О13, О16)", () => {
+    vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true }) as unknown as MediaQueryList));
+    try {
+      const view = peek({ block, opening: { sequence: 1, slug: block.slug, from: "full", restored: false } });
+      expect(view.container.querySelector("[data-card-peek-preparing]")).toBeNull();
+      expect(view.container.querySelector<HTMLElement>("[data-card-peek-window]")!.style.opacity).toBe("");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("goes from a fade toward the full page back to its window from where it stands (О9, О11)", () => {
+    const frames = handFrames();
+    try {
+      const view = peek({ block, opening: restored });
+      // The right part narrows: the window fades toward the full page.
+      view.rerenderWith({ block: null, opening: restored, exit: "fade" });
+      let shown = "";
+      for (let frame = 0; frame < 8 && view.container.querySelector("[data-card-peek]"); frame += 1) {
+        shown = frames.run(() => view.container.querySelector<HTMLElement>("[data-card-peek-window]")?.style.opacity ?? "");
+      }
+      const midway = Number(shown);
+      expect(midway).toBeGreaterThan(0);
+      expect(midway).toBeLessThan(1);
+      // It widens again before the fade ends: back up from that opacity, no jump.
+      view.rerenderWith({ block, opening: { sequence: 2, slug: block.slug, from: "full", restored: false }, exit: "return" });
+      const next = Number(frames.run(() => view.container.querySelector<HTMLElement>("[data-card-peek-window]")?.style.opacity ?? "1"));
+      expect(Math.abs(next - midway)).toBeLessThan(0.2);
+      let last = next;
+      for (let frame = 0; frame < 120 && last < 1; frame += 1) {
+        const opacity = frames.run(() => view.container.querySelector<HTMLElement>("[data-card-peek-window]")?.style.opacity ?? "");
+        last = opacity === "" ? 1 : Number(opacity);
+      }
+      expect(last).toBe(1);
+      expect(view.container.querySelector("[data-card-peek]")).not.toBeNull();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("stands `M` off every edge of the right part (О3)", () => {
     const { container } = peek({ block, opening: restored });
     const window = container.querySelector<HTMLElement>("[data-card-peek-window]");
@@ -127,12 +193,6 @@ describe("CardPeek", () => {
     const { container, onClose } = peek({ block, opening: restored });
     fireEvent.click(container.querySelector("[data-card-peek-scrim]")!);
     expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("is gone at once when a narrow window takes the card full page (О1)", () => {
-    const view = peek({ block, opening: restored });
-    view.rerenderWith({ block: null, opening: restored, exit: "none" });
-    expect(view.container.querySelector("[data-card-peek]")).toBeNull();
   });
 
   it("leaves the page in the frame its closing lays down, never shown whole and blurred after it left (О11)", () => {
@@ -630,6 +690,72 @@ describe("CardPeek", () => {
     });
   });
 
+  // О6 (user's request of 30.10.2026, «Исправь прокрутку»).
+  describe("the wheel aimed at the feed under it", () => {
+    function feedWheel(): boolean {
+      const feed = document.createElement("main");
+      document.body.append(feed);
+      const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 40 });
+      feed.dispatchEvent(event);
+      feed.remove();
+      return event.defaultPrevented;
+    }
+
+    it("goes nowhere from the click's frame, the window still preparing, and the card in the window still scrolls", () => {
+      const frames = handFrames();
+      try {
+        expect(feedWheel()).toBe(false);
+        const view = peek({ block, opening: { sequence: 1, slug: block.slug, from: "elsewhere", restored: false } });
+        // Preparing: the scrim and the window take no press yet.
+        expect(view.container.querySelector("[data-card-peek-preparing]")).not.toBeNull();
+        expect(feedWheel()).toBe(true);
+        const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 40 });
+        view.getByTestId("content").dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        // Growing, then open.
+        for (let frame = 0; frame < 60; frame += 1) frames.run(() => null);
+        expect(feedWheel()).toBe(true);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it("goes nowhere while the window closes, and reaches the feed once it has left", () => {
+      const frames = handFrames();
+      try {
+        const view = peek({ block, opening: restored });
+        view.rerenderWith({ block: null, opening: restored });
+        for (let frame = 0; frame < 4; frame += 1) frames.run(() => null);
+        expect(view.container.querySelector("[data-card-peek]")).not.toBeNull();
+        expect(feedWheel()).toBe(true);
+        for (let frame = 0; frame < 120 && view.container.querySelector("[data-card-peek]"); frame += 1) frames.run(() => null);
+        expect(view.container.querySelector("[data-card-peek]")).toBeNull();
+        expect(feedWheel()).toBe(false);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it("lets go with Escape's instant close and with the window's unmount", () => {
+      const view = peek({ block, opening: { sequence: 1, slug: block.slug, from: "keyboard", restored: false } });
+      expect(feedWheel()).toBe(true);
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      view.rerenderWith({ block: null, opening: null });
+      expect(view.container.querySelector("[data-card-peek]")).toBeNull();
+      expect(feedWheel()).toBe(false);
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent("keyup", { key: "Escape", bubbles: true }));
+      });
+      // Another window, gone with its component.
+      const other = peek({ block, opening: restored });
+      expect(feedWheel()).toBe(true);
+      other.unmount();
+      expect(feedWheel()).toBe(false);
+    });
+  });
+
   describe("Escape (О11)", () => {
     const key = (type: "keydown" | "keyup") => act(() => {
       window.dispatchEvent(new KeyboardEvent(type, { key: "Escape", bubbles: true }));
@@ -880,6 +1006,61 @@ describe("CardPeek", () => {
   });
 });
 
+/// TRIAL (SPEC_CARD_PEEK.md, О3, О16): the right part tells the page its
+/// width as it places itself, the feed's width with the sidebar beside it or
+/// over it.
+describe("CardPeekArea", () => {
+  function box(left: number, top: number, width: number, height: number): DOMRect {
+    return { left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) } as DOMRect;
+  }
+
+  it.each([
+    ["beside the feed", 360, 829, 469],
+    ["beside the feed", 360, 830, 470],
+    ["beside the feed", 360, 831, 471],
+    ["over the feed", 0, 469, 469],
+    ["over the feed", 0, 470, 470],
+    ["over the feed", 0, 471, 471],
+  ])("reports the right part's width with the sidebar %s (sidebar %i, window %i)", (_mode, sidebar, windowWidth, expected) => {
+    const shell = document.createElement("div");
+    const main = document.createElement("main");
+    const top = document.createElement("header");
+    shell.append(main, top);
+    document.body.append(shell);
+    vi.spyOn(shell, "getBoundingClientRect").mockReturnValue(box(0, 0, windowWidth, 800));
+    vi.spyOn(top, "getBoundingClientRect").mockReturnValue(box(0, 0, windowWidth, 40));
+    vi.spyOn(main, "getBoundingClientRect").mockReturnValue(box(sidebar, 40, windowWidth - sidebar, 760));
+    const offsetParent = vi.spyOn(HTMLElement.prototype, "offsetParent", "get").mockReturnValue(shell);
+    const areaRef = createRef<HTMLDivElement>();
+    const sides = createRef<HTMLElement>();
+    Object.assign(sides, { current: main });
+    const onWidth = vi.fn();
+    try {
+      render(<CardPeekArea areaRef={areaRef} top={top} sides={sides} onWidth={onWidth}>{null}</CardPeekArea>);
+      expect(onWidth).toHaveBeenLastCalledWith(expected);
+      expect(areaRef.current?.style.width).toBe(`${expected}px`);
+    } finally {
+      offsetParent.mockRestore();
+      vi.restoreAllMocks();
+      shell.remove();
+    }
+  });
+});
+
+/// SPEC_CARD_PEEK.md, О9; DESIGN_SYSTEM.md (user's decision of 30.10.2026):
+/// the view toggle's arrows drawn at the close cross's extent, the line 1 px.
+describe("ViewToggleIcon", () => {
+  it.each(["full", "window"] as const)("draws the arrows to %s at the cross's size with a 1 px line", (to) => {
+    const { container } = render(<ViewToggleIcon to={to} />);
+    const icon = container.querySelector<SVGElement>(`[data-view-toggle-icon='${to}']`)!;
+    // 13 px icons, the cross spanning 12 of 24 units and the arrows 18.
+    const size = parseFloat(icon.style.width);
+    expect(size).toBeCloseTo((13 * 12) / 18, 5);
+    expect(parseFloat(icon.style.height)).toBeCloseTo(size, 5);
+    expect(Number(icon.style.strokeWidth) * (size / 24)).toBeCloseTo(1, 5);
+  });
+});
+
 /// TRIAL (SPEC_CARD_PEEK.md, О9): the window's plate.
 describe("CardPeekPlate", () => {
   function plate(sequence: number, onExpand = vi.fn(), onClose = vi.fn()) {
@@ -903,14 +1084,24 @@ describe("CardPeekPlate", () => {
     );
   }
 
-  it("holds full page first, then the file's name, the menu and the close", () => {
+  it("holds the file's name, then the menu, full page and the close (user's decision of 30.10.2026)", () => {
     const onExpand = vi.fn();
     const onClose = vi.fn();
-    render(plate(0, onExpand, onClose));
-    const buttons = screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"));
-    expect(buttons[0]).toBe("Open as full page");
-    expect(buttons.at(-1)).toBe("Close");
-    expect(screen.getByText("One")).toHaveAttribute("data-secondary-detail-card-name");
+    const { container } = render(plate(0, onExpand, onClose));
+    // The name comes first; the right group runs ⋯, full page, ×.
+    const header = container.querySelector("[data-card-peek-plate]")!;
+    expect(header.querySelector("[data-secondary-detail-card-name]")).toHaveTextContent("One");
+    const group = header.querySelector<HTMLElement>("[data-chrome-actions]")!;
+    const buttons = within(group).getAllByRole("button");
+    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual(["Card actions", "Open as full page", "Close"]);
+    // The same variant and size as its neighbours.
+    const menu = within(group).getByRole("button", { name: "Card actions" });
+    const expand = within(group).getByRole("button", { name: "Open as full page" });
+    const close = within(group).getByRole("button", { name: "Close" });
+    expect(expand.getAttribute("data-variant")).toBe(close.getAttribute("data-variant"));
+    expect(expand.getAttribute("data-size")).toBe(close.getAttribute("data-size"));
+    expect(expand.getAttribute("data-size")).toBe(menu.getAttribute("data-size"));
+    expect(expand.querySelector("[data-view-toggle-icon='full']")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Open as full page" }));
     expect(onExpand).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Close" }));

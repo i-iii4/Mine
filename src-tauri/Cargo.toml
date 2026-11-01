@@ -26,6 +26,8 @@ article-audio = []
 
 [build-dependencies]
 sha2 = "0.10"
+# build.rs reads Mine's one minimum macOS from tauri.conf.json.
+serde_json = "1"
 tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]

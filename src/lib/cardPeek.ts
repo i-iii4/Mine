@@ -15,6 +15,7 @@
 // part goes from the card's crop to the whole picture with no switch (О10, п. 3).
 
 import { useSyncExternalStore } from "react";
+import { APP_MAIN_MIN_WIDTH_PX } from "./appLayout";
 import { SPRING_SETTLE, springSettleMs } from "./channelIcon";
 import {
   DETAIL_CONTENT_MAX_WIDTH_PX,
@@ -26,6 +27,19 @@ import {
 
 /** `M`: the window's distance from each edge of the right part (О3). */
 export const CARD_PEEK_MARGIN_PX = 40;
+
+/** `R_min`: the narrowest right part a card stands over in its window
+ *  (О16; user's decision of 30.10.2026). The window's place, the right part
+ *  less `M` on either side, is no narrower than the narrowest content the
+ *  product lays out, `F_min`; narrower, the card stands full page. */
+export const CARD_PEEK_MIN_AREA_WIDTH_PX = APP_MAIN_MIN_WIDTH_PX + 2 * CARD_PEEK_MARGIN_PX;
+
+/** Whether a right part `width` wide holds the card's window (О16): the
+ *  width alone decides, never the view the card stands in now, so the view
+ *  does not flicker at the threshold. */
+export function peekAreaHoldsWindow(width: number): boolean {
+  return width >= CARD_PEEK_MIN_AREA_WIDTH_PX;
+}
 
 /** The window's corner at its place, and where its growth ends: 4 px, the
  *  user's own value for this window (decision of 23.10.2026), set here
@@ -581,8 +595,9 @@ export function peekRideOpacity(direction: "in" | "out", elapsedMs: number, star
 export type PeekMotionKind = "card" | "center" | "fade" | "instant";
 
 /** What opened the card: a click on its card in the feed or on the graph, a
- *  key in the feed, or something else (search, the sidebar, a step back). */
-export type PeekOpeningFrom = "card" | "keyboard" | "elsewhere";
+ *  key in the feed, something else (search, the sidebar, a step back), or
+ *  the same card's full page, which gives it back to its window (О9, О16). */
+export type PeekOpeningFrom = "card" | "keyboard" | "elsewhere" | "full";
 
 /** The input the page heard last, as the opening reads it. */
 export interface PeekInput {
@@ -604,10 +619,10 @@ export function peekOpeningFrom(input: PeekInput | null, slug: string, now: numb
   return input.inRightPart ? "keyboard" : "elsewhere";
 }
 
-/** How an opening goes (О10, О13): a card opened with the tab stands in
- *  place at once; with "Reduce motion" every window fades in place; a click
- *  on its card grows it out of the card; a key fades it in place; anything
- *  else brings it out of the centre. */
+/** How an opening goes (О9, О10, О13): a card opened with the tab, by a
+ *  key or from its full page stands in place at once; with "Reduce motion"
+ *  every other window fades in place; a click on its card grows it out of
+ *  the card; anything else brings it out of the centre. */
 export function peekOpeningKind({
   from,
   restored,
@@ -621,6 +636,9 @@ export function peekOpeningKind({
   // A key opens at once, in the frame it is pressed in, as Escape closes
   // (user's decision of 26.10.2026).
   if (from === "keyboard") return "instant";
+  // The full page gives the card back to its window where it stands, at
+  // once (О9).
+  if (from === "full") return "instant";
   if (reducedMotion) return "fade";
   if (from === "card") return "card";
   return "center";
@@ -628,9 +646,9 @@ export function peekOpeningKind({
 
 /** What the page asks of a closing: the reverse of the opening (`return`),
  *  to the centre whatever the card (a collection or a view chosen in the
- *  top row: the card is not where it was), a fade in place (the window
- *  opened full page), or gone at once (a narrow window takes the card full). */
-export type CardPeekExit = "return" | "center" | "fade" | "none";
+ *  top row: the card is not where it was), or a fade in place (the card
+ *  goes full page, by its button or the right part's width, О9, О16). */
+export type CardPeekExit = "return" | "center" | "fade";
 
 /** How a closing goes (О11, О13): the way the window came, into the card
  *  where it stands when that card is on screen, else to the centre. */
@@ -644,11 +662,46 @@ export function peekClosingKind({
   exit: CardPeekExit;
   reducedMotion: boolean;
   cardOnScreen: boolean;
-}): Exclude<PeekMotionKind, "instant"> | "none" {
-  if (exit === "none") return "none";
+}): Exclude<PeekMotionKind, "instant"> {
   if (reducedMotion || exit === "fade" || openedAs === "fade") return "fade";
   if (openedAs !== "card" || exit === "center") return "center";
   return cardOnScreen ? "card" : "center";
+}
+
+// ─── The wheel under the window ──────────────────────────────────────────
+
+/** Where wheel input under the card's window goes nowhere (О6): the feed or
+ *  the graph (the page's `main`) and the right part round the window (its
+ *  scrim and hint). */
+const PEEK_WHEEL_DROPPED = "main, [data-card-peek-area]";
+
+/** Where it keeps going: the window's surface, which scrolls the card in it,
+ *  and the open card full page, which the window fades into (О9). */
+const PEEK_WHEEL_KEPT = "[data-card-peek-surface], [data-detail-root]";
+
+/** Whether a wheel event aimed at `target` is dropped while the window is on
+ *  the page. The sidebar, menus and dialogs over the page keep their wheel. */
+export function peekWheelDropped(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return target.closest(PEEK_WHEEL_KEPT) === null && target.closest(PEEK_WHEEL_DROPPED) !== null;
+}
+
+function dropPeekWheel(event: WheelEvent): void {
+  if (!peekWheelDropped(event.target)) return;
+  // Held as an open menu holds the wheel outside it (openMenus.ts): no
+  // scroll and no handler under it, the graph's zoom included, which acts
+  // on the wheel whether or not its default was prevented.
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+/** Drop the wheel aimed under the card's window (О6; user's request of
+ *  30.10.2026): from the frame its opening click is heard, its preparation
+ *  included, until it has left the page, momentum included. Returns the
+ *  guard's removal. */
+export function holdPeekWheelGuard(): () => void {
+  window.addEventListener("wheel", dropPeekWheel, { capture: true, passive: false });
+  return () => window.removeEventListener("wheel", dropPeekWheel, true);
 }
 
 // ─── The input, the hidden card and the graph's cards ───────────────────

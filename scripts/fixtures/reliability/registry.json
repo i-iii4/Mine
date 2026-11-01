@@ -2122,6 +2122,8 @@
         "src/tabbar/constants.test.ts",
         "src/tabbar/constants.ts",
         "src/tabbar/main.tsx",
+        "src/tabbar/settingsMenu.ts",
+        "src/tabbar/settingsMenu.test.ts",
         "src/tabbar/sourceGuard.test.ts",
         "src/tabbar/tabDrag.test.ts",
         "src/tabbar/tabDrag.ts",
@@ -2136,8 +2138,6 @@
         "src/tabbar/tabbar.css",
         "src/tabbar/useTabBarState.ts",
         "src/lib/adjacentTab.ts",
-        "src/lib/chromeHeight.ts",
-        "src/lib/chromeHeight.test.ts",
         "src/components/MineLogo.tsx",
         "src/components/MineLogo.test.tsx",
         "tabbar.html",
@@ -2147,11 +2147,11 @@
       ],
       "requirement": "SPEC_TABS.md### Полоса вкладок",
       "tests": [
-        "src/lib/chromeHeight.test.ts",
         "src/components/MineLogo.test.tsx",
         "src/tabbar/TabBar.test.tsx",
         "src/tabbar/TabBarApp.test.tsx",
         "src/tabbar/constants.test.ts",
+        "src/tabbar/settingsMenu.test.ts",
         "src/tabbar/sourceGuard.test.ts",
         "src/tabbar/tabDrag.test.ts",
         "src/tabbar/tabKeyboard.test.ts",
@@ -3313,26 +3313,6 @@
     },
     {
       "paths": [
-        "src/components/TopCollectionSwitcher.tsx"
-      ],
-      "requirement": "DESIGN_SYSTEM.md#### Surface Search",
-      "tests": [
-        "scripts/settings-menu-audit.mjs"
-      ],
-      "command": "test:chrome"
-    },
-    {
-      "paths": [
-        "src/components/TopCollectionSwitcher.tsx"
-      ],
-      "requirement": "DESIGN_SYSTEM.md#### Отступ от кнопки",
-      "tests": [
-        "scripts/settings-menu-audit.mjs"
-      ],
-      "command": "test:chrome"
-    },
-    {
-      "paths": [
         "scripts/settings-menu-audit.mjs"
       ],
       "requirement": "SPEC_TABS.md#### Окно и страница",
@@ -3367,9 +3347,24 @@
       ],
       "requirement": "SPEC_CARD_ASSOCIATIONS.md### Лента автора",
       "tests": [
-        "scripts/settings-menu-audit.mjs"
+        "src/components/TopCollectionSwitcher.test.tsx"
       ],
-      "command": "test:chrome"
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/TopCollectionSwitcher.tsx",
+        "src/components/TopCollectionSwitcher.test.tsx",
+        "src/components/ChromeNameField.tsx",
+        "src/components/ChromeNameField.test.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md### Верхние ряды",
+      "tests": [
+        "src/components/ChromeNameField.test.tsx",
+        "src/components/TopCollectionSwitcher.test.tsx",
+        "src/components/MainSecondaryChrome.test.tsx"
+      ],
+      "command": "test:frontend"
     },
     {
       "paths": [
@@ -3391,16 +3386,6 @@
         "src-tauri/src/tooling/export_bindings.rs"
       ],
       "command": "bindings:check"
-    },
-    {
-      "paths": [
-        "src/components/TopCollectionSwitcher.tsx"
-      ],
-      "requirement": "DESIGN_SYSTEM.md##### Тексты окон",
-      "tests": [
-        "scripts/settings-menu-audit.mjs"
-      ],
-      "command": "test:chrome"
     },
     {
       "paths": [
@@ -4188,6 +4173,7 @@
         "src/lib/cardPeek.ts",
         "src/lib/cardPeekSource.ts",
         "src/lib/cardView.ts",
+        "src/components/ViewToggleIcon.tsx",
         "src/components/CardPeek.test.tsx",
         "src/components/CardViewMenu.test.tsx",
         "src/components/DetailView.test.tsx",
@@ -4727,17 +4713,6 @@
         "src/lib/channelIcon.test.ts",
         "src/lib/textClip.test.ts",
         "src/components/ChannelIcon.test.tsx"
-      ],
-      "command": "test:frontend"
-    },
-    {
-      "paths": [
-        "src/hooks/useChromeRowHeight.ts",
-        "src/hooks/useChromeRowHeight.test.tsx"
-      ],
-      "requirement": "SPEC_NARROW_WINDOW.md### Правила",
-      "tests": [
-        "src/hooks/useChromeRowHeight.test.tsx"
       ],
       "command": "test:frontend"
     },

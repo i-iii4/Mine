@@ -1389,8 +1389,8 @@ Image media expansion:
   пересортировывают список; connected-канал после действия не прыгает наверх.
 - Search uses the shared `SearchMenuInput` menu-header contract: a flat
   `Input variant="ghost"` row behind the menu's top divider, without its own
-  rounded input frame/pill. This must match `Search spaces` and
-  `Search collections`; Connect menus do not get a separate form-field surface.
+  rounded input frame/pill. This must match `Search spaces`; Connect menus do
+  not get a separate form-field surface.
 - Rows use shared menu row tokens: `default` = 32px for app dropdown/search
   rows, `clipper` = 40px for clipper-sized rows. Any future token change must
   update the row renderer and the quantized scroll calculation together.
@@ -1530,7 +1530,7 @@ Image media expansion:
   with Mine's theme; arbitrary button colors remain unsupported and forbidden.
   Top chrome делится той же границей `--sidebar-width`, что и body: слева
   space selector, sidebar channel search и
-  `border-r border-sidebar-border`, справа current collection switcher и
+  `border-r border-sidebar-border`, справа название места и
   оставшийся drag region. Так разделитель Sidebar/Main продолжается до
   верхнего края окна, а search не является overlay над Grid.
 - В правой части bottom app bar есть `Search elements` action с shortcut label
@@ -1657,41 +1657,23 @@ Image media expansion:
 - All search inputs suppress native browser/WebKit typing suggestions through
   shared `SEARCH_INPUT_SUPPRESSION_PROPS`: `autoComplete="off"`,
   `autoCorrect="off"`, `autoCapitalize="none"`, `spellCheck={false}`. This
-  applies to top chrome search, `Search spaces`, `Search collections` and
-  channel connect pickers, without changing normal text-entry dialogs.
-- Right top chrome contains a current collection switcher. The trigger shows
-  the active Grid route label (`Everything` or current channel name), uses the
-  same transparent root + inner `bg-active` hover/open/keyboard-focus pill
-  contract as the space selector. Trigger typography matches Detail top bar:
-  `font-mono text-sm text-muted-foreground`, regular weight; hover/open/focus
-  raises only the inner pill text to `text-foreground`. Expanded mode keeps the
-  right-side `32px` content axis (`px-6` root + `px-2` pill);
-  compact/collapsed sidebar mode uses `px-3` root padding to align with the
-  space selector and remove the extra gap. It contains no dropdown chevron and opens a
-  `DropdownMenu` with a `Search collections` input. Dropdown rows are ordered
-  exactly like Sidebar collections and use the shared
-  `filterAndRankChannelSearch` matcher. The active collection is not rendered
-  in the dropdown at all: no duplicated current label, no checkmark, no radio
-  marker, no selected/current row. Selecting an item immediately navigates to
-  `/` or `/channel/:tag`; the switcher derives current state only from route.
-  In an author's feed (`/author/:author`) the pill names the author as written
-  (`currentAuthor`), and every destination, Everything included, is listed
-  (SPEC_CARD_ASSOCIATIONS.md, «Лента автора»).
-  The search input remains the only focus owner while the dropdown is open:
-  pointer hover over destination rows must not blur or move focus out of the
-  input. Destination rows and the pinned create action are menu-styled buttons
-  with `role="menuitem"`, not roving-focus `DropdownMenuItem`. A fixed pinned
-  bottom `Create collection` action is always available and never appears as an
-  inline search result; it opens a separate create-channel dialog, which may
-  prefill from the search query, validates empty/duplicate names, refreshes
-  snapshots and navigates to the new channel after creation.
-  `Search collections` and `Search spaces` use the same input-owned keyboard
-  model as Sidebar search: `ArrowUp`/`ArrowDown` change
-  `aria-activedescendant`, while the input remains focused.
-  The dropdown takes the same `search` width role as Space dropdown. It is
-  anchored to the visible inner collection pill, not to the invisible root
-  layout slot: the `DropdownMenuContent` wrapper measures the offsets from the
-  pill on every opening, as for the space switcher and every dropdown menu.
+  applies to top chrome search, `Search spaces` and channel connect pickers,
+  without changing normal text-entry dialogs.
+- Название места в верхнем ряду (`TopCollectionSwitcher`): `Everything`,
+  название открытой коллекции или автор в его ленте (`currentAuthor`,
+  SPEC_CARD_ASSOCIATIONS.md, «Лента автора»), в `font-mono text-sm
+  text-muted-foreground`, на прежнем месте пути. Меню и стрелки у него нет
+  (решение пользователя 31.10.2026; прежде оно открывало выпадающий список
+  коллекций с полем `Search collections` и пунктом `Create collection`).
+  Место меняют боковое меню и ⌘⌥ ↕; коллекцию создают боковое меню, ⇧⌘N и
+  меню карточки. Название коллекции переименовывает её щелчком, так же как
+  имя файла открытой карточки (общий `ChromeNameField`, тот же вид в покое,
+  то же поле, Enter и уход из поля сохраняют, Escape оставляет прежнее имя,
+  причина отказа под именем, отказ встряхивает поле): той же командой и той
+  же проверкой, что переименование в боковом меню (`rename_channel` через
+  `handleRenameTag` в `App.tsx`, `check_collection_name`), с теми же
+  словами отказа (`collectionNameRefusal`). `Everything` и автор это простой
+  текст: щелчок ничего не делает, подсветки и текстового курсора нет.
 - Top chrome controls must remain usable as window drag handles. Interactive
   chrome controls use the shared `4px` pointer threshold: movement below the
   threshold is handled as normal click/focus/editing, movement at or above it
@@ -1701,7 +1683,9 @@ Image media expansion:
   `data-tauri-drag-region`. Plain clickable controls use
   `useChromeDragGesture()`. Dropdown triggers use
   `useTopChromeTriggerInteraction()` so pointer drag never opens the dropdown
-  and pointer-close does not leave a sticky focus-colored trigger.
+  and pointer-close does not leave a sticky focus-colored trigger. Names
+  renamed in place (`ChromeNameField`: the open card's file, the collection)
+  are not dragged.
 Следующее описание компактного меню сохранено как история проектирования.
 Флаг больше не применяется, а контрол удалён из настроек.
 
@@ -1814,6 +1798,15 @@ Image media expansion:
   menu (`CardMoreMenu`) и close button. Filename это имя файла без папки
   (`Шуховская башня.md`, не `Cards/Шуховская башня.md`); путь от корня
   пространства остаётся в подсказке `title`.
+- Между `⋯` и `×` этого ряда стоит кнопка «свернуть в окно» (`Minimize2`
+  из lucide в `ViewToggleIcon`, тот же вариант `chrome` и размер
+  `chrome-icon`, что у соседних кнопок), пока правой части хватает места
+  для окна карточки, при любом значении «Card view». Она ставит группе
+  «Card view» значение «Peek», как выбор в панели Display, и открытая
+  карточка сразу встаёт в своё окно. Пока правая часть уже 470 px, кнопки
+  нет (решения пользователя 30.10.2026;
+  [SPEC_CARD_PEEK.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_PEEK.md>),
+  О1, О9, О16).
 - Внешний non-compact Detail chrome закрывается как единый top-bar transition,
   а не как серия независимых переключений. `MainSecondaryTopBar` держит main
   layer (число коллекций, счётчик элементов) и Detail/link-editor layer в одних и тех же sidebar/content

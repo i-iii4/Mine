@@ -45,6 +45,9 @@
       "binaries/video-mux-helper": "binaries/video-mux-helper",
       "../build/clipper-extension/": "clipper-extension/",
       "../build/clipper-runtime-manifest.json": "clipper-runtime-manifest.json"
+    },
+    "macOS": {
+      "minimumSystemVersion": "26.2"
     }
   }
 }

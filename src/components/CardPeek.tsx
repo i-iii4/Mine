@@ -47,7 +47,7 @@ import {
   type RefObject,
 } from "react";
 import { flushSync } from "react-dom";
-import { ArrowDown, Maximize2 } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import {
   CARD_PEEK_CENTER_SCALE,
   CARD_PEEK_FRAME_STEP_MS,
@@ -67,6 +67,7 @@ import {
   centerPeekRect,
   centredPeekRect,
   clampUnit,
+  holdPeekWheelGuard,
   intersectPeekRect,
   lerpPeekRect,
   mainPeekTile,
@@ -123,6 +124,7 @@ import { DetailFrameContext, type DetailFrame } from "./detailFrame";
 import { DetailMotionGateContext, type DetailMotionGate } from "./detailMotionGate";
 import { DetailCardFileName } from "./MainSecondaryChrome";
 import { Button } from "./ui/button";
+import { ViewToggleIcon } from "./ViewToggleIcon";
 
 type PeekBlock = LightBlock | IndexedBlock;
 
@@ -491,19 +493,26 @@ function PeekFrameOver({ view, cut }: { view: PeekMotionView; cut: PeekFrameCut 
  * over the page shell, it reads the two boxes whenever either changes size,
  * in the frame they change (a ResizeObserver notifies before the frame is
  * painted): the sidebar's collapse and its edge's drag move it with them.
- * What lies past its edges is cut there.
+ * What lies past its edges is cut there. It tells the page its width as it
+ * places itself, whether the window holds over it deciding the card's view
+ * (О16).
  */
 export function CardPeekArea({
   areaRef,
   top,
   sides,
+  onWidth,
   children,
 }: {
   areaRef: RefObject<HTMLDivElement | null>;
   top: HTMLElement | null;
   sides: RefObject<HTMLElement | null>;
+  onWidth: (width: number) => void;
   children: ReactNode;
 }) {
+  // Read at each placing: the page's callback may change between them.
+  const onWidthRef = useRef(onWidth);
+  onWidthRef.current = onWidth;
   useLayoutEffect(() => {
     const area = areaRef.current;
     const feed = sides.current;
@@ -518,6 +527,7 @@ export function CardPeekArea({
       area.style.top = `${rows.top - origin.top}px`;
       area.style.width = `${box.width}px`;
       area.style.height = `${box.bottom - rows.top}px`;
+      onWidthRef.current(box.width);
     };
     place();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
@@ -1823,9 +1833,9 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
         reducedMotion: prefersReducedMotion(),
       });
       if (kind === "card" && !(area && findPeekSource(area, block.slug))) kind = "center";
-      // A window a key opened at once still fades in place when it closes
-      // other than by Escape (О11).
-      openedAsRef.current = from === "keyboard" && kind === "instant" && !(opening?.restored ?? false) ? "fade" : kind;
+      // A window a key or the full page stood at once still fades in place
+      // when it closes other than by Escape (О9, О11).
+      openedAsRef.current = (from === "keyboard" || from === "full") && kind === "instant" && !(opening?.restored ?? false) ? "fade" : kind;
       if (kind === "instant") {
         setPreparing(false);
         return;
@@ -1895,7 +1905,7 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
         reducedMotion,
         cardOnScreen: source !== null,
       });
-      if (kind === "none" || escapedRef.current) {
+      if (escapedRef.current) {
         escapedRef.current = false;
         vanish();
         return;
@@ -1949,10 +1959,6 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
           // graph after a change of place included (О11).
           const place = openedAs === "card" && area ? findPeekSource(area, slug) : null;
           const kindNow = peekClosingKind({ openedAs, exit: exitRef.current, reducedMotion, cardOnScreen: place !== null });
-          if (kindNow === "none") {
-            vanish();
-            return;
-          }
           if (kindNow === "center" && openedAs === "card") {
             leaveAsDialog();
             return;
@@ -1986,6 +1992,12 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
   useLayoutEffect(() => {
     gatherAndPaint();
   }, [flyer, gatherAndPaint, view]);
+
+  // The wheel aimed under the window goes nowhere from the commit that first
+  // holds it, the opening click's own, its preparation included, until it
+  // has left the page (О6). Laid before paint, so no frame lets one through.
+  const windowHeld = held !== null;
+  useLayoutEffect(() => (windowHeld ? holdPeekWheelGuard() : undefined), [windowHeld]);
 
   // Escape closes the window at once, with no movement (О11; user's
   // decision of 24.10.2026), from rest, while it grows and while it closes.
@@ -2197,7 +2209,8 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
 /** The window's header (О9): always shown at the window's top, the card
  *  under it, on the top rows' fill, `--chrome` (user's decision of
  *  28.10.2026), with a line under it. Everything the open card's top row holds full page, and
- *  before it the way to full page. */
+ *  between its menu and its close the way to full page (user's decision of
+ *  30.10.2026). */
 export function CardPeekPlate({
   block,
   vaultPath,
@@ -2223,7 +2236,7 @@ export function CardPeekPlate({
   onRequestDelete: (slug: string) => void;
   onRenameFile: (block: PeekBlock, newStem: string) => Promise<void>;
   onCheckFileName: (block: PeekBlock, newStem: string) => Promise<RenameBlockError | null>;
-  /** Full page: the window fades and the same card stands full (О9). */
+  /** Chooses «Card view: Full page»: the same card stands full (О9, О16). */
   onExpand: () => void;
   onClose: () => void;
   menuOpenRequestSequence: number;
@@ -2238,16 +2251,6 @@ export function CardPeekPlate({
       data-card-peek-plate=""
     >
       <div className="flex min-h-0 flex-1 items-center gap-1 pl-[var(--chrome-edge-pad)]">
-        <Button
-          type="button"
-          variant="chrome"
-          size="chrome-icon"
-          aria-label="Open as full page"
-          onClick={onExpand}
-          data-card-peek-expand=""
-        >
-          <Maximize2 />
-        </Button>
         <DetailCardFileName block={block} onRename={onRenameFile} onCheck={onCheckFileName} />
         <ChromeActions className="ml-auto">
           <CardMoreMenu
@@ -2263,6 +2266,16 @@ export function CardPeekPlate({
             triggerShortcut={commandById("element-menu-open").combo}
             openRequestSequence={menuOpenRequestSequence - menuBaselineRef.current}
           />
+          <Button
+            type="button"
+            variant="chrome"
+            size="chrome-icon"
+            aria-label="Open as full page"
+            onClick={onExpand}
+            data-card-peek-expand=""
+          >
+            <ViewToggleIcon to="full" />
+          </Button>
           <ChromeCloseButton onClick={onClose} />
         </ChromeActions>
       </div>

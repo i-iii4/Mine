@@ -157,8 +157,9 @@ navigates to the created channel.
 
 Space switcher dropdown follows the same no-current/no-check/no-icon menu
 language, adds its own `Search spaces` input, lists only destination spaces and
-keeps a plain pinned `Add space` action. `Search collections`, `Search spaces`
-and Sidebar channel search use the same input-owned keyboard model:
+keeps a plain pinned `Add space` action. `Search spaces` and Sidebar channel
+search use the same input-owned keyboard model (the collection switcher's
+`Search collections` went with its menu on 31.10.2026):
 `ArrowUp`/`ArrowDown` change `aria-activedescendant`, pointer hover may update
 the active row, but focus remains in the search input.
 

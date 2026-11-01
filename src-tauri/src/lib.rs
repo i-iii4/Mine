@@ -122,7 +122,6 @@ pub fn run() {
             commands::tabs::tab_painted,
             commands::tabs::report_tab_history,
             commands::tabs::open_place,
-            commands::tabs::set_chrome_rows,
             commands::tabs::step_tab_history,
             commands::tabs::open_tab_search,
             commands::tabs::activate_tab,

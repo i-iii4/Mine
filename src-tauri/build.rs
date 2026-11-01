@@ -1,28 +1,44 @@
 fn main() {
     emit_build_identity();
-    // Article audio is opt-in; without the feature the Swift helper is neither
-    // compiled nor placed in `binaries/` for bundling.
-    #[cfg(all(feature = "desktop", feature = "article-audio", target_os = "macos"))]
-    build_article_audio_helper();
+    // One minimum macOS for everything Mine ships, read once from
+    // tauri.conf.json (user's decision of 01.11.2026); None off macOS.
+    let macos_minimum = macos_minimum_system_version();
+    if let Some(minimum) = &macos_minimum {
+        // Every binary of this package (the app, native-host, the CLI and
+        // the tooling) links for that minimum in every build. tauri-build
+        // emits the same line only when `tauri` has `custom-protocol`
+        // (`cargo tauri build`); native-host is also built without the
+        // `desktop` feature (`clipper:install-host`), and any other build
+        // would link for rustc's default.
+        println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET={minimum}");
+    }
 
-    // The iCloud progress helper is not optional: a real download percentage
-    // (SPEC_CLOUD_STORAGE.md Х4) only exists in the system's ubiquitous
-    // metadata, and reading it needs a run loop outside the app process. This
-    // makes swiftc (Xcode Command Line Tools) a build requirement on macOS —
-    // the documented price of a percent that tells the truth.
     #[cfg(all(feature = "desktop", target_os = "macos"))]
-    build_swift_helper("icloud_progress_helper.swift", "icloud-progress-helper");
+    {
+        let swift_target = swift_target(macos_minimum.as_deref());
 
-    // The unresolved iCloud conflict versions of a space's notes exist only
-    // as NSFileVersion records, which only Foundation reads and settles. See
-    // SPEC_ICLOUD_CONFLICTS.md, ВК5.
-    #[cfg(all(feature = "desktop", target_os = "macos"))]
-    build_swift_helper("icloud_conflicts_helper.swift", "icloud-conflicts-helper");
+        // Article audio is opt-in; without the feature the Swift helper is
+        // neither compiled nor placed in `binaries/` for bundling.
+        #[cfg(feature = "article-audio")]
+        build_article_audio_helper(&swift_target);
 
-    // Download Media joins YouTube's separate video and audio streams without
-    // ffmpeg, through AVFoundation. See SPEC_MEDIA_ASSET_ACTIONS.md.
-    #[cfg(all(feature = "desktop", target_os = "macos"))]
-    build_swift_helper("video_mux_helper.swift", "video-mux-helper");
+        // The iCloud progress helper is not optional: a real download
+        // percentage (SPEC_CLOUD_STORAGE.md Х4) only exists in the system's
+        // ubiquitous metadata, and reading it needs a run loop outside the
+        // app process. This makes swiftc (Xcode Command Line Tools) a build
+        // requirement on macOS — the documented price of a percent that
+        // tells the truth.
+        build_swift_helper("icloud_progress_helper.swift", "icloud-progress-helper", &swift_target);
+
+        // The unresolved iCloud conflict versions of a space's notes exist
+        // only as NSFileVersion records, which only Foundation reads and
+        // settles. See SPEC_ICLOUD_CONFLICTS.md, ВК5.
+        build_swift_helper("icloud_conflicts_helper.swift", "icloud-conflicts-helper", &swift_target);
+
+        // Download Media joins YouTube's separate video and audio streams
+        // without ffmpeg, through AVFoundation. See SPEC_MEDIA_ASSET_ACTIONS.md.
+        build_swift_helper("video_mux_helper.swift", "video-mux-helper", &swift_target);
+    }
 
     #[cfg(feature = "desktop")]
     {
@@ -149,6 +165,62 @@ fn emit_build_identity() {
     println!("cargo:rustc-env=MINE_BUILD_COMMIT={commit}");
 }
 
+/// The minimum macOS of Mine when the target is macOS: the
+/// `bundle.macOS.minimumSystemVersion` of tauri.conf.json, which Tauri also
+/// writes into Info.plist as `LSMinimumSystemVersion`. It is the one source:
+/// the Rust binaries and the Swift helpers take it from here, so no second
+/// literal can drift from the bundle's. A missing or malformed value stops
+/// the build: Tauri's own default (10.13) would silently differ.
+fn macos_minimum_system_version() -> Option<String> {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
+        return None;
+    }
+    let manifest_dir = std::path::PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").expect("missing CARGO_MANIFEST_DIR"),
+    );
+    let config_path = manifest_dir.join("tauri.conf.json");
+    println!("cargo:rerun-if-changed={}", config_path.display());
+    let text = std::fs::read_to_string(&config_path)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", config_path.display()));
+    let config: serde_json::Value = serde_json::from_str(&text)
+        .unwrap_or_else(|error| panic!("cannot parse {}: {error}", config_path.display()));
+    let minimum = config
+        .pointer("/bundle/macOS/minimumSystemVersion")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| {
+            panic!(
+                "{} has no bundle.macOS.minimumSystemVersion: the minimum macOS of Mine",
+                config_path.display()
+            )
+        });
+    let well_formed = (1..=3).contains(&minimum.split('.').count())
+        && minimum
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()));
+    assert!(
+        well_formed,
+        "bundle.macOS.minimumSystemVersion in {} is not a macOS version: {minimum:?}",
+        config_path.display()
+    );
+    Some(minimum.to_string())
+}
+
+/// The swiftc target for the cargo target's architecture at Mine's minimum
+/// macOS: without it swiftc builds for the build machine's macOS.
+#[cfg(all(feature = "desktop", target_os = "macos"))]
+fn swift_target(macos_minimum: Option<&str>) -> String {
+    let minimum = macos_minimum.expect("Swift helpers are built only for a macOS target");
+    let arch = match std::env::var("CARGO_CFG_TARGET_ARCH")
+        .expect("missing CARGO_CFG_TARGET_ARCH")
+        .as_str()
+    {
+        "aarch64" => "arm64",
+        "x86_64" => "x86_64",
+        other => panic!("no Swift target for the macOS architecture {other}"),
+    };
+    format!("{arch}-apple-macosx{minimum}")
+}
+
 /// Tauri validates configured resources before compiling the application,
 /// while the real native-host digest only exists after compilation. Keep an
 /// ignored placeholder available for Cargo builds; `beforeBundleCommand`
@@ -179,7 +251,7 @@ fn ensure_clipper_runtime_manifest_placeholder() {
 /// so it ships as a bundle resource the same way yt-dlp does and is found
 /// beside the resources at runtime.
 #[cfg(all(feature = "desktop", target_os = "macos"))]
-fn build_swift_helper(source_name: &str, helper_name: &str) {
+fn build_swift_helper(source_name: &str, helper_name: &str, swift_target: &str) {
     use std::env;
     use std::path::PathBuf;
     use std::process::Command;
@@ -199,6 +271,8 @@ fn build_swift_helper(source_name: &str, helper_name: &str) {
 
     let status = Command::new("xcrun")
         .arg("swiftc")
+        .arg("-target")
+        .arg(swift_target)
         .arg("-module-cache-path")
         .arg(&module_cache)
         .arg("-O")
@@ -216,7 +290,7 @@ fn build_swift_helper(source_name: &str, helper_name: &str) {
 }
 
 #[cfg(all(feature = "desktop", feature = "article-audio", target_os = "macos"))]
-fn build_article_audio_helper() {
+fn build_article_audio_helper(swift_target: &str) {
     use std::env;
     use std::path::PathBuf;
     use std::process::Command;
@@ -242,6 +316,8 @@ fn build_article_audio_helper() {
 
     let status = Command::new("xcrun")
         .arg("swiftc")
+        .arg("-target")
+        .arg(swift_target)
         .arg("-module-cache-path")
         .arg(&module_cache)
         .arg("-parse-as-library")

@@ -44,6 +44,7 @@ function bar(
   onCheckFileName: (block: LightBlock | IndexedBlock, newStem: string) => Promise<RenameBlockError | null> =
     vi.fn(() => Promise.resolve(null)),
   placeBefore = true,
+  onDetailCollapse?: () => void,
 ) {
   return (
     <MainSecondaryTopBar
@@ -61,6 +62,7 @@ function bar(
       onCheckFileName={onCheckFileName}
       onRequestDelete={vi.fn()}
       onDetailClose={vi.fn()}
+      onDetailCollapse={onDetailCollapse}
       detailMenuOpenRequestSequence={0}
     />
   );
@@ -170,6 +172,24 @@ describe("MainSecondaryTopBar", () => {
     expect(field).toHaveClass("state-active");
   });
 
+  // The rename field follows its text up to the card's commands, as the name
+  // at rest does (user's decision of 01.11.2026): the name's box shrinks in
+  // the layer's row, the commands do not.
+  it("caps the name's field by the room up to the card's commands", () => {
+    const { container } = renderBar({ ...BLOCK, slug: "Cards/Nogal House" });
+    fireEvent.click(screen.getByTitle("Nogal House"));
+    const field = screen.getByRole("textbox", { name: "Rename file" });
+    const anchor = container.querySelector("[data-secondary-detail-card-name-anchor]")!;
+    expect(anchor).toContainElement(field);
+    expect(anchor).toHaveClass("min-w-0");
+    const layer = container.querySelector("[data-secondary-detail-top-menu]")!;
+    expect(layer).toHaveClass("flex", "min-w-0");
+    expect(anchor.parentElement).toBe(layer);
+    const actions = layer.querySelector(":scope > [data-chrome-actions]")!;
+    expect(actions).toHaveClass("shrink-0", "ml-auto");
+    expect(anchor.nextElementSibling).toBe(actions);
+  });
+
   it("does nothing more on the rest of a double click than open the field", () => {
     const onRenameFile = vi.fn<(block: LightBlock | IndexedBlock, newStem: string) => Promise<void>>();
     renderBar({ ...BLOCK, slug: "Cards/Nogal House" }, "grid", onRenameFile);
@@ -271,6 +291,28 @@ describe("MainSecondaryTopBar", () => {
     expect(screen.queryByRole("textbox", { name: "Rename file" })).toBeNull();
     expect(screen.getByTitle("Casa Blanca")).toHaveTextContent("Casa Blanca");
     expect(onRenameFile).not.toHaveBeenCalled();
+  });
+
+  // SPEC_CARD_PEEK.md, О9, О16 (user's decision of 30.10.2026).
+  it("holds the way back to the card's window between the menu and the close, only when offered", () => {
+    const onDetailCollapse = vi.fn();
+    const { rerender } = renderBar(BLOCK, "grid", vi.fn(), vi.fn(() => Promise.resolve(null)), true, onDetailCollapse);
+    const menu = document.querySelector<HTMLElement>("[data-secondary-detail-top-menu]")!;
+    const group = menu.querySelector<HTMLElement>("[data-chrome-actions]")!;
+    const buttons = within(group).getAllByRole("button");
+    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual(["Card actions", "Collapse to window", "Close"]);
+    const actions = within(group).getByRole("button", { name: "Card actions" });
+    const collapse = within(group).getByRole("button", { name: "Collapse to window" });
+    const close = within(group).getByRole("button", { name: "Close" });
+    expect(collapse.getAttribute("data-variant")).toBe(close.getAttribute("data-variant"));
+    expect(collapse.getAttribute("data-size")).toBe(close.getAttribute("data-size"));
+    expect(collapse.getAttribute("data-size")).toBe(actions.getAttribute("data-size"));
+    fireEvent.click(collapse);
+    expect(onDetailCollapse).toHaveBeenCalledTimes(1);
+    // Not offered (Full page, or a right part too narrow for the window): absent.
+    rerender(bar(BLOCK));
+    expect(screen.queryByRole("button", { name: "Collapse to window" })).toBeNull();
+    expect(within(group).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Card actions", "Close"]);
   });
 
   it("brings no collections switch with an open card", () => {

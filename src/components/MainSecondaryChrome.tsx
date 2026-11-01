@@ -1,9 +1,7 @@
-import { useEffect, useRef, useState } from "react";
 import { getFileName } from "@/lib/displayTitle";
 import { commandById } from "@/lib/commandRegistry";
 import { cn } from "@/lib/utils";
 import { useChromeDragGesture } from "@/hooks/useChromeDragGesture";
-import { NAME_REFUSED_SHAKE_MS, useNameEdit } from "@/hooks/useNameEdit";
 import type {
   IndexedBlock,
   LightBlock,
@@ -12,13 +10,15 @@ import type {
   TagCount,
 } from "@/types";
 import { ChromeActions } from "./ChromeRow";
+import { ChromeNameField } from "./ChromeNameField";
 import { CardMoreMenu } from "./CardHoverMenu";
 import { ChromeCloseButton } from "./ChromeCloseButton";
 import { renameErrorMessage } from "./RenameBlockDialog";
 import { FeedDisplayMenu } from "./FeedDisplayMenu";
 import { GraphDisplayMenu } from "./GraphDisplayMenu";
+import { Button } from "./ui/button";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { ViewToggleIcon } from "./ViewToggleIcon";
 import { sidebarWidthHost } from "@/lib/sidebarWidth";
 
 
@@ -77,6 +77,7 @@ export function MainSecondaryTopBar({
   onCheckFileName,
   onRequestDelete,
   onDetailClose,
+  onDetailCollapse,
   detailMenuOpenRequestSequence,
   selectionActive = false,
   selectionHostRef,
@@ -102,6 +103,10 @@ export function MainSecondaryTopBar({
   onCheckFileName: (block: LightBlock | IndexedBlock, newStem: string) => Promise<RenameBlockError | null>;
   onRequestDelete: (slug: string) => void;
   onDetailClose: () => void;
+  /// Chooses «Card view: Peek» and gives the open card to its window
+  /// (SPEC_CARD_PEEK.md, О9, О16): offered while the right part holds the
+  /// window, whatever «Card view» was, else absent.
+  onDetailCollapse?: () => void;
   detailMenuOpenRequestSequence: number;
   /// A group selection exists: its commands take this half over.
   selectionActive?: boolean;
@@ -118,6 +123,7 @@ export function MainSecondaryTopBar({
   // The selection's commands belong over the feed they act on.
   const contentMainLayerEntered = !detailLayerEntered && !selectionActive;
   const closeChromeGesture = useChromeDragGesture({ disabled: !detailBlock });
+  const collapseChromeGesture = useChromeDragGesture({ disabled: !detailBlock || !onDetailCollapse });
 
   // In the path an open card's name stands past a line, the one the sidebar
   // segment draws between space and collection (11.10.2026). The half itself
@@ -200,6 +206,21 @@ export function MainSecondaryTopBar({
             openRequestSequence={detailMenuOpenRequestSequence}
             topChromeInteraction
           />
+          {/* Where the card's window holds its way to full page, between the
+              menu and the close (user's decision of 30.10.2026). */}
+          {onDetailCollapse && (
+            <Button
+              {...collapseChromeGesture}
+              type="button"
+              variant="chrome"
+              size="chrome-icon"
+              aria-label="Collapse to window"
+              onClick={onDetailCollapse}
+              data-secondary-detail-collapse=""
+            >
+              <ViewToggleIcon to="window" />
+            </Button>
+          )}
           <ChromeCloseButton {...closeChromeGesture} onClick={onDetailClose} />
           </ChromeActions>
         </div>
@@ -220,22 +241,9 @@ function refusalMessage(raw: unknown): string {
 type FileNameCheck = (block: LightBlock | IndexedBlock, newStem: string) => Promise<RenameBlockError | null>;
 
 /// The open card in the path is named by its file and renamed right there
-/// (user's decisions of 05.10.2026). A click turns the name into a field
-/// (16.10.2026; a double click before); the rest of a double click does
-/// nothing more in the new field. Leaving the field or Enter saves, Escape
-/// keeps the old name. While the typed name would be refused (a character
-/// Obsidian cannot link, a name already taken) the reason stands right under
-/// it. A refused save shakes the field once: after Enter the field stays,
-/// with the cursor and the typed name; after leaving the field the old name
-/// returns and the reason stays a moment (`useNameEdit`, shared with the
-/// sidebar's collection names, which keep the double click: a click opens a
-/// collection). The name is not dragged. In the path the name keeps the inner
-/// padding of the space and the collection before it, but no hover plate
-/// (16.10.2026): under the pointer its text brightens and the cursor is a
-/// text cursor, as over a field. A click that only makes an inactive window
-/// key never reaches the page (`acceptsFirstMouse` is off, SPEC_TABS.md,
-/// В85), so it opens nothing. The open card's window names it the same way
-/// in its plate (CardPeek.tsx, SPEC_CARD_PEEK.md, О9).
+/// (user's decisions of 05.10.2026), as `ChromeNameField` renames a name in
+/// the path. The open card's window names it the same way in its plate
+/// (CardPeek.tsx, SPEC_CARD_PEEK.md, О9).
 export function DetailCardFileName({
   block,
   onRename,
@@ -246,105 +254,19 @@ export function DetailCardFileName({
   onCheck: FileNameCheck;
 }) {
   const fileName = getFileName(block);
-  const [editing, setEditing] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  // The field opened under a click: the rest of a double or triple click
-  // lands on the field and would select a word or the whole name there.
-  const openingClick = useRef(false);
-  const edit = useNameEdit({
-    current: fileName,
-    check: (typed) => onCheck(block, typed).then((problem) => (
-      problem ? renameErrorMessage(problem) : null
-    )),
-    save: (typed) => onRename(block, typed),
-    reasonOf: refusalMessage,
-    end: () => setEditing(false),
-  });
-
-  // Another card in the path ends the edit, as Escape would.
-  useEffect(() => {
-    edit.cancel();
-  }, [block.slug]);
-
-  useEffect(() => {
-    const input = inputRef.current;
-    if (!editing || !input) return;
-    input.focus();
-    const end = input.value.length;
-    input.setSelectionRange(end, end);
-  }, [editing]);
-
-  const startEditing = () => {
-    openingClick.current = true;
-    edit.begin(fileName);
-    setEditing(true);
-  };
-
   return (
-    <Tooltip open={edit.notice !== null}>
-      <TooltipTrigger asChild>
-        <div
-          className={cn("flex min-w-0", editing && "flex-1")}
-          data-secondary-detail-card-name-anchor=""
-        >
-          {editing ? (
-            <input
-              ref={inputRef}
-              type="text"
-              aria-label="Rename file"
-              aria-invalid={edit.notice !== null}
-              defaultValue={fileName}
-              readOnly={edit.refused}
-              spellCheck={false}
-              autoComplete="off"
-              // The plate stays while the name is a field, so its extent shows.
-              className="state-active h-6 min-w-0 flex-1 rounded-1 border-0 bg-transparent px-2 font-mono text-sm leading-6 text-foreground outline-none"
-              data-secondary-detail-card-name-input=""
-              data-name-refused={edit.refused ? "" : undefined}
-              style={{ animationDuration: `${NAME_REFUSED_SHAKE_MS}ms` }}
-              onPointerDown={(event) => event.stopPropagation()}
-              onMouseDown={(event) => {
-                // A first press starts a new click count: from then on the
-                // field selects as any field does. Before it, a second or
-                // third press is the rest of the click that opened the field
-                // and leaves the cursor at the end of the name.
-                if (event.detail <= 1) openingClick.current = false;
-                else if (openingClick.current) event.preventDefault();
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  edit.submit(event.currentTarget.value);
-                } else if (event.key === "Escape") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  edit.cancel();
-                }
-              }}
-              onChange={(event) => edit.change(event.currentTarget.value)}
-              onBlur={(event) => edit.leave(event.currentTarget.value)}
-            />
-          ) : (
-            <div
-              onClick={startEditing}
-              className="h-6 min-w-0 cursor-text select-none truncate rounded-1 px-2 font-mono text-sm leading-6 text-muted-foreground hover:text-foreground"
-              title={fileName}
-              data-secondary-detail-card-name=""
-            >
-              {fileName}
-            </div>
-          )}
-        </div>
-      </TooltipTrigger>
-      <TooltipContent
-        align="start"
-        className="max-w-80 text-destructive"
-        data-secondary-detail-card-name-notice=""
-      >
-        {edit.notice}
-      </TooltipContent>
-    </Tooltip>
+    <ChromeNameField
+      name={fileName}
+      title={fileName}
+      fieldLabel="Rename file"
+      check={(typed) => onCheck(block, typed).then((problem) => (
+        problem ? renameErrorMessage(problem) : null
+      ))}
+      save={(typed) => onRename(block, typed)}
+      reasonOf={refusalMessage}
+      resetKey={block.slug}
+      marker="secondary-detail-card-name"
+    />
   );
 }
 

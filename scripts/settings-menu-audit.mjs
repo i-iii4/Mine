@@ -54,7 +54,7 @@ const server = await createServer({
           const props = { ...secondaryProps, detailBlock: detail ? block : null, detailEntered: detail, onDetailClose: () => { window.closeCount = (window.closeCount || 0) + 1; } };
           return React.createElement(ChromeShell, null,
           React.createElement(ChromeRow, { as: "header", separator: "bottom", className: "bg-chrome" },
-            React.createElement(TopCollectionSwitcher, { orderedTags: [], onNavigate: noop, onCreateCollection: noop, joinsNext: true }),
+            React.createElement(TopCollectionSwitcher, { onRename: async () => undefined, joinsNext: true }),
             React.createElement(MainSecondaryTopBar, props),
             React.createElement(AppSettingsMenu, { onSelectSection: id => { window.selectedSection = id; } })
           ),
@@ -222,7 +222,7 @@ try {
       // Regression: identical visual plates formerly anchored to 30px and
       // 24px targets, leaving 3px and 0px below the same divider.
       const gaps = [];
-      for (const selector of ['[data-top-collection-switcher]', '[data-top-chrome-settings-menu] button']) {
+      for (const selector of ['[data-top-chrome-settings-menu] button']) {
         const target = page.locator(selector);
         const box = await target.boundingBox();
         assert.equal(box.height, 30);
@@ -238,7 +238,7 @@ try {
         // Let Radix complete close-auto-focus before testing another control.
         await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       }
-      assert.deepEqual(gaps, [3, 3, 3], 'collection/settings/cloud menu divider gaps');
+      assert.deepEqual(gaps, [3], 'settings menu divider gap');
       // All controls stay within the row, and extending vertically does not
       // change horizontal placement or create overlapping targets.
       const targets = await page.locator('[data-chrome-control]').evaluateAll(nodes => nodes.map(node => {
@@ -264,14 +264,6 @@ try {
         assert.equal(await page.evaluate(() => window.actionCount), count + 2);
       }
       await page.evaluate(() => window.setActionStyle('pill'));
-      const collection = await page.locator('[data-top-collection-switcher]').boundingBox();
-      const dragCount = await page.evaluate(() => window.dragCount || 0);
-      await page.mouse.move(collection.x + collection.width / 2, collection.y + 1);
-      await page.mouse.down();
-      await page.mouse.move(collection.x + collection.width / 2 + 12, collection.y + 1, { steps: 3 });
-      await page.mouse.up();
-      assert.equal(await page.evaluate(() => window.dragCount), dragCount + 1);
-      assert.equal(await page.getByRole('menu').count(), 0, 'drag must not open a menu');
       console.log(`PASS ${theme} ${width}px ${deviceScaleFactor}x: plates 3/3px, icon canvas inset 16px, padded logo inherits button colors, menu navigation`);
     }
   }
