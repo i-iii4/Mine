@@ -15,6 +15,8 @@ import {
 import { App } from "./App";
 import { getVaultPath, recordStartupMilestone, reportNativeShellSmoke, tabPainted } from "@/lib/commands";
 import { installControlCharGuard } from "@/lib/controlCharGuard";
+import { startCardPictureVersions } from "@/lib/pictureVersions";
+import { answerSwipeQuestion } from "@/lib/horizontalScroller";
 import { scheduleAfterNextPaint } from "@/lib/startup";
 import { afterTwoFrames } from "@/lib/tabPage";
 import "./styles/global.css";
@@ -26,6 +28,15 @@ document.documentElement.dataset.appStarted = "";
 // A tab is a child page of its window, where the arrow keys can type stray
 // control characters into fields (SPEC_TABS.md, В80): one guard for the page.
 installControlCharGuard();
+
+// Every picture made from a card takes a new address once the card's
+// pictures are written again, before the page draws one
+// (SPEC_THUMBNAILS.md, «Адрес картинки»).
+void startCardPictureVersions();
+
+// The two-finger swipe asks the page what stands under the pointer
+// (SPEC_NARROW_WINDOW.md, У17).
+answerSwipeQuestion();
 
 // Apply the stored theme before first paint (the settings window owns the
 // controls; this window re-applies on "settings-changed").

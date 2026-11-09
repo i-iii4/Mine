@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ImagePreviewOverlay, visibleImagePreviewTransform } from "./ImagePreviewOverlay";
+import { ImagePreviewOverlay, visibleImagePreviewTransform, type ImagePreviewRequest } from "./ImagePreviewOverlay";
 import { copyMediaAssetToClipboard } from "@/lib/commands";
 
 vi.mock("@/lib/commands", () => ({
@@ -43,6 +43,13 @@ function readImageNumber(image: Element, attribute: string) {
   return Number(image.getAttribute(attribute));
 }
 
+/** The dialogs' animation ended on `element`. jsdom has no AnimationEvent:
+ *  React hears the event under the name it found, whichever that is. */
+function finishAnimation(element: Element) {
+  fireEvent.animationEnd(element);
+  fireEvent(element, new Event("webkitAnimationEnd", { bubbles: true }));
+}
+
 describe("ImagePreviewOverlay", () => {
   beforeEach(() => {
     copyMediaAssetToClipboardMock.mockReset();
@@ -81,13 +88,14 @@ describe("ImagePreviewOverlay", () => {
     );
 
     const overlay = screen.getByRole("dialog", { name: "Image preview" });
-    // The shared modal scrim over the whole page of the tab (16.10.2026).
-    expect(overlay).toHaveClass(
+    // The shared modal scrim over the whole page of the tab (16.10.2026), its
+    // own layer so the motion's opacity leaves the picture alone (05.11.2026).
+    expect(overlay).toHaveClass("fixed", "inset-0", "z-[70]");
+    expect(container.querySelector("[data-image-preview-scrim]")).toHaveClass(
       "modal-scrim",
       "image-preview-secondary-plane",
-      "fixed",
+      "absolute",
       "inset-0",
-      "z-[70]",
     );
     expect(overlay).not.toHaveClass("bg-white");
     expect(overlay).toHaveAttribute("aria-modal", "false");
@@ -113,7 +121,9 @@ describe("ImagePreviewOverlay", () => {
     expect(image).toHaveClass("image-preview-primary-media");
     // No shadow at all on the previewed image (user decision 16.10.2026).
     expect(image!.className).not.toMatch(/(^|\s)shadow-/);
-    expect(image).toHaveStyle({ transform: "translate3d(0px, 0px, 0) scale(1)" });
+    // At 100 % the picture keeps no layer of its own at rest (05.11.2026).
+    expect((image as HTMLElement).style.transform).not.toContain("3d");
+    expect(image!.className).not.toContain("will-change");
     expect(image).not.toHaveClass("cursor-ns-resize", "active:cursor-ns-resize");
 
     fireEvent.click(image!, { clientX: 400, clientY: 250 });
@@ -194,6 +204,10 @@ describe("ImagePreviewOverlay", () => {
     const collapseButton = screen.getByLabelText("Collapse image preview");
     expect(collapseButton).toHaveAttribute("data-image-preview-collapse");
     fireEvent.click(collapseButton);
+    // No source: it leaves as a dialog, gone when the exit has played.
+    expect(onClose).not.toHaveBeenCalled();
+    expect(stage).toHaveClass("animate-out", "fade-out-0", "zoom-out-95", "duration-200");
+    finishAnimation(stage!);
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -363,6 +377,7 @@ describe("ImagePreviewOverlay", () => {
     expect(screen.queryByLabelText("Copy media")).toBeNull();
     expect(screen.getByLabelText("Zoom in")).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Collapse image preview"));
+    finishAnimation(container.querySelector("[data-image-preview-stage]")!);
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(copyMediaAssetToClipboardMock).not.toHaveBeenCalled();
   });
@@ -378,5 +393,621 @@ describe("ImagePreviewOverlay", () => {
     fireEvent.error(container.querySelector("[data-image-preview-image]") as HTMLImageElement);
     expect(container.querySelector("[data-image-preview-image]")).toBeNull();
     expect(screen.getByRole("dialog", { name: "Image preview" })).toBeInTheDocument();
+  });
+});
+
+// SPEC_MEDIA_ASSET_ACTIONS.md, «Движение просмотра изображения».
+describe("ImagePreviewOverlay motion", () => {
+  type Box = { left: number; top: number; width: number; height: number };
+  const FRAME_MS = 1000 / 60;
+  /** More than the spring's 367 ms stop and the frames after it. */
+  const WHOLE_MOTION_FRAMES = 30;
+  const LAID: Box = { left: 200, top: 100, width: 800, height: 600 };
+  const SOURCE: Box = { left: 40, top: 500, width: 200, height: 150 };
+
+  let now = 0;
+  let pending = new Map<number, FrameRequestCallback>();
+  let nextFrame = 1;
+  let reducedMotion = false;
+
+  /** Runs one display frame: everything asked for before it. */
+  function frame(count = 1) {
+    for (let index = 0; index < count; index += 1) {
+      now += FRAME_MS;
+      const due = [...pending.values()];
+      pending = new Map();
+      act(() => {
+        for (const callback of due) callback(now);
+      });
+    }
+  }
+
+  /** Runs a closing to the frame the source shows under the picture again. */
+  function frameUntilSourceShows(source: HTMLElement) {
+    for (let index = 0; index < WHOLE_MOTION_FRAMES && source.style.visibility === "hidden"; index += 1) {
+      frame();
+    }
+    expect(source.style.visibility).toBe("");
+  }
+
+  function sourceFrame(box: Box = SOURCE, fit = "contain") {
+    const element = document.createElement("div");
+    const picture = document.createElement("img");
+    picture.src = "asset://localhost/source.jpg";
+    picture.style.objectFit = fit;
+    Object.defineProperty(picture, "naturalWidth", { configurable: true, value: 800 });
+    Object.defineProperty(picture, "naturalHeight", { configurable: true, value: 600 });
+    element.append(picture);
+    document.body.append(element);
+    setElementBox(element, box);
+    setElementBox(picture, box);
+    return { element, picture };
+  }
+
+  /** Renders the preview with a picture of known size at `LAID`. */
+  function open(request: Partial<ImagePreviewRequest>, onClose = vi.fn()) {
+    const preview: ImagePreviewRequest = {
+      src: "asset://localhost/photo.jpg",
+      mediaRef: "photo.jpg",
+      openedBy: "pointer",
+      ...request,
+    };
+    const result = render(<ImagePreviewOverlay preview={preview} onClose={onClose} />);
+    const image = result.container.querySelector<HTMLImageElement>("[data-image-preview-image]")!;
+    const stage = result.container.querySelector<HTMLElement>("[data-image-preview-stage]")!;
+    setElementBox(image, LAID);
+    setElementBox(stage, { left: 0, top: 0, width: 1200, height: 800 });
+    setImageLayout(image, { offsetLeft: LAID.left, offsetTop: LAID.top, offsetWidth: LAID.width, offsetHeight: LAID.height });
+    return {
+      ...result,
+      image,
+      stage,
+      overlay: result.container.querySelector<HTMLElement>("[data-image-preview-overlay]")!,
+      scrim: result.container.querySelector<HTMLElement>("[data-image-preview-scrim]")!,
+      controls: result.container.querySelector<HTMLElement>("[data-image-preview-controls]")!,
+      onClose,
+    };
+  }
+
+  /** The picture's box on screen, from what the motion wrote on it. */
+  function shownBox(image: HTMLElement): Box {
+    const transform = image.style.transform;
+    if (transform === "none" || transform === "") return LAID;
+    const move = /translate3d\((-?[\d.]+)px, (-?[\d.]+)px, 0\) scale\(([\d.]+)\)/.exec(transform)!;
+    const [x, y, scale] = [Number(move[1]), Number(move[2]), Number(move[3])];
+    const width = LAID.width * scale;
+    const height = LAID.height * scale;
+    return {
+      left: LAID.left + LAID.width / 2 + x - width / 2,
+      top: LAID.top + LAID.height / 2 + y - height / 2,
+      width,
+      height,
+    };
+  }
+
+  function expectBox(actual: Box, expected: Box, digits = 2) {
+    expect(actual.left).toBeCloseTo(expected.left, digits);
+    expect(actual.top).toBeCloseTo(expected.top, digits);
+    expect(actual.width).toBeCloseTo(expected.width, digits);
+    expect(actual.height).toBeCloseTo(expected.height, digits);
+  }
+
+  beforeEach(() => {
+    now = 0;
+    pending = new Map();
+    nextFrame = 1;
+    reducedMotion = false;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      const id = nextFrame++;
+      pending.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+      pending.delete(id);
+    });
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query.includes("prefers-reduced-motion") && reducedMotion,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(800);
+    vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(600);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    document.body.replaceChildren();
+  });
+
+  it("shows nothing until the motion starts, and the first frame stands exactly on the source", () => {
+    const { element } = sourceFrame();
+    const { image, scrim, controls } = open({ source: element });
+    // Before anything is painted: nothing on screen has changed.
+    expect(scrim.style.opacity).toBe("0");
+    expect(controls.style.opacity).toBe("0");
+    expect(image.style.visibility).toBe("hidden");
+
+    frame();
+    expect(image.style.visibility).toBe("");
+    expect(scrim.style.opacity).toBe("0");
+    expect(controls.style.opacity).toBe("0");
+    expectBox(shownBox(image), SOURCE);
+    expect(image.style.clipPath).toBe("inset(0px 0px 0px 0px round 0px)");
+    // Under a picture that lies on it, the source is still there this frame.
+    expect(element.style.visibility).toBe("");
+    frame();
+    expect(element.style.visibility).toBe("hidden");
+  });
+
+  it("opens the crop continuously out of a source that covers with the picture", () => {
+    const box = { left: 40, top: 400, width: 200, height: 200 };
+    const { element } = sourceFrame(box, "cover");
+    const { image } = open({ source: element });
+    frame();
+    // The whole picture, 4:3, covers the 200 px square, centred.
+    expectBox(shownBox(image), { left: 40 - (800 / 3 - 200) / 2, top: 400, width: 800 / 3, height: 200 });
+    const crops: number[] = [];
+    for (let index = 0; index < 22; index += 1) {
+      const inset = /inset\(([\d.]+)px ([\d.]+)px ([\d.]+)px ([\d.]+)px/.exec(image.style.clipPath);
+      if (inset) crops.push(Number(inset[2]));
+      frame();
+    }
+    expect(crops[0]).toBeCloseTo((800 - 600) / 2, 1);
+    for (let index = 1; index < crops.length; index += 1) {
+      expect(crops[index]!).toBeLessThanOrEqual(crops[index - 1]! + 1e-6);
+    }
+    expect(crops.at(-1)).toBeCloseTo(0, 1);
+  });
+
+  it("lands on the preview's place on the spring, the scrim with it and the toolbar in the second half", () => {
+    const { element } = sourceFrame();
+    const { image, scrim, controls } = open({ source: element });
+    frame();
+    let previousLeft = shownBox(image).left;
+    let previousScrim = 0;
+    let elapsed = 0;
+    let landedAt = 0;
+    for (let index = 0; index < WHOLE_MOTION_FRAMES; index += 1) {
+      frame();
+      elapsed += FRAME_MS;
+      if (image.style.clipPath === "") break;
+      const scrimShare = Number(scrim.style.opacity);
+      expect(scrimShare).toBeGreaterThanOrEqual(previousScrim);
+      previousScrim = scrimShare;
+      // Critically damped: it never passes its place.
+      const left = shownBox(image).left;
+      expect(left).toBeGreaterThanOrEqual(previousLeft - 1e-6);
+      expect(left).toBeLessThanOrEqual(LAID.left + 1e-3);
+      previousLeft = left;
+      if (elapsed < 183) expect(controls.style.opacity).toBe("0");
+      if (elapsed > 190 && Number(scrim.style.opacity) < 1) expect(Number(controls.style.opacity)).toBeGreaterThan(0);
+      if (scrimShare === 1 && landedAt === 0) landedAt = elapsed;
+    }
+    expect(Math.abs(landedAt - 367)).toBeLessThanOrEqual(2 * FRAME_MS);
+    // At rest: nothing of the motion stays on it, and the frame after, no layer.
+    expect(image.style.transform).toBe("none");
+    expect(scrim.style.opacity).toBe("");
+    expect(controls.style.opacity).toBe("");
+    expect(image.style.willChange).toBe("transform");
+    frame();
+    expect(image.style.willChange).toBe("");
+    expect(pending.size).toBe(0);
+  });
+
+  it("closes the same way back: toolbar in the first third, last frame on the source, the source shown before it goes", () => {
+    const { element } = sourceFrame();
+    const { image, scrim, controls, onClose } = open({ source: element });
+    frame(WHOLE_MOTION_FRAMES);
+    expect(element.style.visibility).toBe("hidden");
+
+    fireEvent.click(screen.getByLabelText("Collapse image preview"));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(shownBox(image).left).toBeCloseTo(LAID.left, 2);
+    let elapsed = 0;
+    for (let index = 0; index < WHOLE_MOTION_FRAMES && element.style.visibility === "hidden"; index += 1) {
+      frame();
+      elapsed += FRAME_MS;
+      if (elapsed > 125) expect(controls.style.opacity).toBe("0");
+    }
+    // The source shows under the picture lying exactly on it, and the scrim is gone.
+    expectBox(shownBox(image), SOURCE);
+    expect(scrim.style.opacity).toBe("0");
+    expect(onClose).not.toHaveBeenCalled();
+    frame();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns to the source wherever it stands at the moment of closing", () => {
+    const { element, picture } = sourceFrame();
+    const { image } = open({ source: element });
+    frame(WHOLE_MOTION_FRAMES);
+    const moved = { left: 300, top: 40, width: 200, height: 150 };
+    setElementBox(picture, moved);
+    setElementBox(element, moved);
+    fireEvent.click(screen.getByLabelText("Collapse image preview"));
+    frameUntilSourceShows(element);
+    expectBox(shownBox(image), moved);
+  });
+
+  it("starts a closing from the zoom and the pan the preview shows", () => {
+    const { element } = sourceFrame();
+    const { image } = open({ source: element });
+    frame(WHOLE_MOTION_FRAMES);
+    fireEvent.click(screen.getByLabelText("Zoom in"));
+    frame();
+    const zoomed = image.getAttribute("data-detail-image-preview-scale");
+    expect(zoomed).toBe("1.200");
+    fireEvent.click(screen.getByLabelText("Collapse image preview"));
+    const start = shownBox(image);
+    expect(start.width).toBeCloseTo(LAID.width * 1.2, 1);
+    frame();
+    // The first step is a small one, not a jump back to 100 %.
+    expect(shownBox(image).width).toBeGreaterThan(LAID.width * 1.1);
+    frameUntilSourceShows(element);
+    expectBox(shownBox(image), SOURCE);
+  });
+
+  it("turns back mid-way from where it stands, keeping its speed", () => {
+    const { element } = sourceFrame();
+    const { image, overlay, onClose } = open({ source: element });
+    frame();
+    const widths: number[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      frame();
+      widths.push(shownBox(image).width);
+    }
+    const speedAtTurn = widths[2]! - widths[1]!;
+    expect(speedAtTurn).toBeGreaterThan(0);
+
+    fireEvent.click(overlay);
+    expect(onClose).not.toHaveBeenCalled();
+    // The picture did not move at the press.
+    expect(shownBox(image).width).toBeCloseTo(widths[2]!, 6);
+    const back: number[] = [widths[2]!];
+    for (let index = 0; index < 12; index += 1) {
+      frame();
+      back.push(shownBox(image).width);
+    }
+    // It brakes first: still growing, by less than before, with no break in speed.
+    expect(back[1]! - back[0]!).toBeGreaterThan(0);
+    expect(back[1]! - back[0]!).toBeLessThan(speedAtTurn);
+    for (let index = 1; index < back.length - 1; index += 1) {
+      const change = (back[index + 1]! - back[index]!) - (back[index]! - back[index - 1]!);
+      expect(Math.abs(change)).toBeLessThan(Math.abs(speedAtTurn));
+    }
+    frame(WHOLE_MOTION_FRAMES);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expectBox(shownBox(image), SOURCE);
+  });
+
+  it("opens at once from the keyboard and closes at once by Escape", () => {
+    const { element } = sourceFrame();
+    const { image, scrim, controls, onClose } = open({ source: element, openedBy: "keyboard" });
+    // Standing in the frame of the key press, nothing asked for later.
+    expect(scrim.style.opacity).toBe("");
+    expect(controls.style.opacity).toBe("");
+    expect(image.style.visibility).toBe("");
+    expect(image.style.clipPath).toBe("");
+    expect(element.style.visibility).toBe("");
+    frame();
+    expect(image.style.clipPath).toBe("");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(pending.size).toBe(0);
+  });
+
+  it("fades in place on closing by the button after a keyboard opening, no way back to the source", () => {
+    const { element } = sourceFrame();
+    const { image, scrim, onClose } = open({ source: element, openedBy: "keyboard" });
+    frame();
+    fireEvent.click(screen.getByLabelText("Collapse image preview"));
+    frame(5);
+    expect(Number(image.style.opacity)).toBeLessThan(1);
+    expect(Number(scrim.style.opacity)).toBeCloseTo(Number(image.style.opacity), 6);
+    expect(image.style.clipPath).toBe("");
+    expect(shownBox(image)).toEqual(LAID);
+    frame(WHOLE_MOTION_FRAMES);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes at once by Escape mid-way, the source shown again", () => {
+    const { element } = sourceFrame();
+    const { onClose } = open({ source: element });
+    frame(6);
+    expect(element.style.visibility).toBe("hidden");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(element.style.visibility).toBe("");
+    expect(pending.size).toBe(0);
+  });
+
+  it("with Reduce motion only fades in place and out, by the same spring", () => {
+    reducedMotion = true;
+    const { element } = sourceFrame();
+    const { image, scrim, controls, onClose } = open({ source: element });
+    expect(scrim.style.opacity).toBe("0");
+    frame();
+    expect(image.style.opacity).toBe("0");
+    frame(6);
+    const share = Number(image.style.opacity);
+    expect(share).toBeGreaterThan(0);
+    expect(share).toBeLessThan(1);
+    expect(Number(scrim.style.opacity)).toBeCloseTo(share, 6);
+    expect(Number(controls.style.opacity)).toBeCloseTo(share, 6);
+    expect(image.style.clipPath).toBe("");
+    expect(image.style.transform).not.toContain("translate");
+    expect(element.style.visibility).toBe("");
+    frame(WHOLE_MOTION_FRAMES);
+    expect(image.style.opacity).toBe("");
+
+    fireEvent.click(screen.getByLabelText("Collapse image preview"));
+    frame(5);
+    expect(Number(image.style.opacity)).toBeLessThan(1);
+    expect(image.style.transform).not.toContain("translate");
+    frame(WHOLE_MOTION_FRAMES);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens and leaves as a dialog without a source", () => {
+    const { stage, scrim, controls, onClose } = open({ source: undefined });
+    expect(stage).toHaveClass("animate-in", "fade-in-0", "zoom-in-95", "duration-200");
+    expect(scrim).toHaveClass("animate-in", "fade-in-0");
+    expect(controls).toHaveClass("animate-in", "fade-in-0");
+    expect(scrim.style.opacity).toBe("");
+    finishAnimation(stage);
+    expect(stage).not.toHaveClass("animate-in");
+
+    fireEvent.click(screen.getByLabelText("Collapse image preview"));
+    expect(stage).toHaveClass("animate-out", "fade-out-0", "zoom-out-95", "duration-200");
+    expect(scrim).toHaveClass("animate-out", "fade-out-0");
+    expect(onClose).not.toHaveBeenCalled();
+    finishAnimation(stage);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens as a dialog from a source off screen", () => {
+    const { element } = sourceFrame({ left: 40, top: 5000, width: 200, height: 150 });
+    const { stage, scrim, image } = open({ source: element });
+    frame();
+    expect(stage).toHaveClass("animate-in", "zoom-in-95");
+    expect(scrim.style.opacity).toBe("");
+    expect(image.style.visibility).toBe("");
+    expect(element.style.visibility).toBe("");
+  });
+
+  it("leaves as a dialog when the source left the screen or the page, and the source shows again", () => {
+    const { element, picture } = sourceFrame();
+    const { stage, onClose } = open({ source: element });
+    frame(WHOLE_MOTION_FRAMES);
+    expect(element.style.visibility).toBe("hidden");
+    setElementBox(picture, { left: 40, top: 5000, width: 200, height: 150 });
+    fireEvent.click(screen.getByLabelText("Collapse image preview"));
+    expect(stage).toHaveClass("animate-out", "zoom-out-95", "duration-200");
+    expect(element.style.visibility).toBe("");
+    finishAnimation(stage);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps zoom, pan and the buttons working during the opening, the motion landing where they say", () => {
+    const { element } = sourceFrame();
+    const { image, overlay } = open({ source: element });
+    frame(6);
+
+    fireEvent.click(screen.getByLabelText("Zoom in"));
+    frame();
+    expect(image).toHaveAttribute("data-detail-image-preview-scale", "1.200");
+    expect(screen.getByText("120%")).toBeInTheDocument();
+    // No transition of its own under the spring.
+    expect(image.style.transition).toBe("none");
+
+    const before = shownBox(image);
+    fireEvent.pointerDown(image, { pointerId: 1, button: 0, clientX: 600, clientY: 400 });
+    fireEvent.pointerMove(image, { pointerId: 1, clientX: 640, clientY: 400 });
+    fireEvent.pointerUp(image, { pointerId: 1, clientX: 640, clientY: 400 });
+    frame();
+    expect(readImageNumber(image, "data-detail-image-preview-translate-x")).toBeGreaterThan(39);
+    // No jump: the frame after the gesture is the spring's next step.
+    expect(Math.abs(shownBox(image).left - before.left)).toBeLessThan(120);
+
+    fireEvent.wheel(overlay, { deltaY: -100, clientX: 600, clientY: 400 });
+    frame();
+    expect(readImageNumber(image, "data-detail-image-preview-scale")).toBeGreaterThan(1.2);
+
+    frame(WHOLE_MOTION_FRAMES);
+    // It lands exactly on what the gestures asked for.
+    expect(image.style.clipPath).toBe("");
+    const landed = /translate3d\((-?[\d.]+)px, (-?[\d.]+)px, 0\) scale\(([\d.]+)\)/.exec(image.style.transform)!;
+    expect(Number(landed[1])).toBeCloseTo(readImageNumber(image, "data-detail-image-preview-translate-x"), 2);
+    expect(Number(landed[2])).toBeCloseTo(readImageNumber(image, "data-detail-image-preview-translate-y"), 2);
+    expect(Number(landed[3])).toBeCloseTo(readImageNumber(image, "data-detail-image-preview-scale"), 2);
+  });
+
+  it("turns back when zoom, pan or a zoom button take over a closing, and the viewer stays", () => {
+    for (const takeOver of [
+      () => fireEvent.click(screen.getByLabelText("Zoom in")),
+      (image: HTMLElement) => fireEvent.pointerDown(image, { pointerId: 1, button: 0, clientX: 600, clientY: 400 }),
+      (_image: HTMLElement, overlay: HTMLElement) => fireEvent.wheel(overlay, { deltaY: -40, clientX: 600, clientY: 400 }),
+    ]) {
+      const { element } = sourceFrame();
+      const { image, overlay, onClose, scrim, unmount } = open({ source: element });
+      frame(WHOLE_MOTION_FRAMES);
+      fireEvent.click(screen.getByLabelText("Collapse image preview"));
+      expect(overlay).toHaveClass("pointer-events-none");
+      expect(image).toHaveClass("pointer-events-auto");
+      frame(5);
+      const shrinking = shownBox(image).width;
+      expect(shrinking).toBeLessThan(LAID.width);
+
+      takeOver(image, overlay);
+      expect(overlay).not.toHaveClass("pointer-events-none");
+      frame(WHOLE_MOTION_FRAMES);
+      expect(onClose).not.toHaveBeenCalled();
+      expect(scrim.style.opacity).toBe("");
+      expect(image.style.clipPath).toBe("");
+      unmount();
+      element.remove();
+    }
+  });
+
+  it("waits for the original at most 100 ms, then starts from what the source already draws", async () => {
+    const { element } = sourceFrame();
+    let finishDecode = () => undefined as void;
+    const decode = vi.fn(() => new Promise<void>((resolve) => {
+      finishDecode = resolve;
+    }));
+    Object.defineProperty(HTMLImageElement.prototype, "decode", { configurable: true, value: decode });
+    try {
+      const { image } = open({ source: element });
+      expect(decode).toHaveBeenCalledTimes(1);
+      frame(5);
+      expect(image.style.visibility).toBe("hidden");
+      frame(2);
+      // Past 100 ms: it started, the source's picture behind the original.
+      expect(image.style.visibility).toBe("");
+      expect(image.style.backgroundImage).toContain("source.jpg");
+      frame(WHOLE_MOTION_FRAMES);
+      // At rest and still undecoded: the backing stays until it is.
+      expect(image.style.clipPath).toBe("");
+      expect(image.style.backgroundImage).toContain("source.jpg");
+      await act(async () => {
+        finishDecode();
+        await Promise.resolve();
+      });
+      expect(image.style.backgroundImage).toBe("");
+    } finally {
+      Reflect.deleteProperty(HTMLImageElement.prototype, "decode");
+    }
+  });
+
+  it("asks no decoding of an original the source draws already: WebKit would blank it on the page", () => {
+    const { element, picture } = sourceFrame();
+    picture.src = "asset://localhost/photo.jpg";
+    const decode = vi.fn(() => Promise.resolve());
+    Object.defineProperty(HTMLImageElement.prototype, "decode", { configurable: true, value: decode });
+    try {
+      const { image } = open({ source: element });
+      frame();
+      expect(decode).not.toHaveBeenCalled();
+      // It starts at once, and the same picture stands behind nothing.
+      expect(image.style.visibility).toBe("");
+      expect(image.style.backgroundImage).toBe("");
+      expectBox(shownBox(image), SOURCE);
+    } finally {
+      Reflect.deleteProperty(HTMLImageElement.prototype, "decode");
+    }
+  });
+
+  it("starts as soon as the original is decoded", async () => {
+    const { element } = sourceFrame();
+    Object.defineProperty(HTMLImageElement.prototype, "decode", { configurable: true, value: () => Promise.resolve() });
+    try {
+      const { image } = open({ source: element });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      frame();
+      expect(image.style.visibility).toBe("");
+      expectBox(shownBox(image), SOURCE);
+    } finally {
+      Reflect.deleteProperty(HTMLImageElement.prototype, "decode");
+    }
+  });
+
+  it("holds the place of an original not loaded yet, sized from the source's picture", () => {
+    vi.restoreAllMocks();
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const { element } = sourceFrame();
+    const { image } = open({ source: element });
+    image.style.maxWidth = "1000px";
+    image.style.maxHeight = "600px";
+    frame();
+    expect(image.style.width).toBe("800px");
+    expect(image.style.height).toBe("600px");
+    expectBox(shownBox(image), SOURCE);
+  });
+
+  it("returns to the media now shown after the arrows", () => {
+    const first = sourceFrame();
+    const second = sourceFrame({ left: 700, top: 500, width: 200, height: 150 });
+    const siblings = [
+      { src: "asset://localhost/a.jpg", mediaRef: "a.jpg", source: first.element },
+      { src: "asset://localhost/b.jpg", mediaRef: "b.jpg", source: second.element },
+    ];
+    const { container } = open({
+      src: "asset://localhost/a.jpg",
+      mediaRef: "a.jpg",
+      source: first.element,
+      siblings,
+    });
+    frame(WHOLE_MOTION_FRAMES);
+    expect(first.element.style.visibility).toBe("hidden");
+
+    fireEvent.keyDown(document, { key: "ArrowRight" });
+    expect(first.element.style.visibility).toBe("");
+    expect(second.element.style.visibility).toBe("hidden");
+    const shownImage = container.querySelector<HTMLImageElement>("[data-image-preview-image]")!;
+    expect(shownImage.getAttribute("src")).toBe("asset://localhost/b.jpg");
+    setElementBox(shownImage, LAID);
+
+    fireEvent.click(screen.getByLabelText("Collapse image preview"));
+    frameUntilSourceShows(second.element);
+    expectBox(shownBox(shownImage), { left: 700, top: 500, width: 200, height: 150 });
+  });
+
+  it("leaves as a dialog from the media now shown when it has no source", () => {
+    const first = sourceFrame();
+    const { stage } = open({
+      src: "asset://localhost/a.jpg",
+      mediaRef: "a.jpg",
+      source: first.element,
+      siblings: [
+        { src: "asset://localhost/a.jpg", mediaRef: "a.jpg", source: first.element },
+        { src: "asset://localhost/c.jpg", mediaRef: "c.jpg" },
+      ],
+    });
+    frame(WHOLE_MOTION_FRAMES);
+    fireEvent.keyDown(document, { key: "ArrowRight" });
+    expect(first.element.style.visibility).toBe("");
+    fireEvent.click(screen.getByLabelText("Collapse image preview"));
+    expect(stage).toHaveClass("animate-out", "zoom-out-95");
+  });
+
+  it("does not take the second press of a double click for a press of its own", () => {
+    const { element } = sourceFrame();
+    const { overlay, image, onClose } = open({ source: element });
+    frame(4);
+    // The press that opened it lands on the background on its way.
+    fireEvent.click(overlay, { detail: 2 });
+    expect(overlay).not.toHaveClass("pointer-events-none");
+    frame(WHOLE_MOTION_FRAMES);
+
+    fireEvent.click(overlay, { detail: 1 });
+    expect(overlay).toHaveClass("pointer-events-none");
+    const page = vi.fn();
+    document.body.addEventListener("click", page);
+    // The one that closed it: it reaches neither the picture nor the page.
+    fireEvent.click(image, { detail: 2 });
+    fireEvent.click(document.body, { detail: 2 });
+    expect(page).not.toHaveBeenCalled();
+    expect(overlay).toHaveClass("pointer-events-none");
+    // A new press does reach the page under the closing viewer.
+    fireEvent.click(document.body, { detail: 1 });
+    expect(page).toHaveBeenCalledTimes(1);
+    document.body.removeEventListener("click", page);
+    frame(WHOLE_MOTION_FRAMES);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives everything back when it is taken off the page mid-way", () => {
+    const { element } = sourceFrame();
+    const { unmount } = open({ source: element });
+    frame(6);
+    expect(element.style.visibility).toBe("hidden");
+    unmount();
+    expect(element.style.visibility).toBe("");
+    expect(pending.size).toBe(0);
   });
 });

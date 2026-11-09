@@ -225,6 +225,9 @@ async function main() {
     await runAudit("scripts/reading-mode-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/editing-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/focus-ring-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/paste-feed-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/image-preview-motion-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/swipe-scroller-audit.mjs", {}, onAuditChildChange);
     // The browser's measures only: the Rust test of the save's time builds
     // the tests optimised and runs with `bun run test:editing-perf`.
     await runAudit("scripts/editing-perf-audit.mjs", {}, onAuditChildChange, ["--skip-rust"]);

@@ -20,6 +20,8 @@ class MemoryStore {
   values = new Map<string, unknown>();
   async get(store: string, key: string) { return structuredClone(this.values.get(`${store}:${key}`)); }
   async put(store: string, key: string, value: unknown) { this.values.set(`${store}:${key}`, structuredClone(value)); }
+  async delete(store: string, key: string) { this.values.delete(`${store}:${key}`); }
+  async all() { return []; }
 }
 
 // A folder on a full disk: it lists and creates entries, and refuses every write.

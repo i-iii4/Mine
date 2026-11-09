@@ -61,11 +61,12 @@ import {
   SIDEBAR_PREVIEW_DIVIDER_GAP_PX,
   sidebarBesideMinWidthPx,
   SIDEBAR_ROW_ACTION_GAP_PX,
+  sidebarRowsWidthPx,
   sidebarStripTileCount,
   sidebarStripTrackWidth,
 } from "@/lib/appLayout";
 import { observeStripWidth } from "@/lib/sidebarStripWidth";
-import { sidebarWidthHost } from "@/lib/sidebarWidth";
+import { sidebarColumnsHost, sidebarWidthHost } from "@/lib/sidebarWidth";
 import { SidebarOverlayWidthContext } from "./SidebarOverlay";
 import { holdStripPicture } from "@/lib/stripPictures";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
@@ -78,13 +79,15 @@ import {
 } from "@/lib/collectionHover";
 import { scheduleAfterOptimisticUiUpdate } from "@/lib/groupSelection";
 import { publishCollectionOrder } from "@/lib/cardCollections";
+import { scrollSidebarRowIntoView } from "@/lib/sidebarKeyboardFocus";
 import { SIDEBAR_THUMBNAIL_DRAG_ID_PREFIX, type BlockDragData } from "@/lib/blockDrag";
 import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
-import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
+import { hoverPreviewBesidePanel } from "@/lib/hoverPreviewWindow";
+import { RestingPointer } from "@/lib/restingPointer";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { SIDEBAR_WIDTH_MOTION_MS } from "@/hooks/useSidebarResize";
-import { ReadOnlyCardPreview } from "./Card";
+import { HoverPreviewWindowLayer, useHoverPreviewWindow } from "./HoverPreviewWindow";
 import {
   MicroPreviewThumbnail,
   microPreviewFromPreviewCard,
@@ -95,9 +98,10 @@ import {
 } from "./MicroPreviewThumbnail";
 import { CHANNEL_ICON_CARD_CLASS, ChannelIcon } from "./ChannelIcon";
 import { CHANNEL_ICON_MAX_CARDS, channelIconCardStyle, channelIconSpringStyle } from "@/lib/channelIcon";
+import { observeSidebarListMorph } from "@/lib/sidebarListMorph";
+import { observeSidebarLook } from "@/lib/sidebarLook";
 import { observeSidebarRowsMorph } from "@/lib/sidebarRowsMorph";
 
-const SIDEBAR_PREVIEW_WIDTH = 240;
 /// Where a part of the sidebar laid out by its width takes it from: beside
 /// the feed the sidebar's width, written on the part itself
 /// (sidebarWidth.ts); over the feed the panel's own width
@@ -105,15 +109,18 @@ const SIDEBAR_PREVIEW_WIDTH = 240;
 /// restyles these parts and nothing under them.
 type SidebarWidthSource = {
   ref: ((element: HTMLElement | null) => (() => void) | undefined) | undefined;
+  /// The same for a part that works the name's column out: beside the feed it
+  /// takes the sidebar's open width, which a collapse leaves alone.
+  columnsRef: ((element: HTMLElement | null) => (() => void) | undefined) | undefined;
   style: CSSProperties | undefined;
 };
 
 function useSidebarWidthSource(): SidebarWidthSource {
   const overlayWidth = useContext(SidebarOverlayWidthContext);
   return useMemo(() => (overlayWidth === null
-    ? { ref: sidebarWidthHost, style: undefined }
+    ? { ref: sidebarWidthHost, columnsRef: sidebarColumnsHost, style: undefined }
     // A custom property by construction; CSSProperties has no key for it.
-    : { ref: undefined, style: { "--sidebar-width": overlayWidth } as CSSProperties }), [overlayWidth]);
+    : { ref: undefined, columnsRef: undefined, style: { "--sidebar-width": overlayWidth } as CSSProperties }), [overlayWidth]);
 }
 
 /// The panel's box, as wide as the sidebar's width. The nav takes the panel's width less
@@ -130,9 +137,6 @@ function sidebarPanelStyle(widthAnimating: boolean): CSSProperties {
     "--sidebar-nav-min-width": `${sidebarBesideMinWidthPx() - 1}px`,
   } as CSSProperties;
 }
-const SIDEBAR_PREVIEW_FALLBACK_HEIGHT = 320;
-const SIDEBAR_PREVIEW_GAP = 8;
-const SIDEBAR_PREVIEW_VIEWPORT_MARGIN = 16;
 const SIDEBAR_PREVIEW_DIVIDER_GAP = SIDEBAR_PREVIEW_DIVIDER_GAP_PX;
 /// The row's box: 40 tall, with the last pixel reserved for the divider that
 /// closes it. Content centres in what is left, so the space above and below it
@@ -207,6 +211,9 @@ const LINK_ICON_SPRING_STYLE = channelIconSpringStyle();
 /// inset (DESIGN_SYSTEM.md, «оптический сдвиг»), as the bottom bar's first
 /// plate under it expects.
 const SIDEBAR_NAME_OPTICAL_SHIFT_PX = 1;
+/// Where a name's text starts in its cell: the column's lead, the row's inset
+/// and the optical shift. The name at rest and the name being edited alike.
+const SIDEBAR_NAME_CELL_PAD = `calc(var(--sidebar-name-lead, 0px) + var(--sidebar-row-pad-x) + ${SIDEBAR_NAME_OPTICAL_SHIFT_PX}px)`;
 /// The clear air between a name's dissolve and the guideline after it: the
 /// divider gap, less the optical shift the name's text already took. The cell
 /// ends on the guideline (the next column owns its pixel), so the tail stays
@@ -255,10 +262,8 @@ type SidebarPreviewTarget = {
   slug: string;
 };
 
-type SidebarPreviewPosition = {
-  top: number;
-  left: number;
-};
+/// A thumbnail under the pointer, as the preview window takes it.
+type SidebarPreviewWindowTarget = SidebarPreviewTarget & { element: Element };
 
 type CardMenuPoint = {
   x: number;
@@ -286,6 +291,9 @@ interface SidebarProps {
   /** The width is moving to a collapse or an opening: the only time it
    *  animates (useSidebarResize.ts). */
   widthAnimating: boolean;
+  /** Its width beside the feed when open, px (useSidebarResize.ts): while
+   *  the width moves the list keeps this width's look. */
+  openWidth?: number;
   vaultPath?: string;
   thumbsRootPath?: string;
   tags?: TagCount[];
@@ -326,10 +334,16 @@ interface SidebarProps {
   onCreateAndAssign?: (tag: string, blockSlug: string) => void;
   onRequestRename?: (block: LightBlock) => void;
   onRequestDelete?: (slug: string) => void;
+  /** A row of another place was pressed. */
   onNavClick?: () => void;
+  /** The row of the place the feed stands on was pressed over an open card:
+   *  no move, the card closes. */
+  onCardClose?: () => void;
   onScrollToTop?: () => void;
   keyboardNavigationFocus?: SidebarKeyboardNavigationFocus | null;
-  keyboardNavigationFocusPersistent?: boolean;
+  /** The row holding the keyboard's focus (SPEC_KEYBOARD.md, «Sidebar»); the page
+   *  owns it. Not the focus above: this one lights no name and opens no stack. */
+  keyboardFocusRowKey?: string | null;
   searchQuery?: string;
   /** ⌘-click on a row opens its route in a new tab, ⇧⌘-click in a new window
    *  (SPEC_TABS.md, В82). Absent on a page that is not a tab. */
@@ -363,8 +377,19 @@ const SidebarOpenElsewhereContext = createContext<((to: string, newWindow: boole
  *  (`immediate`). The wide rows' names keep answering the raw pointer at once
  *  (С7.10, user's decision of 02.10.2026). A context, not a prop: only the
  *  rows' frames read it. */
-type SidebarAnswerRows = { pointer: string | null; immediate: string | null };
-const SidebarAnswerRowContext = createContext<SidebarAnswerRows>({ pointer: null, immediate: null });
+type SidebarAnswerRows = {
+  pointer: string | null;
+  immediate: string | null;
+  keyboardFocus: string | null;
+  /** Over an open card that row shows its buttons as under the pointer (SPEC_KEYBOARD.md, М5). */
+  keyboardFocusShowsActions: boolean;
+};
+const SidebarAnswerRowContext = createContext<SidebarAnswerRows>({
+  pointer: null,
+  immediate: null,
+  keyboardFocus: null,
+  keyboardFocusShowsActions: false,
+});
 
 export function Sidebar(props: SidebarProps) {
   const { over } = useDndContext();
@@ -379,6 +404,7 @@ export function Sidebar(props: SidebarProps) {
 const SidebarCore = memo(function SidebarCore({
   dropOverId,
   widthAnimating,
+  openWidth,
   vaultPath,
   thumbsRootPath,
   orderedTags,
@@ -397,9 +423,10 @@ const SidebarCore = memo(function SidebarCore({
   onOpenCardMenu,
   hoverPreviewFrozen = false,
   onNavClick,
+  onCardClose,
   onScrollToTop,
   keyboardNavigationFocus,
-  keyboardNavigationFocusPersistent = false,
+  keyboardFocusRowKey = null,
   searchQuery = "",
   linkedBlockSlug,
   linkedTags = [],
@@ -409,12 +436,24 @@ const SidebarCore = memo(function SidebarCore({
   scrollEdgeFade = false,
 }: SidebarProps & { dropOverId: string | null }) {
   const widthSource = useSidebarWidthSource();
+  // While the width moves beside the feed (a collapse, an opening, leaving
+  // the row and coming back), the list keeps the look of its open width:
+  // no switch and no move between the List and the table (user's decision
+  // of 01.11.2026; sidebarListMorph.ts). Over the feed its width does not
+  // move.
+  const besideFeed = useContext(SidebarOverlayWidthContext) === null;
+  const heldWidth = widthAnimating && besideFeed ? openWidth : undefined;
+  const widthMotion = heldWidth === undefined ? undefined : String(heldWidth);
+  // For that whole motion the list is laid out at its open width, and the
+  // panel's edge slides over it like a curtain: no name is cut, faded or
+  // wrapped anew by a width it only passes (user's decision of 05.11.2026).
+  const heldListStyle: CSSProperties | undefined = heldWidth === undefined
+    ? undefined
+    : { minWidth: `max(var(--sidebar-nav-min-width), ${sidebarRowsWidthPx(heldWidth)}px)` };
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const navRef = useRef<HTMLElement>(null);
   const topFade = useTopFadeMask(navRef, scrollEdgeFade);
   const previewTriggerRefs = useRef(new Map<string, HTMLElement>());
-  const previewRef = useRef<HTMLDivElement | null>(null);
-  const previewCloseTimerRef = useRef<number | null>(null);
   const lastPointerPointRef = useRef<CardMenuPoint | null>(null);
   const previousHoverPreviewFrozenRef = useRef(hoverPreviewFrozen);
   // Mirror the live drag state so the deferred open timer can read the current
@@ -428,8 +467,6 @@ const SidebarCore = memo(function SidebarCore({
   const sidebarRowFocusKeyRef = useRef<string | null>(null);
   const sidebarRowFocusModeRef = useRef(false);
   const [hoveredPreview, setHoveredPreview] = useState<SidebarPreviewTarget | null>(null);
-  const [hoverPreviewBlock, setHoverPreviewBlock] = useState<IndexedBlock | null>(null);
-  const [hoverPreviewPosition, setHoverPreviewPosition] = useState<SidebarPreviewPosition | null>(null);
   const [sidebarRowFocusKey, setSidebarRowFocusKey] = useState<string | null>(null);
   const [sidebarRowFocusMode, setSidebarRowFocusMode] = useState(false);
   const [sidebarRowSwitching, setSidebarRowSwitching] = useState(false);
@@ -460,8 +497,17 @@ const SidebarCore = memo(function SidebarCore({
   const rowIntent = useHoverIntent(({ chosen }) => {
     setHoveredCollectionRow(feedRowKey(chosen));
   });
-  // The big preview's delay, resting pointer and warm window (С7.10).
-  const previewOpener = useHoverPreviewOpener(rowIntent.isSlow);
+  // The one preview window over the rows, as the open card's panel's (С7.11).
+  const [previewPointer] = useState(() => new RestingPointer());
+  const previewWindow = useHoverPreviewWindow<SidebarPreviewWindowTarget, LightBlock | IndexedBlock>({
+    intent: rowIntent,
+    readCard: getBlock,
+    place: hoverPreviewBesidePanel(
+      () => navRef.current?.closest("[data-sidebar-panel]")?.getBoundingClientRect() ?? null,
+      "after",
+    ),
+    onShown: setHoveredPreview,
+  });
   // The row under the pointer, set on every move without delay or speed gate.
   // After the list scrolls, a report at the pointer's same point is the list
   // moving, not the pointer (WebKit repeats it): no row lights until the
@@ -498,12 +544,20 @@ const SidebarCore = memo(function SidebarCore({
     };
   }, []);
 
-  // The rows move between the wide table and the narrow one as the list
-  // crosses the compact threshold (sidebarRowsMorph.ts).
-  useEffect(() => {
+  // The list's look follows its width, and its rows move as it crosses the
+  // compact threshold: between the wide table and the List
+  // (sidebarListMorph.ts), or the narrow table, postponed
+  // (sidebarRowsMorph.ts). Before the first paint, so no frame shows the
+  // wrong look.
+  useLayoutEffect(() => {
     const nav = navRef.current;
     if (!nav) return;
-    return observeSidebarRowsMorph(nav);
+    const stopList = observeSidebarListMorph(nav);
+    const stopTable = observeSidebarRowsMorph(nav);
+    return () => {
+      stopList();
+      stopTable();
+    };
   }, []);
 
   // Auto-scroll sidebar to the active channel (e.g. after Opt+Cmd+Arrow)
@@ -512,7 +566,7 @@ const SidebarCore = memo(function SidebarCore({
     if (!nav) return;
     const active = nav.querySelector<HTMLElement>('[aria-current="page"]');
     if (active) {
-      scrollActiveSidebarItemIntoView(nav, active);
+      scrollSidebarRowIntoView(nav, active, scrollBehavior());
     }
   }, [location.pathname]);
 
@@ -615,13 +669,6 @@ const SidebarCore = memo(function SidebarCore({
     }
   }, []);
 
-  const clearPreviewCloseTimer = useCallback(() => {
-    if (previewCloseTimerRef.current !== null) {
-      window.clearTimeout(previewCloseTimerRef.current);
-      previewCloseTimerRef.current = null;
-    }
-  }, []);
-
   const clearSidebarRowSwitchFrame = useCallback(() => {
     if (sidebarRowSwitchFrameRef.current !== null) {
       window.cancelAnimationFrame(sidebarRowSwitchFrameRef.current);
@@ -707,8 +754,15 @@ const SidebarCore = memo(function SidebarCore({
   // Connect answers the pointer by this mark, not by :hover: the button lets
   // the pointer through until its row lights, and WebKit names :hover only on
   // the next move. A pointer that lands right on it lights the row and shows
-  // the hovered word in one step, with no slide between (global.css).
+  // the hovered word in one step, with no slide between (global.css). The mark
+  // divides the row where a click divides it: over the button the button answers
+  // and the name stays as at rest, elsewhere the name answers and the button stays
+  // as at rest (SPEC_CARD_STATES.md, С7.10).
   const linkActionPointerRef = useRef<HTMLElement | null>(null);
+  // The keyboard's walk moves nothing: what it lights is in place in the frame it
+  // arrives, and goes the same way (SPEC_KEYBOARD.md, М5). The mark stays after the focus
+  // has left, until the pointer really moves, so the last row lets go at once too.
+  const [keyboardWalked, setKeyboardWalked] = useState(false);
   const markLinkActionUnderPointer = useCallback((row: HTMLElement | null, x: number, y: number, instant: boolean) => {
     const button = row?.querySelector<HTMLElement>("[data-sidebar-link-action]") ?? null;
     const rect = button?.getBoundingClientRect();
@@ -741,14 +795,18 @@ const SidebarCore = memo(function SidebarCore({
     const row = target && event.currentTarget.contains(target) ? target : null;
     const rowKey = row?.dataset.sidebarRowKey ?? null;
     rowIntent.move(rowKey, event.clientX, event.clientY);
+    if (previewPointer.move(event.clientX, event.clientY) && !isDropDraggingRef.current && !isTagDraggingRef.current) {
+      previewWindow.pointer(previewTargetUnder(event.target));
+    }
     const last = lastPointerPointRowRef.current;
     const still = last !== null && last.x === event.clientX && last.y === event.clientY;
     lastPointerPointRowRef.current = { x: event.clientX, y: event.clientY };
     if (listSlidRef.current && still) return;
     listSlidRef.current = false;
+    setKeyboardWalked(false);
     markLinkActionUnderPointer(row, event.clientX, event.clientY, pointerRowKeyRef.current !== rowKey);
     setPointerRow(rowKey);
-  }, [markLinkActionUnderPointer, rowIntent, setPointerRow]);
+  }, [markLinkActionUnderPointer, previewPointer, previewWindow, rowIntent, setPointerRow]);
 
   const handleSidebarPointerLeave = useCallback(() => {
     markLinkActionUnderPointer(null, 0, 0, false);
@@ -757,7 +815,37 @@ const SidebarCore = memo(function SidebarCore({
     pointerRowFocusRef.current = false;
     deactivateSidebarRowFocusMode();
     rowIntent.leave();
-  }, [deactivateSidebarRowFocusMode, markLinkActionUnderPointer, rowIntent, setPointerRow]);
+    previewPointer.leave();
+    previewWindow.leave();
+  }, [deactivateSidebarRowFocusMode, markLinkActionUnderPointer, previewPointer, previewWindow, rowIntent, setPointerRow]);
+
+  // What stands under a pointer that did not choose it goes quiet until the pointer
+  // really moves (С7.5): the list slid under it, or the keyboard took the list.
+  const quietRowsUnderPointer = useCallback(() => {
+    listSlidRef.current = true;
+    markLinkActionUnderPointer(null, 0, 0, false);
+    setPointerRow(null);
+    rowIntent.displace();
+    previewPointer.displace();
+    previewWindow.leave();
+  }, [markLinkActionUnderPointer, previewPointer, previewWindow, rowIntent, setPointerRow]);
+
+  const keyboardHoldsRow = keyboardFocusRowKey !== null;
+  if (keyboardHoldsRow && !keyboardWalked) setKeyboardWalked(true);
+  useEffect(() => {
+    if (keyboardHoldsRow) quietRowsUnderPointer();
+  }, [keyboardHoldsRow, quietRowsUnderPointer]);
+
+  // The keyboard's row shows its button as the pointer does (SPEC_KEYBOARD.md, М5), and
+  // a stepped word over the name's last line takes the same fade before it (global.css).
+  useLayoutEffect(() => {
+    if (keyboardFocusRowKey === null) return undefined;
+    const row = document.getElementById(sidebarRowDomId(keyboardFocusRowKey));
+    const button = row?.querySelector<HTMLElement>("[data-sidebar-link-action]");
+    if (!row || !button || !nameRunsUnderLinkWord(row, button)) return undefined;
+    button.setAttribute("data-sidebar-link-over-name", "");
+    return () => button.removeAttribute("data-sidebar-link-over-name");
+  }, [keyboardFocusRowKey]);
 
   const handleSidebarFocusCapture = useCallback((event: ReactFocusEvent<HTMLElement>) => {
     focusSidebarRowFromTarget(event.target, event.currentTarget);
@@ -789,9 +877,6 @@ const SidebarCore = memo(function SidebarCore({
     pointerRowFocusRef.current = false;
     setRowFocusFromPointer(false);
     activateSidebarRowFocus(rowKey);
-    if (keyboardNavigationFocusPersistent) {
-      return;
-    }
     sidebarKeyboardFocusTimerRef.current = window.setTimeout(() => {
       sidebarKeyboardFocusTimerRef.current = null;
       deactivateSidebarRowFocusMode();
@@ -802,7 +887,6 @@ const SidebarCore = memo(function SidebarCore({
     deactivateSidebarRowFocusMode,
     keyboardNavigationFocus?.rowKey,
     keyboardNavigationFocus?.sequence,
-    keyboardNavigationFocusPersistent,
     showEverythingRow,
     visibleTags,
   ]);
@@ -812,25 +896,19 @@ const SidebarCore = memo(function SidebarCore({
   }, [clearSidebarKeyboardFocusTimer]);
 
   const closePreview = useCallback(() => {
-    previewOpener.hide();
-    clearPreviewCloseTimer();
-    setHoveredPreview(null);
-  }, [clearPreviewCloseTimer, previewOpener]);
-
-  const requestPreviewClose = useCallback(() => {
-    if (hoverPreviewFrozen) return;
-    closePreview();
-  }, [closePreview, hoverPreviewFrozen]);
+    previewWindow.dismiss();
+  }, [previewWindow]);
 
   // The open preview belongs to its thumbnail. A strip update (a card saved
   // or removed, its thumbnail no longer confirmed, the row gone) can unmount
   // that thumbnail under a still pointer, and a node gone from the page never
   // reports the pointer leaving it: its unmount is that leave
   // (SPEC_FRONTEND.md, «Миниатюра ушла из-под превью»; SPEC_CARD_STATES.md,
-  // С7.10). Whatever thumbnail now stands there opens its own preview when
-  // the pointer enters it, by the shared rule.
+  // С7.10). Whatever thumbnail now stands there stays silent until the pointer
+  // really moves (С7.5).
   previewTriggerGoneRef.current = (key) => {
-    if (hoveredPreview?.key === key) requestPreviewClose();
+    previewPointer.displace();
+    if (!hoverPreviewFrozen) previewWindow.forget(key);
   };
 
   // Tear down an already-open preview the moment a drag begins.
@@ -840,28 +918,9 @@ const SidebarCore = memo(function SidebarCore({
     }
   }, [isDropDragging, isTagDragging, closePreview]);
 
-  const openPreview = useCallback((target: SidebarPreviewTarget) => {
-    // Never reveal the hover preview while a drag is in flight — pointer-enter
-    // events still fire over the sidebar during a drag-and-drop gesture.
-    if (hoverPreviewFrozen) return;
-    if (isDropDraggingRef.current || isTagDraggingRef.current) return;
-    if (!previewTriggerRefs.current.has(target.key)) return;
-    setHoveredPreview(target);
-  }, [hoverPreviewFrozen]);
-
-  const schedulePreviewOpen = useCallback((target: SidebarPreviewTarget) => {
-    if (hoverPreviewFrozen) return;
-    if (isDropDraggingRef.current || isTagDraggingRef.current) return;
-    clearPreviewCloseTimer();
-    setHoveredPreview(null);
-    previewOpener.request(() => openPreview(target));
-  }, [clearPreviewCloseTimer, hoverPreviewFrozen, openPreview, previewOpener]);
-
   useEffect(() => {
-    if (hoverPreviewFrozen) {
-      previewOpener.cancel();
-    }
-  }, [hoverPreviewFrozen, previewOpener]);
+    previewWindow.setFrozen(hoverPreviewFrozen);
+  }, [hoverPreviewFrozen, previewWindow]);
 
   const pointerIsInsidePreviewTrigger = useCallback((target: SidebarPreviewTarget) => {
     const point = lastPointerPointRef.current;
@@ -895,8 +954,7 @@ const SidebarCore = memo(function SidebarCore({
 
   const openPreviewCardMenu = useCallback((target: SidebarPreviewTarget, point: CardMenuPoint) => {
     if (!onOpenCardMenu) return;
-    previewOpener.cancel();
-    clearPreviewCloseTimer();
+    previewWindow.cancelPending();
     void getBlock(target.slug)
       .then((block) => {
         if (block) {
@@ -906,73 +964,23 @@ const SidebarCore = memo(function SidebarCore({
       .catch((error) => {
         void error;
       });
-  }, [clearPreviewCloseTimer, onOpenCardMenu, previewOpener]);
+  }, [onOpenCardMenu, previewWindow]);
 
   useEffect(() => () => {
-    clearPreviewCloseTimer();
     clearSidebarRowSwitchFrame();
-  }, [clearPreviewCloseTimer, clearSidebarRowSwitchFrame]);
-
-  useEffect(() => {
-    if (!hoveredPreview) {
-      setHoverPreviewBlock(null);
-      setHoverPreviewPosition(null);
-      return;
-    }
-    let cancelled = false;
-    setHoverPreviewBlock(null);
-
-    const trigger = previewTriggerRefs.current.get(hoveredPreview.key);
-    if (trigger) {
-      setHoverPreviewPosition(
-        computeSidebarPreviewPosition(
-          trigger.getBoundingClientRect(),
-          previewRef.current?.getBoundingClientRect().height ?? SIDEBAR_PREVIEW_FALLBACK_HEIGHT,
-        ),
-      );
-    } else {
-      setHoverPreviewPosition(null);
-    }
-
-    void getBlock(hoveredPreview.slug)
-      .then((block) => {
-        if (cancelled) return;
-        setHoverPreviewBlock(block);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setHoverPreviewBlock(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [hoveredPreview]);
-
-  useEffect(() => {
-    if (!hoveredPreview || !hoverPreviewBlock || !hoverPreviewPosition || !previewRef.current) {
-      return;
-    }
-    const trigger = previewTriggerRefs.current.get(hoveredPreview.key);
-    if (!trigger) return;
-
-    const nextPosition = computeSidebarPreviewPosition(
-      trigger.getBoundingClientRect(),
-      previewRef.current.getBoundingClientRect().height,
-    );
-    if (
-      Math.abs(nextPosition.top - hoverPreviewPosition.top) > 1 ||
-      Math.abs(nextPosition.left - hoverPreviewPosition.left) > 1
-    ) {
-      setHoverPreviewPosition(nextPosition);
-    }
-  }, [hoveredPreview, hoverPreviewBlock, hoverPreviewPosition]);
+  }, [clearSidebarRowSwitchFrame]);
 
   const immediateAnswerRowKey = editingRowKey
     ?? dropOverRowKey
     ?? (sidebarRowFocusMode && !rowFocusFromPointer ? sidebarRowFocusKey : null);
   const answerRows = useMemo<SidebarAnswerRows>(
-    () => ({ pointer: intentRowKey, immediate: immediateAnswerRowKey }),
-    [intentRowKey, immediateAnswerRowKey],
+    () => ({
+      pointer: intentRowKey,
+      immediate: immediateAnswerRowKey,
+      keyboardFocus: keyboardFocusRowKey,
+      keyboardFocusShowsActions: isLinkEditorActive,
+    }),
+    [intentRowKey, immediateAnswerRowKey, isLinkEditorActive, keyboardFocusRowKey],
   );
 
   return (
@@ -995,9 +1003,10 @@ const SidebarCore = memo(function SidebarCore({
       {/* Matches the nav's frozen min-width: the band is sized by this wrapper,
           and a narrower wrapper would leave the right edge of the rows
           uncovered as the panel is resized down. */}
-      <div className="relative flex min-h-0 min-w-[var(--sidebar-nav-min-width)] flex-1 flex-col">
+      <div className="relative flex min-h-0 min-w-[var(--sidebar-nav-min-width)] flex-1 flex-col" style={heldListStyle}>
       <nav
         ref={topFade.ref}
+        style={heldListStyle}
         className={cn(
           // min-width freezes the menu (`--sidebar-nav-min-width`): below it the
           // nav keeps this width and the panel's overflow-hidden clips it.
@@ -1008,20 +1017,17 @@ const SidebarCore = memo(function SidebarCore({
           "px-[var(--sidebar-nav-pad-x)] pt-[var(--sidebar-nav-pad-top)]",
         )}
         data-sidebar-scroll
+        data-sidebar-width-motion={widthMotion}
         data-sidebar-tag-dragging={isTagDragging ? "true" : undefined}
         data-sidebar-top-fade={topFade.scrolled ? "true" : undefined}
         data-sidebar-link-editor-mode={isLinkEditorActive ? "true" : undefined}
         data-sidebar-row-focus-mode={hasSidebarRowFocusMode ? "true" : undefined}
+        data-sidebar-keyboard-walk={keyboardHoldsRow || keyboardWalked ? "true" : undefined}
         data-sidebar-row-switching={sidebarRowSwitching ? "true" : undefined}
         onPointerMove={handleSidebarPointerMove}
         onPointerLeave={handleSidebarPointerLeave}
-        onScroll={() => {
-          // The list slid under the pointer: the next real move names the row.
-          listSlidRef.current = true;
-          markLinkActionUnderPointer(null, 0, 0, false);
-          setPointerRow(null);
-          rowIntent.displace();
-        }}
+        // The list slid under the pointer: the next real move names the row.
+        onScroll={quietRowsUnderPointer}
         onFocusCapture={handleSidebarFocusCapture}
         onBlurCapture={handleSidebarBlurCapture}
       >
@@ -1031,7 +1037,7 @@ const SidebarCore = memo(function SidebarCore({
         <div className="relative" data-sidebar-rows>
           <div className="pointer-events-none absolute inset-0" data-sidebar-guidelines>
             <span
-              ref={widthSource.ref}
+              ref={widthSource.columnsRef}
               aria-hidden="true"
               data-sidebar-guideline="left"
               className="absolute inset-y-0 w-px bg-sidebar-border"
@@ -1063,15 +1069,13 @@ const SidebarCore = memo(function SidebarCore({
               cards={channelPreviews.get("__all__")}
               previewsPending={previewsPending}
               previewKeyPrefix="all"
-              onPreviewEnter={schedulePreviewOpen}
-              onPreviewLeave={requestPreviewClose}
               onPreviewClick={openPreviewBlock}
               onPreviewContextMenu={openPreviewCardMenu}
               onPreviewTriggerRef={setPreviewTriggerRef}
               activePreviewKey={hoveredPreview?.key ?? null}
               end
               onClick={onNavClick}
-              onSameClick={isLinkEditorActive ? onNavClick : onScrollToTop}
+              onSameClick={isLinkEditorActive ? onCardClose : onScrollToTop}
               rowKey="all"
               isSidebarRowFocused={effectiveSidebarRowFocusKey === "all"}
               staticConnected={isLinkEditorActive || isSelectionEditorActive}
@@ -1117,8 +1121,6 @@ const SidebarCore = memo(function SidebarCore({
                   cards={channelPreviews.get(tc.tag)}
                   previewsPending={previewsPending}
                   previewKeyPrefix={`tag:${tc.tag}`}
-                  onPreviewEnter={schedulePreviewOpen}
-                  onPreviewLeave={requestPreviewClose}
                   onPreviewClick={openPreviewBlock}
                   onPreviewContextMenu={openPreviewCardMenu}
                   onPreviewTriggerRef={setPreviewTriggerRef}
@@ -1135,7 +1137,7 @@ const SidebarCore = memo(function SidebarCore({
                   onRenameCheck={onCheckCollectionName}
                   onDelete={onDeleteTag}
                   onClick={onNavClick}
-                  onSameClick={isLinkEditorActive ? undefined : onScrollToTop}
+                  onSameClick={isLinkEditorActive ? onCardClose : onScrollToTop}
                   rowKey={`tag:${tc.tag}`}
                   isIntentRow={intentRowKey === `tag:${tc.tag}`}
                   isSidebarRowFocused={effectiveSidebarRowFocusKey === `tag:${tc.tag}`}
@@ -1152,26 +1154,13 @@ const SidebarCore = memo(function SidebarCore({
       <TopFadeScrim scrolled={topFade.scrolled} surface="sidebar" color="var(--sidebar)" />
       </div>
 
-      {vaultPath
-        && hoverPreviewPosition
-        && hoverPreviewBlock && (
-          <div
-            ref={previewRef}
-            className="pointer-events-none fixed z-50"
-            style={{
-              top: hoverPreviewPosition.top,
-              left: hoverPreviewPosition.left,
-              width: SIDEBAR_PREVIEW_WIDTH,
-            }}
-            data-sidebar-thumbnail-hover-preview
-          >
-            <ReadOnlyCardPreview
-              block={hoverPreviewBlock}
-              vaultPath={vaultPath}
-              thumbsRootPath={thumbsRootPath}
-              width={SIDEBAR_PREVIEW_WIDTH}
-            />
-          </div>
+      {vaultPath && (
+        <HoverPreviewWindowLayer
+          controller={previewWindow}
+          vaultPath={vaultPath}
+          thumbsRootPath={thumbsRootPath}
+          attribute="data-sidebar-thumbnail-hover-preview"
+        />
       )}
 
     </aside>
@@ -1180,71 +1169,12 @@ const SidebarCore = memo(function SidebarCore({
 
 // ─── Components ──────────────────────────────────────────────────────────────
 
-function scrollActiveSidebarItemIntoView(nav: HTMLElement, active: HTMLElement) {
-  const navRect = nav.getBoundingClientRect();
-  const activeRect = active.getBoundingClientRect();
-  const style = getComputedStyle(nav);
-  const topInset = parseFloat(style.paddingTop) || 0;
-  const bottomInset = parseFloat(style.paddingBottom) || 0;
-  const topLimit = navRect.top + topInset;
-  const bottomLimit = navRect.bottom - bottomInset;
-
-  let nextTop = nav.scrollTop;
-  if (activeRect.top < topLimit) {
-    nextTop -= topLimit - activeRect.top;
-  } else if (activeRect.bottom > bottomLimit) {
-    nextTop += activeRect.bottom - bottomLimit;
-  } else {
-    return;
-  }
-
-  if (typeof nav.scrollTo === "function") {
-    nav.scrollTo({ top: Math.max(0, nextTop), behavior: scrollBehavior() });
-  } else {
-    nav.scrollTop = Math.max(0, nextTop);
-  }
-}
-
-function computeSidebarPreviewPosition(
-  triggerRect: DOMRect,
-  previewHeight: number,
-): SidebarPreviewPosition {
-  const viewportWidth = window.innerWidth;
-  const viewportHeight = window.innerHeight;
-  const left = Math.max(
-    SIDEBAR_PREVIEW_VIEWPORT_MARGIN,
-    Math.min(
-      triggerRect.left,
-      viewportWidth - SIDEBAR_PREVIEW_VIEWPORT_MARGIN - SIDEBAR_PREVIEW_WIDTH,
-    ),
-  );
-  const canOpenDown =
-    triggerRect.bottom + SIDEBAR_PREVIEW_GAP + previewHeight <=
-    viewportHeight - SIDEBAR_PREVIEW_VIEWPORT_MARGIN;
-  const canOpenUp =
-    triggerRect.top - SIDEBAR_PREVIEW_GAP - previewHeight >= SIDEBAR_PREVIEW_VIEWPORT_MARGIN;
-  // Too tall for either side: the preview stands beside the thumbnail
-  // instead, so it never covers the thumbnail it answers (user's remark of
-  // 22.10.2026).
-  if (!canOpenDown && !canOpenUp) {
-    const besideRight = triggerRect.right + SIDEBAR_PREVIEW_GAP;
-    const sideLeft = besideRight + SIDEBAR_PREVIEW_WIDTH <= viewportWidth - SIDEBAR_PREVIEW_VIEWPORT_MARGIN
-      ? besideRight
-      : Math.max(SIDEBAR_PREVIEW_VIEWPORT_MARGIN, triggerRect.left - SIDEBAR_PREVIEW_GAP - SIDEBAR_PREVIEW_WIDTH);
-    const centred = triggerRect.top + triggerRect.height / 2 - previewHeight / 2;
-    const sideTop = Math.max(
-      SIDEBAR_PREVIEW_VIEWPORT_MARGIN,
-      Math.min(centred, viewportHeight - SIDEBAR_PREVIEW_VIEWPORT_MARGIN - previewHeight),
-    );
-    return { top: sideTop, left: sideLeft };
-  }
-  const top = canOpenDown
-    ? triggerRect.bottom + SIDEBAR_PREVIEW_GAP
-    : Math.max(
-        SIDEBAR_PREVIEW_VIEWPORT_MARGIN,
-        triggerRect.top - SIDEBAR_PREVIEW_GAP - previewHeight,
-      );
-  return { top, left };
+/// The thumbnail under a pointer event, as the preview window's target.
+function previewTargetUnder(target: EventTarget): SidebarPreviewWindowTarget | null {
+  const tile = target instanceof Element ? target.closest<HTMLElement>("[data-sidebar-preview-key]") : null;
+  if (!tile) return null;
+  const { sidebarPreviewKey: key, sidebarPreviewRow: rowKey, sidebarPreviewSlug: slug } = tile.dataset;
+  return key && rowKey && slug ? { key, rowKey, slug, element: tile } : null;
 }
 
 function clientPointFromEvent(event: Event): CardMenuPoint | null {
@@ -1307,6 +1237,8 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
   }, [forwardedRef, nodeRef]);
   const answerRows = useContext(SidebarAnswerRowContext);
   const isAnswerRow = rowKey === answerRows.pointer || rowKey === answerRows.immediate;
+  // A name being typed holds the keyboard in its field; the row returns to it after.
+  const holdsKeyboardFocus = rowKey === answerRows.keyboardFocus && !isEditing;
 
   return (
     <div
@@ -1314,8 +1246,9 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
       ref={setRefs}
       style={style}
       {...domProps}
-      // A slow pointer is on this row (С7.10): its button shows.
-      data-sidebar-row-intent={isIntentRow ? "true" : undefined}
+      // A slow pointer is on this row (С7.10), or over an open card the keyboard's
+      // focus, which presses the button with Enter (SPEC_KEYBOARD.md, М5): its button shows.
+      data-sidebar-row-intent={isIntentRow || (holdsKeyboardFocus && answerRows.keyboardFocusShowsActions) ? "true" : undefined}
       // A compact item's stack opens for this (SidebarAnswerRowContext).
       data-sidebar-row-answer={isAnswerRow ? "true" : undefined}
       data-sidebar-row=""
@@ -1324,6 +1257,7 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
       data-sidebar-row-active={isCurrentRoute ? "true" : undefined}
       data-sidebar-row-linked={isLinked ? "true" : undefined}
       data-sidebar-row-focused={isSidebarRowFocused ? "true" : undefined}
+      data-sidebar-row-keyboard-focus={holdsKeyboardFocus ? "true" : undefined}
       data-sidebar-row-editing={isEditing ? "true" : undefined}
       data-sidebar-text-drop-tag={textDropTag}
       className={cn(
@@ -1331,6 +1265,10 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
         // Lifted over the column lines on the table's own surface; its seam
         // (`::after`) paints over that surface and stays.
         spansRow && "z-10 bg-sidebar",
+        // The keyboard's focus (SPEC_KEYBOARD.md, М5; user's decision of
+        // 05.11.2026): a light grey. Only here: the pointer
+        // and the open collection have no plate (decision of 22.10.2026).
+        holdsKeyboardFocus && "state-active",
         className,
       )}
     >
@@ -1355,7 +1293,7 @@ function SidebarRowTitleCell({
   // The name's column follows the sidebar's width, which the cell holds
   // itself (global.css, `--sidebar-name-col`).
   const widthSource = useSidebarWidthSource();
-  const widthRef = widthSource.ref;
+  const widthRef = widthSource.columnsRef;
   const cellRef = useCallback((cell: HTMLSpanElement | null) => {
     if (!cell) return undefined;
     const stopClip = trackTextClip(cell);
@@ -1378,7 +1316,7 @@ function SidebarRowTitleCell({
       )}
       style={{
         ...SIDEBAR_ROW_TEXT_MASK_STYLE,
-        paddingLeft: `calc(var(--sidebar-name-lead, 0px) + var(--sidebar-row-pad-x) + ${SIDEBAR_NAME_OPTICAL_SHIFT_PX}px)`,
+        paddingLeft: SIDEBAR_NAME_CELL_PAD,
         ...widthSource.style,
       }}
     >
@@ -1446,8 +1384,6 @@ function SidebarRowBody({
   previewKeyPrefix,
   rowKey,
   sourceTag,
-  onPreviewEnter,
-  onPreviewLeave,
   onPreviewClick,
   onPreviewContextMenu,
   onPreviewTriggerRef,
@@ -1473,8 +1409,6 @@ function SidebarRowBody({
   rowKey: string;
   /** The row's collection; absent on Everything. */
   sourceTag?: string;
-  onPreviewEnter: (target: SidebarPreviewTarget) => void;
-  onPreviewLeave: () => void;
   onPreviewClick: (target: SidebarPreviewTarget) => void;
   onPreviewContextMenu?: (target: SidebarPreviewTarget, point: CardMenuPoint) => void;
   onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
@@ -1539,8 +1473,6 @@ function SidebarRowBody({
     previewKeyPrefix,
     rowKey,
     sourceTag,
-    onPreviewEnter,
-    onPreviewLeave,
     onPreviewClick,
     onPreviewContextMenu,
     onPreviewTriggerRef,
@@ -1565,6 +1497,9 @@ function SidebarRowBody({
           "font-sans text-base text-muted-foreground outline-none",
         )}
         data-sidebar-row-body=""
+        // The count the Contents list stands on the table while the rows
+        // move from it or to it (global.css, «List and table»).
+        data-sidebar-count={count ?? undefined}
       >
         <SidebarRowTitleCell>
           {label}
@@ -1660,15 +1595,15 @@ function SidebarRowBody({
           <span data-sidebar-link-label="">
           {linkEditor.checked ? (
             <span className={ROW_INTENT_LABEL_STACK}>
-              <span className={cn(ROW_INTENT_FADE, ROW_INTENT_HIDES)}>Connected</span>
-              <span className={cn(ROW_INTENT_FADE, ROW_INTENT_SHOWS, "text-detach")}>Disconnect</span>
+              <span className={ROW_INTENT_FADE} data-sidebar-link-word="rest" data-sidebar-link-connected="">Connected</span>
+              <span className={cn(ROW_INTENT_FADE, "text-detach")} data-sidebar-link-word="press">Disconnect</span>
             </span>
           ) : linkEditor.partial !== undefined ? (
             <span className={ROW_INTENT_LABEL_STACK}>
-              <span className={cn(ROW_INTENT_FADE, ROW_INTENT_HIDES, "font-mono font-normal")} data-sidebar-link-partial="">
+              <span className={cn(ROW_INTENT_FADE, "font-mono font-normal")} data-sidebar-link-word="rest" data-sidebar-link-partial="">
                 {linkEditor.partial}
               </span>
-              <span className={cn(ROW_INTENT_FADE, ROW_INTENT_SHOWS)}>Connect</span>
+              <span className={ROW_INTENT_FADE} data-sidebar-link-word="press">Connect</span>
             </span>
           ) : (
             "Connect"
@@ -1734,12 +1669,22 @@ function SidebarNameNotice({
   );
 }
 
+/// A name being edited stands where it stands at rest, in every look (user's
+/// decision of 05.11.2026): the row's body and the name's cell are the rest
+/// row's own (`data-sidebar-row-body`, `data-sidebar-name-cell`, global.css), so
+/// entering and leaving the edit moves nothing. The cell runs on to the submit
+/// button; a trial order that puts other columns before the name keeps their
+/// room (`--sidebar-name-left`). In the Contents list a row's height comes from
+/// the name's lines and the count beside it: unseen copies of them keep it
+/// (`data-sidebar-editable-row-ghost`), the field on the first line.
 function SidebarEditableRowBody({
   defaultValue,
   placeholder,
   ariaLabel,
   submitAction,
   edit,
+  restLabel,
+  restCount,
 }: {
   defaultValue: string;
   placeholder: string;
@@ -1750,11 +1695,15 @@ function SidebarEditableRowBody({
     shortcutKey: string;
   };
   edit: NameEdit;
+  /** The name and the count of the row at rest, when it has them. */
+  restLabel?: string;
+  restCount?: number | null;
 }) {
   return (
     <SidebarNameNotice notice={edit.notice}>
       <div
-        className={cn(SIDEBAR_ROW_BOX_CLASS, "pl-[var(--sidebar-row-pad-x)] font-sans text-base text-muted-foreground")}
+        className={cn(SIDEBAR_ROW_BOX_CLASS, "font-sans text-base text-muted-foreground")}
+        data-sidebar-row-body=""
         data-sidebar-editable-row-body
         data-sidebar-editable-row-full-width
       >
@@ -1768,13 +1717,27 @@ function SidebarEditableRowBody({
             style={{ right: "var(--sidebar-zone)" }}
           />
         )}
-        <InlineChannelNameEditor
-          defaultValue={defaultValue}
-          placeholder={placeholder}
-          ariaLabel={ariaLabel}
-          submitAction={submitAction}
-          edit={edit}
-        />
+        <span
+          data-sidebar-name-cell=""
+          className="min-w-0 flex-1 overflow-hidden whitespace-nowrap"
+          style={{ paddingLeft: SIDEBAR_NAME_CELL_PAD, marginLeft: "var(--sidebar-name-left, 0px)" }}
+        >
+          <InlineChannelNameEditor
+            defaultValue={defaultValue}
+            placeholder={placeholder}
+            ariaLabel={ariaLabel}
+            submitAction={submitAction}
+            edit={edit}
+          />
+          {restLabel !== undefined && (
+            <span aria-hidden="true" data-sidebar-editable-row-ghost="">
+              <span data-sidebar-name-text="">{restLabel}</span>
+            </span>
+          )}
+        </span>
+        {restLabel !== undefined && (
+          <span aria-hidden="true" data-sidebar-editable-row-ghost="" data-sidebar-meta-count="">{restCount ?? ""}</span>
+        )}
       </div>
     </SidebarNameNotice>
   );
@@ -1787,8 +1750,6 @@ const NavItem = memo(function NavItem({
   cards,
   previewsPending,
   previewKeyPrefix,
-  onPreviewEnter,
-  onPreviewLeave,
   onPreviewClick,
   onPreviewContextMenu,
   onPreviewTriggerRef,
@@ -1808,8 +1769,6 @@ const NavItem = memo(function NavItem({
   /** The space's previews are still being built; see `SidebarProps`. */
   previewsPending: boolean;
   previewKeyPrefix: string;
-  onPreviewEnter: (target: SidebarPreviewTarget) => void;
-  onPreviewLeave: () => void;
   onPreviewClick: (target: SidebarPreviewTarget) => void;
   onPreviewContextMenu?: (target: SidebarPreviewTarget, point: CardMenuPoint) => void;
   onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
@@ -1840,8 +1799,6 @@ const NavItem = memo(function NavItem({
         previewsPending={previewsPending}
         previewKeyPrefix={previewKeyPrefix}
         rowKey={rowKey}
-        onPreviewEnter={onPreviewEnter}
-        onPreviewLeave={onPreviewLeave}
         onPreviewClick={onPreviewClick}
         onPreviewContextMenu={onPreviewContextMenu}
         onPreviewTriggerRef={onPreviewTriggerRef}
@@ -1863,8 +1820,6 @@ const TagNavItem = memo(function TagNavItem({
   cards,
   previewsPending,
   previewKeyPrefix,
-  onPreviewEnter,
-  onPreviewLeave,
   onPreviewClick,
   onPreviewContextMenu,
   onPreviewTriggerRef,
@@ -1892,8 +1847,6 @@ const TagNavItem = memo(function TagNavItem({
   /** The space's previews are still being built; see `SidebarProps`. */
   previewsPending: boolean;
   previewKeyPrefix: string;
-  onPreviewEnter: (target: SidebarPreviewTarget) => void;
-  onPreviewLeave: () => void;
   onPreviewClick: (target: SidebarPreviewTarget) => void;
   onPreviewContextMenu?: (target: SidebarPreviewTarget, point: CardMenuPoint) => void;
   onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
@@ -1989,6 +1942,8 @@ const TagNavItem = memo(function TagNavItem({
           // Saving names its key like creating does (05.10.2026).
           submitAction={{ label: "Save", shortcut: bindingLabel({ key: "Enter" }), shortcutKey: "Enter" }}
           edit={renameEdit}
+          restLabel={label}
+          restCount={count}
         />
       </SidebarRowFrame>
     );
@@ -2022,8 +1977,6 @@ const TagNavItem = memo(function TagNavItem({
               previewKeyPrefix={previewKeyPrefix}
               rowKey={rowKey}
               sourceTag={tag}
-              onPreviewEnter={onPreviewEnter}
-              onPreviewLeave={onPreviewLeave}
               onPreviewClick={onPreviewClick}
               onPreviewContextMenu={onPreviewContextMenu}
               onPreviewTriggerRef={onPreviewTriggerRef}
@@ -2186,8 +2139,10 @@ function SidebarCreateChannelRowBody({
     <div
       className={cn(
         SIDEBAR_ROW_BOX_CLASS,
-        // The label runs to the plus: the row's inset, then the plus's 32px.
-        "pl-[var(--sidebar-row-pad-x)] pr-[calc(var(--sidebar-row-pad-x)+2rem)] font-sans text-base text-muted-foreground",
+        // The label starts where a name starts (`--sidebar-name-left`, a trial
+        // order's columns before the name) and runs to the plus: the row's
+        // inset, then the plus's 32px.
+        "pl-[calc(var(--sidebar-name-left,0px)+var(--sidebar-name-lead,0px)+var(--sidebar-row-pad-x))] pr-[calc(var(--sidebar-row-pad-x)+2rem)] font-sans text-base text-muted-foreground",
         // A slow pointer lights it like any row (С7.10); the keyboard at once.
         !isEditing && "group-focus-within:text-foreground",
       )}
@@ -2324,8 +2279,6 @@ const SidebarPreviewThumbnail = memo(function SidebarPreviewThumbnail({
   rowKey,
   sourceTag,
   isPreviewActive,
-  onPreviewEnter,
-  onPreviewLeave,
   onPreviewClick,
   onPreviewContextMenu,
   onPreviewTriggerRef,
@@ -2341,8 +2294,6 @@ const SidebarPreviewThumbnail = memo(function SidebarPreviewThumbnail({
   /** The row's collection; absent on Everything. */
   sourceTag?: string;
   isPreviewActive: boolean;
-  onPreviewEnter: (target: SidebarPreviewTarget) => void;
-  onPreviewLeave: () => void;
   onPreviewClick: (target: SidebarPreviewTarget) => void;
   onPreviewContextMenu?: (target: SidebarPreviewTarget, point: CardMenuPoint) => void;
   onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
@@ -2377,8 +2328,6 @@ const SidebarPreviewThumbnail = memo(function SidebarPreviewThumbnail({
         // The source dims as a dragged feed card does.
         isDragging && "opacity-30",
       )}
-      onPointerEnter={() => onPreviewEnter(target)}
-      onPointerLeave={onPreviewLeave}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -2400,6 +2349,9 @@ const SidebarPreviewThumbnail = memo(function SidebarPreviewThumbnail({
       // A stack's card answers as the strip's thumbnail does, under a name
       // of its own: the strip's tiles are what the strip counts.
       data-sidebar-preview-thumbnail={stackStyle ? undefined : "trigger"}
+      data-sidebar-preview-key={previewKey}
+      data-sidebar-preview-row={rowKey}
+      data-sidebar-preview-slug={card.slug}
       data-sidebar-stack-card={stackStyle ? "trigger" : undefined}
       data-channel-icon-card={stackStyle ? "" : undefined}
       data-thumb-edge=""
@@ -2478,8 +2430,6 @@ function SidebarPreviewStrip({
   previewKeyPrefix,
   rowKey,
   sourceTag,
-  onPreviewEnter,
-  onPreviewLeave,
   onPreviewClick,
   onPreviewContextMenu,
   onPreviewTriggerRef,
@@ -2496,8 +2446,6 @@ function SidebarPreviewStrip({
   rowKey: string;
   /** The row's collection, which a thumbnail dragged back onto keeps as is. */
   sourceTag?: string;
-  onPreviewEnter: (target: SidebarPreviewTarget) => void;
-  onPreviewLeave: () => void;
   onPreviewClick: (target: SidebarPreviewTarget) => void;
   onPreviewContextMenu?: (target: SidebarPreviewTarget, point: CardMenuPoint) => void;
   onPreviewTriggerRef: (key: string, node: HTMLElement | null) => void;
@@ -2552,8 +2500,6 @@ function SidebarPreviewStrip({
             rowKey={rowKey}
             sourceTag={sourceTag}
             isPreviewActive={activePreviewKey === previewKey}
-            onPreviewEnter={onPreviewEnter}
-            onPreviewLeave={onPreviewLeave}
             onPreviewClick={onPreviewClick}
             onPreviewContextMenu={onPreviewContextMenu}
             onPreviewTriggerRef={onPreviewTriggerRef}
@@ -2596,8 +2542,6 @@ function SidebarCompactStack({
   previewKeyPrefix,
   rowKey,
   sourceTag,
-  onPreviewEnter,
-  onPreviewLeave,
   onPreviewClick,
   onPreviewContextMenu,
   onPreviewTriggerRef,
@@ -2636,8 +2580,6 @@ function SidebarCompactStack({
             rowKey={rowKey}
             sourceTag={sourceTag}
             isPreviewActive={activePreviewKey === previewKey}
-            onPreviewEnter={onPreviewEnter}
-            onPreviewLeave={onPreviewLeave}
             onPreviewClick={onPreviewClick}
             onPreviewContextMenu={onPreviewContextMenu}
             onPreviewTriggerRef={onPreviewTriggerRef}
@@ -2709,7 +2651,7 @@ function InlineChannelNameEditor({
         aria-label={ariaLabel}
         defaultValue={defaultValue}
         placeholder={placeholder}
-        className="block h-5 min-w-0 flex-1 translate-x-px border-0 bg-transparent p-0 font-sans text-base leading-5 text-foreground outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0"
+        className="block h-[1lh] min-w-0 flex-1 border-0 bg-transparent p-0 font-sans text-base leading-[inherit] text-foreground outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0"
         data-sidebar-inline-channel-editor=""
         aria-invalid={edit.notice !== null}
         // A refused name shakes once and takes no typing meanwhile.
@@ -2790,6 +2732,10 @@ function InlineChannelNameEditor({
 
 const DRAG_PREVIEW_NOOP = () => {};
 
+/// The lifted copy's look follows its own width from when it is laid out
+/// first (sidebarLook.ts): compact where its row is.
+const keepDragRowLook = (element: HTMLDivElement | null) => (element ? observeSidebarLook(element) : undefined);
+
 /// The row copy that travels in the DragOverlay while a collection is being
 /// reordered.
 ///
@@ -2819,17 +2765,15 @@ export function SidebarTagRowDragPreview({
     previewsPending,
     previewKeyPrefix: "drag-preview",
     rowKey: "drag-preview",
-    onPreviewEnter: DRAG_PREVIEW_NOOP,
-    onPreviewLeave: DRAG_PREVIEW_NOOP,
     onPreviewClick: DRAG_PREVIEW_NOOP,
     onPreviewTriggerRef: DRAG_PREVIEW_NOOP,
     activePreviewKey: null,
   };
   return (
-    // As wide as the row it lifts (the overlay takes the row's box), so the
-    // compact rows' threshold reads the same width here as in the list
-    // (global.css, «Compact rows»); the border is inside it.
-    <div className="h-full w-full" data-sidebar-drag-row="">
+    // As wide as the row it lifts (the overlay takes the row's box), so its
+    // look follows the same width as the list's does (sidebarLook.ts,
+    // global.css, «Compact rows»); the border is inside it.
+    <div className="h-full w-full" data-sidebar-drag-row="" ref={keepDragRowLook}>
     <div
       className="flex h-full w-full items-center rounded-1 border border-border bg-sidebar shadow-md"
       data-sidebar-tag-drag-preview=""

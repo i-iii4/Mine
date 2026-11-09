@@ -290,9 +290,15 @@ async function accessibility(label, page) {
   const aria = await page.locator('.mine-note-editor .cm-content').ariaSnapshot();
   check(label, 'the accessibility tree names the text box', aria.includes(`textbox "Text of ${FILE_NAME}"`), aria.slice(0, 120));
 
-  // Escape with nothing to close, then Tab: the focus leaves the text
-  // forward; Escape and ⇧Tab: backward (CodeMirror's rule).
-  for (const [keys, forward] of [[['Escape', 'Tab'], true], [['Escape', 'Shift+Tab'], false]]) {
+  // Escape with nothing to close puts the focus on the card's root, with no caret.
+  await caretAfter(page, 'Короткий абзац');
+  await page.keyboard.press('Escape');
+  const onRoot = await page.evaluate(() => document.activeElement?.hasAttribute('data-detail-scroll') ?? false);
+  check(label, 'Escape with nothing to close puts the focus on the card\'s root (Л16)', onRoot);
+  // From the root Tab goes on: the text comes first, and the Tab after it leaves
+  // the text forward (CodeMirror's rule, for two seconds after the Escape); ⇧Tab
+  // goes back.
+  for (const [keys, forward] of [[['Escape', 'Tab', 'Tab'], true], [['Escape', 'Shift+Tab'], false]]) {
     await caretAfter(page, 'Короткий абзац');
     for (const key of keys) await page.keyboard.press(key);
     const where = await page.evaluate(() => {
@@ -306,7 +312,7 @@ async function accessibility(label, page) {
       return 'before';
     });
     const text = await docText(page);
-    check(label, `Escape then ${forward ? 'Tab' : '⇧Tab'} moves the focus ${forward ? 'on' : 'back'} and types nothing (Л16)`, where === (forward ? 'after' : 'before') && !text.includes('\t'), where);
+    check(label, `Escape then ${forward ? 'Tab and Tab' : '⇧Tab'} moves the focus ${forward ? 'on' : 'back'} and types nothing (Л16)`, where === (forward ? 'after' : 'before') && !text.includes('\t'), where);
   }
   // Tab without Escape belongs to the text (Л12); the two seconds after an
   // Escape in which Tab moves the focus are over first.

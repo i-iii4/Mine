@@ -212,7 +212,14 @@ describe("buttons.css", () => {
     expect(hover?.body.trim()).toBe("--macos-outline-from: color-mix(in srgb, var(--macos-face), var(--foreground) var(--active-alpha));");
     const faceHover = rules.find(({ selector, body }) => selector.includes(":hover") && body.includes("var(--button-face-layer);") && !selector.includes("data-buttons"));
     const entries = (selector: string) => /:is\(([\s\S]*)\)\s*$/.exec(selector)?.[1]?.split(/,\s*\n/).map((entry) => entry.trim()) ?? [];
-    expect(entries(faceHover?.selector ?? "").length).toBe(5);
+    // The sidebar row's action answers by the part of the row the pointer is
+    // on and under the keyboard focus, not by `:hover` (user's decision of
+    // 06.11.2026; SPEC_CARD_STATES.md, С7.10).
+    expect(entries(faceHover?.selector ?? "")).toEqual(expect.arrayContaining([
+      ".button-depth[data-sidebar-link-pointer]",
+      '[data-sidebar-row-keyboard-focus="true"] > .button-depth',
+    ]));
+    expect(entries(faceHover?.selector ?? "").length).toBe(7);
     for (const entry of entries(faceHover?.selector ?? "")) expect(entries(hover?.selector ?? "")).toContain(entry);
     expect(entries(hover?.selector ?? "")).toEqual(expect.arrayContaining([".button-depth.state-active", ".bg-component-fill-inner.state-active"]));
   });

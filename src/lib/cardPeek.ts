@@ -14,7 +14,7 @@
 // clip of its own with the picture scaled uniformly inside it: the visible
 // part goes from the card's crop to the whole picture with no switch (О10, п. 3).
 
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, type CSSProperties } from "react";
 import { APP_MAIN_MIN_WIDTH_PX } from "./appLayout";
 import { SPRING_SETTLE, springSettleMs } from "./channelIcon";
 import {
@@ -25,8 +25,18 @@ import {
   type DetailLayoutMode,
 } from "./detailLayout";
 
-/** `M`: the window's distance from each edge of the right part (О3). */
+/** `M`: the window's distance from the right part's left, right and bottom
+ *  edges (О3). */
 export const CARD_PEEK_MARGIN_PX = 40;
+
+/** The window's line, 1px (`border`). */
+export const FRAME_LINE_PX = 1;
+
+/** The window's distance from the right part's top (О3; user's decision of
+ *  01.11.2026): `M` less the window's line, so the line lies on the top
+ *  row's own and the header under it fills the sidebar's first row, its
+ *  line going on from that row's. */
+export const CARD_PEEK_TOP_INSET_PX = CARD_PEEK_MARGIN_PX - FRAME_LINE_PX;
 
 /** `R_min`: the narrowest right part a card stands over in its window
  *  (О16; user's decision of 30.10.2026). The window's place, the right part
@@ -99,6 +109,27 @@ export function peekNudgeTransform(share: number): string {
   return `translateY(${Math.round(CARD_PEEK_NUDGE_OFFSET_PX * share * 1e3) / 1e3}px) scale(${Math.round(scale * 1e6) / 1e6})`;
 }
 
+/** How long the window and its scrim take to leave when the collection or
+ *  the view changes under them (О11; user's decision of 05.11.2026): the
+ *  dialogs' `duration-200` (ui/modal-window.ts). */
+export const CARD_PEEK_SWITCH_EXIT_MS = 200;
+
+/** The curve of that leaving: the dialogs' own, `animate-out`'s `ease`. */
+export const CARD_PEEK_SWITCH_EXIT_EASING = "ease";
+
+/** Where that leaving ends for the window and for its scrim; each starts from
+ *  where it stands. The window goes down by the close hint's step, as one
+ *  piece, with no scale; with "Reduce motion" it only fades (О13). */
+export function peekSwitchExitKeyframes(reducedMotion: boolean): { window: Keyframe; scrim: Keyframe } {
+  const faded: Keyframe = { opacity: 0 };
+  return {
+    window: reducedMotion
+      ? faded
+      : { ...faded, transform: `translateY(${Math.round(CARD_PEEK_NUDGE_OFFSET_PX * 1e3) / 1e3}px)` },
+    scrim: faded,
+  };
+}
+
 /** The window's spring (SPEC_CARD_PEEK.md, «Величины»): critically damped,
  *  response 0.25 s (user's decision of 24.10.2026: faster than the compact
  *  stack's 0.3 s, `SPRING_RESPONSE_S` in channelIcon.ts, which keeps it). */
@@ -131,14 +162,13 @@ export const CARD_PEEK_FRAME_STEP_MS = DISPLAY_FRAME_MS * 1.05;
 
 /** How long the window waits, before it starts, for the card it shows to be
  *  whole: its module, its file, its editor, its picture decoded. Past it the
- *  window starts with what it has, and what comes later lands once it rests. */
+ *  window starts with what it has, and what comes later lands once it rests.
+ *  As long at most, leaving for a change of collection or view, it waits for
+ *  the new feed to stand under it (О11). */
 export const CARD_PEEK_PREPARE_MAX_MS = 100;
 
 /** The smallest side a moving box is given, so its inverse stays finite. */
 const MIN_SIDE_PX = 0.01;
-
-/** The window's line, 1px (`border`). */
-const FRAME_LINE_PX = 1;
 
 // ─── Geometry ───────────────────────────────────────────────────────────
 
@@ -309,6 +339,36 @@ export function peekFramePieceBoxes(width: number, height: number, cut: PeekFram
     cornerBottomLeft: { x: 0, y: height - k, width: k, height: k },
     cornerBottomRight: { x: width - k, y: height - k, width: k, height: k },
   };
+}
+
+/** Where each piece is laid out at the frame's place, by CSS, so it follows
+ *  the frame's box as the frame does (`peekFramePieceBoxes` reads the same
+ *  boxes for the motion). */
+export function peekFramePieceStyle(piece: PeekFramePiece, cut: PeekFrameCut): CSSProperties {
+  const r = cut.round;
+  const k = cut.corner;
+  switch (piece) {
+    case "shadow": return { inset: 0 };
+    case "bandAcross": return { left: 0, right: 0, top: r, bottom: r };
+    case "bandDown": return { left: r, right: r, top: 0, bottom: 0 };
+    case "lineTop": return { left: r, right: r, top: 0, height: 1 };
+    case "lineBottom": return { left: r, right: r, bottom: 0, height: 1 };
+    case "lineLeft": return { left: 0, top: r, bottom: r, width: 1 };
+    case "lineRight": return { right: 0, top: r, bottom: r, width: 1 };
+    case "cornerTopLeft": return { left: 0, top: 0, width: k, height: k };
+    case "cornerTopRight": return { right: 0, top: 0, width: k, height: k };
+    case "cornerBottomLeft": return { left: 0, bottom: 0, width: k, height: k };
+    case "cornerBottomRight": return { right: 0, bottom: 0, width: k, height: k };
+  }
+}
+
+/** A corner's shape inside its square: a rounded box twice the square's
+ *  side, of which the square shows one corner. */
+export function peekFrameCornerShapeStyle(corner: PeekFrameCorner, cut: PeekFrameCut, radius: number): CSSProperties {
+  const size = cut.corner * 2;
+  const horizontal = corner === "cornerTopLeft" || corner === "cornerBottomLeft" ? { left: 0 } : { right: 0 };
+  const vertical = corner === "cornerTopLeft" || corner === "cornerTopRight" ? { top: 0 } : { bottom: 0 };
+  return { width: size, height: size, borderRadius: radius, ...horizontal, ...vertical };
 }
 
 /** The transform of every piece of a frame laid out at its place, `laid`
@@ -645,13 +705,15 @@ export function peekOpeningKind({
 }
 
 /** What the page asks of a closing: the reverse of the opening (`return`),
- *  to the centre whatever the card (a collection or a view chosen in the
- *  top row: the card is not where it was), or a fade in place (the card
- *  goes full page, by its button or the right part's width, О9, О16). */
-export type CardPeekExit = "return" | "center" | "fade";
+ *  a fade with a small move down over the new place, whatever the card (the
+ *  collection or the view changed, `switch`, О11), or a fade in place (the
+ *  card goes full page, by its button or the right part's width, О9, О16). */
+export type CardPeekExit = "return" | "switch" | "fade";
 
-/** How a closing goes (О11, О13): the way the window came, into the card
- *  where it stands when that card is on screen, else to the centre. */
+/** How a closing that keeps to the spring goes (О11, О13): the way the window
+ *  came, into the card where it stands when that card is on screen, else to
+ *  the centre. A `switch` has no spring: the window leaves by
+ *  `peekSwitchExitKeyframes` before this is asked. */
 export function peekClosingKind({
   openedAs,
   exit,
@@ -664,7 +726,7 @@ export function peekClosingKind({
   cardOnScreen: boolean;
 }): Exclude<PeekMotionKind, "instant"> {
   if (reducedMotion || exit === "fade" || openedAs === "fade") return "fade";
-  if (openedAs !== "card" || exit === "center") return "center";
+  if (openedAs !== "card") return "center";
   return cardOnScreen ? "card" : "center";
 }
 

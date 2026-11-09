@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MoreHorizontal, Plus, Trash2, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cardMenuBadgeOf } from "./CardHoverMenu";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -106,7 +107,9 @@ export function GroupSelectionCardMenu({
             type="button"
             variant="default"
             size="icon-xs"
-            className="pointer-events-none absolute right-2 top-2 z-[7] opacity-0 data-[state=open]:pointer-events-auto data-[state=open]:opacity-100"
+            // Only an anchor: the menu comes out of the chord's plate at this corner
+            // (SPEC_CARD_STATES.md, С8.8).
+            className="pointer-events-none absolute right-2 top-2 z-[7] opacity-0"
             data-feed-grid-batch-menu-trigger=""
           >
             <MoreHorizontal className="size-[13px]" />
@@ -114,6 +117,7 @@ export function GroupSelectionCardMenu({
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="end"
+          plateOf={cardMenuBadgeOf}
           data-feed-grid-batch-menu=""
         >
           <div

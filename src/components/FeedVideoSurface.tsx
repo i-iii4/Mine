@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { mediaUrl, previewAssetUrl } from "@/lib/assets";
+import { cardSlugOfPreviewPath, mediaUrl, previewAssetUrl } from "@/lib/assets";
+import { useCardPicturesVersion } from "@/lib/pictureVersions";
 import type { NormalizedFeedPlaybackDescriptor } from "@/lib/feedPlayback";
 import { FeedVideoPoster } from "./FeedVideoPoster";
 import { PlayBadge } from "./PlayBadge";
@@ -57,9 +58,14 @@ export function FeedVideoSurface({
     () => mediaUrl(vaultPath, playback.sourcePath),
     [playback.sourcePath, vaultPath],
   );
+  // A new version of the card's pictures is a new poster address
+  // (SPEC_THUMBNAILS.md, «Адрес картинки»).
+  const picturesVersion = useCardPicturesVersion(cardSlugOfPreviewPath(playback.posterPreviewPath));
   const posterSrc = useMemo(
     () => previewAssetUrl(thumbsRootPath, playback.posterPreviewPath),
-    [playback.posterPreviewPath, thumbsRootPath],
+    // The address reads the version itself; it is listed so that a new one
+    // makes the address again.
+    [playback.posterPreviewPath, thumbsRootPath, picturesVersion],
   );
   const resolvedPosterCandidates = useMemo(
     () => (posterCandidates && posterCandidates.length > 0 ? posterCandidates : [posterSrc]),

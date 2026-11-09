@@ -24,16 +24,17 @@ export function ScreenshotPreview({
   return (
     <div className="mine-clipper-section-stack min-h-0" data-clipper-preview-stack="">
       {/* The image is the section's only elastic element: in a short viewport
-          the box compresses and object-contain scales the screenshot down;
-          in a panel the person sized it takes the room left. The action row
+          the box compresses and object-fit scales the screenshot down, never
+          up past its size; in a panel the person sized it takes the room left.
+          The box's height stands before the frame arrives. The action row
           below is rigid: Crop Area and Retake must never shrink away or be
           painted over. */}
-      <div className="flex min-h-24 shrink justify-center overflow-hidden rounded-1 border border-border bg-accent" data-clipper-preview="">
+      <div className="flex h-[220px] min-h-24 shrink justify-center overflow-hidden rounded-1 border border-border bg-accent" data-clipper-preview="">
         {dataUrl ? (
           <img
             src={dataUrl}
             alt=""
-            className="block max-h-[220px] min-h-0 w-auto max-w-full rounded-1 object-contain"
+            className="block max-h-[220px] min-h-0 w-auto max-w-full rounded-1 object-scale-down"
           />
         ) : (
           <p className="self-center text-sm text-muted-foreground" role="status">

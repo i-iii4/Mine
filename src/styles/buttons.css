@@ -27,8 +27,10 @@ html:root .bg-component-fill-inner {
 /* Hover and an open menu are a state layer on every element, a button with
    depth included: the face stays, the layer lies over it. */
 html:root :is(
-  .button-depth:not(:disabled, :disabled > *, [data-selected="true"] > *):hover,
+  .button-depth:not(:disabled, :disabled > *, [data-selected="true"] > *, [data-sidebar-link-action]):hover,
   .button-depth[data-state="open"],
+  .button-depth[data-sidebar-link-pointer],
+  [data-sidebar-row-keyboard-focus="true"] > .button-depth,
   button:not(:disabled):hover > .button-depth,
   button[data-state="open"] > .button-depth,
   [data-action-button]:not([data-selected="true"]):hover > .button-depth
@@ -85,8 +87,10 @@ html:root:not([data-buttons]) :is(
   box-shadow: inset 0 0 0 0.5px oklch(from var(--macos-outline-from) clamp(0, calc(l + var(--macos-outline-step)), 1) 0 0);
 }
 html:root:not([data-buttons]) :is(
-  .button-depth:not(:disabled, :disabled > *, [data-selected="true"] > *):hover,
+  .button-depth:not(:disabled, :disabled > *, [data-selected="true"] > *, [data-sidebar-link-action]):hover,
   .button-depth[data-state="open"],
+  .button-depth[data-sidebar-link-pointer],
+  [data-sidebar-row-keyboard-focus="true"] > .button-depth,
   button:not(:disabled):hover > .button-depth,
   button[data-state="open"] > .button-depth,
   [data-action-button]:not([data-selected="true"]):hover > .button-depth,
@@ -231,8 +235,10 @@ html:root[data-buttons="linear"] :is(
    button, the outline included, so the outline rises with the face, as in
    Linear (decision 05.10.2026). */
 html:root[data-buttons="linear"] :is(
-  .button-depth:not(:disabled, :disabled > *, [data-selected="true"] > *):hover,
+  .button-depth:not(:disabled, :disabled > *, [data-selected="true"] > *, [data-sidebar-link-action]):hover,
   .button-depth[data-state="open"],
+  .button-depth[data-sidebar-link-pointer],
+  [data-sidebar-row-keyboard-focus="true"] > .button-depth,
   button:not(:disabled):hover > .button-depth,
   button[data-state="open"] > .button-depth,
   [data-action-button]:not([data-selected="true"]):hover > .button-depth,

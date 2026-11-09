@@ -25,6 +25,7 @@ import { ChromeRow, ChromeShell } from "@/components/ChromeRow";
 import type { SettingsSection } from "@/lib/settingsSections";
 import { isTauri } from "@tauri-apps/api/core";
 import { listenPage } from "@/lib/pageEvents";
+import { noteSpaceShown } from "@/lib/pictureVersions";
 import { getNavigationLabel } from "@/lib/displayTitle";
 import {
   SPACE_LEAD_CHANGED_EVENT,
@@ -78,7 +79,7 @@ import {
   TAG_ROW_OVERLAY_MODIFIERS,
 } from "@/lib/tagRowDragOverlay";
 import { arrayMove } from "@dnd-kit/sortable";
-import { applyPendingTagOrder, reorderedPositions } from "@/lib/collectionOrder";
+import { applyPendingTagOrder, keyboardMoveTarget, reorderedPositions } from "@/lib/collectionOrder";
 import { collectionRefLabel } from "@/lib/collections";
 import {
   DELETE_COLLECTION_FAILED_TITLE,
@@ -110,7 +111,7 @@ import {
 } from "@/lib/keyboardTargets";
 import {
   buildSidebarSearchNavigationRows,
-  sidebarRowDomId,
+  SIDEBAR_ALL_ROW_KEY,
   sidebarRowKeyToRoute,
 } from "@/lib/sidebarSearch";
 import { SEARCH_INPUT_SUPPRESSION_PROPS } from "@/lib/searchInputSuppression";
@@ -150,6 +151,8 @@ import {
 } from "@/lib/nativeWindowChromeSurface";
 import { Input } from "@/components/ui/input";
 import { CardPointMenu } from "@/components/CardHoverMenu";
+import type { ChromeNameFieldHandle } from "@/components/ChromeNameField";
+import { afterMenuCloses } from "@/lib/openMenus";
 import { MainSecondaryTopBar } from "@/components/MainSecondaryChrome";
 import { CardPeek, CardPeekArea, CardPeekPlate, type CardPeekOpening } from "@/components/CardPeek";
 import { DetailView, preloadDetail } from "@/components/DetailView";
@@ -344,6 +347,8 @@ import {
 import { followNoteRename, isNoteHeldForEditing, noteMissingFromIndex } from "@/lib/noteEditSessions";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useSidebarOverlay } from "@/hooks/useSidebarOverlay";
+import { useSidebarKeyboardFocus, type FeedKeyboardFocus } from "@/hooks/useSidebarKeyboardFocus";
+import { sidebarEnterLabel } from "@/lib/sidebarKeyboardFocus";
 import { SIDEBAR_COLUMNS_STORAGE_KEY, reloadSidebarColumnLayout } from "@/lib/sidebarColumnLayout";
 import {
   COMPACT_STACK_EDGE_STORAGE_KEY,
@@ -1202,10 +1207,6 @@ export function AppWithVault({
     rowKey: string;
     sequence: number;
   } | null>(null);
-  const [sidebarSearchKeyboardNavigationFocus, setSidebarSearchKeyboardNavigationFocus] = useState<{
-    rowKey: string;
-    sequence: number;
-  } | null>(null);
   /// The cards the DragOverlay draws. Empty for a moment when the drag began
   /// on a sidebar thumbnail whose card is not in the feed: it is being read.
   const [activeDragBlocks, setActiveDragBlocks] = useState<LightBlock[]>([]);
@@ -1551,18 +1552,24 @@ export function AppWithVault({
   // A route change made to follow a renamed collection keeps the open card
   // (SPEC_TABS.md, В18).
   const keepDetailOnRouteChangeRef = useRef(false);
+  // The place the card's window stood over: the first run of the route's
+  // effect below changes no place.
+  const peekWindowPlaceRef = useRef(location.pathname);
   // Close Detail when navigating to a different route. Feed keyboard focus is
   // owned by Grid and resets with the route-scoped Grid instance.
   useEffect(() => {
+    const placeChanged = peekWindowPlaceRef.current !== location.pathname;
+    peekWindowPlaceRef.current = location.pathname;
     if (keepDetailOnRouteChangeRef.current) {
       keepDetailOnRouteChangeRef.current = false;
       return;
     }
     cancelPendingDetailClose();
-    // In another place the card's window shrinks into the card if the new
-    // feed shows it, else leaves as a dialog does (SPEC_CARD_PEEK.md, О5,
-    // О11): the window decides as its closing starts.
-    setPeekExit("return");
+    // In another place the card's window lands nowhere: it fades down over
+    // the new feed, which stands under it by now (SPEC_CARD_PEEK.md, О5, О11;
+    // user's decision of 05.11.2026). A window already closing goes the same
+    // way from where it stands.
+    if (placeChanged) setPeekExit("switch");
     setSelectedBlock(null);
     setSelectedBlockAnchor(null);
     setGridFocusRestore(null);
@@ -1579,8 +1586,13 @@ export function AppWithVault({
   // sidebar open over the feed (У7), and takes an intent that reached the
   // page after the window widened.
   const besideSidebarRef = useRef<{ collapsed: boolean; toggle: () => void } | null>(null);
+  // The sidebar was opened for the keyboard (SPEC_KEYBOARD.md, М8). Declared here
+  // because the sidebar's own hooks read it; the keyboard's focus owner below,
+  // `useSidebarKeyboardFocus`, sets it. Never stored.
+  const [sidebarOpenedForKeyboard, setSidebarOpenedForKeyboard] = useState(false);
   const sidebarOverlay = useSidebarOverlay({
     tab: tabPage,
+    openedForKeyboard: sidebarOpenedForKeyboard,
     onWidenWhileOpen: () => {
       const beside = besideSidebarRef.current;
       if (beside?.collapsed) beside.toggle();
@@ -1594,6 +1606,23 @@ export function AppWithVault({
   const sidebarNarrow = sidebarOverlay.narrow;
   const closeSidebarOverlay = sidebarOverlay.close;
   bottomBarScrollsRef.current = sidebarNarrow;
+  const sidebarOverlayOpenRef = useRef(sidebarOverlay.open);
+  sidebarOverlayOpenRef.current = sidebarOverlay.open;
+  // `Rename…` of a card's menu (SPEC_FRONTEND.md, «RenameBlockDialog»; user's
+  // decision of 05.11.2026): the open card's name takes it, in the header that
+  // holds it, the top row or the card's window. The dialog serves where that
+  // field is not there or cannot take the focus: everything under the sidebar
+  // over the feed is inert. Stable, so a card opening re-renders no feed card.
+  const topRowNameFieldRef = useRef<ChromeNameFieldHandle>(null);
+  const peekNameFieldRef = useRef<ChromeNameFieldHandle>(null);
+  const handleRequestRename = useCallback((block: LightBlock | IndexedBlock) => {
+    const nameField = () => {
+      if (selectedBlockRef.current?.slug !== block.slug || sidebarOverlayOpenRef.current) return null;
+      return (detailViewRef.current === "peek" ? peekNameFieldRef : topRowNameFieldRef).current;
+    };
+    if (nameField()) afterMenuCloses(() => nameField()?.startEditing());
+    else setRenamingBlock(block);
+  }, []);
   // Into a narrow window or out of it: the bar shows everything in its
   // scrolling row, or hides entries by priority again (У13).
   useLayoutEffect(() => {
@@ -1606,14 +1635,27 @@ export function AppWithVault({
     collapsed: sidebarCollapsed,
     isResizing: sidebarResizing,
     widthAnimating: sidebarWidthAnimating,
+    openWidth: sidebarOpenWidth,
     besideShown: sidebarBesideShown,
     startResize,
     updateResize,
     endResize,
     resizeTo: resizeSidebarTo,
     toggleCollapsed,
-  } = useSidebarResize(windowSidebar, sidebarNarrow);
-  besideSidebarRef.current = { collapsed: sidebarCollapsed, toggle: toggleCollapsed };
+  } = useSidebarResize(windowSidebar, sidebarNarrow, sidebarOpenedForKeyboard);
+  // The toggle during the keyboard's visit, from the bottom bar or forwarded by the
+  // backend (`onBesideIntent` above): the sidebar on screen goes, and what is stored
+  // already says hidden, so nothing is written.
+  const toggleBesideSidebar = sidebarOpenedForKeyboard
+    ? () => setSidebarOpenedForKeyboard(false)
+    : toggleCollapsed;
+  besideSidebarRef.current = { collapsed: sidebarCollapsed, toggle: toggleBesideSidebar };
+  // What is stored changed under the visit: a drag of the edge stored it open. That
+  // is the person's now, and nothing hides the sidebar after the visit.
+  const windowSidebarCollapsed = windowSidebar?.collapsed;
+  useEffect(() => {
+    setSidebarOpenedForKeyboard(false);
+  }, [windowSidebarCollapsed]);
   // The sidebar beside the feed and its filter row in the top row are on the
   // page while the window holds them, and for the motion of their leaving
   // when it narrows past the threshold (SPEC_NARROW_WINDOW.md, У7). One
@@ -1637,7 +1679,7 @@ export function AppWithVault({
   const placeReplaced = !topRowPlaceShown;
   // The bottom bar's button and ⌃⌘S outside the app shell act on the
   // sidebar where it stands; in the app the backend routes them (У4).
-  const toggleSidebar = sidebarNarrow ? sidebarOverlay.toggle : toggleCollapsed;
+  const toggleSidebar = sidebarNarrow ? sidebarOverlay.toggle : toggleBesideSidebar;
 
   // The filter row over the sidebar's table narrows the space name so the
   // field keeps its minimum (useSidebarRowFit.ts).
@@ -2314,6 +2356,9 @@ export function AppWithVault({
             elapsedMs: Math.round(performance.now() - started),
           });
           setIndexBuiltOnOpen(!result.derived_store_ready);
+          // Pictures of another space drawn before have their own addresses
+          // from here (SPEC_THUMBNAILS.md, «Адрес картинки»).
+          noteSpaceShown(result.thumbs_root);
           setThumbsRootPath(result.thumbs_root);
           setVaultReady(true);
         }
@@ -3041,12 +3086,10 @@ export function AppWithVault({
 
   const handleSidebarSearchChange = useCallback((query: string) => {
     setSidebarSearchQuery(query);
-    setSidebarSearchKeyboardNavigationFocus(null);
   }, []);
 
   const handleClearSidebarSearch = useCallback(() => {
     setSidebarSearchQuery("");
-    setSidebarSearchKeyboardNavigationFocus(null);
     sidebarSearchInputRef.current?.focus({ preventScroll: true });
   }, []);
 
@@ -3125,6 +3168,9 @@ export function AppWithVault({
   const feedViewModeRef = useRef(feedViewMode);
   feedViewModeRef.current = feedViewMode;
   const handleMainViewModeChange = useCallback((next: MainViewMode) => {
+    // The other view takes the place of the feed under the card's window: it
+    // lands nowhere (SPEC_CARD_PEEK.md, О11).
+    if (feedViewModeRef.current !== next) setPeekExit("switch");
     if (
       feedViewModeRef.current === "grid"
       && next === "graph"
@@ -3306,11 +3352,10 @@ export function AppWithVault({
   handleDetailCloseRef.current = handleDetailClose;
 
   // TRIAL (SPEC_CARD_PEEK.md, О5): over the card's window the top row's view
-  // switch works as with no card open; it closes the window first, into the
-  // card where the other view shows it, else as a dialog leaves (О11).
+  // switch works as with no card open; the window closes with it and fades
+  // down over the other view (О11).
   const handleTopRowViewModeChange = useCallback((next: MainViewMode) => {
     if (selectedBlockRef.current && detailViewRef.current === "peek") {
-      setPeekExit("return");
       handleDetailClose();
     }
     handleMainViewModeChange(next);
@@ -3451,11 +3496,14 @@ export function AppWithVault({
   // A refused rename rejects: the sidebar keeps the name's field and shows
   // the reason under it (05.10.2026). What follows a rename that was taken
   // does not make it refused.
+  // Set below, where the sidebar's rows are known.
+  const keyboardRowRenamedRef = useRef<(fromRowKey: string, toRowKey: string) => void>(() => {});
   const handleRenameTag = useCallback(
     async (oldTag: string, newTag: string) => {
       suppressRedirectRef.current = true;
       try {
         const result = await renameChannel(oldTag, newTag);
+        keyboardRowRenamedRef.current(`tag:${oldTag}`, `tag:${result.tag}`);
         try {
           await reloadAllSnapshots();
           if (window.location.pathname === `/channel/${encodeURIComponent(oldTag)}`) {
@@ -3524,6 +3572,126 @@ export function AppWithVault({
     return applyPendingTagOrder(pages, pendingTagOrder);
   }, [tags, channels, pendingTagOrder]);
 
+  const sidebarSearchNavigationRows = useMemo(() => (
+    buildSidebarSearchNavigationRows(orderedTags, sidebarSearchQuery)
+  ), [orderedTags, sidebarSearchQuery]);
+
+  // The collections' order has one writer: a drag and ⌘⇧↑↓ alike. One write at a time, in
+  // order: a move made meanwhile waits, and only the latest order is written. The
+  // optimistic order stays until the last write has been read back, so a held key
+  // never shows a row snapping back between its steps.
+  const tagOrderWritesRef = useRef<{
+    writing: boolean;
+    next: { tag: string; position: number }[] | null;
+  }>({ writing: false, next: null });
+  const handleReorderTag = useCallback(
+    async (activeTag: string, overTag: string) => {
+      const currentOrder = orderedTags.map((t) => t.tag);
+      const oldIndex = currentOrder.indexOf(activeTag);
+      const newIndex = currentOrder.indexOf(overTag);
+      if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return;
+
+      const newOrder = arrayMove(currentOrder, oldIndex, newIndex);
+      const trace = (event: StartupMilestone) => {
+        if (isTauri()) void recordStartupMilestone(event).catch(() => {});
+      };
+      trace("tag_reorder_dropped");
+      // Show the result of the gesture at once. Waiting for the write and a
+      // full snapshot reload leaves the row in its old place for the whole
+      // round trip, which reads as the drop snapping back and then jumping.
+      setPendingTagOrder(newOrder);
+      // From the smallest position on: the collections the drag did not
+      // move keep theirs, and their pages are not written (Е6.2).
+      const items = reorderedPositions(
+        newOrder,
+        new Map(channels.map((channel) => [channel.tag, channel.position])),
+      );
+      const writes = tagOrderWritesRef.current;
+      if (writes.writing) {
+        writes.next = items;
+        return;
+      }
+      writes.writing = true;
+      let written = false;
+      try {
+        let next: typeof items | null = items;
+        while (next !== null) {
+          writes.next = null;
+          await reorderChannels(next);
+          written = true;
+          trace("tag_reorder_written");
+          next = writes.next;
+          if (next === null) {
+            // The order of collections changes the collection list only. Reloading
+            // the feed as well rebuilt hundreds of cards right after the drop.
+            await loadTaxonomySnapshotState();
+            trace("tag_reorder_reloaded");
+            next = writes.next;
+          }
+        }
+        scheduleAfterNextPaint(() => trace("tag_reorder_painted"));
+      } catch (err) {
+        // Dropping the optimistic order restores whatever the vault says, so a
+        // failed write never leaves the sidebar claiming an order it does not
+        // have. An earlier write of this run did land: the list reads it.
+        console.error("Failed to reorder channels:", err);
+        writes.next = null;
+        if (written) await loadTaxonomySnapshotState().catch(() => {});
+      } finally {
+        writes.writing = false;
+        setPendingTagOrder(null);
+      }
+    },
+    [channels, loadTaxonomySnapshotState, orderedTags],
+  );
+
+  // ⌘⇧↑↓ on a row (SPEC_KEYBOARD.md, М11). A ranked list and a drag under way have no
+  // manual order to step in.
+  const moveSidebarRow = useCallback((rowKey: string, direction: 1 | -1): boolean => {
+    const manualOrder = sidebarSearchQuery.length === 0 && activeDragTag === null;
+    const target = keyboardMoveTarget(rowKey, direction, orderedTags, manualOrder);
+    if (target === null) return false;
+    void handleReorderTag(rowKey.slice(4), target);
+    return true;
+  }, [activeDragTag, handleReorderTag, orderedTags, sidebarSearchQuery]);
+
+  const clearSidebarKeyboardNavigationFocus = useCallback(() => setSidebarKeyboardNavigationFocus(null), []);
+  // The sidebar shows for the keyboard and goes after it, by the way of showing
+  // it each mode has: beside the feed through the flag above, over the feed as
+  // when it is opened (SPEC_NARROW_WINDOW.md, У4), which is never stored either.
+  const setSidebarKeyboardVisit = useCallback((open: boolean) => {
+    setSidebarOpenedForKeyboard(open);
+    if (open) openSidebarOverlay();
+    else closeSidebarOverlay();
+  }, [closeSidebarOverlay, openSidebarOverlay]);
+
+  // Where the keyboard's focus is: a sidebar row or the page (SPEC_KEYBOARD.md,
+  // «Sidebar»). It comes from the feed's left edge, from an open card with the
+  // keyboard not in text (М9), and from the graph (М10).
+  const sidebarKeyboardFocus = useSidebarKeyboardFocus({
+    rows: sidebarSearchNavigationRows,
+    currentRowKey: currentLocation.kind === "everything"
+      ? SIDEBAR_ALL_ROW_KEY
+      : currentLocation.kind === "collection" ? `tag:${currentLocation.tag}` : null,
+    feedOnScreen: feedViewMode === "grid",
+    cardOpen: selectedBlock !== null,
+    sidebarShown,
+    openedForKeyboard: sidebarOpenedForKeyboard,
+    setOpenedForKeyboard: setSidebarKeyboardVisit,
+    // The row last lit by ⌘⌥↑↓ is not lit again as this focus ends.
+    onEnter: clearSidebarKeyboardNavigationFocus,
+    filterQuery: sidebarSearchQuery,
+    setFilterQuery: handleSidebarSearchChange,
+    filterFieldRef: sidebarSearchInputRef,
+    moveRow: moveSidebarRow,
+  });
+  const {
+    moveWithRoute: moveSidebarKeyboardFocus,
+    followRename: followSidebarKeyboardRename,
+    reportFeed: reportFeedKeyboardFocus,
+  } = sidebarKeyboardFocus;
+  keyboardRowRenamedRef.current = followSidebarKeyboardRename;
+
   const handleTopCollectionNavigate = useCallback((tag?: string) => {
     navigate(tag ? `/channel/${encodeURIComponent(tag)}` : "/");
   }, [navigate]);
@@ -3561,20 +3729,28 @@ export function AppWithVault({
   // Files import like drops, a bitmap becomes an image element, a lone URL a
   // link element, other text a markdown element titled by its first line. In
   // inputs, dialogs and over an open element ⌘V stays native.
+  //
+  // ⌘V is the Edit menu's stock Paste. A tab page is a child webview, and the
+  // menu takes a ⌘ chord before such a page sees it (SPEC_EDITING.md, Л12):
+  // ⌘V never reaches this page as a keydown. Paste reaches it as the `paste`
+  // event, and so does the item chosen with the pointer (SPEC_KEYBOARD.md,
+  // «Global»). Where the keyboard stands is the focus, not the event's
+  // target: WebKit aims the event at the selection.
   useEffect(() => {
-    // The chord is read at the keypress: a rebind in Settings changes the
-    // registry without re-rendering this window (SPEC_AUDIT_FIXES.md, Ф11).
-    const handler = (e: KeyboardEvent) => {
-      if (!commandPressed("paste", e)) return;
+    const handler = (e: ClipboardEvent) => {
+      const focused = document.activeElement;
       if (
         e.defaultPrevented
         || isEditableKeyboardTarget(e.target)
-        || isOverlayKeyboardTarget(e.target)
-        || isDetailShortcutBlockedTarget(e.target)
+        || isEditableKeyboardTarget(focused)
+        || isOverlayKeyboardTarget(focused)
+        || isDetailShortcutBlockedTarget(focused)
         || renderedDetailBlock
       ) {
         return;
       }
+      // Nothing on the page takes it: the feed does.
+      e.preventDefault();
       // A paste during another waits its turn, and what could not be created
       // is this tab's notice (SPEC_DEEP_AUDIT.md, Е6.4).
       void (async () => {
@@ -3591,8 +3767,8 @@ export function AppWithVault({
         if (outcome.created > 0) await reloadAllSnapshots();
       })();
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    window.addEventListener("paste", handler);
+    return () => window.removeEventListener("paste", handler);
   }, [currentTag, reloadAllSnapshots, renderedDetailBlock]);
 
   // ── ⌘/ — the full command table, in Settings ──────────────────────────
@@ -3659,11 +3835,15 @@ export function AppWithVault({
         }
       }
       if (!targetPath || !targetRowKey) return;
-      if (selectedBlock) handleDetailClose();
-      setSidebarKeyboardNavigationFocus((current) => ({
-        rowKey: targetRowKey,
-        sequence: (current?.sequence ?? 0) + 1,
-      }));
+      // The card's window closes as the route lands, the new feed under it
+      // (SPEC_CARD_PEEK.md, О11).
+      if (selectedBlock && detailViewRef.current !== "peek") handleDetailClose();
+      if (!moveSidebarKeyboardFocus(targetRowKey)) {
+        setSidebarKeyboardNavigationFocus((current) => ({
+          rowKey: targetRowKey,
+          sequence: (current?.sequence ?? 0) + 1,
+        }));
+      }
       navigate(targetPath);
     };
     window.addEventListener("keydown", handler);
@@ -3671,6 +3851,7 @@ export function AppWithVault({
   }, [
     currentTag,
     orderedTags,
+    moveSidebarKeyboardFocus,
     navigate,
     selectedBlock,
     sidebarShown,
@@ -3850,102 +4031,79 @@ export function AppWithVault({
     setIsCreatingChannel(true);
   }, [sidebarShown]);
 
-  const sidebarSearchNavigationRows = useMemo(() => (
-    buildSidebarSearchNavigationRows(orderedTags, sidebarSearchQuery)
-  ), [orderedTags, sidebarSearchQuery]);
-
-  useEffect(() => {
-    if (
-      sidebarSearchKeyboardNavigationFocus
-      && !sidebarSearchNavigationRows.includes(sidebarSearchKeyboardNavigationFocus.rowKey)
-    ) {
-      setSidebarSearchKeyboardNavigationFocus(null);
-    }
-  }, [sidebarSearchKeyboardNavigationFocus, sidebarSearchNavigationRows]);
-
-  const setSidebarSearchNavigationRow = useCallback((rowKey: string | null) => {
-    if (!rowKey) {
-      setSidebarSearchKeyboardNavigationFocus(null);
-      return;
-    }
-    setSidebarSearchKeyboardNavigationFocus((current) => ({
-      rowKey,
-      sequence: (current?.sequence ?? 0) + 1,
-    }));
-  }, []);
-
-  const moveSidebarSearchNavigationRow = useCallback((direction: 1 | -1) => {
-    if (sidebarSearchNavigationRows.length === 0) return;
-    const currentIndex = sidebarSearchKeyboardNavigationFocus
-      ? sidebarSearchNavigationRows.indexOf(sidebarSearchKeyboardNavigationFocus.rowKey)
-      : -1;
-    const nextIndex = currentIndex === -1
-      ? direction > 0 ? 0 : sidebarSearchNavigationRows.length - 1
-      : Math.max(0, Math.min(sidebarSearchNavigationRows.length - 1, currentIndex + direction));
-    setSidebarSearchNavigationRow(sidebarSearchNavigationRows[nextIndex] ?? null);
-  }, [
-    setSidebarSearchNavigationRow,
-    sidebarSearchKeyboardNavigationFocus,
-    sidebarSearchNavigationRows,
-  ]);
-
   const activateSidebarSearchNavigationRow = useCallback((rowKey: string | null) => {
     if (!rowKey) return;
     const route = sidebarRowKeyToRoute(rowKey);
     if (!route) return;
     navigate(route);
     // Enter in the filter goes to the collection like a click on its row:
-    // the sidebar over the feed closes after the move (У6, У11).
-    closeSidebarOverlay();
-  }, [closeSidebarOverlay, navigate]);
+    // the sidebar over the feed closes after the move (У6, У11). Shown for the
+    // keyboard, it goes only as the focus leaves it (SPEC_KEYBOARD.md, М8).
+    if (!sidebarOpenedForKeyboard) closeSidebarOverlay();
+  }, [closeSidebarOverlay, navigate, sidebarOpenedForKeyboard]);
 
   // A row or a card opened from the sidebar over the feed closes it after
   // the move (SPEC_NARROW_WINDOW.md, У6); beside the feed closing is a no-op.
   // ⌘-click, the row's menu, renaming and a new collection never reach here.
+  // The card's window closes as the route lands, the new feed under it
+  // (SPEC_CARD_PEEK.md, О11). Shown for the keyboard, it goes only as the focus
+  // leaves it (SPEC_KEYBOARD.md, М8).
   const handleSidebarNavClick = useCallback(() => {
+    if (detailViewRef.current !== "peek") handleDetailClose();
+    if (!sidebarOpenedForKeyboard) closeSidebarOverlay();
+  }, [closeSidebarOverlay, handleDetailClose, sidebarOpenedForKeyboard]);
+  // The row of the place the feed stands on, pressed over an open card: no
+  // move, the card closes as by its ×.
+  const handleSidebarCardClose = useCallback(() => {
     handleDetailClose();
     closeSidebarOverlay();
   }, [closeSidebarOverlay, handleDetailClose]);
   const handleSidebarSameClick = useCallback(() => {
     handleScrollToTop();
-    closeSidebarOverlay();
-  }, [closeSidebarOverlay, handleScrollToTop]);
+    // Shown for the keyboard, it goes only as the focus leaves it (SPEC_KEYBOARD.md, М8).
+    if (!sidebarOpenedForKeyboard) closeSidebarOverlay();
+  }, [closeSidebarOverlay, handleScrollToTop, sidebarOpenedForKeyboard]);
   const handleSidebarOpenBlock = useCallback((block: IndexedBlock) => {
     openDetailBlock(block);
     closeSidebarOverlay();
   }, [closeSidebarOverlay, openDetailBlock]);
 
   const handleSidebarSearchKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
+    // A key composing text is the input method's: its Enter confirms the composition
+    // and must not act on a half-written name. WebKit ends the composition before this
+    // keydown, so only the key code 229 tells there.
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (event.key === "Escape") {
       event.preventDefault();
+      // Came from a row: everything returns to where it stood before the typing
+      // (SPEC_KEYBOARD.md, «Ввод текста в меню»).
+      if (sidebarKeyboardFocus.fieldEscape()) {
+        event.stopPropagation();
+        return;
+      }
       if (sidebarSearchHasValue) {
         handleClearSidebarSearch();
         return;
       }
-      setSidebarSearchNavigationRow(null);
       sidebarSearchInputRef.current?.blur();
       return;
     }
 
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    // ArrowDown takes the focus to the rows. ArrowUp has nowhere to go from here, or
+    // a held key would run in a circle.
+    const bare = !event.metaKey && !event.altKey && !event.ctrlKey && !event.shiftKey;
+    if (bare && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
       event.preventDefault();
       event.stopPropagation();
-      moveSidebarSearchNavigationRow(event.key === "ArrowDown" ? 1 : -1);
+      if (event.key === "ArrowDown") sidebarKeyboardFocus.fieldDown();
       return;
     }
 
     if (event.key !== "Enter") return;
-    const activeRowKey = sidebarSearchKeyboardNavigationFocus?.rowKey ?? null;
-    if (activeRowKey) {
-      event.preventDefault();
-      event.stopPropagation();
-      activateSidebarSearchNavigationRow(activeRowKey);
-      return;
-    }
-    // No row chosen with the arrows: Enter acts on the typed name. A
-    // collection already called that opens; otherwise one is made with it,
-    // taking the open card when its collections show Connected, and the
-    // filter clears so the list shows the new collection on top.
+    // Enter acts on the typed name. A collection already called that opens;
+    // otherwise one is made with it, empty, and the filter clears so the list
+    // shows it on top. An open card stays out of both: its connections change
+    // on a row.
     const name = sidebarSearchQuery.trim();
     if (!name) return;
     event.preventDefault();
@@ -3974,12 +4132,9 @@ export function AppWithVault({
     checkNewCollectionName,
     createCollectionReporting,
     handleClearSidebarSearch,
-    moveSidebarSearchNavigationRow,
     orderedTags,
-    selectedBlock,
-    setSidebarSearchNavigationRow,
+    sidebarKeyboardFocus,
     sidebarSearchHasValue,
-    sidebarSearchKeyboardNavigationFocus,
     sidebarSearchQuery,
   ]);
 
@@ -3987,48 +4142,6 @@ export function AppWithVault({
     setPendingCreateChannelDrop(pendingDrop);
     setIsCreatingChannel(true);
   }, []);
-
-  const handleReorderTag = useCallback(
-    async (activeTag: string, overTag: string) => {
-      const currentOrder = orderedTags.map((t) => t.tag);
-      const oldIndex = currentOrder.indexOf(activeTag);
-      const newIndex = currentOrder.indexOf(overTag);
-      if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return;
-
-      const newOrder = arrayMove(currentOrder, oldIndex, newIndex);
-      const trace = (event: StartupMilestone) => {
-        if (isTauri()) void recordStartupMilestone(event).catch(() => {});
-      };
-      trace("tag_reorder_dropped");
-      // Show the result of the gesture at once. Waiting for the write and a
-      // full snapshot reload leaves the row in its old place for the whole
-      // round trip, which reads as the drop snapping back and then jumping.
-      setPendingTagOrder(newOrder);
-      try {
-        // From the smallest position on: the collections the drag did not
-        // move keep theirs, and their pages are not written (Е6.2).
-        const items = reorderedPositions(
-          newOrder,
-          new Map(channels.map((channel) => [channel.tag, channel.position])),
-        );
-        await reorderChannels(items);
-        trace("tag_reorder_written");
-        // The order of collections changes the collection list only. Reloading
-        // the feed as well rebuilt hundreds of cards right after the drop.
-        await loadTaxonomySnapshotState();
-        trace("tag_reorder_reloaded");
-        scheduleAfterNextPaint(() => trace("tag_reorder_painted"));
-      } catch (err) {
-        // Dropping the optimistic order restores whatever the vault says, so a
-        // failed write never leaves the sidebar claiming an order it does not
-        // have.
-        console.error("Failed to reorder channels:", err);
-      } finally {
-        setPendingTagOrder(null);
-      }
-    },
-    [channels, loadTaxonomySnapshotState, orderedTags],
-  );
 
   // ── Card drag-to-tag (dnd-kit) ──────────────────────────────────────────
 
@@ -4789,11 +4902,6 @@ export function AppWithVault({
               ref={sidebarSearchInputRef}
               {...SEARCH_INPUT_SUPPRESSION_PROPS}
               aria-label="Find or create collection"
-              aria-activedescendant={
-                sidebarSearchKeyboardNavigationFocus
-                  ? sidebarRowDomId(sidebarSearchKeyboardNavigationFocus.rowKey)
-                  : undefined
-              }
               placeholder="Find or create..."
               // Overflowing text at the field's right edge dissolves, it
               // is not cut: a narrow panel used to slice the placeholder
@@ -4806,6 +4914,8 @@ export function AppWithVault({
               value={sidebarSearchQuery}
               onChange={(event) => handleSidebarSearchChange(event.target.value)}
               onKeyDown={handleSidebarSearchKeyDown}
+              onFocus={sidebarKeyboardFocus.fieldFocused}
+              onBlur={sidebarKeyboardFocus.fieldBlurred}
               className="h-full min-w-0 flex-1 rounded-0 bg-transparent px-3 py-0 font-mono text-sm text-muted-foreground placeholder:text-muted-foreground"
               data-sidebar-top-search=""
             />
@@ -4819,6 +4929,9 @@ export function AppWithVault({
                 aria-label="Clear collection search"
                 // The filter's actions follow it.
                 className="mr-1"
+                // The caret stays in the field through the press: leaving the
+                // field would forget the row it came from.
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={handleClearSidebarSearch}
                 data-sidebar-top-search-clear=""
               >
@@ -4856,6 +4969,7 @@ export function AppWithVault({
       previewsPending={previewsPending}
       collapsed={sidebarCollapsed}
       widthAnimating={sidebarWidthAnimating}
+      openWidth={sidebarOpenWidth}
       vaultPath={vaultPath}
       thumbsRootPath={thumbsRootPath ?? undefined}
       tags={orderedTags}
@@ -4880,14 +4994,13 @@ export function AppWithVault({
       hoverPreviewFrozen={cardActionsMenuTarget !== null}
       onToggleTag={handleToggleTag}
       onCreateAndAssign={handleCreateTagFromMenu}
-      onRequestRename={setRenamingBlock}
+      onRequestRename={handleRequestRename}
       onRequestDelete={requestDeleteBlock}
       onNavClick={handleSidebarNavClick}
+      onCardClose={handleSidebarCardClose}
       onScrollToTop={handleSidebarSameClick}
-      keyboardNavigationFocus={
-        sidebarSearchKeyboardNavigationFocus ?? sidebarKeyboardNavigationFocus
-      }
-      keyboardNavigationFocusPersistent={sidebarSearchKeyboardNavigationFocus !== null}
+      keyboardNavigationFocus={sidebarKeyboardNavigationFocus}
+      keyboardFocusRowKey={sidebarKeyboardFocus.rowKey}
       searchQuery={sidebarSearchQuery}
       linkedBlockSlug={renderedLinkedBlockSlug}
       linkedTags={renderedLinkedTags}
@@ -4896,6 +5009,24 @@ export function AppWithVault({
       detailChromeClosing={detailChromeClosing}
       scrollEdgeFade={scrollEdgeFade}
     />
+  );
+
+  // What ↵ does on the row under the keyboard's focus, as the bar names it (М6).
+  const sidebarEnterName = sidebarKeyboardFocus.rowKey === null
+    ? null
+    : sidebarEnterLabel(sidebarKeyboardFocus.rowKey, sidebarKeyboardFocus.overCard, renderedLinkedTags);
+  // An entry of the sidebar's commands: pressable when it has an act, a reference
+  // otherwise. ↵ is named by the row's state.
+  const sidebarBarEntry = (id: string, onClick?: () => void, name = commandById(id).name) => (
+    <span
+      data-bar-entry={id}
+      className="inline-flex shrink-0 items-center"
+      style={hiddenBarEntries.has(id) ? { display: "none" } : undefined}
+    >
+      <ActionButton chrome hotkey={commandById(id).combo} readOnly={onClick === undefined} onClick={onClick}>
+        {name}
+      </ActionButton>
+    </span>
   );
 
   // The bottom bar's commands: in the bar itself outside a narrow window,
@@ -4942,7 +5073,7 @@ export function AppWithVault({
           </ActionButton>
         </span>
       )}
-      {activeBlocks.length > 0 && renderedDetailBlock === null && !hasSelection && (
+      {activeBlocks.length > 0 && renderedDetailBlock === null && !hasSelection && sidebarKeyboardFocus.rowKey === null && (
         <span
           data-bar-entry="navigate"
           className="inline-flex shrink-0 items-center"
@@ -4972,7 +5103,7 @@ export function AppWithVault({
           its card, over an open element in its top menu. The chord shown
           is the one that opens this menu here: each surface's command
           has its own binding (Ф11). */}
-      {(renderedDetailBlock !== null || feedCardMenuAvailable) && (
+      {(renderedDetailBlock !== null || feedCardMenuAvailable) && sidebarKeyboardFocus.rowKey === null && (
         <span
           data-bar-entry="element-menu"
           className="inline-flex shrink-0 items-center"
@@ -4993,7 +5124,7 @@ export function AppWithVault({
           </ActionButton>
         </span>
       )}
-      {renderedDetailBlock !== null && (
+      {renderedDetailBlock !== null && sidebarKeyboardFocus.rowKey === null && (
         <span
           data-bar-entry="close-element"
           className="inline-flex shrink-0 items-center"
@@ -5022,6 +5153,18 @@ export function AppWithVault({
             {commandById("clear-selection").name}
           </ActionButton>
         </span>
+      )}
+      {/* The keyboard's focus on a sidebar row (SPEC_KEYBOARD.md, М6): the card's
+          commands have left with the card's focus. Everything's row has no menu. */}
+      {sidebarKeyboardFocus.rowKey !== null && (
+        <>
+          {sidebarBarEntry("sidebar-navigate")}
+          {sidebarEnterName !== null && sidebarBarEntry("sidebar-open", sidebarKeyboardFocus.open, sidebarEnterName)}
+          {sidebarKeyboardFocus.rowKey !== SIDEBAR_ALL_ROW_KEY
+            && sidebarBarEntry("sidebar-menu", sidebarKeyboardFocus.openMenu)}
+          {sidebarBarEntry("sidebar-go", sidebarKeyboardFocus.go)}
+          {sidebarBarEntry("sidebar-unfocus", sidebarKeyboardFocus.unfocus, sidebarSearchHasValue ? "Clear" : undefined)}
+        </>
       )}
       {!sidebarNarrow && <div className="flex-1" data-bar-spacer="" />}
       <span
@@ -5074,7 +5217,7 @@ export function AppWithVault({
         currentTag={currentTag}
         onToggleTag={handleToggleTag}
         onCreateAndAssign={handleCreateTagFromMenu}
-        onRequestRename={setRenamingBlock}
+        onRequestRename={handleRequestRename}
         onRequestDelete={requestDeleteBlock}
         onCreateMediaAssetCard={handleMediaAssetCreateCard}
         onCreateChannelAndMediaAssetCard={handleMediaAssetCreateChannelAndCard}
@@ -5189,9 +5332,10 @@ export function AppWithVault({
             currentTag={currentTag}
             onToggleTag={handleToggleTag}
             onCreateAndAssign={handleCreateTagFromMenu}
-            onRequestRename={setRenamingBlock}
+            onRequestRename={handleRequestRename}
             onRenameFile={handleRenameBlock}
             onCheckFileName={handleCheckFileName}
+            nameFieldRef={topRowNameFieldRef}
             onRequestDelete={requestDeleteBlock}
             onDetailClose={handleDetailClose}
             onDetailCollapse={offersPeekCollapse(detailViewInputs) ? handlePeekCollapse : undefined}
@@ -5252,6 +5396,8 @@ export function AppWithVault({
                 onKeyboardFocusChange={reportKeyboardFocus}
                 onCardMenuShortcutChange={reportCardMenuCommand}
                 onSelectionCommandChange={reportSelectionCommand}
+                onKeyboardFocusLeave={sidebarKeyboardFocus.enter}
+                onKeyboardFocusReturnChange={reportFeedKeyboardFocus}
                 selectionCommandsHost={selectionCommandsHost}
                 blocks={activeBlocks}
                 vaultPath={vaultPath}
@@ -5268,7 +5414,7 @@ export function AppWithVault({
                 blockDragActive={blockDragActive}
                 detailOpen={Boolean(renderedDetailBlock)}
                 selectedBlockSlug={renderedDetailBlock?.slug ?? null}
-                keyboardNavigationDisabled={gridKeyboardNavigationDisabled}
+                keyboardNavigationDisabled={gridKeyboardNavigationDisabled || sidebarKeyboardFocus.rowKey !== null}
                 restoreFocusSlug={gridFocusRestore?.slug ?? null}
                 restoreFocusSequence={gridFocusRestore?.sequence ?? 0}
                 onBlockClick={handleBlockClick}
@@ -5282,7 +5428,7 @@ export function AppWithVault({
                 onDeleteSelectedBlocks={handleDeleteSelectedBlocks}
                 onMergeSelectedBlocks={handleMergeSelectedBlocks}
                 onCardMenuOpenChange={handleCardMenuOpenChange}
-                onRequestRename={setRenamingBlock}
+                onRequestRename={handleRequestRename}
                 onRequestDelete={requestDeleteBlock}
                 onColumnCountChange={handleColumnCountChange}
                 hasMoreBlocks={hasMoreBlocks}
@@ -5477,7 +5623,7 @@ export function AppWithVault({
           openRequestSequence={cardActionsMenuTarget.sequence}
           onToggleTag={handleToggleTag}
           onCreateAndAssign={handleCreateTagFromMenu}
-          onRequestRename={setRenamingBlock}
+          onRequestRename={handleRequestRename}
           onRequestDelete={requestDeleteBlock}
           onOpenChange={(open) => {
             if (!open) {
@@ -5497,6 +5643,7 @@ export function AppWithVault({
           block={detailView === "peek" ? selectedBlock : null}
           opening={peekOpening}
           exit={peekExit}
+          placeReady={gridRouteSnapshotReady}
           areaRef={peekAreaRef}
           onClose={handleDetailClose}
           onReopen={openDetailBlock}
@@ -5511,10 +5658,11 @@ export function AppWithVault({
                 currentTag={currentTag}
                 onToggleTag={handleToggleTag}
                 onCreateAndAssign={handleCreateTagFromMenu}
-                onRequestRename={setRenamingBlock}
+                onRequestRename={handleRequestRename}
                 onRequestDelete={requestDeleteBlock}
                 onRenameFile={handleRenameBlock}
                 onCheckFileName={handleCheckFileName}
+                nameFieldRef={peekNameFieldRef}
                 onExpand={handlePeekExpand}
                 onClose={handleDetailClose}
                 menuOpenRequestSequence={detailMenuOpenRequestSequence}
@@ -5579,7 +5727,9 @@ export function AppWithVault({
       {sidebarNarrow && (
         <SidebarOverlay
           open={sidebarOverlay.open}
-          onClose={closeSidebarOverlay}
+          // Escape under the keyboard's focus is the focus's own (М8); the panel
+          // hears it first.
+          onClose={sidebarKeyboardFocus.rowKey !== null ? sidebarKeyboardFocus.unfocus : closeSidebarOverlay}
           header={(
             <ChromeRow separator="bottom" className={topChromeSurfaceClass}>
               {/* Over the feed the space switcher lives here alone (У12). */}
@@ -5705,6 +5855,9 @@ interface RouteContext {
   onKeyboardFocusChange: (activate: (() => void) | null) => void;
   onCardMenuShortcutChange: (activate: (() => void) | null) => void;
   onSelectionCommandChange: (clear: (() => void) | null) => void;
+  /// The keyboard's way into the sidebar and back (SPEC_KEYBOARD.md, «Sidebar»).
+  onKeyboardFocusLeave: () => boolean;
+  onKeyboardFocusReturnChange: (feed: FeedKeyboardFocus | null) => void;
   selectionCommandsHost: HTMLElement | null;
   /// Offered by the empty-space onboarding, which is the only place in the app
   /// that can introduce the clipper to someone who has never seen it.

@@ -56,10 +56,11 @@ describe("the scrim", () => {
   });
 
   it("lies under the image preview over the whole page", () => {
-    const { getByRole } = render(
+    const { getByRole, container } = render(
       <ImagePreviewOverlay preview={{ src: "asset://localhost/photo.jpg", mediaRef: "photo.jpg" }} onClose={vi.fn()} />,
     );
-    expect(getByRole("dialog", { name: "Image preview" })).toHaveClass("modal-scrim", "fixed", "inset-0");
+    expect(getByRole("dialog", { name: "Image preview" })).toHaveClass("fixed", "inset-0");
+    expect(container.querySelector("[data-image-preview-scrim]")).toHaveClass("modal-scrim", "absolute", "inset-0");
   });
 
   it("lies under the sidebar over the feed", () => {

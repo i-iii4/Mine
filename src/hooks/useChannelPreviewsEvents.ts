@@ -29,7 +29,7 @@
 
 import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { listChannelPreviews } from "@/lib/commands";
-import { thumbnailLevelUrl } from "@/lib/assets";
+import { thumbnailLevelUrl, withQueryParam } from "@/lib/assets";
 import { releaseStripPicturesExcept } from "@/lib/stripPictures";
 import type { PreviewCard, PreviewItem } from "@/types";
 import type { ProjectionRevisionOwner } from "./useProjectionRevisionOwner";
@@ -39,16 +39,14 @@ interface Options {
   revisionOwner?: ProjectionRevisionOwner;
 }
 
-/** A card as the last read made it, with what its address was built from. */
+/** A card as the last read made it. */
 interface KnownCard {
   card: PreviewCard;
-  mtime: number;
-  version: number;
 }
 
 /** The card a read's `item` stands for: the one this read already made for
- *  another row, the one the last read made when nothing its address or look
- *  comes from changed, a new one otherwise. `made` collects this read's. */
+ *  another row, the one the last read made when its address and look are
+ *  the same, a new one otherwise. `made` collects this read's. */
 function previewCard(
   item: PreviewItem,
   root: string,
@@ -58,30 +56,33 @@ function previewCard(
 ): PreviewCard {
   const current = made.get(item.slug);
   if (current) return current.card;
+  // The strip draws 32 logical pixels: the `micro` level, never the full
+  // thumbnail of 640 (SPEC_SIDEBAR_STRIP.md, ЛМ4; SPEC_THUMBNAILS.md, П4).
+  // The level's address carries the version of the card's pictures in this
+  // page (SPEC_THUMBNAILS.md, «Адрес картинки»); `v` wins over `m` within a
+  // session so events can force a refetch even when the file's mtime
+  // appears unchanged.
+  const micro = thumbnailLevelUrl(root, item.slug, "micro");
+  const url = version > 0
+    ? withQueryParam(micro, "v", version)
+    : item.mtime > 0 ? withQueryParam(micro, "m", item.mtime) : micro;
   const previous = known.get(item.slug);
   if (
     previous
-    && previous.mtime === item.mtime
-    && previous.version === version
+    && previous.card.url === url
     && previous.card.text === item.text
+    && previous.card.hasThumb === item.has_thumb
   ) {
     made.set(item.slug, previous);
     return previous.card;
   }
-  // The strip draws 32 logical pixels: the `micro` level, never the full
-  // thumbnail of 640 (SPEC_SIDEBAR_STRIP.md, ЛМ4; SPEC_THUMBNAILS.md, П4).
-  // `?v=` wins over `?m=` within a session so events can force a refetch
-  // even when the file's mtime appears unchanged.
-  const query = version > 0
-    ? `?v=${version}`
-    : item.mtime > 0 ? `?m=${item.mtime}` : "";
   const card: PreviewCard = {
     slug: item.slug,
-    url: `${thumbnailLevelUrl(root, item.slug, "micro")}${query}`,
+    url,
     text: item.text,
     hasThumb: item.has_thumb,
   };
-  made.set(item.slug, { card, mtime: item.mtime, version });
+  made.set(item.slug, { card });
   return card;
 }
 

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createRef } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type {
   GraphLink,
   GraphNode,
@@ -15,8 +15,11 @@ import { GraphView, type GraphViewHandle } from "./GraphView";
 import { GraphDisplayMenu } from "./GraphDisplayMenu";
 import { reloadGraphPreferences, useGraphPreferences } from "@/lib/graphPreferences";
 import { GRAPH_CONTEXT_OPACITY } from "@/lib/colorLaw";
+import { GRAPH_HIT_CANVAS_REFRESH_MS, GRAPH_PREVIEW_GAP } from "./graph/contracts";
+import { graphNodeScreenSize } from "./graph/nodeSize";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { HOVER_PREVIEW_COLD_OPEN_DELAY_MS, HOVER_PREVIEW_WARM_WINDOW_MS } from "@/lib/hoverPreviewTiming";
+import { HOVER_PREVIEW_WINDOW_SETTLE_MS } from "@/lib/hoverPreviewWindow";
 import { indexedBlock, lightBlock } from "@/test/blocks";
 
 type MockGraphNode = GraphNode & {
@@ -34,6 +37,7 @@ type MockGraphProps = {
   onNodeClick?: (node: MockGraphNode, event: MouseEvent) => void;
   onNodeRightClick?: (node: MockGraphNode, event: MouseEvent) => void;
   onNodeHover?: (node: MockGraphNode | null) => void;
+  onZoom?: (transform: { k: number; x: number; y: number }) => void;
   enablePointerInteraction?: boolean;
   onBackgroundClick?: () => void;
   onEngineTick?: () => void;
@@ -157,6 +161,7 @@ vi.mock("react-force-graph-2d", async () => {
       onNodeClick,
       onNodeRightClick,
       onNodeHover,
+      onZoom,
       enablePointerInteraction,
       onBackgroundClick,
       onEngineTick,
@@ -276,6 +281,15 @@ vi.mock("react-force-graph-2d", async () => {
             onClick: () => onNodeDragEnd?.((graphData?.nodes ?? [])[0] as never),
           },
           "drop node",
+        ),
+        React.createElement(
+          "button",
+          {
+            type: "button",
+            "data-testid": "graph-zoom",
+            onClick: () => onZoom?.({ k: 1, x: 0, y: 0 }),
+          },
+          "zoom",
         ),
         React.createElement(
           "button",
@@ -492,6 +506,20 @@ function graphCardNode(
   };
 }
 
+/**
+ * The pointer's own movement onto a node: two reports at different points, then
+ * force-graph telling the node under it. A node arriving with no step answers
+ * nothing (SPEC_CARD_STATES.md, С7.5). The graph must have been brought in by
+ * `renderGraphOnFakeClock`: see there.
+ */
+let graphPointerX = 300;
+function hoverNode(node: Element) {
+  graphPointerX += 4;
+  fireEvent.pointerMove(node, { clientX: graphPointerX, clientY: 300 });
+  fireEvent.pointerMove(node, { clientX: graphPointerX + 1, clientY: 300 });
+  fireEvent.mouseEnter(node);
+}
+
 function renderGraph(props: Partial<Parameters<typeof GraphView>[0]> = {}) {
   const onNavigateCollection = vi.fn();
   const onOpenBlock = vi.fn();
@@ -539,6 +567,43 @@ function renderGraph(props: Partial<Parameters<typeof GraphView>[0]> = {}) {
     onOpenBlock,
     onOpenCardMenu,
   };
+}
+
+const INTENT_TIMERS = {
+  toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "Date", "requestAnimationFrame", "cancelAnimationFrame"],
+} satisfies Parameters<typeof vi.useFakeTimers>[0];
+
+const preview = () => document.querySelector("[data-graph-card-hover-preview]");
+
+/** `ms` of the fake clock inside `act`: what falls due runs, and every commit's effects land. */
+async function settle(ms = 0) {
+  await act(async () => {
+    vi.advanceTimersByTime(ms);
+    for (let flush = 0; flush < 8; flush += 1) await Promise.resolve();
+  });
+  await act(async () => {
+    for (let flush = 0; flush < 8; flush += 1) await Promise.resolve();
+  });
+}
+
+/**
+ * The graph with its snapshot in, for a test that hovers a node. `findBy*` will
+ * not do: it returns at the commit's DOM change, while that commit's effects are
+ * still on React's scheduler, and on a busy worker its timer overtakes them. The
+ * effect that shuts the still-pointer gate (`graphPointer.displace`) then lands
+ * between the pointer's step and the node's hover report, and the node answers
+ * nothing. Here every commit happens inside `act`, and the gate's `performance`,
+ * the window's frames and the engine's timers read no real time.
+ */
+async function renderGraphOnFakeClock(props: Partial<Parameters<typeof GraphView>[0]> = {}) {
+  vi.useFakeTimers(INTENT_TIMERS);
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
+  const view = renderGraph(props);
+  await settle();
+  await settle(16);
+  return view;
 }
 
 describe("GraphView", () => {
@@ -650,7 +715,9 @@ describe("GraphView", () => {
 
     renderGraph();
 
-    const graph = await screen.findByTestId("force-graph");
+    // The canvas mounts before the snapshot, and these are the snapshot's lines.
+    await screen.findByRole("button", { name: "Design" });
+    const graph = screen.getByTestId("force-graph");
     expect(graph).toHaveAttribute("data-membership-curvature", "0");
     expect(graph).toHaveAttribute("data-membership-dash", "null");
     expect(Math.abs(Number(graph.getAttribute("data-reference-curvature")))).toBe(0.14);
@@ -727,28 +794,26 @@ describe("GraphView", () => {
     }));
     commandMocks.getBlock.mockResolvedValue(makeIndexedBlock(block));
 
-    const { container, onOpenCardMenu } = renderGraph({ loadedBlocks: [block] });
-    const cardNode = await screen.findByRole("button", { name: "Alpha card" });
+    const { onOpenCardMenu } = await renderGraphOnFakeClock({ loadedBlocks: [block] });
+    const cardNode = screen.getByRole("button", { name: "Alpha card" });
 
-    fireEvent.mouseEnter(cardNode);
+    hoverNode(cardNode);
+    await settle();
 
-    await waitFor(() => {
-      expect(container.querySelector("[data-graph-card-hover-preview]")).toBeInTheDocument();
-    });
+    expect(preview()).toBeInTheDocument();
     // The feed's own card unfolded, no lift, with nothing to press
     // (SPEC_CARD_STATES.md, С10).
-    const preview = container.querySelector("[data-graph-card-hover-preview]")!;
-    expect(preview.querySelector("[data-card-preview]")).toHaveAttribute("data-card-preview-unfolded");
-    expect(preview.querySelector("[data-card-preview]")).not.toHaveAttribute("data-card-lift-pinned");
-    expect(preview.querySelector("[data-card-preview-collections]")).not.toBeNull();
-    expect(preview.querySelector("button")).toBeNull();
+    const shown = preview()!;
+    expect(shown.querySelector("[data-card-preview]")).toHaveAttribute("data-card-preview-unfolded");
+    expect(shown.querySelector("[data-card-preview]")).not.toHaveAttribute("data-card-lift-pinned");
+    expect(shown.querySelector("[data-card-preview-collections]")).not.toBeNull();
+    expect(shown.querySelector("button")).toBeNull();
 
     fireEvent.contextMenu(cardNode);
+    await settle();
 
-    await waitFor(() => {
-      expect(onOpenCardMenu).toHaveBeenCalledWith(block, { x: 144, y: 188 });
-    });
-    expect(container.querySelector("[data-graph-card-hover-preview]")).toBeInTheDocument();
+    expect(onOpenCardMenu).toHaveBeenCalledWith(block, { x: 144, y: 188 });
+    expect(preview()).toBeInTheDocument();
   });
 
   it("freezes hover preview changes while a card menu is open", async () => {
@@ -786,24 +851,23 @@ describe("GraphView", () => {
       return null;
     });
 
-    const { container, rerenderGraph } = renderGraph({ loadedBlocks: [alpha, beta] });
-    const alphaNode = await screen.findByRole("button", { name: "Alpha card" });
-    const betaNode = await screen.findByRole("button", { name: "Beta card" });
+    const { rerenderGraph } = await renderGraphOnFakeClock({ loadedBlocks: [alpha, beta] });
+    const alphaNode = screen.getByRole("button", { name: "Alpha card" });
+    const betaNode = screen.getByRole("button", { name: "Beta card" });
 
-    fireEvent.mouseEnter(alphaNode);
+    hoverNode(alphaNode);
+    await settle();
 
-    await waitFor(() => {
-      expect(container.querySelector("[data-graph-card-hover-preview]")).toBeInTheDocument();
-    });
+    expect(preview()).toBeInTheDocument();
 
     rerenderGraph({ loadedBlocks: [alpha, beta], hoverPreviewFrozen: true });
-    fireEvent.mouseEnter(betaNode);
+    hoverNode(betaNode);
 
     expect(commandMocks.getBlock).not.toHaveBeenCalledWith(beta.slug);
-    expect(container.querySelector("[data-graph-card-hover-preview]")).toBeInTheDocument();
+    expect(preview()).toBeInTheDocument();
   });
 
-  it("times a card's preview by the shared card preview rule", async () => {
+  describe("the one preview window (SPEC_CARD_STATES.md, С7.11; SPEC_GRAPH_VIEW.md, «Hover»)", () => {
     const alpha = makeBlock({ slug: "alpha-card", title: "Alpha card" });
     const beta = makeBlock({ id: 2, slug: "beta-card", title: "Beta card" });
     const cardNode = (block: LightBlock): GraphNode => ({
@@ -818,45 +882,204 @@ describe("GraphView", () => {
       preview_manifest: null,
       degree: 1,
     });
-    commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([cardNode(alpha), cardNode(beta)]));
-    const { container } = renderGraph({ loadedBlocks: [alpha, beta] });
-    const alphaNode = await screen.findByRole("button", { name: "Alpha card" });
-    const betaNode = screen.getByRole("button", { name: "Beta card" });
-    const preview = () => container.querySelector("[data-graph-card-hover-preview]");
-    const settle = async (ms: number) => {
-      await act(async () => {
-        vi.advanceTimersByTime(ms);
-        await Promise.resolve();
-      });
+    /** A real pointer step at (x, 10), a frame after the last. */
+    let pointerX = 100;
+    const stepOn = async (element: Element, dx = 1) => {
+      await settle(16);
+      pointerX += dx;
+      fireEvent.pointerMove(element, { clientX: pointerX, clientY: 10 });
     };
 
-    previewTimingMocks.real = true;
-    vi.useFakeTimers({
-      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "Date", "requestAnimationFrame", "cancelAnimationFrame"],
+    beforeEach(() => {
+      previewTimingMocks.real = true;
+      pointerX = 100;
+      commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([cardNode(alpha), cardNode(beta)]));
     });
-    try {
-      // The graph feeds the pointer's speed: a pointer still moving over the
-      // node past the delay opens nothing until it rests.
-      fireEvent.mouseEnter(alphaNode);
+
+    afterEach(() => {
+      previewTimingMocks.real = false;
+    });
+
+    async function renderCards() {
+      const view = await renderGraphOnFakeClock({ loadedBlocks: [alpha, beta] });
+      return {
+        ...view,
+        alphaNode: screen.getByRole("button", { name: "Alpha card" }),
+        betaNode: screen.getByRole("button", { name: "Beta card" }),
+        canvas: screen.getByTestId("force-graph"),
+      };
+    }
+
+    /** The first window, on the alpha card, its fade done. */
+    async function openOnAlpha(view: Awaited<ReturnType<typeof renderCards>>) {
+      await stepOn(view.alphaNode);
+      await stepOn(view.alphaNode);
+      fireEvent.mouseEnter(view.alphaNode);
+      await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + HOVER_INTENT.velocityWindowMs);
+      await settle(HOVER_INTENT.fadeInMs + 32);
+      expect(preview()).toBeInTheDocument();
+    }
+
+    it("waits the shared delay and a pointer that has slowed, whatever crosses the node on the way", async () => {
+      const view = await renderCards();
+      await stepOn(view.alphaNode);
+      await stepOn(view.alphaNode);
+      fireEvent.mouseEnter(view.alphaNode);
+      // A pointer still fast over the node past the delay opens nothing.
       for (let elapsed = 0; elapsed < HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 100; elapsed += 16) {
-        await settle(16);
-        fireEvent.pointerMove(alphaNode, { clientX: 100 + elapsed, clientY: 10 });
+        await stepOn(view.alphaNode, 40);
       }
       expect(preview()).toBeNull();
       await settle(HOVER_INTENT.velocityWindowMs * 2);
       expect(preview()).toBeInTheDocument();
+    });
 
-      // Read long past the warm window, it hands over to the next node at once.
-      await settle(HOVER_PREVIEW_WARM_WINDOW_MS * 3);
-      fireEvent.mouseLeave(alphaNode, { relatedTarget: screen.getByTestId("force-graph") });
-      expect(preview()).toBeNull();
-      fireEvent.mouseEnter(betaNode);
-      await settle(0);
+    it("stands by the node, under it, in a portal of its own that takes no pointer", async () => {
+      const view = await renderCards();
+      await openOnAlpha(view);
+      const window = preview() as HTMLElement;
+      expect(window.parentElement).toBe(document.body);
+      expect(window).toHaveClass("pointer-events-none");
+      expect(window.querySelector("[data-card-preview]")).toHaveAttribute("data-card-preview-unfolded");
+      // The stand-in's coordinates are the node's own.
+      const node = graphDataSpy.current!.nodes[0] as { x: number; y: number };
+      const size = graphNodeScreenSize(1);
+      expect(window.style.top).toBe(`${node.y + size / 2 + GRAPH_PREVIEW_GAP}px`);
+      expect(window.style.left).toBe(`${node.x - size / 2}px`);
+    });
+
+    it("changes the card in one window on a new node", async () => {
+      const view = await renderCards();
+      await openOnAlpha(view);
+      const window = preview();
+      expect(window).toHaveTextContent("Alpha card");
+      fireEvent.mouseLeave(view.alphaNode, { relatedTarget: view.canvas });
+      await stepOn(view.betaNode);
+      fireEvent.mouseEnter(view.betaNode);
+      await settle();
+      expect(preview()).toBe(window);
+      await settle(HOVER_PREVIEW_WINDOW_SETTLE_MS + 32);
+      expect(preview()).toBe(window);
+      expect(preview()).toHaveTextContent("Beta card");
+      expect(preview()).not.toHaveTextContent("Alpha card");
+    });
+
+    it("on a fast pass keeps its card, and takes the node the pointer stops on", async () => {
+      const view = await renderCards();
+      await openOnAlpha(view);
+      fireEvent.mouseLeave(view.alphaNode, { relatedTarget: view.canvas });
+      await stepOn(view.betaNode, 40);
+      await stepOn(view.betaNode, 40);
+      fireEvent.mouseEnter(view.betaNode);
+      await stepOn(view.betaNode, 40);
+      expect(preview()).toHaveTextContent("Alpha card");
+      expect(preview()).not.toHaveTextContent("Beta card");
+      await settle(HOVER_INTENT.velocityWindowMs + HOVER_PREVIEW_WINDOW_SETTLE_MS);
+      expect(preview()).toHaveTextContent("Beta card");
+    });
+
+    it("goes after the grace and the fade over the empty canvas, and comes back warm with no delay", async () => {
+      const view = await renderCards();
+      await openOnAlpha(view);
+      fireEvent.mouseLeave(view.alphaNode, { relatedTarget: view.canvas });
+      await stepOn(view.canvas);
+      await settle(HOVER_INTENT.velocityWindowMs);
+      await settle(HOVER_INTENT.leaveGraceMs - 100);
       expect(preview()).toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-      previewTimingMocks.real = false;
-    }
+      await settle(100 + HOVER_INTENT.fadeOutMs + 32);
+      expect(preview()).toBeNull();
+
+      // Within the warm window, no second delay.
+      await stepOn(view.betaNode);
+      fireEvent.mouseEnter(view.betaNode);
+      await settle(HOVER_INTENT.velocityWindowMs);
+      expect(preview()).toHaveTextContent("Beta card");
+
+      // Past it, the delay is back.
+      fireEvent.pointerLeave(view.betaNode);
+      await settle(HOVER_INTENT.fadeOutMs + 32 + HOVER_PREVIEW_WARM_WINDOW_MS + 1);
+      expect(preview()).toBeNull();
+    });
+
+    it("answers no node that moved under a still pointer until the pointer really moves", async () => {
+      const view = await renderCards();
+      await stepOn(view.canvas);
+      await stepOn(view.canvas);
+      await settle(GRAPH_HIT_CANVAS_REFRESH_MS + 16);
+      commandMocks.getBlock.mockClear();
+      // force-graph tells a node under the same point: physics brought it.
+      fireEvent.mouseEnter(view.alphaNode);
+      await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS * 2);
+      expect(preview()).toBeNull();
+      // The same point again is no step either.
+      fireEvent.pointerMove(view.alphaNode, { clientX: pointerX, clientY: 10 });
+      await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS * 2);
+      expect(preview()).toBeNull();
+
+      // Its own step answers on that same node, with no new hover report.
+      await stepOn(view.alphaNode);
+      await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + HOVER_INTENT.velocityWindowMs);
+      expect(preview()).toBeInTheDocument();
+    });
+
+    it("answers a node told late after the pointer's step: the library's hit canvas lags the graph", async () => {
+      const view = await renderCards();
+      await stepOn(view.canvas);
+      await stepOn(view.canvas);
+      await settle(GRAPH_HIT_CANVAS_REFRESH_MS - 100);
+      fireEvent.mouseEnter(view.alphaNode);
+      await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + HOVER_INTENT.velocityWindowMs);
+      expect(preview()).toBeInTheDocument();
+    });
+
+    it("stays silent after the camera moved a node under a still pointer, and keeps a shown window", async () => {
+      const view = await renderCards();
+      await openOnAlpha(view);
+      const window = preview();
+      fireEvent.click(screen.getByTestId("graph-zoom"));
+      await settle(16);
+      // The window goes on following its node.
+      expect(preview()).toBe(window);
+      // The camera brought another node under the pointer: the same point, no step.
+      fireEvent.mouseLeave(view.alphaNode, { relatedTarget: view.canvas });
+      fireEvent.pointerMove(view.betaNode, { clientX: pointerX, clientY: 10 });
+      fireEvent.mouseEnter(view.betaNode);
+      await settle(HOVER_PREVIEW_WINDOW_SETTLE_MS);
+      expect(preview()).toHaveTextContent("Alpha card");
+      expect(preview()).not.toHaveTextContent("Beta card");
+
+      // Its own step answers once the camera's quiet is over.
+      await stepOn(view.betaNode);
+      await settle(HOVER_INTENT.scrollSettleMs + HOVER_INTENT.velocityWindowMs);
+      await settle(HOVER_PREVIEW_WINDOW_SETTLE_MS);
+      expect(preview()).toHaveTextContent("Beta card");
+    });
+
+    it("follows its node every frame, by coordinates, with no layout read", async () => {
+      const view = await renderCards();
+      await openOnAlpha(view);
+      await settle(HOVER_PREVIEW_WINDOW_SETTLE_MS + 32);
+      const window = preview() as HTMLElement;
+      const top = Number.parseFloat(window.style.top);
+      const left = Number.parseFloat(window.style.left);
+      const node = graphDataSpy.current!.nodes[0] as { x: number; y: number };
+      const reads = vi.spyOn(Element.prototype, "getBoundingClientRect");
+      node.x += 30;
+      node.y += 12;
+      await settle(16);
+      expect(window.style.transform).toBe("translate(30px, 12px)");
+      expect(window.style.willChange).toContain("transform");
+      node.x += 5;
+      await settle(16);
+      expect(window.style.transform).toBe("translate(35px, 12px)");
+      expect(reads).not.toHaveBeenCalled();
+      reads.mockRestore();
+      await settle(HOVER_PREVIEW_WINDOW_SETTLE_MS + 32);
+      expect(window.style.transform).toBe("");
+      expect(window.style.willChange).toBe("");
+      expect(Number.parseFloat(window.style.top)).toBe(top + 12);
+      expect(Number.parseFloat(window.style.left)).toBe(left + 35);
+    });
   });
 
   it("reheats the force simulation when hover preview freeze is released", async () => {
@@ -911,24 +1134,22 @@ describe("GraphView", () => {
     }));
     commandMocks.getBlock.mockResolvedValue(makeIndexedBlock(block));
 
-    const { container, rerenderGraph } = renderGraph({ loadedBlocks: [block] });
-    const cardNode = await screen.findByRole("button", { name: "Alpha card" });
+    const { rerenderGraph } = await renderGraphOnFakeClock({ loadedBlocks: [block] });
+    const cardNode = screen.getByRole("button", { name: "Alpha card" });
 
-    fireEvent.mouseEnter(cardNode);
-    await waitFor(() => {
-      expect(container.querySelector("[data-graph-card-hover-preview]")).toBeInTheDocument();
-    });
+    hoverNode(cardNode);
+    await settle();
+    expect(preview()).toBeInTheDocument();
 
     rerenderGraph({ loadedBlocks: [block], hoverPreviewFrozen: true });
     fireEvent.mouseLeave(cardNode);
     fireEvent.pointerMove(window, { clientX: 500, clientY: 500 });
-    expect(container.querySelector("[data-graph-card-hover-preview]")).toBeInTheDocument();
+    expect(preview()).toBeInTheDocument();
 
     rerenderGraph({ loadedBlocks: [block], hoverPreviewFrozen: false });
+    await settle();
 
-    await waitFor(() => {
-      expect(container.querySelector("[data-graph-card-hover-preview]")).not.toBeInTheDocument();
-    });
+    expect(preview()).not.toBeInTheDocument();
   });
 
   it("renders the force graph only with the measured viewport size", async () => {
@@ -1033,27 +1254,25 @@ describe("GraphView", () => {
     };
     commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([card, collection]));
 
-    const { rerenderGraph } = renderGraph();
-    await screen.findByRole("button", { name: "Alpha card" });
+    const { rerenderGraph } = await renderGraphOnFakeClock();
     const pill = () => graphDataSpy.current?.nodes.find(
       (node) => node.id === "collection:Design",
     ) as MockGraphNode;
 
     const resting = paintPill(pill());
-    fireEvent.mouseOver(screen.getByRole("button", { name: "Design" }));
+    hoverNode(screen.getByRole("button", { name: "Design" }));
     const hovered = paintPill(pill());
     expect(hovered.stroke).not.toBe(resting.stroke);
 
     fireEvent.mouseOut(screen.getByRole("button", { name: "Design" }));
     rerenderGraph({ currentCollection: "Design" });
-    await waitFor(() => {
-      const opened = paintPill(pill());
-      expect(opened.stroke).toBe(hovered.stroke);
-      expect(opened.text).toBe(hovered.text);
-      // A heavier line was the invented third look; the opened pill wears the
-      // hover outline at hover weight.
-      expect(opened.lineWidth).toBe(hovered.lineWidth);
-    });
+    await settle();
+    const opened = paintPill(pill());
+    expect(opened.stroke).toBe(hovered.stroke);
+    expect(opened.text).toBe(hovered.text);
+    // A heavier line was the invented third look; the opened pill wears the
+    // hover outline at hover weight.
+    expect(opened.lineWidth).toBe(hovered.lineWidth);
   });
 
   it("recomputes zoom on every navigation instead of inheriting the previous screen's", async () => {
@@ -1146,8 +1365,9 @@ describe("GraphView", () => {
       makeSnapshot(graphCardNode("alpha-card", "Alpha card")),
     );
     renderGraph();
-    const graph = await screen.findByTestId("force-graph");
-    const atRest = graph.getAttribute("data-velocity-decay");
+    // The canvas mounts before the snapshot, and only a node can be dragged.
+    await screen.findByRole("button", { name: "Alpha card" });
+    const atRest = screen.getByTestId("force-graph").getAttribute("data-velocity-decay");
 
     fireEvent.click(screen.getByTestId("graph-node-drag"));
     const dragging = screen.getByTestId("force-graph").getAttribute("data-velocity-decay");
@@ -1325,8 +1545,8 @@ describe("GraphView", () => {
     );
     // Hovering a card also schedules its preview, which asks for the block.
     commandMocks.getBlock.mockResolvedValue(null);
-    renderGraph();
-    const card = await screen.findByRole("button", { name: "Alpha card" });
+    await renderGraphOnFakeClock();
+    const card = screen.getByRole("button", { name: "Alpha card" });
 
     const strokes = (): string[] => {
       const drawn: string[] = [];
@@ -1349,7 +1569,7 @@ describe("GraphView", () => {
     // line for a frame (09.10.2026), and the pointer lights that frame.
     const rest = strokes();
     expect(rest).toHaveLength(1);
-    fireEvent.mouseEnter(card);
+    hoverNode(card);
     const hovered = strokes();
     expect(hovered).toHaveLength(1);
     expect(hovered[0]).not.toBe(rest[0]);
@@ -1415,8 +1635,7 @@ describe("GraphView", () => {
     ));
     commandMocks.getBlock.mockResolvedValue(null);
     try {
-      renderGraph();
-      await screen.findByRole("button", { name: "Card A" });
+      await renderGraphOnFakeClock();
 
       // The alpha a node's own paint ends at; the canvas underlay of a dimmed
       // node is painted before it, at full alpha.
@@ -1448,21 +1667,19 @@ describe("GraphView", () => {
       const lit = colorOf("membership:Design:a");
       // The layout's first reheat waits for a frame: let it pass before the
       // count that dimming must leave alone.
-      await act(() => new Promise<void>((resolve) => {
-        requestAnimationFrame(() => resolve());
-      }));
+      await settle(16);
       const reheats = graphMethodMocks.d3ReheatSimulation.mock.calls.length;
       const atRest = alphas();
       expect(Object.values(atRest).every((alpha) => alpha === 1)).toBe(true);
 
-      const settle = async (ms: number) => {
-        await act(async () => {
-          vi.advanceTimersByTime(ms);
-          await Promise.resolve();
-        });
-      };
       // The pointer moves along y = 10 over the graph, one step a frame.
       let pointerX = 0;
+      // A hover report in the frames after a step of the pointer's own.
+      const stepOnto = (name: string) => {
+        pointerX += 1;
+        fireEvent.pointerMove(canvas(), { clientX: pointerX, clientY: 10 });
+        fireEvent.mouseEnter(node(name));
+      };
       const step = async (dx: number) => {
         await settle(16);
         pointerX += dx;
@@ -1471,92 +1688,85 @@ describe("GraphView", () => {
 
       // The dimming answers the shared hover intent engine, not the raw hover
       // (SPEC_CARD_STATES.md, С7; SPEC_GRAPH_VIEW.md, «Hover»).
-      vi.useFakeTimers({
-        toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "Date", "requestAnimationFrame", "cancelAnimationFrame"],
-      });
-      try {
-        // A sweep straight across Design dims nothing, on the way or after.
-        fireEvent.mouseEnter(node("Design"));
-        for (let elapsed = 0; elapsed < HOVER_INTENT.dwellMs * 2; elapsed += 16) {
-          await step(40);
-          expect(alphas()).toEqual(atRest);
-        }
-        leaveForCanvas("Design");
-        for (let elapsed = 0; elapsed < HOVER_INTENT.dwellMs; elapsed += 16) await step(40);
-        await settle(HOVER_INTENT.warmMs * 2);
+      // A sweep straight across Design dims nothing, on the way or after.
+      stepOnto("Design");
+      for (let elapsed = 0; elapsed < HOVER_INTENT.dwellMs * 2; elapsed += 16) {
+        await step(40);
         expect(alphas()).toEqual(atRest);
-
-        // A pointer resting on Design dims the rest after the engine's dwell,
-        // not before.
-        fireEvent.mouseEnter(node("Design"));
-        await settle(HOVER_INTENT.dwellMs - 20);
-        expect(alphas()).toEqual(atRest);
-        await settle(40);
-        const dimmed = alphas();
-        expect(dimmed["collection:Design"]).toBe(1);
-        expect(dimmed["card:a"]).toBe(1);
-        expect(dimmed["card:b"]).toBe(1);
-        // Collections never dim (16.10.2026).
-        expect(dimmed["collection:Research"]).toBe(1);
-        expect(dimmed["card:c"]).toBe(GRAPH_CONTEXT_OPACITY);
-        expect(colorOf("membership:Design:a")).toBe(lit);
-        expect(colorOf("membership:Design:b")).toBe(lit);
-        // Strict: neither the wikilink between two of its cards nor a member's
-        // line to another collection belongs to the hovered collection.
-        expect(colorOf("wikilink:a:b")).not.toBe(lit);
-        expect(colorOf("membership:Research:a")).not.toBe(lit);
-        expect(colorOf("membership:Research:c")).toBe(colorOf("wikilink:a:b"));
-        // Dimming is paint only: the layout is not woken.
-        expect(graphMethodMocks.d3ReheatSimulation.mock.calls.length).toBe(reheats);
-
-        // Once Design has answered, its neighbour Research takes over at once,
-        // and so does Design again.
-        leaveForCanvas("Design");
-        fireEvent.mouseEnter(node("Research"));
-        await settle(0);
-        expect(alphaOf("collection:Research")).toBe(1);
-        expect(alphaOf("card:c")).toBe(1);
-        expect(alphaOf("card:b")).toBe(GRAPH_CONTEXT_OPACITY);
-        expect(alphaOf("collection:Design")).toBe(1);
-        leaveForCanvas("Research");
-        fireEvent.mouseEnter(node("Design"));
-        await settle(0);
-        expect(alphas()).toEqual(dimmed);
-
-        // A dragged node answers nothing: the dimming clears at once and
-        // comes back after the dwell once the node is dropped (С7.8).
-        fireEvent.click(screen.getByTestId("graph-node-drag"));
-        await settle(0);
-        expect(alphas()).toEqual(atRest);
-        fireEvent.click(screen.getByTestId("graph-node-drag-end"));
-        await settle(HOVER_INTENT.dwellMs + 20);
-        expect(alphas()).toEqual(dimmed);
-
-        // Leaving for the empty canvas clears it after the leave grace.
-        leaveForCanvas("Design");
-        await settle(HOVER_INTENT.leaveGraceMs - 20);
-        expect(alphas()).toEqual(dimmed);
-        await settle(40);
-        expect(alphas()).toEqual(atRest);
-        expect(colorOf("wikilink:a:b")).toBe(lit);
-
-        // A selected card outside the hovered part dims like any other node.
-        fireEvent.click(node("Card C"));
-        fireEvent.mouseEnter(node("Design"));
-        await settle(HOVER_INTENT.dwellMs + 20);
-        expect(alphaOf("card:c")).toBe(GRAPH_CONTEXT_OPACITY);
-        leaveForCanvas("Design");
-        await settle(HOVER_INTENT.leaveGraceMs + 20);
-
-        // A card dims nothing, however long the pointer rests on it.
-        fireEvent.mouseEnter(node("Card A"));
-        await settle(HOVER_INTENT.dwellMs * 2);
-        expect(alphas()).toEqual(atRest);
-        expect(colorOf("wikilink:a:b")).toBe(lit);
-        expect(colorOf("membership:Research:c")).toBe(lit);
-      } finally {
-        vi.useRealTimers();
       }
+      leaveForCanvas("Design");
+      for (let elapsed = 0; elapsed < HOVER_INTENT.dwellMs; elapsed += 16) await step(40);
+      await settle(HOVER_INTENT.warmMs * 2);
+      expect(alphas()).toEqual(atRest);
+
+      // A pointer resting on Design dims the rest after the engine's dwell,
+      // not before.
+      stepOnto("Design");
+      await settle(HOVER_INTENT.dwellMs - 20);
+      expect(alphas()).toEqual(atRest);
+      await settle(40);
+      const dimmed = alphas();
+      expect(dimmed["collection:Design"]).toBe(1);
+      expect(dimmed["card:a"]).toBe(1);
+      expect(dimmed["card:b"]).toBe(1);
+      // Collections never dim (16.10.2026).
+      expect(dimmed["collection:Research"]).toBe(1);
+      expect(dimmed["card:c"]).toBe(GRAPH_CONTEXT_OPACITY);
+      expect(colorOf("membership:Design:a")).toBe(lit);
+      expect(colorOf("membership:Design:b")).toBe(lit);
+      // Strict: neither the wikilink between two of its cards nor a member's
+      // line to another collection belongs to the hovered collection.
+      expect(colorOf("wikilink:a:b")).not.toBe(lit);
+      expect(colorOf("membership:Research:a")).not.toBe(lit);
+      expect(colorOf("membership:Research:c")).toBe(colorOf("wikilink:a:b"));
+      // Dimming is paint only: the layout is not woken.
+      expect(graphMethodMocks.d3ReheatSimulation.mock.calls.length).toBe(reheats);
+
+      // Once Design has answered, its neighbour Research takes over at once,
+      // and so does Design again.
+      leaveForCanvas("Design");
+      stepOnto("Research");
+      await settle(0);
+      expect(alphaOf("collection:Research")).toBe(1);
+      expect(alphaOf("card:c")).toBe(1);
+      expect(alphaOf("card:b")).toBe(GRAPH_CONTEXT_OPACITY);
+      expect(alphaOf("collection:Design")).toBe(1);
+      leaveForCanvas("Research");
+      stepOnto("Design");
+      await settle(0);
+      expect(alphas()).toEqual(dimmed);
+
+      // A dragged node answers nothing: the dimming clears at once and
+      // comes back after the dwell once the node is dropped (С7.8).
+      fireEvent.click(screen.getByTestId("graph-node-drag"));
+      await settle(0);
+      expect(alphas()).toEqual(atRest);
+      fireEvent.click(screen.getByTestId("graph-node-drag-end"));
+      await settle(HOVER_INTENT.dwellMs + 20);
+      expect(alphas()).toEqual(dimmed);
+
+      // Leaving for the empty canvas clears it after the leave grace.
+      leaveForCanvas("Design");
+      await settle(HOVER_INTENT.leaveGraceMs - 20);
+      expect(alphas()).toEqual(dimmed);
+      await settle(40);
+      expect(alphas()).toEqual(atRest);
+      expect(colorOf("wikilink:a:b")).toBe(lit);
+
+      // A selected card outside the hovered part dims like any other node.
+      fireEvent.click(node("Card C"));
+      stepOnto("Design");
+      await settle(HOVER_INTENT.dwellMs + 20);
+      expect(alphaOf("card:c")).toBe(GRAPH_CONTEXT_OPACITY);
+      leaveForCanvas("Design");
+      await settle(HOVER_INTENT.leaveGraceMs + 20);
+
+      // A card dims nothing, however long the pointer rests on it.
+      stepOnto("Card A");
+      await settle(HOVER_INTENT.dwellMs * 2);
+      expect(alphas()).toEqual(atRest);
+      expect(colorOf("wikilink:a:b")).toBe(lit);
+      expect(colorOf("membership:Research:c")).toBe(lit);
     } finally {
       computedStyle.mockRestore();
     }
@@ -2168,20 +2378,20 @@ describe("GraphView", () => {
     commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes([
       graphCardNode("alpha-card", "Alpha card"),
     ]));
-    const { container } = renderGraph({ loadedBlocks: [alpha] });
-    const alphaNode = await screen.findByRole("button", { name: "Alpha card" });
+    const { container } = await renderGraphOnFakeClock({ loadedBlocks: [alpha] });
+    const alphaNode = screen.getByRole("button", { name: "Alpha card" });
 
-    fireEvent.mouseEnter(alphaNode);
-    await waitFor(() => {
-      expect(container.querySelector("[data-graph-card-hover-preview]")).toBeInTheDocument();
-    });
+    hoverNode(alphaNode);
+    await settle();
+    expect(preview()).toBeInTheDocument();
 
     // The pointer goes to the sidebar. The page fires pointerleave on the
     // graph's container; force-graph keeps its old point and reports no
     // hover change, so no onNodeHover(null) follows.
     fireEvent.pointerLeave(container.querySelector("[data-graph-view]")!);
+    await settle(HOVER_INTENT.fadeOutMs + 32);
 
-    expect(container.querySelector("[data-graph-card-hover-preview]")).not.toBeInTheDocument();
+    expect(preview()).not.toBeInTheDocument();
   });
 
   it("opens no preview for a node drifting under the old pointer point while a card is open", async () => {
@@ -2191,7 +2401,7 @@ describe("GraphView", () => {
       graphCardNode("alpha-card", "Alpha card"),
       graphCardNode("beta-card", "Beta card"),
     ]));
-    const { container, rerenderGraph } = renderGraph({ loadedBlocks: [alpha, beta] });
+    const { rerenderGraph } = renderGraph({ loadedBlocks: [alpha, beta] });
     const betaNode = await screen.findByRole("button", { name: "Beta card" });
 
     // A card opened over the graph (Detail, `absolute inset-0 z-10` in the
@@ -2204,7 +2414,7 @@ describe("GraphView", () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector("[data-graph-card-hover-preview]")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-graph-card-hover-preview]")).not.toBeInTheDocument();
   });
 
   it("stops hearing the pointer off the graph and under an open card, and forgets what it hovered", async () => {
@@ -2223,8 +2433,7 @@ describe("GraphView", () => {
     commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(
       [graphCardNode("alpha-card", "Alpha card"), collection],
     ));
-    const { container, rerenderGraph } = renderGraph();
-    await screen.findByRole("button", { name: "Alpha card" });
+    const { container, rerenderGraph } = await renderGraphOnFakeClock();
     const surface = container.querySelector("[data-graph-view]")!;
     const graph = () => screen.getByTestId("force-graph");
     const pill = () => graphDataSpy.current?.nodes.find(
@@ -2236,7 +2445,7 @@ describe("GraphView", () => {
     // A hovered collection lights its pill; leaving the graph unlights it
     // (and with it the collection's dimming) although the library reports
     // nothing, and the library stops reading its stale point.
-    fireEvent.mouseEnter(screen.getByRole("button", { name: "Design" }));
+    hoverNode(screen.getByRole("button", { name: "Design" }));
     expect(paintPill(pill()).stroke).not.toBe(resting.stroke);
     fireEvent.pointerLeave(surface);
     expect(paintPill(pill()).stroke).toBe(resting.stroke);
@@ -2245,7 +2454,7 @@ describe("GraphView", () => {
     // Back over the graph it listens again, and the same pill hovers again.
     fireEvent.pointerEnter(surface);
     expect(graph()).toHaveAttribute("data-pointer-interaction", "true");
-    fireEvent.mouseEnter(screen.getByRole("button", { name: "Design" }));
+    hoverNode(screen.getByRole("button", { name: "Design" }));
     expect(paintPill(pill()).stroke).not.toBe(resting.stroke);
 
     // An open card covers the graph: the same as the pointer leaving.

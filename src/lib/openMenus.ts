@@ -22,6 +22,9 @@ type PointerDownOutsideEvent = CustomEvent<{ originalEvent: PointerEvent }>;
 /** Radix marks every menu and submenu surface with this attribute. */
 const MENU_SURFACE = "data-radix-menu-content";
 
+/** The box Radix positions a surface in: it outlasts the surface's own zoom out. */
+const MENU_POPPER = "[data-radix-popper-content-wrapper]";
+
 /** Set on the root element while a menu surface is on the page. */
 const MENU_OPEN_ATTRIBUTE = "data-menu-open";
 
@@ -33,6 +36,12 @@ const menuSurfaces = new Set<HTMLElement>();
 
 /** The presses this module dispatches to close the open menus. */
 const dismissPresses = new WeakSet<Event>();
+
+/** The surfaces that mounted during a press: the press opened them. */
+const openedByPress = new WeakSet<HTMLElement>();
+
+/** What takes the focus once a closing surface is gone (`afterMenuCloses`). */
+const focusTakers = new WeakMap<HTMLElement, () => void>();
 
 interface Press {
   /** It began outside an open menu and closed it. */
@@ -50,6 +59,22 @@ function openMenuSurface(): HTMLElement | null {
     if (surface.isConnected && surface.getAttribute("data-state") === "open") return surface;
   }
   return null;
+}
+
+/** Whether a menu is open now, a closing one not counted. */
+export function isMenuOpen(): boolean {
+  return openMenuSurface() !== null;
+}
+
+/**
+ * Closes the open menu as Escape does, for the chord that opened it: a context
+ * menu has no state of its own to set. False when no menu is open.
+ */
+export function closeOpenMenu(): boolean {
+  const surface = openMenuSurface();
+  if (surface === null) return false;
+  surface.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  return true;
 }
 
 /** The event's path crosses a menu or a submenu, shadow roots included. */
@@ -166,6 +191,55 @@ export function isMenuDismissPress(event: Event): boolean {
   return dismissPresses.has(event);
 }
 
+/**
+ * An `onCloseAutoFocus` for a button that shows under the pointer: a menu a
+ * press opened gives the focus back to nothing. WebKit would draw the button's
+ * focus ring (DESIGN_SYSTEM.md, «Своя рамка фокуса у каждого элемента») and
+ * scroll to a button the feed's edge cuts, under the still pointer. A menu a key
+ * opened gives it back as usual.
+ */
+export function noFocusBackAfterPress(event: Event): void {
+  if (event.target instanceof HTMLElement && openedByPress.has(event.target)) event.preventDefault();
+}
+
+/**
+ * A menu's command that moves the focus out of the menu: `takeFocus` runs once
+ * the open menu's surface is gone, in place of the focus going back where the
+ * menu would send it. Not earlier: a closing surface still takes the pointer's
+ * events, and Radix focuses an item the pointer crosses and the surface when
+ * the pointer leaves an item, so a field focused while the surface fades would
+ * lose the focus and end. With no menu open `takeFocus` runs at once.
+ */
+export function afterMenuCloses(takeFocus: () => void): void {
+  const surface = openMenuSurface();
+  if (surface === null) takeFocus();
+  else focusTakers.set(surface, takeFocus);
+}
+
+/** The pointer stands on a menu's surface, a submenu's included. */
+export function pointerIsOnMenu(): boolean {
+  return document.querySelector(`[${MENU_SURFACE}]:hover`) !== null;
+}
+
+/**
+ * Calls `report` at the first pointer event off every menu. WebKit gives `:hover`
+ * to what lies under a menu only once its surface is gone, some 200 to 400 ms
+ * after it closed, and says so with `pointerover` alone (SPEC_CARD_STATES.md,
+ * С7.8). A closing surface still takes the pointer's events, which say nothing.
+ */
+export function onPointerOffMenus(report: () => void): () => void {
+  const handle = (event: Event) => {
+    if (event.target instanceof Element && event.target.closest(MENU_POPPER)) return;
+    report();
+  };
+  window.addEventListener("pointerover", handle, true);
+  window.addEventListener("pointermove", handle, true);
+  return () => {
+    window.removeEventListener("pointerover", handle, true);
+    window.removeEventListener("pointermove", handle, true);
+  };
+}
+
 /** A primary press; Control with it is the macOS right click. */
 function isPrimaryPress(event: PointerEvent): boolean {
   return event.button === 0 && !event.ctrlKey;
@@ -220,6 +294,7 @@ export function useMenuSurface<T extends HTMLElement>(
         if (previous) menuSurfaces.delete(previous);
         if (node) {
           menuSurfaces.add(node);
+          if (press !== null) openedByPress.add(node);
           // Attached before Radix moves the focus into the menu.
           focusBeforeRef.current = focusedElement(node);
         }
@@ -249,6 +324,12 @@ export function useMenuSurface<T extends HTMLElement>(
 
   const handleCloseAutoFocus = useCallback(
     (event: Event) => {
+      const takeFocus = event.target instanceof HTMLElement ? focusTakers.get(event.target) : undefined;
+      if (takeFocus) {
+        event.preventDefault();
+        takeFocus();
+        return;
+      }
       onCloseAutoFocus?.(event);
       const target = focusAfterPressRef.current;
       focusAfterPressRef.current = null;

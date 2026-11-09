@@ -797,25 +797,49 @@ cannot resolve overlaps in Mine's real vaults.
 
 ### Hover
 
-Card hover opens a sidebar-compatible preview. Its timing is the shared card
-preview rule (SPEC_CARD_STATES.md, С7.10, user's decision 08.10.2026), owned
-by `HoverPreviewOpener` in `src/lib/hoverPreviewTiming.ts` and wired through
-`useHoverPreviewOpener`, the same as the sidebar and the open card's rows:
+Превью карточки показывает одно окно, общее с боковым меню и панелью открытой
+карточки (решение пользователя 05.11.2026; SPEC_CARD_STATES.md, С7.11;
+`HoverPreviewWindow` в `src/lib/hoverPreviewWindow.ts`). До этого решения у каждого
+узла было своё превью, оно появлялось и исчезало мгновенно, а узел, который раскладка
+приносила под неподвижный указатель, открывал его.
 
-- cold open delay: `HOVER_PREVIEW_COLD_OPEN_DELAY_MS = 500`;
-- then a resting pointer: the graph container feeds its own hover-intent
-  engine (`useHoverIntent`), and the preview waits while its `isSlow` is
-  false, so a pointer passing over nodes opens nothing;
-- warm open delay: `HOVER_PREVIEW_WARM_OPEN_DELAY_MS = 0`;
-- warm window: `HOVER_PREVIEW_WARM_WINDOW_MS = 800`, counted from when a
-  preview was last on screen, not from when it opened: a preview read for a
-  while still hands over to the next node at once.
+- Первое появление идёт через 500 мс (`HOVER_PREVIEW_COLD_OPEN_DELAY_MS`) и только в
+  режиме внимания движка `useHoverIntent`, поэтому указатель, проходящий по узлам,
+  ничего не открывает. Окно проявляется на месте за 150 мс.
+- В течение 800 мс (`HOVER_PREVIEW_WARM_WINDOW_MS`) после того, как окно было на
+  экране, следующее появление идёт без задержки.
+- Карточка меняется только на новом узле карточки в режиме внимания, при скорости
+  указателя не выше 500 px/с (`previewSpeed`). Старая гаснет за 100 мс, новая
+  проявляется за 150 мс, а новая картинка ждёт декодирования не дольше 100 мс.
+- На быстром проходе окно держит прежнюю карточку и своё место.
+- Над пустым холстом и над коллекцией быстрый проход окно держит, а в режиме внимания
+  оно гаснет через `leaveGraceMs` = 150 мс за 100 мс. Уход указателя с графа гасит
+  его на месте за 100 мс, открытая карточка закрывает его сразу.
+- Окно стоит под узлом, а без места снизу над ним (`graphPreviewPlace` в
+  `src/components/graph/interaction.ts`). Его место считается от `graph2ScreenCoords`
+  и экранного размера узла. Смена узла идёт одним движением по обеим осям, двумя
+  независимыми пружинами с откликом 0,3 с. Окно держится в 8 px от краёв окна
+  приложения.
+- Пока показанный узел сам движется (физика, панорамирование, масштаб), окно идёт за
+  ним в тот же кадр, без запаздывания пружины. Переход на другую сторону узла идёт по
+  пружине. В кадре читаются только координаты. Раскладка читается один раз при смене
+  карточки и при изменении размера вида, и окно ищет узел по его идентификатору, а не
+  перебором снимка.
+- Узел, сдвинутый под неподвижный указатель, ничего не включает, пока указатель не
+  сменит координаты (`RestingPointer`; SPEC_CARD_STATES.md, С7.5). force-graph читает
+  узел под своей последней точкой в каждом кадре и сообщает только его смену, а читает
+  он скрытый холст, который обновляется не чаще раза в 800 мс
+  (`GRAPH_HIT_CANVAS_REFRESH_MS`, в библиотеке `HOVER_CANVAS_THROTTLE_DELAY`). Поэтому
+  смена считается делом указателя в течение 800 мс после его настоящего шага. Позже она
+  только снимает ответ прежнего узла. Новый снимок и движение камеры (`onZoom`)
+  вызывают `displace()`: панорамирование и масштаб не гасят показанное окно, но до
+  настоящего шага новых ответов нет.
 
 Приглушение при наведении на коллекцию отвечает тому же правилу намерения,
 что карточки ленты и строки бокового меню (решение пользователя 16.10.2026,
 SPEC_CARD_STATES.md, С7.1 по С7.8): один движок `HoverIntent`
-(`src/lib/hoverIntent.ts`) через `useHoverIntent`, тот же, что даёт превью
-скорость указателя; своих таймеров у графа нет. Как граф кормит движок:
+(`src/lib/hoverIntent.ts`) через `useHoverIntent`, тот же, что даёт окну превью его
+режим внимания; своих таймеров у графа нет. Как граф кормит движок:
 
 - force-graph сообщает узел под указателем через `onNodeHover`, когда узел
   под ним сменился (проверка идёт в кадре отрисовки). Граф запоминает
@@ -847,18 +871,16 @@ Rules:
 - do not change card size, opacity, border, label visibility or link color on
   card hover; the only canvas change is the card's 0.5 CSS px edge turning to
   `cardHoverOutline`;
-- after the configured delay, fetch the full block with `get_block`;
+- the window reads a card the feed has loaded from memory, and any other with
+  `get_block`;
 - render `ReadOnlyCardPreview` with width `240`: the feed's own card unfolded,
   everything its lift brings up shown without the lift, nothing to press (SPEC_CARD_STATES.md, С10, since
   06.10.2026), the same card as the sidebar and search previews;
-- position the preview from `graph2ScreenCoords(node.x, node.y)`, clamped to the
-  viewport with the same gap/margin model as Sidebar;
-- close immediately on pointer leave;
 - граф отвечает наведению, только пока указатель над его поверхностью и её
   не закрывает открытая карточка (решение 16.10.2026, причина живой ошибки
   того же дня). Уход указателя с контейнера графа (`pointerleave`) и
   открытая карточка (`detailOpen`) снимают наведённые карточку и коллекцию
-  (а с ними обводку и приглушение коллекции), закрывают превью и выключают
+  (а с ними обводку и приглушение коллекции), убирают окно превью и выключают
   `enablePointerInteraction` у `ForceGraph2D`; вход указателя включает его
   обратно. Причина: force-graph запоминает последнюю точку указателя только
   по `pointermove` и `pointerdown` своего контейнера, при уходе её не
@@ -1275,8 +1297,10 @@ from `block:<old_slug>` to `block:<new_slug>` without closing Detail.
 ## Accessibility And Keyboard
 
 **The graph is a pointer surface — decided 23.08.2026.** Selection, opening,
-panning and zoom are cursor gestures; the graph installs no keyboard handlers
-and its canvas is not focusable. The earlier parallel keyboard model (arrow
+panning and zoom are cursor gestures; the graph itself installs no keyboard
+handlers and its canvas is not focusable. `ArrowLeft` on the graph moves the
+keyboard's focus to the sidebar (SPEC_KEYBOARD.md, М10; решение пользователя
+06.11.2026): the focus owner hears it, and the graph keeps no focus of its own. The earlier parallel keyboard model (arrow
 selection, Enter activation, Escape deselection) is removed: it required DOM
 focus on the canvas, was dead until a click, and duplicated a navigation the
 feed already owns. Global shortcuts (collection switching, view toggle, search)
@@ -1406,7 +1430,7 @@ verification prerequisite.
   the dragged node until release.
 - Closing menu or Detail restores simulation state without a synthetic drag or
   remount.
-- The graph exposes no keyboard surface: no `data-graph-keyboard-surface`, no focusable canvas wrapper.
+- The graph exposes no keyboard surface of its own: no `data-graph-keyboard-surface`, no focusable canvas wrapper. `ArrowLeft` goes to the sidebar (SPEC_KEYBOARD.md, М10).
 
 ## Implementation Slices
 

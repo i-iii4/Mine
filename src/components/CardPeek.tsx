@@ -13,7 +13,9 @@
 // in place; anything else brings it out of the right part's centre at 95 %
 // (О10, О11). One spring drives every movement, read each frame, so a
 // reversal turns back from where the window is without a jump or a break in
-// speed (О12). Only `transform` and `opacity` move: the frame is drawn in
+// speed (О12). When the collection or the view changes under it, the window
+// lands nowhere: it fades with a small move down, the new place behind it
+// (О11). Only `transform` and `opacity` move: the frame is drawn in
 // pieces while the window moves, the content is clipped by a box scaled to
 // the frame and scaled back inside it, and the card's picture rides a clip of
 // its own (cardPeek.ts). At rest the window is one plain surface with no
@@ -44,6 +46,7 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
+  type Ref,
   type RefObject,
 } from "react";
 import { flushSync } from "react-dom";
@@ -58,6 +61,9 @@ import {
   CARD_PEEK_PLATE_HEIGHT_PX,
   CARD_PEEK_PREPARE_MAX_MS,
   CARD_PEEK_RADIUS_PX,
+  CARD_PEEK_SWITCH_EXIT_EASING,
+  CARD_PEEK_SWITCH_EXIT_MS,
+  CARD_PEEK_TOP_INSET_PX,
   PEEK_FRAME_CORNERS,
   PEEK_FRAME_PIECES,
   carriedPeekMediaPlace,
@@ -74,7 +80,9 @@ import {
   pairPeekGallery,
   peekClosingKind,
   peekContentOpacity,
+  peekFrameCornerShapeStyle,
   peekFrameCut,
+  peekFramePieceStyle,
   peekFrameTransforms,
   peekLaidMediaTransforms,
   peekMediaTransforms,
@@ -83,6 +91,7 @@ import {
   peekRideOpacity,
   peekSpringSettled,
   peekSurfaceTransforms,
+  peekSwitchExitKeyframes,
   peekTileEdgeRects,
   peekWindowLayout,
   lerp,
@@ -120,10 +129,12 @@ import { CardMoreMenu } from "./CardHoverMenu";
 import { ChromeActions } from "./ChromeRow";
 import { Separator } from "./ui/separator";
 import { ChromeCloseButton } from "./ChromeCloseButton";
+import type { ChromeNameFieldHandle } from "./ChromeNameField";
 import { DetailFrameContext, type DetailFrame } from "./detailFrame";
 import { DetailMotionGateContext, type DetailMotionGate } from "./detailMotionGate";
 import { DetailCardFileName } from "./MainSecondaryChrome";
 import { Button } from "./ui/button";
+import { MODAL_SCRIM_LEAVE_CLASS, MODAL_SURFACE_LEAVE_CLASS } from "./ui/modal-window";
 import { ViewToggleIcon } from "./ViewToggleIcon";
 
 type PeekBlock = LightBlock | IndexedBlock;
@@ -144,6 +155,9 @@ export interface CardPeekProps {
   opening: CardPeekOpening | null;
   /** How the window goes when `block` turns null. */
   exit: CardPeekExit;
+  /** The feed of the place the page stands on has its list. A window leaving
+   *  for a change of collection or view starts fading once it has (О11). */
+  placeReady?: boolean;
   /** The right part the window stands over. */
   areaRef: RefObject<HTMLElement | null>;
   /** The scrim was pressed, or Escape came while the window grew. */
@@ -341,11 +355,6 @@ const FLYER_CLASS = "pointer-events-none absolute origin-top-left will-change-tr
  *  window's first frame at full opacity. */
 const MOVED_CLASS = "transition-none";
 
-/** The dialogs' exit (ui/modal-window.ts, DESIGN_SYSTEM.md, «Окна»): the
- *  window's as their surface's, the scrim's as their overlay's (О11). */
-const DIALOG_LEAVE_CLASS = "animate-out fade-out-0 zoom-out-95 duration-200 fill-mode-forwards";
-const DIALOG_SCRIM_LEAVE_CLASS = "animate-out fade-out-0 fill-mode-forwards";
-
 /** On the root while a menu is on the page (openMenus.ts). */
 const MENU_OPEN_ATTRIBUTE = "data-menu-open";
 
@@ -353,43 +362,14 @@ const MENU_OPEN_ATTRIBUTE = "data-menu-open";
 const SCRIM_TARGET = "card-peek-scrim";
 
 /** The free band over the window stepped back (О15): from the right part's
- *  top to the stepped window's top, `M` and the step's own way down, its
- *  scale taking half of what it takes from the window's height (the window
- *  is the right part's height less `M` on either side). The hint stands in
- *  its middle, across the right part, clear of the window. */
+ *  top to the stepped window's top, the window's top inset and the step's
+ *  own way down, its scale taking half of what it takes from the window's
+ *  height (the window is the right part's height less its top inset and
+ *  `M` under it). The hint stands in its middle, across the right part,
+ *  clear of the window. */
 const HINT_BAND_STYLE: CSSProperties = {
-  height: `calc(${Math.round((CARD_PEEK_MARGIN_PX + CARD_PEEK_NUDGE_OFFSET_PX) * 1e3) / 1e3}px + ${Math.round(((1 - CARD_PEEK_NUDGE_SCALE) / 2) * 1e6) / 1e6} * (100% - ${2 * CARD_PEEK_MARGIN_PX}px))`,
+  height: `calc(${Math.round((CARD_PEEK_TOP_INSET_PX + CARD_PEEK_NUDGE_OFFSET_PX) * 1e3) / 1e3}px + ${Math.round(((1 - CARD_PEEK_NUDGE_SCALE) / 2) * 1e6) / 1e6} * (100% - ${CARD_PEEK_TOP_INSET_PX + CARD_PEEK_MARGIN_PX}px))`,
 };
-
-/** Where each piece is laid out at the window's place, by CSS, so it follows
- *  the right part as the window does (`peekFramePieceBoxes` reads the same
- *  boxes for the motion). */
-function pieceStyle(piece: PeekFramePiece, cut: PeekFrameCut): CSSProperties {
-  const r = cut.round;
-  const k = cut.corner;
-  switch (piece) {
-    case "shadow": return { inset: 0 };
-    case "bandAcross": return { left: 0, right: 0, top: r, bottom: r };
-    case "bandDown": return { left: r, right: r, top: 0, bottom: 0 };
-    case "lineTop": return { left: r, right: r, top: 0, height: 1 };
-    case "lineBottom": return { left: r, right: r, bottom: 0, height: 1 };
-    case "lineLeft": return { left: 0, top: r, bottom: r, width: 1 };
-    case "lineRight": return { right: 0, top: r, bottom: r, width: 1 };
-    case "cornerTopLeft": return { left: 0, top: 0, width: k, height: k };
-    case "cornerTopRight": return { right: 0, top: 0, width: k, height: k };
-    case "cornerBottomLeft": return { left: 0, bottom: 0, width: k, height: k };
-    case "cornerBottomRight": return { right: 0, bottom: 0, width: k, height: k };
-  }
-}
-
-/** A corner's shape inside its square: a rounded box twice the square's
- *  side, of which the square shows one corner. */
-function cornerShapeStyle(corner: PeekFrameCorner, cut: PeekFrameCut, radius: number): CSSProperties {
-  const size = cut.corner * 2;
-  const horizontal = corner === "cornerTopLeft" || corner === "cornerBottomLeft" ? { left: 0 } : { right: 0 };
-  const vertical = corner === "cornerTopLeft" || corner === "cornerTopRight" ? { top: 0 } : { bottom: 0 };
-  return { width: size, height: size, borderRadius: radius, ...horizontal, ...vertical };
-}
 
 /** The frame under the window's surface: the shadow, the fill, the corners'
  *  fill. The card's fill gives way to the window's by the motion's share;
@@ -402,7 +382,7 @@ function PeekFrameUnder({ view, cut }: { view: PeekMotionView; cut: PeekFrameCut
     <div
       className={cn("absolute", MOVED_CLASS, owner === "window" && "bg-background")}
       style={{
-        ...cornerShapeStyle(corner, cut, owner === "card" ? view.cardRadius : view.windowRadius),
+        ...peekFrameCornerShapeStyle(corner, cut, owner === "card" ? view.cardRadius : view.windowRadius),
         ...(owner === "card" ? { background: view.fill } : null),
       }}
       data-peek-weight={weighted ? owner : undefined}
@@ -412,7 +392,7 @@ function PeekFrameUnder({ view, cut }: { view: PeekMotionView; cut: PeekFrameCut
     <>
       <div
         className={cn(FRAME_PIECE_CLASS, "shadow-lg")}
-        style={{ ...pieceStyle("shadow", cut), borderRadius: CARD_PEEK_RADIUS_PX }}
+        style={{ ...peekFramePieceStyle("shadow", cut), borderRadius: CARD_PEEK_RADIUS_PX }}
         data-peek-piece="shadow"
         data-peek-weight="window"
       />
@@ -421,7 +401,7 @@ function PeekFrameUnder({ view, cut }: { view: PeekMotionView; cut: PeekFrameCut
           <div
             key={piece}
             className={FRAME_PIECE_CLASS}
-            style={{ ...pieceStyle(piece, cut), background: view.fill }}
+            style={{ ...peekFramePieceStyle(piece, cut), background: view.fill }}
             data-peek-piece={piece}
           />
         ))}
@@ -431,7 +411,7 @@ function PeekFrameUnder({ view, cut }: { view: PeekMotionView; cut: PeekFrameCut
           <div
             key={piece}
             className={cn(FRAME_PIECE_CLASS, "bg-background")}
-            style={pieceStyle(piece, cut)}
+            style={peekFramePieceStyle(piece, cut)}
             data-peek-piece={piece}
           />
         ))}
@@ -440,7 +420,7 @@ function PeekFrameUnder({ view, cut }: { view: PeekMotionView; cut: PeekFrameCut
         <div
           key={corner}
           className={cn(FRAME_PIECE_CLASS, "overflow-hidden")}
-          style={pieceStyle(corner, cut)}
+          style={peekFramePieceStyle(corner, cut)}
           data-peek-piece={corner}
         >
           {shape(cardOnTop ? "window" : "card", corner, false)}
@@ -460,7 +440,7 @@ function PeekFrameOver({ view, cut }: { view: PeekMotionView; cut: PeekFrameCut 
         <div
           key={piece}
           className={cn(FRAME_PIECE_CLASS, "bg-border")}
-          style={pieceStyle(piece, cut)}
+          style={peekFramePieceStyle(piece, cut)}
           data-peek-piece={piece}
         />
       ))}
@@ -468,14 +448,14 @@ function PeekFrameOver({ view, cut }: { view: PeekMotionView; cut: PeekFrameCut 
         <div
           key={corner}
           className={cn(FRAME_PIECE_CLASS, "overflow-hidden")}
-          style={pieceStyle(corner, cut)}
+          style={peekFramePieceStyle(corner, cut)}
           data-peek-piece={corner}
         >
           {(["card", "window"] as const).map((owner) => (
             <div
               key={owner}
               className={cn("absolute border border-border", MOVED_CLASS)}
-              style={cornerShapeStyle(corner, cut, owner === "card" ? view.cardRadius : view.windowRadius)}
+              style={peekFrameCornerShapeStyle(corner, cut, owner === "card" ? view.cardRadius : view.windowRadius)}
               data-peek-weight={owner}
             />
           ))}
@@ -615,7 +595,7 @@ function originalOf(frame: HTMLElement | null): string | null {
 }
 
 /** The open card's window over the right part. */
-export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, children }: CardPeekProps) {
+export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onClose, onReopen, children }: CardPeekProps) {
   // The card the window shows: the open one, and the last one while the
   // window leaves.
   const [held, setHeld] = useState<PeekBlock | null>(block);
@@ -723,6 +703,11 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
   // О11: the card the window grew out of has no place on screen as the
   // window closes; it leaves as a dialog does.
   const [leavingAsDialog, setLeavingAsDialog] = useState(false);
+  // О11: the collection or the view changed under the window; it fades down
+  // over the new place, which answers from the start. Its two animations, and
+  // the movement it cut short, whose hidden frames stay hidden until it ends.
+  const [switching, setSwitching] = useState(false);
+  const switchExitRef = useRef<{ animations: Animation[]; cut: PeekMotion | null } | null>(null);
 
   // The gate the card's own work goes through (detailMotionGate.ts): open
   // while the window prepares and rests, holding while it moves.
@@ -1729,10 +1714,24 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
     queueMicrotask(() => evaluateFrameRef.current());
   }, [peekWidth]);
 
+  /** A leaving for a change of collection or view stopped where it is. */
+  const cancelSwitchExit = () => {
+    const exiting = switchExitRef.current;
+    switchExitRef.current = null;
+    if (!exiting) return;
+    for (const animation of exiting.animations) {
+      animation.onfinish = null;
+      animation.cancel();
+    }
+    restoreHiddenFrame(exiting.cut);
+  };
+
   /** The window, its scrim and its hint gone at once, the card back in the
    *  feed (О11: Escape, a narrow window's full page). */
   const vanish = () => {
     const motion = motionRef.current;
+    cancelSwitchExit();
+    setSwitching(false);
     cancelPreparation();
     cancelHandover();
     stopLoop(motion);
@@ -1772,6 +1771,66 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
     setLeavingAsDialog(true);
   };
 
+  /** The collection or the view changed under the window (О11; user's
+   *  decision of 05.11.2026): it lands nowhere, even where the same card
+   *  stands in the new feed. It stops where it stands; the card it hid shows
+   *  at once and the page under it answers at once. */
+  const leaveForSwitch = () => {
+    if (switchExitRef.current) return;
+    const motion = motionRef.current;
+    stopLoop(motion);
+    motionRef.current = null;
+    cancelPreparation();
+    cancelHandover();
+    const nudge = nudgeSpringRef.current;
+    if (nudge.frame !== null) cancelAnimationFrame(nudge.frame);
+    nudge.frame = null;
+    writeNudge();
+    hideCard(null);
+    releaseGate();
+    setHintShown(false);
+    setClosing(true);
+    switchExitRef.current = { animations: [], cut: motion };
+    setSwitching(true);
+  };
+
+  // That leaving fades once the new place's feed stands under the window, in
+  // the commit that lays it out, and `CARD_PEEK_PREPARE_MAX_MS` at most after
+  // the change. The window and its scrim fade together and the window moves
+  // down as one piece. They run on the compositor, so the work on the page
+  // under them does not hold them up, and "Reduce motion" keeps their time
+  // (О13).
+  useLayoutEffect(() => {
+    const exiting = switchExitRef.current;
+    if (!switching || !exiting || exiting.animations.length > 0) return undefined;
+    const fade = () => {
+      const anchor = anchorRef.current;
+      const scrim = scrimRef.current;
+      if (!anchor || !scrim || typeof anchor.animate !== "function") {
+        vanish();
+        return;
+      }
+      const ends = peekSwitchExitKeyframes(prefersReducedMotion());
+      const timing: KeyframeAnimationOptions = {
+        duration: CARD_PEEK_SWITCH_EXIT_MS,
+        easing: CARD_PEEK_SWITCH_EXIT_EASING,
+        fill: "forwards",
+      };
+      const windowExit = anchor.animate([ends.window], timing);
+      exiting.animations = [windowExit, scrim.animate([ends.scrim], timing)];
+      // In one task with the last frame's styles dropped, so no frame shows
+      // the window whole after it faded.
+      windowExit.onfinish = () => flushSync(() => vanish());
+    };
+    if (placeReady) {
+      fade();
+      return undefined;
+    }
+    const wait = window.setTimeout(fade, CARD_PEEK_PREPARE_MAX_MS);
+    return () => window.clearTimeout(wait);
+  // `vanish` reads only refs and sets state.
+  }, [placeReady, switching]);
+
   // The page opened, closed or reopened the card.
   useLayoutEffect(() => {
     const previousSlug = previousRef.current;
@@ -1804,6 +1863,8 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
         return;
       }
       // A new opening: a window still leaving is gone at once (О11).
+      cancelSwitchExit();
+      setSwitching(false);
       restPicturesRef.current = new Map();
       cancelPreparation();
       cancelHandover();
@@ -1888,6 +1949,11 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
       }
       // The hint goes; the step back stays and the closing carries it (О15).
       setHintShown(false);
+      // Escape keeps its own: at once, below.
+      if (exitRef.current === "switch" && !escapedRef.current) {
+        leaveForSwitch();
+        return;
+      }
       // A resize under way stops where it stands: the closing goes from the
       // width the window shows (О11).
       let shownWidth: number | null = null;
@@ -1984,10 +2050,16 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
         },
         false,
       );
+      return;
     }
-  // Heard on `block` alone: `held`, `closing` and `flyer` are what stood
-  // before this change, and `opening` and `exit` come with `block`.
-  }, [block]);
+    // The collection or the view changed under a window already closing: it
+    // leaves from where it stands (О5, О11). One leaving as a dialog ends as
+    // it began.
+    if (!block && held && closing && !leavingAsDialog && exit === "switch") leaveForSwitch();
+  // Heard on `block` and `exit`: `held`, `closing`, `flyer` and
+  // `leavingAsDialog` are what stood before this change, `opening` comes with
+  // `block`, and `exit` comes with it or, over a closing, on its own.
+  }, [block, exit]);
 
   useLayoutEffect(() => {
     gatherAndPaint();
@@ -1996,7 +2068,8 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
   // The wheel aimed under the window goes nowhere from the commit that first
   // holds it, the opening click's own, its preparation included, until it
   // has left the page (О6). Laid before paint, so no frame lets one through.
-  const windowHeld = held !== null;
+  // A leaving for a change of collection or view holds nothing (О11).
+  const windowHeld = held !== null && !switching;
   useLayoutEffect(() => (windowHeld ? holdPeekWheelGuard() : undefined), [windowHeld]);
 
   // Escape closes the window at once, with no movement (О11; user's
@@ -2035,9 +2108,11 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
 
   // The second press of the double click that closed the window does not
   // reach the feed under it: it is not a press of its own (О11). A single
-  // press on the feed right after the closing begins does.
+  // press on the feed right after the closing begins does. A leaving for a
+  // change of collection or view was not closed by a press on the window: the
+  // page answers as with no window (О11).
   useEffect(() => {
-    if (!closing) return undefined;
+    if (!closing || switching) return undefined;
     const guard = (event: MouseEvent) => {
       if (event.detail < 2) return;
       event.preventDefault();
@@ -2049,7 +2124,7 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
       window.removeEventListener("click", guard, true);
       window.removeEventListener("dblclick", guard, true);
     };
-  }, [closing]);
+  }, [closing, switching]);
 
   useEffect(() => () => {
     const nudge = nudgeSpringRef.current;
@@ -2058,6 +2133,7 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
     const motion = motionRef.current;
     stopLoop(motion);
     restoreHiddenFrame(motion);
+    cancelSwitchExit();
     cancelPreparation();
     cancelHandover();
     hiddenCardRef.current?.removeAttribute(HIDDEN_CARD_ATTRIBUTE);
@@ -2112,6 +2188,7 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
       className="pointer-events-none absolute inset-0 z-10"
       data-card-peek=""
       data-card-peek-closing={closing ? "" : undefined}
+      data-card-peek-switching={switching ? "" : undefined}
       data-card-peek-preparing={preparing ? "" : undefined}
     >
       {/* A drag holds the step and the hint (С7.8). */}
@@ -2123,7 +2200,7 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
           "modal-scrim absolute inset-0",
           MOVED_CLASS,
           closing ? "pointer-events-none" : "pointer-events-auto",
-          leavingAsDialog && DIALOG_SCRIM_LEAVE_CLASS,
+          leavingAsDialog && MODAL_SCRIM_LEAVE_CLASS,
         )}
         data-card-peek-scrim=""
         onClick={(event) => {
@@ -2140,16 +2217,21 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
       />
       <div
         ref={anchorRef}
-        className={cn("pointer-events-none absolute", MOVED_CLASS, leavingAsDialog && DIALOG_LEAVE_CLASS)}
+        className={cn("pointer-events-none absolute", MOVED_CLASS, leavingAsDialog && MODAL_SURFACE_LEAVE_CLASS)}
         onAnimationEnd={(event) => {
           if (leavingAsDialog && event.target === event.currentTarget) vanish();
         }}
-        // In M from the right part's edges; with «Peek width» Fit card never
-        // wider than the card, and with the panel under the content no wider
-        // than the content, the auto margins centring it once the right part
-        // is wider (О3).
+        // In M from the right part's sides and bottom, and from its top by M
+        // less the window's line, so the line lies on the top row's and the
+        // header fills the sidebar's first row; with «Peek width» Fit card
+        // never wider than the card, and with the panel under the content no
+        // wider than the content, the auto margins centring it once the
+        // right part is wider (О3).
         style={{
-          inset: CARD_PEEK_MARGIN_PX,
+          top: CARD_PEEK_TOP_INSET_PX,
+          right: CARD_PEEK_MARGIN_PX,
+          bottom: CARD_PEEK_MARGIN_PX,
+          left: CARD_PEEK_MARGIN_PX,
           maxWidth: frameMaxWidth(frameLayout, peekWidth),
           marginInline: "auto",
         }}
@@ -2165,7 +2247,10 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
         <div
           ref={surfaceRef}
           className={cn(
-            "pointer-events-auto absolute inset-0 origin-top-left overflow-hidden border border-border bg-background text-foreground shadow-lg",
+            "absolute inset-0 origin-top-left overflow-hidden border border-border bg-background text-foreground shadow-lg",
+            // Leaving for a change of collection or view, the page under it
+            // takes the press and the wheel at once (О11).
+            switching ? "pointer-events-none" : "pointer-events-auto",
             MOVED_CLASS,
           )}
           style={{ borderRadius: CARD_PEEK_RADIUS_PX }}
@@ -2191,7 +2276,7 @@ export function CardPeek({ block, opening, exit, areaRef, onClose, onReopen, chi
         {view && cut && <PeekFrameOver view={view} cut={cut} />}
         </div>
       </div>
-      {/* Over the window, in the field `M` over it (О15). */}
+      {/* Over the window, in the field over it (О15). */}
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-center gap-1 text-sm text-muted-foreground"
@@ -2222,6 +2307,7 @@ export function CardPeekPlate({
   onRequestDelete,
   onRenameFile,
   onCheckFileName,
+  nameFieldRef,
   onExpand,
   onClose,
   menuOpenRequestSequence,
@@ -2236,6 +2322,8 @@ export function CardPeekPlate({
   onRequestDelete: (slug: string) => void;
   onRenameFile: (block: PeekBlock, newStem: string) => Promise<void>;
   onCheckFileName: (block: PeekBlock, newStem: string) => Promise<RenameBlockError | null>;
+  /** The card's name, for the card's `Rename…` to reach. */
+  nameFieldRef?: Ref<ChromeNameFieldHandle>;
   /** Chooses «Card view: Full page»: the same card stands full (О9, О16). */
   onExpand: () => void;
   onClose: () => void;
@@ -2251,7 +2339,7 @@ export function CardPeekPlate({
       data-card-peek-plate=""
     >
       <div className="flex min-h-0 flex-1 items-center gap-1 pl-[var(--chrome-edge-pad)]">
-        <DetailCardFileName block={block} onRename={onRenameFile} onCheck={onCheckFileName} />
+        <DetailCardFileName block={block} onRename={onRenameFile} onCheck={onCheckFileName} fieldRef={nameFieldRef} />
         <ChromeActions className="ml-auto">
           <CardMoreMenu
             block={block}

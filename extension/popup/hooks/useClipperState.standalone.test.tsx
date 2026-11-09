@@ -43,6 +43,8 @@ vi.mock("../lib/messaging", async (importOriginal) => {
       ? { url: threadArticle.value.pageUrl ?? "https://x.com/author/status/10", title: "Thread", selection: "", detectedType: "content" }
       : { url: "https://example.com", title: "Page" },
     extractArticleAsync: async () => threadArticle.value,
+    // No page and no worker here: a collection gets no file.
+    openPageFiles: () => ({ files: Promise.resolve([]), keep: () => undefined, close: () => undefined }),
   };
 });
 
@@ -1631,4 +1633,199 @@ describe("the channel is the author of a YouTube clip (SPEC_CARD_ASSOCIATIONS.md
     expect(saved!).toMatchObject({ ok: true });
     expect(savedAuthor()).toBeNull();
   });
+});
+
+// SPEC_CLIPPER.md, «Один путь файла со страницы», Б9, Б12: the browser gets the
+// files of the clip before the operation is fixed, and the helper takes them
+// from `browser_files`; a helper without the route works as it did.
+describe("the files of a clip", () => {
+  const PAGE = "https://shop.example/p";
+  const PICTURE = "https://cdn.example/picture.jpg";
+  const ENTRY = { url: PICTURE, upload_id: "8f7e0a91d9b44d0cb1e6f52bb612ab8d", source: "browser", final_url: PICTURE };
+
+  function helper(features: string[]) {
+    const order: string[] = [];
+    const saves: Record<string, unknown>[] = [];
+    sendToNative.mockImplementation(async (request: { action: string }) => {
+      if (request.action === "get_status") {
+        return { ...nativeStatus(), upload_port: 1234, upload_token: "token", features: [...nativeStatus().features, ...features] };
+      }
+      if (request.action === "save_block") {
+        order.push("save");
+        saves.push(request);
+        return { ok: true, outcome: "committed", slug: "Cards/Clip" };
+      }
+      return { ok: true, channels: [], vaults: ["/v"] };
+    });
+    return { order, saves };
+  }
+
+  function collecting(order: string[], files: messaging.PageFilesCollection["files"] = Promise.resolve([ENTRY]) as messaging.PageFilesCollection["files"]) {
+    return vi.spyOn(messaging, "openPageFiles").mockImplementation(() => ({
+      files,
+      keep: () => { order.push("keep"); },
+      close: () => { order.push("close"); },
+    }));
+  }
+
+  function pageWith(meta: Partial<messaging.PageMetadata>) {
+    vi.spyOn(messaging, "extractMetadata").mockResolvedValue({
+      url: PAGE, documentUrl: `${PAGE}?from=feed`, captureGeneration: "g:1", title: "Page", description: "", image: null, author: null,
+      ogType: null, favicon: null, selection: "", detectedType: "link", isArticle: false, ...meta,
+    } as messaging.PageMetadata);
+  }
+
+  it("gives the Save what the browser did about the files, after fixing the operation with them", async () => {
+    const { order, saves } = helper(["browser_files_v1"]);
+    const open = collecting(order);
+    pageWith({ image: PICTURE });
+    const { result } = renderHook(() => useClipperState());
+    await settled(result);
+    act(() => result.current.setCurrentType("link"));
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open.mock.calls[0]?.[0]).toMatchObject({
+      documentUrl: `${PAGE}?from=feed`, imageUrl: PICTURE, tabId: 7, uploadPort: 1234, uploadToken: "token", vaultPath: "/v",
+    });
+    expect(saves[0]).toMatchObject({ image_url: PICTURE, browser_files: [ENTRY] });
+    expect(order).toEqual(["keep", "save", "close"]);
+    // A repeat and a check of the outcome read this record: they take the same uploads.
+    const fixed = browser.storage.local.set.mock.calls.flatMap(([values]) => Object.entries(values))
+      .find(([key]) => key.startsWith("minePendingSaveOperation:"))?.[1] as { payload?: Record<string, unknown> } | undefined;
+    expect(fixed?.payload?.browser_files).toEqual([ENTRY]);
+  });
+
+  it("sends the body and the posters of an article through the same route", async () => {
+    const { order, saves } = helper(["browser_files_v1"]);
+    const open = collecting(order);
+    pageWith({ detectedType: "content", isArticle: true });
+    const content = `![a](${PICTURE})\n\nText.`;
+    vi.spyOn(messaging, "extractArticleAsync").mockResolvedValue({ title: "Page", content, byline: null, excerpt: "",
+      documentUrl: `${PAGE}?from=feed`, sourceUrl: PAGE, captureGeneration: "g:1" });
+    const { result } = renderHook(() => useClipperState());
+    await settled(result);
+    act(() => result.current.setCurrentType("content"));
+    await waitFor(() => expect(result.current.articleExtractionState).toBe("ready"));
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+
+    expect(String(open.mock.calls[0]?.[0].body)).toContain(PICTURE);
+    expect(saves[0]?.body).toBe(open.mock.calls[0]?.[0].body);
+  });
+
+  it("keeps the address of a picture card and takes its file through the route", async () => {
+    const { order, saves } = helper(["browser_files_v1", "pending_uploads_v1"]);
+    collecting(order);
+    const oldPath = vi.spyOn(messaging, "uploadBrowserFile");
+    pageWith({ imageToSave: PICTURE, image: PICTURE, detectedType: "image" });
+    const { result } = renderHook(() => useClipperState());
+    await settled(result);
+    act(() => result.current.setCurrentType("image"));
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+
+    expect(oldPath).not.toHaveBeenCalled();
+    expect(saves[0]).toMatchObject({ block_type: "image", image_url: PICTURE, browser_files: [ENTRY] });
+    expect(saves[0]?.pre_uploaded_id).toBeUndefined();
+  });
+
+  it("uses the upload of the cache with a helper without the route (Б12)", async () => {
+    const { order, saves } = helper(["pending_uploads_v1"]);
+    const open = collecting(order);
+    const oldPath = vi.spyOn(messaging, "uploadBrowserFile").mockResolvedValue("8f7e0a91d9b44d0cb1e6f52bb612ab8d");
+    pageWith({ imageToSave: PICTURE, image: PICTURE, detectedType: "image" });
+    const { result } = renderHook(() => useClipperState());
+    await settled(result);
+    act(() => result.current.setCurrentType("image"));
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+
+    expect(open).not.toHaveBeenCalled();
+    expect(oldPath).toHaveBeenCalledTimes(1);
+    expect(saves[0]).toMatchObject({ pre_uploaded_id: "8f7e0a91d9b44d0cb1e6f52bb612ab8d" });
+    expect(saves[0]?.browser_files).toBeUndefined();
+  });
+
+  it("saves without the field when the browser did nothing: the helper downloads as before", async () => {
+    const { order, saves } = helper(["browser_files_v1"]);
+    collecting(order, Promise.resolve([]));
+    pageWith({ image: PICTURE });
+    const { result } = renderHook(() => useClipperState());
+    await settled(result);
+    act(() => result.current.setCurrentType("link"));
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+
+    expect("browser_files" in (saves[0] ?? {})).toBe(false);
+    expect(saves[0]).toMatchObject({ image_url: PICTURE });
+  });
+
+  it("leaves the uploads to the background when the operation could not be fixed", async () => {
+    const { order, saves } = helper(["browser_files_v1"]);
+    collecting(order);
+    pageWith({ image: PICTURE });
+    const { result } = renderHook(() => useClipperState());
+    await settled(result);
+    act(() => result.current.setCurrentType("link"));
+    browser.storage.local.set.mockImplementation(async (values: Record<string, unknown>) => {
+      if (Object.keys(values).some((key) => key.startsWith("minePendingSaveOperation:"))) throw new Error("The disk is full");
+    });
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: false }); });
+
+    expect(saves).toEqual([]);
+    expect(order).toEqual(["close"]);
+  });
+
+  it("collects for a browser folder without the helper, and fixes the operation with what came (Б13)", async () => {
+    browserDestination();
+    const order: string[] = [];
+    standalone.standaloneSave.mockImplementation(async () => {
+      order.push("save");
+      return { ok: true, outcome: "committed", slug: "Cards/Clip" };
+    });
+    const open = collecting(order);
+    pageWith({ image: PICTURE });
+    await chrome.storage.local.set({ mineSaveDestination: { executor: "browser", bindingId: "browser-original" } });
+    const { result } = renderHook(() => useClipperState());
+    await settled(result);
+    act(() => result.current.setCurrentType("link"));
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+
+    expect(open).toHaveBeenCalledOnce();
+    expect(open.mock.calls[0]?.[0]).toMatchObject({
+      executor: "browser", imageUrl: PICTURE, uploadPort: null, uploadToken: null, vaultPath: null, documentUrl: `${PAGE}?from=feed`,
+    });
+    expect(standalone.standaloneSave.mock.calls[0]?.[0]).toMatchObject({ image_url: PICTURE, browser_files: [ENTRY] });
+    expect(order).toEqual(["keep", "save", "close"]);
+    expect(sendToNative.mock.calls.some(([request]) => (request as { action?: string }).action === "save_block")).toBe(false);
+  });
+
+  it("takes the file of a picture card by the route in a browser folder (Б13)", async () => {
+    browserDestination();
+    const order: string[] = [];
+    collecting(order);
+    pageWith({ image: PICTURE, detectedType: "image", imageToSave: PICTURE, imageWidth: 640, imageHeight: 480 } as Partial<messaging.PageMetadata>);
+    await chrome.storage.local.set({ mineSaveDestination: { executor: "browser", bindingId: "browser-original" } });
+    const { result } = renderHook(() => useClipperState());
+    await settled(result);
+    act(() => result.current.setCurrentType("image"));
+    await act(async () => { expect(await result.current.save()).toMatchObject({ ok: true }); });
+
+    expect(standalone.standaloneSave.mock.calls[0]?.[0]).toMatchObject({ block_type: "image", image_url: PICTURE, browser_files: [ENTRY] });
+  });
+
+  it("does not collect a screenshot in a browser folder: its bytes are at hand", async () => {
+    browserDestination();
+    const open = vi.spyOn(messaging, "openPageFiles");
+    pageWith({});
+    await chrome.storage.local.set({ mineSaveDestination: { executor: "browser", bindingId: "browser-original" } });
+    const { result } = renderHook(() => useClipperState());
+    await settled(result);
+    act(() => result.current.setCurrentType("screenshot"));
+    await act(async () => { await result.current.save(); });
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  function browserDestination() {
+    sendToNative.mockResolvedValue({ ok: false, error: "No helper" });
+    standalone.getStandaloneStatus.mockResolvedValue({ configured: true, folderName: "Mine", permission: "granted", bindingId: "browser-original" });
+    standalone.standaloneSave.mockResolvedValue({ ok: true, outcome: "committed", slug: "Cards/Clip" });
+  }
 });

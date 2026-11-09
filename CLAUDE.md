@@ -89,7 +89,8 @@
 | whatlang | Определение языка текста (article speech prep) |
 | ureq | Синхронный HTTP-клиент (импорт Are.na) |
 | tiny_http + http-range + url + getrandom + httpdate | Native host: локальный upload-сервер для бинарных файлов, валидация URL, upload-токены, `Retry-After` отказа сайта |
-| pulldown-cmark | Native host: разбор CommonMark, чтобы примеры в коде не превращались во вставки медиа |
+| pulldown-cmark | Ядро сохранения: разбор CommonMark, чтобы примеры в коде не превращались во вставки медиа |
+| psl | Ядро сохранения: список публичных суффиксов, сайт файла для cookie и имена без публичного суффикса (SPEC_CLIPPER.md, «Один путь файла со страницы») |
 | React 19 | UI-фреймворк |
 | react-router | Роутинг страницы вкладки |
 | Vite | Сборка фронтенда, HMR |
@@ -132,7 +133,7 @@ local-arena/
 │   ├── src/
 │   │   ├── bin/
 │   │   │   └── native_host.rs  # Native messaging host для расширения (stdin/stdout JSON)
-│   │   ├── native_host_tests/  # Тестовые модули помощника: cloud_tests.rs, e4_tests.rs, picture_file_tests.rs (файл картинки, отказ сайта), fake_web.rs (поддельный веб-сервер)
+│   │   ├── native_host_tests/  # Тестовые модули помощника: cloud_tests.rs, e4_tests.rs, picture_file_tests.rs (файл картинки, отказ сайта), page_files_tests.rs (один путь файла со страницы), fake_web.rs (поддельный веб-сервер)
 │   │   ├── tooling/            # Остальные исполняемые файлы ([[bin]] в Cargo.toml)
 │   │   │   ├── mine_cli.rs     # CLI `mine` и MCP
 │   │   │   ├── clipper_runtime_install.rs, cli_runtime_install.rs # Установка помощника клиппера и CLI
@@ -317,9 +318,9 @@ local-arena/
 │   │   ├── ScreenState.tsx     # Общая раскладка полноэкранных состояний: колонка, заголовок, текст, кнопки
 │   │   ├── EmptySpaceOnboarding.tsx # Два пути наполнения пустого пространства
 │   │   └── EdgeStatesSection.tsx # Витрина краевых состояний (гейт test:edge-states)
-│   ├── hooks/                  # useSidebarResize (ширина последнего перетаскивания, сжатие окном в CSS), useHiddenEdges (какие края прокручиваемого ряда скрывают содержимое: нижняя панель узкого окна и таблицы статьи, SPEC_SCROLL_EDGE_FADE.md), useSidebarOverlay (открытость меню поверх ленты у страницы, команды бэкенда, зеркало для полосы и View, SPEC_NARROW_WINDOW.md, У4 по У8), useTopRowWrap (действия выделения во втором ряду, когда верхний ряд их не вмещает, SPEC_NARROW_WINDOW.md, У10), useGridScroll, useChannelPreviewsEvents, useProjectionRevisionOwner, useThumbnailUpgrade, usePreviewFileRetry (нет файла превью: заливка вместо битой картинки, повтор по thumb:updated) и др.
+│   ├── hooks/                  # useSidebarKeyboardFocus (где клавиатурный фокус: строка бокового меню или страница, SPEC_KEYBOARD.md, «Sidebar»), useSidebarResize (ширина последнего перетаскивания, сжатие окном в CSS), useHiddenEdges (какие края прокручиваемого ряда скрывают содержимое: нижняя панель узкого окна и таблицы статьи, SPEC_SCROLL_EDGE_FADE.md), useSidebarOverlay (открытость меню поверх ленты у страницы, команды бэкенда, зеркало для полосы и View, SPEC_NARROW_WINDOW.md, У4 по У8), useTopRowWrap (действия выделения во втором ряду, когда верхний ряд их не вмещает, SPEC_NARROW_WINDOW.md, У10), useGridScroll, useChannelPreviewsEvents, useProjectionRevisionOwner, useThumbnailUpgrade, usePreviewFileRetry (нет файла превью: заливка вместо битой картинки, повтор по thumb:updated) и др.
 │   ├── types/                  # generated.ts from Rust/Specta + frontend-owned index.ts
-│   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()), pageEvents.ts (события своей страницы), tabPage.ts (память вкладки), tabVisibility.ts (показ и пауза медиа), chromeHeight.ts (высота хрома окна, резерв светофоров), channelIcon.ts (геометрия и пружина стопки мини-карточек компактного меню), compactStack.ts (пробы меню PLAN 50.38: шаг и вид List, отложенные вид меню и край стопки), sidebarWidth.ts (ширина меню ненаследуемой переменной на корне и на элементах, которые по ней раскладываются), sidebarStripWidth.ts и stripPictures.ts (число плиток ленты миниатюр по её ширине в том же кадре, кэш её картинок, SPEC_SIDEBAR_STRIP.md), sidebarRowsMorph.ts (переход строк таблицы в узкие, отложен), cardView.ts (проба вида открытой карточки, SPEC_CARD_PEEK.md), textClip.ts (растворение края только у не помещающегося текста), controlCharGuard.ts, floatingLayer.ts (ширина меню, зазор от плашки кнопки), deleteFailure.ts (уведомления о сбое удаления), actionFailures.ts (уведомления о сбоях действий вкладки), createElements.ts (очередь новых элементов из броска и ⌘V), systemActions.ts (ссылка в браузер, файл в Finder), tabBarFailure.ts (сбой полосы вкладок видимой вкладке), errorMessage.ts (слова ошибки), sidebarPlacement.ts (меню рядом с лентой, сжатое или поверх неё по ширине окна, пределы перетаскивания), topRowFit.ts (обрезает ли верхний ряд действия выделения), topRowPath.ts (место в верхнем ряду при открытой карточке в узком окне и рядом с открытым меню), detailLayout.ts (раскладка открытой карточки и рамка её медиа, один предел высоты) и др.
+│   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()), pageEvents.ts (события своей страницы), tabPage.ts (память вкладки), tabVisibility.ts (показ и пауза медиа), chromeHeight.ts (высота хрома окна, резерв светофоров), channelIcon.ts (геометрия и пружина стопки мини-карточек компактного меню), compactStack.ts (пробы меню PLAN 50.38: шаг и вид List, отложенные вид меню и край стопки), sidebarWidth.ts (ширина меню ненаследуемой переменной на корне и на элементах, которые по ней раскладываются), sidebarStripWidth.ts и stripPictures.ts (число плиток ленты миниатюр по её ширине в том же кадре, кэш её картинок, SPEC_SIDEBAR_STRIP.md), sidebarRowsMorph.ts (переход строк таблицы в узкие, отложен), cardView.ts (проба вида открытой карточки, SPEC_CARD_PEEK.md), textClip.ts (растворение края только у не помещающегося текста), controlCharGuard.ts, floatingLayer.ts (ширина меню, зазор от плашки кнопки), deleteFailure.ts (уведомления о сбое удаления), actionFailures.ts (уведомления о сбоях действий вкладки), createElements.ts (очередь новых элементов из броска и ⌘V), systemActions.ts (ссылка в браузер, файл в Finder), tabBarFailure.ts (сбой полосы вкладок видимой вкладке), errorMessage.ts (слова ошибки), sidebarPlacement.ts (меню рядом с лентой, сжатое или поверх неё по ширине окна, пределы перетаскивания), sidebarKeyboardFocus.ts (ходьба по строкам меню и действия над строкой под клавиатурным фокусом), topRowFit.ts (обрезает ли верхний ряд действия выделения), topRowPath.ts (место в верхнем ряду при открытой карточке в узком окне и рядом с открытым меню), detailLayout.ts (раскладка открытой карточки и рамка её медиа, один предел высоты), imagePreviewMotion.ts (путь картинки просмотра из рамки медиа и обратно, SPEC_MEDIA_ASSET_ACTIONS.md) и др.
 │   ├── workers/                # fontMetrics.worker.ts (Canvas measureText), thumbWorker.ts
 │   ├── dev/                    # Dev-only Feed, Graph, ColdSpace and SidebarReorder acceptance routes; страницы сравнения на dev-сервере: /__buttons (кнопки shadcn), /__cloud-open (первое открытие пространства из облака), /__onboarding (онбординг по экранам), /__popups (модальные окна приложения по кнопкам)
 │   ├── components/reading/     # Элементы статьи (SPEC_READING_MODE.md, Ч13): ArticleMarkdown, CodeBlock, MermaidDiagram, MathView, Callout, Disclosure, NoteEmbed, TaskCheckbox, ArticleTable
@@ -336,7 +337,7 @@ local-arena/
 │   ├── cold-space-browser-audit.mjs # First/settled/deep cold Grid acceptance
 │   ├── edge-states-audit.mjs   # Витрина краевых состояний: варианты, контексты, обрезка, невидимый текст
 │   ├── audit-vite.mjs          # Свой Vite браузерной проверки: свободный порт, кэш зависимостей во временной папке
-│   ├── selection-menu-audit.mjs, sidebar-action-audit.mjs, detail-image-geometry-audit.mjs, top-row-wrap-audit.mjs, narrow-window-audit.mjs, reading-mode-audit.mjs # Самостоятельные браузерные проверки на audit-vite.mjs
+│   ├── selection-menu-audit.mjs, sidebar-action-audit.mjs, detail-image-geometry-audit.mjs, top-row-wrap-audit.mjs, narrow-window-audit.mjs, reading-mode-audit.mjs, paste-feed-audit.mjs # Самостоятельные браузерные проверки на audit-vite.mjs
 │   ├── sidebar-strip-audit.mjs # Лента миниатюр меню: своя сборка для продакшена, перетаскивание края, полное чтение (SPEC_SIDEBAR_STRIP.md)
 │   ├── fixtures/reading-mode.md # Заметка проверки режима чтения: код, Mermaid, таблицы, выноски, формулы, HTML, сноски, вставки, задачи
 │   ├── fixtures/list-of-images.md, fixtures/media-shapes.md, picture-rows.mjs # Заметки картинок (тело карточки клиппера байт в байт; картинки в списках, абзацах, цитатах) и их замеры для test:reading-mode и test:editing (SPEC_READING_MODE.md, Ч15)
@@ -361,7 +362,7 @@ local-arena/
 │   │   ├── hooks/              # useClipperState.ts
 │   │   └── lib/                # messaging.ts (типизированный native messaging), openClip.ts (открытый клип вкладки между загрузками страниц), overlayBounds.ts (место и размер оверлея)
 │   ├── dist/                   # Собранный попап (output Vite)
-│   ├── lib/                    # Вендорные библиотеки (Defuddle UMD), ядро сохранения (mineCore.js), extensionBuild.js (сборка работающего фона против сборки на диске), browserFile.js (файл картинки из кэша вкладки, SPEC_CLIPPER.md Б1) и др.
+│   ├── lib/                    # Вендорные библиотеки (Defuddle UMD), ядро сохранения (mineCore.js), extensionBuild.js (сборка работающего фона против сборки на диске), browserFile.js (файл страницы из её кэша и её запросом, SPEC_CLIPPER.md Б5), pageFiles.js (порядок сбора файлов клипа и запрос фона, Б4, Б6, Б11) и др.
 │   ├── icons/                  # Иконки расширения
 │   └── manifest.json           # Manifest V3
 ├── core-ffi/                   # Rust FFI-слой для iOS (UniFFI)
@@ -525,6 +526,9 @@ bun run test:x-thread          # Сборка расширения и цепоч
 bun run test:reading-mode      # Режим чтения статьи: фикстура scripts/fixtures/reading-mode.md в Detail, обе темы, 1600 и 900 в ширину, перенос, код, маркер, HTML, таблицы, Mermaid, выноски, KaTeX, сноски, вставки, флажки, без сетевых запросов (свой Vite)
 bun run test:browser           # Сам поднимает Vite и запускает все browser gates
 bun run test:focus-ring        # WebKit: ни одной рамки фокуса браузера в главном окне (свой Vite)
+bun run test:paste-feed        # WebKit: настоящий ⌘V над лентой вставляет один раз в каждом её состоянии, в поле, меню, оверлее и при открытой карточке не вставляет (свой Vite)
+bun run test:image-preview     # WebKit: движение просмотра изображения покадрово: первый и последний кадр на источнике, разворот, клавиатура, «Уменьшить движение», ввод во время движения, оригинал ещё в загрузке; с IMAGE_PREVIEW_STRIP_DIR пишет полосы кадров (свой Vite)
+bun run test:swipe-scroller    # WebKit: жест над элементом с горизонтальной прокруткой: ответ страницы и настоящее колесо над таблицей статьи и блоком кода, в том числе на краю (свой Vite)
 bun run test:native-shell      # Packaged macOS WKWebView + real Tauri invoke smoke
 bun run test:clipper-worker    # Собранное расширение/CSP/WASM и цепочка X (x-thread-smoke) в отдельном headless Chromium
 bun run bindings:generate      # Обновить committed Rust/Specta TypeScript bindings

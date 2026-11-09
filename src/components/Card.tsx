@@ -5,6 +5,7 @@ import {
   previewAssetUrl,
   fallbackThumbsRoot,
 } from "@/lib/assets";
+import { useCardPicturesVersion } from "@/lib/pictureVersions";
 import {
   deriveCardLayoutDescriptor,
   hasCardText,
@@ -44,7 +45,7 @@ import {
   type BlockDragData,
 } from "@/lib/blockDrag";
 import { cn } from "@/lib/utils";
-import { CardCollectionsRow, CardHoverMenu } from "./CardHoverMenu";
+import { CardCollectionsRow, CardHoverMenu, type CardMenuBadgeCommand } from "./CardHoverMenu";
 import { EDGE_FADE_WIDTH, createTopFadeMaskStyle } from "@/lib/edgeFade";
 import { useCollectionOrder } from "@/lib/cardCollections";
 import { FeedVideoSurface } from "./FeedVideoSurface";
@@ -92,6 +93,10 @@ interface CardProps {
   priority?: boolean;
   allowPlayback?: boolean;
   openMoreMenuRequestSequence?: number;
+  /** The keyboard's card shows the chord of its menu in the top row. */
+  menuBadge?: CardMenuBadgeCommand | null;
+  /** The keyboard's card lifts as on hover, with no buttons (С8.5). */
+  keyboardLift?: boolean;
   hoverEnabled?: boolean;
   /// Whether the pointer has arrived on this card: only then do its hover
   /// buttons and lift answer `:hover`. The feed arms the card a settling
@@ -349,7 +354,11 @@ export function MeasuredCardFrame({
   );
 }
 
-export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumbVersion, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, hoverEnabled = true, hoverArmed = true, dragBlocks: dragBlocksProp, clearSelectionOnDragStart, onKeyboardMoreMenuOpenChange, onMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
+export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumbVersion, priority, allowPlayback = true, openMoreMenuRequestSequence = 0, menuBadge = null, keyboardLift = false, hoverEnabled = true, hoverArmed = true, dragBlocks: dragBlocksProp, clearSelectionOnDragStart, onKeyboardMoreMenuOpenChange, onMenuOpenChange, onModifiedClick, onClick, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete }: CardProps) {
+  // The card draws again when its pictures were written again, loaded in the
+  // feed then or not: every address of them takes the new version
+  // (SPEC_THUMBNAILS.md, «Адрес картинки»).
+  useCardPicturesVersion(block.slug);
   const dragBlocks = useMemo(() => {
     const candidateBlocks = dragBlocksProp && dragBlocksProp.length > 0
       ? dragBlocksProp
@@ -415,9 +424,10 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       // The lift follows the bottom action row exactly: pointer hover while
-      // hover is enabled, or a pointer-opened menu holding the row (С8).
+      // hover is enabled, a pointer-opened menu holding the row, or the
+      // keyboard's focus (С8, С8.5).
       data-card-lift-hover={lifts && hoverEnabled && hoverArmed ? "" : undefined}
-      data-card-lift-pinned={lifts && actionsPinned ? "" : undefined}
+      data-card-lift-pinned={lifts && (actionsPinned || keyboardLift) ? "" : undefined}
       style={lifts ? cardLiftStyle(descriptor) : undefined}
       className={cn(
         // The card's keyboard focus is the feed's (`data-feed-grid-item-focused`,
@@ -446,6 +456,9 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
           // Only a card that actually plays video needs its controls lifted
           // into layers of their own.
           videoUnderneath={allowPlayback && block.feed_playback !== null}
+          menuBadge={menuBadge}
+          keyboardLift={keyboardLift}
+          hoverArmed={hoverArmed}
           onKeyboardMoreMenuOpenChange={onKeyboardMoreMenuOpenChange}
           onInteractiveOpenChange={onMenuOpenChange}
           onActionsPinnedChange={setActionsPinned}
@@ -1257,8 +1270,9 @@ function PreviewPicture({
 }: CardMediaProps) {
   const imgLoading = usePriority() ? "eager" as const : "lazy" as const;
   const previewState = usePreviewState();
+  const picturesVersion = useCardPicturesVersion(block.slug);
   const [retryCount, setRetryCount] = useState(0);
-  useEffect(() => { setRetryCount(0); }, [previewManifest?.primaryPreviewPath, thumbVersion]);
+  useEffect(() => { setRetryCount(0); }, [previewManifest?.primaryPreviewPath, thumbVersion, picturesVersion]);
 
   const sources = useMemo(() => {
     return uniqueUrls([
@@ -1270,6 +1284,7 @@ function PreviewPicture({
     previewManifest?.primaryPreviewPath,
     thumbsRootPath,
     thumbVersion,
+    picturesVersion,
   ]);
 
   const [sourceIndex, setSourceIndex] = useState(0);

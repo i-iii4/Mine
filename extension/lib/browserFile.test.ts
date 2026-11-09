@@ -1,159 +1,196 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import "./browserFile.js";
 
-const { MAX_BYTES, CHUNK_BYTES, PORT_PREFIX, shownAs, read, uploadName, send } = globalThis.MineBrowserFile;
+const { MAX_BYTES, CHUNK_BYTES, PORT_PREFIX, retryAfterSeconds, open, uploadName, deliver } = globalThis.MineBrowserFile;
 
-// SPEC_CLIPPER.md, «Файл картинки из браузера, отказ сайта и причина ошибки»,
-// Б1: the bytes come from the browser only when it shows the very file, and
-// only from its cache; everything else is the helper's download.
+// SPEC_CLIPPER.md, «Один путь файла со страницы», Б5: the page's half works only
+// with a file of its own origin: the cache first, which never reaches the
+// network, then the page's own request.
 
+const PAGE = "https://upload.example.org/wiki/Harvest";
 const PICTURE = "https://upload.example.org/a/a1/Harvest.jpg";
 
-type Shown = Pick<Document, "URL" | "contentType" | "images">;
-
-/** A document at `url` of type `contentType` with pictures loaded from `sources`. */
-function pageAt(url: string, contentType: string, sources: string[] = []): Shown {
-  const images = sources.map((source) => ({ currentSrc: source, src: source }));
-  return { URL: url, contentType, images: images as unknown as HTMLCollectionOf<HTMLImageElement> };
+/** The answer of a fetch: a body read in the given portions. */
+function answer(portions: Uint8Array[], init: { status?: number; type?: string; length?: string; retryAfter?: string; url?: string } = {}) {
+  const headers = new Headers({ "content-type": init.type ?? "image/jpeg" });
+  if (init.length !== undefined) headers.set("content-length", init.length);
+  if (init.retryAfter !== undefined) headers.set("retry-after", init.retryAfter);
+  let next = 0;
+  const cancel = vi.fn(async () => undefined);
+  const body = {
+    cancel,
+    getReader: () => ({
+      cancel,
+      read: async () => (next < portions.length ? { done: false, value: portions[next++] } : { done: true, value: undefined }),
+    }),
+  };
+  return { status: init.status ?? 200, headers, body, url: init.url ?? PICTURE } as unknown as Response;
 }
 
-/** A fetch that answers from the cache with `body`, recording what it was asked. */
-function cachedFetch(body: Uint8Array<ArrayBuffer>, init: { status?: number; type?: string; length?: string } = {}) {
+function fetchAnswering(response: Response | Error) {
   const asked: Array<{ url: string; options: RequestInit | undefined }> = [];
-  const type = init.type ?? "image/jpeg";
   const fetchFile = vi.fn(async (url: RequestInfo | URL, options?: RequestInit) => {
     asked.push({ url: String(url), options });
-    const headers = new Headers({ "content-type": type });
-    if (init.length !== undefined) headers.set("content-length", init.length);
-    // The page's own Blob, as the browser gives it: the page reads it with
-    // its FileReader.
-    return { status: init.status ?? 200, headers, body: null, blob: async () => new Blob([body], { type }) };
+    if (response instanceof Error) throw response;
+    return response;
   });
   return { fetchFile: fetchFile as unknown as typeof fetch, asked };
 }
 
-describe("shownAs", () => {
-  it("knows the tab's document is the picture itself", () => {
-    expect(shownAs(PICTURE, pageAt(PICTURE, "image/jpeg"))).toBe("document");
-    expect(shownAs(PICTURE, pageAt(`${PICTURE}#zoom`, "image/jpeg"))).toBe("document");
+describe("open", () => {
+  it("asks the cache only, and the page's own request carries what the page's would", async () => {
+    const cache = fetchAnswering(answer([new Uint8Array([1])]));
+    expect((await open(PICTURE, "cache", PAGE, cache.fetchFile)).kind).toBe("open");
+    expect(cache.asked[0]?.options).toMatchObject({ cache: "only-if-cached", mode: "same-origin", credentials: "same-origin" });
+
+    const request = fetchAnswering(answer([new Uint8Array([1])]));
+    expect((await open(PICTURE, "request", PAGE, request.fetchFile)).kind).toBe("open");
+    expect(request.asked[0]?.options?.cache).toBeUndefined();
+    expect(request.asked[0]?.options).toMatchObject({ mode: "same-origin", credentials: "same-origin" });
   });
 
-  it("knows a picture of the page was loaded from the same address", () => {
-    const page = pageAt("https://upload.example.org/wiki/Harvest", "text/html", ["https://upload.example.org/x.png", PICTURE]);
-    expect(shownAs(PICTURE, page)).toBe("page");
+  it("does not ask for a file of another origin, or for what is not a web address", async () => {
+    const { fetchFile, asked } = fetchAnswering(answer([new Uint8Array([1])]));
+    expect(await open("https://cdn.example.net/a.jpg", "cache", PAGE, fetchFile)).toEqual({ kind: "elsewhere" });
+    expect(await open("data:image/png;base64,AA", "request", PAGE, fetchFile)).toEqual({ kind: "elsewhere" });
+    expect(await open("https://", "request", PAGE, fetchFile)).toEqual({ kind: "elsewhere" });
+    expect(asked).toEqual([]);
   });
 
-  it("does not take a reduced copy, a feed or a gallery for the file", () => {
-    const page = pageAt("https://upload.example.org/wiki/Harvest", "text/html", [
-      "https://upload.example.org/a/a1/thumb/Harvest.jpg/320px-Harvest.jpg",
-    ]);
-    expect(shownAs(PICTURE, page)).toBeNull();
-    expect(shownAs(PICTURE, pageAt("https://upload.example.org/other.jpg", "image/jpeg"))).toBeNull();
+  it("takes a refusal of the cache for a miss, and of the page's request for a refusal", async () => {
+    const refused = fetchAnswering(new TypeError("Failed to fetch"));
+    expect(await open(PICTURE, "cache", PAGE, refused.fetchFile)).toEqual({ kind: "miss" });
+    expect(await open(PICTURE, "request", PAGE, refused.fetchFile)).toEqual({ kind: "refused" });
+    const part = answer([], { status: 206 });
+    expect(await open(PICTURE, "cache", PAGE, fetchAnswering(part).fetchFile)).toEqual({ kind: "miss" });
+  });
+
+  it("reports the status of the page's request with the wait the site names", async () => {
+    const limited = answer([], { status: 429, retryAfter: "600" });
+    expect(await open(PICTURE, "request", PAGE, fetchAnswering(limited).fetchFile))
+      .toEqual({ kind: "status", status: 429, retryAfter: 600 });
+    const gone = answer([], { status: 404 });
+    expect(await open(PICTURE, "request", PAGE, fetchAnswering(gone).fetchFile))
+      .toEqual({ kind: "status", status: 404, retryAfter: null });
+  });
+
+  it("does not take a web page for the file", async () => {
+    const page = answer([], { type: "text/html; charset=utf-8" });
+    expect(await open(PICTURE, "request", PAGE, fetchAnswering(page).fetchFile)).toEqual({ kind: "failure", failure: "not_a_file" });
+    const cached = answer([], { type: "TEXT/HTML" });
+    expect(await open(PICTURE, "cache", PAGE, fetchAnswering(cached).fetchFile)).toEqual({ kind: "failure", failure: "not_a_file" });
+  });
+
+  it("cancels a file that declares more than 500 MiB", async () => {
+    const large = answer([], { length: String(MAX_BYTES + 1) });
+    expect(await open(PICTURE, "request", PAGE, fetchAnswering(large).fetchFile)).toEqual({ kind: "failure", failure: "too_large" });
+    expect(large.body?.cancel).toHaveBeenCalled();
   });
 });
 
-describe("read", () => {
-  it("takes the cached bytes of the picture the tab shows, asking the cache only", async () => {
-    const bytes = new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3]);
-    const { fetchFile, asked } = cachedFetch(bytes);
+describe("retryAfterSeconds", () => {
+  const now = Date.parse("Thu, 29 Oct 2026 12:00:00 GMT");
 
-    const file = await read(PICTURE, pageAt(PICTURE, "image/jpeg"), fetchFile);
-
-    expect(file.ok).toBe(true);
-    if (!file.ok) return;
-    expect(new Uint8Array(await file.blob.arrayBuffer())).toEqual(bytes);
-    expect(asked).toEqual([{ url: PICTURE, options: { cache: "only-if-cached", mode: "same-origin", credentials: "same-origin" } }]);
-  });
-
-  it("asks nothing for a picture the page does not show", async () => {
-    const { fetchFile, asked } = cachedFetch(new Uint8Array([1]));
-    const file = await read(PICTURE, pageAt("https://upload.example.org/wiki/Harvest", "text/html"), fetchFile);
-    expect(file).toEqual({ ok: false, reason: "not_shown" });
-    expect(asked).toEqual([]);
-  });
-
-  // Fetch allows `only-if-cached` for the page's own origin alone: a picture
-  // of another origin is never asked of the site from the page.
-  it("asks nothing for a picture of another origin", async () => {
-    const { fetchFile, asked } = cachedFetch(new Uint8Array([1]));
-    const page = pageAt("https://shop.example/products/shirt", "text/html", ["https://cdn.example/shirt.jpg"]);
-    const file = await read("https://cdn.example/shirt.jpg", page, fetchFile);
-    expect(file).toEqual({ ok: false, reason: "other_origin" });
-    expect(asked).toEqual([]);
-  });
-
-  it("gives up when the cache has no whole file", async () => {
-    const missing = vi.fn(async () => { throw new TypeError("Failed to fetch"); }) as unknown as typeof fetch;
-    expect(await read(PICTURE, pageAt(PICTURE, "image/jpeg"), missing)).toEqual({ ok: false, reason: "not_cached" });
-    const { fetchFile } = cachedFetch(new Uint8Array([1, 2]), { status: 206 });
-    expect(await read(PICTURE, pageAt(PICTURE, "image/jpeg"), fetchFile)).toEqual({ ok: false, reason: "not_cached" });
-    expect(await read("data:image/png;base64,xx", pageAt(PICTURE, "image/jpeg"), fetchFile))
-      .toEqual({ ok: false, reason: "not_web_address" });
-  });
-
-  // The limit of this path is the helper's download limit, 500 MiB.
-  it("leaves a file over 500 MiB to the helper", async () => {
-    expect(MAX_BYTES).toBe(500 * 1024 * 1024);
-    const { fetchFile } = cachedFetch(new Uint8Array([1]), { length: String(MAX_BYTES + 1) });
-    expect(await read(PICTURE, pageAt(PICTURE, "image/jpeg"), fetchFile)).toEqual({ ok: false, reason: "too_large" });
+  it("reads seconds and dates, and says nothing about anything else", () => {
+    expect(retryAfterSeconds("600", now)).toBe(600);
+    expect(retryAfterSeconds(" 0 ", now)).toBe(0);
+    expect(retryAfterSeconds("Thu, 29 Oct 2026 12:10:00 GMT", now)).toBe(600);
+    expect(retryAfterSeconds("Thu, 29 Oct 2026 11:00:00 GMT", now)).toBe(0);
+    expect(retryAfterSeconds("soon", now)).toBeNull();
+    expect(retryAfterSeconds(null, now)).toBeNull();
   });
 });
 
 describe("uploadName", () => {
   it("names the upload by the answered type, else by the address", () => {
-    expect(uploadName(PICTURE, "image/png")).toBe("picture.png");
+    expect(uploadName(PICTURE, "image/webp")).toBe("picture.webp");
     expect(uploadName(PICTURE, "image/jpeg; charset=binary")).toBe("picture.jpg");
-    expect(uploadName("https://example.org/a/b.WEBP?x=1", "")).toBe("picture.webp");
-    expect(uploadName("https://example.org/image?id=4", "")).toBe("picture.jpg");
+    expect(uploadName("https://example.org/a.png?w=1", "")).toBe("picture.png");
+    expect(uploadName("https://example.org/a", "")).toBe("picture.jpg");
   });
 });
 
-describe("send", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
+/** A port the background holds the other end of: it asks for the next part after each. */
+function connected(onClose?: (close: () => void) => void) {
+  const posted: Array<Record<string, unknown>> = [];
+  const messageListeners: Array<(message: unknown) => void> = [];
+  const closeListeners: Array<() => void> = [];
+  const port = {
+    onMessage: { addListener: (listener: (message: unknown) => void) => messageListeners.push(listener) },
+    onDisconnect: { addListener: (listener: () => void) => closeListeners.push(listener) },
+    postMessage: (message: Record<string, unknown>) => {
+      posted.push(message);
+      if (message.kind === "start" || message.kind === "part") {
+        queueMicrotask(() => messageListeners.forEach((listener) => listener({ kind: "next" })));
+      }
+    },
+    disconnect: () => undefined,
+  };
+  onClose?.(() => closeListeners.forEach((listener) => listener()));
+  const connect = vi.fn(() => port) as unknown as typeof chrome.runtime.connect;
+  return { connect, posted };
+}
+
+describe("deliver", () => {
+  it("answers on its own port without a file", async () => {
+    const { connect, posted } = connected();
+    await deliver("https://cdn.example.net/a.jpg", "id-1", "cache", {
+      pageUrl: PAGE, fetchFile: fetchAnswering(answer([])).fetchFile, connect,
+    });
+    expect(connect).toHaveBeenCalledWith({ name: `${PORT_PREFIX}id-1` });
+    expect(posted).toEqual([{ kind: "answer", answer: { kind: "elsewhere" } }]);
   });
 
-  /** A background that asks for every next part and keeps what came. */
-  function backgroundPort() {
-    const messages: Array<Record<string, unknown>> = [];
-    const listeners: Array<(message: unknown) => void> = [];
-    const port = {
-      name: "",
-      postMessage: (message: Record<string, unknown>) => {
-        messages.push(message);
-        if (message.kind !== "end") queueMicrotask(() => listeners.forEach((listener) => listener({ kind: "next" })));
-      },
-      onMessage: { addListener: (listener: (message: unknown) => void) => listeners.push(listener) },
-      onDisconnect: { addListener: () => undefined },
-    };
-    const connect = vi.fn((info: { name: string }) => {
-      port.name = info.name;
-      return port;
+  it("hands the file over part by part, and names where it came from", async () => {
+    const whole = new Uint8Array(CHUNK_BYTES + 3).fill(7);
+    const { connect, posted } = connected();
+    await deliver(PICTURE, "id-2", "request", {
+      pageUrl: PAGE,
+      fetchFile: fetchAnswering(answer([whole.subarray(0, CHUNK_BYTES), whole.subarray(CHUNK_BYTES)])).fetchFile,
+      connect,
     });
-    return { port, connect, messages };
-  }
+    expect(posted.map((message) => message.kind)).toEqual(["start", "part", "part", "end"]);
+    expect(posted[0]).toEqual({ kind: "start", contentType: "image/jpeg", source: "page", finalUrl: PICTURE });
+  });
 
-  it("hands the file over part by part on its own port", async () => {
-    const bytes = new Uint8Array(CHUNK_BYTES + 5).map((_, index) => index % 251);
-    const { fetchFile } = cachedFetch(bytes);
-    const { port, connect, messages } = backgroundPort();
-    vi.stubGlobal("fetch", fetchFile);
-    vi.stubGlobal("chrome", { runtime: { connect } });
-    Object.defineProperty(document, "contentType", { configurable: true, value: "image/jpeg" });
-    const url = `${window.location.origin}/Harvest.jpg`;
-    window.history.replaceState(null, "", "/Harvest.jpg");
+  it("names the cache as the source of a file from the cache", async () => {
+    const { connect, posted } = connected();
+    await deliver(PICTURE, "id-3", "cache", {
+      pageUrl: PAGE, fetchFile: fetchAnswering(answer([new Uint8Array([1, 2])])).fetchFile, connect,
+    });
+    expect(posted[0]).toMatchObject({ kind: "start", source: "cache" });
+    expect(posted.at(-1)).toEqual({ kind: "end" });
+  });
 
-    const sent = await send(url, "transfer-1");
+  it("does not go past 500 MiB when the file declares no length", async () => {
+    const piece = new Uint8Array(1);
+    const large = answer([piece]);
+    const reader = large.body!.getReader() as unknown as { read: () => Promise<unknown>; cancel: () => Promise<void> };
+    (large.body as unknown as { getReader: () => unknown }).getReader = () => ({
+      cancel: reader.cancel,
+      // One portion that alone is past the limit stands for a long stream.
+      read: async () => ({ done: false, value: { length: MAX_BYTES + 1 } as unknown as Uint8Array }),
+    });
+    const { connect, posted } = connected();
+    await deliver(PICTURE, "id-4", "request", { pageUrl: PAGE, fetchFile: fetchAnswering(large).fetchFile, connect });
+    expect(posted.at(-1)).toEqual({ kind: "answer", answer: { kind: "failure", failure: "too_large" } });
+  });
 
-    expect(sent).toEqual({ ok: true, size: bytes.length });
-    expect(port.name).toBe(`${PORT_PREFIX}transfer-1`);
-    expect(messages.map((message) => message.kind)).toEqual(["start", "part", "part", "end"]);
-    expect(messages[0]).toEqual({ kind: "start", contentType: "image/jpeg", size: bytes.length });
-    const decoded = Buffer.concat(messages
-      .filter((message) => message.kind === "part")
-      .map((message) => Buffer.from(String(message.data), "base64")));
-    // Byte for byte, compared at once: a deep equality of 4 MiB is too slow.
-    expect(decoded.equals(Buffer.from(bytes))).toBe(true);
+  it("stops the request when the background closes the port", async () => {
+    let close = () => undefined as void;
+    const { connect } = connected((closing) => { close = closing; });
+    let signal: AbortSignal | undefined;
+    const fetchFile = vi.fn((_url: RequestInfo | URL, options?: RequestInit) => {
+      signal = options?.signal ?? undefined;
+      return new Promise<Response>((_, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+    }) as unknown as typeof fetch;
+    const delivered = deliver(PICTURE, "id-5", "request", { pageUrl: PAGE, fetchFile, connect });
+    await Promise.resolve();
+    close();
+    await delivered;
+    expect(signal?.aborted).toBe(true);
   });
 });

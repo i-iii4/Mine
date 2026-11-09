@@ -32,6 +32,7 @@ function background(apiMode: BrowserApiMode, options: {
   runningBuild?: string; diskBuild?: string;
 } = {}) {
   let receiveRuntimeMessage: MessageListener = () => undefined;
+  const connectListeners: Array<(port: unknown) => void> = [];
   const installListeners: Array<(details: { reason: string }) => void> = [];
   let receiveNativeMessage: (message: Message) => void = () => undefined;
   let disconnectNative: () => void = () => undefined;
@@ -70,8 +71,9 @@ function background(apiMode: BrowserApiMode, options: {
       reload: vi.fn(),
       onInstalled: eventSink<(details: { reason: string }) => void>((listener) => { installListeners.push(listener); }),
       onMessage: eventSink<MessageListener>((listener) => { receiveRuntimeMessage = listener; }),
-      // Ports of a picture file handed over from a page (SPEC_CLIPPER.md, Б1).
-      onConnect: eventSink(),
+      // Ports of a picture file handed over from a page (SPEC_CLIPPER.md, Б1),
+      // of a collection and of a Save into a browser folder (Б9, Б13).
+      onConnect: eventSink<(port: unknown) => void>((listener) => { connectListeners.push(listener); }),
       sendMessage: vi.fn(() => Promise.resolve()),
     },
     scripting: { executeScript: vi.fn<ExecuteScript>() },
@@ -104,7 +106,7 @@ function background(apiMode: BrowserApiMode, options: {
   const fetch = vi.fn(options.fetch ?? (async () => ({ ok: true, json: async () => ({ buildId: options.diskBuild ?? runningBuild, commit: "disk-commit" }) })));
   const context = createContext({
     AbortController,
-    MineStandaloneVault: options.standaloneVault,
+    MineStandaloneVault: { sweepPageFiles: async () => undefined, ...options.standaloneVault },
     TextEncoder,
     URL,
     chrome,
@@ -115,12 +117,16 @@ function background(apiMode: BrowserApiMode, options: {
     MineBuildIdentity: { buildId: runningBuild, commit: "worker-commit" },
     setTimeout,
     clearTimeout,
+    // Timer functions by name: fake timers of a test take effect in the worker's world too.
+    setInterval: (...args: Parameters<typeof setInterval>) => setInterval(...args),
+    clearInterval: (id: ReturnType<typeof setInterval> | undefined) => clearInterval(id),
     fetch,
   });
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/extensionBuild.js"), "utf8"), context);
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/saveProtocol.js"), "utf8"), context);
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/youtubeSource.js"), "utf8"), context);
   runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/browserFile.js"), "utf8"), context);
+  runInContext(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "lib/pageFiles.js"), "utf8"), context);
   runInContext(source, context);
 
   function dispatch(message: Message, sender: FakeSender = {}) {
@@ -130,8 +136,25 @@ function background(apiMode: BrowserApiMode, options: {
     return { keepAlive, response };
   }
 
+  /** A port the clipper opens, as the worker receives it. */
+  function connect(name: string, sender: FakeSender = {}) {
+    let receive: (message: Message) => void = () => undefined;
+    let closed: () => void = () => undefined;
+    const port = {
+      name,
+      sender,
+      postMessage: vi.fn<(message: Message) => void>(),
+      disconnect: vi.fn(),
+      onMessage: eventSink<(message: Message) => void>((listener) => { receive = listener; }),
+      onDisconnect: eventSink<() => void>((listener) => { closed = listener; }),
+    };
+    for (const listener of connectListeners) listener(port);
+    return { port, send: (message: Message) => receive(message), close: () => closed() };
+  }
+
   return {
     chrome,
+    connect,
     run: (code: string): Promise<unknown> => Promise.resolve(runInContext(code, context)),
     /** The extension is installed or updated. */
     install: (reason = "install") => installListeners.forEach((listener) => listener({ reason })),
@@ -911,7 +934,17 @@ describe("an extension update checks again right before the reload (SPEC_AUDIT_F
     keepIn(worker.chrome.storage.session, session);
     const send = (message: Message, sender: FakeSender = { tab }) =>
       worker.dispatch({ target: "background", sourceUrl, ...message }, sender).response;
-    return { worker, session, send, finishWrite: () => finishWrite() };
+    /** A Save on its port; resolves with what the worker answers. */
+    const saveOnPort = (payload: Message) => {
+      const opened = worker.connect("mine-standalone-save:one", { tab });
+      opened.send({ kind: "start", payload });
+      return new Promise<Message>((resolve) => {
+        opened.port.postMessage.mockImplementation((message: Message) => {
+          if (message.kind === "done") resolve(message.response as Message);
+        });
+      });
+    };
+    return { worker, session, send, saveOnPort, finishWrite: () => finishWrite() };
   }
 
   /// The update check that a clipper's Escape starts, held while it asks the
@@ -929,7 +962,7 @@ describe("an extension update checks again right before the reload (SPEC_AUDIT_F
     const host = updatingWorker();
     const answerPages = await checkHeldAtPages(host);
 
-    const written = host.send({ action: "standaloneSave", payload: { title: "Saved during the check" } });
+    const written = host.saveOnPort({ title: "Saved during the check" });
     answerPages([]);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(host.worker.chrome.runtime.reload).not.toHaveBeenCalled();
@@ -992,7 +1025,7 @@ describe("an extension update checks again right before the reload (SPEC_AUDIT_F
     await vi.advanceTimersByTimeAsync(0);
     expect(host.worker.chrome.tabs.get).toHaveBeenCalledWith(7);
 
-    const written = host.send({ action: "standaloneSave", payload: { title: "Saved during the carry" } });
+    const written = host.saveOnPort({ title: "Saved during the carry" });
     answerTab({ id: 7, url: "about:blank" });
     await vi.advanceTimersByTimeAsync(0);
     expect(host.worker.chrome.runtime.reload).not.toHaveBeenCalled();
@@ -1300,3 +1333,136 @@ describe("files of the running build and the pages open before it (К4)", () => 
     expect(notices(before.host)).toEqual(keepsClip ? [[5, waitsForClipper]] : []);
   });
 });
+
+// SPEC_CLIPPER.md, «Один путь файла со страницы», Б13: a browser folder has no
+// connection to the helper, so its collection and its Save run on ports the
+// worker keeps speaking on.
+describe("the ports of a browser folder", () => {
+  afterEach(() => vi.useRealTimers());
+
+  const sender = { url: "chrome-extension://test/dist/index.html" };
+  const START = { kind: "start", executor: "browser", document_url: "https://shop.example.com/p", body: "![a](https://cdn.example.net/a.jpg)", image_url: null, video_posters: null, tab_id: null };
+
+  it("makes a Save a port's work, with progress every 20 seconds until its answer", async () => {
+    vi.useFakeTimers();
+    let finish: (reply: Message) => void = () => undefined;
+    const saveStandaloneBlock = vi.fn(() => new Promise<Message>((resolve) => { finish = resolve; }));
+    const worker = background("promise", { standaloneVault: { saveStandaloneBlock } });
+    const opened = worker.connect("mine-standalone-save:one", sender);
+    opened.send({ kind: "start", payload: { title: "Long" } });
+    opened.send({ kind: "start", payload: { title: "Second" } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(saveStandaloneBlock).toHaveBeenCalledTimes(1);
+    expect(saveStandaloneBlock.mock.calls[0]).toEqual([expect.objectContaining({ title: "Long" })]);
+
+    await vi.advanceTimersByTimeAsync(41_000);
+    expect(opened.port.postMessage.mock.calls.map(([message]) => message.kind)).toEqual(["progress", "progress"]);
+
+    finish({ ok: true, outcome: "committed" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(opened.port.postMessage).toHaveBeenLastCalledWith({ kind: "done", response: { ok: true, outcome: "committed" } });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(opened.port.postMessage).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps writing when the clipper closes, and says nothing to a closed port", async () => {
+    vi.useFakeTimers();
+    let finish: (reply: Message) => void = () => undefined;
+    const worker = background("promise", { standaloneVault: { saveStandaloneBlock: () => new Promise<Message>((resolve) => { finish = resolve; }) } });
+    const opened = worker.connect("mine-standalone-save:one", sender);
+    opened.send({ kind: "start", payload: {} });
+    await vi.advanceTimersByTimeAsync(0);
+    opened.close();
+    await vi.advanceTimersByTimeAsync(30_000);
+    finish({ ok: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(opened.port.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("collects without the helper, speaks while it works, and answers with the entries", async () => {
+    vi.useFakeTimers();
+    let finish: (entries: unknown[]) => void = () => undefined;
+    const collectPageFiles = vi.fn((_request: unknown, _work: unknown) => new Promise<unknown[]>((resolve) => { finish = resolve; }));
+    const worker = background("promise", { standaloneVault: { collectPageFiles } });
+    const opened = worker.connect("mine-page-files:one", sender);
+    opened.send(START);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(worker.chrome.runtime.connectNative).not.toHaveBeenCalled();
+    expect(collectPageFiles.mock.calls[0]?.[0]).toEqual({ document_url: START.document_url, body: START.body, image_url: null, video_posters: null });
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(opened.port.postMessage).toHaveBeenCalledWith({ kind: "progress" });
+    finish([{ url: "https://cdn.example.net/a.jpg", upload_id: "one" }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(opened.port.postMessage).toHaveBeenLastCalledWith({ kind: "done", browser_files: [{ url: "https://cdn.example.net/a.jpg", upload_id: "one" }] });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(opened.port.postMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("removes what a collection kept when the clipper leaves before its Save, and stops the requests", async () => {
+    vi.useFakeTimers();
+    let finish: (entries: unknown[]) => void = () => undefined;
+    const discardPageFiles = vi.fn(async () => undefined);
+    /** What the worker gives the collection. */
+    type Work = { signal: AbortSignal; stored: (id: string) => void };
+    const works: Work[] = [];
+    const collectPageFiles = vi.fn((_request: unknown, given: Work) => {
+      works.push(given);
+      return new Promise<unknown[]>((resolve) => { finish = resolve; });
+    });
+    const worker = background("promise", { standaloneVault: { collectPageFiles, discardPageFiles } });
+    const opened = worker.connect("mine-page-files:one", sender);
+    opened.send(START);
+    await vi.advanceTimersByTimeAsync(0);
+    works[0]?.stored("kept-1");
+    opened.close();
+    expect(works[0]?.signal.aborted).toBe(true);
+    finish([]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(discardPageFiles).toHaveBeenCalledWith(["kept-1"]);
+  });
+
+  it("leaves what was kept once the operation is fixed with it", async () => {
+    vi.useFakeTimers();
+    const discardPageFiles = vi.fn(async () => undefined);
+    const collectPageFiles = vi.fn(async (_request: unknown, given: { stored: (id: string) => void }) => {
+      given.stored("kept-1");
+      return [{ url: "https://cdn.example.net/a.jpg", upload_id: "kept-1" }];
+    });
+    const worker = background("promise", { standaloneVault: { collectPageFiles, discardPageFiles } });
+    const opened = worker.connect("mine-page-files:one", sender);
+    opened.send(START);
+    await vi.advanceTimersByTimeAsync(0);
+    opened.send({ kind: "keep" });
+    opened.close();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(discardPageFiles).not.toHaveBeenCalled();
+  });
+
+  it("gives a collection that fails no files and still answers", async () => {
+    vi.useFakeTimers();
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const worker = background("promise", { standaloneVault: { collectPageFiles: async () => { throw new Error("no core"); } } });
+    const opened = worker.connect("mine-page-files:one", sender);
+    opened.send(START);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(opened.port.postMessage).toHaveBeenLastCalledWith({ kind: "done", browser_files: [] });
+    expect(warned).toHaveBeenCalled();
+    warned.mockRestore();
+  });
+
+  it("sweeps as the worker starts, and asks about the fixed operations only when the sweep does", async () => {
+    let names: () => Promise<string[]> = async () => [];
+    const sweepPageFiles = vi.fn(async (given: () => Promise<string[]>) => { names = given; });
+    const worker = background("promise", { standaloneVault: { sweepPageFiles } });
+    keepIn(worker.chrome.storage.local, new Map<string, unknown>([
+      ["minePendingSaveOperation:one", { payload: { browser_files: [{ url: "a", upload_id: "pinned" }, { url: "b", status: 404 }] } }],
+      ["minePendingSaveOperation:two", { payload: null }],
+      ["somethingElse", { payload: { browser_files: [{ upload_id: "foreign" }] } }],
+    ]));
+    expect(sweepPageFiles).toHaveBeenCalledOnce();
+    expect(worker.chrome.storage.local.get).not.toHaveBeenCalled();
+    expect(await names()).toEqual(["pinned"]);
+  });
+});
+
+// The clipper's half of a Save on its port lives in popup/lib/standalone.test.ts.

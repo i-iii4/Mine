@@ -2,9 +2,11 @@ import { MissingAwareImage } from "./MissingAwareImage";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type AnimationEvent as ReactAnimationEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
@@ -12,7 +14,35 @@ import {
 import { Copy, Minimize2, Minus, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  MODAL_SCRIM_ENTER_CLASS,
+  MODAL_SCRIM_LEAVE_CLASS,
+  MODAL_SURFACE_ENTER_CLASS,
+  MODAL_SURFACE_LEAVE_CLASS,
+} from "@/components/ui/modal-window";
+import {
+  CARD_PEEK_FRAME_STEP_MS,
+  CARD_PEEK_PREPARE_MAX_MS,
+  clampUnit,
+  peekContentOpacity,
+  peekSpringSettled,
+  stepPeekSpring,
+  type PeekRect,
+  type PeekSpring,
+} from "@/lib/cardPeek";
 import { copyMediaAssetToClipboard } from "@/lib/commands";
+import {
+  imagePreviewClosingKind,
+  imagePreviewDrawnAddress,
+  imagePreviewFrame,
+  imagePreviewOpeningKind,
+  imagePreviewRestTransform,
+  measureLaidImage,
+  readImagePreviewPlace,
+  type ImagePreviewOpening,
+  type ImagePreviewPlace,
+  type ImagePreviewTransform,
+} from "@/lib/imagePreviewMotion";
 import { cn } from "@/lib/utils";
 import { prefersReducedMotion } from "@/lib/motion";
 
@@ -26,11 +56,20 @@ export type ImagePreviewRequest = {
   /// viewer can step through them. Omitted when the caller has no such set;
   /// the viewer then shows the single image and the arrow keys do nothing.
   siblings?: ImagePreviewSibling[];
+  /// The media frame on the page the picture opens out of and returns to
+  /// (SPEC_MEDIA_ASSET_ACTIONS.md, «Движение просмотра изображения»). Omitted
+  /// when the caller has none: the viewer then opens and leaves as a dialog.
+  source?: HTMLElement | null;
+  /// What opened the viewer: a key stands it at once (SPEC_CARD_PEEK.md, О10).
+  openedBy?: "pointer" | "keyboard";
 };
 
 export type ImagePreviewSibling = {
   src: string;
   mediaRef: string;
+  /// This picture's media frame on the page, to return to when it is the one
+  /// on screen at closing.
+  source?: HTMLElement | null;
 };
 
 /** The picture the viewer shows: a sibling, or the requested picture, which
@@ -38,6 +77,25 @@ export type ImagePreviewSibling = {
 type ImagePreviewShown = {
   src: string;
   mediaRef: string | null;
+  source?: HTMLElement | null;
+};
+
+/** The running motion of the picture, the scrim and the toolbar, on the card
+ *  window's one spring: `position` 0 is the source, 1 the preview. `way` is the
+ *  flight's, measured once at its start; a fade goes by opacity alone. */
+type ImagePreviewMotion = {
+  spring: PeekSpring;
+  way: { laid: PeekRect; place: ImagePreviewPlace } | null;
+  /** Ms since the motion last turned: the toolbar's share goes by time. */
+  elapsed: number;
+  last: number;
+  frame: number | null;
+  /** Frames written since its start. */
+  written: number;
+  toolbar: number;
+  toolbarStart: number;
+  /** It has stopped and only leaves the page or its layers now. */
+  landing: boolean;
 };
 
 const IMAGE_PREVIEW_MIN_SCALE = 0.5;
@@ -61,12 +119,6 @@ export function visibleImagePreviewTransform(computed: string): ImagePreviewTran
   if (values.length !== 6 || values.some((value) => !Number.isFinite(value))) return null;
   return { scale: values[0]!, x: values[4]!, y: values[5]! };
 }
-
-type ImagePreviewTransform = {
-  scale: number;
-  x: number;
-  y: number;
-};
 
 type ImagePreviewDrag = {
   pointerId: number;
@@ -124,6 +176,26 @@ function constrainImagePreviewTransform(
   };
 }
 
+/** What the motion writes moves only by the spring: no CSS transition of its
+ *  own, the 0.01 ms one "Reduce motion" gives every element included
+ *  (global.css), which would show each frame's value a frame late. */
+const MOVED_CLASS = "transition-none";
+
+/** The picture's backing while it flies: what its source draws, already
+ *  decoded, so an original still on its way is never an empty box
+ *  (SPEC_MEDIA_ASSET_ACTIONS.md, «Движение просмотра изображения», п. 5). */
+function setImageBacking(image: HTMLImageElement, address: string) {
+  image.style.backgroundImage = `url("${address.replace(/"/g, "%22")}")`;
+  image.style.backgroundSize = "100% 100%";
+  image.style.backgroundRepeat = "no-repeat";
+}
+
+function clearImageBacking(image: HTMLImageElement) {
+  image.style.backgroundImage = "";
+  image.style.backgroundSize = "";
+  image.style.backgroundRepeat = "";
+}
+
 export function ImagePreviewOverlay({
   preview,
   onClose,
@@ -132,6 +204,8 @@ export function ImagePreviewOverlay({
   onClose: () => void;
 }) {
   const overlayRef = useRef<HTMLDivElement>(null);
+  const scrimRef = useRef<HTMLDivElement>(null);
+  const controlsRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const transformRef = useRef<ImagePreviewTransform>({ scale: 1, x: 0, y: 0 });
@@ -142,7 +216,32 @@ export function ImagePreviewOverlay({
   const [copyError, setCopyError] = useState<string | null>(null);
   // Which image of the card is on screen. The request names the one that was
   // clicked; the arrow keys move within its card without reopening the viewer.
-  const [shownMediaRef, setShownMediaRef] = useState<string | null>(null);
+  // A step counts for the request it was taken in, so a new request shows its
+  // own picture from its first render: its motion starts on that element.
+  const [steppedTo, setSteppedTo] = useState<{ request: ImagePreviewRequest; mediaRef: string | null } | null>(null);
+  const shownMediaRef = steppedTo && steppedTo.request === preview ? steppedTo.mediaRef : preview?.mediaRef ?? null;
+
+  const motionRef = useRef<ImagePreviewMotion | null>(null);
+  /// The frame that waits for the original before the motion starts.
+  const preparationRef = useRef<number | null>(null);
+  /// The frame that takes the picture's layer off after a motion.
+  const layerFrameRef = useRef<number | null>(null);
+  /// The source the picture stands for, hidden on the page, and what its own
+  /// `visibility` was.
+  const hiddenSourceRef = useRef<{ element: HTMLElement; visibility: string } | null>(null);
+  /// The original is decoded: the backing may go at rest.
+  const decodedRef = useRef(false);
+  const openedAsRef = useRef<ImagePreviewOpening>("instant");
+  const closingRef = useRef(false);
+  const onCloseRef = useRef(onClose);
+  useLayoutEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+  /// The viewer is on its way out: the page takes the pointer and the keys
+  /// from now on, but for the picture and the toolbar, which turn it back.
+  const [closing, setClosing] = useState(false);
+  /// The dialogs' own entrance or exit plays (`MODAL_SURFACE_*_CLASS`).
+  const [dialogMotion, setDialogMotion] = useState<"in" | "out" | null>(null);
 
   const gallery = useMemo<ImagePreviewShown[]>(() => {
     if (!preview) return [];
@@ -160,18 +259,15 @@ export function ImagePreviewOverlay({
     );
   }, [gallery, preview, shownMediaRef]);
 
-  useEffect(() => {
-    setShownMediaRef(preview?.mediaRef ?? null);
-  }, [preview]);
-
-  const step = useCallback((direction: -1 | 1) => {
-    if (gallery.length < 2 || !shown) return;
-    const index = gallery.findIndex((item) => item.mediaRef === shown.mediaRef);
-    if (index < 0) return;
-    // Wraps, so a long press on one arrow keeps cycling instead of dead-ending.
-    const next = gallery[(index + direction + gallery.length) % gallery.length];
-    if (next) setShownMediaRef(next.mediaRef);
-  }, [gallery, shown]);
+  // The requested picture returns to the frame it was pressed in: the same
+  // file may stand in the card twice.
+  const shownSource = !preview || !shown
+    ? null
+    : (shown.mediaRef === preview.mediaRef ? preview.source : shown.source) ?? null;
+  const shownSourceRef = useRef(shownSource);
+  useLayoutEffect(() => {
+    shownSourceRef.current = shownSource;
+  }, [shownSource]);
 
   /// An animated zoom is commanded but its frame has not written it yet.
   const animationPendingRef = useRef(false);
@@ -203,8 +299,10 @@ export function ImagePreviewOverlay({
       stageRef.current,
       imageRef.current,
     );
-    // Reduced motion places the image at once (SPEC_AUDIT_FIXES.md, Ф12).
-    const animate = animated && !prefersReducedMotion();
+    // Reduced motion places the image at once (SPEC_AUDIT_FIXES.md, Ф12), and
+    // during a motion the next frame takes the new place from here: the
+    // picture has no second animation of its own.
+    const animate = animated && !prefersReducedMotion() && motionRef.current === null;
     animationPendingRef.current = animate;
     if (!animate) animationEndRef.current = 0;
     const image = imageRef.current;
@@ -225,7 +323,9 @@ export function ImagePreviewOverlay({
       const { scale, x, y } = transformRef.current;
       const currentImage = imageRef.current;
       if (currentImage) {
-        currentImage.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+        if (motionRef.current === null) {
+          currentImage.style.transform = imagePreviewRestTransform({ scale, x, y });
+        }
         currentImage.dataset.detailImagePreviewScale = scale.toFixed(3);
         currentImage.dataset.detailImagePreviewTranslateX = x.toFixed(3);
         currentImage.dataset.detailImagePreviewTranslateY = y.toFixed(3);
@@ -292,7 +392,7 @@ export function ImagePreviewOverlay({
     applyScaleAtPoint(scale, center.x, center.y, animated);
   }, [applyScaleAtPoint, applyTransform, getImageLayoutCenter, getStageCenter]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!preview) {
       return;
     }
@@ -311,6 +411,358 @@ export function ImagePreviewOverlay({
     };
   }, [applyTransform, preview, shown?.mediaRef]);
 
+  /** The picture stands for `element` on the page: its place shows nothing
+   *  there, and the one it stood for before shows again. */
+  const hideSource = useCallback((element: HTMLElement | null) => {
+    const hidden = hiddenSourceRef.current;
+    if (hidden?.element === element) return;
+    if (hidden) hidden.element.style.visibility = hidden.visibility;
+    hiddenSourceRef.current = null;
+    if (element) {
+      hiddenSourceRef.current = { element, visibility: element.style.visibility };
+      element.style.visibility = "hidden";
+    }
+  }, []);
+
+  /** The picture at rest gives back what only a motion needed: the size held
+   *  for an original not yet loaded, and the backing once it is decoded. */
+  const settleImageAtRest = useCallback(() => {
+    const image = imageRef.current;
+    if (!image || motionRef.current || preparationRef.current !== null) return;
+    if (image.naturalWidth > 0) {
+      image.style.width = "";
+      image.style.height = "";
+    }
+    if (decodedRef.current) clearImageBacking(image);
+  }, []);
+
+  /** Everything the motion wrote comes off: the viewer stands at rest. */
+  const clearMotionStyles = useCallback(() => {
+    for (const element of [scrimRef.current, controlsRef.current]) {
+      if (element) element.style.opacity = "";
+    }
+    const image = imageRef.current;
+    if (!image) return;
+    image.style.opacity = "";
+    image.style.clipPath = "";
+    image.style.visibility = "";
+    image.style.transform = imagePreviewRestTransform(transformRef.current);
+  }, []);
+
+  const cancelFrames = useCallback(() => {
+    if (preparationRef.current !== null) cancelAnimationFrame(preparationRef.current);
+    preparationRef.current = null;
+    if (layerFrameRef.current !== null) cancelAnimationFrame(layerFrameRef.current);
+    layerFrameRef.current = null;
+    const motion = motionRef.current;
+    if (motion?.frame != null) cancelAnimationFrame(motion.frame);
+    motionRef.current = null;
+  }, []);
+
+  /** The motion stops here and the viewer stands at rest in this frame. */
+  const landNow = useCallback(() => {
+    cancelFrames();
+    clearMotionStyles();
+    const image = imageRef.current;
+    if (image) image.style.willChange = "";
+    settleImageAtRest();
+    setDialogMotion(null);
+  }, [cancelFrames, clearMotionStyles, settleImageAtRest]);
+
+  /** Gone in this frame (Escape; a request that replaces this one). */
+  const stopAll = useCallback(() => {
+    cancelFrames();
+    hideSource(null);
+    clearMotionStyles();
+    const image = imageRef.current;
+    if (image) {
+      image.style.willChange = "";
+      clearImageBacking(image);
+    }
+    closingRef.current = false;
+    setClosing(false);
+    setDialogMotion(null);
+  }, [cancelFrames, clearMotionStyles, hideSource]);
+
+  const step = useCallback((direction: -1 | 1) => {
+    if (gallery.length < 2 || !shown) return;
+    const index = gallery.findIndex((item) => item.mediaRef === shown.mediaRef);
+    if (index < 0) return;
+    // Wraps, so a long press on one arrow keeps cycling instead of dead-ending.
+    const next = gallery[(index + direction + gallery.length) % gallery.length];
+    if (!next || !preview) return;
+    // An arrow is a key: the picture it replaces does not finish its way.
+    landNow();
+    if (hiddenSourceRef.current) hideSource(next.source ?? null);
+    setSteppedTo({ request: preview, mediaRef: next.mediaRef });
+  }, [gallery, hideSource, landNow, preview, shown]);
+
+  /** Writes one frame of the motion. */
+  const paint = useCallback(() => {
+    const motion = motionRef.current;
+    if (!motion) return;
+    const progress = clampUnit(motion.spring.position);
+    if (scrimRef.current) scrimRef.current.style.opacity = String(progress);
+    if (controlsRef.current) controlsRef.current.style.opacity = String(motion.toolbar);
+    const image = imageRef.current;
+    if (!image) return;
+    if (!motion.way) {
+      image.style.opacity = String(progress);
+      return;
+    }
+    const frame = imagePreviewFrame(motion.way.place, motion.way.laid, transformRef.current, progress);
+    image.style.transform = frame.transform;
+    image.style.clipPath = frame.clipPath;
+  }, []);
+
+  /** The motion's last frame was written. Open, the clip and the opacities go
+   *  a frame later and the picture's layer the frame after, one change a frame
+   *  (SPEC_CARD_PEEK.md, О12). Closed, the picture stays a frame exactly on the
+   *  source, the source shows under it the next frame, and the viewer goes the
+   *  frame after (О11, п. 4). */
+  const finish = useCallback((motion: ImagePreviewMotion) => {
+    motion.landing = true;
+    motion.frame = requestAnimationFrame(() => {
+      motion.frame = null;
+      if (motionRef.current !== motion) return;
+      if (motion.spring.target === 1) {
+        motionRef.current = null;
+        clearMotionStyles();
+        settleImageAtRest();
+        layerFrameRef.current = requestAnimationFrame(() => {
+          layerFrameRef.current = null;
+          if (imageRef.current) imageRef.current.style.willChange = "";
+        });
+        return;
+      }
+      hideSource(null);
+      motion.frame = requestAnimationFrame(() => {
+        motion.frame = null;
+        if (motionRef.current !== motion) return;
+        motionRef.current = null;
+        onCloseRef.current();
+      });
+    });
+  }, [clearMotionStyles, hideSource, settleImageAtRest]);
+
+  const tick = useCallback((now: number) => {
+    const motion = motionRef.current;
+    if (!motion) return;
+    // One frame at most: a frame held up slows the picture, never jumps it.
+    const step = Math.min(CARD_PEEK_FRAME_STEP_MS, Math.max(0, now - motion.last));
+    motion.last = now;
+    motion.spring = stepPeekSpring(motion.spring, step);
+    motion.elapsed += step;
+    motion.toolbar = motion.way
+      ? peekContentOpacity(motion.spring.target === 1 ? "in" : "out", motion.elapsed, motion.toolbarStart)
+      : clampUnit(motion.spring.position);
+    const settled = peekSpringSettled(motion.spring);
+    if (settled) {
+      motion.spring = { position: motion.spring.target, velocity: 0, target: motion.spring.target };
+      motion.toolbar = motion.spring.target;
+    }
+    paint();
+    motion.written += 1;
+    // From the second frame, under a picture that has been drawn over it.
+    if (motion.way && motion.written === 1 && shownSourceRef.current) hideSource(shownSourceRef.current);
+    if (settled) {
+      finish(motion);
+      return;
+    }
+    motion.frame = requestAnimationFrame(tick);
+  }, [finish, hideSource, paint]);
+
+  const runMotion = useCallback((
+    spring: PeekSpring,
+    way: ImagePreviewMotion["way"],
+    toolbar: number,
+  ) => {
+    if (layerFrameRef.current !== null) cancelAnimationFrame(layerFrameRef.current);
+    layerFrameRef.current = null;
+    const motion: ImagePreviewMotion = {
+      spring,
+      way,
+      elapsed: 0,
+      last: performance.now(),
+      frame: null,
+      written: 0,
+      toolbar,
+      toolbarStart: toolbar,
+      landing: false,
+    };
+    motionRef.current = motion;
+    const image = imageRef.current;
+    if (image && way) image.style.willChange = "transform";
+    paint();
+    if (image) image.style.visibility = "";
+    motion.frame = requestAnimationFrame(tick);
+  }, [paint, tick]);
+
+  /** The running motion turns to `target` from where it stands, keeping its
+   *  speed: the spring carries position and velocity through the turn. */
+  const turn = useCallback((motion: ImagePreviewMotion, target: 0 | 1) => {
+    motion.spring = { ...motion.spring, target };
+    motion.elapsed = 0;
+    motion.toolbarStart = motion.toolbar;
+    closingRef.current = target === 0;
+    setClosing(target === 0);
+  }, []);
+
+  /** A gesture on the picture while it leaves: it stays (Ф12). */
+  const takeOver = useCallback(() => {
+    const motion = motionRef.current;
+    if (motion && !motion.landing && motion.spring.target === 0) turn(motion, 1);
+  }, [turn]);
+
+  /** The opening's first frame, once the original is decoded or the wait is
+   *  over: measured here, once. */
+  const beginOpening = useCallback((kind: ImagePreviewOpening, source: HTMLElement | null) => {
+    const image = imageRef.current;
+    if (kind === "flight" && image && source) {
+      const laid = measureLaidImage(image, source);
+      const place = laid && readImagePreviewPlace(source, laid.width, laid.height);
+      if (laid && place) {
+        const drawn = imagePreviewDrawnAddress(source);
+        if (drawn && drawn !== image.src) setImageBacking(image, drawn);
+        runMotion({ position: 0, velocity: 0, target: 1 }, { laid, place }, 0);
+        return;
+      }
+      // The source is off screen or the picture has no size at all.
+      openedAsRef.current = "dialog";
+      clearMotionStyles();
+      setDialogMotion("in");
+      return;
+    }
+    if (image) image.style.opacity = "0";
+    runMotion({ position: 0, velocity: 0, target: 1 }, null, 0);
+  }, [clearMotionStyles, runMotion]);
+
+  // A new request: whatever ran is gone in this frame, and the new opening
+  // writes its unseen first state before anything is painted.
+  useLayoutEffect(() => {
+    stopAll();
+    if (!preview) return;
+    const source = preview.source ?? null;
+    const kind = imagePreviewOpeningKind({
+      keyboard: preview.openedBy === "keyboard",
+      reducedMotion: prefersReducedMotion(),
+      hasSource: source !== null,
+    });
+    openedAsRef.current = kind;
+    if (kind === "instant") return;
+    if (kind === "dialog") {
+      setDialogMotion("in");
+      return;
+    }
+    const image = imageRef.current;
+    if (scrimRef.current) scrimRef.current.style.opacity = "0";
+    if (controlsRef.current) controlsRef.current.style.opacity = "0";
+    if (image) image.style.visibility = "hidden";
+    decodedRef.current = false;
+    let ready = false;
+    // An original the source draws already is decoded, and `decode()` is not
+    // to be asked of it: until it resolves WebKit blanks every picture of that
+    // address on the page, the source first of all.
+    const decodable = image && typeof image.decode === "function"
+      && !(source && imagePreviewDrawnAddress(source) === image.src);
+    if (image && decodable) {
+      // A picture that cannot be decoded has nothing to wait for either: a
+      // broken file leaves the plane by its own `onError`.
+      const settled = () => {
+        ready = true;
+        if (imageRef.current !== image) return;
+        decodedRef.current = true;
+        settleImageAtRest();
+      };
+      void image.decode().then(settled, settled);
+    } else {
+      ready = true;
+      decodedRef.current = true;
+    }
+    const since = performance.now();
+    const wait = (now: number) => {
+      preparationRef.current = null;
+      if (ready || now - since >= CARD_PEEK_PREPARE_MAX_MS) {
+        beginOpening(kind, source);
+        return;
+      }
+      preparationRef.current = requestAnimationFrame(wait);
+    };
+    preparationRef.current = requestAnimationFrame(wait);
+  }, [beginOpening, preview, settleImageAtRest, stopAll]);
+
+  useLayoutEffect(() => stopAll, [stopAll]);
+
+  /** Gone in this frame: Escape, or a closing before anything showed. */
+  const vanish = useCallback(() => {
+    stopAll();
+    onCloseRef.current();
+  }, [stopAll]);
+
+  /** The button or the background: the way back from where it stands. */
+  const requestClose = useCallback(() => {
+    if (closingRef.current) return;
+    if (preparationRef.current !== null) {
+      vanish();
+      return;
+    }
+    const motion = motionRef.current;
+    if (motion && !motion.landing) {
+      turn(motion, 0);
+      return;
+    }
+    // A motion that only takes its styles off lands now, in this frame.
+    if (motion) landNow();
+    settleRunningAnimation();
+    const image = imageRef.current;
+    const laid = image && shownSource ? measureLaidImage(image, shownSource) : null;
+    const place = laid && shownSource ? readImagePreviewPlace(shownSource, laid.width, laid.height) : null;
+    const kind = imagePreviewClosingKind({
+      openedAs: openedAsRef.current,
+      reducedMotion: prefersReducedMotion(),
+      sourceOnScreen: place !== null,
+    });
+    closingRef.current = true;
+    setClosing(true);
+    if (kind === "flight" && laid && place) {
+      setDialogMotion(null);
+      hideSource(shownSource);
+      runMotion({ position: 1, velocity: 0, target: 0 }, { laid, place }, 1);
+      return;
+    }
+    if (kind === "fade") {
+      setDialogMotion(null);
+      runMotion({ position: 1, velocity: 0, target: 0 }, null, 1);
+      return;
+    }
+    hideSource(null);
+    setDialogMotion("out");
+  }, [hideSource, landNow, runMotion, settleRunningAnimation, shownSource, turn, vanish]);
+
+  // The second press of a double click is not a press of its own: the one
+  // that closed the viewer is done, and it reaches neither the picture nor
+  // the page under it (SPEC_CARD_PEEK.md, О11).
+  useEffect(() => {
+    if (!closing) return;
+    const drop = (event: MouseEvent) => {
+      if (event.detail < 2) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    window.addEventListener("click", drop, true);
+    window.addEventListener("dblclick", drop, true);
+    return () => {
+      window.removeEventListener("click", drop, true);
+      window.removeEventListener("dblclick", drop, true);
+    };
+  }, [closing]);
+
+  const handleStageAnimationEnd = useCallback((event: ReactAnimationEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (dialogMotion === "out") vanish();
+    else setDialogMotion(null);
+  }, [dialogMotion, vanish]);
+
   useEffect(() => {
     if (!preview) {
       return;
@@ -322,7 +774,11 @@ export function ImagePreviewOverlay({
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopImmediatePropagation();
-        onClose();
+        vanish();
+        return;
+      }
+      // On its way out the viewer leaves the rest to the page.
+      if (closingRef.current) {
         return;
       }
       // Arrows are claimed only while the viewer is open and the card actually
@@ -338,16 +794,20 @@ export function ImagePreviewOverlay({
       event.stopImmediatePropagation();
       step(event.key === "ArrowLeft" ? -1 : 1);
     };
-    document.addEventListener("keydown", handler, true);
-    return () => document.removeEventListener("keydown", handler, true);
-  }, [gallery.length, onClose, preview, step]);
+    // On the window, ahead of the document: the viewer is the top layer, and
+    // a tooltip left open under it (⤢ focused by the key that opened it) must
+    // not take its Escape.
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [gallery.length, preview, step, vanish]);
 
   const stepScale = useCallback((direction: -1 | 1) => {
+    takeOver();
     applyScaleAtStageCenter(
       transformRef.current.scale + direction * IMAGE_PREVIEW_BUTTON_SCALE_STEP,
       true,
     );
-  }, [applyScaleAtStageCenter]);
+  }, [applyScaleAtStageCenter, takeOver]);
 
   const toggleImageScale = useCallback((clientX: number, clientY: number) => {
     applyScaleAtPoint(
@@ -361,10 +821,11 @@ export function ImagePreviewOverlay({
   const handleWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
+    takeOver();
     settleRunningAnimation();
     const nextScale = transformRef.current.scale * Math.exp(-event.deltaY * IMAGE_PREVIEW_WHEEL_SCALE_STEP);
     applyScaleAtPoint(nextScale, event.clientX, event.clientY);
-  }, [applyScaleAtPoint, settleRunningAnimation]);
+  }, [applyScaleAtPoint, settleRunningAnimation, takeOver]);
 
   const handleImageClick = useCallback((event: ReactMouseEvent<HTMLImageElement>) => {
     event.stopPropagation();
@@ -372,14 +833,21 @@ export function ImagePreviewOverlay({
       suppressNextClickRef.current = false;
       return;
     }
+    // The second press of the double click that opened the viewer lands on
+    // the picture on its way: it is not a press of its own (О11).
+    if (motionRef.current && event.detail >= 2) {
+      return;
+    }
+    takeOver();
     toggleImageScale(event.clientX, event.clientY);
-  }, [toggleImageScale]);
+  }, [takeOver, toggleImageScale]);
 
   const handleImagePointerDown = useCallback((event: ReactPointerEvent<HTMLImageElement>) => {
     if (event.button !== 0) {
       return;
     }
     event.stopPropagation();
+    takeOver();
     settleRunningAnimation();
     activeDragRef.current = {
       pointerId: event.pointerId,
@@ -390,7 +858,7 @@ export function ImagePreviewOverlay({
       moved: false,
     };
     event.currentTarget.setPointerCapture?.(event.pointerId);
-  }, [settleRunningAnimation]);
+  }, [settleRunningAnimation, takeOver]);
 
   const handleImagePointerMove = useCallback((event: ReactPointerEvent<HTMLImageElement>) => {
     const drag = activeDragRef.current;
@@ -443,23 +911,53 @@ export function ImagePreviewOverlay({
     return null;
   }
 
+  // On its way out the viewer keeps the pointer only where it can turn back;
+  // the dialogs' exit has nothing to turn back to.
+  const interactiveWhileClosing = closing && dialogMotion !== "out" && "pointer-events-auto";
+
   return (
     <div
       ref={overlayRef}
       tabIndex={-1}
       // Focused only to take the preview's keys: no ring around the window.
-      className="modal-scrim image-preview-secondary-plane fixed inset-0 z-[70] overflow-hidden text-black outline-none"
+      className={cn(
+        "fixed inset-0 z-[70] overflow-hidden text-black outline-none",
+        closing && "pointer-events-none",
+      )}
       role="dialog"
       aria-modal="false"
       aria-label="Image preview"
       data-image-preview-overlay
-      onClick={onClose}
+      onClick={(event) => {
+        // The second press of the double click that opened the viewer lands
+        // here: it is not a press of its own (О11).
+        if (event.detail >= 2) return;
+        requestClose();
+      }}
       onWheel={handleWheel}
     >
+      {/* The scrim alone takes the motion's opacity: an opacity over the
+          picture and the toolbar would cut the blur off from the page. */}
+      <div
+        ref={scrimRef}
+        aria-hidden="true"
+        className={cn(
+          "modal-scrim image-preview-secondary-plane absolute inset-0",
+          MOVED_CLASS,
+          dialogMotion === "in" && MODAL_SCRIM_ENTER_CLASS,
+          dialogMotion === "out" && MODAL_SCRIM_LEAVE_CLASS,
+        )}
+        data-image-preview-scrim
+      />
       <div
         ref={stageRef}
-        className="relative z-10 flex h-full w-full items-center justify-center overflow-hidden p-8 pb-20"
+        className={cn(
+          "relative z-10 flex h-full w-full items-center justify-center overflow-hidden p-8 pb-20",
+          dialogMotion === "in" && MODAL_SURFACE_ENTER_CLASS,
+          dialogMotion === "out" && MODAL_SURFACE_LEAVE_CLASS,
+        )}
         data-image-preview-stage
+        onAnimationEnd={handleStageAnimationEnd}
       >
         {/* A file that will not load leaves the plane, never the
             broken-image icon (SPEC_DEEP_AUDIT.md, Е6.8). */}
@@ -467,16 +965,23 @@ export function ImagePreviewOverlay({
           key={shown.src}
           ref={imageRef}
           src={shown.src}
-          className="image-preview-primary-media max-h-[calc(100vh-8rem)] max-w-[calc(100vw-4rem)] origin-center cursor-grab select-none object-contain will-change-transform active:cursor-grabbing"
+          className={cn(
+            "image-preview-primary-media max-h-[calc(100vh-8rem)] max-w-[calc(100vw-4rem)] origin-center cursor-grab select-none object-contain active:cursor-grabbing",
+            MOVED_CLASS,
+            interactiveWhileClosing,
+          )}
           draggable={false}
           data-image-preview-image
           data-detail-image-preview-scale="1.000"
           data-detail-image-preview-translate-x="0.000"
           data-detail-image-preview-translate-y="0.000"
-          style={{ transform: "translate3d(0px, 0px, 0) scale(1)", touchAction: "none" }}
+          style={{ touchAction: "none" }}
           onClick={handleImageClick}
           onDragStart={(event) => event.preventDefault()}
-          onLoad={() => applyTransform(transformRef.current)}
+          onLoad={() => {
+            applyTransform(transformRef.current);
+            settleImageAtRest();
+          }}
           onPointerDown={handleImagePointerDown}
           onPointerMove={handleImagePointerMove}
           onPointerUp={finishImageDrag}
@@ -484,6 +989,7 @@ export function ImagePreviewOverlay({
         />
       </div>
       <div
+        ref={controlsRef}
         className={cn(
           // A floating layer like every menu (DESIGN_SYSTEM.md, «Оверлеи»):
           // its own surface and line, so it reads on the shared scrim in either
@@ -494,6 +1000,10 @@ export function ImagePreviewOverlay({
           // never hide, the pointer need not wake them (user decision
           // 16.10.2026; until then they left after 3 s without movement).
           "absolute bottom-6 left-1/2 z-20 flex h-8 -translate-x-1/2 items-center gap-1 rounded-1 border border-border bg-popover px-1 text-popover-foreground",
+          MOVED_CLASS,
+          interactiveWhileClosing,
+          dialogMotion === "in" && MODAL_SURFACE_ENTER_CLASS,
+          dialogMotion === "out" && MODAL_SURFACE_LEAVE_CLASS,
         )}
         data-image-preview-controls
         onClick={(event) => event.stopPropagation()}
@@ -553,7 +1063,7 @@ export function ImagePreviewOverlay({
           size="icon"
           aria-label="Collapse image preview"
           data-image-preview-collapse
-          onClick={onClose}
+          onClick={requestClose}
           className="text-muted-foreground hover:text-foreground"
         >
           <Minimize2 className="size-[13px]" />

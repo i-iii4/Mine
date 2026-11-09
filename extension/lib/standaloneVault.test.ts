@@ -4,6 +4,8 @@ import { createRequire } from "node:module";
 import { Blob as NodeBlob, File as NodeFile } from "node:buffer";
 import { webcrypto } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import "./browserFile.js";
+import "./pageFiles.js";
 import "./saveProtocol.js";
 import "./standaloneVault.js";
 
@@ -15,7 +17,7 @@ const call = async (command: unknown) => {
 };
 type Reply = { ok: boolean; outcome?: string; code?: string; slug?: string; tag?: string; resumable?: boolean; channels?: { tag: string }[] };
 type Options = { directory: FakeDirectory; store: MemoryStore; binding_id?: string;
-  fetch?: unknown; afterEffect?: (effect: string) => void; afterPrepared?: () => void };
+  afterEffect?: (effect: string) => void; afterPrepared?: () => void };
 // The adapter as these tests drive it: its folder and journal are the fakes
 // below, which hold only the File System Access and IndexedDB calls the adapter
 // makes, so its declared options (real handles) do not describe them.
@@ -27,12 +29,14 @@ const vault = (globalThis as unknown as { MineStandaloneVault: {
   resolveLayout: (directory: FakeDirectory) => Promise<unknown>;
   getStandaloneStatus: (options: Options) => Promise<unknown>;
   existingStems: (directory: FakeDirectory) => Promise<string[]>;
+  collectPageFiles: (request: Record<string, unknown>, work: Record<string, unknown>, options: Options) => Promise<unknown[]>;
 } }).MineStandaloneVault;
 
 class MemoryStore {
   values = new Map<string, unknown>();
   async get(store: string, key: string) { return structuredClone(this.values.get(`${store}:${key}`)); }
   async put(store: string, key: string, value: unknown) { this.values.set(`${store}:${key}`, structuredClone(value)); }
+  async delete(store: string, key: string) { this.values.delete(`${store}:${key}`); }
 }
 // A file of the folder as File System Access gives it: a snapshot with its
 // modification time, which every write moves on. `reads` counts the reads of
@@ -104,6 +108,15 @@ const options = (): Options => ({ directory: folder, store });
 const request = (extra = {}) => ({ operation_id: "save-1", binding_id: "test-vault", executor_id: "browser",
   block_type: "article", title: "Article", body: "Content", tags: [],
   saved_at: "2026-08-31T12:00:00Z", ...extra });
+/** The clip after its collection, as the clipper fixes it (SPEC_CLIPPER.md, Б9, Б13). */
+async function collected(clip: Record<string, unknown>, blob: () => NodeBlob) {
+  const asked = vi.fn(async (file: { url: string }) => ({ kind: "file", blob: blob(), source: "browser", finalUrl: file.url }));
+  const browser_files = await vault.collectPageFiles({ document_url: "https://example.com/page", body: null, image_url: clip.image_url, video_posters: null }, {
+    signal: new AbortController().signal, limiter: globalThis.MinePageFiles.createLimiter(),
+    pageRead: async () => ({ kind: "elsewhere" }), request: asked, stored: () => undefined,
+  }, options());
+  return { clip: { ...clip, browser_files }, asked };
+}
 beforeEach(() => {
   folder = new FakeDirectory("Mine"); store = new MemoryStore();
   vi.stubGlobal("crypto", webcrypto);
@@ -267,21 +280,21 @@ describe("browser executor backed by actual WASM", () => {
     expect(folder.directories.get("Cards")!.files.size).toBe(0);
   });
   it("publishes media before its reference and recovers without downloading twice", async () => {
-    const fetcher = vi.fn(async () => ({ ok: true, blob: async () => new NodeBlob(["image"], { type: "image/png" }) }));
-    const image = request({ block_type: "image", body: "", image_url: "https://example.com/image.png" });
-    await vault.saveStandaloneBlock(image, { ...options(), fetch: fetcher, afterEffect: effect => { if (effect === "media") throw new Error("stop"); } });
+    const { clip, asked } = await collected(request({ block_type: "image", body: "", image_url: "https://example.com/image.png" }),
+      () => new NodeBlob(["image"], { type: "image/png" }));
+    await vault.saveStandaloneBlock(clip, { ...options(), afterEffect: effect => { if (effect === "media") throw new Error("stop"); } });
     expect(await folder.text("Media/Article.png")).toBe("image");
     expect(folder.directories.get("Cards")!.files.size).toBe(0);
-    expect(await vault.saveStandaloneBlock({ ...image, operation_mode: "resume" }, options())).toMatchObject({ ok: true });
+    expect(await vault.saveStandaloneBlock({ ...clip, operation_mode: "resume" }, options())).toMatchObject({ ok: true });
     expect(await folder.text("Cards/Article.md")).toContain("[[Article.png]]");
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(asked).toHaveBeenCalledTimes(1);
   });
   it("names downloaded media by its bytes, not by the address or the declared type", async () => {
     // A server that negotiates formats answers a `.png` URL with AVIF.
     const avif = Uint8Array.from(Buffer.from("\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1miaf", "latin1"));
-    const fetcher = vi.fn(async () => ({ ok: true, blob: async () => new NodeBlob([avif], { type: "image/png" }) }));
-    const image = request({ block_type: "image", body: "", image_url: "https://example.com/logo.png" });
-    expect(await vault.saveStandaloneBlock(image, { ...options(), fetch: fetcher })).toMatchObject({ ok: true });
+    const { clip } = await collected(request({ block_type: "image", body: "", image_url: "https://example.com/logo.png" }),
+      () => new NodeBlob([avif], { type: "image/png" }));
+    expect(await vault.saveStandaloneBlock(clip, options())).toMatchObject({ ok: true });
     expect(folder.directories.get("Media")!.files.has("Article.avif")).toBe(true);
     expect(folder.directories.get("Media")!.files.has("Article.png")).toBe(false);
     expect(await folder.text("Cards/Article.md")).toContain("[[Article.avif]]");
@@ -335,7 +348,7 @@ describe("browser executor backed by actual WASM", () => {
   // A core of another build may name a step this adapter does not know: the
   // save is refused, not recorded as committed without its file (К4).
   it("refuses a step of the core it does not know instead of committing without the file", async () => {
-    vi.stubGlobal("MineCore", { call: async (command: { op?: string }) => command.op === "advance" ? "publish_sidecar" : call(command) });
+    vi.stubGlobal("MineCore", { call: async (command: { op?: string }) => command.op === "media_evidence" ? { media: "not_required", action: "publish_sidecar" } : call(command) });
     expect(await vault.saveStandaloneBlock(request(), options())).toMatchObject({
       ok: false, outcome: "not_committed", code: "core_step_unknown",
     });
@@ -377,9 +390,9 @@ describe("browser executor backed by actual WASM", () => {
     mine.files.set("layout.json", new FakeFile(JSON.stringify({ cards: "Cards", media: "Media", collections: "Collections" })));
     const cards = await folder.getDirectoryHandle("Cards", { create: true });
     cards.files.set("Old.md", new FakeFile("Old"));
-    const fetcher = vi.fn(async () => ({ ok: true, blob: async () => new NodeBlob(["image"], { type: "image/png" }) }));
-    const image = request({ block_type: "image", body: "", image_url: "https://example.com/image.png" });
-    expect(await vault.saveStandaloneBlock(image, { ...options(), fetch: fetcher })).toMatchObject({ ok: true });
+    const { clip } = await collected(request({ block_type: "image", body: "", image_url: "https://example.com/image.png" }),
+      () => new NodeBlob(["image"], { type: "image/png" }));
+    expect(await vault.saveStandaloneBlock(clip, options())).toMatchObject({ ok: true });
     expect(cards.listings).toBe(1);
   });
 

@@ -66,8 +66,9 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     // Two between the feed's groups, one before each of the three trial
     // sections and one inside the compact sidebar's while its table choices
     // are put aside (PLAN 50.38); the third section is the open card's view
-    // (SPEC_CARD_PEEK.md, О1).
+    // (SPEC_CARD_PEEK.md, О1), and it ends the panel.
     expect(screen.getAllByRole("separator")).toHaveLength(6);
+    expect(screen.getByRole("menu").lastElementChild).toHaveAttribute("data-card-view-menu");
   });
 
   it("marks the stored presentation when it opens (Д18)", async () => {

@@ -40,6 +40,96 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
     expect(wide.result.current.width).toBe(0);
   });
 
+  it("names the open width beside the feed, collapsed too, squeezed as the CSS squeezes it", () => {
+    window.innerWidth = 1400;
+    const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: true }));
+    // The width an opening reaches, while the width shown is none.
+    expect(result.current.width).toBe(0);
+    expect(result.current.openWidth).toBe(480);
+    window.innerWidth = 800;
+    const squeezed = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
+    expect(squeezed.result.current.openWidth).toBe(800 - 390);
+  });
+
+  it("keeps the rows' columns at the open width while the sidebar's width goes to none and back (user's decision of 05.11.2026)", () => {
+    const root = document.documentElement.style;
+    const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
+    const open = root.getPropertyValue("--sidebar-width");
+    expect(open).toContain("480px");
+    expect(root.getPropertyValue("--sidebar-columns-width")).toBe(open);
+    act(() => result.current.toggleCollapsed());
+    expect(root.getPropertyValue("--sidebar-width")).toBe("0px");
+    expect(root.getPropertyValue("--sidebar-columns-width")).toBe(open);
+    act(() => result.current.toggleCollapsed());
+    expect(root.getPropertyValue("--sidebar-width")).toBe(open);
+    expect(root.getPropertyValue("--sidebar-columns-width")).toBe(open);
+  });
+
+  describe("opened for the keyboard (SPEC_KEYBOARD.md, М8)", () => {
+    const hidden: SidebarLayout = { width_px: 480, collapsed: true };
+    const visit = (layout: SidebarLayout = hidden) => renderHook(
+      ({ open, sidebar }: { open: boolean; sidebar: SidebarLayout }) => useSidebarResize(sidebar, false, open),
+      { initialProps: { open: false, sidebar: layout } },
+    );
+
+    it("shows a collapsed sidebar with the motion of an opening, and stores nothing", () => {
+      const root = document.documentElement.style;
+      const { result, rerender } = visit();
+      expect(result.current.collapsed).toBe(true);
+      expect(root.getPropertyValue("--sidebar-width")).toBe("0px");
+
+      rerender({ open: true, sidebar: hidden });
+      expect(result.current.collapsed).toBe(false);
+      expect(result.current.width).toBe(480);
+      expect(result.current.widthAnimating).toBe(true);
+      expect(root.getPropertyValue("--sidebar-width")).toContain("480px");
+
+      rerender({ open: false, sidebar: hidden });
+      expect(result.current.collapsed).toBe(true);
+      expect(result.current.widthAnimating).toBe(true);
+      expect(root.getPropertyValue("--sidebar-width")).toBe("0px");
+      expect(commands.setWindowSidebar).not.toHaveBeenCalled();
+    });
+
+    it("comes back collapsed after a reload during the visit, what is stored having not moved", () => {
+      const { rerender, unmount } = visit();
+      rerender({ open: true, sidebar: hidden });
+      unmount();
+      const reloaded = renderHook(() => useSidebarResize(hidden));
+      expect(reloaded.result.current.collapsed).toBe(true);
+      expect(commands.setWindowSidebar).not.toHaveBeenCalled();
+    });
+
+    it("leaves a sidebar the person keeps open as it is, without a motion", () => {
+      const open: SidebarLayout = { width_px: 480, collapsed: false };
+      const { result, rerender } = visit(open);
+      rerender({ open: true, sidebar: open });
+      expect(result.current.collapsed).toBe(false);
+      expect(result.current.widthAnimating).toBe(false);
+    });
+
+    it("takes what a drag of the edge stored during the visit", () => {
+      const { result, rerender } = visit();
+      rerender({ open: true, sidebar: hidden });
+      // The stored state came back open; the page ends the visit's flag on it.
+      const shown: SidebarLayout = { width_px: 480, collapsed: false };
+      rerender({ open: false, sidebar: shown });
+      expect(result.current.collapsed).toBe(false);
+      expect(commands.setWindowSidebar).not.toHaveBeenCalled();
+    });
+
+    it("takes no width of the row over the feed, the sidebar there having its own", () => {
+      const { result, rerender } = renderHook(
+        ({ open }: { open: boolean }) => useSidebarResize(hidden, true, open),
+        { initialProps: { open: false } },
+      );
+      rerender({ open: true });
+      expect(result.current.widthAnimating).toBe(false);
+      expect(document.documentElement.style.getPropertyValue("--sidebar-width")).toBe("0px");
+      expect(commands.setWindowSidebar).not.toHaveBeenCalled();
+    });
+  });
+
   it("follows the window when another tab, the tab bar or the menu changes it", () => {
     const { result, rerender } = renderHook(
       ({ layout }: { layout: SidebarLayout }) => useSidebarResize(layout),

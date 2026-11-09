@@ -75,6 +75,10 @@ pub fn export_types(check_only: bool) -> Result<()> {
     types
         .register::<mine_core::save::CaptureRequest>()
         .register::<mine_core::save::CoreCommand>()
+        .register::<mine_core::page_files::PageFilePlan>()
+        .register::<mine_core::page_files::InlineMedia>()
+        .register::<mine_core::page_files::CardFileRole>()
+        .register::<mine_core::page_files::AddressRefusal>()
         .register::<mine_core::save::SaveError>()
         .register::<mine_core::save::SaveAction>()
         .register::<mine_core::save::SaveOutcome>()

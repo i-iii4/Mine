@@ -7,12 +7,14 @@
 //! `127.0.0.1` bypassed the filter entirely.
 
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{anyhow, bail, Context, Result};
 use url::{Host, Url};
+
+pub use mine_core::page_files::{is_public_ip, TOO_MANY_REQUESTS};
 
 /// Maximum number of redirects to follow. Each hop is revalidated before it is
 /// followed, so this only bounds redirect-chain length, not safety.
@@ -29,15 +31,26 @@ const MAX_REDIRECTS: usize = 5;
 /// server is exactly what this vault exists to avoid.
 pub const MAX_MEDIA_BYTES: u64 = 500 * 1024 * 1024;
 
-/// How many times a download is attempted before it fails. A refusal for
-/// too many requests is never repeated (see [`TOO_MANY_REQUESTS`]).
-const DOWNLOAD_ATTEMPTS: u32 = 3;
-
-/// `429 Too Many Requests`: the site limits this client. Another attempt
-/// only prolongs the limit, so a download stops at the first such answer
+/// How many times a download is attempted before it fails. A refusal for too
+/// many requests is never repeated: another attempt only prolongs the limit
 /// (SPEC_CLIPPER.md, «Файл картинки из браузера, отказ сайта и причина
-/// ошибки», Б2).
-pub const TOO_MANY_REQUESTS: u16 = 429;
+/// ошибки», Б2). An answer that is a web page is not repeated either.
+pub const DOWNLOAD_ATTEMPTS: u32 = 3;
+
+/// The answer is a web page, not the file: an error page or a bot check does
+/// not become a picture (SPEC_CLIPPER.md, «Один путь файла со страницы», Б8).
+/// Another attempt would get the same page, so a download stops here.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("the answer is a web page")]
+pub struct NotAFile;
+
+/// Whether `content_type` declares a web page.
+fn declares_web_page(content_type: &str) -> bool {
+    content_type
+        .split(';')
+        .next()
+        .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("text/html"))
+}
 
 /// A server answered with an HTTP error status. Kept typed so the caller can
 /// tell a refusal from a broken connection and name the site, the code and,
@@ -126,76 +139,6 @@ fn validate_public_ip(ip: IpAddr) -> Result<()> {
         bail!("private/loopback addresses are not allowed: {}", ip);
     }
     Ok(())
-}
-
-/// Whether a fetch made on the person's behalf may reach `ip`: not this Mac,
-/// not the person's network or their provider's, not a service or reserved
-/// range (SPEC_AUDIT_FIXES.md, Ф10).
-pub fn is_public_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(addr) => is_public_v4(addr),
-        IpAddr::V6(addr) => is_public_v6(addr),
-    }
-}
-
-fn is_public_v4(addr: Ipv4Addr) -> bool {
-    let [a, b, c, _] = addr.octets();
-    let restricted = addr.is_private()
-        || addr.is_loopback()
-        || addr.is_link_local()
-        || addr.is_broadcast()
-        || addr.is_unspecified()
-        || addr.is_multicast()
-        // "This network".
-        || a == 0
-        // Shared address space of carrier-grade NAT.
-        || (a == 100 && (64..=127).contains(&b))
-        // IETF protocol assignments.
-        || (a == 192 && b == 0 && c == 0)
-        // Documentation.
-        || (a == 192 && b == 0 && c == 2)
-        || (a == 198 && b == 51 && c == 100)
-        || (a == 203 && b == 0 && c == 113)
-        // Benchmarking.
-        || (a == 198 && (b == 18 || b == 19))
-        // Reserved.
-        || a >= 240;
-    !restricted
-}
-
-fn is_public_v6(addr: Ipv6Addr) -> bool {
-    // An IPv4 address written as IPv6 reaches that IPv4 address.
-    if let Some(v4) = addr.to_ipv4_mapped() {
-        return is_public_v4(v4);
-    }
-    let s = addr.segments();
-    let embedded = |high: u16, low: u16| {
-        let [a, b] = high.to_be_bytes();
-        let [c, d] = low.to_be_bytes();
-        Ipv4Addr::new(a, b, c, d)
-    };
-    // IPv4-compatible addresses (deprecated) and `::`, `::1`.
-    if s[..6] == [0; 6] {
-        return false;
-    }
-    // NAT64 carries an IPv4 destination.
-    if s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
-        return is_public_v4(embedded(s[6], s[7]));
-    }
-    // 6to4 carries an IPv4 relay.
-    if s[0] == 0x2002 && !is_public_v4(embedded(s[1], s[2])) {
-        return false;
-    }
-    let restricted = addr.is_loopback()
-        || addr.is_unspecified()
-        || addr.is_unique_local()
-        || addr.is_unicast_link_local()
-        || addr.is_multicast()
-        // Site-local (deprecated).
-        || (s[0] & 0xffc0) == 0xfec0
-        // Documentation.
-        || (s[0] == 0x2001 && s[1] == 0x0db8);
-    !restricted
 }
 
 /// Resolves names for the HTTP client and admits only public addresses. The
@@ -376,7 +319,23 @@ pub fn download_validated_to_file_reporting(
     headers: &[(&str, &str)],
     progress: &(dyn Fn() + Sync),
 ) -> Result<()> {
-    download_resumable(dest, DOWNLOAD_RETRY_BACKOFF, progress, |resume| {
+    download_with_attempts(url, dest, DOWNLOAD_ATTEMPTS, idle_timeout, headers, progress).map(|_| ())
+}
+
+/// [`download_validated_to_file_reporting`] with a number of attempts of its
+/// own: after a refusal the browser met, the helper asks the site once
+/// (SPEC_CLIPPER.md, «Один путь файла со страницы», Б8). Answers the type the
+/// server declared for the file, which tells what an address without an
+/// extension holds without a `HEAD` of its own (Б9).
+pub fn download_with_attempts(
+    url: &str,
+    dest: &Path,
+    attempts: u32,
+    idle_timeout: Duration,
+    headers: &[(&str, &str)],
+    progress: &(dyn Fn() + Sync),
+) -> Result<Option<String>> {
+    download_attempting(dest, attempts, DOWNLOAD_RETRY_BACKOFF, progress, |resume| {
         let range;
         let mut request_headers = headers.to_vec();
         if let Some((offset, validator)) = resume {
@@ -389,6 +348,7 @@ pub fn download_validated_to_file_reporting(
             status: resp.status(),
             content_range_start: resp.header("Content-Range").and_then(content_range_start),
             validator: resume_validator(&resp),
+            content_type: resp.header("Content-Type").map(str::to_string),
             body: Box::new(resp.into_reader()),
         })
     })
@@ -400,6 +360,7 @@ struct DownloadResponse {
     status: u16,
     content_range_start: Option<u64>,
     validator: Option<String>,
+    content_type: Option<String>,
     body: Box<dyn Read + Send>,
 }
 
@@ -423,12 +384,23 @@ fn content_range_start(value: &str) -> Option<u64> {
 /// `fetch` receives `Some((offset, validator))` when a retry asks the server
 /// to continue from `offset`. An answer that is not the matching `206` part
 /// (the file changed, or the server ignores `Range`) restarts from zero.
+#[cfg(test)]
 fn download_resumable(
     dest: &Path,
     backoff: Duration,
     progress: &(dyn Fn() + Sync),
+    fetch: impl FnMut(Option<(u64, &str)>) -> Result<DownloadResponse>,
+) -> Result<Option<String>> {
+    download_attempting(dest, DOWNLOAD_ATTEMPTS, backoff, progress, fetch)
+}
+
+fn download_attempting(
+    dest: &Path,
+    attempts: u32,
+    backoff: Duration,
+    progress: &(dyn Fn() + Sync),
     mut fetch: impl FnMut(Option<(u64, &str)>) -> Result<DownloadResponse>,
-) -> Result<()> {
+) -> Result<Option<String>> {
     let parent = dest
         .parent()
         .ok_or_else(|| anyhow::anyhow!("download destination has no parent: {}", dest.display()))?;
@@ -448,16 +420,20 @@ fn download_resumable(
         .create_new(true)
         .open(&tmp)
         .with_context(|| format!("failed to create {}", tmp.display()))?;
-    let result = fill_with_attempts(&mut file, backoff, progress, &mut fetch)
-        .and_then(|()| {
+    let result = fill_with_attempts(&mut file, attempts, backoff, progress, &mut fetch)
+        .and_then(|content_type| {
             file.sync_all()
-                .with_context(|| format!("failed to fsync download {}", tmp.display()))
+                .with_context(|| format!("failed to fsync download {}", tmp.display()))?;
+            Ok(content_type)
         });
     drop(file);
-    if let Err(error) = result {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(error);
-    }
+    let content_type = match result {
+        Ok(content_type) => content_type,
+        Err(error) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(error);
+        }
+    };
     // One exclusive rename, not link + unlink: hard links are unreliable in
     // cloud storage (iCloud Drive), and a crash between two steps would leave
     // a visible `name.tmp.*` duplicate in the space.
@@ -474,7 +450,7 @@ fn download_resumable(
     std::fs::File::open(parent)
         .and_then(|directory| directory.sync_all())
         .with_context(|| format!("failed to fsync directory {}", parent.display()))?;
-    Ok(())
+    Ok(content_type)
 }
 
 /// A body reader that calls `progress` after every read that brought bytes.
@@ -495,13 +471,14 @@ impl<R: Read> Read for Reporting<'_, R> {
 
 fn fill_with_attempts(
     file: &mut std::fs::File,
+    attempts: u32,
     backoff: Duration,
     progress: &(dyn Fn() + Sync),
     fetch: &mut impl FnMut(Option<(u64, &str)>) -> Result<DownloadResponse>,
-) -> Result<()> {
+) -> Result<Option<String>> {
     let mut validator: Option<String> = None;
     let mut last_error = None;
-    for attempt in 0..DOWNLOAD_ATTEMPTS {
+    for attempt in 0..attempts {
         if attempt > 0 {
             std::thread::sleep(backoff * attempt);
         }
@@ -518,6 +495,10 @@ fn fill_with_attempts(
                 continue;
             }
         };
+        if response.content_type.as_deref().is_some_and(declares_web_page) {
+            file.set_len(0)?;
+            return Err(NotAFile.into());
+        }
         let continues = resume.is_some()
             && response.status == 206
             && response.content_range_start == Some(offset);
@@ -537,6 +518,7 @@ fn fill_with_attempts(
             validator = response.validator.clone();
         }
         let already = if continues { offset } else { 0 };
+        let content_type = response.content_type.clone();
         // take(remaining + 1) so an exactly-MAX body is not silently truncated:
         // one byte past the cap proves the body exceeds it.
         let mut reader = Reporting {
@@ -549,7 +531,7 @@ fn fill_with_attempts(
             }
             Ok(_) => {
                 file.flush()?;
-                return Ok(());
+                return Ok(content_type);
             }
             Err(error) => {
                 // Keep what arrived: the next attempt continues from it when
@@ -564,33 +546,6 @@ fn fill_with_attempts(
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn service_and_translated_addresses_are_not_public() {
-        for blocked in [
-            "::ffff:127.0.0.1",
-            "::ffff:10.0.0.1",
-            "::127.0.0.1",
-            "100.64.0.1",
-            "100.127.255.254",
-            "224.0.0.1",
-            "239.255.255.250",
-            "0.1.2.3",
-            "240.0.0.1",
-            "192.0.0.8",
-            "198.18.0.1",
-            "64:ff9b::7f00:1",
-            "2002:7f00:1::",
-            "fec0::1",
-            "ff02::1",
-            "2001:db8::1",
-        ] {
-            assert!(!is_public_ip(blocked.parse().unwrap()), "{blocked} must be blocked");
-        }
-        for allowed in ["93.184.216.34", "100.128.0.1", "2606:2800:220:1::", "64:ff9b::5db8:d822", "::ffff:93.184.216.34"] {
-            assert!(is_public_ip(allowed.parse().unwrap()), "{allowed} must be allowed");
-        }
-    }
-
     #[test]
     fn the_connection_resolver_refuses_a_name_that_leads_inside() {
         use ureq::Resolver;
@@ -660,6 +615,7 @@ mod tests {
             status,
             content_range_start: start,
             validator: validator.map(str::to_string),
+            content_type: None,
             body,
         }
     }
@@ -867,6 +823,7 @@ mod tests {
                 status: resp.status(),
                 content_range_start: None,
                 validator: None,
+                content_type: resp.header("Content-Type").map(str::to_string),
                 body: Box::new(resp.into_reader()),
             }),
             Err(ureq::Error::Status(status, resp)) => Err(status_error(url, status, &resp).into()),
@@ -888,6 +845,48 @@ mod tests {
         assert_eq!(refusal.retry_after, Some(Duration::from_secs(600)));
         assert_eq!(refusal.host().as_deref(), Some("127.0.0.1"));
         assert!(!dest.exists());
+    }
+
+    /// Б8: a web page is not the file, and asking again would bring it again.
+    #[test]
+    fn a_web_page_is_not_the_file_and_is_asked_once() {
+        let dest = scratch();
+        let mut attempts = 0;
+        let error = download_resumable(&dest, Duration::ZERO, &|| (), |_| {
+            attempts += 1;
+            Ok(DownloadResponse { content_type: Some("text/html; charset=utf-8".into()), ..response(200, None, None, whole(b"<html>")) })
+        })
+        .unwrap_err();
+        assert_eq!(attempts, 1);
+        assert!(error.chain().any(|cause| cause.downcast_ref::<NotAFile>().is_some()));
+        assert!(!dest.exists());
+        assert!(declares_web_page("text/html; charset=utf-8"));
+        assert!(declares_web_page("TEXT/HTML"));
+        assert!(!declares_web_page("image/jpeg"));
+    }
+
+    /// Б9: the download answers the type the server declared for the file.
+    #[test]
+    fn a_download_answers_the_type_of_the_file() {
+        let dest = scratch();
+        let content_type = download_resumable(&dest, Duration::ZERO, &|| (), |_| {
+            Ok(DownloadResponse { content_type: Some("video/mp4".into()), ..response(200, None, None, whole(b"bytes")) })
+        })
+        .unwrap();
+        assert_eq!(content_type.as_deref(), Some("video/mp4"));
+    }
+
+    /// Б8: after a refusal the browser met, one attempt is one request.
+    #[test]
+    fn a_download_makes_only_the_attempts_it_is_given() {
+        let dest = scratch();
+        let mut asked = 0;
+        let result = download_attempting(&dest, 1, Duration::ZERO, &|| (), |_| {
+            asked += 1;
+            Err(HttpStatusError::new("https://cdn.test/a.jpg", 503, None, SystemTime::now()).into())
+        });
+        assert!(result.is_err());
+        assert_eq!(asked, 1);
     }
 
     /// Б2: every other failure keeps its three attempts.

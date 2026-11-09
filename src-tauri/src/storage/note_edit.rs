@@ -20,7 +20,7 @@ use crate::domain::block::{compute_body_hash, BlockType, ParsedMarkdownBlock};
 use crate::domain::vault::{validate_slug, VaultLayout};
 use crate::storage::index::IndexedBlock;
 use crate::storage::note_write::{self, NoteWriteRefusal, ReadNote};
-use crate::storage::thumbnails::{self, ThumbSource};
+use crate::storage::derived_preview::{self, WrittenCardPictures};
 use crate::storage::{cloud_files, index};
 
 /// The index operation a save commits with.
@@ -50,6 +50,12 @@ pub struct SavedNoteBody {
     pub split_changed: bool,
     /// The file already held this body: nothing was written.
     pub unchanged: bool,
+    /// The save draws the card from other pictures than before: a picture
+    /// was added, dropped, moved or renamed. Its preview is made at once,
+    /// not when the note rests (Л3.3 step 8, Л3.7).
+    #[serde(skip_serializing)]
+    #[specta(skip)]
+    pub pictures_changed: bool,
 }
 
 /// The body of a note as it is on disk (Л4.1).
@@ -224,6 +230,7 @@ pub fn save_note_body(
             block,
             split_changed: false,
             unchanged: true,
+            pictures_changed: false,
         });
     }
     let written = read.read_back(&written_text).map_err(refused)?;
@@ -231,13 +238,21 @@ pub fn save_note_body(
         return Err(NoteSaveError::not_a_card(slug));
     }
     let split_changed = written.block.body != params.body;
+    let pictures_before = index::get_block(conn, slug)
+        .map_err(|error| refused(NoteWriteRefusal::internal(error)))?
+        .and_then(|row| row.preview_manifest);
     let published =
         note_write::publish_note(conn, vault, &note, read, written_text, &written, OPERATION)
             .map_err(refused)?;
+    let pictures_changed = index::picture_plans_differ(
+        pictures_before.as_deref(),
+        published.indexed.preview_manifest.as_deref(),
+    );
     Ok(SavedNoteBody {
         block: published.indexed,
         split_changed,
         unchanged: false,
+        pictures_changed,
     })
 }
 
@@ -299,32 +314,22 @@ pub fn current_body_hash(vault: &VaultLayout, slug: &str) -> Option<String> {
     (!is_collection_page(&read.parsed)).then(|| compute_body_hash(&read.parsed.block.body))
 }
 
-/// Make the preview of the card `slug` from its index row (Л3.3 step 8):
-/// the deferred task after the last save of an edit session. A preview that
-/// is already fresh is kept. `None` when the card is no longer indexed.
+/// Make the pictures of the card `slug` from its index row (Л3.3 step 8):
+/// the deferred task after a save, at once when the save changed the card's
+/// pictures. Its tiles, previews and thumbnail follow the saved note
+/// (`derived_preview::refresh_written_card`); pictures that are already
+/// fresh are kept. `None` when the card is no longer indexed.
 ///
 /// # Errors
 ///
-/// When the index cannot be read or holds a row that does not read back.
+/// When the index cannot be read or written, or holds a row that does not
+/// read back.
 pub fn generate_note_preview(
     conn: &Connection,
     vault: &VaultLayout,
     slug: &str,
-) -> anyhow::Result<Option<ThumbSource>> {
-    let Some(row) = index::get_block(conn, slug)? else {
-        return Ok(None);
-    };
-    let block = row.to_domain_block()?;
-    let thumb_path = vault.thumb_path(slug);
-    let thumb = if thumbnails::is_thumb_fresh(&thumb_path, &vault.block_path(slug), &block, vault) {
-        ThumbSource::None
-    } else {
-        thumbnails::generate_for_block(&block, vault)
-    };
-    if let Err(error) = index::sync_thumb_metadata(conn, slug, &thumb_path, Some(vault.root())) {
-        log::warn!("preview of '{slug}' made, not recorded: {error:#}");
-    }
-    Ok(Some(thumb))
+) -> anyhow::Result<Option<WrittenCardPictures>> {
+    derived_preview::refresh_written_card(conn, vault, slug)
 }
 
 /// The new file: the start of the file as it is now, then `body` (Л2.3,
@@ -790,9 +795,59 @@ mod tests {
         assert!(!thumb.exists(), "the save made a preview");
 
         let made = generate_note_preview(&space.conn, &space.vault, "Note").unwrap();
-        assert_eq!(made, Some(ThumbSource::Text));
+        assert_eq!(made, Some(WrittenCardPictures { changed: true, is_text: true }));
         assert!(thumb.exists());
         assert_eq!(generate_note_preview(&space.conn, &space.vault, "Gone").unwrap(), None);
+    }
+
+    /// Л3.7 (решение пользователя 09.11.2026): a save that drops a picture
+    /// moves the card's source stamp with its index row, and the preview
+    /// made for the save draws the card from the pictures it still shows.
+    /// The watcher ignores the save as Mine's own (Л3.6), so before
+    /// 09.11.2026 the feed kept the dropped picture in the card's first tile
+    /// until the next pass over the space.
+    #[test]
+    fn a_save_that_drops_a_picture_redraws_the_card_from_what_remains() {
+        use crate::storage::derived_preview::{
+            self,
+            fixtures::{drawn_tiles, picture, preview_state, Colour},
+        };
+        use crate::storage::reconcile;
+        let space = space();
+        picture(&space.vault.root().join("red.jpg"), Colour::Red);
+        picture(&space.vault.root().join("green.jpg"), Colour::Green);
+        picture(&space.vault.root().join("blue.jpg"), Colour::Blue);
+        let body = "Text.\n\n![[red.jpg]]\n\n![[green.jpg]]\n\n![[blue.jpg]]\n";
+        std::fs::write(space.vault.block_path("Gallery"), format!("{FRONT}{body}")).unwrap();
+        reconcile::reconcile_vault(&space.conn, &space.vault).unwrap();
+        derived_preview::reconcile_all_previews(&space.conn, &space.vault).unwrap();
+        assert_eq!(drawn_tiles(&space.conn, &space.vault, "Gallery").len(), 3);
+
+        let saved = save(&space, "Gallery", body, "Text.\n\n![[green.jpg]]\n\n![[blue.jpg]]\n").unwrap();
+        assert!(saved.pictures_changed, "dropping a picture changes what the card is drawn from");
+        generate_note_preview(&space.conn, &space.vault, "Gallery").unwrap();
+        assert_eq!(
+            drawn_tiles(&space.conn, &space.vault, "Gallery"),
+            [
+                ("green.jpg".to_string(), Colour::Green),
+                ("blue.jpg".to_string(), Colour::Blue),
+            ],
+        );
+        assert_eq!(preview_state(&space.conn, "Gallery"), "ready");
+        let pass = reconcile::reconcile_vault(&space.conn, &space.vault).unwrap();
+        assert!(
+            pass.upserted.is_empty() && pass.dependency_changed.is_empty(),
+            "the index and the source stamp already hold the saved note: {pass:?}",
+        );
+
+        let text_only = save(
+            &space,
+            "Gallery",
+            "Text.\n\n![[green.jpg]]\n\n![[blue.jpg]]\n",
+            "Other text.\n\n![[green.jpg]]\n\n![[blue.jpg]]\n",
+        )
+        .unwrap();
+        assert!(!text_only.pictures_changed, "new words draw the card from the same pictures");
     }
 
     /// Л2.8: entering editing gives the card with the body on disk, catching

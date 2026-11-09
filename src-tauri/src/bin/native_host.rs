@@ -25,7 +25,10 @@ use mine_lib::domain::channel::Channel;
 use mine_lib::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use mine_lib::domain::vault::VaultLayout;
 use mine_core::domain::media_type::{extension_for_content_type, stored_media_extension};
-use mine_lib::markdown_images::{build_inline_wikilink, replaceable_body_images};
+use mine_core::page_files::{
+    self, ext_from_url_opt, BodyPlacement, CardFileRole, InlineMediaKind, InlinePlace, MediaFailure,
+    PageFilesRequest, VideoPosterRef, ASSUMED_EXTENSION,
+};
 use mine_lib::net;
 use mine_lib::space_registry::{CloudRead, IdentityUnreadable};
 use mine_lib::storage::{clipper_uploads, db, files, index, save_operations, thumbnails};
@@ -122,12 +125,58 @@ struct SaveBlockParams {
     /// added (SPEC_AUDIT_FIXES.md, Ф5).
     #[serde(default)]
     selection: bool,
+    /// What the browser did about the files of the clip before this request
+    /// (SPEC_CLIPPER.md, «Один путь файла со страницы», Б9). A request without
+    /// it keeps the fingerprint it always had.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    browser_files: Option<Vec<BrowserFile>>,
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
-struct VideoPosterRef {
-    video_url: String,
-    poster_url: String,
+/// What the browser did about one file of the clip: its upload, the status the
+/// site refused it with, or why there is neither (Б9).
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+struct BrowserFile {
+    url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    upload_id: Option<String>,
+    /// Where the file came from, for its journal line (Б10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<BrowserFileSource>,
+    /// The address after redirects of a request from outside the page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    final_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    status: Option<u16>,
+    /// Seconds from `Retry-After`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retry_after: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    failure: Option<BrowserFailure>,
+}
+
+/// Where a file of the browser came from (Б4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum BrowserFileSource {
+    /// The page's cache, without a request.
+    Cache,
+    /// A request of the page itself.
+    Page,
+    /// A request from the extension's background.
+    Browser,
+}
+
+/// Why the browser has no file for an address (Б9). A word this helper does
+/// not know is an answer it did not get.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum BrowserFailure {
+    NoAnswer,
+    NotAFile,
+    TooLarge,
+    HostLimited,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(serde::Deserialize)]
@@ -1414,6 +1463,9 @@ fn handle_get_status_with_upload(
             // A Save asked with `_progress` sends signs of work, and the
             // clipper's deadline counts from the last one (Н9).
             "save_progress_v1".into(),
+            // `plan_page_files`, `discard_pending_uploads` and `browser_files`
+            // of `save_block` (SPEC_CLIPPER.md, «Один путь файла со страницы», Б9).
+            "browser_files_v1".into(),
         ],
         upload_port: upload.as_ref().map(|u| u.port),
         upload_token: upload.as_ref().map(|u| u.token.clone()),
@@ -1733,6 +1785,41 @@ fn pending_id(p: &SaveBlockParams) -> Option<String> {
     })
 }
 
+/// The uploads a request names as its files from the browser.
+fn browser_upload_ids(p: &SaveBlockParams) -> Vec<String> {
+    p.browser_files
+        .iter()
+        .flatten()
+        .filter_map(|file| file.upload_id.clone())
+        .collect()
+}
+
+/// After the commit of a Save, each upload it names gives up its bytes or goes
+/// (Б9). A failure only leaves the bytes where they are.
+fn release_uploads(vault: &VaultLayout, uploads: &[String]) {
+    for upload in uploads {
+        if let Err(error) = clipper_uploads::release_committed_upload(vault, upload) {
+            log::warn!("operation confirmed; staging cleanup deferred: {error:#}");
+        }
+    }
+}
+
+/// A rejected Save wrote nothing and a new one goes the whole route again, so
+/// the uploads its request names are of no more use (Б9).
+fn discard_rejected_uploads(vault: &VaultLayout, params: &serde_json::Value) {
+    let uploads = params
+        .get("browser_files")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|file| file.get("upload_id").and_then(serde_json::Value::as_str));
+    for upload in uploads {
+        if let Err(error) = clipper_uploads::discard_rejected_upload(vault, upload) {
+            log::warn!("save rejected; upload kept: {error:#}");
+        }
+    }
+}
+
 fn incompatible_save_response(params: &serde_json::Value, error: impl ToString) -> serde_json::Value {
     let id = params.get("operation_id").and_then(serde_json::Value::as_str).unwrap_or("");
     let mut response = operation_failure(id, "not_committed", "incompatible_protocol", error);
@@ -1773,10 +1860,17 @@ fn handle_save_block(vault: &VaultLayout, params: serde_json::Value) {
 /// The answer to a Save, made without sending it.
 fn save_block_response(vault: &VaultLayout, params: serde_json::Value) -> serde_json::Value {
     if let Err(error) = mine_lib::runtime_protocol::validate_save_request(&params) {
+        discard_rejected_uploads(vault, &params);
         return incompatible_save_response(&params, error);
     }
     match operation_store(vault) {
-        Ok(store) => save_block_with_store(vault, params, &store),
+        Ok(store) => {
+            let response = save_block_with_store(vault, params.clone(), &store);
+            if response["terminal_rejected"] == true {
+                discard_rejected_uploads(vault, &params);
+            }
+            response
+        }
         Err(error) => operation_failure("", "unknown", "operation_unknown", error),
     }
 }
@@ -1868,9 +1962,7 @@ fn save_block_with_store(
             return match recovery {
                 Ok(Some(response)) => {
                     if response["ok"] == true && response["durability_warning"].is_null() {
-                        if let Some(upload) = pending_id(&p) {
-                            let _ = clipper_uploads::mark_pending_upload_committed(vault, &upload);
-                        }
+                        release_uploads(vault, &record.pending_upload_ids);
                     }
                     response
                 }
@@ -1977,18 +2069,14 @@ fn handle_get_save_operation(vault: &VaultLayout, params: serde_json::Value) {
         // from its receipt; one under way is unknown for now.
         let finished = store.peek(&binding, id)?.and_then(|record| match record.phase {
             save_operations::OperationPhase::Committed { response } => {
-                Some((response, record.pending_upload_id))
+                Some((response, record.pending_upload_ids))
             }
-            save_operations::OperationPhase::Rejected { response } => Some((response, None)),
+            save_operations::OperationPhase::Rejected { response } => Some((response, Vec::new())),
             _ => None,
         });
-        if let Some((response, upload)) = finished {
+        if let Some((response, uploads)) = finished {
             if response["ok"] == true && response["durability_warning"].is_null() {
-                if let Some(upload) = upload {
-                    if let Err(error) = clipper_uploads::mark_pending_upload_committed(vault, &upload) {
-                        log::warn!("operation confirmed; staging cleanup deferred: {error:#}");
-                    }
-                }
+                release_uploads(vault, &uploads);
             }
             return Ok(Some(response));
         }
@@ -2014,11 +2102,7 @@ fn handle_get_save_operation(vault: &VaultLayout, params: serde_json::Value) {
             .as_ref()
             .is_some_and(|value| value["ok"] == true && value["durability_warning"].is_null())
         {
-            if let Some(upload) = &record.pending_upload_id {
-                if let Err(error) = clipper_uploads::mark_pending_upload_committed(vault, upload) {
-                    log::warn!("operation confirmed; staging cleanup deferred: {error:#}");
-                }
-            }
+            release_uploads(vault, &record.pending_upload_ids);
         }
         Ok(response)
     })();
@@ -2097,8 +2181,10 @@ fn perform_save_block_with_publisher(
     let slug = vault.new_card_slug(&name);
     files::validate_vault_write_target(vault, &vault.block_path(&slug))?;
     record.reserved_name = Some(name.clone());
-    record.pending_upload_id = pending_upload_id.clone();
+    record.pending_upload_ids = pending_upload_id.iter().cloned().chain(browser_upload_ids(&p)).collect();
     locked.store(record)?;
+    // Every file of the page takes this one route (Б4, Б8).
+    let route = PageFileRoute::new(vault, p.url.as_deref().unwrap_or(""), p.browser_files.as_deref().unwrap_or_default());
     // Acquisition is isolated from source. The same layout yields exact final
     // relative references, but neither downloads nor inline localization can
     // mutate the user's vault before the complete plan is durable.
@@ -2149,27 +2235,22 @@ fn perform_save_block_with_publisher(
                 Err(e) => warning = Some(format!("failed to decode data URL: {e}")),
             }
         } else {
-            // HTTP URL — download file
-            let ext = ext_from_url(image_url);
+            let ext = route.extension_of(image_url);
             let dest_name = format!("{}.{}", name, ext);
             let dest_path = vault.new_media_path(&dest_name);
             files::validate_vault_write_target(vault, &dest_path)?;
 
-            let referer = p.url.as_deref().unwrap_or(image_url);
-            match download_file(image_url, &dest_path, referer) {
-                Ok(()) => {
-                    if bt == BlockType::Video && thumbnails::is_image_ext(ext) {
+            match route.obtain(image_url, &dest_path) {
+                Ok(_) => {
+                    if page_files::card_file_role(&p.block_type, &ext) == CardFileRole::Thumbnail {
                         thumbnail_file = Some(vault.new_media_stem(&dest_name));
                     } else {
                         media_file = Some(vault.new_media_stem(&dest_name));
                     }
                 }
-                Err(e) => {
-                    // The reason reaches the answer and the journal (Б3).
-                    let reason = media_download_reason(image_url, &e);
-                    host_log(&format!("save: media download failed: {reason} ({e:#})"));
-                    warning = Some(reason);
-                }
+                // The reason reaches the answer (Б3) and the file's journal
+                // line (Б10).
+                Err(not_obtained) => warning = Some(not_obtained.reason),
             }
         }
     }
@@ -2181,8 +2262,7 @@ fn perform_save_block_with_publisher(
     let LocalizedBody { body, files: inline_files, unresolved_videos, mut remote } = if raw.trim().is_empty() {
         LocalizedBody { body: raw, files: Vec::new(), unresolved_videos: Vec::new(), remote: Vec::new() }
     } else {
-        let page_url = p.url.as_deref().unwrap_or("");
-        localize_body_images(&raw, vault, &name, page_url, source_vault)
+        localize_body_images(&raw, vault, &name, source_vault, &route)
     };
 
     // A video too large to store leaves the note pointing at someone else's
@@ -2197,10 +2277,10 @@ fn perform_save_block_with_publisher(
                 .find(|entry| unresolved_videos.iter().any(|url| url == &entry.video_url))
                 .map(|entry| entry.poster_url.clone())
         }) {
-            let ext = ext_from_url(&poster_url);
+            let ext = route.extension_of(&poster_url);
             let mut occupied = files::scan_vault_file_paths(source_vault)?;
             occupied.extend(files::scan_vault_file_paths(vault)?);
-            let target = mine_core::save::select_unique_file_stem(&format!("{name} (poster)"), ext, &occupied)
+            let target = mine_core::save::select_unique_file_stem(&format!("{name} (poster)"), &ext, &occupied)
                 .map_err(|error| anyhow::anyhow!("{error}"))
                 .and_then(|poster_name| {
                     let dest_name = format!("{poster_name}.{ext}");
@@ -2210,16 +2290,10 @@ fn perform_save_block_with_publisher(
                 });
             let poster = |reason| RemoteMedia { url: poster_url.clone(), kind: "poster", reason };
             match target {
-                Ok((dest_name, dest_path)) => {
-                    let referer = p.url.as_deref().unwrap_or(&poster_url);
-                    match download_file(&poster_url, &dest_path, referer) {
-                        Ok(()) => thumbnail_file = Some(vault.new_media_stem(&dest_name)),
-                        Err(e) => {
-                            log::warn!("inline-media: poster download failed err={e:#}");
-                            remote.push(poster(REMOTE_DOWNLOAD_FAILED));
-                        }
-                    }
-                }
+                Ok((dest_name, dest_path)) => match route.obtain(&poster_url, &dest_path) {
+                    Ok(_) => thumbnail_file = Some(vault.new_media_stem(&dest_name)),
+                    Err(_) => remote.push(poster(REMOTE_DOWNLOAD_FAILED)),
+                },
                 Err(error) => {
                     log::warn!("inline-media: no name for the poster {poster_url}: {error:#}");
                     remote.push(poster(REMOTE_NAME));
@@ -2277,6 +2351,16 @@ fn perform_save_block_with_publisher(
             artifacts.push(save_operations::PlannedArtifact::inspect(vault, &path)?);
         }
     }
+    route.record_final_names(&artifacts);
+    // A file renamed by its bytes keeps the name its upload knows it by (Б9).
+    if let (Some(upload), Some(file)) = (pending_upload_id.as_deref(), media_file.as_deref()) {
+        if let Some(artifact) = artifacts.iter().find(|artifact| artifact.source.relative_path == file) {
+            let filename = file.rsplit('/').next().unwrap_or(file);
+            if let Err(error) = clipper_uploads::record_upload_publication(source_vault, upload, filename, &artifact.source.sha256) {
+                log::warn!("upload {upload}: final name not recorded: {error:#}");
+            }
+        }
+    }
     // Saved means saved whole, or the answer says what was not: every
     // medium that stayed a link to its server is named (SPEC_DEEP_AUDIT.md,
     // Н10). The answer is the receipt a lost reply is recovered from.
@@ -2308,10 +2392,8 @@ fn perform_save_block_with_publisher(
         // but is not authority for upload cleanup or disposable-index writes.
         return Ok(committed);
     }
-    if let Some(upload) = pending_upload_id.filter(|_| committed["durability_warning"].is_null()) {
-        if let Err(error) = clipper_uploads::mark_pending_upload_committed(vault, &upload) {
-            log::warn!("capture committed; staging cleanup deferred: {error:#}");
-        }
+    if committed["durability_warning"].is_null() {
+        release_uploads(vault, &record.pending_upload_ids);
     }
     // A card whose name another writer took at publication went under the
     // next free one (SPEC_DEEP_AUDIT.md, Е4.14): the index takes it there.
@@ -2619,33 +2701,6 @@ fn write_new_bytes(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     files::write_new_atomically(path, bytes)
 }
 
-fn ext_from_url(url: &str) -> &str {
-    ext_from_url_opt(url).unwrap_or("jpg")
-}
-
-/// The extension a URL states outright, or `None` when it states none.
-///
-/// Kept separate from [`ext_from_url`] so callers who can find out what a file
-/// actually is — by asking the server — can tell "the URL says jpg" apart from
-/// "the URL says nothing and jpg is a guess". API-style URLs such as
-/// `.../xrpc/com.atproto.sync.getBlob` are the case that matters: their last
-/// dotted segment is a method name, not a file type.
-///
-/// Only letters and digits make an extension: a file cannot be named with
-/// anything else (`select_unique_file_stem`), and before 13.10.2026 one
-/// address such as `photo.j-pg` left every picture of an article remote and
-/// a poster at such an address failed the whole save (SPEC_DEEP_AUDIT.md,
-/// Е4.1). Such an address states no type; the server and the bytes say it.
-fn ext_from_url_opt(url: &str) -> Option<&str> {
-    let path = url.split('?').next().unwrap_or(url);
-    let path = path.split('#').next().unwrap_or(path);
-    let (_, ext) = path.rsplit_once('.')?;
-    if ext.is_empty() || ext.len() > 5 || !ext.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
-        return None;
-    }
-    Some(ext)
-}
-
 /// Ask a server what it is about to serve, for URLs that do not say.
 ///
 /// A failure here is not an error: the caller falls back to its own assumption,
@@ -2692,56 +2747,28 @@ struct MediaNotObtained {
     reason: String,
 }
 
-/// Why the download of `url` failed, as the clipper says it: the site, the
-/// HTTP code and, for a `429`, when the site allows the next request (Б3).
-/// A failure without an HTTP answer names the site and its cause.
+/// Why the download of `url` failed, as the clipper says it (Б3). The words are
+/// the core's; this reads the failure from the error of the download.
 fn media_download_reason(url: &str, error: &anyhow::Error) -> String {
     let refusal = error
         .chain()
         .find_map(|cause| cause.downcast_ref::<net::HttpStatusError>());
     let Some(refusal) = refusal else {
-        return format!("{} did not give the file: {}.", site_of(url), error.root_cause());
+        return page_files::media_failure_reason(
+            &page_files::site_of(url),
+            &MediaFailure::NoAnswer { cause: error.root_cause().to_string() },
+        );
     };
-    let site = refusal.host().unwrap_or_else(|| site_of(url));
-    if refusal.status != net::TOO_MANY_REQUESTS {
-        return format!("{site} did not give the file (HTTP {}).", refusal.status);
-    }
-    let when = refusal
-        .retry_after
-        .map_or_else(|| "later".to_string(), |wait| format!("in {}", wait_text(wait)));
-    format!("{site} is not giving the file right now (HTTP {}). Try again {when}.", refusal.status)
-}
-
-/// The host of `url` as a person names the site; the address itself when it
-/// has none.
-fn site_of(url: &str) -> String {
-    let host = host_from_url(url);
-    if host.is_empty() {
-        url.to_string()
-    } else {
-        host
-    }
-}
-
-/// A wait as the clipper says it: seconds under a minute, else whole minutes
-/// rounded up, hours from sixty minutes on.
-fn wait_text(wait: Duration) -> String {
-    const SECONDS_PER_MINUTE: u64 = 60;
-    const MINUTES_PER_HOUR: u64 = 60;
-    let seconds = wait.as_secs();
-    if seconds < SECONDS_PER_MINUTE {
-        return format!("{seconds} s");
-    }
-    let minutes = seconds.div_ceil(SECONDS_PER_MINUTE);
-    if minutes < MINUTES_PER_HOUR {
-        return format!("{minutes} min");
-    }
-    let (hours, rest) = (minutes / MINUTES_PER_HOUR, minutes % MINUTES_PER_HOUR);
-    if rest == 0 {
-        format!("{hours} h")
-    } else {
-        format!("{hours} h {rest} min")
-    }
+    let site = refusal.host().unwrap_or_else(|| page_files::site_of(url));
+    page_files::media_failure_reason(
+        &site,
+        &MediaFailure::Refused {
+            status: refusal.status,
+            retry_after_seconds: refusal
+                .retry_after
+                .map(|wait| u32::try_from(wait.as_secs()).unwrap_or(u32::MAX)),
+        },
+    )
 }
 
 /// Download a file from URL to local path.
@@ -2751,15 +2778,16 @@ fn wait_text(wait: Duration) -> String {
 /// `mine_lib::net::download_validated_to_file`.
 /// Every part that arrives is a sign of the helper's work (Н9).
 #[cfg(not(test))]
-fn download_file(url: &str, dest: &std::path::Path, referer: &str) -> anyhow::Result<()> {
+fn download_file(url: &str, dest: &std::path::Path, referer: &str, attempts: u32) -> anyhow::Result<Option<String>> {
     let headers = [
         ("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
         ("Referer", referer),
         ("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"),
     ];
-    let result = net::download_validated_to_file_reporting(
+    let result = net::download_with_attempts(
         url,
         dest,
+        attempts,
         INLINE_DOWNLOAD_IDLE_TIMEOUT,
         &headers,
         &note_work,
@@ -2770,82 +2798,22 @@ fn download_file(url: &str, dest: &std::path::Path, referer: &str) -> anyhow::Re
 
 /// Tests download from the stand-in web ([`fake_web`]), never the real one.
 #[cfg(test)]
-fn download_file(url: &str, dest: &std::path::Path, _referer: &str) -> anyhow::Result<()> {
-    let result = fake_web::download(url, dest, &note_work);
+fn download_file(url: &str, dest: &std::path::Path, _referer: &str, attempts: u32) -> anyhow::Result<Option<String>> {
+    let result = fake_web::download(url, dest, attempts, &note_work);
     note_work();
     result
 }
 
-/// Kind of inline media embedded in an article body, used to produce
-/// human-readable filenames like `Название (image 1).jpg`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InlineMediaKind {
-    Image,
-    Video,
-    File,
-}
+const MAX_PARALLEL_DOWNLOADS: usize = page_files::MAX_PARALLEL_REQUESTS as usize;
+const MAX_PER_DOMAIN: usize = page_files::MAX_REQUESTS_PER_HOST as usize;
 
-impl InlineMediaKind {
-    fn label(self) -> &'static str {
-        match self {
-            InlineMediaKind::Image => "image",
-            InlineMediaKind::Video => "video",
-            InlineMediaKind::File => "file",
-        }
-    }
-}
-
-/// Classify an extension (lowercase, no leading dot) as image/video/other.
-fn inline_media_kind_from_ext(ext: &str) -> InlineMediaKind {
-    match ext.to_lowercase().as_str() {
-        "jpg" | "jpeg" | "png" | "webp" | "gif" | "avif" | "heic" | "heif" | "bmp" | "svg"
-        | "tiff" | "tif" => InlineMediaKind::Image,
-        "mp4" | "webm" | "m4v" | "mov" | "mkv" | "avi" => InlineMediaKind::Video,
-        _ => InlineMediaKind::File,
-    }
-}
-
-/// Build the local filename for a piece of inline article media.
-///
-/// Format: `<slug> (<kind> <1-based idx>).<ext>`
-/// Example: `Hello World (image 1).jpg`, `Story (video 2).mp4`.
-/// The `idx` is 1-based per-kind so a single article mixing 3 images and
-/// 2 videos produces `(image 1/2/3)` and `(video 1/2)` independently.
-fn build_inline_media_name(slug: &str, kind: InlineMediaKind, idx: u32, ext: &str) -> String {
-    if ext.is_empty() {
-        format!(
-            "{slug} ({label} {idx})",
-            slug = slug,
-            label = kind.label(),
-            idx = idx
-        )
-    } else {
-        format!(
-            "{slug} ({label} {idx}).{ext}",
-            slug = slug,
-            label = kind.label(),
-            idx = idx,
-            ext = ext
-        )
-    }
-}
-
-/// Download inline images from Markdown body, replacing external URLs with local filenames.
-/// Images that fail to download keep their original URL.
-const MAX_INLINE_IMAGES: u32 = 30;
-const MAX_PARALLEL_DOWNLOADS: usize = 3;
-const MAX_PER_DOMAIN: usize = 2;
-
-/// One inline `![alt](url)` occurrence parsed from the body, with its
-/// destination filename precomputed. Phase A produces a Vec<InlineTask>;
-/// Phase B downloads in parallel; Phase C dedups + rewrites the body.
+/// One address the body shows, with its destination filename precomputed.
+/// Phase A produces a Vec<InlineTask>; Phase B obtains the files in parallel;
+/// Phase C dedups + rewrites the body at every place that shows the address.
 #[derive(Debug, Clone)]
 struct InlineTask {
-    range: std::ops::Range<usize>, // source bytes of the whole `![alt](url)`
-    alt: String,                   // caption as written, line breaks as spaces
+    places: Vec<InlinePlace>,
     url: String,
-    host: String, // for per-domain throttling
-    #[allow(dead_code)] // diagnostic only after Phase A
     kind: InlineMediaKind,
     dest_name: String, // e.g. "Title (image 1).jpg"
     dest_path: PathBuf,
@@ -2922,29 +2890,11 @@ fn host_from_url(url: &str) -> String {
 }
 
 /// Phase A: scan the body, build the list of inline-media tasks with
-/// deterministic per-kind indices. Stops at `MAX_INLINE_IMAGES` http(s)
-/// images; images with other destinations, and images the local form cannot
-/// replace (see [`replaceable_body_images`]), are skipped without consuming
-/// the cap.
+/// deterministic per-kind indices. Images with other destinations, and images
+/// the local form cannot replace, are skipped.
 #[cfg(test)]
 fn scan_inline_tasks(body: &str, vault: &VaultLayout, slug: &str) -> Vec<InlineTask> {
-    scan_inline_tasks_with(body, vault, slug, &|_| None)
-}
-
-/// As [`scan_inline_tasks`], but consulting `probe` for URLs that carry no
-/// extension of their own.
-///
-/// The probe is a parameter so the scan stays a pure function over the body:
-/// tests pass one that answers nothing, and only the save path pays for the
-/// network round-trip — and only for the rare URL that needs it.
-#[cfg(test)]
-fn scan_inline_tasks_with(
-    body: &str,
-    vault: &VaultLayout,
-    slug: &str,
-    probe: &dyn Fn(&str) -> Option<&'static str>,
-) -> Vec<InlineTask> {
-    scan_inline_media(body, vault, slug, probe).0
+    scan_inline_media(body, vault, slug, &|_| None)
 }
 
 /// A picture, video, file or poster of a clip that stays a link to someone
@@ -2955,14 +2905,13 @@ struct RemoteMedia {
     url: String,
     /// `image`, `video`, `file` or `poster`.
     kind: &'static str,
-    /// [`REMOTE_DOWNLOAD_FAILED`], [`REMOTE_LIMIT`] or [`REMOTE_NAME`].
+    /// [`REMOTE_DOWNLOAD_FAILED`] or [`REMOTE_NAME`].
     reason: &'static str,
 }
 
-/// The download failed: the server refused, the transfer broke or stalled.
+/// Neither the browser nor the helper got the file: the server refused, the
+/// transfer broke or stalled.
 const REMOTE_DOWNLOAD_FAILED: &str = "download_failed";
-/// Past the first `MAX_INLINE_IMAGES` media of the body.
-const REMOTE_LIMIT: &str = "limit";
 /// No file name could be given to it in the space.
 const REMOTE_NAME: &str = "name";
 
@@ -2970,135 +2919,66 @@ impl RemoteMedia {
     fn of(url: &str, kind: InlineMediaKind, reason: &'static str) -> Self {
         Self { url: url.to_string(), kind: kind.label(), reason }
     }
+
+    /// One entry per place of the body that stays a link.
+    fn of_task<'a>(task: &'a InlineTask, reason: &'static str) -> impl Iterator<Item = Self> + 'a {
+        task.places.iter().map(move |_| Self::of(&task.url, task.kind, reason))
+    }
 }
 
-/// The inline-media tasks of the body, consulting `probe` for URLs that
-/// carry no extension of their own, and the media past `MAX_INLINE_IMAGES`,
-/// which stay links and are named in the Save answer (Н10).
+/// The inline-media tasks of the body, consulting `probe` for an address that
+/// carries no extension of its own. The probe is a parameter so the scan stays
+/// a pure function over the body: tests pass one that answers nothing, and only
+/// the save path pays for the network round-trip, only for such an address and
+/// only when the browser did not say (Б9).
 fn scan_inline_media(
     body: &str,
     vault: &VaultLayout,
     slug: &str,
     probe: &dyn Fn(&str) -> Option<&'static str>,
-) -> (Vec<InlineTask>, Vec<RemoteMedia>) {
-    let mut tasks = Vec::new();
-    let mut past_limit = Vec::new();
-    let mut image_idx: u32 = 0;
-    let mut video_idx: u32 = 0;
-    let mut file_idx: u32 = 0;
-
-    for image in replaceable_body_images(body) {
-        let url = image.url.as_str();
-        if !(url.starts_with("http://") || url.starts_with("https://")) {
-            continue;
-        }
-        if tasks.len() >= MAX_INLINE_IMAGES as usize {
-            let kind = ext_from_url_opt(url).map_or(InlineMediaKind::Image, inline_media_kind_from_ext);
-            past_limit.push(RemoteMedia::of(url, kind, REMOTE_LIMIT));
-            continue;
-        }
-
-        // A URL that names its own type is trusted; one that does not is asked
-        // about, so an API endpoint serving a video is not filed as a JPEG.
-        let ext = match ext_from_url_opt(url) {
-            Some(ext) => ext,
-            None => probe(url).unwrap_or("jpg"),
-        };
-        let kind = inline_media_kind_from_ext(ext);
-        let idx = match kind {
-            InlineMediaKind::Image => {
-                image_idx += 1;
-                image_idx
-            }
-            InlineMediaKind::Video => {
-                video_idx += 1;
-                video_idx
-            }
-            InlineMediaKind::File => {
-                file_idx += 1;
-                file_idx
-            }
-        };
-        let basename = build_inline_media_name(slug, kind, idx, ext);
-        let dest_path = vault.new_media_path(&basename);
-        let dest_name = vault.new_media_stem(&basename);
-        let host = host_from_url(url);
-
-        tasks.push(InlineTask {
-            range: image.range,
-            alt: image.caption,
-            url: image.url,
-            host,
-            kind,
-            dest_name,
-            dest_path,
-        });
-    }
-    (tasks, past_limit)
-}
-
-/// Phase B: spawn a fixed worker pool, drain a shared queue of task
-/// indices, throttle per-domain via `DomainLimiter`. Returns one
-/// `Result<(), String>` per task, indexed identically to `tasks`.
-fn run_parallel_downloads(tasks: &[InlineTask], page_url: &str) -> Vec<Result<(), String>> {
-    if tasks.is_empty() {
-        return Vec::new();
-    }
-
-    let limiter = DomainLimiter::new(MAX_PER_DOMAIN);
-    let queue: Arc<Mutex<VecDeque<usize>>> = Arc::new(Mutex::new((0..tasks.len()).collect()));
-    let tasks_shared: Arc<Vec<InlineTask>> = Arc::new(tasks.to_vec());
-    let (result_tx, result_rx) = std::sync::mpsc::channel::<(usize, Result<(), String>)>();
-
-    let worker_count = MAX_PARALLEL_DOWNLOADS.min(tasks.len());
-    let mut handles = Vec::with_capacity(worker_count);
-    for _ in 0..worker_count {
-        let queue = Arc::clone(&queue);
-        let limiter = Arc::clone(&limiter);
-        let tasks_shared = Arc::clone(&tasks_shared);
-        let result_tx = result_tx.clone();
-        let page_url = page_url.to_string();
-        handles.push(std::thread::spawn(move || loop {
-            let task_idx = {
-                let mut q = queue.lock().expect("download queue poisoned");
-                match q.pop_front() {
-                    Some(i) => i,
-                    None => break,
-                }
-            };
-            let task = &tasks_shared[task_idx];
-            let _permit = limiter.acquire(task.host.clone());
-            let result =
-                download_file(&task.url, &task.dest_path, &page_url).map_err(|e| e.to_string());
-            let _ = result_tx.send((task_idx, result));
-        }));
-    }
-    drop(result_tx);
-
-    let mut results: Vec<Option<Result<(), String>>> = (0..tasks.len()).map(|_| None).collect();
-    while let Ok((idx, res)) = result_rx.recv() {
-        results[idx] = Some(res);
-    }
-    for h in handles {
-        let _ = h.join();
-    }
-
-    results
+) -> Vec<InlineTask> {
+    page_files::inline_media(body, slug, |url| probe(url).map(str::to_string))
         .into_iter()
-        .map(|opt| opt.unwrap_or_else(|| Err("worker panicked or task lost".to_string())))
+        .map(|medium| InlineTask {
+            kind: medium.kind,
+            dest_path: vault.new_media_path(&medium.file_name),
+            dest_name: vault.new_media_stem(&medium.file_name),
+            places: medium.places,
+            url: medium.url,
+        })
         .collect()
 }
 
-/// One body-rewrite to apply at the end of localize. Computed against
-/// the ORIGINAL body so all ranges remain valid; applied in reverse
-/// offset order to preserve earlier offsets.
-struct RewriteSpec {
-    range: std::ops::Range<usize>, // [start, end) bytes in original body
-    replacement: String,
+/// Phase B: a fixed pool of workers drains a shared queue of tasks, each file by
+/// the one route. One result per task, indexed identically to `tasks`.
+fn run_parallel_downloads(tasks: &[InlineTask], route: &PageFileRoute) -> Vec<Result<FileOrigin, FileNotObtained>> {
+    let queue: Mutex<VecDeque<usize>> = Mutex::new((0..tasks.len()).collect());
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        for _ in 0..MAX_PARALLEL_DOWNLOADS.min(tasks.len()) {
+            let result_tx = result_tx.clone();
+            let queue = &queue;
+            scope.spawn(move || loop {
+                let next = queue.lock().expect("download queue poisoned").pop_front();
+                let Some(index) = next else { break };
+                let task = &tasks[index];
+                let _ = result_tx.send((index, route.obtain(&task.url, &task.dest_path)));
+            });
+        }
+    });
+    drop(result_tx);
+    let mut results: Vec<Option<Result<FileOrigin, FileNotObtained>>> = (0..tasks.len()).map(|_| None).collect();
+    for (index, result) in result_rx {
+        results[index] = Some(result);
+    }
+    results
+        .into_iter()
+        .map(|result| result.unwrap_or_else(|| Err(FileNotObtained { reason: "the worker stopped".to_string() })))
+        .collect()
 }
 
-/// Phase C: dedup by byte comparison among successful downloads, build
-/// rewrite specs, apply in reverse offset order, return new body.
+/// Phase C: dedup by byte comparison among the files obtained, then say which
+/// file each place of the text shows, and let the core rewrite the body.
 #[cfg(test)]
 fn apply_rewrites(
     body: &str,
@@ -3110,10 +2990,10 @@ fn apply_rewrites(
     ))
 }
 
-fn apply_rewrites_with_links(
+fn apply_rewrites_with_links<T, E>(
     body: &str,
     tasks: &[InlineTask],
-    outcomes: &[Result<(), String>],
+    outcomes: &[Result<T, E>],
     links: &mine_core::links::LinkIndex,
 ) -> (String, Vec<std::path::PathBuf>) {
     debug_assert_eq!(tasks.len(), outcomes.len());
@@ -3154,49 +3034,23 @@ fn apply_rewrites_with_links(
         .map(|(_, task)| task.dest_path.clone())
         .collect();
 
-    // Build rewrite specs against the ORIGINAL body so offsets stay valid.
-    let mut specs: Vec<RewriteSpec> = Vec::new();
-    for (i, task) in tasks.iter().enumerate() {
-        match (&outcomes[i], dedup_target[i]) {
-            (Err(_), _) => {
-                // Failed download: leave the remote URL in place. Renderer
-                // will load it from network (CSP allows http(s) img-src).
-            }
-            (Ok(()), None) => {
-                // Successful unique: replace `![alt](url)` with wikilink.
-                let target = links.shortest_link(&task.dest_name, false)
-                    .unwrap_or_else(|| task.dest_name.clone());
-                let replacement = build_inline_wikilink(&target, task.alt.trim());
-                specs.push(RewriteSpec {
-                    range: task.range.clone(),
-                    replacement,
-                });
-            }
-            (Ok(()), Some(kept)) => {
-                // Byte-identical to an earlier file: the same embed, reused.
-                let kept = &tasks[kept].dest_name;
-                let target = links.shortest_link(kept, false)
-                    .unwrap_or_else(|| kept.clone());
-                specs.push(RewriteSpec {
-                    range: task.range.clone(),
-                    replacement: build_inline_wikilink(&target, task.alt.trim()),
-                });
-            }
-        }
-    }
-
-    // Apply in reverse offset order so earlier ranges stay valid.
-    specs.sort_by_key(|spec| std::cmp::Reverse(spec.range.start));
-    let mut result = body.to_string();
-    for spec in specs {
-        // Defensive: ranges must lie within result. Skip pathological
-        // overlaps with later (already-applied) specs.
-        if spec.range.end > result.len() || spec.range.start > spec.range.end {
-            continue;
-        }
-        result.replace_range(spec.range, &spec.replacement);
-    }
-    (result, surviving)
+    // A failed file leaves the remote address in place: the renderer loads it
+    // from the network (CSP allows http(s) img-src).
+    let placements: Vec<BodyPlacement> = tasks
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| outcomes[*i].is_ok())
+        .flat_map(|(i, task)| {
+            let kept = &tasks[dedup_target[i].unwrap_or(i)];
+            task.places.iter().map(move |place| BodyPlacement {
+                start: place.start,
+                end: place.end,
+                caption: place.caption.clone(),
+                file: kept.dest_name.clone(),
+            })
+        })
+        .collect();
+    (page_files::rewrite_body(body, &placements, links), surviving)
 }
 
 /// Localize inline body media. Returns the rewritten body and the paths of the
@@ -3217,15 +3071,16 @@ fn localize_body_images(
     body: &str,
     vault: &VaultLayout,
     slug: &str,
-    page_url: &str,
     source_vault: &VaultLayout,
+    route: &PageFileRoute,
 ) -> LocalizedBody {
-    let (scanned, mut remote) = scan_inline_media(body, vault, slug, &probe_ext_over_network);
+    let scanned = scan_inline_media(body, vault, slug, &|url| route.type_of(url));
     note_work();
     let unlocalized = |tasks: &[InlineTask], mut remote: Vec<RemoteMedia>| {
-        remote.extend(tasks.iter().map(|task| RemoteMedia::of(&task.url, task.kind, REMOTE_NAME)));
+        remote.extend(tasks.iter().flat_map(|task| RemoteMedia::of_task(task, REMOTE_NAME)));
         LocalizedBody { body: body.to_string(), files: Vec::new(), unresolved_videos: Vec::new(), remote }
     };
+    let mut remote = Vec::new();
     let mut paths = match files::scan_vault_file_paths(source_vault) {
         Ok(paths) => paths,
         Err(error) => {
@@ -3256,7 +3111,7 @@ fn localize_body_images(
             }
             Err(error) => {
                 log::warn!("inline-media: no name for {}: {error:#}; it stays a link", task.url);
-                remote.push(RemoteMedia::of(&task.url, task.kind, REMOTE_NAME));
+                remote.extend(RemoteMedia::of_task(&task, REMOTE_NAME));
             }
         }
     }
@@ -3270,8 +3125,8 @@ fn localize_body_images(
         MAX_PARALLEL_DOWNLOADS,
         MAX_PER_DOMAIN,
     );
-    let outcomes = run_parallel_downloads(&tasks, page_url);
-    name_inline_media_by_content(vault, &mut tasks, &outcomes, &mut paths);
+    let outcomes = run_parallel_downloads(&tasks, route);
+    name_inline_media_by_content(vault, &mut tasks, &outcomes, &mut paths, &|url| route.answered_type(url));
     let ok = outcomes.iter().filter(|r| r.is_ok()).count();
     // Video that stayed remote is reported separately: the note now depends on
     // someone else's server for it, and the caller can at least keep a local
@@ -3279,16 +3134,14 @@ fn localize_body_images(
     let mut unresolved_videos = Vec::new();
     let mut failed = Vec::new();
     for (task, outcome) in tasks.iter().zip(outcomes.iter()) {
-        if let Err(e) = outcome {
-            log::warn!("inline-media: download failed url={} err={}", task.url, e);
-            failed.push(RemoteMedia::of(&task.url, task.kind, REMOTE_DOWNLOAD_FAILED));
+        if outcome.is_err() {
+            failed.extend(RemoteMedia::of_task(task, REMOTE_DOWNLOAD_FAILED));
             if task.kind == InlineMediaKind::Video {
                 unresolved_videos.push(task.url.clone());
             }
         }
     }
-    // The failed downloads in the order of the body, then the media past
-    // the limit and those without a name.
+    // The failed files in the order of the body, then those without a name.
     failed.extend(remote);
     let links = mine_core::links::LinkIndex::new(paths);
     let (result, inline_files) = apply_rewrites_with_links(body, &tasks, &outcomes, &links);
@@ -3310,11 +3163,12 @@ fn localize_body_images(
 /// still in staging, so renaming them touches nothing the person can see. A
 /// file that cannot be renamed keeps its first name: the picture is saved
 /// either way.
-fn name_inline_media_by_content(
+fn name_inline_media_by_content<T, E>(
     staging: &VaultLayout,
     tasks: &mut [InlineTask],
-    outcomes: &[Result<(), String>],
+    outcomes: &[Result<T, E>],
     paths: &mut [String],
+    answered_type: &dyn Fn(&str) -> Option<&'static str>,
 ) {
     for (task, outcome) in tasks.iter_mut().zip(outcomes) {
         if outcome.is_err() {
@@ -3325,7 +3179,9 @@ fn name_inline_media_by_content(
         let Ok(head) = files::read_media_head(&task.dest_path) else {
             continue;
         };
-        let Some(extension) = stored_media_extension(&head, Some(declared)) else {
+        // An address that states no type took an assumed name; what the server
+        // answered with its bytes says better, video included (Б9).
+        let Some(extension) = stored_media_extension(&head, Some(answered_type(&task.url).unwrap_or(declared))) else {
             continue;
         };
         if extension == declared {
@@ -3383,6 +3239,361 @@ fn files_identical(a: &std::path::Path, b: &std::path::Path) -> bool {
             return true;
         }
     }
+}
+
+// ─── One route of a file from the page ──────────────────────────────────────
+//
+// SPEC_CLIPPER.md, «Один путь файла со страницы». Every file a clip takes from
+// its page (the file of a picture card, the media of a body, the preview of a
+// link or a video, a poster) comes here in one way: the upload the browser made
+// of it, or what table Б8 says after the browser's answer.
+
+/// Where a file came from: the word of its journal line (Б10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileOrigin {
+    Browser(BrowserFileSource),
+    Helper,
+}
+
+impl FileOrigin {
+    fn word(self) -> &'static str {
+        match self {
+            FileOrigin::Browser(BrowserFileSource::Cache) => "cache",
+            FileOrigin::Browser(BrowserFileSource::Page) => "page",
+            FileOrigin::Browser(BrowserFileSource::Browser) => "browser",
+            FileOrigin::Helper => "helper",
+        }
+    }
+}
+
+/// A file neither the browser nor the helper got, with the reason in the
+/// clipper's words (Б3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileNotObtained {
+    reason: String,
+}
+
+/// What the helper does after the browser's answer: how many attempts it makes,
+/// or the error that stands for its not asking at all (Б8).
+fn attempts_after_browser(url: &str, file: Option<&BrowserFile>) -> anyhow::Result<u32> {
+    let refused = |status: u16, retry_after: Option<u64>| {
+        anyhow::Error::from(net::HttpStatusError {
+            url: url.to_string(),
+            status,
+            retry_after: retry_after.map(Duration::from_secs),
+        })
+    };
+    let Some(file) = file else { return Ok(net::DOWNLOAD_ATTEMPTS) };
+    match (file.status, file.failure) {
+        (Some(net::TOO_MANY_REQUESTS), _) | (_, Some(BrowserFailure::HostLimited)) => {
+            Err(refused(net::TOO_MANY_REQUESTS, file.retry_after))
+        }
+        (Some(status @ (404 | 410)), _) => Err(refused(status, None)),
+        (Some(_), _) | (_, Some(BrowserFailure::NotAFile)) => Ok(1),
+        (_, Some(BrowserFailure::TooLarge)) => Err(anyhow::anyhow!("the file is larger than 500 MiB")),
+        (None, Some(BrowserFailure::NoAnswer | BrowserFailure::Unknown) | None) => Ok(net::DOWNLOAD_ATTEMPTS),
+    }
+}
+
+/// How the browser's answer reads in a file's journal line (Б10).
+fn browser_answer_text(file: &BrowserFile) -> Option<String> {
+    let word = match (file.status, file.failure) {
+        (Some(status), _) => return Some(format!("browser: HTTP {status}")),
+        (_, Some(BrowserFailure::NoAnswer | BrowserFailure::Unknown)) => "no answer",
+        (_, Some(BrowserFailure::NotAFile)) => "not a file",
+        (_, Some(BrowserFailure::TooLarge)) => "too large",
+        (_, Some(BrowserFailure::HostLimited)) => "host limited",
+        (None, None) => return None,
+    };
+    Some(format!("browser: {word}"))
+}
+
+/// Whether an address leads to the public network, by the name as it resolves
+/// now. One answer per origin: a body of many files has few of them. Tests ask
+/// the stand-in web, which refuses what the address itself shows is internal.
+#[derive(Default)]
+struct PublicNetwork {
+    answers: Mutex<HashMap<String, bool>>,
+}
+
+impl PublicNetwork {
+    fn reaches(&self, url: &str) -> bool {
+        let origin = match url::Url::parse(url) {
+            Ok(parsed) => parsed.origin().ascii_serialization(),
+            Err(_) => return false,
+        };
+        let known = self.answers.lock().ok().and_then(|answers| answers.get(&origin).copied());
+        known.unwrap_or_else(|| {
+            let answer = resolves_to_public_network(url);
+            if let Ok(mut answers) = self.answers.lock() {
+                answers.insert(origin, answer);
+            }
+            answer
+        })
+    }
+}
+
+#[cfg(not(test))]
+fn resolves_to_public_network(url: &str) -> bool {
+    net::validate_fetch_url(url).is_ok()
+}
+
+#[cfg(test)]
+fn resolves_to_public_network(url: &str) -> bool {
+    page_files::address_literal_check(url).is_ok() && fake_web::resolves(url)
+}
+
+/// An upload this Save copied into its staging.
+struct UploadTaken {
+    upload_id: String,
+    sha256: String,
+}
+
+/// The files of one Save: what the browser said about them, the hosts closed by
+/// a `429`, what already failed, and the uploads taken (Б8, Б9).
+struct PageFileRoute<'a> {
+    source_vault: &'a VaultLayout,
+    page_url: String,
+    browser: HashMap<&'a str, &'a BrowserFile>,
+    /// A `429` closes its host for the following files of this Save, with its
+    /// `Retry-After`, in the browser and in the fallback download alike.
+    closed_hosts: Mutex<HashMap<String, Option<u64>>>,
+    /// An address that failed is not asked again in this Save.
+    failed: Mutex<HashMap<String, FileNotObtained>>,
+    /// The type the server declared for an address that states none, from the
+    /// helper's own download: it costs no `HEAD` (Б9).
+    answered_types: Mutex<HashMap<String, &'static str>>,
+    taken: Mutex<Vec<UploadTaken>>,
+    limiter: Arc<DomainLimiter>,
+    public_network: PublicNetwork,
+}
+
+impl<'a> PageFileRoute<'a> {
+    fn new(source_vault: &'a VaultLayout, page_url: &str, browser_files: &'a [BrowserFile]) -> Self {
+        let mut closed_hosts = HashMap::new();
+        let mut browser = HashMap::new();
+        for file in browser_files {
+            browser.entry(file.url.as_str()).or_insert(file);
+            if file.status == Some(net::TOO_MANY_REQUESTS) || file.failure == Some(BrowserFailure::HostLimited) {
+                closed_hosts.insert(host_from_url(&file.url), file.retry_after);
+            }
+        }
+        Self {
+            source_vault,
+            page_url: page_url.to_string(),
+            browser,
+            closed_hosts: Mutex::new(closed_hosts),
+            failed: Mutex::new(HashMap::new()),
+            answered_types: Mutex::new(HashMap::new()),
+            taken: Mutex::new(Vec::new()),
+            limiter: DomainLimiter::new(MAX_PER_DOMAIN),
+            public_network: PublicNetwork::default(),
+        }
+    }
+
+    /// The type of the file the browser has for `url`, by what it answered with.
+    fn upload_extension(&self, url: &str) -> Option<&'static str> {
+        let upload = self.browser.get(url)?.upload_id.as_deref()?;
+        extension_for_content_type(&clipper_uploads::upload_content_type(self.source_vault, upload)?)
+    }
+
+    /// The extension of a file before its bytes are seen: what the address
+    /// states, else the type its upload answered with, else the assumption the
+    /// bytes correct later.
+    fn extension_of(&self, url: &str) -> String {
+        ext_from_url_opt(url)
+            .or_else(|| self.upload_extension(url))
+            .unwrap_or(ASSUMED_EXTENSION)
+            .to_string()
+    }
+
+    /// The type of an address that states none. An address the browser answered
+    /// about costs no probe: its upload says, or its bytes will (Б8, Б9).
+    fn type_of(&self, url: &str) -> Option<&'static str> {
+        if self.browser.contains_key(url) {
+            return self.upload_extension(url);
+        }
+        if self.closed_wait(&host_from_url(url)).is_some() {
+            return None;
+        }
+        probe_ext_over_network(url)
+    }
+
+    /// What the helper's download said about an address that states no type.
+    fn answered_type(&self, url: &str) -> Option<&'static str> {
+        self.answered_types.lock().ok()?.get(url).copied()
+    }
+
+    fn closed_wait(&self, host: &str) -> Option<Option<u64>> {
+        self.closed_hosts.lock().ok()?.get(host).copied()
+    }
+
+    /// The file at `url` in the new file `dest`, by the one route (Б4), with one
+    /// journal line about it (Б10).
+    fn obtain(&self, url: &str, dest: &Path) -> Result<FileOrigin, FileNotObtained> {
+        let answer = self.browser.get(url).copied();
+        let earlier = self.failed.lock().ok().and_then(|failed| failed.get(url).cloned());
+        if let Some(not_obtained) = earlier {
+            return Err(not_obtained);
+        }
+        let result = self.obtain_first_time(url, answer, dest);
+        let said = answer
+            .and_then(browser_answer_text)
+            .map_or_else(String::new, |text| format!(" ({text})"));
+        match result {
+            Ok(origin) => {
+                host_log(&format!("page-file: {url} from {}{said}", origin.word()));
+                Ok(origin)
+            }
+            Err(error) => {
+                let not_obtained = FileNotObtained { reason: media_download_reason(url, &error) };
+                host_log(&format!("page-file: {url} from link: {}{said}", not_obtained.reason));
+                if let Ok(mut failed) = self.failed.lock() {
+                    failed.insert(url.to_string(), not_obtained.clone());
+                }
+                Err(not_obtained)
+            }
+        }
+    }
+
+    fn obtain_first_time(&self, url: &str, answer: Option<&BrowserFile>, dest: &Path) -> anyhow::Result<FileOrigin> {
+        if let Some(origin) = answer.and_then(|file| self.take_upload(file, dest)) {
+            return Ok(origin);
+        }
+        let attempts = attempts_after_browser(url, answer)?;
+        let host = host_from_url(url);
+        let closed = |wait: Option<u64>| {
+            anyhow::Error::from(net::HttpStatusError {
+                url: url.to_string(),
+                status: net::TOO_MANY_REQUESTS,
+                retry_after: wait.map(Duration::from_secs),
+            })
+        };
+        if let Some(wait) = self.closed_wait(&host) {
+            return Err(closed(wait));
+        }
+        let _permit = self.limiter.acquire(host.clone());
+        if let Some(wait) = self.closed_wait(&host) {
+            return Err(closed(wait));
+        }
+        let referer = if self.page_url.is_empty() { url } else { &self.page_url };
+        match download_file(url, dest, referer, attempts) {
+            Ok(content_type) => {
+                let answered = content_type.as_deref().and_then(extension_for_content_type);
+                if let (None, Some(extension), Ok(mut types)) = (ext_from_url_opt(url), answered, self.answered_types.lock()) {
+                    types.insert(url.to_string(), extension);
+                }
+                Ok(FileOrigin::Helper)
+            }
+            Err(error) => {
+                let limited = error
+                    .chain()
+                    .filter_map(|cause| cause.downcast_ref::<net::HttpStatusError>())
+                    .find(|refusal| refusal.status == net::TOO_MANY_REQUESTS);
+                if let (Some(refusal), Ok(mut closed_hosts)) = (limited, self.closed_hosts.lock()) {
+                    closed_hosts.insert(host, refusal.retry_after.map(|wait| wait.as_secs()));
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Copy the browser's upload of a file into staging. An upload the helper
+    /// cannot take gives way to the fallback download, and the journal says so
+    /// (Б9).
+    fn take_upload(&self, file: &BrowserFile, dest: &Path) -> Option<FileOrigin> {
+        let upload_id = file.upload_id.as_deref()?;
+        // A request from outside the page may have been led inside by a
+        // redirect; a request of the page is the page's own (Б7).
+        let source = file.source.unwrap_or(BrowserFileSource::Browser);
+        if source == BrowserFileSource::Browser {
+            if let Some(final_url) = file.final_url.as_deref().filter(|at| !self.public_network.reaches(at)) {
+                host_log(&format!("page-file: {} led to {final_url}: the upload is not taken", file.url));
+                return None;
+            }
+        }
+        match clipper_uploads::take_pending_upload(self.source_vault, upload_id, dest) {
+            Ok(taken) => {
+                note_work();
+                if let Ok(mut uploads) = self.taken.lock() {
+                    uploads.push(UploadTaken { upload_id: upload_id.to_string(), sha256: taken.sha256 });
+                }
+                Some(FileOrigin::Browser(source))
+            }
+            Err(error) => {
+                host_log(&format!("page-file: {}: the upload is not taken: {error:#}", file.url));
+                None
+            }
+        }
+    }
+
+    /// Tell each upload taken the name its file is published under: renaming by
+    /// content and merging identical files moved it from where it was copied,
+    /// and only the same bytes lead to it (Б9). An upload whose file is not in
+    /// the plan keeps no name and goes at the commit.
+    fn record_final_names(&self, artifacts: &[save_operations::PlannedArtifact]) {
+        let Ok(uploads) = self.taken.lock() else { return };
+        for upload in uploads.iter() {
+            let Some(artifact) = artifacts.iter().find(|artifact| artifact.source.sha256 == upload.sha256) else {
+                continue;
+            };
+            let path = artifact.source.relative_path.as_str();
+            let filename = path.rsplit('/').next().unwrap_or(path);
+            if let Err(error) = clipper_uploads::record_upload_publication(
+                self.source_vault,
+                &upload.upload_id,
+                filename,
+                &upload.sha256,
+            ) {
+                log::warn!("upload {}: final name not recorded: {error:#}", upload.upload_id);
+            }
+        }
+    }
+}
+
+/// The answer to `plan_page_files`: the core's plan, `reachable` by where each
+/// name resolves now (Б7). Writes nothing.
+fn plan_page_files_response(params: &serde_json::Value) -> serde_json::Value {
+    let request: PageFilesRequest = match serde_json::from_value(params.clone()) {
+        Ok(request) => request,
+        Err(error) => {
+            return serde_json::json!({ "ok": false, "code": "invalid_request", "error": error.to_string() })
+        }
+    };
+    let mut plan = page_files::page_file_plan(&request);
+    let public_network = PublicNetwork::default();
+    for file in &mut plan.files {
+        file.reachable = public_network.reaches(&file.url);
+    }
+    note_work();
+    let mut response = serde_json::json!(plan);
+    response["ok"] = serde_json::json!(true);
+    response
+}
+
+fn handle_plan_page_files(params: &serde_json::Value) {
+    send_response(&plan_page_files_response(params));
+}
+
+/// The answer to `discard_pending_uploads`: the clipper closed before its Save,
+/// so the uploads of its collection are of no use (Б9). An upload with a
+/// `finalization` stays; so does one of another folder.
+fn discard_pending_uploads_response(vault: &VaultLayout, params: &serde_json::Value) -> serde_json::Value {
+    let uploads = params
+        .get("upload_ids")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str);
+    let mut discarded = 0;
+    for upload in uploads {
+        match clipper_uploads::discard_pending_upload(vault, upload) {
+            Ok(true) => discarded += 1,
+            Ok(false) => {}
+            Err(error) => host_log(&format!("discard_pending_uploads: {upload}: {error:#}")),
+        }
+    }
+    serde_json::json!({ "ok": true, "discarded": discarded })
 }
 
 // ─── Twitter video discovery ────────────────────────────────────────────────
@@ -3833,6 +4044,11 @@ fn take_journal_lines() -> Vec<String> {
     JOURNAL_CAPTURE.with(|lines| std::mem::take(&mut *lines.borrow_mut()))
 }
 
+/// Every journal line of this test run, the worker threads' too: a test picks
+/// the ones about its own address.
+#[cfg(test)]
+static ALL_JOURNAL_LINES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
 /// The helper's log records (`log::warn!` and the rest) go to its journal:
 /// before 13.10.2026 no logger was set, and they went nowhere
 /// (SPEC_DEEP_AUDIT.md, Е4.4).
@@ -3880,7 +4096,10 @@ fn host_log(line: &str) {
     use std::io::Write as _;
     let stamped = format!("{} {line}", journal_time(std::time::SystemTime::now()));
     #[cfg(test)]
-    JOURNAL_CAPTURE.with(|lines| lines.borrow_mut().push(stamped.clone()));
+    {
+        JOURNAL_CAPTURE.with(|lines| lines.borrow_mut().push(stamped.clone()));
+        ALL_JOURNAL_LINES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(stamped.clone());
+    }
     let Some(path) = journal_file() else {
         return;
     };
@@ -4586,8 +4805,9 @@ fn serve_request(req: Request, upload_server: Option<UploadServer>) {
         "open_app" => handle_open_app(req.params),
         "resolve_twitter_media" => handle_resolve_twitter_media(req.params),
         "video_tool_status" => handle_video_tool_status(),
+        "plan_page_files" => handle_plan_page_files(&req.params),
 
-        "list_channels" | "save_block" | "create_channel" | "get_save_operation" => {
+        "list_channels" | "save_block" | "create_channel" | "get_save_operation" | "discard_pending_uploads" => {
             let space = resolve_request_space(req.vault_path.clone(), binding_hint.as_deref());
             remember_for_uploads(&space);
             timing.step("space");
@@ -4632,6 +4852,7 @@ fn serve_request(req: Request, upload_server: Option<UploadServer>) {
                 "save_block" => handle_save_block(&vault, params),
                 "get_save_operation" => handle_get_save_operation(&vault, params),
                 "create_channel" => handle_create_channel(&vault, params),
+                "discard_pending_uploads" => send_response(&discard_pending_uploads_response(&vault, &params)),
                 _ => unreachable!(),
             }
             timing.step("answer");
@@ -4660,6 +4881,11 @@ mod cloud_tests;
 #[path = "../native_host_tests/picture_file_tests.rs"]
 mod picture_file_tests;
 
+/// Tests of the one route of a file from the page (SPEC_CLIPPER.md, Б4 to Б12).
+#[cfg(test)]
+#[path = "../native_host_tests/page_files_tests.rs"]
+mod page_files_tests;
+
 /// The stand-in web of the helper's tests.
 #[cfg(test)]
 #[path = "../native_host_tests/fake_web.rs"]
@@ -4668,6 +4894,7 @@ mod fake_web;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mine_core::page_files::{build_inline_media_name, inline_media_kind_from_ext};
     use tempfile::TempDir;
 
     /// A request the helper read at `received` (ms since the epoch), sent by
@@ -7066,15 +7293,15 @@ mod tests {
         assert_eq!(ext_from_url_opt("https://h.example/a.jpg"), Some("jpg"));
         assert_eq!(ext_from_url_opt("https://h.example/a.mp4?v=2"), Some("mp4"));
         // The guessing wrapper keeps its old answer for both cases.
-        assert_eq!(ext_from_url("https://h.example/media"), "jpg");
-        assert_eq!(ext_from_url("https://h.example/a.mp4"), "mp4");
+        assert_eq!(ext_from_url_opt("https://h.example/media").unwrap_or(ASSUMED_EXTENSION), "jpg");
+        assert_eq!(ext_from_url_opt("https://h.example/a.mp4").unwrap_or(ASSUMED_EXTENSION), "mp4");
     }
 
     #[test]
     fn probe_classifies_extensionless_url_as_video() {
         let tmp = tempfile::tempdir().unwrap();
         let body = "![a](https://pds.example/xrpc/com.atproto.sync.getBlob?did=d&cid=c)";
-        let tasks = scan_inline_tasks_with(body, &vault_at(tmp.path()), "Post", &|_| Some("mp4"));
+        let tasks = scan_inline_media(body, &vault_at(tmp.path()), "Post", &|_| Some("mp4"));
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].kind, InlineMediaKind::Video);
         assert_eq!(tasks[0].dest_name, "Post (video 1).mp4");
@@ -7084,7 +7311,7 @@ mod tests {
     fn silent_probe_leaves_previous_behaviour_intact() {
         let tmp = tempfile::tempdir().unwrap();
         let body = "![a](https://pds.example/xrpc/com.atproto.sync.getBlob?did=d&cid=c)";
-        let tasks = scan_inline_tasks_with(body, &vault_at(tmp.path()), "Post", &|_| None);
+        let tasks = scan_inline_media(body, &vault_at(tmp.path()), "Post", &|_| None);
         assert_eq!(tasks[0].kind, InlineMediaKind::Image);
         assert_eq!(tasks[0].dest_name, "Post (image 1).jpg");
     }
@@ -7093,7 +7320,7 @@ mod tests {
     fn url_extension_wins_over_probe() {
         let tmp = tempfile::tempdir().unwrap();
         let body = "![a](https://h.example/clip.mp4)";
-        let tasks = scan_inline_tasks_with(body, &vault_at(tmp.path()), "Post", &|_| {
+        let tasks = scan_inline_media(body, &vault_at(tmp.path()), "Post", &|_| {
             panic!("probe must not run for a URL that states its extension")
         });
         assert_eq!(tasks[0].dest_name, "Post (video 1).mp4");
@@ -7199,18 +7426,17 @@ mod tests {
         assert_eq!(tasks[1].dest_name, "Title (video 1).mp4");
         assert_eq!(tasks[2].dest_name, "Title (image 2).png");
         assert_eq!(tasks[3].dest_name, "Title (video 2).webm");
-        assert_eq!(tasks[0].host, "h.com");
     }
 
     #[test]
-    fn scan_caps_at_max_inline_images() {
+    fn scan_has_no_limit_on_the_media_of_a_body() {
         let tmp = TempDir::new().unwrap();
         let mut body = String::new();
         for i in 0..50 {
             body.push_str(&format!("![x](https://h.com/{i}.jpg)\n"));
         }
         let tasks = scan_inline_tasks(&body, &vault_at(tmp.path()), "S");
-        assert_eq!(tasks.len(), MAX_INLINE_IMAGES as usize);
+        assert_eq!(tasks.len(), 50);
     }
 
     #[test]
@@ -7271,7 +7497,7 @@ mod tests {
                 "https://h.com/5.jpg"
             ]
         );
-        assert_eq!(tasks[4].alt, "alt with `code` in it");
+        assert_eq!(tasks[4].places[0].caption, "alt with `code` in it");
     }
 
     #[test]
@@ -7517,7 +7743,7 @@ mod tests {
         let outcomes = vec![Ok(())];
         let mut paths = vec!["S.md".to_string(), tasks[0].dest_name.clone()];
 
-        name_inline_media_by_content(&vault, &mut tasks, &outcomes, &mut paths);
+        name_inline_media_by_content(&vault, &mut tasks, &outcomes, &mut paths, &|_| None);
 
         assert_eq!(tasks[0].dest_name, "S (image 1).avif");
         assert!(tmp.path().join("S (image 1).avif").exists());
@@ -7540,7 +7766,7 @@ mod tests {
         let before = tasks.iter().map(|task| task.dest_name.clone()).collect::<Vec<_>>();
         let mut paths = before.clone();
 
-        name_inline_media_by_content(&vault, &mut tasks, &[Ok(()), Ok(())], &mut paths);
+        name_inline_media_by_content(&vault, &mut tasks, &[Ok::<(), String>(()), Ok(())], &mut paths, &|_| None);
 
         let after = tasks.iter().map(|task| task.dest_name.clone()).collect::<Vec<_>>();
         assert_eq!(after, before);
@@ -7553,7 +7779,7 @@ mod tests {
         let body = "no images here";
         assert_eq!(apply_rewrites(body, &[], &[]).0, body);
         assert_eq!(
-            localize_body_images(body, &vault_at(tmp.path()), "S", "", &vault_at(tmp.path())).body,
+            localize_body_images(body, &vault_at(tmp.path()), "S", &vault_at(tmp.path()), &PageFileRoute::new(&vault_at(tmp.path()), "", &[])).body,
             body
         );
     }

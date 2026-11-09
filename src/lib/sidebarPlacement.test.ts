@@ -8,6 +8,7 @@ import {
   sidebarOverlayWidthCss,
   sidebarPlacement,
   sidebarWidthCss,
+  sidebarWidthPx,
 } from "./sidebarPlacement";
 
 // S_beside 280 (user's decision of 25.10.2026; 240 since 23.10.2026), S_min 350
@@ -93,6 +94,12 @@ describe("sidebarWidthCss: the squeeze as one CSS value (47.2b)", () => {
     expect(sidebarWidthCss(360)).toBe("min(360px, 100vw - 390px)");
     expect(sidebarWidthCss(5000)).toBe("min(5000px, 100vw - 390px)");
     expect(sidebarWidthCss(100)).toBe("min(280px, 100vw - 390px)");
+  });
+
+  it("gives in pixels the width the CSS value lays out in a window", () => {
+    expect(sidebarWidthPx(360, 1400)).toBe(360);
+    expect(sidebarWidthPx(5000, 1400)).toBe(1400 - 390);
+    expect(sidebarWidthPx(100, 1400)).toBe(280);
   });
 });
 

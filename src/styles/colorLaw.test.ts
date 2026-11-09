@@ -197,8 +197,15 @@ describe("tokens follow the colour rules", () => {
     const focusLight = greyForContrast(CANVAS.light, 3);
     expect(lightness(LIGHT["--border-accent"])).toBeCloseTo(focusLight, 2);
     expect(lightness(DARK["--border-accent"])).toBeCloseTo(CANVAS.dark + darkSignalDelta(CANVAS.light - focusLight, "line"), 2);
-    expect(percent(LIGHT["--graphic-card-focus-overlay"])).toBeCloseTo(alphaForDelta(FG.light, CANVAS.light, 3 * QUIET) * 100, 1);
-    expect(percent(DARK["--graphic-card-focus-overlay"])).toBeCloseTo(alphaForDelta(FG.dark, CANVAS.dark, darkSignalDelta(3 * QUIET, "area")) * 100, 1);
+    // The wash on a picture for hover, selection and keyboard focus (user's
+    // decision of 05.11.2026): the whole step 2 s of an area signal in both themes.
+    expect(percent(LIGHT["--graphic-card-focus-alpha"])).toBeCloseTo(alphaForDelta(FG.light, CANVAS.light, 2 * QUIET) * 100, 1);
+    expect(percent(DARK["--graphic-card-focus-alpha"])).toBeCloseTo(alphaForDelta(FG.dark, CANVAS.dark, darkSignalDelta(2 * QUIET, "area")) * 100, 1);
+    expect(LIGHT["--graphic-card-focus-alpha"]).toBe("8.17%");
+    expect(DARK["--graphic-card-focus-alpha"]).toBe("10.92%");
+    // One value: no second wash token in any theme block.
+    expect(css).not.toContain("--card-hover-tint");
+    expect(css).toContain("--graphic-card-focus-overlay: color-mix(in srgb, var(--foreground) var(--graphic-card-focus-alpha), transparent);");
   });
 
   it("derives the destructive button: a flat fill of 2 s and 3 s, its text K5 on the hover fill (3.8)", () => {

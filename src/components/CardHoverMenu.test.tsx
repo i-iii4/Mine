@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -184,7 +184,7 @@ describe("CardHoverMenu", () => {
     );
 
     expect(await screen.findByText("Rename…")).toBeInTheDocument();
-    expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-100");
+    expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-0");
     expect(container.querySelector("[data-card-hover-bottom-actions]")).toHaveClass("opacity-0");
 
     rerender(
@@ -621,12 +621,111 @@ describe("CardHoverMenu", () => {
     );
 
     expect(await screen.findByText("Rename…")).toBeInTheDocument();
-    expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-100");
-    expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("pointer-events-auto");
+    expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-0");
+    expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("pointer-events-none");
     expect(container.querySelector("[data-card-hover-more-action]")).not.toHaveClass("group-hover:opacity-100");
     expect(container.querySelector("[data-card-hover-bottom-actions]")).toHaveClass("opacity-0");
     expect(container.querySelector("[data-card-hover-bottom-actions]")).toHaveClass("pointer-events-none");
     expect(container.querySelector("[data-card-hover-bottom-actions]")).not.toHaveClass("group-hover:opacity-100");
+  });
+
+  // WebKit draws the ring on any button a script focuses when no click focused
+  // something before it, and on the focused button at any key after that
+  // (DESIGN_SYSTEM.md, «Своя рамка фокуса у каждого элемента»).
+  describe.each(["Card actions", "Connect"])("the focus after the menu of its %s button", (label) => {
+    const renderCard = () => render(
+      <CardHoverMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+      />,
+    );
+    const closeWithEscape = async () => {
+      fireEvent.keyDown(document.querySelector("[data-radix-menu-content]")!, { key: "Escape" });
+      await waitFor(() => expect(document.querySelector("[data-radix-menu-content]")).toBeNull());
+      // The menu hands the focus over one task after it is gone.
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    };
+    const press = async (trigger: HTMLElement) => {
+      fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+      fireEvent.pointerUp(trigger, { button: 0 });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    };
+    const expectOpen = async () => {
+      await waitFor(() => expect(document.querySelector('[data-radix-menu-content][data-state="open"]')).not.toBeNull());
+    };
+
+    it("goes back to no button after a press opened it", async () => {
+      renderCard();
+      const trigger = screen.getByRole("button", { name: label, hidden: true });
+      await press(trigger);
+      await expectOpen();
+      await closeWithEscape();
+      expect(trigger).not.toHaveFocus();
+      expect(document.activeElement).toBe(document.body);
+    });
+
+    it("goes back to the button after a key opened it, press before it or not", async () => {
+      renderCard();
+      const trigger = screen.getByRole("button", { name: label, hidden: true });
+      await press(trigger);
+      await expectOpen();
+      await closeWithEscape();
+      trigger.focus();
+      fireEvent.keyDown(trigger, { key: "Enter" });
+      await expectOpen();
+      await closeWithEscape();
+      expect(trigger).toHaveFocus();
+    });
+  });
+
+  // SPEC_CARD_STATES.md, С7.8: WebKit gives `:hover` to the card only once the
+  // surface is gone, with `pointerover` alone.
+  describe("a menu closing under the pointer", () => {
+    const renderCard = () => {
+      const onActionsPinnedChange = vi.fn();
+      render(
+        <CardHoverMenu
+          block={makeBlock()}
+          vaultPath="/vault"
+          tags={[]}
+          onToggleTag={vi.fn()}
+          onCreateAndAssign={vi.fn()}
+          onRequestRename={vi.fn()}
+          onRequestDelete={vi.fn()}
+          onActionsPinnedChange={onActionsPinnedChange}
+        />,
+      );
+      return onActionsPinnedChange;
+    };
+    const openAndClose = async () => {
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Card actions", hidden: true }), { button: 0, ctrlKey: false });
+      await waitFor(() => expect(document.querySelector('[data-radix-menu-content][data-state="open"]')).not.toBeNull());
+      fireEvent.keyDown(document.querySelector("[data-radix-menu-content]")!, { key: "Escape" });
+      await waitFor(() => expect(document.querySelector("[data-radix-menu-content]")).toBeNull());
+    };
+
+    it("keeps the card held until the pointer's first event off the menu", async () => {
+      const onActionsPinnedChange = renderCard();
+      const query = document.querySelector.bind(document);
+      const pointerOnMenu = vi.spyOn(document, "querySelector").mockImplementation((selector: string) =>
+        selector.endsWith(":hover") ? document.body : query(selector));
+      await openAndClose();
+      pointerOnMenu.mockRestore();
+      expect(onActionsPinnedChange).toHaveBeenLastCalledWith(true);
+      fireEvent.pointerOver(document.body);
+      expect(onActionsPinnedChange).toHaveBeenLastCalledWith(false);
+    });
+
+    it("lets the card go at once when the pointer stands elsewhere", async () => {
+      const onActionsPinnedChange = renderCard();
+      await openAndClose();
+      expect(onActionsPinnedChange).toHaveBeenLastCalledWith(false);
+    });
   });
 
   it("reports keyboard-opened overflow menu state separately from pointer menus", async () => {

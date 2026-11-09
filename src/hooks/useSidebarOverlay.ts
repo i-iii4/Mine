@@ -43,16 +43,25 @@ export interface UseSidebarOverlayOptions {
    *  (У7). */
   onWidenWhileOpen: () => void;
   /** A command that came while the window was no longer narrow: the mirror
-   *  lagged the page, and the intent is the sidebar's beside the feed. */
+   *  lagged the page, or the sidebar beside the feed is shown for the keyboard
+   *  and the mirror says so. The intent is the sidebar's beside the feed. */
   onBesideIntent: (intent: SidebarIntent) => void;
+  /** The sidebar is on screen only because the keyboard opened it
+   *  (SPEC_KEYBOARD.md, М8). */
+  openedForKeyboard?: boolean;
 }
 
 function narrowNow(): boolean {
   return typeof window !== "undefined" && sidebarOverlaid(window.innerWidth);
 }
 
-/** What the backend's mirror should say (domain/windows.rs `SidebarOverlay`). */
-export function sidebarOverlayReport(narrow: boolean, open: boolean): SidebarOverlay {
+/** What the backend's mirror should say (domain/windows.rs `SidebarOverlay`). A
+ *  sidebar shown for the keyboard says open wherever it stands: it is on screen
+ *  while what is stored says hidden, so the View item and the tab bar's button name
+ *  it shown, and every toggle and swipe comes to the page and stores nothing
+ *  (SPEC_KEYBOARD.md, М8). */
+export function sidebarOverlayReport(narrow: boolean, open: boolean, openedForKeyboard = false): SidebarOverlay {
+  if (openedForKeyboard) return "open";
   if (!narrow) return "beside";
   return open ? "open" : "closed";
 }
@@ -62,6 +71,7 @@ export function useSidebarOverlay({
   tab,
   onWidenWhileOpen,
   onBesideIntent,
+  openedForKeyboard = false,
 }: UseSidebarOverlayOptions): SidebarOverlayControls {
   const [narrow, setNarrow] = useState(narrowNow);
   const [requestedOpen, setRequestedOpen] = useState(false);
@@ -131,7 +141,9 @@ export function useSidebarOverlay({
   }, [tab]);
 
   // The mirror for the bar's button and the View menu (У4).
-  const report = sidebarOverlayReport(narrow, open);
+  // A hidden tab hears no toggle, and the backend closes its mirror when it hides
+  // the tab; coming back, the report says open again.
+  const report = sidebarOverlayReport(narrow, open, openedForKeyboard && visible);
   useEffect(() => {
     if (!tab) return;
     void reportSidebarOverlay(report).catch((error: unknown) => {

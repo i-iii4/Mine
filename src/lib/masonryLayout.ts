@@ -68,11 +68,28 @@ export function getMasonryColumnWidth(
 }
 
 /**
+ * What every feed looks like: the first item stands in the first column, and
+ * no column is empty with an item to its right (SPEC_GRID.md, «Форма ленты»).
+ * Placing each item into the shortest column always gives this; only the
+ * columns remembered for items whose neighbours left can break it.
+ */
+function holdsFeedShape(positions: readonly MasonryPosition[]): boolean {
+  if (positions.length === 0) return true;
+  if (positions[0]!.column !== 0) return false;
+  const used = new Set(positions.map((position) => position.column));
+  let rightmost = 0;
+  for (const column of used) rightmost = Math.max(rightmost, column);
+  return rightmost === used.size - 1;
+}
+
+/**
  * Lay the items out in columns, each into the shortest one. `columnOf`, when
  * given, names the column an item stood in on the last layout of the same
  * view: it stays there, so a card whose height changed moves only the cards
  * under it in its own column (SPEC_GRID_LAYOUT_READINESS.md, К1). An item it
  * does not name, or names past the column count, takes the shortest column.
+ * When the remembered columns would break the feed's shape, they are dropped
+ * and the items are laid out anew.
  */
 export function computeMasonryLayout(
   itemHeights: number[],
@@ -97,40 +114,49 @@ export function computeMasonryLayout(
   const columnLeft = (column: number) => column * (columnWidth + safeGap) + Math.min(column, widenedColumns);
   const widthOf = (column: number) => columnWidth + (column < widenedColumns ? 1 : 0);
 
-  const columnHeights = new Array<number>(columnCount).fill(0);
-  const positions: MasonryPosition[] = [];
+  const place = (memory?: (index: number) => number | undefined) => {
+    const columnHeights = new Array<number>(columnCount).fill(0);
+    const positions: MasonryPosition[] = [];
 
-  itemHeights.forEach((rawHeight, index) => {
-    const height = Math.max(1, rawHeight);
-    let targetColumn = 0;
+    itemHeights.forEach((rawHeight, index) => {
+      const height = Math.max(1, rawHeight);
+      let targetColumn = 0;
 
-    const remembered = columnOf?.(index);
-    if (remembered !== undefined && remembered >= 0 && remembered < columnCount) {
-      targetColumn = remembered;
-    } else {
-      for (let i = 1; i < columnCount; i += 1) {
-        if (columnHeights[i]! < columnHeights[targetColumn]!) {
-          targetColumn = i;
+      const remembered = memory?.(index);
+      if (remembered !== undefined && remembered >= 0 && remembered < columnCount) {
+        targetColumn = remembered;
+      } else {
+        for (let i = 1; i < columnCount; i += 1) {
+          if (columnHeights[i]! < columnHeights[targetColumn]!) {
+            targetColumn = i;
+          }
         }
       }
-    }
 
-    const top = columnHeights[targetColumn]!;
-    const left = columnLeft(targetColumn);
-    const bottom = top + height;
+      const top = columnHeights[targetColumn]!;
+      const left = columnLeft(targetColumn);
+      const bottom = top + height;
 
-    positions.push({
-      index,
-      top,
-      left,
-      width: widthOf(targetColumn),
-      height,
-      bottom,
-      column: targetColumn,
+      positions.push({
+        index,
+        top,
+        left,
+        width: widthOf(targetColumn),
+        height,
+        bottom,
+        column: targetColumn,
+      });
+
+      columnHeights[targetColumn] = bottom + safeGap;
     });
 
-    columnHeights[targetColumn] = bottom + safeGap;
-  });
+    return { columnHeights, positions };
+  };
+
+  const remembered = place(columnOf);
+  const { columnHeights, positions } = columnOf === undefined || holdsFeedShape(remembered.positions)
+    ? remembered
+    : place();
 
   const totalHeight = Math.max(0, ...columnHeights.map((height) => (height > 0 ? height - safeGap : 0)));
 

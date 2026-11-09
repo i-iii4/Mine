@@ -58,6 +58,7 @@ import { LayoutCache } from "@/lib/layoutCache";
 import { createFontMetricsCacheIdentity, fetchWordWidths, measureTopFirst } from "@/lib/fontMetrics";
 import { useGridScroll } from "@/hooks/useGridScroll";
 import { useFeedMediaPreloader } from "@/hooks/useFeedMediaPreloader";
+import type { FeedKeyboardFocus } from "@/hooks/useSidebarKeyboardFocus";
 import type { WordWidths } from "@/types/fontMetrics";
 import {
   buildLayoutGenerationKey,
@@ -91,7 +92,6 @@ import {
   isOverlayKeyboardTarget,
 } from "@/lib/keyboardTargets";
 import { commandById } from "@/lib/commandRegistry";
-import { useCommandOverrides } from "@/hooks/useCommandOverrides";
 import { setHoveredCard, setSelectedCards, useCardLitByCollection } from "@/lib/collectionHover";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
@@ -108,6 +108,8 @@ import {
   findPositionForSlug,
   findViewportPreservationAnchor,
   firstVisibleSlug,
+  horizontalStepBackSlug,
+  type HorizontalStep,
   isEmptyGridPointerTarget,
   isGridArrowKey,
   isLiveSlug,
@@ -207,6 +209,11 @@ interface GridProps {
   onKeyboardFocusChange?: (activate: (() => void) | null) => void;
   onCardMenuShortcutChange?: (activate: (() => void) | null) => void;
   onSelectionCommandChange?: (clear: (() => void) | null) => void;
+  /// ArrowLeft at the feed's left edge (SPEC_KEYBOARD.md, М1). True when the
+  /// sidebar took the keyboard's focus; the feed then holds none.
+  onKeyboardFocusLeave?: () => boolean;
+  /// Reports how the feed takes the focus back from the sidebar (М4).
+  onKeyboardFocusReturnChange?: (feed: FeedKeyboardFocus | null) => void;
   selectionCommandsHost?: HTMLElement | null;
   vaultPath: string;
   thumbsRootPath?: string;
@@ -253,9 +260,8 @@ interface GridProps {
   restoreFocusSlug?: string | null;
   restoreFocusSequence?: number;
   onBlockClick: (block: LightBlock) => void;
-  /// ⌘-click opens the card in a new tab, ⇧⌘-click in a new window
-  /// (SPEC_TABS.md, В82). Absent on a page that is not a tab: there ⌘-click
-  /// selects, as ⇧-click does everywhere.
+  /// ⇧⌘-click opens the card in a new window (SPEC_TABS.md, В82). Absent on a
+  /// page that is not a tab. ⌘-click selects on every page, as ⇧-click does.
   onOpenBlockElsewhere?: (block: LightBlock, newWindow: boolean) => void;
   onToggleTag: (slug: string, tag: string, hasTag: boolean) => void;
   onCreateAndAssign: (tag: string, blockSlug: string) => void;
@@ -389,7 +395,10 @@ function buildLayout(
 
 /** The columns of the last layout shown, and the view they belong to. */
 interface ColumnMemory {
-  routeKey: string;
+  /** The route these cards are from. Null while a new route's list is on its
+   *  way and the feed still holds the previous route's cards: their columns
+   *  are no memory of the new route (SPEC_GRID.md, «Форма ленты»). */
+  routeKey: string | null;
   parentWidth: number;
   show: FeedShow;
   /** The cards in the order they were laid out. */
@@ -556,6 +565,8 @@ export function Grid({
   blocks,
   onKeyboardFocusChange,
   onCardMenuShortcutChange,
+  onKeyboardFocusLeave,
+  onKeyboardFocusReturnChange,
   onSelectionCommandChange,
   selectionCommandsHost,
   vaultPath,
@@ -659,6 +670,9 @@ export function Grid({
   const lastRestoreFocusSequenceRef = useRef(0);
   const lastPointerPositionRef = useRef<FeedPointerPosition | null>(null);
   const blockedPointerPositionRef = useRef<FeedPointerPosition | null>(null);
+  // The card the focus left for the sidebar, until the collection changes (М4).
+  const sidebarReturnSlugRef = useRef<string | null>(null);
+  const horizontalStepRef = useRef<HorizontalStep | null>(null);
   // Which card the pointer attends to reaches the sidebar through the
   // hover-intent engine, which ignores a pointer passing through, a scroll and
   // cards sliding under a still pointer (SPEC_CARD_STATES.md, С4, С7). Under
@@ -1107,6 +1121,14 @@ export function Grid({
   const layoutMovesSmoothly = columnOf !== null;
   useLayoutEffect(() => {
     const previous = columnMemoryRef.current;
+    // A card that changed its column means the feed was laid out anew in spite
+    // of the memory: it stands at once, like any new view (SPEC_GRID.md,
+    // «Форма ленты»).
+    const columnsKept = layoutMovesSmoothly && layout.positions.every((position) => {
+      const slug = blocks[position.index]?.slug;
+      const was = slug === undefined ? undefined : previous?.column.get(slug);
+      return was === undefined || was === position.column;
+    });
     const column = new Map<string, number>();
     const top = new Map<string, number>();
     const scrollElement = parentRef.current;
@@ -1118,7 +1140,7 @@ export function Grid({
       top.set(slug, position.top);
       const was = previous?.top.get(slug);
       if (
-        !layoutMovesSmoothly
+        !columnsKept
         || was === undefined
         || was === position.top
         || scrollElement === null
@@ -1141,7 +1163,7 @@ export function Grid({
       );
     }
     columnMemoryRef.current = {
-      routeKey,
+      routeKey: routeSnapshotReady ? routeKey : null,
       parentWidth,
       show,
       order: blocks.map((block) => block.slug),
@@ -1149,7 +1171,7 @@ export function Grid({
       top,
       exact: allCurrentGenerationDeterministic,
     };
-  }, [allCurrentGenerationDeterministic, blocks, layout, layoutMovesSmoothly, parentWidth, routeKey, show]);
+  }, [allCurrentGenerationDeterministic, blocks, layout, layoutMovesSmoothly, parentWidth, routeKey, routeSnapshotReady, show]);
 
   useEffect(() => {
     onColumnCountChange?.(layout.columnCount);
@@ -1597,6 +1619,7 @@ export function Grid({
 
   useEffect(() => {
     suppressedFocusedScrollSlugRef.current = null;
+    sidebarReturnSlugRef.current = null;
     setFocusedSlug(null);
     setFeedInteractionMode("pointer");
     setPinnedActionMenuSlug(null);
@@ -1809,17 +1832,19 @@ export function Grid({
     onKeyboardFocusChange?.(null);
     onCardMenuShortcutChange?.(null);
     onSelectionCommandChange?.(null);
-  }, [onCardMenuShortcutChange, onKeyboardFocusChange, onSelectionCommandChange]);
+    onKeyboardFocusReturnChange?.(null);
+  }, [onCardMenuShortcutChange, onKeyboardFocusChange, onKeyboardFocusReturnChange, onSelectionCommandChange]);
 
   const handleModifiedCardClick = useCallback((
     block: LightBlock,
     event: ReactMouseEvent<HTMLDivElement>,
   ): boolean => {
-    // In a tab ⌘ opens the card elsewhere, with ⇧ in a new window (В82).
-    if (event.metaKey && onOpenBlockElsewhere) {
+    // In a tab ⇧⌘ opens the card in a new window (В82); ⌘ alone selects it
+    // (user's decision of 06.11.2026).
+    if (event.metaKey && event.shiftKey && onOpenBlockElsewhere) {
       event.preventDefault();
       event.stopPropagation();
-      onOpenBlockElsewhere(block, event.shiftKey);
+      onOpenBlockElsewhere(block, true);
       return true;
     }
     if (event.metaKey || event.shiftKey || selectedSlugs.size > 0) {
@@ -2036,6 +2061,57 @@ export function Grid({
     onSelectionCommandChange?.(selectedSlugs.size > 0 ? clearSelection : null);
   }, [clearSelection, onSelectionCommandChange, selectedSlugs.size]);
 
+  // How the focus comes back from the sidebar (SPEC_KEYBOARD.md, М4): to the card
+  // it left on, or to the first visible one of a feed it has not been on. Reported
+  // into a ref upward, so a layout change costs no render there.
+  useEffect(() => {
+    onKeyboardFocusReturnChange?.({
+      take: () => {
+        if (!routeSnapshotReady) return false;
+        const remembered = sidebarReturnSlugRef.current;
+        const scrollElement = parentRef.current;
+        const slug = remembered !== null
+          && isLiveSlug(layout.positions, blocks, remembered, renderReadyBlockIds)
+          ? remembered
+          : firstVisibleSlug(
+              layout.positions,
+              blocks,
+              scrollElement?.scrollTop ?? scrollTop,
+              scrollElement?.clientHeight || viewportHeight,
+              renderReadyBlockIds,
+              gridTopInset,
+            );
+        if (!slug) return false;
+        sidebarReturnSlugRef.current = null;
+        blockedPointerPositionRef.current = lastPointerPositionRef.current;
+        setFeedInteractionMode("keyboard");
+        setFocusedSlug(slug);
+        return true;
+      },
+      release: () => {
+        sidebarReturnSlugRef.current = null;
+        setFeedInteractionMode("pointer");
+      },
+    });
+  }, [
+    blocks,
+    gridTopInset,
+    layout.positions,
+    onKeyboardFocusReturnChange,
+    renderReadyBlockIds,
+    routeSnapshotReady,
+    scrollTop,
+    viewportHeight,
+  ]);
+
+
+  // Any other move of the focus ends the pair of sideways arrows: the pointer,
+  // Escape, the sidebar, a new route (SPEC_KEYBOARD.md, «Feed»).
+  useEffect(() => {
+    if (horizontalStepRef.current?.to !== focusedSlug) {
+      horizontalStepRef.current = null;
+    }
+  }, [focusedSlug]);
 
   useEffect(() => {
     if (keyboardNavigationDisabled) return;
@@ -2198,15 +2274,32 @@ export function Grid({
         return;
       }
 
-      const nextSlug = findLayoutNeighborSlug(
+      const stepBackSlug = horizontalStepBackSlug(
+        horizontalStepRef.current,
         layout.positions,
         blocks,
         focusedSlug,
         event.key,
         renderReadyBlockIds,
       );
+      const nextSlug = stepBackSlug ?? findLayoutNeighborSlug(
+        layout.positions,
+        blocks,
+        focusedSlug,
+        event.key,
+        renderReadyBlockIds,
+      );
+      horizontalStepRef.current =
+        stepBackSlug === null && nextSlug !== null && (event.key === "ArrowLeft" || event.key === "ArrowRight")
+          ? { from: focusedSlug, to: nextSlug, direction: event.key, positions: layout.positions }
+          : null;
       if (nextSlug) {
         setFocusedSlug(nextSlug);
+      } else if (event.key === "ArrowLeft" && selectedSlugs.size === 0 && onKeyboardFocusLeave?.()) {
+        // No card holds the focus while the sidebar does (М1). The mode stays
+        // the keyboard's, so the card under a still pointer does not rise.
+        sidebarReturnSlugRef.current = focusedSlug;
+        setFocusedSlug(null);
       }
     };
 
@@ -2221,6 +2314,7 @@ export function Grid({
     handleBlockClick,
     keyboardNavigationDisabled,
     layout.positions,
+    onKeyboardFocusLeave,
     openFocusedElementMenu,
     renderReadyBlockIds,
     requestDeleteSelection,
@@ -2534,6 +2628,9 @@ export function Grid({
             handleIntentPointerMove(event);
             handleGridPointerMove(event);
           }}
+          // A menu going away from over a still pointer: WebKit names what is
+          // under it now with this event alone, with no `pointermove` (С7.8).
+          onPointerOver={handleIntentPointerMove}
           onPointerLeave={handleIntentPointerLeave}
           onPointerUp={finishMarqueeSelection}
           onPointerCancel={finishMarqueeSelection}
@@ -2669,20 +2766,6 @@ export function Grid({
 }
 
 // ─── Virtualized JS path (the only layout path, SPEC_GRID.md) ───────────────
-
-/// The chord that opens the focused card's menu, as the registry holds it now:
-/// a rebind in Settings relabels the badge at once (SPEC_AUDIT_FIXES.md, Ф11).
-function FocusedCardMenuBadge({ command }: { command: "element-menu" | "batch-menu" }) {
-  useCommandOverrides();
-  return (
-    <div
-      className="absolute left-2 top-2 flex h-6 items-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground"
-      data-feed-grid-action-badge=""
-    >
-      {commandById(command).combo}
-    </div>
-  );
-}
 
 function VirtualMasonryLayout({
   blocks,
@@ -2866,6 +2949,8 @@ const GridItem = memo(function GridItem({
             openMoreMenuRequestSequence={openMoreMenuRequestSequence}
             hoverEnabled={context.hoverEnabled && !isPinnedActionMenuAnchor}
             hoverArmed={hoverArmed}
+            menuBadge={isFocused ? (context.selectedSlugs.size > 0 ? "batch-menu" : "element-menu") : null}
+            keyboardLift={isFocused && !isSelected}
             dragBlocks={dragBlocks}
             clearSelectionOnDragStart={clearSelectionOnDragStart}
             onKeyboardMoreMenuOpenChange={handleKeyboardMoreMenuOpenChange}
@@ -2881,17 +2966,6 @@ const GridItem = memo(function GridItem({
           />
         ) : (
           <CardSkeleton block={block} />
-        )}
-        {isCommitted && isFocused && (
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-px z-[6]"
-            data-feed-grid-action-layer=""
-          >
-            <FocusedCardMenuBadge
-              command={context.selectedSlugs.size > 0 ? "batch-menu" : "element-menu"}
-            />
-          </div>
         )}
         {isCommitted &&
           context.selectedSlugs.size > 0 &&

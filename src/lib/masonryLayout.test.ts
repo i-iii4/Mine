@@ -105,6 +105,80 @@ describe("masonryLayout", () => {
     expect(layout.positions.map((position) => position.column)).toEqual([0, 1, 2, 2]);
   });
 
+  // SPEC_GRID.md, «Форма ленты», user decision 06.11.2026.
+  describe("the shape of a feed, whatever the memory says", () => {
+    const FOUR_COLUMNS = 1000;
+
+    function expectShape(columns: number[]) {
+      if (columns.length === 0) return;
+      expect(columns[0]).toBe(0);
+      const used = [...new Set(columns)].sort((first, second) => first - second);
+      expect(used).toEqual(used.map((_, index) => index));
+    }
+
+    it("puts a lone card into the first column, not the one it stood in", () => {
+      const layout = computeMasonryLayout([100], FOUR_COLUMNS, MIN_COL, GAP, () => 3);
+      expect(layout.positions.map((position) => position.column)).toEqual([0]);
+      expect(layout.positions[0]!.left).toBe(0);
+    });
+
+    it("leaves no column empty with a card to its right", () => {
+      // The cards of columns 1 and 2 left; those of 0 and 3 stay.
+      const remembered = [0, 3, 0, 3];
+      const layout = computeMasonryLayout([100, 100, 100, 100], FOUR_COLUMNS, MIN_COL, GAP, (index) => remembered[index]);
+      expectShape(layout.positions.map((position) => position.column));
+    });
+
+    it("lays the feed out anew when the first card does not stand in the first column", () => {
+      // The first card left: the new first one stood in column 1, and a later
+      // card holds column 0.
+      const remembered = [1, 2, 0];
+      const heights = [100, 120, 80];
+      const layout = computeMasonryLayout(heights, 900, MIN_COL, GAP, (index) => remembered[index]);
+      const fresh = computeMasonryLayout(heights, 900, MIN_COL, GAP);
+      expect(layout).toEqual(fresh);
+    });
+
+    it("keeps every column when the cards that left do not break the shape", () => {
+      // Column 1 still has a card after one of its two left.
+      const remembered = [0, 1, 2, 0, 2];
+      const layout = computeMasonryLayout([100, 90, 80, 70, 60], 900, MIN_COL, GAP, (index) => remembered[index]);
+      expect(layout.positions.map((position) => position.column)).toEqual(remembered);
+    });
+
+    it("holds through any run of departures and height changes", () => {
+      let state = 12345;
+      const next = () => {
+        state = (state * 1664525 + 1013904223) % 4294967296;
+        return state / 4294967296;
+      };
+      for (const width of [326, 700, 1000, 1400, 2200]) {
+        for (let run = 0; run < 40; run += 1) {
+          let cards = Array.from({ length: 1 + Math.floor(next() * 30) }, (_, id) => ({
+            id,
+            height: 40 + Math.floor(next() * 500),
+          }));
+          const column = new Map<number, number>();
+          while (cards.length > 0) {
+            const layout = computeMasonryLayout(
+              cards.map((card) => card.height),
+              width,
+              MIN_COL,
+              GAP,
+              (index) => column.get(cards[index]!.id),
+            );
+            expectShape(layout.positions.map((position) => position.column));
+            layout.positions.forEach((position) => column.set(cards[position.index]!.id, position.column));
+            // A card changes its height, and some cards leave the list.
+            const changed = cards[Math.floor(next() * cards.length)]!;
+            changed.height = 40 + Math.floor(next() * 500);
+            cards = cards.filter(() => next() > 0.3);
+          }
+        }
+      }
+    });
+  });
+
   it("derives max width from the next min-width threshold while preserving the configured gap", () => {
     const layout = computeMasonryLayout([100, 100, 100], 1000, MIN_COL, GAP);
 

@@ -17,7 +17,7 @@ export interface CommandBinding {
 
 /// Keys whose combo cannot be typed as a chord: they name a family of keys or
 /// a direction, and the bar shows them as a hint rather than a binding.
-export type CommandGesture = "arrows" | "meta-alt-arrows";
+export type CommandGesture = "arrows" | "up-down-arrows" | "meta-alt-arrows";
 
 const KEY_LABELS: Record<string, string> = {
   Tab: "⇥",
@@ -34,6 +34,7 @@ const KEY_LABELS: Record<string, string> = {
 
 const GESTURE_LABELS: Record<CommandGesture, string> = {
   arrows: "↕ ↔",
+  "up-down-arrows": "↑↓",
   "meta-alt-arrows": "⌘⌥ ↕",
 };
 

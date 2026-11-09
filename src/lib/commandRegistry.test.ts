@@ -25,7 +25,7 @@ describe("command registry", () => {
     // Contexts are mutually exclusive surfaces, so the same combo may mean
     // different things in feed and element — but inside one surface, and
     // against the always-active global set, a combo must mean one thing.
-    for (const context of ["feed", "element", "selection"] as const) {
+    for (const context of ["feed", "element", "selection", "sidebar"] as const) {
       const active = [...commandsForContext("global"), ...commandsForContext(context)];
       // Every chord a command answers to, alternates included.
       const combos = active.flatMap((command) => commandBindings(command).map(bindingId));
@@ -34,6 +34,23 @@ describe("command registry", () => {
       // element captures Tab for its own mode switch.
       expect(duplicates.filter((combo) => combo !== "tab")).toEqual([]);
     }
+  });
+
+  it("holds the sidebar's commands as their own context (SPEC_KEYBOARD.md, «Sidebar»)", () => {
+    expect(commandsForContext("sidebar").map((command) => [command.combo, command.name])).toEqual([
+      ["↑↓", "Navigate"],
+      ["↵", "Open"],
+      ["⌘K", "Command"],
+      ["→", "Back"],
+      ["esc", "Unfocus"],
+      ["⇧⌘↑", "Move up"],
+      ["⇧⌘↓", "Move down"],
+    ]);
+    // Only the chord that opens the row's menu may be rebound.
+    expect(commandsForContext("sidebar").filter((command) => !command.fixed).map((command) => command.id))
+      .toEqual(["sidebar-menu"]);
+    expect(commandById("sidebar-go").matches?.(keydown({ key: "ArrowRight" }))).toBe(true);
+    expect(commandById("sidebar-go").matches?.(keydown({ key: "ArrowRight", shiftKey: true }))).toBe(false);
   });
 
   it("derives the label and the match from one record", () => {
@@ -89,11 +106,16 @@ describe("command registry", () => {
     setCommandOverrides({
       "toggle-view": { key: "j", meta: true },
       settings: { key: "j", meta: true },
+      paste: { key: "b", meta: true },
     });
 
     expect(commandById("toggle-view").combo).toBe("⇥");
     expect(commandById("settings").combo).toBe("⌘,");
     expect(commandById("toggle-view").rebound).toBe(false);
+    // ⌘V is the Edit menu's stock Paste (SPEC_KEYBOARD.md, «Global»).
+    expect(commandById("paste").fixed).toBe("system");
+    expect(commandById("paste").combo).toBe("⌘V");
+    expect(commandById("paste").rebound).toBe(false);
   });
 
   it("marks every command that cannot be rebound with a reason", () => {

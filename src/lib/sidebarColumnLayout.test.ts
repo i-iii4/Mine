@@ -30,6 +30,16 @@ describe("sidebarColumnLayout", () => {
     reloadSidebarColumnLayout();
   });
 
+  it("names where the name's zone starts when other columns stand before it (user's decision of 05.11.2026)", () => {
+    expect(sidebarColumnRootStyle({ order: ["name", "previews", "meta"], hidden: ["meta"] })["--sidebar-name-left"]).toBeUndefined();
+    const second = sidebarColumnRootStyle({ order: ["previews", "name", "meta"], hidden: [] });
+    expect(second["--sidebar-name-left"]).toBe(second["--sidebar-guide-1-left"]);
+    const last = sidebarColumnRootStyle({ order: ["previews", "meta", "name"], hidden: [] });
+    expect(last["--sidebar-name-left"]).toBe(last["--sidebar-guide-2-left"]);
+    const hiddenBefore = sidebarColumnRootStyle({ order: ["previews", "name", "meta"], hidden: ["previews"] });
+    expect(hiddenBefore["--sidebar-name-left"]).toBeUndefined();
+  });
+
   it("starts as the rows have always been and writes nothing on the root", () => {
     expect(getSidebarColumnLayout()).toEqual(DEFAULT_SIDEBAR_COLUMN_LAYOUT);
     expect(DEFAULT_SIDEBAR_COLUMN_LAYOUT).toEqual({ order: ["name", "previews", "meta"], hidden: [] });

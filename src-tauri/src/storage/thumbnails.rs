@@ -264,7 +264,7 @@ fn preview_dependency_paths(
 /// has a media file, a poster, a title, or non-empty body to bake into a text
 /// thumb. A block with none of these (an empty `.md`) produces no thumb at
 /// all, so there is nothing to draw, ever.
-fn block_has_renderable_source(block: &Block) -> bool {
+pub fn block_has_renderable_source(block: &Block) -> bool {
     block.frontmatter.file.is_some()
         || block.frontmatter.thumbnail.is_some()
         || block.frontmatter.title.is_some()

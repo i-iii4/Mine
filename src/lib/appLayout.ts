@@ -151,6 +151,16 @@ export function sidebarEqualZonesWidth(): number {
 /// much narrower than `--sidebar-width`.
 const SIDEBAR_PANEL_BORDER_PX = 1;
 
+/** The rows' width in a panel `panelWidth` wide: the panel less its border. */
+export function sidebarRowsWidthPx(panelWidth: number): number {
+  return panelWidth - SIDEBAR_PANEL_BORDER_PX;
+}
+
+/** The panel's width around rows `rowsWidth` wide: the rows and its border. */
+export function sidebarPanelWidthPx(rowsWidth: number): number {
+  return rowsWidth + SIDEBAR_PANEL_BORDER_PX;
+}
+
 /** The previews' cell that shows 2.8 thumbnails before its edge: the
  *  guideline's pixel and the divider gap before them, the three tiles and two
  *  gaps, the 24px dissolve the strip ends in (`EDGE_FADE_WIDTH`) and the

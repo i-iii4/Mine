@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 // Grid integration test — reproduces the "cards collapse after save / on
 // channel revisit" bug described in the debugging session of 2026-04-13.
 //
@@ -27,6 +28,7 @@ import {
 } from "@/lib/masonryLayout";
 import { computeCardHeight } from "@/lib/cardHeight";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
+import { cardMenuBadgeOf } from "./CardHoverMenu";
 import { commandById, setCommandOverrides } from "@/lib/commandRegistry";
 import {
   getCardSelectionSummary,
@@ -36,6 +38,7 @@ import {
   setHoveredCollectionRow,
 } from "@/lib/collectionHover";
 import type { ComponentProps } from "react";
+import type { FeedKeyboardFocus } from "@/hooks/useSidebarKeyboardFocus";
 import type { DeleteBlockMedia, DeleteBlocksPlan, LightBlock } from "@/types";
 import { lightBlock } from "@/test/blocks";
 
@@ -950,24 +953,31 @@ describe("Grid — no collapse after add / revisit", () => {
 
     const focusedWrapper = gridItemForSlug("block-9251");
     expect(focusedWrapper).toHaveAttribute("data-feed-grid-item-focused", "true");
-    const actionLayer = focusedWrapper?.querySelector("[data-feed-grid-action-layer]");
-    expect(actionLayer).toHaveClass("inset-px");
-    const actionBadge = focusedWrapper?.querySelector("[data-feed-grid-action-badge]");
+    const actionBadge = focusedWrapper?.querySelector<HTMLElement>("[data-feed-grid-action-badge]");
     expect(actionBadge).toHaveTextContent("⌘K");
-    expect(actionBadge).toHaveClass("left-2", "top-2");
+    // The last of the card's top right row, on the buttons' own inset and gap,
+    // after them, so they stand to its left (SPEC_CARD_STATES.md, С8.8).
+    const topRow = actionBadge?.parentElement;
+    expect(topRow).toHaveAttribute("data-card-top-row");
+    expect(topRow).toHaveClass("absolute", "right-2", "top-2", "flex", "gap-1");
+    expect(topRow?.lastElementChild).toBe(actionBadge);
+    expect(topRow?.firstElementChild).toHaveAttribute("data-card-hover-more-action");
 
     fireEvent.keyDown(window, { key: "k", metaKey: true });
     await flushAsync();
 
     expect(screen.getByText("Rename…")).toBeInTheDocument();
+    // The menu comes out of the badge: the trigger finds it from inside the card.
+    const trigger = focusedWrapper?.querySelector<HTMLElement>('[aria-label="Card actions"]');
+    expect(cardMenuBadgeOf(trigger!)).toBe(actionBadge);
+    // Keyboard use shows the chord alone, with its menu open too (С8.8), and the
+    // card stays lifted (С8.5).
     expect(
       focusedWrapper?.querySelector("[data-card-hover-more-action]"),
-    ).toHaveClass("opacity-100");
-    // The keyboard never lifts the card (SPEC_CARD_STATES.md, С8): its row of
-    // collections stays under the bottom edge, where the lift would raise it.
+    ).toHaveClass("opacity-0", "pointer-events-none");
     expect(
       focusedWrapper?.querySelector("[data-feed-card-frame]"),
-    ).not.toHaveAttribute("data-card-lift-pinned");
+    ).toHaveAttribute("data-card-lift-pinned");
 
     fireEvent.keyDown(window, { key: "k", metaKey: true });
     await flushAsync();
@@ -1062,7 +1072,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(anchorWrapper?.querySelector("[data-feed-grid-action-badge]")).toHaveTextContent("⌘K");
     expect(
       anchorWrapper?.querySelector("[data-card-hover-more-action]"),
-    ).toHaveClass("opacity-100");
+    ).toHaveClass("opacity-0");
     expect(
       anchorWrapper?.querySelector("[data-card-hover-bottom-actions]"),
     ).not.toHaveClass("group-hover:opacity-100");
@@ -1563,16 +1573,182 @@ describe("Grid — no collapse after add / revisit", () => {
       expect(raised("block-9452")).toBe(false);
     });
 
+    describe("С7.8: a closed menu gives the hover back to the still pointer", () => {
+      const frameOf = (slug: string) => gridItemForSlug(slug)!.querySelector("[data-feed-card-frame]")!;
+      const surface = () => document.querySelector("[data-radix-menu-content]")!;
+
+      it("after the card's own menu lay under the pointer", async () => {
+        render(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} />);
+        await flushAsync();
+        const card = gridItemForSlug("block-9452")!;
+        step(card, 0, 10);
+        step(card, 1, 100);
+        expect(raised("block-9452")).toBe(true);
+        // The real order in WebKit: the press opens the menu, the pointer goes onto
+        // it, the menu closes, and only `pointerover` tells the card at that point.
+        fireEvent.pointerDown(card.querySelector('[aria-label="Card actions"]')!, { button: 0, ctrlKey: false });
+        await flushAsync();
+        step(surface(), 1, 40);
+        fireEvent.keyDown(surface(), { key: "Escape" });
+        await flushAsync();
+        expect(document.querySelector("[data-radix-menu-content]")).toBeNull();
+        expect(raised("block-9452")).toBe(false);
+        fireEvent.pointerOver(frameOf("block-9452"), { clientX: at.x, clientY: 50 });
+        expect(raised("block-9452")).toBe(true);
+      });
+
+      it("after a right click's menu opened under the pointer", async () => {
+        render(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} />);
+        await flushAsync();
+        const card = gridItemForSlug("block-9452")!;
+        step(card, 0, 10);
+        step(card, 1, 100);
+        expect(raised("block-9452")).toBe(true);
+        fireEvent.contextMenu(card.querySelector("[data-block-slug]")!);
+        await flushAsync();
+        expect(raised("block-9452")).toBe(false);
+        // The surface under the pointer takes it off the feed.
+        fireEvent.pointerLeave(document.querySelector("[data-grid-scroll]")!);
+        fireEvent.keyDown(surface(), { key: "Escape" });
+        await flushAsync();
+        expect(raised("block-9452")).toBe(false);
+        fireEvent.pointerOver(frameOf("block-9452"), { clientX: at.x, clientY: 50 });
+        expect(raised("block-9452")).toBe(true);
+      });
+
+      it("С7.5: the same event at the same point lifts nothing on a card that slid under the pointer", async () => {
+        render(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} />);
+        await flushAsync();
+        step(gridItemForSlug("block-9451")!, 0, 10);
+        step(gridItemForSlug("block-9451")!, 1, 100);
+        fireEvent.scroll(document.querySelector("[data-grid-scroll]")!);
+        fireEvent.pointerOver(frameOf("block-9452"), { clientX: at.x, clientY: 50 });
+        act(() => { vi.advanceTimersByTime(2000); });
+        expect(raised("block-9452")).toBe(false);
+        step(frameOf("block-9452"), 1, 8);
+        act(() => { vi.advanceTimersByTime(HOVER_INTENT.velocityWindowMs + 10); });
+        expect(raised("block-9452")).toBe(true);
+      });
+    });
+
     it("lifts nothing for a pointer sweeping across the cards", async () => {
       render(<Grid {...BASE_PROPS} blocks={[makeBlock(9451), makeBlock(9452)]} />);
       await flushAsync();
       const first = gridItemForSlug("block-9451")!;
       const second = gridItemForSlug("block-9452")!;
       step(first, 0, 10);
-      for (let index = 0; index < 20; index += 1) step(index % 2 ? second : first, 12, 8);
+      // 5 px/ms, above the lift mode's exit.
+      for (let index = 0; index < 20; index += 1) step(index % 2 ? second : first, 40, 8);
       expect(raised("block-9451")).toBe(false);
       expect(raised("block-9452")).toBe(false);
       expect(isRowConnectedToHoveredCard("all")).toBe(false);
+    });
+
+    describe("the keyboard's card (SPEC_CARD_STATES.md, С8.5, С8.9)", () => {
+      const frameOf = (slug: string) => gridItemForSlug(slug)?.querySelector("[data-feed-card-frame]");
+      const rowOf = (slug: string) => gridItemForSlug(slug)?.querySelector<HTMLElement>("[data-card-hover-bottom-actions]");
+
+      async function focusOn(slug: string) {
+        for (let press = 0; press < 3 && !gridItemForSlug(slug)?.hasAttribute("data-feed-grid-item-focused"); press += 1) {
+          fireEvent.keyDown(window, { key: "ArrowRight" });
+          await flushAsync();
+        }
+        expect(gridItemForSlug(slug)).toHaveAttribute("data-feed-grid-item-focused", "true");
+      }
+
+      async function feed() {
+        render(<Grid {...BASE_PROPS} blocks={[{ ...makeBlock(9451), collections: ["alpha"] }, { ...makeBlock(9452), collections: ["alpha"] }]} />);
+        await flushAsync();
+      }
+
+      it("lifts through the same path as a pinned hover, and the old card goes down when the arrows move on", async () => {
+        await feed();
+        await focusOn("block-9451");
+        expect(frameOf("block-9451")).toHaveAttribute("data-card-lift-pinned");
+        expect(frameOf("block-9451")).not.toHaveAttribute("data-card-lift-hover");
+        await focusOn("block-9452");
+        expect(frameOf("block-9451")).not.toHaveAttribute("data-card-lift-pinned");
+        expect(frameOf("block-9452")).toHaveAttribute("data-card-lift-pinned");
+      });
+
+      it("shows the row as names alone, not interactive, to the card's right edge, and no buttons", async () => {
+        await feed();
+        await focusOn("block-9451");
+        const row = rowOf("block-9451")!;
+        expect(row).toHaveClass("opacity-100", "pointer-events-none");
+        expect(row).toHaveAttribute("data-card-keyboard-row");
+        expect(row.querySelector("button")).toBeNull();
+        expect(row.querySelector('[data-card-collection-name="alpha"]')).toHaveTextContent("alpha");
+        expect(row.querySelector("[data-card-hover-connect]")).toBeNull();
+        // No mask of its own on the row's box: the letters stay clean.
+        expect(row.getAttribute("style") ?? "").not.toContain("mask");
+        // No plus to stop at: the row runs to the edge, in its usual place otherwise.
+        expect(row).toHaveClass("right-0", "left-2", "bottom-2", "h-6");
+        expect(row).not.toHaveClass("right-2");
+        // The row's own right fade ends there; JSDOM drops this gradient from the
+        // style attribute, so the source holds the rule.
+        expect(row.querySelector("[data-card-collections-row]")).not.toBeNull();
+        expect(readFileSync("src/components/CardHoverMenu.tsx", "utf8")).toContain("COLLECTIONS_ROW_FADE_STYLE = createRightFadeMaskStyle(EDGE_FADE_WIDTH, 0)");
+        expect(gridItemForSlug("block-9451")?.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-0");
+        expect(gridItemForSlug("block-9451")?.querySelector("[data-feed-grid-action-badge]")).toHaveTextContent("⌘K");
+      });
+
+      it("gives the row back when its fade ends, so the pointer's hover is as ever", async () => {
+        await feed();
+        await focusOn("block-9451");
+        await focusOn("block-9452");
+        const row = rowOf("block-9451")!;
+        // Fading out behind the card going down: still names alone.
+        expect(row).toHaveClass("opacity-0");
+        expect(row.querySelector("[data-card-hover-connect]")).toBeNull();
+        const end = new Event("transitionend", { bubbles: true });
+        Object.defineProperty(end, "propertyName", { value: "opacity" });
+        act(() => { row.dispatchEvent(end); });
+        expect(row).not.toHaveAttribute("data-card-keyboard-row");
+        expect(row.getAttribute("style") ?? "").not.toContain("mask");
+        expect(row).toHaveClass("right-2");
+        expect(row.querySelector('[data-card-collection-pill="alpha"]')).not.toBeNull();
+      });
+
+      it("gives the row to the pointer at once when it arrives on the keyboard's card", async () => {
+        await feed();
+        await focusOn("block-9451");
+        const card = gridItemForSlug("block-9451")!;
+        step(card, 40, 20);
+        step(card, 1, 100);
+        const row = rowOf("block-9451")!;
+        expect(raised("block-9451")).toBe(true);
+        expect(row).not.toHaveAttribute("data-card-keyboard-row");
+        expect(row).toHaveClass("right-2");
+        expect(row.querySelector("[data-card-hover-connect]")).not.toBeNull();
+      });
+
+      it("does not lift a selected card", async () => {
+        await feed();
+        await focusOn("block-9451");
+        expect(frameOf("block-9451")).toHaveAttribute("data-card-lift-pinned");
+        fireEvent.keyDown(window, { key: "Enter", shiftKey: true });
+        await flushAsync();
+        expect(gridItemForSlug("block-9451")).toHaveAttribute("data-feed-grid-item-selected", "true");
+        expect(frameOf("block-9451")).not.toHaveAttribute("data-card-lift-pinned");
+        expect(rowOf("block-9451")).toHaveClass("opacity-0");
+      });
+
+      it("leaves the pointer's row as ever, with its names and plus, stopping before the edge", async () => {
+        await feed();
+        const card = gridItemForSlug("block-9451")!;
+        step(card, 0, 10);
+        step(card, 1, 100);
+        expect(raised("block-9451")).toBe(true);
+        const row = rowOf("block-9451")!;
+        expect(row).not.toHaveAttribute("data-card-keyboard-row");
+        expect(row.getAttribute("style") ?? "").not.toContain("mask");
+        expect(row).toHaveClass("right-2");
+        expect(row).not.toHaveClass("right-0");
+        expect(row.querySelector('[data-card-collection-pill="alpha"]')).not.toBeNull();
+        expect(row.querySelector("[data-card-hover-connect]")).not.toBeNull();
+        expect(frameOf("block-9451")).not.toHaveAttribute("data-card-lift-pinned");
+      });
     });
 
     it("lowers the card while the feed scrolls under a still pointer", async () => {
@@ -1648,6 +1824,44 @@ describe("Grid — no collapse after add / revisit", () => {
     unmount();
     expect(getCardSelectionSummary()).toBeNull();
     resetCollectionHover();
+  });
+
+  it("selects with Command-click in a tab and opens a new window only with Shift-Command-click", async () => {
+    vi.useFakeTimers();
+
+    const onBlockClick = vi.fn();
+    const onOpenBlockElsewhere = vi.fn();
+    const blocks = [makeBlock(9511), makeBlock(9512)];
+    setBlockHeight(9511, 200);
+    setBlockHeight(9512, 220);
+
+    render(
+      <Grid
+        {...BASE_PROPS}
+        onBlockClick={onBlockClick}
+        onOpenBlockElsewhere={onOpenBlockElsewhere}
+        blocks={blocks}
+      />,
+    );
+    await flushAsync();
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9511"]') as HTMLElement, { metaKey: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onOpenBlockElsewhere).not.toHaveBeenCalled();
+    expect(onBlockClick).not.toHaveBeenCalled();
+    expect(gridItemForSlug("block-9511")).toHaveAttribute("data-feed-grid-item-selected", "true");
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9512"]') as HTMLElement, { metaKey: true, shiftKey: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onOpenBlockElsewhere).toHaveBeenCalledTimes(1);
+    expect(onOpenBlockElsewhere).toHaveBeenCalledWith(expect.objectContaining({ slug: "block-9512" }), true);
+    expect(gridItemForSlug("block-9512")).not.toHaveAttribute("data-feed-grid-item-selected", "true");
   });
 
   it("toggles group selection with Command-click without opening Detail", async () => {
@@ -1982,6 +2196,389 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(gridItemForSlug("block-9521")).toHaveAttribute("data-feed-grid-item-selected", "true");
     expect(gridItemForSlug("block-9522")).toHaveAttribute("data-feed-grid-item-selected", "true");
     expect(screen.getByText("2 elements selected")).toBeInTheDocument();
+  });
+
+  describe("the keyboard's way into the sidebar (SPEC_KEYBOARD.md, «Sidebar»)", () => {
+    const focused = (slug: string) => gridItemForSlug(slug)?.hasAttribute("data-feed-grid-item-focused") ?? false;
+    const anyCardFocused = () => document.querySelector("[data-feed-grid-item-focused]") !== null;
+
+    async function press(init: KeyboardEventInit) {
+      fireEvent.keyDown(window, init);
+      await flushAsync();
+    }
+
+    async function feed(overrides: Partial<ComponentProps<typeof Grid>> = {}) {
+      vi.useFakeTimers();
+      const returning: { current: FeedKeyboardFocus | null } = { current: null };
+      const onKeyboardFocusLeave = vi.fn(() => true);
+      const onKeyboardFocusChange = vi.fn();
+      const onCardMenuShortcutChange = vi.fn();
+      const props: ComponentProps<typeof Grid> = {
+        ...BASE_PROPS,
+        blocks: [makeBlock(9561), makeBlock(9562)],
+        onKeyboardFocusLeave,
+        onKeyboardFocusChange,
+        onCardMenuShortcutChange,
+        onKeyboardFocusReturnChange: (report) => { returning.current = report; },
+        ...overrides,
+      };
+      const view = render(<Grid {...props} />);
+      await flushAsync();
+      return {
+        ...view,
+        returning,
+        onKeyboardFocusLeave,
+        onKeyboardFocusChange,
+        onCardMenuShortcutChange,
+        update: (next: Partial<ComponentProps<typeof Grid>>) => view.rerender(<Grid {...props} {...next} />),
+      };
+    }
+
+    async function take(returning: { current: FeedKeyboardFocus | null }) {
+      let taken = false;
+      await act(async () => { taken = returning.current!.take(); });
+      await flushAsync();
+      return taken;
+    }
+
+    it("hands the focus over from the left column, and the card loses its lift and its commands", async () => {
+      const { onKeyboardFocusLeave, onKeyboardFocusChange, onCardMenuShortcutChange } = await feed();
+      await press({ key: "ArrowRight" });
+      expect(focused("block-9561")).toBe(true);
+      expect(onKeyboardFocusChange).toHaveBeenLastCalledWith(expect.any(Function));
+
+      await press({ key: "ArrowLeft" });
+      expect(onKeyboardFocusLeave).toHaveBeenCalledTimes(1);
+      expect(anyCardFocused()).toBe(false);
+      expect(onKeyboardFocusChange).toHaveBeenLastCalledWith(null);
+      expect(onCardMenuShortcutChange).toHaveBeenLastCalledWith(null);
+    });
+
+    it("keeps moving in the feed while the card has a neighbour on the left", async () => {
+      const { onKeyboardFocusLeave } = await feed();
+      await press({ key: "ArrowRight" });
+      await press({ key: "ArrowRight" });
+      expect(focused("block-9562")).toBe(true);
+
+      await press({ key: "ArrowLeft" });
+      expect(focused("block-9561")).toBe(true);
+      expect(onKeyboardFocusLeave).not.toHaveBeenCalled();
+    });
+
+    it("keeps the card when the sidebar does not take the focus", async () => {
+      await feed({ onKeyboardFocusLeave: vi.fn(() => false) });
+      await press({ key: "ArrowRight" });
+      await press({ key: "ArrowLeft" });
+      expect(focused("block-9561")).toBe(true);
+    });
+
+    it("is not offered by the first arrow, with no card focused yet", async () => {
+      const { onKeyboardFocusLeave } = await feed();
+      await press({ key: "ArrowLeft" });
+      expect(onKeyboardFocusLeave).not.toHaveBeenCalled();
+      expect(focused("block-9561")).toBe(true);
+    });
+
+    it("stays in the feed during a selection", async () => {
+      const { onKeyboardFocusLeave } = await feed();
+      await press({ key: "ArrowRight" });
+      await press({ key: "Enter", shiftKey: true });
+      expect(gridItemForSlug("block-9561")).toHaveAttribute("data-feed-grid-item-selected", "true");
+      await press({ key: "ArrowLeft" });
+      expect(onKeyboardFocusLeave).not.toHaveBeenCalled();
+    });
+
+    it("returns to the same card, with its lift, when the collection did not change", async () => {
+      const { returning, update } = await feed();
+      await press({ key: "ArrowRight" });
+      await press({ key: "ArrowRight" });
+      await press({ key: "ArrowLeft" });
+      await press({ key: "ArrowLeft" });
+      expect(anyCardFocused()).toBe(false);
+
+      // The page holds the arrows away from the feed while a row has the focus.
+      update({ keyboardNavigationDisabled: true });
+      await press({ key: "ArrowRight" });
+      expect(anyCardFocused()).toBe(false);
+
+      update({ keyboardNavigationDisabled: false });
+      expect(await take(returning)).toBe(true);
+      expect(focused("block-9561")).toBe(true);
+      expect(document.querySelector("[data-feed-grid-interaction-mode]"))
+        .toHaveAttribute("data-feed-grid-interaction-mode", "keyboard");
+    });
+
+    it("returns to the first visible card of a feed it has not been on", async () => {
+      const { returning, update } = await feed({ blocks: [makeBlock(9561), makeBlock(9562)] });
+      await press({ key: "ArrowRight" });
+      await press({ key: "ArrowRight" });
+      await press({ key: "ArrowLeft" });
+      await press({ key: "ArrowLeft" });
+
+      update({ currentTag: "other", blocks: [makeBlock(9571), makeBlock(9572)] });
+      await flushAsync();
+      expect(await take(returning)).toBe(true);
+      expect(focused("block-9571")).toBe(true);
+    });
+
+    it("answers that a feed still on its way cannot take the focus, and takes it when it comes", async () => {
+      const { returning, update } = await feed();
+      await press({ key: "ArrowRight" });
+      await press({ key: "ArrowLeft" });
+
+      // The new route with the old feed's cards still in hand.
+      update({ currentTag: "other", routeSnapshotReady: false });
+      await flushAsync();
+      expect(await take(returning)).toBe(false);
+      expect(anyCardFocused()).toBe(false);
+
+      update({ currentTag: "other", routeSnapshotReady: true, blocks: [makeBlock(9571), makeBlock(9572)] });
+      await flushAsync();
+      expect(await take(returning)).toBe(true);
+      expect(focused("block-9571")).toBe(true);
+    });
+
+    it("answers that a feed with no card cannot take the focus", async () => {
+      const { returning, update } = await feed();
+      await press({ key: "ArrowRight" });
+      await press({ key: "ArrowLeft" });
+
+      update({ currentTag: "other", blocks: [] });
+      await flushAsync();
+      expect(await take(returning)).toBe(false);
+    });
+
+    it("leaves nothing focused when the focus ended in the sidebar", async () => {
+      const { returning } = await feed();
+      await press({ key: "ArrowRight" });
+      await press({ key: "ArrowLeft" });
+      await act(async () => { returning.current!.release(); });
+      await flushAsync();
+      expect(anyCardFocused()).toBe(false);
+      expect(document.querySelector("[data-feed-grid-interaction-mode]"))
+        .toHaveAttribute("data-feed-grid-interaction-mode", "pointer");
+    });
+
+    it("takes its report with it when the feed goes away", async () => {
+      const { returning, unmount } = await feed();
+      expect(returning.current).not.toBeNull();
+      unmount();
+      expect(returning.current).toBeNull();
+    });
+  });
+
+  // SPEC_GRID.md, «Форма ленты», user decision 06.11.2026: the first card of a
+  // feed stands in the first column, and no column stays empty with a card to
+  // its right. The pictures' shapes come from their rows.
+  describe("the columns of a feed", () => {
+    const picture = (id: number, [width, height]: [number, number]) => makeBlock(id, {
+      block_type: "image",
+      card_kind: "media",
+      title: null,
+      body: "",
+      media_file: `p${id}.jpg`,
+      width,
+      height,
+    });
+    const SIZES: Array<[number, number]> = [
+      [1000, 500], [800, 600], [900, 900], [600, 800], [1000, 700],
+      [700, 700], [800, 500], [600, 900], [900, 600],
+    ];
+    const positionOf = (slug: string) => {
+      const position = readRenderedPositions().find((item) => item.slug === slug);
+      if (!position) throw new Error(`${slug} is not rendered`);
+      return position;
+    };
+
+    it("does not carry a card's column over from the feed it came from", async () => {
+      vi.useFakeTimers();
+      const everything = SIZES.map((size, index) => picture(9900 + index, size));
+      const { rerender } = render(<Grid {...BASE_PROPS} blocks={everything} currentTag="carry-all" />);
+      act(() => { triggerResize(900, 4000); });
+      await flushAsync();
+      const rightmost = readRenderedPositions().reduce((best, item) => (item.left > best.left ? item : best));
+      expect(rightmost.left).toBeGreaterThan(0);
+      const card = everything.find((block) => block.slug === rightmost.slug)!;
+
+      // The route changes first: the feed still holds the old cards while the
+      // new route's list is on its way (App.tsx, applyGridSnapshot).
+      rerender(<Grid {...BASE_PROPS} blocks={everything} currentTag="carry-one" routeSnapshotReady={false} />);
+      await flushAsync();
+      rerender(<Grid {...BASE_PROPS} blocks={[card]} currentTag="carry-one" routeSnapshotReady />);
+      await flushAsync();
+
+      expect(readRenderedPositions().map((item) => item.slug)).toEqual([card.slug]);
+      expect(positionOf(card.slug).left).toBe(0);
+    });
+
+    // The shape alone would not show this one: two cards share a column they
+    // had in the other feed, and the column to their right stays free.
+    it("lays out a collection on its own, not on the columns of the feed before it", async () => {
+      vi.useFakeTimers();
+      const everything = SIZES.map((size, index) => picture(9910 + index, size));
+      const { rerender } = render(<Grid {...BASE_PROPS} blocks={everything} currentTag="carry-many" />);
+      act(() => { triggerResize(900, 4000); });
+      await flushAsync();
+      const lefts = new Map(readRenderedPositions().map((item) => [item.slug, item.left]));
+      const leftOf = (block: LightBlock) => lefts.get(block.slug)!;
+      const second = everything.findIndex((block) => leftOf(block) > 0);
+      const third = everything.findIndex((block, index) => index > second && leftOf(block) === 0);
+      const collection = [everything[0]!, everything[second]!, everything[third]!];
+      expect(new Set(collection.map(leftOf)).size).toBe(2);
+
+      rerender(<Grid {...BASE_PROPS} blocks={everything} currentTag="carry-few" routeSnapshotReady={false} />);
+      await flushAsync();
+      rerender(<Grid {...BASE_PROPS} blocks={collection} currentTag="carry-few" routeSnapshotReady />);
+      await flushAsync();
+
+      expect(new Set(readRenderedPositions().map((item) => item.left)).size).toBe(3);
+    });
+
+    it("moves the last card left in a collection to the first column", async () => {
+      vi.useFakeTimers();
+      const blocks = SIZES.slice(0, 3).map((size, index) => picture(9920 + index, size));
+      const { rerender } = render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="shrink" />);
+      act(() => { triggerResize(900, 4000); });
+      await flushAsync();
+      expect(positionOf(blocks[2]!.slug).left).toBeGreaterThan(0);
+
+      rerender(<Grid {...BASE_PROPS} blocks={[blocks[2]!]} currentTag="shrink" />);
+      await flushAsync();
+      expect(positionOf(blocks[2]!.slug).left).toBe(0);
+    });
+
+    it("lays the feed out anew, at once, when the first card leaves", async () => {
+      vi.useFakeTimers();
+      const moved: string[] = [];
+      const animate = vi.fn(function (this: HTMLElement) {
+        moved.push(this.getAttribute("data-feed-grid-item-slug") ?? "?");
+        return {} as Animation;
+      });
+      Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
+      const blocks = SIZES.map((size, index) => picture(9930 + index, size));
+      const { rerender } = render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="first-leaves" />);
+      act(() => { triggerResize(900, 4000); });
+      await flushAsync();
+      expect(positionOf(blocks[1]!.slug).left).toBeGreaterThan(0);
+      moved.length = 0;
+
+      rerender(<Grid {...BASE_PROPS} blocks={blocks.slice(1)} currentTag="first-leaves" />);
+      await flushAsync();
+      expect(positionOf(blocks[1]!.slug).left).toBe(0);
+      expect(moved).toEqual([]);
+    });
+
+    it("still keeps the columns when a card that leaves does not break the shape", async () => {
+      vi.useFakeTimers();
+      const blocks = SIZES.map((size, index) => picture(9950 + index, size));
+      const { rerender } = render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="last-leaves" />);
+      act(() => { triggerResize(900, 4000); });
+      await flushAsync();
+      const before = new Map(readRenderedPositions().map((item) => [item.slug, item.left]));
+
+      rerender(<Grid {...BASE_PROPS} blocks={blocks.slice(0, -1)} currentTag="last-leaves" />);
+      await flushAsync();
+      const after = readRenderedPositions();
+      expect(after).toHaveLength(blocks.length - 1);
+      for (const item of after) expect(item.left).toBe(before.get(item.slug));
+    });
+  });
+
+  // SPEC_KEYBOARD.md, «Feed»: ← and → are a pair. Three columns: the tall first
+  // card stands beside the short cards of the second column, so a step right
+  // from it by the rule always lands on the top one.
+  describe("the pair of horizontal arrows", () => {
+    const picture = (id: number, [width, height]: [number, number]) => makeBlock(id, {
+      block_type: "image",
+      card_kind: "media",
+      title: null,
+      body: "",
+      media_file: `p${id}.jpg`,
+      width,
+      height,
+    });
+    const TALL: [number, number] = [500, 1000];
+    const SHORT: [number, number] = [1000, 500];
+    const focused = (slug: string) => gridItemForSlug(slug)?.getAttribute("data-feed-grid-item-focused") === "true";
+    const press = async (key: string) => {
+      fireEvent.keyDown(window, { key });
+      await flushAsync();
+    };
+
+    /** Tall card 9970; column 2 is 9971, 9973, 9975; focus ends on 9973. */
+    async function onMiddleCard(tag: string) {
+      vi.useFakeTimers();
+      const blocks = [
+        picture(9970, TALL),
+        ...[9971, 9972, 9973, 9974, 9975, 9976].map((id) => picture(id, SHORT)),
+      ];
+      const view = render(<Grid {...BASE_PROPS} blocks={blocks} currentTag={tag} />);
+      act(() => { triggerResize(900, 4000); });
+      await flushAsync();
+      await press("ArrowRight");
+      expect(focused("block-9970")).toBe(true);
+      await press("ArrowRight");
+      expect(focused("block-9971")).toBe(true);
+      await press("ArrowDown");
+      expect(focused("block-9973")).toBe(true);
+      return { blocks, ...view };
+    }
+
+    it("returns to the card it came from on the opposite key", async () => {
+      await onMiddleCard("pair-return");
+      await press("ArrowLeft");
+      expect(focused("block-9970")).toBe(true);
+      await press("ArrowRight");
+      expect(focused("block-9973")).toBe(true);
+    });
+
+    it("takes the rule again once the arrow has come back", async () => {
+      await onMiddleCard("pair-again");
+      await press("ArrowLeft");
+      await press("ArrowRight");
+      // A second step left is one more pair.
+      await press("ArrowLeft");
+      expect(focused("block-9970")).toBe(true);
+      await press("ArrowRight");
+      expect(focused("block-9973")).toBe(true);
+    });
+
+    it("forgets the step after any other arrow, even one that moved nothing", async () => {
+      await onMiddleCard("pair-other-key");
+      await press("ArrowLeft");
+      expect(focused("block-9970")).toBe(true);
+      // The tall card is alone in its column.
+      await press("ArrowDown");
+      expect(focused("block-9970")).toBe(true);
+      await press("ArrowRight");
+      expect(focused("block-9971")).toBe(true);
+    });
+
+    it("forgets the step when the pointer moved the focus", async () => {
+      await onMiddleCard("pair-pointer");
+      await press("ArrowLeft");
+      expect(focused("block-9970")).toBe(true);
+      // The pointer goes over another card and comes back to the same one. Its
+      // first report counts as a still pointer, so it takes two to move.
+      fireEvent.pointerMove(gridItemForSlug("block-9974")!, { clientX: 700, clientY: 50 });
+      fireEvent.pointerMove(gridItemForSlug("block-9974")!, { clientX: 705, clientY: 50 });
+      await flushAsync();
+      fireEvent.pointerMove(gridItemForSlug("block-9970")!, { clientX: 100, clientY: 50 });
+      await flushAsync();
+      await press("ArrowRight");
+      expect(focused("block-9971")).toBe(true);
+    });
+
+    it("forgets the step when the layout changes", async () => {
+      const { blocks, rerender } = await onMiddleCard("pair-layout");
+      await press("ArrowLeft");
+      expect(focused("block-9970")).toBe(true);
+      rerender(<Grid {...BASE_PROPS} blocks={[...blocks, picture(9977, SHORT)]} currentTag="pair-layout" />);
+      await flushAsync();
+      expect(focused("block-9970")).toBe(true);
+      await press("ArrowRight");
+      expect(focused("block-9971")).toBe(true);
+    });
   });
 
   it("opens the batch delete confirmation with the macOS Delete key", async () => {

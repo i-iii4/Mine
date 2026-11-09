@@ -17,6 +17,7 @@ use crate::domain::media_type::{extension_for_content_type, stored_media_extensi
 pub use crate::domain::vault::VaultWriteLayout as CoreLayout;
 use crate::domain::vault::{normalize_filename_stem, validate_slug, VaultWriteLayout};
 use crate::links::LinkIndex;
+use crate::page_files::{ext_from_url_opt, ASSUMED_EXTENSION};
 
 /// A prepared capture. Resource acquisition belongs to the executor.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type)]
@@ -420,6 +421,46 @@ pub fn next_save_action(phase: SavePhase, evidence: &SaveEvidence) -> SaveAction
     }
 }
 
+/// One word for what the media of a save show, from what each file shows: a
+/// conflict outweighs a file that cannot be read, and that a missing one; no
+/// file at all needs none.
+#[must_use]
+pub fn media_evidence(observations: &[PublicationEvidence]) -> PublicationEvidence {
+    use PublicationEvidence::{Conflict, Matches, Missing, NotRequired, Unreadable};
+    if observations.is_empty() {
+        NotRequired
+    } else if observations.contains(&Conflict) {
+        Conflict
+    } else if observations.contains(&Unreadable) {
+        Unreadable
+    } else if observations.contains(&Missing) {
+        Missing
+    } else {
+        Matches
+    }
+}
+
+/// The next step of a save with any number of files, by the one rule of
+/// [`next_save_action`]. A mixed set of missing and existing files cannot be
+/// summarized as all missing before the first effect, so in `Prepared` the rule
+/// is asked about each one.
+#[must_use]
+pub fn next_plan_action(
+    phase: SavePhase,
+    markdown: PublicationEvidence,
+    media: &[PublicationEvidence],
+) -> SaveAction {
+    if phase == SavePhase::Prepared {
+        for observed in media {
+            let action = next_save_action(phase, &SaveEvidence { markdown, media: *observed });
+            if !matches!(action, SaveAction::PublishMedia | SaveAction::PublishMarkdown) {
+                return action;
+            }
+        }
+    }
+    next_save_action(phase, &SaveEvidence { markdown, media: media_evidence(media) })
+}
+
 /// A stable fingerprint of the semantic request, independent of map-key ordering.
 pub fn request_fingerprint(value: &serde_json::Value) -> String {
     // serde_json's default Map is a BTreeMap; canonicalize recursively even if
@@ -523,11 +564,54 @@ pub enum CoreCommand {
         value: String,
     },
     /// The extension a downloaded medium is saved under: what its first
-    /// bytes are, else the type the server declared
-    /// ([`stored_media_extension`]).
+    /// bytes are, else what was declared ([`stored_media_extension`]). With
+    /// `url`, the file has an address: what the address states is declared
+    /// first, then the type the server answered with, and silence means
+    /// [`ASSUMED_EXTENSION`], as with the helper (SPEC_CLIPPER.md, Б13).
     MediaExtension {
         head: Vec<u8>,
         content_type: Option<String>,
+        #[serde(default)]
+        url: Option<String>,
+    },
+    /// The next step of a save from what its note and each of its files show,
+    /// with one word for the files (SPEC_CLIPPER.md, Б13).
+    MediaEvidence {
+        phase: SavePhase,
+        markdown: PublicationEvidence,
+        media: Vec<PublicationEvidence>,
+    },
+    /// What a browser may ask for, and how, for the files of a clip
+    /// (SPEC_CLIPPER.md, «Один путь файла со страницы», Б7, Б13).
+    PageFilePlan(crate::page_files::PageFilesRequest),
+    /// Whether an address may be asked for, judged by the address alone (Б13).
+    AddressCheck {
+        url: String,
+    },
+    /// The media of a body that can become local files. `types` names the
+    /// extension of an address that states none, where the executor knows it.
+    InlineMedia {
+        body: String,
+        slug: String,
+        #[serde(default)]
+        types: std::collections::HashMap<String, String>,
+    },
+    /// The body with each placed medium embedded as a local file; `paths` are
+    /// the files of the space the links are shortened against.
+    RewriteBody {
+        body: String,
+        placements: Vec<crate::page_files::BodyPlacement>,
+        paths: Vec<String>,
+    },
+    /// Why a file was not obtained, in the clipper's words (Б3).
+    MediaFailure {
+        url: String,
+        failure: crate::page_files::MediaFailure,
+    },
+    /// What the file at a card's `image_url` becomes (Б9).
+    CardFileRole {
+        block_type: String,
+        extension: String,
     },
 }
 
@@ -638,9 +722,36 @@ pub fn execute(command: CoreCommand) -> Result<serde_json::Value, SaveError> {
                 .map_err(|e| failure(SaveErrorCode::InvalidRequest, e))?;
             Ok(json!(request_fingerprint(&value)))
         }
-        CoreCommand::MediaExtension { head, content_type } => {
-            let declared = content_type.as_deref().and_then(extension_for_content_type);
+        CoreCommand::MediaExtension { head, content_type, url } => {
+            let answered = content_type.as_deref().and_then(extension_for_content_type);
+            let declared = match url.as_deref() {
+                Some(url) => Some(ext_from_url_opt(url).or(answered).unwrap_or(ASSUMED_EXTENSION)),
+                None => answered,
+            };
             Ok(json!({ "extension": stored_media_extension(&head, declared) }))
+        }
+        CoreCommand::MediaEvidence { phase, markdown, media } => Ok(json!({
+            "media": media_evidence(&media),
+            "action": next_plan_action(phase, markdown, &media),
+        })),
+        CoreCommand::PageFilePlan(request) => Ok(json!(crate::page_files::page_file_plan(&request))),
+        CoreCommand::AddressCheck { url } => Ok(match crate::page_files::address_check(&url) {
+            Ok(()) => json!({ "allowed": true }),
+            Err(refusal) => json!({ "allowed": false, "refusal": refusal }),
+        }),
+        CoreCommand::InlineMedia { body, slug, types } => Ok(json!(crate::page_files::inline_media(
+            &body,
+            &slug,
+            |url| types.get(url).cloned(),
+        ))),
+        CoreCommand::RewriteBody { body, placements, paths } => Ok(json!({
+            "body": crate::page_files::rewrite_body(&body, &placements, &crate::links::LinkIndex::new(paths)),
+        })),
+        CoreCommand::MediaFailure { url, failure } => Ok(json!({
+            "reason": crate::page_files::media_failure_reason(&crate::page_files::site_of(&url), &failure),
+        })),
+        CoreCommand::CardFileRole { block_type, extension } => {
+            Ok(json!(crate::page_files::card_file_role(&block_type, &extension)))
         }
     }
 }
@@ -899,6 +1010,61 @@ mod tests {
             next_save_action(SavePhase::Committed, &present),
             SaveAction::ReturnCommitted
         );
+    }
+    #[test]
+    fn one_word_for_the_files_names_the_worst_of_them() {
+        use PublicationEvidence::{Conflict, Matches, Missing, NotRequired, Unreadable};
+        assert_eq!(media_evidence(&[]), NotRequired);
+        assert_eq!(media_evidence(&[Matches, Matches]), Matches);
+        assert_eq!(media_evidence(&[Matches, Missing]), Missing);
+        assert_eq!(media_evidence(&[Missing, Unreadable]), Unreadable);
+        assert_eq!(media_evidence(&[Unreadable, Conflict, Missing]), Conflict);
+    }
+    #[test]
+    fn a_save_with_many_files_follows_the_one_rule() {
+        use PublicationEvidence::{Conflict, Matches, Missing, Unreadable};
+        let plan = |phase, media: &[PublicationEvidence]| next_plan_action(phase, Missing, media);
+        assert_eq!(plan(SavePhase::Prepared, &[]), SaveAction::PublishMarkdown);
+        assert_eq!(plan(SavePhase::Prepared, &[Missing, Missing]), SaveAction::PublishMedia);
+        // One file already there before any effect is another writer's.
+        assert_eq!(plan(SavePhase::Prepared, &[Missing, Matches]), SaveAction::NameConflict);
+        assert_eq!(plan(SavePhase::Prepared, &[Conflict, Missing]), SaveAction::NameConflict);
+        assert_eq!(plan(SavePhase::Prepared, &[Missing, Unreadable]), SaveAction::UnknownOutcome);
+        // A break among the files is not a failed write: nothing is written anew.
+        assert_eq!(plan(SavePhase::MediaPublishing, &[Matches, Missing]), SaveAction::UnknownOutcome);
+        assert_eq!(plan(SavePhase::MediaPublished, &[Matches, Matches]), SaveAction::PublishMarkdown);
+        assert_eq!(
+            next_plan_action(SavePhase::SourceCommitted, Matches, &[Matches, Matches]),
+            SaveAction::PersistReceipt
+        );
+        assert_eq!(
+            next_plan_action(SavePhase::MarkdownPublishing, Matches, &[Matches, Missing]),
+            SaveAction::UnknownOutcome
+        );
+    }
+    #[test]
+    fn a_file_with_an_address_always_gets_an_extension() {
+        let extension = |head: &[u8], content_type: Option<&str>, url: Option<&str>| {
+            execute(CoreCommand::MediaExtension {
+                head: head.to_vec(),
+                content_type: content_type.map(str::to_string),
+                url: url.map(str::to_string),
+            })
+            .unwrap()["extension"]
+                .clone()
+        };
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        // The bytes win over everything.
+        assert_eq!(extension(&png, Some("image/jpeg"), Some("https://h.example/a.jpg")), "png");
+        // Then what the address states, as the helper reads it.
+        assert_eq!(extension(b"....", Some("video/webm"), Some("https://h.example/a.mp4")), "mp4");
+        // Then what the server answered with.
+        assert_eq!(extension(b"....", Some("video/webm"), Some("https://h.example/getBlob")), "webm");
+        // Silence is the helper's assumption.
+        assert_eq!(extension(b"....", None, Some("https://h.example/getBlob")), "jpg");
+        // Without an address there is nothing to assume about: the bytes of a
+        // screenshot say what they are or the file is refused.
+        assert!(extension(b"....", None, None).is_null());
     }
     #[test]
     fn fingerprint_is_independent_of_object_key_order() {

@@ -6,7 +6,6 @@ import { Detail } from "@/components/Detail";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { beginNoteEdit, getBlock, noteBodyState, resolveNoteLink, saveNoteBody } from "@/lib/commands";
 import { computeBodyHash } from "@/lib/editing/bodyHash";
-import { HOVER_PREVIEW_COLD_OPEN_DELAY_MS } from "@/lib/hoverPreviewTiming";
 import { getActiveMineTextSelectionDragPayload } from "@/lib/textSelectionDrag";
 import { indexedBlock } from "@/test/blocks";
 import { installCodeMirrorLayoutStubs } from "@/test/codemirror";
@@ -227,16 +226,13 @@ describe("the open card with the editor mounted (SPEC_EDITING.md, Л11)", () => 
     // The row: the note's name and the start of its text.
     const row = await screen.findByRole("button", { name: /^Related/ });
     expect(screen.getByText("Related notes")).toBeInTheDocument();
-    vi.useFakeTimers();
-    fireEvent.mouseEnter(row);
-    await act(async () => {
-      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(document.querySelector("[data-related-note-hover-preview]")).not.toBeNull();
-    fireEvent.mouseLeave(row);
-    vi.useRealTimers();
+    // The pointer's own movement, then its rest: the window's shared rule
+    // (SPEC_CARD_STATES.md, С7.11), on the real clock its engine reads.
+    fireEvent.pointerMove(row, { clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(row, { clientX: 101, clientY: 100 });
+    await waitFor(() => {
+      expect(document.querySelector("[data-related-note-hover-preview]")).not.toBeNull();
+    }, { timeout: 2000 });
   });
 
   it("scrolls to the block its link names (Л11.8)", async () => {

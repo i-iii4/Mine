@@ -22,8 +22,7 @@ use crate::domain::markdown::toggle_task_marker;
 use crate::domain::vault::VaultLayout;
 use crate::storage::index::IndexedBlock;
 use crate::storage::note_write::{self, NoteWriteRefusal, ReadNote, WritableNote};
-use crate::storage::thumbnails::ThumbSource;
-use crate::storage::{index, thumbnails};
+use crate::storage::derived_preview::{self, WrittenCardPictures};
 
 // What the tests below name from this module's scope.
 #[cfg(test)]
@@ -118,12 +117,12 @@ impl TaskToggleError {
     }
 }
 
-/// A toggled task: the card as the index holds it now, and which preview
-/// the write baked.
+/// A toggled task: the card as the index holds it now, and what the write
+/// did to its pictures (`None` when the card left the index meanwhile).
 #[derive(Debug)]
 pub struct ToggledTask {
     pub block: IndexedBlock,
-    pub thumb: ThumbSource,
+    pub pictures: Option<WrittenCardPictures>,
 }
 
 /// Toggle the task `params` names in the note of the space `vault` and
@@ -157,23 +156,20 @@ pub fn toggle_task_item(
         OPERATION,
     )
     .map_err(refused)?;
-    let block = published.block;
-
-    let thumb = thumbnails::generate_for_block(&block, vault);
-    if let Err(error) = index::sync_thumb_metadata(
-        conn,
-        &block.slug,
-        &vault.thumb_path(&block.slug),
-        Some(vault.root()),
-    ) {
-        log::warn!(
-            "task of '{}' written, its preview not recorded: {error:#}",
-            block.slug
-        );
-    }
+    // The watcher drops the write as Mine's own and the write moved the
+    // source stamp: the card's pictures are made here (SPEC_THUMBNAILS.md,
+    // «Свои записи Mine»).
+    let pictures = derived_preview::refresh_written_card(conn, vault, &published.block.slug)
+        .unwrap_or_else(|error| {
+            log::warn!(
+                "task of '{}' written, its pictures not made: {error:#}",
+                published.block.slug
+            );
+            None
+        });
     Ok(ToggledTask {
         block: published.indexed,
-        thumb,
+        pictures,
     })
 }
 
@@ -249,6 +245,7 @@ mod tests {
     use super::*;
     use crate::domain::block::DateTime;
     use crate::storage::db;
+    use crate::storage::index;
     use std::os::unix::fs::PermissionsExt;
 
     struct Space {
@@ -357,7 +354,7 @@ mod tests {
             Some(compute_body_hash(&new_body).as_str())
         );
         assert_eq!(indexed_body(&space, "Tasks"), new_body);
-        assert_eq!(toggled.thumb, ThumbSource::Text);
+        assert_eq!(toggled.pictures, Some(WrittenCardPictures { changed: true, is_text: true }));
         assert_eq!(folder_names(&path), ["Tasks.md"]);
 
         toggle_task_item(

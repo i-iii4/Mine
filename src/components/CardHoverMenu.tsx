@@ -15,6 +15,7 @@ import type { ComponentProps } from "react";
 import { MoreHorizontal, Plus, ExternalLink, Trash2, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
+import { useCommandOverrides } from "@/hooks/useCommandOverrides";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,7 +40,7 @@ import { openLinkInBrowser, revealInFinder } from "@/lib/systemActions";
 import { useCardMembership } from "@/hooks/useCardMembership";
 import { CardCollectionsContext } from "@/lib/cardCollections";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
-import { useContextMenuPresence } from "@/lib/openMenus";
+import { noFocusBackAfterPress, onPointerOffMenus, pointerIsOnMenu, useContextMenuPresence } from "@/lib/openMenus";
 import { editorTableMenu, subscribeEditorTableMenu } from "@/lib/editorTableMenu";
 
 interface CardMenuActionsProps<TBlock extends LightBlock | IndexedBlock> {
@@ -65,6 +66,8 @@ interface CardMoreMenuProps<TBlock extends LightBlock | IndexedBlock> extends Ca
   /** Where focus goes when the menu closes; the trigger by default. A search
    *  result row sends it back to the search field. */
   onCloseAutoFocus?: ComponentProps<typeof DropdownMenuContent>["onCloseAutoFocus"];
+  /** The plate the menu comes out of, when it is not the trigger. */
+  plateOf?: ComponentProps<typeof DropdownMenuContent>["plateOf"];
 }
 
 interface CardPointMenuProps<TBlock extends LightBlock | IndexedBlock> extends CardMenuActionsProps<TBlock> {
@@ -78,6 +81,7 @@ interface CardMenuDropdownContentProps<TBlock extends LightBlock | IndexedBlock>
   extends CardMenuActionsProps<TBlock> {
   menuOpen: boolean;
   onCloseAutoFocus?: ComponentProps<typeof DropdownMenuContent>["onCloseAutoFocus"];
+  plateOf?: ComponentProps<typeof DropdownMenuContent>["plateOf"];
   onKeyDownCapture?: (event: ReactKeyboardEvent) => void;
 }
 
@@ -88,6 +92,13 @@ type CardHoverMenuPropsWithState = CardHoverMenuProps & {
   /// Whether a <video> sits under these controls. Only then do they need a
   /// compositing layer of their own — see the comment at the More button.
   videoUnderneath?: boolean;
+  /// The keyboard's card shows the chord of its menu at the end of the top row.
+  menuBadge?: CardMenuBadgeCommand | null;
+  /// The keyboard's card lifts as on hover and shows its collections' names,
+  /// with no buttons (SPEC_CARD_STATES.md, С8.5).
+  keyboardLift?: boolean;
+  /// The pointer has arrived on this card (С8.6).
+  hoverArmed?: boolean;
   onKeyboardMoreMenuOpenChange?: (open: boolean) => void;
   onInteractiveOpenChange?: (open: boolean) => void;
   onInteractionStart?: () => void;
@@ -95,6 +106,30 @@ type CardHoverMenuPropsWithState = CardHoverMenuProps & {
   /// with it (SPEC_CARD_STATES.md, С8).
   onActionsPinnedChange?: (pinned: boolean) => void;
 };
+
+/// The menu ⌘K opens on the keyboard's card, one card's or the selection's.
+export type CardMenuBadgeCommand = "element-menu" | "batch-menu";
+
+/// The plate the keyboard's menu comes out of (SPEC_CARD_STATES.md, С8.8; user's
+/// decision of 05.11.2026), found from the menu's trigger.
+export function cardMenuBadgeOf(trigger: HTMLElement): HTMLElement | null {
+  return trigger.closest("[data-feed-grid-item]")?.querySelector<HTMLElement>("[data-feed-grid-action-badge]") ?? null;
+}
+
+/// The chord that opens the focused card's menu, as the registry holds it now:
+/// a rebind in Settings relabels the badge at once (SPEC_AUDIT_FIXES.md, Ф11).
+function CardMenuBadge({ command, videoUnderneath }: { command: CardMenuBadgeCommand; videoUnderneath: boolean }) {
+  useCommandOverrides();
+  return (
+    <div
+      aria-hidden="true"
+      className={cn("flex h-6 items-center rounded-1 bg-component-fill px-[1ch] font-sans text-sm font-semibold text-foreground", videoUnderneath && "transform-gpu")}
+      data-feed-grid-action-badge=""
+    >
+      {commandById(command).combo}
+    </div>
+  );
+}
 
 /// The card's collections in its bottom row, left-aligned, as
 /// plain clickable text: no plate, no outline. A name opens its collection.
@@ -187,6 +222,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
   triggerSize,
   triggerShortcut,
   onCloseAutoFocus,
+  plateOf,
 }: CardMoreMenuProps<TBlock>) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuOpenRef = useRef(false);
@@ -247,6 +283,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
         onRequestDelete={onRequestDelete}
         onCloseAutoFocus={topChromeInteraction ? topChromeTrigger.handleCloseAutoFocus : onCloseAutoFocus}
         onKeyDownCapture={handleMenuKeyDownCapture}
+        plateOf={plateOf}
       />
     </DropdownMenu>
   );
@@ -264,6 +301,7 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
   onRequestDelete,
   onCloseAutoFocus,
   onKeyDownCapture,
+  plateOf,
 }: CardMenuDropdownContentProps<TBlock>) {
   const hasUrl = block.url != null && isSafeUrl(block.url);
   const filePath = `${vaultPath}/${block.slug}.md`;
@@ -284,6 +322,7 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
   return (
     <DropdownMenuContent
       align="end"
+      plateOf={plateOf}
       onCloseAutoFocus={(event) => {
         if (tableCommandRan.current) {
           tableCommandRan.current = false;
@@ -477,6 +516,9 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   openMoreMenuRequestSequence = 0,
   hoverEnabled = true,
   videoUnderneath = false,
+  menuBadge = null,
+  keyboardLift = false,
+  hoverArmed = false,
   onKeyboardMoreMenuOpenChange,
   onInteractiveOpenChange,
   onInteractionStart,
@@ -497,7 +539,16 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   const anyMenuOpen = menuOpen || channelOpen;
   // A pointer-opened menu holds the card's hover state (С8); a keyboard one
   // does not.
-  const hoverActionsPinned = channelOpen || (menuOpen && !effectiveKeyboardMenuOpen);
+  // A menu closing under the pointer keeps the hold until WebKit gives `:hover`
+  // to what lay under it, or the card would drop and rise again (С7.8).
+  const [heldPastClose, setHeldPastClose] = useState(false);
+  const hoverActionsPinned = channelOpen || (menuOpen && !effectiveKeyboardMenuOpen) || heldPastClose;
+  // The row keeps the keyboard's form while it fades out behind the card going
+  // down, or a plus would flash on it; the end of that fade gives it back.
+  const [keyboardRow, setKeyboardRow] = useState(false);
+  if (keyboardLift && !keyboardRow) setKeyboardRow(true);
+  // The pointer arriving on this card takes the row at once: it never fades.
+  else if (!keyboardLift && keyboardRow && hoverArmed) setKeyboardRow(false);
 
   useEffect(() => {
     if (openMoreMenuRequestSequence <= lastOpenMoreMenuRequestSequenceRef.current) return;
@@ -512,12 +563,17 @@ export const CardHoverMenu = memo(function CardHoverMenu({
     onActionsPinnedChange?.(hoverActionsPinned);
   }, [hoverActionsPinned, onActionsPinnedChange]);
 
+  useEffect(() => {
+    if (!heldPastClose) return;
+    return onPointerOffMenus(() => setHeldPastClose(false));
+  }, [heldPastClose]);
+
   return (
     <>
       {/* Overlay — затенение при hover */}
       <div
         className={cn(
-          "pointer-events-none absolute inset-0 z-[4] bg-[var(--card-hover-overlay)] transition-opacity",
+          "pointer-events-none absolute inset-0 z-[4] bg-[var(--card-hover-overlay)]",
           videoUnderneath && "transform-gpu",
           hoverEnabled && "group-hover:opacity-100",
           hoverActionsPinned ? "opacity-100" : "opacity-0",
@@ -535,13 +591,17 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           rendering load, measured 20.08.2026: 1.3 GB and a third of a core at
           rest, against 320 MB and five per cent with them off. A card without
           video has nothing to lose the fight to. */}
+      <div className="pointer-events-none absolute right-2 top-2 z-[5] flex items-center gap-1" data-card-top-row="">
       <div
         className={cn(
-          // The card menu at the top right, the link's button to its left.
-          "pointer-events-none absolute right-2 top-2 z-[5] flex items-center gap-1 transition-opacity",
+          // The card menu at the top right, the link's button to its left, and
+          // the keyboard's chord after them.
+          "pointer-events-none flex items-center gap-1",
           videoUnderneath && "transform-gpu",
           hoverEnabled && "group-hover:pointer-events-auto group-hover:opacity-100",
-          anyMenuOpen ? "pointer-events-auto opacity-100" : "opacity-0",
+          // A menu ⌘K opened comes out of the chord alone: the buttons stay
+          // hidden in keyboard use (SPEC_CARD_STATES.md, С8.8).
+          (anyMenuOpen && !effectiveKeyboardMenuOpen) || heldPastClose ? "pointer-events-auto opacity-100" : "opacity-0",
         )}
         data-card-hover-more-action=""
         data-card-hover-enabled={hoverEnabled ? "true" : undefined}
@@ -563,6 +623,10 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           // No keystroke in its tooltip: ⌘K opens the menu of the card the
           // keyboard is on, not of the one under the pointer.
           triggerSize="icon-xs"
+          // A menu ⌘K opened comes out of the chord's plate, the pointer's out
+          // of the button (SPEC_CARD_STATES.md, С8.8).
+          plateOf={effectiveKeyboardMenuOpen ? cardMenuBadgeOf : undefined}
+          onCloseAutoFocus={noFocusBackAfterPress}
           onOpenChange={(open) => {
             if (open) {
               if (keyboardMenuRequestPending) {
@@ -573,6 +637,8 @@ export const CardHoverMenu = memo(function CardHoverMenu({
             } else {
               if (keyboardMenuOpen || keyboardMenuRequestPending) {
                 onKeyboardMoreMenuOpenChange?.(false);
+              } else if (pointerIsOnMenu()) {
+                setHeldPastClose(true);
               }
               setKeyboardMenuOpen(false);
             }
@@ -580,38 +646,53 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           }}
         />
       </div>
+      {menuBadge && <CardMenuBadge command={menuBadge} videoUnderneath={videoUnderneath} />}
+      </div>
 
       {/* The card's collections, left-aligned, and Connect as a plus at the
           right; the row rises with the card's lift (SPEC_CARD_STATES.md, С8).
-          It shows only where the card lifts: under the pointer, or held by a
-          menu the pointer opened. A menu the keyboard opens lifts nothing,
-          so the row stays hidden rather than cover the card's text. */}
+          It shows only where the card lifts: under the pointer, held by a menu
+          the pointer opened, or on the keyboard's card, there as names alone,
+          running to the card's right edge, where the row's own fade ends: there
+          is no plus to stop at (С8.5, С8.9). */}
       <div
         className={cn(
-          "pointer-events-none absolute bottom-2 left-2 right-2 z-[5] flex items-center gap-1",
+          "pointer-events-none absolute bottom-2 left-2 z-[5] flex items-center gap-1",
+          // As tall as with the plus, so the letters stand where the pointer's do.
+          keyboardRow ? "right-0 h-6" : "right-2",
           hoverEnabled && "group-hover:pointer-events-auto group-hover:opacity-100",
-          hoverActionsPinned ? "pointer-events-auto opacity-100" : "opacity-0",
+          hoverActionsPinned ? "pointer-events-auto opacity-100" : keyboardLift ? "opacity-100" : "opacity-0",
         )}
         data-card-lift="tray"
         data-card-lift-gpu={videoUnderneath ? "" : undefined}
         data-card-hover-bottom-actions=""
         data-card-hover-enabled={hoverEnabled ? "true" : undefined}
+        data-card-keyboard-row={keyboardRow ? "" : undefined}
         onClick={stopProp}
         onPointerDown={stopProp}
+        onTransitionEnd={(event) => {
+          if (keyboardRow && !keyboardLift && event.target === event.currentTarget && event.propertyName === "opacity") {
+            setKeyboardRow(false);
+          }
+        }}
       >
-        <CardCollectionsRow collections={block.collections} order={tags} />
-        <CardConnectMenu
-          block={block}
-          tags={tags}
-          currentTag={currentTag}
-          onToggleTag={onToggleTag}
-          onCreateAndAssign={onCreateAndAssign}
-          className="ml-auto"
-          onOpenChange={(open) => {
-            if (open) onInteractionStart?.();
-            setChannelOpen(open);
-          }}
-        />
+        <CardCollectionsRow collections={block.collections} order={tags} readOnly={keyboardRow} />
+        {!keyboardRow && (
+          <CardConnectMenu
+            block={block}
+            tags={tags}
+            currentTag={currentTag}
+            onToggleTag={onToggleTag}
+            onCreateAndAssign={onCreateAndAssign}
+            className="ml-auto"
+            onCloseAutoFocus={noFocusBackAfterPress}
+            onOpenChange={(open) => {
+              if (open) onInteractionStart?.();
+              else if (pointerIsOnMenu()) setHeldPastClose(true);
+              setChannelOpen(open);
+            }}
+          />
+        )}
       </div>
     </>
   );

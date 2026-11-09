@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { PNG } from 'pngjs';
 import { extensionBuildVersion, stampExtensionBuild } from './clipper-extension-payload.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -566,6 +567,124 @@ async function checkHeaderDragBySpaceName(worker) {
 // links without one; a Save into a collection whose page was deleted after
 // the clipper opened writes nothing, says why under the collection list, and
 // a Save again saves the clip without it.
+// The picture in the clipper's preview under a pointer resting over the list
+// (SPEC_CLIPPER.md, Layout). The browser may not reuse the picture here, so a
+// recreated element would ask the site again and stand without height until it
+// answers: that was the loop of the recording of 07.11.2026, with the panel's
+// height as its other half. The site holds the picture until the first
+// measure, so its arrival is measured too.
+async function checkPreviewPictureStaysPut(worker) {
+  const image = new PNG({ width: 1200, height: 600 });
+  image.data.fill(120);
+  const bytes = PNG.sync.write(image);
+  let pictureRequests = 0;
+  let letPictureGo;
+  const pictureMayGo = new Promise((resolve) => { letPictureGo = resolve; });
+  const server = createServer(async (request, response) => {
+    if (new URL(request.url, 'http://127.0.0.1').pathname === '/big.png') {
+      pictureRequests += 1;
+      await pictureMayGo;
+      response.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' }).end(bytes);
+      return;
+    }
+    // The page holds the picture only as a lazy address: the preview is what asks for it.
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(`<!doctype html><html><head><meta charset="utf-8"><title>Walton Ford</title>
+<meta property="og:type" content="article"></head><body><article><h1>Walton Ford</h1><p>Walton Ford</p>
+<p><img class="lazy" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" data-src="/big.png" width="1200" height="600" alt=""></p></article></body></html>`);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  // The earlier checks left a moved and resized panel; this one follows its content.
+  await worker.evaluate(() => chrome.storage.local.remove('mineOverlayBounds'));
+  const page = await context.newPage();
+  try {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const devtools = await context.newCDPSession(page);
+    await devtools.send('Network.enable');
+    await devtools.send('Network.setCacheDisabled', { cacheDisabled: true });
+    await page.goto(`${origin}/walton-ford`);
+    await worker.evaluate(async (url) => {
+      const tab = (await chrome.tabs.query({})).find((candidate) => candidate.url === url);
+      if (!tab) throw new Error('No tab for the local page');
+      await chrome.tabs.update(tab.id, { active: true });
+      await openClipperUi(tab);
+    }, page.url());
+    await page.getByRole('button', { name: 'Connect Worker collection', exact: true }).waitFor({ state: 'attached', timeout: 15_000 });
+    await page.locator('[data-clipper-preview] img').waitFor({ state: 'attached', timeout: 15_000 });
+    const row = await page.locator('[data-collection-picker-row]').first().boundingBox();
+    await page.mouse.move(row.x + row.width / 2, row.y + row.height / 2);
+    await page.locator('[data-collection-picker-row-active][data-collection-picker-interaction-mode="pointer"]').waitFor({ timeout: 15_000 });
+
+    // Every frame from before the picture until a second after it has come.
+    const started = page.evaluate(() => new Promise((resolve) => {
+      const shadow = document.querySelector('[data-mine-clipper-overlay]').shadowRoot;
+      const preview = shadow.querySelector('[data-clipper-preview]');
+      const picture = preview.querySelector('img');
+      let recreated = 0;
+      new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of [...record.addedNodes, ...record.removedNodes]) {
+            if (node.nodeName === 'IMG' || node.querySelector?.('img')) recreated += 1;
+          }
+        }
+      }).observe(preview, { childList: true, subtree: true });
+      const frames = [];
+      let shownAt = null;
+      const step = () => {
+        const now = performance.now();
+        const shown = picture.isConnected && picture.naturalHeight > 0;
+        if (shown && shownAt === null) shownAt = now;
+        frames.push({
+          shown,
+          panel: shadow.querySelector('[data-mine-clipper-panel]').getBoundingClientRect().height,
+          preview: preview.getBoundingClientRect().height,
+          search: shadow.querySelector('[data-collection-picker] input').getBoundingClientRect().top,
+          save: [...shadow.querySelectorAll('button')].find((button) => /^Save/.test(button.textContent ?? '')).getBoundingClientRect().top,
+          hover: shadow.querySelector('[data-collection-picker-row-active]')?.textContent ?? null,
+        });
+        if (shownAt !== null && now - shownAt > 1_000) resolve({ frames, recreated, picture: preview.querySelector('img') === picture });
+        else requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }));
+    await page.waitForTimeout(300);
+    letPictureGo();
+    const { frames, recreated, picture } = await started;
+    const arrived = frames.findIndex((frame) => frame.shown);
+    assert.ok(arrived > 3, 'the check did not see the picture arrive');
+    assert.ok(frames.slice(arrived).every((frame) => frame.shown), 'the picture went away');
+    assert.equal(recreated, 0, 'the picture was recreated');
+    assert.equal(picture, true, 'the picture is another element');
+    assert.equal(pictureRequests, 1, 'the picture was asked for again');
+    for (const key of ['panel', 'preview', 'search', 'save', 'hover']) {
+      assert.equal(new Set(frames.map((frame) => frame[key])).size, 1, `${key} changed: ${JSON.stringify([...new Set(frames.map((frame) => frame[key]))])}`);
+    }
+    assert.ok(frames[0].preview >= 270, `the body with a picture stands at its limit: ${frames[0].preview}`);
+
+    // A window lower than the panel: the previews give way, Save stays in the
+    // panel with nothing to scroll, the panel stays in the window.
+    await page.setViewportSize({ width: 1280, height: 500 });
+    await page.waitForFunction((inset) => {
+      const panel = document.querySelector('[data-mine-clipper-overlay]')?.shadowRoot?.querySelector('[data-mine-clipper-panel]')?.getBoundingClientRect();
+      return panel && panel.bottom <= window.innerHeight - inset + 0.5;
+    }, OVERLAY_INSET);
+    const low = await page.evaluate(() => {
+      const shadow = document.querySelector('[data-mine-clipper-overlay]').shadowRoot;
+      const panel = shadow.querySelector('[data-mine-clipper-panel]');
+      const save = [...shadow.querySelectorAll('button')].find((button) => /^Save/.test(button.textContent ?? '')).getBoundingClientRect();
+      return { saveToPanel: panel.getBoundingClientRect().bottom - save.bottom, scrolls: panel.firstElementChild.scrollHeight - panel.firstElementChild.clientHeight };
+    });
+    assert.ok(low.saveToPanel > 0, JSON.stringify(low));
+    assert.equal(low.scrolls, 0, JSON.stringify(low));
+    await devtools.detach();
+  } finally {
+    letPictureGo();
+    await page.close();
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
 async function checkCollectionsArePages(worker) {
   const listed = await worker.evaluate(async () => {
     const adapter = globalThis.MineStandaloneVault;
@@ -716,14 +835,24 @@ async function checkNativeHelperReplies() {
   }
 }
 
+// A server of a check, closed with the connections the browser still holds open:
+// a socket it opened ahead without a request keeps `close` waiting for minutes.
+function closedServer(server) {
+  return new Promise((resolve) => {
+    server.close(resolve);
+    server.closeAllConnections();
+  });
+}
+
 // The file of a picture from the browser (SPEC_CLIPPER.md, «Файл картинки из
 // браузера, отказ сайта и причина ошибки», Б1). A local site stands in for
 // the picture's server and counts every request; a local server stands in
 // for the helper's upload server. The bytes of a picture the tab shows reach
 // the upload byte for byte with no new request to the site: the picture
 // opened as the tab's document and a picture of a page from the same address.
-// A picture the cache does not keep and one the page does not show are left
-// to the helper's download, with no request from the browser either.
+// A picture the cache does not keep is left to the helper's download, with no
+// request from the browser either: this is the path of a helper without
+// `browser_files_v1` (SPEC_CLIPPER.md, «Один путь файла со страницы», Б12).
 async function checkPictureFileFromBrowser() {
   const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), randomBytes(600 * 1024)]);
   const png = Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), randomBytes(64 * 1024)]);
@@ -816,14 +945,640 @@ async function checkPictureFileFromBrowser() {
     assert.equal(requests.get('/fresh.jpg'), 1, 'the browser asked the site for a picture it does not keep');
 
     const elsewhere = await upload(`${origin}/gallery.html`, `${origin}/elsewhere.jpg`);
-    assert.deepEqual(elsewhere, { ok: false, reason: 'not_shown' });
-    assert.equal(requests.get('/elsewhere.jpg'), undefined, 'the browser asked the site for a picture the page does not show');
+    assert.deepEqual(elsewhere, { ok: false, reason: 'miss' });
+    assert.equal(requests.get('/elsewhere.jpg'), undefined, 'the browser asked the site for a picture of no cache');
     assert.equal(uploads.length, 2, 'a refused picture reached the upload server');
   } finally {
     for (const page of tabs) await page.close();
     await transport.close();
-    await new Promise((resolve) => site.close(resolve));
-    await new Promise((resolve) => uploadServer.close(resolve));
+    await closedServer(site);
+    await closedServer(uploadServer);
+  }
+}
+
+// A helper for the route of a file: it answers the status as the real one does
+// about this build, the plan from a file the check writes, and writes down each
+// discard. The plan itself comes from the save core in the worker; only
+// `reachable` is the check's, because the names of this site resolve by a rule
+// of the browser (the real helper asks DNS).
+const ROUTE_HELPER = `import { appendFileSync, readFileSync } from 'node:fs';
+const [identityPath, planPath, discardsPath] = process.argv.slice(2);
+let input = Buffer.alloc(0);
+process.stdin.on('data', (chunk) => {
+  input = Buffer.concat([input, chunk]);
+  while (input.length >= 4 && input.length >= 4 + input.readUInt32LE(0)) {
+    const length = input.readUInt32LE(0);
+    const request = JSON.parse(input.subarray(4, 4 + length).toString('utf8'));
+    input = input.subarray(4 + length);
+    let answer;
+    if (request.action === 'plan_page_files') answer = JSON.parse(readFileSync(planPath, 'utf8'));
+    else if (request.action === 'discard_pending_uploads') {
+      appendFileSync(discardsPath, JSON.stringify(request) + '\\n');
+      answer = { ok: true, discarded: request.upload_ids.length };
+    } else answer = { ok: true, connected: true, features: ['browser_files_v1'],
+      extension_build_id: JSON.parse(readFileSync(identityPath, 'utf8')).buildId };
+    const reply = Buffer.from(JSON.stringify({ _messageId: request._messageId, ...answer }));
+    const header = Buffer.alloc(4);
+    header.writeUInt32LE(reply.length);
+    process.stdout.write(Buffer.concat([header, reply]));
+  }
+});
+`;
+
+// The one route of a file (SPEC_CLIPPER.md, «Один путь файла со страницы»): the
+// real worker and the real page script against a site on two registrable domains
+// that counts every request and writes down its headers. The names resolve to
+// this Mac by a rule of the browser. A local server stands in for the upload
+// server, a disposable helper for the helper. What the requests carried goes
+// into the report: it is the proof for «Что не доказано», item 3.
+async function checkPageFileRoute() {
+  const SHOP = 'shop.mine-route.test';
+  const FILES = 'files.mine-route.test';
+  const CDN = 'cdn.elsewhere-route.test';
+  const sandbox = mkdtempSync(join(tmpdir(), 'mine-clipper-page-files-'));
+  const profile = join(sandbox, 'profile');
+  const planPath = join(sandbox, 'plan.json');
+  const discardsPath = join(sandbox, 'discards.jsonl');
+  const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+  const jpeg = (mark) => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from(mark), randomBytes(2048)]);
+  const bodies = new Map();
+  const bytesOf = (path) => {
+    if (!bodies.has(path)) bodies.set(path, jpeg(path));
+    return bodies.get(path);
+  };
+  /** @type {Array<{ host: string, path: string, headers: Record<string, string | string[] | undefined> }>} */
+  const seen = [];
+  const held = [];
+  const waitingFor = new Map();
+  const site = createServer((request, response) => {
+    const host = (request.headers.host ?? '').split(':')[0];
+    const path = new URL(request.url, 'http://local').pathname;
+    seen.push({ host, path, headers: request.headers });
+    waitingFor.get(path)?.();
+    const image = { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=3600' };
+    if (path === '/page.html') {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'set-cookie': 'session=shop; Path=/; Domain=mine-route.test' })
+        .end('<!doctype html><html><head><meta charset="utf-8"><title>Shop</title></head><body><img id="shown" src="/shown.jpg"></body></html>');
+    } else if (path === '/folder/page.html') {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'set-cookie': 'session=shop; Path=/; Domain=example.com' })
+        .end('<!doctype html><html><head><meta charset="utf-8"><title>Shop</title></head><body><img id="shown" src="/folder/shown.jpg"></body></html>');
+    } else if (path === '/folder/flaky.jpg' && requestsOf(path).length < 3) {
+      response.writeHead(503).end();
+    } else if (path === '/cookie') {
+      response.writeHead(200, { 'content-type': 'text/plain', 'set-cookie': 'elsewhere=cdn; Path=/' }).end('set');
+    } else if (path.startsWith('/limited')) {
+      response.writeHead(429, { 'retry-after': '600' }).end();
+    } else if (path === '/robot.jpg') {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end('<html>Are you a robot?</html>');
+    } else if (path === '/gone.jpg') {
+      response.writeHead(404).end();
+    } else if (path === '/moved.jpg') {
+      response.writeHead(302, { location: `http://${CDN}:${site.address().port}/target.jpg` }).end();
+    } else if (path === '/sibling-moved.jpg') {
+      response.writeHead(302, { location: `http://${CDN}:${site.address().port}/sibling-target.jpg` }).end();
+    } else if (path.startsWith('/held')) {
+      held.push(() => response.writeHead(200, { ...image, 'cache-control': 'no-store' }).end(bytesOf(path)));
+    } else {
+      response.writeHead(200, image).end(bytesOf(path));
+    }
+  });
+  const arrived = (path) => new Promise((resolve) => {
+    if (seen.some((entry) => entry.path === path)) resolve();
+    else waitingFor.set(path, resolve);
+  });
+  const uploads = [];
+  const token = randomBytes(16).toString('hex');
+  const uploadServer = createServer((request, response) => {
+    const parts = [];
+    request.on('data', (part) => parts.push(part));
+    request.on('end', () => {
+      if (request.headers.authorization !== `Bearer ${token}`) {
+        response.writeHead(403).end();
+        return;
+      }
+      const uploadId = randomBytes(16).toString('hex');
+      uploads.push({ uploadId, query: Object.fromEntries(new URL(request.url, 'http://local').searchParams), type: request.headers['content-type'], body: Buffer.concat(parts) });
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, upload_id: uploadId, size: Buffer.concat(parts).length }));
+    });
+  });
+  await new Promise((resolve) => site.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => uploadServer.listen(0, '127.0.0.1', resolve));
+  const at = (host, path) => `http://${host}:${site.address().port}${path}`;
+  const requestsOf = (path) => seen.filter((entry) => entry.path === path);
+  let browser;
+  try {
+    const hostName = readFileSync(join(extension, 'background.js'), 'utf8').match(/const HOST_NAME = "([^"]+)";/)?.[1];
+    assert.ok(hostName, 'packaged native host name is unavailable');
+    const helper = join(sandbox, 'helper.mjs');
+    writeFileSync(helper, ROUTE_HELPER);
+    writeFileSync(discardsPath, '');
+    const launcher = join(sandbox, 'helper');
+    writeFileSync(launcher, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(helper)} ${quote(join(extension, 'dist/runtime-identity.json'))} ${quote(planPath)} ${quote(discardsPath)} "$@"\n`, { mode: 0o700 });
+    mkdirSync(join(profile, 'NativeMessagingHosts'), { recursive: true });
+    writeFileSync(join(profile, `NativeMessagingHosts/${hostName}.json`), JSON.stringify({
+      name: hostName, description: 'Disposable Mine file route acceptance', path: launcher,
+      type: 'stdio', allowed_origins: [`chrome-extension://${extensionId}/`],
+    }));
+    browser = await chromium.launchPersistentContext(profile, {
+      channel: 'chromium', headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`,
+        // The browser folder judges an address by its public suffix (Б13): names
+        // reserved for examples, which this rule keeps on this Mac.
+        '--host-resolver-rules=MAP *.mine-route.test 127.0.0.1, MAP *.elsewhere-route.test 127.0.0.1, MAP *.example.com 127.0.0.1, MAP *.example.net 127.0.0.1'],
+    });
+    const firstWorker = browser.serviceWorkers()[0] ?? await browser.waitForEvent('serviceworker', { timeout: 15_000 });
+    const workerNow = () => browser.serviceWorkers().find((candidate) => candidate.url() === workerUrl) ?? firstWorker;
+    const clipper = await browser.newPage();
+    await clipper.route('**/dist/assets/*', (route) => route.abort());
+    await clipper.goto(`chrome-extension://${extensionId}/dist/index.html`);
+    const page = await browser.newPage();
+    await page.goto(at(SHOP, '/page.html'));
+    await page.waitForFunction(() => document.images[0]?.complete && document.images[0].naturalWidth >= 0);
+    const other = await browser.newPage();
+    await other.goto(at(CDN, '/cookie'));
+    await other.close();
+    const pageUrl = at(SHOP, '/page.html');
+    const tabId = await clipper.evaluate(async (address) =>
+      (await chrome.tabs.query({})).find((tab) => tab.url === address)?.id ?? null, pageUrl);
+    assert.equal(typeof tabId, 'number');
+
+    // The plan of the save core in the worker; the check says what DNS would.
+    const planned = async (request) => {
+      const plan = await workerNow().evaluate((command) => globalThis.MineCore.call(command), { op: 'page_file_plan', ...request });
+      const answer = { ok: true, ...plan, files: plan.files.map((file) => ({ ...file, reachable: true })) };
+      writeFileSync(planPath, JSON.stringify(answer));
+      return answer;
+    };
+    const start = (request) => ({
+      kind: 'start', ...request, tab_id: tabId, upload_port: uploadServer.address().port,
+      upload_token: token, vault_path: '/smoke-space',
+    });
+    // The clipper: `start`, the answer `done`, then `keep` and the port closes.
+    const collected = (request) => clipper.evaluate((message) => new Promise((resolve) => {
+      const port = chrome.runtime.connect({ name: `mine-page-files:${crypto.randomUUID()}` });
+      port.onMessage.addListener((answer) => {
+        if (answer.kind !== 'done') return;
+        port.postMessage({ kind: 'keep' });
+        port.disconnect();
+        resolve(answer.browser_files);
+      });
+      port.onDisconnect.addListener(() => resolve(null));
+      port.postMessage(message);
+    }), start(request));
+    const rules = () => workerNow().evaluate(() => chrome.declarativeNetRequest.getSessionRules());
+    const uploadOf = (entry) => uploads.find((upload) => upload.uploadId === entry.upload_id);
+
+    // A file of the page in its cache: no request.
+    const shown = at(SHOP, '/shown.jpg');
+    assert.equal(requestsOf('/shown.jpg').length, 1);
+    const plan = await planned({ document_url: pageUrl, body: `![a](${shown})` });
+    assert.equal(plan.files[0].referer, `http://${SHOP}:${site.address().port}/`);
+    const [fromCache] = await collected({ document_url: pageUrl, body: `![a](${shown})` });
+    assert.equal(fromCache.source, 'cache', JSON.stringify(fromCache));
+    assert.equal(requestsOf('/shown.jpg').length, 1, 'the site was asked for a file of the cache');
+    assert.ok(uploadOf(fromCache).body.equals(bytesOf('/shown.jpg')), 'the file of the cache differs');
+    assert.deepEqual(uploadOf(fromCache).query, { filename: 'picture.jpg', source: 'browser_file', vault_path: '/smoke-space' });
+    assert.equal(uploadOf(fromCache).type, 'image/jpeg');
+
+    // A file below the screen: one request of the page, with its Referer and cookie.
+    const below = at(SHOP, '/below.jpg');
+    await planned({ document_url: pageUrl, body: `![a](${below})` });
+    const [fromPage] = await collected({ document_url: pageUrl, body: `![a](${below})` });
+    assert.equal(fromPage.source, 'page', JSON.stringify(fromPage));
+    assert.equal(requestsOf('/below.jpg').length, 1);
+    assert.equal(requestsOf('/below.jpg')[0].headers.referer, pageUrl);
+    assert.match(requestsOf('/below.jpg')[0].headers.cookie ?? '', /session=shop/);
+    assert.ok(uploadOf(fromPage).body.equals(bytesOf('/below.jpg')));
+
+    // A file of another site: one request from outside, the Referer is the origin,
+    // no cookie. The domain of the same site carries the cookie.
+    const cross = at(CDN, '/cross.jpg');
+    const sibling = at(FILES, '/sibling.jpg');
+    const crossPlan = await planned({ document_url: pageUrl, body: `![a](${cross})\n\n![b](${sibling})` });
+    assert.deepEqual(crossPlan.files.map((file) => file.cookies), [false, true]);
+    const fromOutside = await collected({ document_url: pageUrl, body: `![a](${cross})\n\n![b](${sibling})` });
+    assert.deepEqual(fromOutside.map((entry) => entry.source), ['browser', 'browser'], JSON.stringify(fromOutside));
+    assert.equal(fromOutside[0].final_url, cross);
+    const crossRequest = requestsOf('/cross.jpg');
+    assert.equal(crossRequest.length, 1);
+    report.pageFileRequestHeaders = crossRequest[0].headers;
+    assert.equal(crossRequest[0].headers.referer, `http://${SHOP}:${site.address().port}/`, 'initiatorDomains with the extension id did not match');
+    assert.equal(crossRequest[0].headers.cookie, undefined, 'a cookie went to another site');
+    const siblingRequest = requestsOf('/sibling.jpg');
+    assert.equal(siblingRequest.length, 1);
+    assert.equal(siblingRequest[0].headers.referer, `http://${SHOP}:${site.address().port}/`);
+    assert.match(siblingRequest[0].headers.cookie ?? '', /session=shop/, 'the domain of the same site got no cookie');
+    assert.ok(uploadOf(fromOutside[0]).body.equals(bytesOf('/cross.jpg')));
+    assert.deepEqual(await rules(), [], 'a Referer rule outlived its answer');
+
+    // While a rule stands, the request of a tab to the same address keeps its own
+    // Referer: the rule names the worker's request only.
+    const heldPath = '/held-rule.jpg';
+    const heldUrl = at(CDN, heldPath);
+    const clipOrigin = `http://clip.mine-route.test:${site.address().port}/`;
+    await planned({ document_url: `${clipOrigin}page`, body: `![a](${heldUrl})` });
+    const heldCollection = collected({ document_url: `${clipOrigin}page`, body: `![a](${heldUrl})` });
+    await arrived(heldPath);
+    assert.equal((await rules()).length, 1, 'no rule while the request runs');
+    const secondArrived = new Promise((resolve) => {
+      const check = setInterval(() => {
+        if (requestsOf(heldPath).length >= 2) {
+          clearInterval(check);
+          resolve();
+        }
+      }, 20);
+    });
+    await page.evaluate((address) => { new Image().src = address; }, heldUrl);
+    await secondArrived;
+    assert.equal(requestsOf(heldPath)[0].headers.referer, clipOrigin);
+    assert.equal(requestsOf(heldPath)[1].headers.referer, `http://${SHOP}:${site.address().port}/`, 'the rule changed the request of a tab');
+    for (const respond of held.splice(0)) respond();
+    assert.equal((await heldCollection)[0].source, 'browser');
+
+    // A 429 names its wait, and closes the host for the next files of this Save;
+    // a web page is not the file; a 404 is reported.
+    const limited = [at(CDN, '/limited.jpg'), at(CDN, '/limited-next.jpg')];
+    const limitedRequest = { document_url: pageUrl, body: limited.map((url) => `![a](${url})`).join('\n\n') };
+    const limitedPlan = await planned(limitedRequest);
+    writeFileSync(planPath, JSON.stringify({ ...limitedPlan, parallel: 1, per_domain: 1 }));
+    const refusals = await collected(limitedRequest);
+    assert.deepEqual(refusals, [
+      { url: limited[0], status: 429, retry_after: 600 },
+      { url: limited[1], failure: 'host_limited', retry_after: 600 },
+    ]);
+    assert.equal(requestsOf('/limited-next.jpg').length, 0, 'a closed host was asked');
+    const failing = [at(FILES, '/robot.jpg'), at(FILES, '/gone.jpg')];
+    const failingRequest = { document_url: pageUrl, body: failing.map((url) => `![a](${url})`).join('\n\n') };
+    await planned(failingRequest);
+    assert.deepEqual(await collected(failingRequest), [
+      { url: failing[0], failure: 'not_a_file' },
+      { url: failing[1], status: 404 },
+    ]);
+
+    // A request of the page redirected to another domain is refused by the
+    // browser; the worker asks from outside, and the file costs two requests.
+    const moved = at(SHOP, '/moved.jpg');
+    await planned({ document_url: pageUrl, body: `![a](${moved})` });
+    const [afterRedirect] = await collected({ document_url: pageUrl, body: `![a](${moved})` });
+    assert.equal(afterRedirect.source, 'browser', JSON.stringify(afterRedirect));
+    assert.equal(afterRedirect.final_url, at(CDN, '/target.jpg'));
+    assert.equal(requestsOf('/moved.jpg').length, 2);
+    assert.equal(requestsOf('/target.jpg').length, 1);
+    report.pageFileRedirectHeaders = requestsOf('/target.jpg')[0].headers;
+    assert.equal(requestsOf('/target.jpg')[0].headers.referer, undefined, 'the rule of the first address reached the next hop');
+    assert.equal(requestsOf('/target.jpg')[0].headers.cookie, undefined, 'a redirect carried a cookie to another site');
+
+    // A file of the same site that redirects to another: its cookies stay on the
+    // site of the clip's page. Where the page's address leads is not the page's
+    // to decide with the person's login (Б6).
+    const siblingMoved = at(FILES, '/sibling-moved.jpg');
+    await planned({ document_url: pageUrl, body: `![a](${siblingMoved})` });
+    const [afterSiblingRedirect] = await collected({ document_url: pageUrl, body: `![a](${siblingMoved})` });
+    assert.equal(afterSiblingRedirect.source, 'browser', JSON.stringify(afterSiblingRedirect));
+    assert.equal(afterSiblingRedirect.final_url, at(CDN, '/sibling-target.jpg'));
+    assert.match(requestsOf('/sibling-moved.jpg')[0].headers.cookie ?? '', /session=shop/);
+    assert.equal(requestsOf('/sibling-moved.jpg')[1].headers.cookie, undefined);
+    assert.equal(requestsOf('/sibling-target.jpg').length, 1);
+    assert.equal(requestsOf('/sibling-target.jpg')[0].headers.cookie, undefined, 'a redirect of the same site carried a cookie to another');
+
+    // The clipper closes in the middle: the requests stop and the uploads go.
+    const closingPath = '/held-closing.jpg';
+    const closingRequest = { document_url: pageUrl, body: `![a](${shown})\n\n![b](${at(CDN, closingPath)})` };
+    await planned(closingRequest);
+    const uploadsBefore = uploads.length;
+    await clipper.evaluate((message) => {
+      globalThis.closingPort = chrome.runtime.connect({ name: `mine-page-files:${crypto.randomUUID()}` });
+      globalThis.closingPort.postMessage(message);
+    }, start(closingRequest));
+    await arrived(closingPath);
+    const uploadedFirst = uploads.slice(uploadsBefore);
+    assert.equal(uploadedFirst.length, 1, 'the file of the cache was not uploaded first');
+    await clipper.evaluate(() => globalThis.closingPort.disconnect());
+    const discards = () => readFileSync(discardsPath, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    const deadline = Date.now() + 5_000;
+    while (discards().length === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(discards().map((request) => request.upload_ids), [[uploadedFirst[0].uploadId]]);
+    assert.equal(discards()[0].vault_path, '/smoke-space');
+    assert.deepEqual(await rules(), [], 'the rule of a stopped request stayed');
+    held.splice(0);
+
+    // `done` without `keep`: the clipper closed before its Save, and the uploads go.
+    const droppedRequest = { document_url: pageUrl, body: `![a](${below})` };
+    await planned(droppedRequest);
+    const dropped = await clipper.evaluate((message) => new Promise((resolve) => {
+      const port = chrome.runtime.connect({ name: `mine-page-files:${crypto.randomUUID()}` });
+      port.onMessage.addListener((answer) => {
+        if (answer.kind === 'done') {
+          port.disconnect();
+          resolve(answer.browser_files);
+        }
+      });
+      port.postMessage(message);
+    }), start(droppedRequest));
+    const droppedDeadline = Date.now() + 5_000;
+    while (discards().length < 2 && Date.now() < droppedDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(discards()[1].upload_ids, [dropped[0].upload_id]);
+
+    // The worker restarts in the middle: the port closes, the clipper goes on
+    // with what it has, and the new worker takes away the rule of the old one.
+    const restartPath = '/held-restart.jpg';
+    const restartRequest = { document_url: pageUrl, body: `![a](${at(CDN, restartPath)})` };
+    await planned(restartRequest);
+    const interrupted = collected(restartRequest);
+    await arrived(restartPath);
+    assert.equal((await rules()).length, 1);
+    await restartWorker(clipper, browser);
+    assert.equal(await interrupted, null, 'the port of a collection outlived its worker');
+    await pollUntil(async () => ((await rules()).length === 0 ? true : undefined), 'the rule of the old worker to go');
+    const afterRestartRequest = { document_url: pageUrl, body: `![a](${cross})` };
+    await planned(afterRestartRequest);
+    const [afterRestart] = await collected(afterRestartRequest);
+    assert.ok(afterRestart.upload_id || afterRestart.status, JSON.stringify(afterRestart));
+    assert.deepEqual(await rules(), []);
+
+    // ── The browser folder (Б13): the same route, no helper, the same result. ──
+    // Its folder is OPFS: the system folder stays with the live acceptance.
+    const FOLDER_SHOP = 'shop.example.com';
+    const FOLDER_SIBLING = 'files.example.com';
+    const FOLDER_CDN = 'cdn.example.net';
+    const folderPage = await browser.newPage();
+    const folderPageUrl = at(FOLDER_SHOP, '/folder/page.html');
+    await folderPage.goto(folderPageUrl);
+    await folderPage.waitForFunction(() => document.images[0]?.complete && document.images[0].naturalWidth >= 0);
+    const cdnCookie = await browser.newPage();
+    await cdnCookie.goto(at(FOLDER_CDN, '/cookie'));
+    await cdnCookie.close();
+    const folderTab = await clipper.evaluate(async (address) =>
+      (await chrome.tabs.query({})).find((tab) => tab.url === address)?.id ?? null, folderPageUrl);
+    assert.equal(typeof folderTab, 'number');
+
+    // A journal of the database's second version, with one medium and its bytes,
+    // is read to its end after the upgrade.
+    const oldEntry = await workerNow().evaluate(async () => {
+      await new Promise((resolve, reject) => {
+        const removal = indexedDB.deleteDatabase('mine-standalone');
+        removal.onsuccess = resolve;
+        removal.onerror = () => reject(removal.error);
+      });
+      const fingerprint = await globalThis.MineCore.call({ op: 'fingerprint', value: JSON.stringify({ kind: 'capture', request: { block_type: 'image', title: 'Old' } }) });
+      const bytes = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3])], { type: 'image/jpeg' });
+      const toHex = (buffer) => Array.from(new Uint8Array(buffer), (n) => n.toString(16).padStart(2, '0')).join('');
+      const markdown = '---\nsaved_at: 2026-08-31T12:00:00Z\n---\n# Old';
+      const digest = async (data) => toHex(await crypto.subtle.digest('SHA-256', data));
+      const db = await new Promise((resolve, reject) => {
+        const opening = indexedDB.open('mine-standalone', 2);
+        opening.onupgradeneeded = () => {
+          for (const name of ['vault', 'bindings', 'operations']) opening.result.createObjectStore(name);
+        };
+        opening.onsuccess = () => resolve(opening.result);
+        opening.onerror = () => reject(opening.error);
+      });
+      const record = { id: 'old-entry', binding: 'pending', fingerprint, kind: 'capture', phase: 'prepared',
+        layout: { cards: 'Cards', media: 'Media', collections: 'Collections' }, newSpace: true,
+        slug: 'Cards/Old', block_type: 'image', markdown, hash: await digest(new TextEncoder().encode(markdown)),
+        media: { blob: bytes, extension: 'jpg', hash: await digest(await bytes.arrayBuffer()), path: 'Media/Old.jpg' } };
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(['operations'], 'readwrite');
+        tx.objectStore('operations').put(record, 'old-entry');
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+      const adapter = globalThis.MineStandaloneVault;
+      await adapter.storeDirectoryHandle(await navigator.storage.getDirectory());
+      const status = await adapter.getStandaloneStatus();
+      const upgraded = await new Promise((resolve, reject) => {
+        const opening = indexedDB.open('mine-standalone');
+        opening.onsuccess = () => {
+          const found = { version: opening.result.version, stores: [...opening.result.objectStoreNames].sort() };
+          opening.result.close();
+          resolve(found);
+        };
+        opening.onerror = () => reject(opening.error);
+      });
+      await new Promise((resolve, reject) => {
+        const opening = indexedDB.open('mine-standalone');
+        opening.onsuccess = () => {
+          const tx = opening.result.transaction(['operations'], 'readwrite');
+          tx.objectStore('operations').put({ ...record, binding: status.bindingId }, 'old-entry');
+          tx.oncomplete = () => { opening.result.close(); resolve(); };
+          tx.onerror = () => reject(tx.error);
+        };
+        opening.onerror = () => reject(opening.error);
+      });
+      const lookup = await adapter.lookupOperation('old-entry', status.bindingId);
+      const reply = await adapter.saveStandaloneBlock({ operation_id: 'old-entry', block_type: 'image', title: 'Old', operation_mode: 'resume' });
+      return { status, upgraded, lookup, reply };
+    });
+    assert.equal(oldEntry.status.permission, 'granted');
+    assert.deepEqual(oldEntry.upgraded, { version: 3, stores: ['bindings', 'operations', 'page_files', 'vault'] });
+    assert.equal(oldEntry.lookup.resumable, true);
+    assert.equal(oldEntry.reply.outcome, 'committed', JSON.stringify(oldEntry.reply));
+    const bindingId = oldEntry.status.bindingId;
+
+    const fileBytes = (path) => workerNow().evaluate(async (place) => {
+      let directory = await navigator.storage.getDirectory();
+      const parts = place.split('/');
+      for (const part of parts.slice(0, -1)) directory = await directory.getDirectoryHandle(part);
+      const file = await (await directory.getFileHandle(parts.at(-1))).getFile();
+      return Array.from(new Uint8Array(await file.arrayBuffer()));
+    }, path).then((bytes) => Buffer.from(bytes));
+    const keptFiles = () => workerNow().evaluate(() => new Promise((resolve, reject) => {
+      const opening = indexedDB.open('mine-standalone');
+      opening.onsuccess = () => {
+        const keys = opening.result.transaction(['page_files']).objectStore('page_files').getAllKeys();
+        keys.onsuccess = () => { opening.result.close(); resolve(keys.result); };
+        keys.onerror = () => reject(keys.error);
+      };
+      opening.onerror = () => reject(opening.error);
+    }));
+    const folderStart = (request) => ({ kind: 'start', executor: 'browser', image_url: null, video_posters: null, ...request,
+      document_url: folderPageUrl, tab_id: folderTab, upload_port: null, upload_token: null, vault_path: null });
+    const collectedForFolder = (request) => clipper.evaluate((message) => new Promise((resolve) => {
+      const port = chrome.runtime.connect({ name: `mine-page-files:${crypto.randomUUID()}` });
+      port.onMessage.addListener((answer) => {
+        if (answer.kind !== 'done') return;
+        port.postMessage({ kind: 'keep' });
+        port.disconnect();
+        resolve(answer.browser_files);
+      });
+      port.onDisconnect.addListener(() => resolve(null));
+      port.postMessage(message);
+    }), folderStart(request));
+    const savedOnPort = (payload) => clipper.evaluate((request) => new Promise((resolve) => {
+      const port = chrome.runtime.connect({ name: `mine-standalone-save:${crypto.randomUUID()}` });
+      port.onMessage.addListener((message) => {
+        if (message.kind !== 'done') return;
+        port.disconnect();
+        resolve(message.response);
+      });
+      port.onDisconnect.addListener(() => resolve(null));
+      port.postMessage({ kind: 'start', payload: request });
+    }), payload);
+    const clip = (operation, extra) => ({ operation_id: operation, binding_id: bindingId, executor_id: 'browser', block_type: 'article',
+      url: folderPageUrl, tags: [], saved_at: '2026-11-06T12:00:00', ...extra });
+
+    const pictures = {
+      shown: at(FOLDER_SHOP, '/folder/shown.jpg'),
+      below: at(FOLDER_SHOP, '/folder/below.jpg'),
+      cross: at(FOLDER_CDN, '/folder/cross.jpg'),
+      sibling: at(FOLDER_SIBLING, '/folder/sibling.jpg'),
+      flaky: at(FOLDER_SIBLING, '/folder/flaky.jpg'),
+      gone: at(FOLDER_CDN, '/gone.jpg'),
+      robot: at(FOLDER_CDN, '/robot.jpg'),
+    };
+    assert.equal(requestsOf('/folder/shown.jpg').length, 1);
+    const folderBody = Object.entries(pictures).map(([name, url]) => `![${name}](${url})`).join('\n\n');
+    const entries = await collectedForFolder({ body: folderBody });
+    assert.deepEqual(entries.map((entry) => entry.source ?? entry.status ?? entry.failure),
+      ['cache', 'page', 'browser', 'browser', 'browser', 404, 'not_a_file'], JSON.stringify(entries));
+    assert.equal(requestsOf('/folder/shown.jpg').length, 1, 'the site was asked for a file of the cache');
+    assert.equal(requestsOf('/folder/below.jpg').length, 1);
+    assert.equal(requestsOf('/folder/below.jpg')[0].headers.referer, folderPageUrl);
+    assert.match(requestsOf('/folder/below.jpg')[0].headers.cookie ?? '', /session=shop/);
+    const folderOrigin = `http://${FOLDER_SHOP}:${site.address().port}/`;
+    assert.equal(requestsOf('/folder/cross.jpg').length, 1);
+    assert.equal(requestsOf('/folder/cross.jpg')[0].headers.referer, folderOrigin);
+    assert.equal(requestsOf('/folder/cross.jpg')[0].headers.cookie, undefined, 'a cookie went to another site');
+    assert.equal(requestsOf('/folder/sibling.jpg')[0].headers.referer, folderOrigin);
+    assert.match(requestsOf('/folder/sibling.jpg')[0].headers.cookie ?? '', /session=shop/, 'the domain of the same site got no cookie');
+    assert.equal(requestsOf('/folder/flaky.jpg').length, 3, 'a 503 is asked for three times in a browser folder');
+    assert.deepEqual(await rules(), [], 'a Referer rule outlived its answer');
+    assert.equal((await keptFiles()).length, 5);
+
+    const requestsBefore = seen.length;
+    const article = await savedOnPort(clip('folder-article', { title: 'Folder clip', body: folderBody, browser_files: entries }));
+    assert.equal(article.outcome, 'committed', JSON.stringify(article));
+    assert.equal(seen.length, requestsBefore, 'the Save asked the site again');
+    assert.deepEqual(article.remote_media, [
+      { url: pictures.gone, kind: 'image', reason: 'download_failed' },
+      { url: pictures.robot, kind: 'image', reason: 'download_failed' },
+    ]);
+    assert.deepEqual(article.media_reasons, [
+      { url: pictures.gone, reason: `${FOLDER_CDN} did not give the file (HTTP 404).` },
+      { url: pictures.robot, reason: `${FOLDER_CDN} did not give the file: the answer is a web page.` },
+    ]);
+    for (const [index, name] of ['shown', 'below', 'cross', 'sibling', 'flaky'].entries()) {
+      const path = new URL(pictures[name]).pathname;
+      assert.ok((await fileBytes(`Media/Folder clip (image ${index + 1}).jpg`)).equals(bytesOf(path)), `the file of ${name} differs`);
+    }
+    const folderNote = (await fileBytes('Cards/Folder clip.md')).toString('utf8');
+    for (const [index, name] of ['shown', 'below', 'cross', 'sibling', 'flaky'].entries()) {
+      assert.ok(folderNote.includes(`![[Folder clip (image ${index + 1}).jpg|${name}]]`), folderNote);
+      assert.ok(!folderNote.includes(pictures[name]), `${name} stayed a link`);
+    }
+    assert.ok(folderNote.includes(`![gone](${pictures.gone})`), folderNote);
+    assert.deepEqual(await keptFiles(), [], 'the kept files outlived the receipt');
+    assert.deepEqual(await savedOnPort(clip('folder-article', { title: 'Folder clip', body: folderBody, browser_files: entries })), article, 'the receipt does not repeat its answer');
+
+    // The picture of a video card is its thumbnail; a link without its preview is saved.
+    const preview = at(FOLDER_CDN, '/folder/preview.jpg');
+    const previewEntries = await collectedForFolder({ body: '', image_url: preview });
+    const video = await savedOnPort(clip('folder-video', { block_type: 'video', title: 'Folder video', body: '', image_url: preview, browser_files: previewEntries }));
+    assert.equal(video.outcome, 'committed', JSON.stringify(video));
+    assert.match((await fileBytes('Cards/Folder video.md')).toString('utf8'), /thumbnail: .*Folder video\.jpg/);
+    const brokenPreview = at(FOLDER_CDN, '/gone.jpg');
+    const brokenEntries = await collectedForFolder({ body: 'Text', image_url: brokenPreview });
+    const link = await savedOnPort(clip('folder-link', { block_type: 'link', title: 'Folder link', body: 'Text', image_url: brokenPreview, browser_files: brokenEntries }));
+    assert.equal(link.outcome, 'committed', JSON.stringify(link));
+    assert.equal(link.warning, `${FOLDER_CDN} did not give the file (HTTP 404).`);
+    // A picture card without its file is not saved, and names why.
+    const picture = await savedOnPort(clip('folder-picture', { block_type: 'image', title: 'Folder picture', body: '', image_url: brokenPreview, browser_files: brokenEntries }));
+    assert.equal(picture.terminal_rejected, true, JSON.stringify(picture));
+    assert.equal(picture.error, `${FOLDER_CDN} did not give the file (HTTP 404).`);
+
+    // The shipped Save button, not a hand-written request: the clipper window
+    // collects on its port, fixes the operation and saves on its own port.
+    await workerNow().evaluate(async (binding) => {
+      await chrome.storage.local.set({ mineSaveDestination: { executor: 'browser', bindingId: binding } });
+    }, bindingId);
+    const fromButton = at(FOLDER_CDN, '/folder/from-button.jpg');
+    const buttonSource = await browser.newPage();
+    await buttonSource.goto('about:blank');
+    const buttonOpened = browser.waitForEvent('page', { timeout: 15_000 });
+    await workerNow().evaluate(async (post) => {
+      const tab = (await chrome.tabs.query({})).filter((candidate) => candidate.url === 'about:blank').at(-1);
+      if (!tab) throw new Error('No source tab for the clipper window');
+      await openClipperUi(tab, { preloaded: post });
+    }, {
+      metadata: { url: folderPageUrl, documentUrl: folderPageUrl, title: 'Folder button', description: null, image: null, author: null, ogType: 'article',
+        favicon: null, selection: '', detectedType: 'article', isArticle: true },
+      article: { title: 'Folder button', content: `Text.\n\n![from the button](${fromButton})`, byline: null, excerpt: null },
+    });
+    const buttonWindow = await buttonOpened;
+    await buttonWindow.waitForURL(/\/dist\/index\.html/, { timeout: 15_000 });
+    try {
+      await buttonWindow.getByRole('button', { name: 'Save', exact: true }).click({ timeout: 15_000 });
+      await buttonWindow.locator('[data-clipper-saved]').waitFor({ state: 'visible', timeout: 15_000 });
+    } catch (error) {
+      throw new Error(`Save into a browser folder through the button: ${await buttonWindow.locator('body').innerText()}`, { cause: error });
+    }
+    assert.equal(requestsOf('/folder/from-button.jpg').length, 1);
+    const buttonNote = (await fileBytes('Cards/Folder button.md')).toString('utf8');
+    assert.ok(buttonNote.includes('![[Folder button (image 1).jpg|from the button]]'), buttonNote);
+    assert.ok((await fileBytes('Media/Folder button (image 1).jpg')).equals(bytesOf('/folder/from-button.jpg')));
+    assert.deepEqual(await keptFiles(), [], 'the kept files of the button outlived the receipt');
+    await buttonWindow.close();
+    await buttonSource.close();
+    await workerNow().evaluate(async () => chrome.storage.local.remove(['mineSaveDestination']));
+
+    // The clipper closes in the middle of a collection: the requests stop and the
+    // kept files go.
+    const folderClosing = '/held-folder-closing.jpg';
+    await clipper.evaluate((message) => {
+      globalThis.folderClosingPort = chrome.runtime.connect({ name: `mine-page-files:${crypto.randomUUID()}` });
+      globalThis.folderClosingPort.postMessage(message);
+    }, folderStart({ body: `![a](${pictures.shown})\n\n![b](${at(FOLDER_CDN, folderClosing)})` }));
+    await arrived(folderClosing);
+    await pollUntil(async () => ((await keptFiles()).length === 1 ? true : undefined), 'the file of the cache to be kept');
+    await clipper.evaluate(() => globalThis.folderClosingPort.disconnect());
+    await pollUntil(async () => ((await keptFiles()).length === 0 ? true : undefined), 'the kept files of a closed clipper to go');
+    assert.deepEqual(await rules(), [], 'the rule of a stopped request stayed');
+    held.splice(0);
+
+    // The worker stops in the middle of a collection: the port closes, the Save goes
+    // with what it has, and an address nothing asked for stays a link.
+    const folderRestart = '/held-folder-restart.jpg';
+    const interruptedFolder = collectedForFolder({ body: `![a](${at(FOLDER_CDN, folderRestart)})` });
+    await arrived(folderRestart);
+    await restartWorker(clipper, browser);
+    assert.equal(await interruptedFolder, null, 'the port of a collection outlived its worker');
+    held.splice(0);
+    const unasked = at(FOLDER_CDN, folderRestart);
+    const withoutFile = await savedOnPort(clip('folder-unasked', { title: 'Folder unasked', body: `![a](${unasked})` }));
+    assert.deepEqual(withoutFile.media_reasons, [{ url: unasked, reason: `${FOLDER_CDN} did not give the file: the browser did not ask for the file.` }]);
+
+    // As the worker starts, a kept file older than a day goes unless a journal entry
+    // or a fixed operation of the clipper names it.
+    const dayAndMore = 25 * 60 * 60 * 1000;
+    await workerNow().evaluate(async (age) => {
+      const old = Date.now() - age;
+      const blob = new Blob(['bytes']);
+      await new Promise((resolve, reject) => {
+        const opening = indexedDB.open('mine-standalone');
+        opening.onsuccess = () => {
+          const tx = opening.result.transaction(['page_files', 'operations'], 'readwrite');
+          for (const id of ['orphan', 'in-journal', 'in-clipper']) tx.objectStore('page_files').put({ id, url: 'https://cdn.example.net/x.jpg', blob, size: blob.size, hash: 'x', stored_at: old }, id);
+          tx.objectStore('page_files').put({ id: 'young', url: 'https://cdn.example.net/y.jpg', blob, size: blob.size, hash: 'y', stored_at: Date.now() }, 'young');
+          tx.objectStore('operations').put({ id: 'open-entry', binding: 'x', fingerprint: 'x', phase: 'media_publishing', uploads: ['in-journal'] }, 'open-entry');
+          tx.oncomplete = () => { opening.result.close(); resolve(); };
+          tx.onerror = () => reject(tx.error);
+        };
+        opening.onerror = () => reject(opening.error);
+      });
+      await chrome.storage.local.set({ 'minePendingSaveOperation:fixed': { payload: { browser_files: [{ url: 'https://cdn.example.net/x.jpg', upload_id: 'in-clipper' }] } } });
+    }, dayAndMore);
+    await restartWorker(clipper, browser);
+    await pollUntil(async () => (!(await keptFiles()).includes('orphan') ? true : undefined), 'an old file nothing names to go');
+    assert.deepEqual((await keptFiles()).sort(), ['in-clipper', 'in-journal', 'young']);
+    await clipper.evaluate(() => chrome.storage.local.remove('minePendingSaveOperation:fixed'));
+    report.browserFolderRoute = 'OPFS-not-OS-folder';
+  } finally {
+    await browser?.close();
+    await closedServer(site);
+    await closedServer(uploadServer);
+    // Allocated above for this check only, never a user profile or helper.
+    rmSync(sandbox, { recursive: true, force: true });
   }
 }
 
@@ -1753,6 +2508,7 @@ try {
   await checkScreenshotForAnyClip(worker);
   await checkCropOnPageHidingEmptyElements(worker);
   await checkHeaderDragBySpaceName(worker);
+  await checkPreviewPictureStaysPut(worker);
   await checkCollectionsArePages(worker);
   await checkXPostWithoutPageCache(worker);
   await checkPagesOnDiskAndLargeRecords(worker);
@@ -1761,6 +2517,7 @@ try {
   context = undefined;
   await checkXPageWorldAfterReload();
   await checkNativeHelperReplies();
+  await checkPageFileRoute();
   await checkBrowserRestartRunsBuildOnDisk();
   await checkUpdateReloadsWorker();
   await checkIconClickAfterUpdate();
@@ -1775,6 +2532,7 @@ try {
     cropLayerShownOnPageHidingEmptyElements: true,
     overlayMovedResizedKeptAndFitted: true, overlayResizedByTopLeftCorner: true,
     overlayDraggedBySpaceName: true, spaceMenuOpensOnClickNotDrag: true, openClipClearedAfterSave: true,
+    previewPictureStaysPutUnderRestingPointer: true, saveInsidePanelInLowWindow: true,
     collectionsListedAsPagesOnly: true, saveIntoCollectionWithoutPageWritesNothing: true,
     browserRestartRunsBuildOnDisk: true, restartedWorkerKeepsLoadedBuild: true, updateOnDiskReloadsWorker: true,
     keptSaveCoreOfRunningBuild: true, saveCoreOfAnotherBuildRefused: true, openingReloadsIntoBuildOnDisk: true,
@@ -1785,6 +2543,7 @@ try {
     liveClipperHoldsUpdateAndPageSaysSo: true,
     overlayStyledOnPageOnDisk: true, svgPageOpensClipperWindow: true, localStorageKeepsRecordPast10MB: true,
     pictureFileFromBrowserWithoutRequest: true, pictureOutsideCacheLeftToHelper: true,
+    pageFileRouteOnTwoDomains: true,
     filesystem: 'OPFS-not-OS-folder' });
 } catch (error) {
   report.error = error.stack ?? String(error);

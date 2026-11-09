@@ -21,6 +21,7 @@ import type { TagCount } from "@/types";
 export type PickerTag = Omit<TagCount, "count"> & { count: number | null };
 import { CONNECT_ACTION_BUTTON_CLASS, SIDEBAR_ROW_ACTION_BUTTON_PX } from "@/lib/appLayout";
 import { collectionRefLabel } from "@/lib/collections";
+import { isPrintableKeyboardKey } from "@/lib/keyboardTargets";
 import { cn } from "@/lib/utils";
 
 interface CollectionPickerProps {
@@ -74,10 +75,6 @@ export const COLLECTION_PICKER_CONTENT_CLASS =
 
 export const COLLECTION_PICKER_INLINE_SURFACE_CLASS =
   "bg-card text-card-foreground flex flex-col overflow-hidden rounded-1 border p-0 shadow-md";
-
-function isPrintableKeyboardKey(event: ReactKeyboardEvent): boolean {
-  return event.key.length === 1 && !event.metaKey && !event.altKey && !event.ctrlKey;
-}
 
 function applyPendingMembership(
   selectedTags: readonly string[],

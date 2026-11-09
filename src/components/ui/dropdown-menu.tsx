@@ -104,7 +104,8 @@ function DropdownMenuTrigger({
 function useMenuPlateOffsets(
   surface: HTMLElement | null,
   side: MenuSide,
-  align: MenuAlign
+  align: MenuAlign,
+  plateOf?: (trigger: HTMLElement) => HTMLElement | null
 ): MenuPlateOffsets {
   const [offsets, setOffsets] = React.useState<MenuPlateOffsets>({
     sideOffset: MENU_PLATE_GAP_PX,
@@ -116,7 +117,7 @@ function useMenuPlateOffsets(
     if (!trigger) return
     const next = menuPlateOffsets(
       trigger.getBoundingClientRect(),
-      menuPlateOf(trigger).getBoundingClientRect(),
+      (plateOf?.(trigger) ?? menuPlateOf(trigger)).getBoundingClientRect(),
       side,
       align
     )
@@ -125,7 +126,7 @@ function useMenuPlateOffsets(
         ? current
         : next
     )
-  }, [surface, side, align])
+  }, [surface, side, align, plateOf])
   return offsets
 }
 
@@ -138,6 +139,7 @@ function DropdownMenuContent({
   align = "start",
   collisionPadding = FLOATING_LAYER_EDGE_PX,
   widthRole = "action",
+  plateOf,
   ref,
   onPointerDownOutside,
   onCloseAutoFocus,
@@ -149,6 +151,9 @@ function DropdownMenuContent({
   side?: MenuSide
   align?: MenuAlign
   widthRole?: FloatingMenuWidth
+  /** The plate the menu comes out of, when it is not the trigger's own: a
+   *  stable function; `null` from it falls back to the trigger. */
+  plateOf?: (trigger: HTMLElement) => HTMLElement | null
 }) {
   const [surfaceNode, setSurfaceNode] = React.useState<HTMLDivElement | null>(null)
   const ownRef = React.useCallback(
@@ -160,7 +165,7 @@ function DropdownMenuContent({
     [ref]
   )
   const surface = useMenuSurface("dropdown", ownRef, { onPointerDownOutside, onCloseAutoFocus })
-  const offsets = useMenuPlateOffsets(surfaceNode, side, align)
+  const offsets = useMenuPlateOffsets(surfaceNode, side, align, plateOf)
   return (
     <DropdownMenuPortal>
       <DropdownMenuPrimitive.Content

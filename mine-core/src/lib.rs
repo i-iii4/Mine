@@ -3,6 +3,7 @@
 //! This library performs no filesystem, network, database or clock operations.
 pub mod domain;
 pub mod links;
+pub mod page_files;
 pub mod save;
 
 #[cfg(target_arch = "wasm32")]

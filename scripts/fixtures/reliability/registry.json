@@ -1371,6 +1371,7 @@
     {
       "paths": [
         "src-tauri/src/markdown_images.rs",
+        "mine-core/src/domain/markdown_images.rs",
         "src-tauri/src/lib.rs",
         "src-tauri/src/bin/native_host.rs",
         "src-tauri/src/tooling/localize_remote_media.rs",
@@ -1378,7 +1379,7 @@
       ],
       "requirement": "SPEC_AUDIT_FIXES.md#### В4. Клиппер",
       "tests": [
-        "src-tauri/src/markdown_images.rs",
+        "mine-core/src/domain/markdown_images.rs",
         "src-tauri/src/bin/native_host.rs",
         "src-tauri/src/tooling/localize_remote_media.rs",
         "src-tauri/src/lib.rs",
@@ -1579,6 +1580,8 @@
         "src/lib/hoverIntent.ts",
         "src/lib/hoverIntent.test.ts",
         "src/components/Grid.tsx",
+        "src/lib/cardLift.ts",
+        "src/lib/cardLift.test.ts",
         "src/components/CollectionPicker.tsx",
         "src/lib/cardCollections.ts",
         "src/lib/edgeFade.ts",
@@ -1591,6 +1594,7 @@
         "src/components/Card.test.tsx",
         "src/components/CardHoverMenu.test.tsx",
         "src/lib/hoverIntent.test.ts",
+        "src/lib/cardLift.test.ts",
         "src/components/Grid.test.tsx",
         "src/components/Sidebar.test.tsx",
         "src/lib/settingsChanged.test.ts",
@@ -1811,12 +1815,28 @@
       "paths": [
         "src/lib/hoverPreviewTiming.ts",
         "src/lib/hoverPreviewTiming.test.ts",
+        "src/lib/restingPointer.ts",
+        "src/lib/restingPointer.test.ts",
+        "src/lib/hoverPreviewWindow.ts",
+        "src/lib/hoverPreviewWindow.test.ts",
+        "src/components/HoverPreviewWindow.tsx",
+        "src/components/HoverPreviewWindow.test.tsx",
+        "src/components/graph/interaction.ts",
+        "src/components/graph/interaction.test.ts",
+        "src/hooks/useHoverPreviewOpener.ts",
+        "src/hooks/useHoverPreviewOpener.test.tsx",
         "src/hooks/useHoverIntent.tsx",
         "src/hooks/useHoverIntent.test.tsx"
       ],
       "requirement": "SPEC_CARD_STATES.md#### С7. Тишина при движении курсора",
       "tests": [
         "src/lib/hoverPreviewTiming.test.ts",
+        "src/lib/restingPointer.test.ts",
+        "src/lib/hoverPreviewWindow.test.ts",
+        "src/components/HoverPreviewWindow.test.tsx",
+        "src/components/GraphView.test.tsx",
+        "src/components/graph/interaction.test.ts",
+        "src/hooks/useHoverPreviewOpener.test.tsx",
         "src/hooks/useHoverIntent.test.tsx"
       ],
       "command": "test:frontend"
@@ -2509,6 +2529,7 @@
         "extension/popup/overlayCropEscape.test.tsx",
         "extension/popup/OverlayShell.test.tsx",
         "extension/popup/PopupApp.test.tsx",
+        "extension/popup/previewPicture.test.tsx",
         "extension/popup/components/ClipperOverflowMenu.test.tsx",
         "extension/popup/hooks/useClipperState.openClip.test.tsx",
         "extension/popup/hooks/useClipperState.overlayCrop.test.tsx",
@@ -2528,6 +2549,7 @@
         "extension/popup/overlay-entry.test.tsx",
         "extension/popup/OverlayShell.test.tsx",
         "extension/popup/PopupApp.test.tsx",
+        "extension/popup/previewPicture.test.tsx",
         "extension/popup/components/ClipperOverflowMenu.test.tsx",
         "extension/popup/hooks/useClipperState.openClip.test.tsx",
         "extension/popup/lib/openClip.test.ts",
@@ -3074,7 +3096,8 @@
     },
     {
       "paths": [
-        "src-tauri/Cargo.toml"
+        "src-tauri/Cargo.toml",
+        "Cargo.toml"
       ],
       "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-08. Защита от потерянного обновления",
       "tests": [
@@ -3873,6 +3896,16 @@
     },
     {
       "paths": [
+        "scripts/paste-feed-audit.mjs"
+      ],
+      "requirement": "SPEC_KEYBOARD.md#### Вставка в ленту",
+      "tests": [
+        "scripts/paste-feed-audit.mjs"
+      ],
+      "command": "test:paste-feed"
+    },
+    {
+      "paths": [
         "scripts/sidebar-strip-audit.mjs",
         "src/components/Sidebar.tsx",
         "src/hooks/useChannelPreviewsEvents.ts"
@@ -4216,6 +4249,40 @@
       "requirement": "DESIGN_SYSTEM.md#### Компактная строка боковой панели (22.10.2026)",
       "tests": [
         "src/lib/sidebarRowsMorph.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/hooks/useSidebarKeyboardFocus.ts",
+        "src/hooks/useSidebarKeyboardFocus.test.tsx",
+        "src/hooks/useSidebarKeyboardFocus.card.test.tsx",
+        "src/lib/sidebarKeyboardFocus.ts",
+        "src/lib/sidebarKeyboardFocus.test.ts",
+        "src/lib/bottomBarOverflow.ts",
+        "src/lib/bottomBarOverflow.test.ts",
+        "src/lib/commandBinding.ts"
+      ],
+      "requirement": "SPEC_KEYBOARD.md### Sidebar (фокус в боковом меню)",
+      "tests": [
+        "src/hooks/useSidebarKeyboardFocus.test.tsx",
+        "src/hooks/useSidebarKeyboardFocus.card.test.tsx",
+        "src/lib/sidebarKeyboardFocus.test.ts",
+        "src/lib/bottomBarOverflow.test.ts",
+        "src/lib/commandBinding.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/sidebarListMorph.ts",
+        "src/lib/sidebarListMorph.test.ts",
+        "src/lib/sidebarLook.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md##### Переход между List и таблицей (01.11.2026)",
+      "tests": [
+        "src/lib/sidebarListMorph.test.ts",
+        "src/lib/sidebarColumns.test.ts"
       ],
       "command": "test:frontend"
     },
@@ -4779,6 +4846,160 @@
         "scripts/clipper-worker-smoke.mjs"
       ],
       "command": "test:clipper-worker"
+    },
+    {
+      "paths": [
+        "extension/lib/browserFile.js",
+        "extension/lib/browserFile.test.ts",
+        "extension/lib/pageFiles.js",
+        "extension/lib/pageFiles.test.ts",
+        "extension/lib/standaloneVault.js",
+        "extension/lib/standaloneVault.pageFiles.test.ts",
+        "extension/popup/lib/messaging.ts",
+        "extension/popup/lib/standalone.ts",
+        "extension/popup/lib/standalone.test.ts",
+        "extension/popup/hooks/useClipperState.ts"
+      ],
+      "requirement": "SPEC_CLIPPER.md### Один путь файла со страницы (05.11.2026)",
+      "tests": [
+        "extension/lib/browserFile.test.ts",
+        "extension/lib/pageFiles.test.ts",
+        "extension/lib/standaloneVault.pageFiles.test.ts",
+        "extension/popup/lib/messaging.test.ts",
+        "extension/popup/lib/standalone.test.ts",
+        "extension/popup/hooks/useClipperState.standalone.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "mine-core/src/page_files.rs",
+        "mine-core/src/domain/markdown_images.rs",
+        "src-tauri/src/native_host_tests/page_files_tests.rs",
+        "src-tauri/src/native_host_tests/fake_web.rs",
+        "src-tauri/src/storage/clipper_uploads.rs",
+        "src-tauri/src/storage/save_operations.rs",
+        "src-tauri/src/net.rs",
+        "src-tauri/src/bin/native_host.rs"
+      ],
+      "requirement": "SPEC_CLIPPER.md### Один путь файла со страницы (05.11.2026)",
+      "tests": [
+        "mine-core/src/page_files.rs",
+        "src-tauri/src/native_host_tests/page_files_tests.rs",
+        "src-tauri/src/storage/clipper_uploads.rs",
+        "src-tauri/src/net.rs",
+        "src-tauri/src/bin/native_host.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "mine-core/src/save.rs",
+        "mine-core/tests/save-fixtures.json"
+      ],
+      "requirement": "SPEC_CLIPPER.md### Один путь файла со страницы (05.11.2026)",
+      "tests": [
+        "scripts/test-save-core.mjs",
+        "mine-core/src/bin/core-fixture.rs"
+      ],
+      "command": "test:save-core"
+    },
+    {
+      "paths": [
+        "scripts/clipper-worker-smoke.mjs"
+      ],
+      "requirement": "SPEC_CLIPPER.md### Один путь файла со страницы (05.11.2026)",
+      "tests": [
+        "scripts/clipper-worker-smoke.mjs"
+      ],
+      "command": "test:clipper-worker"
+    },
+    {
+      "paths": [
+        "mine-core/Cargo.toml"
+      ],
+      "requirement": "SPEC_CLIPPER.md### Один путь файла со страницы (05.11.2026)",
+      "tests": [
+        "scripts/build-identity.mjs"
+      ],
+      "command": "test:clipper-worker"
+    },
+    {
+      "paths": [
+        "scripts/image-preview-motion-audit.mjs"
+      ],
+      "requirement": "SPEC_MEDIA_ASSET_ACTIONS.md### Движение просмотра изображения",
+      "tests": [
+        "scripts/image-preview-motion-audit.mjs"
+      ],
+      "command": "test:image-preview"
+    },
+    {
+      "paths": [
+        "scripts/swipe-scroller-audit.mjs"
+      ],
+      "requirement": "SPEC_NARROW_WINDOW.md### Правила",
+      "tests": [
+        "scripts/swipe-scroller-audit.mjs"
+      ],
+      "command": "test:swipe-scroller"
+    },
+    {
+      "paths": [
+        "src/lib/horizontalScroller.ts",
+        "src/lib/horizontalScroller.test.ts"
+      ],
+      "requirement": "SPEC_NARROW_WINDOW.md### Правила",
+      "tests": [
+        "src/lib/horizontalScroller.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/imagePreviewMotion.ts",
+        "src/lib/imagePreviewMotion.test.ts",
+        "src/components/ImagePreviewOverlay.tsx",
+        "src/components/ImagePreviewOverlay.test.tsx"
+      ],
+      "requirement": "SPEC_MEDIA_ASSET_ACTIONS.md### Движение просмотра изображения",
+      "tests": [
+        "src/lib/imagePreviewMotion.test.ts",
+        "src/components/ImagePreviewOverlay.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/test/setup.ts",
+        "src/test/setup.test.ts"
+      ],
+      "requirement": "PRINCIPLES.md#### 6. Тесты — спецификация в коде",
+      "tests": [
+        "src/test/setup.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/pictureVersions.ts",
+        "src/lib/pictureVersions.test.ts"
+      ],
+      "requirement": "SPEC_THUMBNAILS.md#### Адрес картинки (09.11.2026)",
+      "tests": [
+        "src/lib/pictureVersions.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/FeedVideoSurface.tsx"
+      ],
+      "requirement": "SPEC_THUMBNAILS.md#### Адрес картинки (09.11.2026)",
+      "tests": [
+        "src/components/FeedVideoSurface.test.tsx"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

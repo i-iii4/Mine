@@ -1088,6 +1088,41 @@ fn parse_feed_preview_manifest(raw: Option<&str>) -> Option<FeedPreviewManifest>
     raw.and_then(|value| serde_json::from_str::<FeedPreviewManifest>(value).ok())
 }
 
+/// The part of a preview manifest that names pictures: its kind, its primary
+/// preview, each tile's source and derived picture, and the count past the
+/// tiles. Geometry is left out: the generator measures it into the manifest
+/// after the fact, so it changes with no change to what is drawn.
+type PicturePlan = (
+    FeedPreviewKind,
+    Option<String>,
+    Vec<(String, Option<String>, bool, bool)>,
+    usize,
+);
+
+fn picture_plan(raw: Option<&str>) -> Option<PicturePlan> {
+    parse_feed_preview_manifest(raw).map(|manifest| {
+        (
+            manifest.kind,
+            manifest.primary_preview_path,
+            manifest
+                .tiles
+                .into_iter()
+                .map(|tile| (tile.source_path, tile.preview_path, tile.is_video, tile.is_video_poster))
+                .collect(),
+            manifest.overflow_count,
+        )
+    })
+}
+
+/// Whether the manifests `before` and `after` of one card draw it from
+/// different pictures, so its derived previews have to be made again
+/// (SPEC_EDITING.md, Л3.3 step 8). New words in a card with the same
+/// pictures are no such change; a picture added, dropped, moved or renamed
+/// is.
+pub fn picture_plans_differ(before: Option<&str>, after: Option<&str>) -> bool {
+    picture_plan(before) != picture_plan(after)
+}
+
 fn autoplay_container_for_source(src: &str) -> Option<FeedPlaybackContainer> {
     if is_remote_media(src) {
         return None;

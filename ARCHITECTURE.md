@@ -1412,6 +1412,30 @@ screenshot keeps 25 MiB. Otherwise the native host downloads `image_url`; a
 `429` is never retried, and a failed download names the site, the status and
 `Retry-After` instead of `MissingMedia` (Б2, Б3).
 
+Решение 05.11.2026; путь с помощником и браузерный исполнитель реализованы 06.11.2026,
+живая приёмка открыта (PLAN.md, 50.72; [SPEC_CLIPPER.md](SPEC_CLIPPER.md), «Один путь
+файла со страницы», Б4 по Б13).
+Каждый файл, который клиппер берёт со страницы, сначала получает браузер: файл
+карточки-картинки, медиа тела статьи, превью ссылки, превью видео, постер. Файл на
+домене страницы берётся из её кэша или обычным запросом самой страницы. Файл на другом
+домене запрашивает фон с `Referer` от сессионного правила `declarativeNetRequest` на
+один этот запрос; cookie идут только на тот же регистрируемый домен. Что запрашивать,
+решает функция ядра `page_file_plan`: разбор Markdown, имена и переписывание тела
+переходят в `mine-core`, поэтому копии в JavaScript нет. Помощник уточняет её ответ
+разрешением имени (`plan_page_files`), получает файлы через Upload Server до записи
+`.md` и сам скачивает только то, что браузер не получил, кроме случаев `429`, `404` и
+`410`. Причина выбора: сайт может отказать отдельной программе, а браузеру он эту
+страницу уже показал.
+
+Папка браузера получает тот же результат, медиа лежат файлами (решение пользователя
+06.11.2026, Б13). Байты ждут записи в IndexedDB (`page_files`) вместо Upload Server, а
+Save идёт по своему порту, потому что соединения с помощником, которое держит фон живым,
+здесь нет. `.md` пишется последним, но группа файлов не атомарна и сброса на диск нет: это гарантии File System
+Access, а не выбор Mine (`docs/sc0-save-safety.md`). Имя, которое разрешается во
+внутренний адрес, браузер распознать не может, и Б13 называет, что из этого следует.
+Новые зависимости `mine-core`: `pulldown-cmark` и список публичных суффиксов (крейт
+`psl`), строки таблицы зависимостей изменятся с кодом.
+
 ### 016: Filesystem-first visibility over SQLite-only route reads
 
 | Approach | Problem |
@@ -2183,7 +2207,8 @@ Canvas перезапускает симуляцию всякий раз, ког
 | getrandom | 0.3.x | OS random bytes for native-host upload tokens | MIT/Apache-2.0 |
 | tiny_http | latest | Local HTTP upload server for extension binary payloads | MIT/Apache-2.0 |
 | httpdate | 1.x | `Retry-After` as an HTTP date for a refused media download | MIT/Apache-2.0 |
-| pulldown-cmark | 0.13.x | Разбор CommonMark в помощнике клиппера: примеры `![…]` в коде не становятся вставками (SPEC_AUDIT_FIXES.md, Б4.4) | MIT |
+| pulldown-cmark | 0.13.x | Разбор CommonMark в ядре сохранения: примеры `![…]` в коде не становятся вставками (SPEC_AUDIT_FIXES.md, Б4.4) | MIT |
+| psl | 2.x | Список публичных суффиксов в ядре сохранения: какому сайту идут cookie файла и какое имя не считается внутренним (SPEC_CLIPPER.md, Б6, Б13) | MIT/Apache-2.0 |
 | react | 19.x | UI-фреймворк | MIT |
 | vite | latest | Сборщик | MIT |
 | react-force-graph-2d | 1.x | Canvas force-directed Graph View renderer with zoom/pan/hit-testing | MIT |

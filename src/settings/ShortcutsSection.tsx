@@ -18,7 +18,7 @@ import { persistCommandOverrides } from "@/lib/shortcutOverrides";
 import { cn } from "@/lib/utils";
 import { rejectionMessage, validateShortcut } from "@/lib/shortcutValidation";
 
-const CONTEXT_ORDER: readonly CommandContext[] = ["global", "feed", "element", "selection"];
+const CONTEXT_ORDER: readonly CommandContext[] = ["global", "feed", "element", "selection", "sidebar"];
 
 function bindingFromEvent(event: KeyboardEvent): CommandBinding | null {
   if (["Meta", "Shift", "Alt", "Control"].includes(event.key)) return null;

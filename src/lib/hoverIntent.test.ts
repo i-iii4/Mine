@@ -56,6 +56,137 @@ function setup() {
   return { time, intent, changes, glide, arrive, chosenHistory };
 }
 
+describe("the preview window's attending mode (SPEC_CARD_STATES.md, С7.11)", () => {
+  it("has one threshold: on at or below it and off above it, going either way", () => {
+    const { glide, intent, time } = setup();
+    time.advance(HOVER_INTENT.velocityWindowMs);
+    expect(intent.isAttending()).toBe(true);
+    // The reading of steady movement runs a little above its speed.
+    glide("a", HOVER_INTENT.previewSpeed * 0.9, 120);
+    expect(intent.isAttending()).toBe(true);
+    glide("a", HOVER_INTENT.previewSpeed * 3, 80);
+    expect(intent.isAttending()).toBe(false);
+    // No band to slow through: just under the threshold it is on again.
+    glide("a", HOVER_INTENT.previewSpeed * 0.9, 120);
+    expect(intent.isAttending()).toBe(true);
+    glide("a", HOVER_INTENT.previewSpeed * 0.7, 120);
+    expect(intent.isAttending()).toBe(true);
+  });
+
+  it("tells its listener when a pointer that stopped comes back on, with no new step", () => {
+    const { glide, intent, time } = setup();
+    let told = 0;
+    intent.setAttendingListener(() => {
+      told += 1;
+    });
+    glide("a", 5, 80);
+    expect(told).toBe(1);
+    expect(intent.isAttending()).toBe(false);
+    time.advance(HOVER_INTENT.velocityWindowMs);
+    expect(told).toBe(2);
+    expect(intent.isAttending()).toBe(true);
+  });
+
+  it("stays off while the surface does not answer, and after content moved under a still pointer", () => {
+    const { intent, time, arrive } = setup();
+    time.advance(HOVER_INTENT.velocityWindowMs);
+    intent.setSuspended(true);
+    expect(intent.isAttending()).toBe(false);
+    intent.setSuspended(false);
+    expect(intent.isAttending()).toBe(true);
+    intent.displace();
+    expect(intent.isAttending()).toBe(false);
+    time.advance(HOVER_INTENT.scrollSettleMs + HOVER_INTENT.velocityWindowMs);
+    expect(intent.isAttending()).toBe(false);
+    arrive("a");
+    time.advance(HOVER_INTENT.velocityWindowMs);
+    expect(intent.isAttending()).toBe(true);
+  });
+
+  it("does not move the slow answers' threshold", () => {
+    const { glide, intent } = setup();
+    glide("a", HOVER_INTENT.previewSpeed * 0.9, 120);
+    expect(intent.isAttending()).toBe(true);
+    expect(intent.isSlow()).toBe(false);
+    expect(intent.state.slow).toBeNull();
+  });
+});
+
+describe("a pointer that stopped after a fast arrival (SPEC_CARD_STATES.md, С8.6)", () => {
+  // WebKit's clock is coarsened to milliseconds in seconds' arithmetic, so its
+  // times carry rounding noise, and adding the window across a power of two drops
+  // it: 2047.0000000000002 + 60 is exactly 2107. The window must read the same at
+  // both ends, or the last sample stays fresh with no moment left to age it out.
+  it("raises the card when the sample's age is read at a rounded moment", () => {
+    const { time, intent } = setup();
+    time.advance(2047.0000000000002 - time.now);
+    expect(time.now).toBe(2047.0000000000002);
+    intent.move("card", 500, 100);
+    expect(intent.state.raised).toBeNull();
+    time.advance(200);
+    expect(intent.state.raised).toBe("card");
+  });
+});
+
+describe("a menu going away from over a still pointer (SPEC_CARD_STATES.md, С7.8)", () => {
+  /** On a card at rest at (1, 100), the point `arrive` reaches first. */
+  const onRaisedCard = () => {
+    const engine = setup();
+    engine.arrive("card");
+    engine.time.advance(HOVER_INTENT.velocityWindowMs + 10);
+    expect(engine.intent.state.raised).toBe("card");
+    return engine;
+  };
+
+  it("raises the card at once when the point comes back after a leave, with no movement", () => {
+    const { time, intent } = onRaisedCard();
+    // A right click: the menu opens under the pointer, and WebKit says it left.
+    intent.setSuspended(true);
+    intent.leave();
+    time.advance(500);
+    intent.setSuspended(false);
+    expect(intent.state.raised).toBeNull();
+    // The menu is gone, and WebKit tells the card under the same point.
+    intent.move("card", 1, 100);
+    expect(intent.state.raised).toBe("card");
+  });
+
+  it("raises the card at once when the menu lay over it and the point never changed", () => {
+    const { time, intent } = onRaisedCard();
+    intent.setSuspended(true);
+    intent.move(null, 1, 100);
+    time.advance(500);
+    intent.setSuspended(false);
+    expect(intent.state.raised).toBeNull();
+    intent.move("card", 1, 100);
+    expect(intent.state.raised).toBe("card");
+  });
+
+  it("С7.5: the same point after a leave does not lift the silence of a card that slid under the pointer", () => {
+    const { time, intent } = onRaisedCard();
+    intent.displace();
+    intent.leave();
+    time.advance(HOVER_INTENT.scrollSettleMs + 10);
+    intent.move("other", 1, 100);
+    time.advance(2000);
+    expect(intent.state.raised).toBeNull();
+    // A real step ends it.
+    intent.move("other", 2, 100);
+    time.advance(HOVER_INTENT.velocityWindowMs + 10);
+    expect(intent.state.raised).toBe("other");
+  });
+
+  it("still reads entering at another point as unknown speed", () => {
+    const { time, intent } = onRaisedCard();
+    intent.leave();
+    time.advance(500);
+    intent.move("card", 40, 100);
+    expect(intent.state.raised).toBeNull();
+    time.advance(HOVER_INTENT.velocityWindowMs + 10);
+    expect(intent.state.raised).toBe("card");
+  });
+});
+
 describe("hover intent (SPEC_CARD_STATES.md, С7)", () => {
   it("С7.1: chooses a target after the pointer rests on it for the dwell", () => {
     const { time, intent, arrive } = setup();
@@ -225,22 +356,49 @@ describe("card lift arrival (SPEC_CARD_STATES.md, С8.6)", () => {
 
   it("lifts nothing while the pointer sweeps across cards", () => {
     const { glide, changes } = setup();
-    glide("a", 2, 80);
-    glide("b", 2, 80);
-    glide("c", 1.2, 80);
+    // The first step after a rest is timed as one frame: 9 px/ms reads 4.5.
+    glide("a", 9, 80);
+    glide("b", 5, 80);
+    glide("c", 5, 80);
     expect(changes.some((state) => state.raised !== null)).toBe(false);
   });
 
   it("lifts the card at once when the pointer arrives at lifting speed, with no dwell", () => {
     const { glide, intent } = setup();
-    glide("a", HOVER_INTENT.liftMaxSpeed * 0.8, 8);
+    glide("a", HOVER_INTENT.liftEntrySpeed * 0.8, 8);
     expect(intent.state.raised).toBe("a");
     expect(intent.state.chosen).toBeNull();
   });
 
+  it("keeps the lift mode on up to the exit speed: the next card lifts at a speed the entry would not allow", () => {
+    const { glide, arrive, intent } = setup();
+    arrive("a");
+    expect(intent.state.raised).toBe("a");
+    glide("b", HOVER_INTENT.liftExitSpeed, 40);
+    expect(intent.state.raised).toBe("b");
+  });
+
+  it("turns the lift mode off above the exit speed, and takes it back only at the entry speed", () => {
+    const { glide, intent } = setup();
+    glide("a", HOVER_INTENT.liftExitSpeed * 3, 80);
+    expect(intent.state.raised).toBeNull();
+    // Slowed, but between the two thresholds: the mode stays off.
+    glide("b", (HOVER_INTENT.liftEntrySpeed + HOVER_INTENT.liftExitSpeed) / 2, 120);
+    expect(intent.state.raised).toBeNull();
+    glide("c", HOVER_INTENT.liftEntrySpeed * 0.9, 120);
+    expect(intent.state.raised).toBe("c");
+  });
+
+  it("holds the mode's exit at the values the spec names", () => {
+    expect(HOVER_INTENT.liftEntrySpeed).toBe(3);
+    expect(HOVER_INTENT.liftExitSpeed).toBe(3.5);
+    expect(HOVER_INTENT.maxSpeed).toBe(0.25);
+    expect(HOVER_INTENT.previewSpeed).toBe(0.5);
+  });
+
   it("lifts the card a fast pointer stops on within the velocity window", () => {
     const { glide, time, intent } = setup();
-    glide("a", 2, 80);
+    glide("a", 9, 80);
     expect(intent.state.raised).toBeNull();
     time.advance(HOVER_INTENT.velocityWindowMs);
     expect(intent.state.raised).toBe("a");
@@ -277,3 +435,74 @@ describe("card lift arrival (SPEC_CARD_STATES.md, С8.6)", () => {
   });
 });
 
+describe("the lift's speed rule and the other answers (SPEC_CARD_STATES.md, С8.6)", () => {
+  it("lifts nothing on the first report of a pointer entering the surface, until its speed reads", () => {
+    const time = fakeClock();
+    const intent = new HoverIntent(() => {}, time.clock);
+    intent.move("a", 0, 100);
+    expect(intent.state.raised).toBeNull();
+    time.advance(HOVER_INTENT.velocityWindowMs);
+    expect(intent.state.raised).toBe("a");
+  });
+
+  it("С7.5: a card sliding under a still pointer does not lift until the pointer really moves", () => {
+    const { time, intent, arrive, changes } = setup();
+    arrive("a");
+    expect(intent.state.raised).toBe("a");
+    const before = changes.length;
+    for (let step = 0; step < 20; step += 1) {
+      time.advance(16);
+      intent.displace();
+      // WebKit reports the same point over whatever card is now under it.
+      intent.move(`slid-${step}`, 1, 100);
+    }
+    time.advance(2000);
+    expect(intent.state.raised).toBeNull();
+    expect(changes.slice(before).filter((state) => state.raised !== null)).toHaveLength(0);
+    arrive("slid-19");
+    expect(intent.state.raised).toBe("slid-19");
+  });
+
+  it("С7.5: a pointer moving while the content settles lifts nothing until it settles", () => {
+    const { time, intent, glide } = setup();
+    intent.displace();
+    glide("a", 3, 80);
+    expect(intent.state.raised).toBeNull();
+    time.advance(HOVER_INTENT.scrollSettleMs);
+    expect(intent.state.raised).toBe("a");
+  });
+
+  it("С7.8: a drag or an open menu drops the lift and holds new ones until it ends", () => {
+    const { glide, intent } = setup();
+    glide("a", 3, 8);
+    intent.setSuspended(true);
+    expect(intent.state.raised).toBeNull();
+    glide("b", 3, 80);
+    expect(intent.state.raised).toBeNull();
+    intent.setSuspended(false);
+    glide("c", 3, 8);
+    expect(intent.state.raised).toBe("c");
+  });
+
+  it("С7.2: leaves the other answers to their own speed: a sweep lights and chooses nothing", () => {
+    const { intent, glide, changes } = setup();
+    for (const target of ["a", "b", "c", "d"]) glide(target, 1.5, 120);
+    expect(intent.state.raised).toBe("d");
+    expect(intent.isSlow()).toBe(false);
+    expect(changes.every((state) => state.chosen === null && state.slow === null)).toBe(true);
+  });
+
+  it("С7.1, С7.3: leaves the dwell and the warm neighbour as they are", () => {
+    const { time, intent, arrive, glide } = setup();
+    arrive("a");
+    time.advance(HOVER_INTENT.dwellMs - 20);
+    expect(intent.state.chosen).toBeNull();
+    time.advance(40);
+    expect(intent.state.chosen).toBe("a");
+    glide("b", 0.2, 24);
+    expect(intent.state.chosen).toBe("b");
+    glide("c", 2, 40);
+    expect(intent.state.chosen).toBe("b");
+    expect(intent.state.raised).toBe("c");
+  });
+});

@@ -14,11 +14,13 @@ describe("ScreenshotPreview", () => {
     );
 
     // The image box is the section's only elastic element: it may compress
-    // and lets object-contain scale the screenshot down.
+    // and lets object-fit scale the screenshot down. Its height stands before
+    // the frame arrives.
     const imageBox = container.querySelector("img")?.parentElement as HTMLElement;
     expect(imageBox).toHaveClass("shrink");
     expect(imageBox).toHaveClass("overflow-hidden");
     expect(imageBox).toHaveClass("min-h-24");
+    expect(imageBox).toHaveClass("h-[220px]");
 
     // Crop Area and Retake must never shrink away — that was the v1 bug the
     // elastic model exists to prevent.

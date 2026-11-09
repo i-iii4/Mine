@@ -1,3 +1,4 @@
+import type { Ref } from "react";
 import { getFileName } from "@/lib/displayTitle";
 import { commandById } from "@/lib/commandRegistry";
 import { cn } from "@/lib/utils";
@@ -10,7 +11,7 @@ import type {
   TagCount,
 } from "@/types";
 import { ChromeActions } from "./ChromeRow";
-import { ChromeNameField } from "./ChromeNameField";
+import { ChromeNameField, type ChromeNameFieldHandle } from "./ChromeNameField";
 import { CardMoreMenu } from "./CardHoverMenu";
 import { ChromeCloseButton } from "./ChromeCloseButton";
 import { renameErrorMessage } from "./RenameBlockDialog";
@@ -75,6 +76,7 @@ export function MainSecondaryTopBar({
   onRequestRename,
   onRenameFile,
   onCheckFileName,
+  nameFieldRef,
   onRequestDelete,
   onDetailClose,
   onDetailCollapse,
@@ -101,6 +103,8 @@ export function MainSecondaryTopBar({
   /// Whether a name typed for the open card would be refused, and why;
   /// writes nothing.
   onCheckFileName: (block: LightBlock | IndexedBlock, newStem: string) => Promise<RenameBlockError | null>;
+  /// The open card's name, for the card's `Rename…` to reach.
+  nameFieldRef?: Ref<ChromeNameFieldHandle>;
   onRequestDelete: (slug: string) => void;
   onDetailClose: () => void;
   /// Chooses «Card view: Peek» and gives the open card to its window
@@ -190,6 +194,7 @@ export function MainSecondaryTopBar({
             block={detailBlock}
             onRename={onRenameFile}
             onCheck={onCheckFileName}
+            fieldRef={nameFieldRef}
           />
           <ChromeActions className="ml-auto">
           <CardMoreMenu
@@ -248,14 +253,17 @@ export function DetailCardFileName({
   block,
   onRename,
   onCheck,
+  fieldRef,
 }: {
   block: LightBlock | IndexedBlock;
   onRename: (block: LightBlock | IndexedBlock, newStem: string) => Promise<void>;
   onCheck: FileNameCheck;
+  fieldRef?: Ref<ChromeNameFieldHandle>;
 }) {
   const fileName = getFileName(block);
   return (
     <ChromeNameField
+      ref={fieldRef}
       name={fileName}
       title={fileName}
       fieldLabel="Rename file"

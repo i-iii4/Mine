@@ -4,6 +4,8 @@ import { Blob as NodeBlob } from "node:buffer";
 import { webcrypto } from "node:crypto";
 import { createRequire } from "node:module";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import "./browserFile.js";
+import "./pageFiles.js";
 import "./saveProtocol.js";
 import "./standaloneVault.js";
 
@@ -22,6 +24,9 @@ class Journal {
     this.records.set(`${store}:${key}`, structuredClone(value));
     this.afterPut?.(store, value);
   }
+  async delete(store: string, key: string) { this.records.delete(`${store}:${key}`); }
+  /** The ids of the kept files of a clip. */
+  kept() { return [...this.records.keys()].filter((key) => key.startsWith("page_files:")); }
 }
 
 class FileHandle {
@@ -87,7 +92,6 @@ type Options = {
   directory: DirectoryHandle;
   store: Journal;
   binding_id?: string;
-  fetch?: unknown;
   afterPrepared?: () => void;
   afterEffect?: (effect: string) => void;
 };
@@ -97,15 +101,25 @@ type Options = {
 const adapter = (globalThis as unknown as { MineStandaloneVault: {
   saveStandaloneBlock(request: Record<string, unknown>, options: Options): Promise<Reply>;
   lookupOperation(id: string, binding: string, options: Options): Promise<Reply>;
+  collectPageFiles(request: Record<string, unknown>, work: Record<string, unknown>, options: Options): Promise<unknown[]>;
 } }).MineStandaloneVault;
 const timestamp = "2026-08-31T12:34:56Z";
 const request = (extra = {}) => ({ operation_id: "recovery-1", binding_id: "test-vault", executor_id: "browser",
   block_type: "article", title: "Original", body: "Original material", tags: [], saved_at: timestamp, ...extra });
 const image = (extra = {}) => request({ block_type: "image", body: "", image_url: "https://example.com/photo.png", ...extra });
-const fetchImage = async () => ({ ok: true, blob: async () => new NodeBlob(["image bytes"], { type: "image/png" }) });
+type Asked = { url: string };
+const imageBytes = (file: Asked) => ({ kind: "file", blob: new NodeBlob(["image bytes"], { type: "image/png" }), source: "browser", finalUrl: file.url });
 let folder: DirectoryHandle;
 let journal: Journal;
-const options = (): Options => ({ directory: folder, store: journal, fetch: fetchImage });
+const options = (): Options => ({ directory: folder, store: journal });
+/** The clip after its collection, as the clipper fixes it (SPEC_CLIPPER.md, Б9, Б13). */
+async function collected(clip: Record<string, unknown>, request: (file: Asked) => unknown = imageBytes) {
+  const browser_files = await adapter.collectPageFiles({ document_url: "https://example.com/page", body: null, image_url: clip.image_url, video_posters: null }, {
+    signal: new AbortController().signal, limiter: globalThis.MinePageFiles.createLimiter(),
+    pageRead: async () => ({ kind: "elsewhere" }), request: async (file: Asked) => request(file), stored: () => undefined,
+  }, options());
+  return { ...clip, browser_files };
+}
 beforeEach(() => {
   folder = new DirectoryHandle("Mine");
   journal = new Journal();
@@ -118,16 +132,19 @@ describe("standalone recovery invariants", () => {
     for (const name of ["Cards", "Media", "Collections"]) await folder.getDirectoryHandle(name, { create: true });
     const mine = await folder.getDirectoryHandle(".mine", { create: true });
     mine.files.set("layout.json", new FileHandle(JSON.stringify({ cards: "Cards", media: "Media", collections: "Collections" })));
-    await adapter.saveStandaloneBlock(image(), { ...options(), afterPrepared: () => { throw new Error("worker stopped"); } });
+    const clip = await collected(image());
+    await adapter.saveStandaloneBlock(clip, { ...options(), afterPrepared: () => { throw new Error("worker stopped"); } });
     const media = await folder.getDirectoryHandle("Media", { create: true });
     media.files.set("Original.png", new FileHandle(foreign));
     const rejected = await adapter.lookupOperation("recovery-1", "test-vault", options());
     expect(rejected).toMatchObject({ code: "name_conflict", outcome: "not_committed", terminal_rejected: true });
-    expect(await adapter.saveStandaloneBlock(image({ operation_mode: "resume" }), options())).toEqual(rejected);
-    expect(await journal.get("operations", "recovery-1")).toMatchObject({ phase: "rejected", markdown: expect.any(String), media: { blob: expect.anything() } });
+    expect(await adapter.saveStandaloneBlock({ ...clip, operation_mode: "resume" }, options())).toEqual(rejected);
+    // The text stays in the entry, and the files go: a new Save collects them anew (Б9, Б13).
+    expect(await journal.get("operations", "recovery-1")).toMatchObject({ phase: "rejected", markdown: expect.any(String), files: [{ path: "Media/Original.png" }] });
+    expect(journal.kept()).toEqual([]);
     expect(await folder.text("Media/Original.png")).toBe(foreign);
     expect(folder.directories.get("Cards")?.files.size ?? 0).toBe(0);
-    expect(await adapter.saveStandaloneBlock(image({ operation_id: "explicit-retry" }), options())).toMatchObject({ ok: true, slug: "Cards/Original" });
+    expect(await adapter.saveStandaloneBlock(await collected(image({ operation_id: "explicit-retry" })), options())).toMatchObject({ ok: true, slug: "Cards/Original" });
     expect(await folder.text("Cards/Original.md")).toContain("[[Original (2).png]]");
     expect(await folder.text("Media/Original.png")).toBe(foreign);
   });
@@ -148,13 +165,15 @@ describe("standalone recovery invariants", () => {
   });
 
   it("does not call a conflict terminal after media publication began", async () => {
-    await adapter.saveStandaloneBlock(image(), { ...options(), afterEffect: effect => { if (effect === "media") throw new Error("worker stopped"); } });
+    const clip = await collected(image());
+    await adapter.saveStandaloneBlock(clip, { ...options(), afterEffect: effect => { if (effect === "media") throw new Error("worker stopped"); } });
     folder.directories.get("Cards")!.files.set("Original.md", new FileHandle("Foreign content"));
     const result = await adapter.lookupOperation("recovery-1", "test-vault", options());
     expect(result).toMatchObject({ outcome: "unknown" });
     expect(result.terminal_rejected).not.toBe(true);
-    expect(await adapter.saveStandaloneBlock(image({ operation_mode: "resume" }), options())).toMatchObject({ outcome: "unknown" });
-    expect(await journal.get("operations", "recovery-1")).toMatchObject({ phase: "media_publishing", media: { blob: expect.anything() } });
+    expect(await adapter.saveStandaloneBlock({ ...clip, operation_mode: "resume" }, options())).toMatchObject({ outcome: "unknown" });
+    expect(await journal.get("operations", "recovery-1")).toMatchObject({ phase: "media_publishing", files: [{ path: "Media/Original.png" }] });
+    expect(journal.kept()).toHaveLength(1);
     expect(await folder.text("Media/Original.png")).toBe("image bytes");
     expect(await folder.text("Cards/Original.md")).toBe("Foreign content");
   });
@@ -163,19 +182,20 @@ describe("standalone recovery invariants", () => {
     journal.afterPut = (store, value) => {
       if (store === "operations" && value.phase === "media_published") throw new Error("worker stopped after durable transition");
     };
-    await adapter.saveStandaloneBlock(image(), options());
+    const clip = await collected(image());
+    await adapter.saveStandaloneBlock(clip, options());
     expect(await journal.get("operations", "recovery-1")).toMatchObject({ phase: "media_published" });
     journal.afterPut = undefined;
     folder.directories.get("Media")!.files.delete("Original.png");
     expect(await adapter.lookupOperation("recovery-1", "test-vault", options())).toMatchObject({ outcome: "unknown" });
-    expect(await adapter.saveStandaloneBlock(image({ operation_mode: "resume" }), options())).toMatchObject({ outcome: "unknown" });
+    expect(await adapter.saveStandaloneBlock({ ...clip, operation_mode: "resume" }, options())).toMatchObject({ outcome: "unknown" });
     expect(folder.directories.get("Media")!.files.size).toBe(0);
     expect(folder.directories.get("Cards")!.files.size).toBe(0);
   });
 
   it("passes prepared metadata and explicit media references to the same capture constructor", async () => {
     const metadata = { description: "An image description", width: 640, height: 480, author: "Author" };
-    const capture = image(metadata);
+    const capture = await collected(image(metadata));
     expect(await adapter.saveStandaloneBlock(capture, options())).toMatchObject({ ok: true });
     const canonical = await call({ op: "capture", request: {
       slug: "Cards/Original", block_type: "image", title: "Original", description: metadata.description,
@@ -186,12 +206,13 @@ describe("standalone recovery invariants", () => {
   });
 
   it("recovers a terminal pre-effect rejection without dispatching the request again", async () => {
-    const fetcher = vi.fn(async () => ({ ok: false, status: 503 }));
-    const rejected = await adapter.saveStandaloneBlock(image(), { ...options(), fetch: fetcher });
+    const asked = vi.fn(() => ({ kind: "status", status: 404, retryAfter: null }));
+    const clip = await collected(image(), asked);
+    const rejected = await adapter.saveStandaloneBlock(clip, options());
     expect(rejected).toMatchObject({ outcome: "not_committed", code: "download_failed", terminal_rejected: true });
     expect(await adapter.lookupOperation("recovery-1", "test-vault", options())).toEqual(rejected);
-    expect(await adapter.saveStandaloneBlock(image({ operation_mode: "resume" }), options())).toEqual(rejected);
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(await adapter.saveStandaloneBlock({ ...clip, operation_mode: "resume" }, options())).toEqual(rejected);
+    expect(asked).toHaveBeenCalledTimes(1);
     expect(folder.directories.size).toBe(0);
   });
 

@@ -6,7 +6,9 @@
 // the user agent's `outline-style: auto` ring. The audit plays the presses
 // that leave focus on an element and the key after them, then focuses every
 // focusable element after a key in each state of the window, and fails on any
-// computed `auto` outline. The full App runs on a Tauri mock. Starts and
+// computed `auto` outline. It also plays a card's More button under a real
+// pointer: no ring of its own after a press, and the hover back under the still
+// pointer when the menu closes. The full App runs on a Tauri mock. Starts and
 // stops its own Vite.
 import assert from "node:assert/strict";
 import { webkit } from "playwright";
@@ -184,6 +186,83 @@ try {
     await page.keyboard.press("ArrowRight");
     await settle(page, 300);
     await expectNoRing(page, "the picture's preview opened with a press, then an arrow");
+    await page.close();
+  }
+
+  // A card's More button under a real pointer: a press leaves no ring on it, a
+  // key still does, and the hover comes back to the still pointer when the menu
+  // closes, with no movement (SPEC_CARD_STATES.md, С7.8, С8.8).
+  {
+    const page = await fresh();
+    const item = page.locator('[data-feed-grid-item-slug="card-5"]');
+    const more = item.locator('[aria-label="Card actions"]');
+    const box = await item.boundingBox();
+    await page.mouse.move(box.x + 20, box.y + 20, { steps: 3 });
+    await settle(page, 150);
+    const button = await more.boundingBox();
+    const onButton = { x: button.x + button.width / 2, y: button.y + button.height / 2 };
+    await page.mouse.move(onButton.x, onButton.y, { steps: 2 });
+    await settle(page, 150);
+    const pressMore = async () => {
+      await page.mouse.down();
+      await page.mouse.up();
+      await settle(page, 300);
+    };
+    const expectNoRingOnMore = async (label) => {
+      await settle(page);
+      await page.keyboard.press("Shift");
+      await settle(page, 100);
+      if (await more.evaluate((el) => el.matches(":focus-visible"))) failures.push(`${label}: a ring on More`);
+      else console.log(`PASS: ${label}: no ring on More`);
+    };
+    await pressMore();
+    await page.keyboard.press("Escape");
+    await expectNoRingOnMore("More pressed, its menu closed with Escape, then a key");
+    await pressMore();
+    await pressMore();
+    await expectNoRingOnMore("More pressed twice, then a key");
+
+    /** The card under the still point answers, within what WebKit takes to say so. */
+    const expectHoverAt = async (label, x, y) => {
+      const answered = await page.waitForFunction(([px, py]) => {
+        const hit = document.elementsFromPoint(px, py).find((el) => !el.closest("[data-radix-popper-content-wrapper]"));
+        const frame = hit?.closest('[data-feed-grid-item-live="true"]')?.querySelector("[data-block-slug]");
+        return frame?.matches(":hover") && frame.hasAttribute("data-card-lift-hover") ? frame.getAttribute("data-block-slug") : false;
+      }, [x, y], { timeout: 1500 }).then((handle) => handle.jsonValue()).catch(() => null);
+      if (answered) console.log(`PASS: ${label}: ${answered} answers with no movement`);
+      else failures.push(`${label}: no hover under the still pointer`);
+    };
+    await pressMore();
+    const entry = await page.locator("[data-radix-menu-content] [role=menuitem]").filter({ hasText: "Copy Path" }).boundingBox();
+    const onEntry = { x: entry.x + 20, y: entry.y + entry.height / 2 };
+    await page.mouse.move(onEntry.x, onEntry.y, { steps: 3 });
+    await settle(page, 100);
+    await page.keyboard.press("Escape");
+    await expectHoverAt("More's menu closed with the pointer on it", onEntry.x, onEntry.y);
+    await page.mouse.click(onEntry.x, onEntry.y, { button: "right" });
+    await settle(page, 300);
+    await page.keyboard.press("Escape");
+    await expectHoverAt("a card's context menu closed", onEntry.x, onEntry.y);
+    await page.close();
+  }
+  // The keyboard's own way to the button keeps its ring.
+  {
+    const page = await fresh();
+    const more = page.locator('[data-feed-grid-item-slug="card-5"] [aria-label="Card actions"]');
+    await page.keyboard.press("Shift");
+    await more.evaluate((el) => el.focus());
+    await page.keyboard.press("Enter");
+    await settle(page, 300);
+    await page.keyboard.press("Escape");
+    await settle(page);
+    const ring = await more.evaluate((el) => ({
+      focused: document.activeElement === el,
+      active: document.activeElement?.tagName,
+      visible: el.matches(":focus-visible"),
+      outline: getComputedStyle(el).outlineStyle,
+    }));
+    if (ring.focused && ring.visible && ring.outline !== "none") console.log("PASS: More opened and closed with keys keeps its ring");
+    else failures.push(`More opened and closed with keys: no ring, ${JSON.stringify(ring)}`);
     await page.close();
   }
 

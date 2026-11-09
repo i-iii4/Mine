@@ -20,6 +20,16 @@
 //! to the bar: it scrolls the tabs and never touches the sidebar, whatever the
 //! pointer crosses before the fingers lift (`SPEC_NARROW_WINDOW.md`, У9).
 //!
+//! A gesture that begins over an element that scrolls sideways belongs to that
+//! element in the same way (У17). Only the page knows its elements, so when the
+//! fingers land the page under the pointer is asked once. The question goes out
+//! before any of the gesture's movement and its answer lands on the main thread,
+//! where the gesture's events land too, so exactly two orders exist. The answer
+//! comes first in an ordinary swipe, and lifting the fingers decides at once, as
+//! it always did. The fingers lift first when the page is busy: the direction
+//! then waits for the answer, with no timer, because WebKit always calls back.
+//! The answer names its gesture, so a late one cannot touch the next gesture.
+//!
 //! The monitor is passive: every event is returned to the application unchanged,
 //! so ordinary scrolling is untouched.
 
@@ -33,6 +43,9 @@ const SWIPE_TRAVEL: f64 = 40.0;
 /// us it was one gesture rather than scrolling noise.
 #[cfg(any(target_os = "macos", test))]
 const DIRECTION_RATIO: f64 = 1.2;
+/// What the page answers the question with (`src/lib/horizontalScroller.ts`).
+#[cfg(any(target_os = "macos", test))]
+const SCROLLER_QUESTION: &str = "__MINE_HORIZONTAL_SCROLLER_AT__";
 
 /// The part of a scroll event's phase that recognition reads. Momentum events
 /// never reach the recogniser: they are the tail of a gesture already decided.
@@ -70,6 +83,14 @@ fn begins_over_tab_bar(y_from_top: f64, bar_height: f64) -> bool {
     (0.0..bar_height).contains(&y_from_top)
 }
 
+/// The script that asks a page whether an element that scrolls sideways stands
+/// at this point, in CSS pixels. A page without the function, the tab bar's
+/// among them, answers no (У17).
+#[cfg(any(target_os = "macos", test))]
+fn scroller_question(x: f64, y: f64) -> String {
+    format!("window.{SCROLLER_QUESTION}?.({x}, {y}) === true")
+}
+
 /// Accumulates one gesture between "landed" and "lifted" and decides once.
 #[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Default)]
@@ -79,13 +100,21 @@ struct SwipeRecognizer {
     live: bool,
     /// The gesture began over the tab bar: it decides nothing (У9).
     over_tab_bar: bool,
+    /// The number of the last gesture that began; the page's answer names it.
+    gesture: u64,
+    /// What the page answered about the point where the fingers landed.
+    over_scroller: Option<bool>,
+    /// The direction of a gesture that finished before the page answered.
+    unanswered: Option<SwipeDirection>,
 }
 
 #[cfg(any(target_os = "macos", test))]
 impl SwipeRecognizer {
     /// Feed one non-momentum phase. Returns a direction only when the user
-    /// lifted their fingers after enough horizontal travel; a cancelled
-    /// gesture, or one that began over the tab bar, returns nothing.
+    /// lifted their fingers after enough horizontal travel and the page has
+    /// said no element under the fingers scrolls sideways; a cancelled gesture,
+    /// or one that began over the tab bar or such an element, returns nothing.
+    /// Before the page answers, the direction waits for [`Self::page_answered`].
     fn feed(&mut self, phase: GesturePhase) -> Option<SwipeDirection> {
         match phase {
             GesturePhase::Began { over_tab_bar } => {
@@ -93,6 +122,9 @@ impl SwipeRecognizer {
                 self.y = 0.0;
                 self.live = true;
                 self.over_tab_bar = over_tab_bar;
+                self.gesture = self.gesture.wrapping_add(1);
+                self.over_scroller = None;
+                self.unanswered = None;
                 None
             }
             GesturePhase::Changed { dx, dy } => {
@@ -106,10 +138,18 @@ impl SwipeRecognizer {
                 if !self.live {
                     return None;
                 }
-                // Decided where the fingers landed, kept to the end (У9).
+                // Decided where the fingers landed, kept to the end (У9, У17).
                 let decision = if self.over_tab_bar { None } else { self.decide() };
+                let over_scroller = self.over_scroller;
                 self.reset();
-                decision
+                match over_scroller {
+                    Some(false) => decision,
+                    Some(true) => None,
+                    None => {
+                        self.unanswered = decision;
+                        None
+                    }
+                }
             }
             // The system took the gesture away: whatever travel it had, the
             // user did not finish a swipe (`SPEC_AUDIT_FIXES.md`, Ф12, Г5.3).
@@ -118,6 +158,23 @@ impl SwipeRecognizer {
                 None
             }
             GesturePhase::Other => None,
+        }
+    }
+
+    /// The page answered about gesture number `gesture`. Returns the direction
+    /// of that gesture if it finished before this answer and no element under
+    /// the fingers scrolls sideways. An answer about an earlier gesture changes
+    /// nothing: the fingers have landed again since (У17).
+    fn page_answered(&mut self, gesture: u64, over_scroller: bool) -> Option<SwipeDirection> {
+        if gesture != self.gesture {
+            return None;
+        }
+        self.over_scroller = Some(over_scroller);
+        let direction = self.unanswered.take();
+        if over_scroller {
+            None
+        } else {
+            direction
         }
     }
 
@@ -140,6 +197,7 @@ impl SwipeRecognizer {
         self.y = 0.0;
         self.live = false;
         self.over_tab_bar = false;
+        self.over_scroller = None;
     }
 }
 
@@ -151,11 +209,14 @@ mod imp {
 
     use block2::RcBlock;
     use objc2::rc::Retained;
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSEvent, NSEventMask, NSEventPhase};
+    use objc2::runtime::{AnyObject, NSObjectProtocol};
+    use objc2::{class, msg_send, MainThreadMarker};
+    use objc2_app_kit::{NSEvent, NSEventMask, NSEventPhase, NSView};
+    use objc2_foundation::NSString;
     use tauri::AppHandle;
 
-    use super::{begins_over_tab_bar, GesturePhase, SwipeRecognizer};
+    use super::{begins_over_tab_bar, scroller_question, GesturePhase, SwipeDirection, SwipeRecognizer};
+    use crate::frame_context_menu::css_point;
 
     /// Reduce the phase bit set `AppKit` reports to the one phase recognition
     /// reads. Where the pointer is matters only when the fingers land, so it
@@ -202,6 +263,57 @@ mod imp {
         begins_over_tab_bar(y_from_top, bar_height)
     }
 
+    /// The page the scroll of `event` goes to: the web view `AppKit` finds under
+    /// the pointer, whichever tab or window it belongs to. `None` over the
+    /// window's own controls.
+    fn page_under_pointer(event: &NSEvent, mtm: MainThreadMarker) -> Option<Retained<NSView>> {
+        let content = event.window(mtm)?.contentView()?;
+        // `hitTest:` takes its point in the coordinates of the view's superview.
+        // SAFETY: reading the superview of a live view on the main thread.
+        let frame = unsafe { content.superview() }?;
+        let mut view = content.hitTest(frame.convertPoint_fromView(event.locationInWindow(), None))?;
+        while !view.isKindOfClass(class!(WKWebView)) {
+            // SAFETY: as above.
+            view = unsafe { view.superview() }?;
+        }
+        Some(view)
+    }
+
+    fn apply(app: &AppHandle, decision: Option<SwipeDirection>) {
+        if let Some(direction) = decision {
+            crate::tabs::swipe_sidebar(app, direction == SwipeDirection::Right);
+        }
+    }
+
+    /// Ask the page under the pointer whether an element that scrolls sideways
+    /// stands where the fingers landed (У17). The answer lands on the main
+    /// thread. No page, a script error and a dead page all answer no, so a swipe
+    /// over anything else always gets its decision.
+    fn ask_page(app: &AppHandle, event: &NSEvent, mtm: MainThreadMarker, recognizer: &Rc<RefCell<SwipeRecognizer>>) {
+        let gesture = recognizer.borrow().gesture;
+        let Some(page) = page_under_pointer(event, mtm) else {
+            recognizer.borrow_mut().page_answered(gesture, false);
+            return;
+        };
+        let point = page.convertPoint_fromView(event.locationInWindow(), None);
+        // SAFETY: `page` is a WKWebView, which answers `pageZoom`.
+        let zoom: f64 = unsafe { msg_send![&*page, pageZoom] };
+        let point = css_point(point.x, point.y, page.bounds().size.height, page.isFlipped(), zoom);
+        let script = NSString::from_str(&scroller_question(point.x, point.y));
+        let app = app.clone();
+        let recognizer = Rc::clone(recognizer);
+        let answered = RcBlock::new(move |result: *mut AnyObject, _error: *mut AnyObject| {
+            // SAFETY: WebKit hands a live object or nil. The script's value is
+            // always a boolean, an `NSNumber` here; an error leaves nil.
+            let over_scroller = unsafe { result.as_ref() }.is_some_and(|result| unsafe { msg_send![result, boolValue] });
+            let decision = recognizer.borrow_mut().page_answered(gesture, over_scroller);
+            apply(&app, decision);
+        });
+        // SAFETY: a live WKWebView on the main thread; WebKit copies the block
+        // and calls it once on the main thread, so it needs no `Send`.
+        let () = unsafe { msg_send![&*page, evaluateJavaScript: &*script, completionHandler: &*answered] };
+    }
+
     /// Install the monitor. Must run on the main thread, where AppKit lives.
     pub fn install(app: AppHandle) {
         let Some(mtm) = MainThreadMarker::new() else {
@@ -226,8 +338,9 @@ mod imp {
                 || over_tab_bar(&app, event_ref, mtm),
             );
             let decision = recognizer.borrow_mut().feed(phase);
-            if let Some(direction) = decision {
-                crate::tabs::swipe_sidebar(&app, direction == super::SwipeDirection::Right);
+            apply(&app, decision);
+            if matches!(phase, GesturePhase::Began { over_tab_bar: false }) {
+                ask_page(&app, event_ref, mtm, &recognizer);
             }
 
             event.as_ptr()
@@ -257,14 +370,33 @@ pub use imp::install;
 
 #[cfg(test)]
 mod tests {
-    use super::{begins_over_tab_bar, GesturePhase, SwipeDirection, SwipeRecognizer};
+    use super::{begins_over_tab_bar, scroller_question, GesturePhase, SwipeDirection, SwipeRecognizer};
 
+    /// The phases of a gesture over a page that answered no before the fingers
+    /// moved, the ordinary order.
     fn run(phases: &[GesturePhase]) -> Vec<SwipeDirection> {
         let mut recognizer = SwipeRecognizer::default();
         phases
             .iter()
-            .filter_map(|phase| recognizer.feed(*phase))
+            .filter_map(|phase| {
+                let decision = recognizer.feed(*phase);
+                if matches!(phase, GesturePhase::Began { .. }) {
+                    recognizer.page_answered(recognizer.gesture, false);
+                }
+                decision
+            })
             .collect()
+    }
+
+    const SWIPE_RIGHT: [GesturePhase; 3] = [
+        GesturePhase::Began { over_tab_bar: false },
+        GesturePhase::Changed { dx: 80.0, dy: 0.0 },
+        GesturePhase::Ended,
+    ];
+
+    /// Feed the whole of `phases` with no answer from the page.
+    fn fed(recognizer: &mut SwipeRecognizer, phases: &[GesturePhase]) -> Vec<SwipeDirection> {
+        phases.iter().filter_map(|phase| recognizer.feed(*phase)).collect()
     }
 
     #[test]
@@ -364,6 +496,119 @@ mod tests {
             GesturePhase::Ended,
         ]);
         assert_eq!(emitted, vec![SwipeDirection::Left]);
+    }
+
+    #[test]
+    fn gesture_over_a_scroller_never_touches_the_sidebar_in_either_direction() {
+        // The page answered before the fingers lifted: the ordinary order.
+        for dx in [80.0, -80.0] {
+            let mut recognizer = SwipeRecognizer::default();
+            recognizer.feed(GesturePhase::Began { over_tab_bar: false });
+            assert_eq!(recognizer.page_answered(recognizer.gesture, true), None);
+            let emitted = fed(
+                &mut recognizer,
+                &[GesturePhase::Changed { dx, dy: 0.0 }, GesturePhase::Ended],
+            );
+            assert!(emitted.is_empty(), "swipe over a scroller emitted {emitted:?}");
+        }
+    }
+
+    #[test]
+    fn answer_before_the_fingers_lift_decides_at_the_lift() {
+        let mut recognizer = SwipeRecognizer::default();
+        recognizer.feed(GesturePhase::Began { over_tab_bar: false });
+        assert_eq!(recognizer.page_answered(recognizer.gesture, false), None);
+        recognizer.feed(GesturePhase::Changed { dx: 80.0, dy: 0.0 });
+        assert_eq!(recognizer.feed(GesturePhase::Ended), Some(SwipeDirection::Right));
+    }
+
+    #[test]
+    fn late_no_lets_a_finished_swipe_through_once() {
+        // The fingers lifted first: the swipe waits, then goes on the answer.
+        let mut recognizer = SwipeRecognizer::default();
+        assert!(fed(&mut recognizer, &SWIPE_RIGHT).is_empty());
+        let gesture = recognizer.gesture;
+        assert_eq!(recognizer.page_answered(gesture, false), Some(SwipeDirection::Right));
+        assert_eq!(recognizer.page_answered(gesture, false), None);
+    }
+
+    #[test]
+    fn late_yes_takes_a_finished_swipe_away() {
+        let mut recognizer = SwipeRecognizer::default();
+        assert!(fed(&mut recognizer, &SWIPE_RIGHT).is_empty());
+        let gesture = recognizer.gesture;
+        assert_eq!(recognizer.page_answered(gesture, true), None);
+        assert_eq!(recognizer.page_answered(gesture, false), None);
+    }
+
+    #[test]
+    fn late_answer_to_a_nudge_or_a_cancelled_gesture_decides_nothing() {
+        let mut recognizer = SwipeRecognizer::default();
+        let nudge = [
+            GesturePhase::Began { over_tab_bar: false },
+            GesturePhase::Changed { dx: 39.0, dy: 0.0 },
+            GesturePhase::Ended,
+        ];
+        assert!(fed(&mut recognizer, &nudge).is_empty());
+        assert_eq!(recognizer.page_answered(recognizer.gesture, false), None);
+
+        let cancelled = [
+            GesturePhase::Began { over_tab_bar: false },
+            GesturePhase::Changed { dx: 80.0, dy: 0.0 },
+            GesturePhase::Cancelled,
+        ];
+        assert!(fed(&mut recognizer, &cancelled).is_empty());
+        assert_eq!(recognizer.page_answered(recognizer.gesture, false), None);
+    }
+
+    #[test]
+    fn answer_about_an_earlier_gesture_changes_nothing() {
+        let mut recognizer = SwipeRecognizer::default();
+        assert!(fed(&mut recognizer, &SWIPE_RIGHT).is_empty());
+        let earlier = recognizer.gesture;
+
+        // The fingers land again before the earlier answer: its swipe is gone,
+        // and neither of its possible answers speaks for the new gesture.
+        recognizer.feed(GesturePhase::Began { over_tab_bar: false });
+        assert_eq!(recognizer.page_answered(earlier, false), None);
+        assert_eq!(recognizer.page_answered(earlier, true), None);
+        recognizer.feed(GesturePhase::Changed { dx: -80.0, dy: 0.0 });
+        assert_eq!(recognizer.feed(GesturePhase::Ended), None);
+        assert_eq!(
+            recognizer.page_answered(recognizer.gesture, false),
+            Some(SwipeDirection::Left),
+        );
+    }
+
+    #[test]
+    fn the_scroller_does_not_leak_into_the_next_gesture() {
+        let mut recognizer = SwipeRecognizer::default();
+        recognizer.feed(GesturePhase::Began { over_tab_bar: false });
+        recognizer.page_answered(recognizer.gesture, true);
+        recognizer.feed(GesturePhase::Changed { dx: 80.0, dy: 0.0 });
+        assert_eq!(recognizer.feed(GesturePhase::Ended), None);
+
+        recognizer.feed(GesturePhase::Began { over_tab_bar: false });
+        recognizer.page_answered(recognizer.gesture, false);
+        recognizer.feed(GesturePhase::Changed { dx: -80.0, dy: 0.0 });
+        assert_eq!(recognizer.feed(GesturePhase::Ended), Some(SwipeDirection::Left));
+    }
+
+    #[test]
+    fn the_bar_keeps_its_gesture_whatever_a_stray_answer_says() {
+        let mut recognizer = SwipeRecognizer::default();
+        recognizer.feed(GesturePhase::Began { over_tab_bar: true });
+        recognizer.feed(GesturePhase::Changed { dx: 80.0, dy: 0.0 });
+        assert_eq!(recognizer.feed(GesturePhase::Ended), None);
+        assert_eq!(recognizer.page_answered(recognizer.gesture, false), None);
+    }
+
+    #[test]
+    fn the_question_names_the_point_and_tolerates_a_page_without_the_function() {
+        assert_eq!(
+            scroller_question(120.5, 80.0),
+            "window.__MINE_HORIZONTAL_SCROLLER_AT__?.(120.5, 80) === true",
+        );
     }
 
     #[test]

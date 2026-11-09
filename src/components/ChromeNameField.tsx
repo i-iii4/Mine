@@ -1,7 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { cn } from "@/lib/utils";
 import { NAME_REFUSED_SHAKE_MS, useNameEdit } from "@/hooks/useNameEdit";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+
+/// What the field offers whoever asks for the name from elsewhere: the open
+/// card's `Rename…` (SPEC_FRONTEND.md, «RenameBlockDialog»).
+export interface ChromeNameFieldHandle {
+  /// The name turns into the field, as a click on it does.
+  startEditing: () => void;
+}
 
 /// A name in the top row's path renamed right there (user's decisions of
 /// 05.10.2026): the open card's file (DetailCardFileName) and, since
@@ -28,6 +35,7 @@ export function ChromeNameField({
   reasonOf,
   resetKey,
   marker,
+  ref,
 }: {
   name: string;
   /// The hint over the name at rest.
@@ -45,6 +53,7 @@ export function ChromeNameField({
   /// The data attributes' stem: `data-<marker>` on the name at rest,
   /// `-anchor`, `-input` and `-notice` on the rest.
   marker: string;
+  ref?: Ref<ChromeNameFieldHandle>;
 }) {
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -76,6 +85,8 @@ export function ChromeNameField({
     edit.begin(name);
     setEditing(true);
   };
+
+  useImperativeHandle(ref, () => ({ startEditing }));
 
   return (
     <Tooltip open={edit.notice !== null}>

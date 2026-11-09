@@ -14,12 +14,13 @@ import ForceGraph2D, {
 } from "react-force-graph-2d";
 import { getBlock, listGraphSnapshot } from "@/lib/commands";
 import { fallbackThumbsRoot } from "@/lib/assets";
+import { useCardPictureVersionsRevision } from "@/lib/pictureVersions";
 import { useHoverIntent } from "@/hooks/useHoverIntent";
-import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
+import { RestingPointer } from "@/lib/restingPointer";
 import type { GraphPreferences } from "@/lib/graphPreferences";
 import { GRAPH_CONTEXT_OPACITY } from "@/lib/colorLaw";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
-import { ReadOnlyCardPreview } from "./Card";
+import { HoverPreviewWindowLayer, useHoverPreviewWindow } from "./HoverPreviewWindow";
 import { Button } from "./ui/button";
 import type {
   GraphOptions,
@@ -34,6 +35,7 @@ import {
   COLLECTION_COLLISION_RADIUS,
   COLLECTION_LABEL_CLICK_SUPPRESS_MS,
   GRAPH_CENTER_DURATION_MS,
+  GRAPH_HIT_CANVAS_REFRESH_MS,
   GRAPH_CENTER_MARGIN,
   GRAPH_INITIAL_FIT_DURATION_MS,
   GRAPH_ENTRY_ANGLE,
@@ -41,8 +43,6 @@ import {
   GRAPH_INITIAL_FIT_TICKS,
   GRAPH_ZOOM_LEVEL_MARGIN_PX,
   type GraphCameraPlan,
-  GRAPH_PREVIEW_FALLBACK_HEIGHT,
-  GRAPH_PREVIEW_WIDTH,
   type GraphCanvasData,
   type GraphCanvasLink,
   type GraphCanvasNode,
@@ -51,7 +51,6 @@ import {
   type GraphChargeForce,
   type GraphForce,
   type GraphLinkDistanceForce,
-  type GraphPreviewPosition,
   type GraphPreviewTarget,
 } from "./graph/contracts";
 import {
@@ -67,7 +66,7 @@ import {
 } from "./graph/canvas";
 import {
   compareGraphNodePaintOrder,
-  computeGraphPreviewPosition,
+  graphPreviewPlace,
   endpointNode,
   graphClientPointFromEvent,
   graphThumbLevelFor,
@@ -159,6 +158,9 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   onNavigateCollection,
 }: GraphViewProps, ref) {
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
+  // The nodes' pictures are loaded again under their new addresses once a
+  // card's pictures were written again (SPEC_THUMBNAILS.md, «Адрес картинки»).
+  const picturesRevision = useCardPictureVersionsRevision();
   const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -169,9 +171,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   // anything depends on how densely this particular graph sits.
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [hoverPreviewTarget, setHoverPreviewTarget] = useState<GraphPreviewTarget | null>(null);
-  const [hoverPreviewBlock, setHoverPreviewBlock] = useState<LightBlock | IndexedBlock | null>(null);
-  const [hoverPreviewPosition, setHoverPreviewPosition] = useState<GraphPreviewPosition | null>(null);
   const [hoveredCollectionId, setHoveredCollectionId] = useState<string | null>(null);
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
   // Whether the pointer is over the graph's surface. The graph answers hover
@@ -196,7 +195,6 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const containerRef = useRef<HTMLDivElement>(null);
   /// Stops the camera glide in progress, if any.
   const stopGlideRef = useRef<(() => void) | null>(null);
-  const previewRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<ForceGraphMethods<GraphCanvasNode, GraphCanvasLink> | undefined>(
     undefined,
   );
@@ -208,11 +206,23 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   // the feed and the sidebar (SPEC_CARD_STATES.md, С7): its dimming waits for
   // the pointer to rest on it, a sweep across the graph dims nothing, and
   // once one has answered a neighbouring collection takes over at once
-  // (SPEC_GRAPH_VIEW.md, «Hover»). The same engine gives a card's preview the
-  // pointer's speed, by the shared card preview rule (С7.10).
+  // (SPEC_GRAPH_VIEW.md, «Hover»). The same engine gives the preview window its
+  // attending mode (С7.11).
   const [attendedCollectionId, setAttendedCollectionId] = useState<string | null>(null);
   const nodePointer = useHoverIntent((state) => setAttendedCollectionId(state.chosen));
-  const previewOpener = useHoverPreviewOpener(nodePointer.isSlow);
+  // A node that moved under a still pointer is no step of the pointer's: nothing
+  // answers it until the pointer really moves (С7.5). force-graph reads the node
+  // under its last point in every frame, physics moving it there or not, and
+  // tells only the change, up to its hidden canvas's refresh late. So a change
+  // counts as the pointer's own only that long after a step of its.
+  const [graphPointer] = useState(() => new RestingPointer());
+  const nodeUnderPointerRef = useRef<GraphCanvasNode | null>(null);
+  const lastPointerStepAtRef = useRef(-Infinity);
+  // The container's box and the app window's size, read at a change of the
+  // preview window's card; while it follows its node only coordinates are read.
+  const previewOriginRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
+  // The card the preview window shows, for the menu's freeze below.
+  const shownPreviewRef = useRef<GraphPreviewTarget | null>(null);
   // The engine's target, the collection force-graph last reported under the
   // pointer (a card or empty canvas is no target), and the pointer's last
   // point on the graph, where a hover change is reported: the same point is
@@ -602,7 +612,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       image.onerror = () => {};
       image.src = url;
     }
-  }, [graphData.nodes, renderThumbnails, resolvedThumbsRoot, thumbVersions]);
+  }, [graphData.nodes, renderThumbnails, resolvedThumbsRoot, thumbVersions, picturesRevision]);
 
   // Panning the view is a drag like any other, and macOS shows a closed hand for
   // it — Preview and Maps both do. The library marks the canvas only while a
@@ -701,7 +711,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       image.onerror = () => {};
       image.src = url;
     }
-  }, [graphData.nodes, nodeScreenSizeAt, renderThumbnails, resolvedThumbsRoot, size, thumbVersions]);
+  }, [graphData.nodes, nodeScreenSizeAt, renderThumbnails, resolvedThumbsRoot, size, thumbVersions, picturesRevision]);
 
   /// One repaint per frame however many images arrive in it. Bumping the
   /// version per image made a burst of loads a burst of renders, which is the
@@ -845,39 +855,58 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     if (fit) glideCamera(fit, GRAPH_INITIAL_FIT_DURATION_MS);
   }, [aimCenterForce, focusNodeId, glideCamera, graphData.nodes, size, zoomBounds]);
 
+  const nodesById = useMemo(() => new Map(graphData.nodes.map((node) => [node.id, node])), [graphData.nodes]);
+
+  // The one preview window, as the sidebar's and the open card's panel's
+  // (SPEC_CARD_STATES.md, С7.11). It stands by the node and moves with it.
+  const previewWindow = useHoverPreviewWindow<GraphPreviewTarget, LightBlock | IndexedBlock>({
+    intent: nodePointer,
+    readCard: async (slug) => loadedBlocksBySlug.get(slug) ?? getBlock(slug),
+    place: (target, height, moment) => {
+      const graph = graphRef.current;
+      const container = containerRef.current;
+      const node = nodesById.get(target.key);
+      if (!graph || !container || !node || !hasNodePosition(node)) return null;
+      if (moment === "change" || !previewOriginRef.current) {
+        const box = container.getBoundingClientRect();
+        previewOriginRef.current = { left: box.left, top: box.top, width: window.innerWidth, height: window.innerHeight };
+      }
+      const origin = previewOriginRef.current;
+      return graphPreviewPlace(
+        graph.graph2ScreenCoords(node.x, node.y),
+        origin,
+        height,
+        currentNodeScreenSize(),
+        origin,
+      );
+    },
+    tracksTarget: true,
+    onShown: (target) => {
+      shownPreviewRef.current = target;
+    },
+  });
+
   const closePreview = useCallback(() => {
-    previewOpener.hide();
-    setHoverPreviewTarget(null);
-    setHoverPreviewBlock(null);
-    setHoverPreviewPosition(null);
-  }, [previewOpener]);
-
-  const openPreview = useCallback((node: GraphCanvasNode) => {
-    if (node.kind !== "card" || !node.slug) return;
-    setHoverPreviewTarget({
-      nodeId: node.id,
-      slug: node.slug,
-    });
-  }, []);
-
-  const schedulePreviewOpen = useCallback((node: GraphCanvasNode) => {
-    if (hoverPreviewFrozen) return;
-    if (node.kind !== "card" || !node.slug) {
-      closePreview();
-      return;
-    }
-
-    setHoverPreviewTarget(null);
-    setHoverPreviewBlock(null);
-    setHoverPreviewPosition(null);
-    previewOpener.request(() => openPreview(node));
-  }, [closePreview, hoverPreviewFrozen, openPreview, previewOpener]);
+    previewWindow.dismiss();
+  }, [previewWindow]);
 
   useEffect(() => {
-    if (hoverPreviewFrozen) {
-      previewOpener.cancel();
-    }
-  }, [hoverPreviewFrozen, previewOpener]);
+    previewWindow.setFrozen(hoverPreviewFrozen);
+  }, [hoverPreviewFrozen, previewWindow]);
+
+  // A resized view moves the container under the window's node.
+  useEffect(() => {
+    previewOriginRef.current = null;
+  }, [size]);
+
+  // A new snapshot moves nodes under a still pointer. The first has nothing to
+  // move and no answer in place: it only finds the gate shut.
+  const hadNodesRef = useRef(false);
+  useEffect(() => {
+    graphPointer.displace();
+    if (hadNodesRef.current) nodePointer.displace();
+    hadNodesRef.current = graphData.nodes.length > 0;
+  }, [graphData, graphPointer, nodePointer]);
 
   const markPointerOverGraph = useCallback((over: boolean) => {
     if (pointerOverGraphRef.current === over) return;
@@ -895,6 +924,17 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     if (point) nodePointer.move(collectionId, point.x, point.y);
   }, [nodePointer]);
 
+  /// What the pointer's own step answers: the node under it now, as force-graph
+  /// last told it. The pill and the card's edge outline at once; the dimming
+  /// waits for the engine; the preview window takes its target.
+  const answerNodeUnderPointer = useCallback(() => {
+    const node = nodeUnderPointerRef.current;
+    reportCollectionUnderPointer(node?.kind === "collection" ? node.id : null);
+    setHoveredCollectionId(node?.kind === "collection" ? node.id : null);
+    setHoveredCardId(node?.kind === "card" ? node.id : null);
+    previewWindow.pointer(node?.kind === "card" && node.slug ? { key: node.id, slug: node.slug } : null);
+  }, [previewWindow, reportCollectionUnderPointer]);
+
   // A node being dragged answers nothing, and the answer in place clears at
   // once (SPEC_CARD_STATES.md, С7.8).
   useEffect(() => {
@@ -909,17 +949,20 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   useEffect(() => {
     if (graphAnswersPointer || hoverPreviewFrozen) return;
     collectionUnderPointerRef.current = null;
+    nodeUnderPointerRef.current = null;
     nodePointer.leave();
     setHoveredCollectionId(null);
     setHoveredCardId(null);
-    closePreview();
-  }, [closePreview, graphAnswersPointer, hoverPreviewFrozen, nodePointer]);
+    // Under an open card it goes at once; off the graph it fades in place.
+    if (detailOpen) closePreview();
+    else previewWindow.leave();
+  }, [closePreview, detailOpen, graphAnswersPointer, hoverPreviewFrozen, nodePointer, previewWindow]);
 
   const pointerIsInsidePreviewNode = useCallback((target: GraphPreviewTarget) => {
     const point = lastPointerPointRef.current;
     const graph = graphRef.current;
     const container = containerRef.current;
-    const node = graphData.nodes.find((candidate) => candidate.id === target.nodeId);
+    const node = nodesById.get(target.key);
     if (!point || !graph || !container || !node || !hasNodePosition(node)) return false;
 
     const containerRect = container.getBoundingClientRect();
@@ -931,7 +974,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
       && point.x <= left + nodeSize
       && point.y >= top
       && point.y <= top + nodeSize;
-  }, [graphData.nodes]);
+  }, [nodesById]);
 
   useEffect(() => {
     const wasFrozen = previousHoverPreviewFrozenRef.current;
@@ -941,86 +984,11 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     const frame = window.requestAnimationFrame(() => {
       graphRef.current?.d3ReheatSimulation();
     });
-    if (hoverPreviewTarget && !pointerIsInsidePreviewNode(hoverPreviewTarget)) {
+    if (shownPreviewRef.current && !pointerIsInsidePreviewNode(shownPreviewRef.current)) {
       closePreview();
     }
     return () => window.cancelAnimationFrame(frame);
-  }, [closePreview, hoverPreviewFrozen, hoverPreviewTarget, pointerIsInsidePreviewNode]);
-
-  useEffect(() => {
-    if (!hoverPreviewTarget) {
-      setHoverPreviewBlock(null);
-      setHoverPreviewPosition(null);
-      return;
-    }
-
-    let cancelled = false;
-    setHoverPreviewBlock(null);
-    setHoverPreviewPosition(computeGraphPreviewPosition(
-      graphRef.current,
-      containerRef.current,
-      graphData.nodes.find((node) => node.id === hoverPreviewTarget.nodeId),
-      previewRef.current?.getBoundingClientRect().height ?? GRAPH_PREVIEW_FALLBACK_HEIGHT,
-      currentNodeScreenSize(),
-    ));
-
-    const loaded = loadedBlocksBySlug.get(hoverPreviewTarget.slug);
-    if (loaded) {
-      setHoverPreviewBlock(loaded);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    void getBlock(hoverPreviewTarget.slug)
-      .then((block) => {
-        if (cancelled) return;
-        setHoverPreviewBlock(block);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setHoverPreviewBlock(null);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [graphData.nodes, hoverPreviewTarget, loadedBlocksBySlug]);
-
-  useEffect(() => {
-    if (!hoverPreviewTarget || !hoverPreviewBlock) return undefined;
-    let frame = 0;
-    let stopped = false;
-
-    const updatePosition = () => {
-      if (stopped) return;
-      const nextPosition = computeGraphPreviewPosition(
-        graphRef.current,
-        containerRef.current,
-        graphData.nodes.find((node) => node.id === hoverPreviewTarget.nodeId),
-        previewRef.current?.getBoundingClientRect().height ?? GRAPH_PREVIEW_FALLBACK_HEIGHT,
-        currentNodeScreenSize(),
-      );
-      setHoverPreviewPosition((current) => {
-        if (!nextPosition) return null;
-        if (
-          current &&
-          Math.abs(nextPosition.top - current.top) <= 1 &&
-          Math.abs(nextPosition.left - current.left) <= 1
-        ) {
-          return current;
-        }
-        return nextPosition;
-      });
-      frame = window.requestAnimationFrame(updatePosition);
-    };
-
-    frame = window.requestAnimationFrame(updatePosition);
-    return () => {
-      stopped = true;
-      window.cancelAnimationFrame(frame);
-    };
-  }, [graphData.nodes, hoverPreviewBlock, hoverPreviewTarget]);
+  }, [closePreview, hoverPreviewFrozen, pointerIsInsidePreviewNode]);
 
   const handleNodeClick = useCallback(
     async (node: GraphCanvasNode) => {
@@ -1248,9 +1216,13 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
         markPointerOverGraph(true);
         intentPointRef.current = { x: event.clientX, y: event.clientY };
         nodePointer.move(collectionUnderPointerRef.current, event.clientX, event.clientY);
+        if (!graphPointer.move(event.clientX, event.clientY)) return;
+        lastPointerStepAtRef.current = performance.now();
+        if (!hoverPreviewFrozen && !detailOpen) answerNodeUnderPointer();
       }}
       onPointerLeave={() => {
         nodePointer.leave();
+        graphPointer.leave();
         markPointerOverGraph(false);
       }}
       onContextMenu={(event) => event.preventDefault()}
@@ -1292,25 +1264,14 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
           No graph nodes
         </div>
       ) : null}
-      {vaultPath && hoverPreviewPosition && hoverPreviewBlock ? (
-        <div
-          ref={previewRef}
-          className="pointer-events-none fixed z-50"
-          style={{
-            top: hoverPreviewPosition.top,
-            left: hoverPreviewPosition.left,
-            width: GRAPH_PREVIEW_WIDTH,
-          }}
-          data-graph-card-hover-preview
-        >
-          <ReadOnlyCardPreview
-            block={hoverPreviewBlock}
-            vaultPath={vaultPath}
-            thumbsRootPath={thumbsRootPath}
-            width={GRAPH_PREVIEW_WIDTH}
-            thumbVersion={thumbVersions.get(hoverPreviewBlock.slug)}
-          />
-        </div>
+      {vaultPath ? (
+        <HoverPreviewWindowLayer
+          controller={previewWindow}
+          vaultPath={vaultPath}
+          thumbsRootPath={thumbsRootPath}
+          thumbVersions={thumbVersions}
+          attribute="data-graph-card-hover-preview"
+        />
       ) : null}
       {/* The graph is a pointer surface: selection, opening and panning are
           cursor gestures, and no keyboard handler lives here. */}
@@ -1343,25 +1304,22 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
             // that same node hovers it again.
             enablePointerInteraction={graphAnswersPointer}
             onNodeHover={(node) => {
+              nodeUnderPointerRef.current = node;
               if (hoverPreviewFrozen) return;
               if (!pointerOverGraphRef.current || detailOpen) return;
-              // The pill outlines at once; the dimming waits for the engine.
-              reportCollectionUnderPointer(node?.kind === "collection" ? node.id : null);
-              if (!node) {
-                setHoveredCollectionId(null);
-                setHoveredCardId(null);
-                closePreview();
+              if (
+                !graphPointer.isStill()
+                && performance.now() - lastPointerStepAtRef.current <= GRAPH_HIT_CANVAS_REFRESH_MS
+              ) {
+                answerNodeUnderPointer();
                 return;
               }
-              if (node.kind === "collection") {
-                setHoveredCollectionId(node.id);
-                setHoveredCardId(null);
-                closePreview();
-                return;
-              }
+              // A node moved under or away from a still pointer: nothing new
+              // answers, and what answered the node before lets go.
+              reportCollectionUnderPointer(null);
               setHoveredCollectionId(null);
-              setHoveredCardId(node.id);
-              schedulePreviewOpen(node);
+              setHoveredCardId(null);
+              previewWindow.pointer(null);
             }}
             onNodeDrag={(node) => {
               suppressCollectionClickAfterDrag(node);
@@ -1406,6 +1364,10 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
               // it here would start an animation in the middle of a gesture —
               // the very lag this model removes.
               syncGraphScale(transform.k);
+              // The camera moved nodes under the pointer: nothing answers them
+              // until the pointer really moves (С7.5).
+              graphPointer.displace();
+              nodePointer.displace();
             }}
             onZoomEnd={(transform) => {
               syncGraphScale(transform.k);

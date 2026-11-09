@@ -27,12 +27,22 @@ import {
   HOVER_PREVIEW_WARM_WINDOW_MS,
 } from "@/lib/hoverPreviewTiming";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
+import { HOVER_PREVIEW_WINDOW_SETTLE_MS } from "@/lib/hoverPreviewWindow";
 import { indexedBlock, lightBlock } from "@/test/blocks";
 
 /** Fake timers that also drive the hover-intent clock (performance.now). */
 const INTENT_TIMERS = {
   toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "Date", "requestAnimationFrame", "cancelAnimationFrame"],
 } satisfies Parameters<typeof vi.useFakeTimers>[0];
+
+/**
+ * The pointer's own movement onto a row of the panel: two reports at different
+ * points, since the first one only says where the pointer is (С7.5).
+ */
+function movePointerOnto(target: Element, x = 100, y = 100) {
+  fireEvent.pointerMove(target, { clientX: x, clientY: y });
+  fireEvent.pointerMove(target, { clientX: x + 1, clientY: y });
+}
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(async () => undefined),
@@ -2125,21 +2135,25 @@ describe("Detail", () => {
 
     // A click that never moved is a click: the drag sensor needs 8px to engage.
     fireEvent.click(image!);
-    expect(onOpenImagePreview).toHaveBeenCalledWith({
+    const frame = image!.closest("[data-detail-media-action-frame]");
+    const request = {
       src: "asset://localhost//tmp/test-vault/photo.jpg",
       mediaRef: "photo.jpg",
-      siblings: [{ src: "asset://localhost//tmp/test-vault/photo.jpg", mediaRef: "photo.jpg" }],
-    });
+      siblings: [{ src: "asset://localhost//tmp/test-vault/photo.jpg", mediaRef: "photo.jpg", source: frame }],
+      source: frame,
+    };
+    // A click with no press behind it stands for a key (`detail` 0).
+    expect(onOpenImagePreview).toHaveBeenCalledWith({ ...request, openedBy: "keyboard" });
+
+    onOpenImagePreview.mockClear();
+    fireEvent.click(image!, { detail: 1 });
+    expect(onOpenImagePreview).toHaveBeenCalledWith({ ...request, openedBy: "pointer" });
 
     onOpenImagePreview.mockClear();
     const expandButton = container.querySelector("[data-detail-media-expand-button]");
     expect(expandButton).toHaveAttribute("aria-label", "Expand image");
-    fireEvent.click(expandButton!);
-    expect(onOpenImagePreview).toHaveBeenCalledWith({
-      src: "asset://localhost//tmp/test-vault/photo.jpg",
-      mediaRef: "photo.jpg",
-      siblings: [{ src: "asset://localhost//tmp/test-vault/photo.jpg", mediaRef: "photo.jpg" }],
-    });
+    fireEvent.click(expandButton!, { detail: 1 });
+    expect(onOpenImagePreview).toHaveBeenCalledWith({ ...request, openedBy: "pointer" });
     expect(screen.queryByRole("dialog", { name: "Image preview" })).not.toBeInTheDocument();
 
     fireEvent.contextMenu(image!, { clientX: 140, clientY: 90 });
@@ -2377,6 +2391,14 @@ describe("Detail", () => {
       "src",
       "asset://localhost//tmp/test-vault/photo.jpg",
     );
+    // The cards that use the file are drawn from the space's thumbnails. The
+    // window looked in the old folder inside the space until 09.11.2026,
+    // where a space with its own derived store has nothing.
+    const sources = () => Array.from(dialog.querySelectorAll("img"), (img) => img.getAttribute("src") ?? "");
+    await waitFor(() => {
+      expect(sources().filter((source) => source.startsWith("asset://localhost//tmp/thumbs/"))).not.toHaveLength(0);
+    });
+    expect(sources().filter((source) => source.includes(".mine/cache"))).toEqual([]);
 
     vi.useFakeTimers();
     fireEvent.mouseEnter(photoRow);
@@ -2764,7 +2786,7 @@ describe("Detail", () => {
   });
 
   it("renders related notes as search rows: thumbnail, file name, dimmed text, no fill", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers(INTENT_TIMERS);
     getBlockMock.mockImplementation(async (slug: string) => {
       if (slug === "related-note") {
         return block({
@@ -2847,7 +2869,7 @@ describe("Detail", () => {
     );
     expect(img).toHaveClass("dark:invert");
 
-    fireEvent.mouseEnter(row);
+    movePointerOnto(row);
     await act(async () => {
       vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS - 1);
       await Promise.resolve();
@@ -2856,8 +2878,7 @@ describe("Detail", () => {
 
     await act(async () => {
       vi.advanceTimersByTime(1);
-      await Promise.resolve();
-      await Promise.resolve();
+      for (let flush = 0; flush < 8; flush += 1) await Promise.resolve();
     });
     const relatedPreview = document.querySelector("[data-related-note-hover-preview]");
     expect(relatedPreview).not.toBeNull();
@@ -2870,26 +2891,32 @@ describe("Detail", () => {
     expect(relatedPreview).not.toHaveTextContent("Connect");
     expect(document.querySelector("[data-related-note-hover-bridge]")).not.toBeInTheDocument();
 
-    fireEvent.mouseLeave(row);
-    expect(document.querySelector("[data-related-note-hover-preview]")).toBeNull();
-    fireEvent.mouseEnter(secondRow);
+    // One window over the list: the next row changes its card, it stays.
+    fireEvent.pointerMove(secondRow, { clientX: 102, clientY: 100 });
     await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
+      vi.advanceTimersByTime(HOVER_INTENT.velocityWindowMs);
+      for (let flush = 0; flush < 8; flush += 1) await Promise.resolve();
     });
     const warmPreview = document.querySelector("[data-related-note-hover-preview]");
-    expect(warmPreview).not.toBeNull();
+    expect(warmPreview).toBe(relatedPreview);
+    await act(async () => {
+      vi.advanceTimersByTime(HOVER_INTENT.fadeInMs + 20);
+    });
     expect(warmPreview).toHaveTextContent("Second note body");
     expect(warmPreview?.querySelector("button")).toBeNull();
 
-    fireEvent.mouseLeave(secondRow);
+    // Leaving the panel fades it, and past the warm window the delay is back.
+    fireEvent.pointerLeave(secondRow);
+    await act(async () => {
+      vi.advanceTimersByTime(HOVER_INTENT.fadeOutMs + 20);
+    });
     expect(document.querySelector("[data-related-note-hover-preview]")).toBeNull();
     await act(async () => {
       vi.advanceTimersByTime(HOVER_PREVIEW_WARM_WINDOW_MS + 1);
       await Promise.resolve();
     });
 
-    fireEvent.mouseEnter(row);
+    fireEvent.pointerMove(row, { clientX: 103, clientY: 100 });
     await act(async () => {
       vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS - 1);
       await Promise.resolve();
@@ -2898,8 +2925,7 @@ describe("Detail", () => {
 
     await act(async () => {
       vi.advanceTimersByTime(1);
-      await Promise.resolve();
-      await Promise.resolve();
+      for (let flush = 0; flush < 8; flush += 1) await Promise.resolve();
     });
     expect(document.querySelector("[data-related-note-hover-preview]")).not.toBeNull();
 
@@ -3056,7 +3082,7 @@ describe("Detail", () => {
 
     // At rest, no commands and no light.
     expect(first!.querySelector("[data-card-row-actions]")).toBeNull();
-    fireEvent.pointerMove(first!);
+    movePointerOnto(first!);
     expect(first).toHaveClass("state-active");
     expect(commands(first!)).toEqual(["Card actions", "Source", "Connect"]);
     expect(first!.querySelector("[data-card-row-actions]")).toHaveAttribute("data-visible", "true");
@@ -3255,8 +3281,9 @@ describe("Detail", () => {
     const backing = frame.querySelector('[data-detail-preview-backing]') as HTMLImageElement;
     expect(backing).not.toBeNull();
     // A new address: the browser asks the file again rather than repeating
-    // the failure from its memory cache.
-    expect(backing.getAttribute('src')).toBe(`${backingSrc}${backingSrc?.includes('?') ? '&' : '?'}retry=1`);
+    // the failure from its memory cache. It carries the new version of the
+    // card's pictures (SPEC_THUMBNAILS.md, «Адрес картинки») and the retry.
+    expect(backing.getAttribute('src')).toBe(`${backingSrc}${backingSrc?.includes('?') ? '&' : '?'}pv=0.1&retry=1`);
   });
 
   it("names the file's state when its contents cannot be fetched from iCloud", () => {
@@ -3570,7 +3597,7 @@ describe("Detail association blocks", () => {
       return found as HTMLElement;
     });
     const row = address.querySelector('[data-card-association-item="button"]') as HTMLElement;
-    fireEvent.pointerMove(row);
+    movePointerOnto(row);
     expect(await within(address).findByRole("button", { name: "Connect" })).toBeInTheDocument();
     fireEvent.click(within(row).getByText("piece"));
     expect(onOpenRelatedNote).toHaveBeenCalledWith("piece");
@@ -3584,32 +3611,35 @@ describe("Detail association blocks", () => {
       slug: "open",
       groups: [{ kind: "author", label: "@kotecinho", blocks: ["one", "two"].map(written) }],
     });
-    const { container } = renderOpenCard();
-    const author = await waitFor(() => {
-      const found = container.querySelector('[data-card-association-block="author"]');
-      expect(found).not.toBeNull();
-      return found as HTMLElement;
-    });
-    const [one, two] = Array.from(
-      author.querySelectorAll<HTMLElement>('[data-card-association-item="button"]'),
-    );
+    // The preview reads its card as the sidebar's does.
+    getBlockMock.mockImplementation(async (slug: string) => block({ slug, body: `Body of ${slug}` }));
     const preview = () => document.querySelector("[data-related-note-hover-preview]");
     const settle = async (ms: number) => {
       await act(async () => {
         vi.advanceTimersByTime(ms);
-        await Promise.resolve();
-        await Promise.resolve();
+        for (let flush = 0; flush < 8; flush += 1) await Promise.resolve();
+      });
+      // The window measures what the first pass rendered, then shows it.
+      await act(async () => {
+        for (let flush = 0; flush < 8; flush += 1) await Promise.resolve();
       });
     };
 
     vi.useFakeTimers(INTENT_TIMERS);
     try {
+      const { container } = renderOpenCard();
+      await settle(0);
+      const author = container.querySelector('[data-card-association-block="author"]') as HTMLElement;
+      const [one, two] = Array.from(
+        author.querySelectorAll<HTMLElement>('[data-card-association-item="button"]'),
+      );
       // The panel feeds the pointer's speed: a pointer still moving along the
       // row past the delay opens nothing until it rests.
-      fireEvent.mouseEnter(one!);
+      let pointerX = 100;
       for (let elapsed = 0; elapsed < HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 100; elapsed += 16) {
         await settle(16);
-        fireEvent.pointerMove(one!, { clientX: 100 + elapsed, clientY: 10 });
+        pointerX = 100 + elapsed;
+        fireEvent.pointerMove(one!, { clientX: pointerX, clientY: 10 });
       }
       expect(preview()).toBeNull();
       await settle(HOVER_INTENT.velocityWindowMs * 2);
@@ -3617,11 +3647,11 @@ describe("Detail association blocks", () => {
 
       // Read long past the warm window, it hands over to the next row at once.
       await settle(HOVER_PREVIEW_WARM_WINDOW_MS * 3);
-      fireEvent.mouseLeave(one!);
-      expect(preview()).toBeNull();
-      fireEvent.mouseEnter(two!);
+      fireEvent.pointerMove(two!, { clientX: pointerX + 1, clientY: 10 });
       await settle(0);
+      await settle(HOVER_PREVIEW_WINDOW_SETTLE_MS + 20);
       expect(preview()).toHaveTextContent("Body of two");
+      expect(preview()).not.toHaveTextContent("Body of one");
     } finally {
       vi.useRealTimers();
     }
@@ -3664,6 +3694,216 @@ describe("Detail association blocks", () => {
 
 // SPEC_DEEP_AUDIT.md, Е6.8: the file `Delete media file?` names may be gone or
 // in iCloud; its preview keeps the tile, never the broken-image icon.
+describe("the panel's rows under a resting pointer (SPEC_CARD_STATES.md, С7.5)", () => {
+  const listCardAssociationsMock = vi.mocked(listCardAssociations);
+  const initialViewportWidth = window.innerWidth;
+  const restingPoint = { clientX: 100, clientY: 100 };
+  const movedPoint = { clientX: 101, clientY: 100 };
+
+  function note(slug: string, related_notes: string[] = []): IndexedBlock {
+    return block({
+      id: slug.length + slug.charCodeAt(0),
+      slug,
+      title: null,
+      fallback_label: slug,
+      body: `Body of ${slug}`,
+      related_notes,
+    });
+  }
+
+  function panel(current: IndexedBlock, onOpenRelatedNote = vi.fn()) {
+    return (
+      <Detail
+        block={current}
+        vaultPath="/tmp/test-vault"
+        thumbsRootPath="/tmp/thumbs"
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onTagsChanged={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        onOpenRelatedNote={onOpenRelatedNote}
+      />
+    );
+  }
+
+  const settle = async (ms = 0) => {
+    await act(async () => {
+      vi.advanceTimersByTime(ms);
+      for (let flush = 0; flush < 8; flush += 1) await Promise.resolve();
+    });
+    // The window measures what the first pass rendered, then shows it.
+    await act(async () => {
+      for (let flush = 0; flush < 8; flush += 1) await Promise.resolve();
+    });
+  };
+
+  const rowOf = (name: string) =>
+    screen.getByRole("button", { name: new RegExp(`^${name}`) }).closest("[data-card-row]") as HTMLElement;
+  const preview = () => document.querySelector("[data-related-note-hover-preview]");
+
+  /** No plate, no commands, no preview, however long the pointer rests. */
+  const expectSilence = () => {
+    expect(document.querySelector("[data-card-row].state-active")).toBeNull();
+    expect(document.querySelector("[data-card-row-actions]")).toBeNull();
+    expect(preview()).toBeNull();
+  };
+
+  /** What the browser reports when a row arrives under a resting pointer. */
+  const reportArrivalUnder = (row: HTMLElement) => {
+    fireEvent.pointerOver(row, restingPoint);
+    fireEvent.mouseEnter(row, restingPoint);
+    fireEvent.pointerMove(row, restingPoint);
+  };
+
+  const expectAnswer = async (row: HTMLElement, name: string) => {
+    expect(row).toHaveClass("state-active");
+    expect(row.querySelector("[data-card-row-actions]")).toHaveAttribute("data-visible", "true");
+    await settle(HOVER_INTENT.scrollSettleMs + HOVER_PREVIEW_COLD_OPEN_DELAY_MS + HOVER_INTENT.velocityWindowMs);
+    await settle(HOVER_INTENT.fadeInMs + 20);
+    expect(preview()).toHaveTextContent(`Body of ${name}`);
+  };
+
+  beforeEach(() => {
+    setViewportWidth(1400);
+    vi.useFakeTimers(INTENT_TIMERS);
+    getBlockMock.mockReset();
+    getBlockMock.mockImplementation(async (slug: string) => note(slug));
+    listCardAssociationsMock.mockReset();
+    listCardAssociationsMock.mockImplementation(async (slug: string) => ({ generation: 1, slug, groups: [] }));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    setViewportWidth(initialViewportWidth);
+  });
+
+  it("keeps a pressed row's new card silent until the pointer really moves", async () => {
+    const onOpenRelatedNote = vi.fn();
+    const { rerender } = render(panel(note("open", ["before-one", "before-two"]), onOpenRelatedNote));
+    await settle();
+
+    const pressed = rowOf("before-one");
+    fireEvent.pointerMove(pressed, { clientX: 99, clientY: 100 });
+    fireEvent.pointerMove(pressed, restingPoint);
+    await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
+    expect(pressed).toHaveClass("state-active");
+    expect(preview()).toHaveTextContent("Body of before-one");
+
+    fireEvent.click(within(pressed).getByRole("button", { name: /^before-one/ }));
+    expect(onOpenRelatedNote).toHaveBeenCalledWith("before-one");
+    rerender(panel(note("next", ["after-one", "after-two"]), onOpenRelatedNote));
+    await settle();
+    expectSilence();
+
+    const under = rowOf("after-one");
+    reportArrivalUnder(under);
+    await settle(0);
+    expectSilence();
+    await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + HOVER_PREVIEW_WARM_WINDOW_MS);
+    fireEvent.pointerMove(under, restingPoint);
+    await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
+    expectSilence();
+
+    fireEvent.pointerMove(under, movedPoint);
+    await expectAnswer(under, "after-one");
+  });
+
+  it("lets go of a row whose key the new card shares", async () => {
+    const { rerender } = render(panel(note("open", ["shared"])));
+    await settle();
+    fireEvent.pointerMove(rowOf("shared"), { clientX: 99, clientY: 100 });
+    fireEvent.pointerMove(rowOf("shared"), restingPoint);
+    expect(rowOf("shared")).toHaveClass("state-active");
+
+    rerender(panel(note("next", ["shared"])));
+    await settle();
+    expectSilence();
+    reportArrivalUnder(rowOf("shared"));
+    await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
+    expectSilence();
+
+    fireEvent.pointerMove(rowOf("shared"), movedPoint);
+    await expectAnswer(rowOf("shared"), "shared");
+  });
+
+  it("holds an opened card's rows and an association block's rows to the same rule", async () => {
+    listCardAssociationsMock.mockImplementation(async (slug: string) => ({
+      generation: 1,
+      slug,
+      groups: [{ kind: "author", label: "@author", blocks: [lightBlock({ slug: "by-author", body: "Body of by-author" })] }],
+    }));
+    const { container } = render(panel(note("open")));
+    await settle();
+
+    const row = container.querySelector('[data-card-association-item="button"]') as HTMLElement;
+    reportArrivalUnder(row);
+    await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
+    expectSilence();
+
+    fireEvent.pointerMove(row, movedPoint);
+    await expectAnswer(row, "by-author");
+  });
+
+  it("stays silent when a row's card arrives under a pointer that moved over its placeholder", async () => {
+    let arrive: (card: IndexedBlock) => void = () => {};
+    const late = new Promise<IndexedBlock>((resolve) => { arrive = resolve; });
+    getBlockMock.mockImplementation((slug: string) => (
+      slug === "late" ? late : Promise.resolve(note(slug))
+    ));
+    const { container } = render(panel(note("open", ["late"])));
+    await settle();
+    const placeholder = container.querySelector('[data-related-note-item="placeholder"]') as HTMLElement;
+    movePointerOnto(placeholder, 99, 100);
+    arrive(note("late"));
+    await settle();
+
+    const row = rowOf("late");
+    fireEvent.pointerMove(row, { clientX: 100, clientY: 100 });
+    await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
+    expectSilence();
+
+    fireEvent.pointerMove(row, movedPoint);
+    await expectAnswer(row, "late");
+  });
+
+  it("lets go when the panel scrolls, and takes the row under the pointer only after it moves", async () => {
+    const { container } = render(panel(note("open", ["one", "two"])));
+    await settle();
+    const row = rowOf("one");
+    fireEvent.pointerMove(row, { clientX: 99, clientY: 100 });
+    fireEvent.pointerMove(row, restingPoint);
+    await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
+    expect(preview()).not.toBeNull();
+
+    fireEvent.scroll(container.querySelector("[data-metadata-scroll]") as HTMLElement);
+    expect(rowOf("one")).not.toHaveClass("state-active");
+    await settle(HOVER_INTENT.fadeOutMs + 20);
+    expectSilence();
+    fireEvent.pointerMove(rowOf("two"), restingPoint);
+    await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
+    expectSilence();
+
+    fireEvent.pointerMove(rowOf("two"), movedPoint);
+    await expectAnswer(rowOf("two"), "two");
+  });
+
+  it("does not let go for a scroll that does not hold the panel", async () => {
+    render(panel(note("open", ["one"])));
+    await settle();
+    const row = rowOf("one");
+    movePointerOnto(row);
+    const beside = document.createElement("div");
+    document.body.appendChild(beside);
+    fireEvent.scroll(beside);
+    beside.remove();
+    expect(row).toHaveClass("state-active");
+  });
+});
+
 describe("Delete media file? preview", () => {
   it("shows no broken-image icon for a file that will not load", () => {
     vi.mocked(prepareDeleteMediaAsset).mockReturnValue(new Promise(() => {}));
@@ -3677,6 +3917,7 @@ describe("Delete media file? preview", () => {
       <DeleteMediaAssetDialog
         asset={asset}
         vaultPath="/vault"
+        thumbsRootPath="/thumbs"
         open
         onOpenChange={vi.fn()}
         onDelete={vi.fn(async () => {})}
@@ -3920,15 +4161,16 @@ describe("an open link card's page picture", () => {
     expect(picture.querySelector("[data-detail-media-more-button]")).toBeNull();
     expect(picture.querySelector("[data-media-asset-ref]")).toBeNull();
 
-    fireEvent.click(picture.querySelector("[data-detail-image] img")!);
+    const frame = picture.querySelector("[data-detail-media-action-frame]");
+    fireEvent.click(picture.querySelector("[data-detail-image] img")!, { detail: 1 });
     expect(onOpenImagePreview).toHaveBeenCalledTimes(1);
-    expect(onOpenImagePreview).toHaveBeenLastCalledWith({ src: PREVIEW_SRC, mediaRef: null });
+    expect(onOpenImagePreview).toHaveBeenLastCalledWith({ src: PREVIEW_SRC, mediaRef: null, source: frame, openedBy: "pointer" });
 
     const expand = controls.querySelector("[data-detail-media-expand-button]")!;
     expect(expand).toHaveAttribute("aria-label", "Expand image");
     fireEvent.click(expand);
     expect(onOpenImagePreview).toHaveBeenCalledTimes(2);
-    expect(onOpenImagePreview).toHaveBeenLastCalledWith({ src: PREVIEW_SRC, mediaRef: null });
+    expect(onOpenImagePreview).toHaveBeenLastCalledWith({ src: PREVIEW_SRC, mediaRef: null, source: frame, openedBy: "keyboard" });
 
     fireEvent.contextMenu(picture.querySelector("[data-detail-image] img")!, { clientX: 120, clientY: 80 });
     await act(async () => {});

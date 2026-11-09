@@ -32,12 +32,12 @@ describe("hydrateCommandOverrides", () => {
   });
 
   it("applies the saved chords once they are read", async () => {
-    listShortcutOverridesMock.mockResolvedValue({ paste: { key: "b", meta: true } });
+    listShortcutOverridesMock.mockResolvedValue({ "switch-space": { key: "b", meta: true } });
 
     await hydrateCommandOverrides();
 
-    expect(pressed("paste", { key: "b", code: "KeyB", metaKey: true })).toBe(true);
-    expect(pressed("paste", { key: "v", code: "KeyV", metaKey: true })).toBe(false);
+    expect(pressed("switch-space", { key: "b", code: "KeyB", metaKey: true })).toBe(true);
+    expect(pressed("switch-space", { key: "o", code: "KeyO", metaKey: true, shiftKey: true })).toBe(false);
   });
 
   it("keeps a rebind that arrived while the saved chords were being read", async () => {
@@ -47,14 +47,14 @@ describe("hydrateCommandOverrides", () => {
     );
 
     const hydrating = hydrateCommandOverrides();
-    // Settings rebinds Paste; its `shortcuts-changed` lands first.
-    const rebound = { paste: { key: "j", meta: true } };
+    // Settings rebinds Switch space; its `shortcuts-changed` lands first.
+    const rebound = { "switch-space": { key: "j", meta: true } };
     setCommandOverrides(rebound);
-    answer({ paste: { key: "b", meta: true } });
+    answer({ "switch-space": { key: "b", meta: true } });
     await hydrating;
 
     expect(getCommandOverrides()).toBe(rebound);
-    expect(pressed("paste", { key: "j", code: "KeyJ", metaKey: true })).toBe(true);
-    expect(pressed("paste", { key: "b", code: "KeyB", metaKey: true })).toBe(false);
+    expect(pressed("switch-space", { key: "j", code: "KeyJ", metaKey: true })).toBe(true);
+    expect(pressed("switch-space", { key: "b", code: "KeyB", metaKey: true })).toBe(false);
   });
 });

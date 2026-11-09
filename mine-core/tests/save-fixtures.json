@@ -517,5 +517,537 @@
         "extension": null
       }
     }
+  },
+  {
+    "name": "page file plan: one address once, referer of the page, cookies on its site, poster of a shown video",
+    "command": {
+      "op": "page_file_plan",
+      "document_url": "https://shop.example.com/p/1?x=1#top",
+      "image_url": "https://cdn.example.net/og.jpg",
+      "body": "![a](https://cdn.example.net/a.jpg)\n\n![again](https://cdn.example.net/a.jpg)\n\n![b](https://files.example.com/b.png)\n\n![i](http://nas.local/i.png)\n\n![v](https://cdn.example.net/v.mp4)\n\n```\n![code](https://cdn.example.net/code.jpg)\n```\n",
+      "video_posters": [
+        {
+          "video_url": "https://cdn.example.net/v.mp4",
+          "poster_url": "https://cdn.example.net/p.jpg"
+        },
+        {
+          "video_url": "https://cdn.example.net/absent.mp4",
+          "poster_url": "https://cdn.example.net/q.jpg"
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "parallel": 3,
+        "per_domain": 2,
+        "files": [
+          {
+            "url": "https://cdn.example.net/og.jpg",
+            "referer": "https://shop.example.com/",
+            "cookies": false,
+            "reachable": true
+          },
+          {
+            "url": "https://cdn.example.net/a.jpg",
+            "referer": "https://shop.example.com/",
+            "cookies": false,
+            "reachable": true
+          },
+          {
+            "url": "https://files.example.com/b.png",
+            "referer": "https://shop.example.com/",
+            "cookies": true,
+            "reachable": true
+          },
+          {
+            "url": "http://nas.local/i.png",
+            "referer": "https://shop.example.com/",
+            "cookies": false,
+            "reachable": false
+          },
+          {
+            "url": "https://cdn.example.net/v.mp4",
+            "referer": "https://shop.example.com/",
+            "cookies": false,
+            "reachable": true
+          },
+          {
+            "url": "https://cdn.example.net/p.jpg",
+            "poster_of": "https://cdn.example.net/v.mp4",
+            "referer": "https://shop.example.com/",
+            "cookies": false,
+            "reachable": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "page file plan of a page without an origin",
+    "command": {
+      "op": "page_file_plan",
+      "document_url": "file:///Users/me/page.html",
+      "body": "![a](https://cdn.example.net/a.jpg)"
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "parallel": 3,
+        "per_domain": 2,
+        "files": [
+          {
+            "url": "https://cdn.example.net/a.jpg",
+            "referer": null,
+            "cookies": false,
+            "reachable": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "address check: a public name",
+    "command": {
+      "op": "address_check",
+      "url": "https://cdn.example.co.uk/a.jpg"
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "allowed": true
+      }
+    }
+  },
+  {
+    "name": "address check: a name without a public suffix",
+    "command": {
+      "op": "address_check",
+      "url": "http://nas.local/a.jpg"
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "allowed": false,
+        "refusal": "unknown_suffix"
+      }
+    }
+  },
+  {
+    "name": "address check: this Mac",
+    "command": {
+      "op": "address_check",
+      "url": "http://127.0.0.1/a.jpg"
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "allowed": false,
+        "refusal": "internal"
+      }
+    }
+  },
+  {
+    "name": "address check: another scheme",
+    "command": {
+      "op": "address_check",
+      "url": "ftp://example.com/a.jpg"
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "allowed": false,
+        "refusal": "scheme"
+      }
+    }
+  },
+  {
+    "name": "inline media: a repeated address, a type the executor knows, an assumption, and multibyte text",
+    "command": {
+      "op": "inline_media",
+      "slug": "Статья",
+      "types": {
+        "https://pds.example/getBlob?cid=1": "mp4"
+      },
+      "body": "Текст ![раз](https://h.example/a.png) и ![два](https://h.example/a.png)\n\n![v](https://pds.example/getBlob?cid=1)\n\n![t](https://h.example/none)\n\n![code](data:image/png;base64,AA)"
+    },
+    "expected": {
+      "ok": true,
+      "value": [
+        {
+          "url": "https://h.example/a.png",
+          "kind": "image",
+          "extension": "png",
+          "file_name": "Статья (image 1).png",
+          "places": [
+            {
+              "start": 11,
+              "end": 45,
+              "caption": "раз"
+            },
+            {
+              "start": 49,
+              "end": 83,
+              "caption": "два"
+            }
+          ]
+        },
+        {
+          "url": "https://pds.example/getBlob?cid=1",
+          "kind": "video",
+          "extension": "mp4",
+          "file_name": "Статья (video 1).mp4",
+          "places": [
+            {
+              "start": 85,
+              "end": 124,
+              "caption": "v"
+            }
+          ]
+        },
+        {
+          "url": "https://h.example/none",
+          "kind": "image",
+          "extension": "jpg",
+          "file_name": "Статья (image 2).jpg",
+          "places": [
+            {
+              "start": 126,
+              "end": 154,
+              "caption": "t"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "rewrite body: only the placed bytes change",
+    "command": {
+      "op": "rewrite_body",
+      "body": "до ![a](https://h.example/a.jpg) и ![b](https://h.example/b.jpg)",
+      "placements": [
+        {
+          "start": 5,
+          "end": 34,
+          "caption": "a",
+          "file": "Media/S (image 1).jpg"
+        }
+      ],
+      "paths": [
+        "Media/S (image 1).jpg"
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "body": "до ![[S (image 1).jpg|a]] и ![b](https://h.example/b.jpg)"
+      }
+    }
+  },
+  {
+    "name": "media failure: a limited site says when to retry",
+    "command": {
+      "op": "media_failure",
+      "url": "https://cdn.example/a.jpg",
+      "failure": {
+        "kind": "refused",
+        "status": 429,
+        "retry_after_seconds": 600
+      }
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "reason": "cdn.example is not giving the file right now (HTTP 429). Try again in 10 min."
+      }
+    }
+  },
+  {
+    "name": "media failure: another code",
+    "command": {
+      "op": "media_failure",
+      "url": "https://cdn.example/a.jpg",
+      "failure": {
+        "kind": "refused",
+        "status": 404
+      }
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "reason": "cdn.example did not give the file (HTTP 404)."
+      }
+    }
+  },
+  {
+    "name": "media failure: no answer names its cause",
+    "command": {
+      "op": "media_failure",
+      "url": "https://cdn.example/a.jpg",
+      "failure": {
+        "kind": "no_answer",
+        "cause": "the answer is a web page"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "reason": "cdn.example did not give the file: the answer is a web page."
+      }
+    }
+  },
+  {
+    "name": "card file role: the picture of a video is its thumbnail",
+    "command": {
+      "op": "card_file_role",
+      "block_type": "video",
+      "extension": "jpg"
+    },
+    "expected": {
+      "ok": true,
+      "value": "thumbnail"
+    }
+  },
+  {
+    "name": "card file role: the picture of a link is its file",
+    "command": {
+      "op": "card_file_role",
+      "block_type": "link",
+      "extension": "jpg"
+    },
+    "expected": {
+      "ok": true,
+      "value": "file"
+    }
+  },
+  {
+    "name": "media extension with an address: the bytes win",
+    "command": {
+      "op": "media_extension",
+      "head": [
+        137,
+        80,
+        78,
+        71,
+        13,
+        10,
+        26,
+        10
+      ],
+      "content_type": "image/jpeg",
+      "url": "https://h.example/a.jpg"
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "extension": "png"
+      }
+    }
+  },
+  {
+    "name": "media extension with an address: what the address states is declared first",
+    "command": {
+      "op": "media_extension",
+      "head": [
+        46,
+        46,
+        46,
+        46
+      ],
+      "content_type": "video/webm",
+      "url": "https://h.example/a.mp4"
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "extension": "mp4"
+      }
+    }
+  },
+  {
+    "name": "media extension with an address that states none: what the server answered",
+    "command": {
+      "op": "media_extension",
+      "head": [
+        46,
+        46,
+        46,
+        46
+      ],
+      "content_type": "video/webm",
+      "url": "https://h.example/getBlob?cid=1"
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "extension": "webm"
+      }
+    }
+  },
+  {
+    "name": "media extension with an address and nothing else: the helper's assumption",
+    "command": {
+      "op": "media_extension",
+      "head": [
+        46,
+        46,
+        46,
+        46
+      ],
+      "content_type": null,
+      "url": "https://h.example/getBlob?cid=1"
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "extension": "jpg"
+      }
+    }
+  },
+  {
+    "name": "media evidence: no files need none",
+    "command": {
+      "op": "media_evidence",
+      "phase": "prepared",
+      "markdown": "missing",
+      "media": []
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "media": "not_required",
+        "action": "publish_markdown"
+      }
+    }
+  },
+  {
+    "name": "media evidence: every file comes before the note",
+    "command": {
+      "op": "media_evidence",
+      "phase": "prepared",
+      "markdown": "missing",
+      "media": [
+        "missing",
+        "missing"
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "media": "missing",
+        "action": "publish_media"
+      }
+    }
+  },
+  {
+    "name": "media evidence: one file already there is another writer's",
+    "command": {
+      "op": "media_evidence",
+      "phase": "prepared",
+      "markdown": "missing",
+      "media": [
+        "missing",
+        "matches"
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "media": "missing",
+        "action": "name_conflict"
+      }
+    }
+  },
+  {
+    "name": "media evidence: a break among the files is unknown",
+    "command": {
+      "op": "media_evidence",
+      "phase": "media_publishing",
+      "markdown": "missing",
+      "media": [
+        "matches",
+        "missing"
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "media": "missing",
+        "action": "unknown_outcome"
+      }
+    }
+  },
+  {
+    "name": "media evidence: all files there, the note is next",
+    "command": {
+      "op": "media_evidence",
+      "phase": "media_published",
+      "markdown": "missing",
+      "media": [
+        "matches",
+        "matches"
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "media": "matches",
+        "action": "publish_markdown"
+      }
+    }
+  },
+  {
+    "name": "media evidence: the note and all files there make the receipt",
+    "command": {
+      "op": "media_evidence",
+      "phase": "source_committed",
+      "markdown": "matches",
+      "media": [
+        "matches",
+        "matches"
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "media": "matches",
+        "action": "persist_receipt"
+      }
+    }
+  },
+  {
+    "name": "media failure: a browser that could not keep the file",
+    "command": {
+      "op": "media_failure",
+      "url": "https://cdn.example/a.jpg",
+      "failure": {
+        "kind": "browser",
+        "failure": "not_stored"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "reason": "cdn.example did not give the file: the browser could not keep the file."
+      }
+    }
+  },
+  {
+    "name": "media failure: an address that leads inside",
+    "command": {
+      "op": "media_failure",
+      "url": "http://nas.local/a.jpg",
+      "failure": {
+        "kind": "address",
+        "refusal": "unknown_suffix"
+      }
+    },
+    "expected": {
+      "ok": true,
+      "value": {
+        "reason": "nas.local did not give the file: the name has no known public suffix."
+      }
+    }
   }
 ]

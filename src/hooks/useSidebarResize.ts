@@ -6,6 +6,7 @@ import {
   clampSidebarTarget,
   sidebarDragBounds,
   sidebarWidthCss,
+  sidebarWidthPx,
 } from "@/lib/sidebarPlacement";
 import type { SidebarLayout } from "@/types";
 import { writeSidebarWidth } from "@/lib/sidebarWidth";
@@ -43,8 +44,9 @@ function initialLayout(windowSidebar: SidebarLayout | null): { width: number; co
 }
 
 /** The sidebar beside the feed leaving the row or coming back into it as the
- *  window crosses the threshold of the sidebar over the feed. */
-type SidebarCrossing = "leave" | "enter";
+ *  window crosses the threshold of the sidebar over the feed; or opening for
+ *  the keyboard and closing after it. */
+type SidebarCrossing = "leave" | "enter" | "keyboard";
 
 /** The width a drag or a key may give the sidebar in the window as it is now. */
 function clampToWindow(width: number): number {
@@ -68,6 +70,11 @@ export interface UseSidebarResizeReturn {
    *  sidebar over the feed: the only times it animates. A window's resize or
    *  a drag moves it at once. */
   widthAnimating: boolean;
+  /** The sidebar's width beside the feed when open, px, as its CSS gives it
+   *  in the window now (`sidebarWidthCss`): the width a collapse leaves and
+   *  an opening reaches. The list keeps this width's look while the width
+   *  moves (sidebarListMorph.ts; user's decision of 01.11.2026). */
+  openWidth: number;
   /** The sidebar beside the feed is on the page: always while the window
    *  holds it, and for the motion of its leaving when the window narrows past
    *  the threshold (SPEC_NARROW_WINDOW.md, У7). */
@@ -91,13 +98,18 @@ export interface UseSidebarResizeReturn {
  * a tab. `overlaid`: the window is too narrow for the sidebar beside the
  * feed (SPEC_NARROW_WINDOW.md, У1); the sidebar takes none of the row then,
  * and lies over the feed when open with a width of its own (SidebarOverlay).
+ * `openForKeyboard`: a collapsed sidebar shows for the keyboard's visit
+ * (SPEC_KEYBOARD.md, М8). It is not the person's setting: `collapsed` below and
+ * what the backend keeps stay as they are, so a reload comes back collapsed.
  */
 export function useSidebarResize(
   windowSidebar: SidebarLayout | null = null,
   overlaid = false,
+  openForKeyboard = false,
 ): UseSidebarResizeReturn {
   const [storedWidth, setStoredWidth] = useState(() => initialLayout(windowSidebar).width);
-  const [collapsed, setCollapsed] = useState(() => initialLayout(windowSidebar).collapsed);
+  const [storedCollapsed, setCollapsed] = useState(() => initialLayout(windowSidebar).collapsed);
+  const collapsed = storedCollapsed && !openForKeyboard;
   const [isResizing, setIsResizing] = useState(false);
   const [dragWidth, setDragWidth] = useState(() => {
     const { width, collapsed: c } = initialLayout(windowSidebar);
@@ -136,8 +148,8 @@ export function useSidebarResize(
   const pendingWidthRef = useRef(0);
 
   // Keep refs in sync so the stable callbacks read fresh values at fire time.
-  const collapsedRef = useRef(collapsed);
-  collapsedRef.current = collapsed;
+  const collapsedRef = useRef(storedCollapsed);
+  collapsedRef.current = storedCollapsed;
 
   // Display width drives React-side consumers (the handle). The actual sidebar
   // layout uses var(--sidebar-width), updated synchronously in updateResize so
@@ -156,6 +168,12 @@ export function useSidebarResize(
     const moves = !collapsed && motionDuration(SIDEBAR_WIDTH_MOTION_MS) > 0;
     setCrossing(moves ? (overlaid ? "leave" : "enter") : null);
   }
+  // The keyboard's visit moves as a collapse and an opening do.
+  const [lastOpenForKeyboard, setLastOpenForKeyboard] = useState(openForKeyboard);
+  if (openForKeyboard !== lastOpenForKeyboard) {
+    setLastOpenForKeyboard(openForKeyboard);
+    if (storedCollapsed && !overlaid && motionDuration(SIDEBAR_WIDTH_MOTION_MS) > 0) setCrossing("keyboard");
+  }
   useEffect(() => {
     if (crossing === null) return undefined;
     const timer = setTimeout(() => setCrossing(null), SIDEBAR_WIDTH_MOTION_MS);
@@ -165,16 +183,19 @@ export function useSidebarResize(
   // Mount + sync: seed / update CSS variable before paint. At rest the
   // variable is the squeeze expression; the drag writes plain pixels. Over
   // the feed the sidebar takes none of the row. Coming back into the row it
-  // starts from none for a frame, so its width moves in.
+  // starts from none for a frame, so its width moves in. The rows' columns
+  // keep the open width throughout (user's decision of 05.11.2026): the name's
+  // column stands still while the panel's edge moves over it.
   useLayoutEffect(() => {
     if (isResizing) return undefined;
-    const target = collapsed || overlaid ? "0px" : sidebarWidthCss(storedWidth);
+    const open = sidebarWidthCss(storedWidth);
+    const target = collapsed || overlaid ? "0px" : open;
     if (crossing === "enter") {
-      writeSidebarWidth("0px");
-      const frame = requestAnimationFrame(() => writeSidebarWidth(target));
+      writeSidebarWidth("0px", open);
+      const frame = requestAnimationFrame(() => writeSidebarWidth(target, open));
       return () => cancelAnimationFrame(frame);
     }
-    writeSidebarWidth(target);
+    writeSidebarWidth(target, open);
     return undefined;
   }, [collapsed, crossing, overlaid, storedWidth, isResizing]);
 
@@ -273,6 +294,7 @@ export function useSidebarResize(
     collapsed,
     isResizing,
     widthAnimating: widthAnimating || crossing !== null,
+    openWidth: sidebarWidthPx(storedWidth, window.innerWidth),
     besideShown: !overlaid || crossing === "leave",
     startResize,
     updateResize,

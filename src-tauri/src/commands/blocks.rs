@@ -1398,14 +1398,14 @@ async fn toggle_task_item_unannounced(
     .await
     .map_err(|e| TaskToggleError::internal(format!("task toggle worker failed: {e}")))??;
 
-    if toggled.thumb != thumbnails::ThumbSource::None {
+    if let Some(pictures) = toggled.pictures.filter(|pictures| pictures.changed) {
         crate::commands::space_events::announce_to_vault(
             &app,
             &event_vault,
             "thumb:updated",
             ThumbUpdatedPayload {
                 slug: toggled.block.slug.clone(),
-                is_text: toggled.thumb == thumbnails::ThumbSource::Text,
+                is_text: pictures.is_text,
             },
         );
     }
@@ -1703,7 +1703,7 @@ fn extract_text_selection_inner(
     let mut writes = Vec::with_capacity(2);
     if let Some(updated) = patched_source {
         writes.push(SourceFileWrite::replace(
-            source_path,
+            source_path.clone(),
             content.into_bytes(),
             updated.into_bytes(),
         ));
@@ -1715,14 +1715,8 @@ fn extract_text_selection_inner(
     let staged = StagedSourceMutation::stage(writes).map_err(internal_text_selection_error)?;
     let indexed = staged
         .commit_with_index(conn, "extract_text_selection", |index_conn| {
-            if let Some(reparsed) = patched_parsed.as_ref() {
-                index::upsert_block_with_diagnostics(
-                    index_conn,
-                    &reparsed.block,
-                    Some(vault.root()),
-                    Some(&reparsed.origin),
-                    reparsed.index_warning.as_deref(),
-                )?;
+            if patched_parsed.is_some() {
+                reconcile::project_source_path(index_conn, vault, &source_path)?;
             }
             index::upsert_block(index_conn, &block, Some(vault.root()))?;
             index::get_block(index_conn, &block.slug)?.ok_or_else(|| {
@@ -1730,6 +1724,9 @@ fn extract_text_selection_inner(
             })
         })
         .map_err(internal_text_selection_error)?;
+    if let Some(reparsed) = patched_parsed.as_ref() {
+        refresh_written_pictures(conn, vault, &reparsed.block.slug);
+    }
     let _ = thumbnails::generate_for_block(&block, vault);
     let _ = index::sync_thumb_metadata(
         conn,
@@ -1821,36 +1818,25 @@ fn delete_text_selection_inner(
             message: format!("failed to parse patched source block: {e}"),
         })?;
     let staged = StagedSourceMutation::stage(vec![SourceFileWrite::replace(
-        source_path,
+        source_path.clone(),
         content.into_bytes(),
         updated.into_bytes(),
     )])
     .map_err(internal_text_selection_error)?;
-    let indexed = staged
+    staged
         .commit_with_index(conn, "delete_text_selection", |index_conn| {
-            index::upsert_block_with_diagnostics(
-                index_conn,
-                &reparsed.block,
-                Some(vault.root()),
-                Some(&reparsed.origin),
-                reparsed.index_warning.as_deref(),
-            )?;
-            index::get_block(index_conn, &reparsed.block.slug)?.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "source block '{}' missing after text deletion",
-                    reparsed.block.slug
-                )
-            })
+            reconcile::project_source_path(index_conn, vault, &source_path).map(|_| ())
         })
         .map_err(internal_text_selection_error)?;
-    let _ = thumbnails::generate_for_block(&reparsed.block, vault);
-    let _ = index::sync_thumb_metadata(
-        conn,
-        &reparsed.block.slug,
-        &vault.thumb_path(&reparsed.block.slug),
-        Some(vault.root()),
-    );
-    Ok(indexed)
+    refresh_written_pictures(conn, vault, &reparsed.block.slug);
+    index::get_block(conn, &reparsed.block.slug)
+        .map_err(internal_text_selection_error)?
+        .ok_or_else(|| TextSelectionExtractError::Internal {
+            message: format!(
+                "source block '{}' missing after text deletion",
+                reparsed.block.slug
+            ),
+        })
 }
 
 /// Rename a block's backing `.md` file while keeping filename-derived identity.
@@ -3143,6 +3129,30 @@ fn apply_merge_blocks(
         })
 }
 
+/// Project every note a media command wrote as a pass over the space
+/// projects it: the row and the source stamp together, a collection page as
+/// a collection (SPEC_THUMBNAILS.md, «Свои записи Mine»).
+fn project_written_notes(
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    writes: &[MediaAssetBlockWrite],
+) -> anyhow::Result<()> {
+    for write in writes {
+        reconcile::project_source_path(conn, vault, &write.path)?;
+    }
+    Ok(())
+}
+
+/// Make the pictures of the card `slug` the command has just written
+/// (SPEC_THUMBNAILS.md, «Свои записи Mine»). The write is done and stays
+/// whatever happens here, so a failure goes to the log; the next pass over
+/// the previews makes what is missing.
+fn refresh_written_pictures(conn: &rusqlite::Connection, vault: &VaultLayout, slug: &str) {
+    if let Err(error) = derived_preview::refresh_written_card(conn, vault, slug) {
+        log::warn!("'{slug}' written, its pictures not made: {error:#}");
+    }
+}
+
 fn reconcile_committed_preview(conn: &rusqlite::Connection, vault: &VaultLayout, slug: &str) {
     if let Err(error) = derived_preview::reconcile_preview_for_slug(conn, vault, slug) {
         log::warn!("failed to reconcile committed preview for {slug}: {error:#}");
@@ -3759,22 +3769,13 @@ fn rename_media_asset_inner(
     let staged = StagedSourceMutation::stage(source_writes).map_err(internal_media_asset_error)?;
     staged
         .commit_with_index(conn, "rename_media_asset", |index_conn| {
-            for write in &planned_writes {
-                index::upsert_block(index_conn, &write.block, Some(vault.root()))?;
-            }
-            Ok(())
+            project_written_notes(index_conn, vault, &planned_writes)
         })
         .map_err(internal_media_asset_error)?;
 
     let mut affected_slugs = Vec::new();
     for write in planned_writes {
-        let _ = thumbnails::generate_for_block(&write.block, vault);
-        let _ = index::sync_thumb_metadata(
-            conn,
-            &write.block.slug,
-            &vault.thumb_path(&write.block.slug),
-            Some(vault.root()),
-        );
+        refresh_written_pictures(conn, vault, &write.block.slug);
         affected_slugs.push(write.block.slug);
     }
     affected_slugs.sort();
@@ -3826,22 +3827,13 @@ fn delete_media_asset_inner(
     let staged = StagedSourceMutation::stage(source_writes).map_err(internal_media_asset_error)?;
     staged
         .commit_with_index(conn, "delete_media_asset", |index_conn| {
-            for write in &planned_writes {
-                index::upsert_block(index_conn, &write.block, Some(vault.root()))?;
-            }
-            Ok(())
+            project_written_notes(index_conn, vault, &planned_writes)
         })
         .map_err(internal_media_asset_error)?;
 
     let mut affected_slugs = Vec::new();
     for write in planned_writes {
-        let thumb_path = vault.thumb_path(&write.block.slug);
-        let thumb_source = thumbnails::generate_for_block(&write.block, vault);
-        if matches!(thumb_source, thumbnails::ThumbSource::None) && thumb_path.exists() {
-            let _ = std::fs::remove_file(&thumb_path);
-        }
-        let _ =
-            index::sync_thumb_metadata(conn, &write.block.slug, &thumb_path, Some(vault.root()));
+        refresh_written_pictures(conn, vault, &write.block.slug);
         affected_slugs.push(write.block.slug);
     }
     affected_slugs.sort();
@@ -3984,21 +3976,17 @@ fn remove_media_asset_from_card_inner(
     let patched =
         apply_block_changes(&content, &before, &block).map_err(internal_media_asset_error)?;
     let staged = StagedSourceMutation::stage(vec![SourceFileWrite::replace(
-        source_path,
+        source_path.clone(),
         content.into_bytes(),
         patched.into_bytes(),
     )])
     .map_err(internal_media_asset_error)?;
     staged
         .commit_with_index(conn, "detach_media_asset", |index_conn| {
-            index::upsert_block(index_conn, &block, Some(vault.root())).map(|_| ())
+            reconcile::project_source_path(index_conn, vault, &source_path).map(|_| ())
         })
         .map_err(internal_media_asset_error)?;
-    let thumb_source = thumbnails::generate_for_block(&block, vault);
-    if matches!(thumb_source, thumbnails::ThumbSource::None) && thumb_path.exists() {
-        let _ = std::fs::remove_file(&thumb_path);
-    }
-    let _ = index::sync_thumb_metadata(conn, &block.slug, &thumb_path, Some(vault.root()));
+    refresh_written_pictures(conn, vault, &block.slug);
 
     Ok(MediaAssetMutationResult {
         media_ref,
@@ -4085,7 +4073,7 @@ fn delete_source_video_inner(
     let patched =
         apply_block_changes(&content, &before, &block).map_err(internal_media_asset_error)?;
     let writes = std::iter::once(SourceFileWrite::replace(
-        source_path,
+        source_path.clone(),
         content.into_bytes(),
         patched.into_bytes(),
     ))
@@ -4094,14 +4082,10 @@ fn delete_source_video_inner(
     let staged = StagedSourceMutation::stage(writes).map_err(internal_media_asset_error)?;
     staged
         .commit_with_index(conn, "delete_source_video", |index_conn| {
-            index::upsert_block(index_conn, &block, Some(vault.root())).map(|_| ())
+            reconcile::project_source_path(index_conn, vault, &source_path).map(|_| ())
         })
         .map_err(internal_media_asset_error)?;
-    let thumb_source = thumbnails::generate_for_block(&block, vault);
-    if matches!(thumb_source, thumbnails::ThumbSource::None) && thumb_path.exists() {
-        let _ = std::fs::remove_file(&thumb_path);
-    }
-    let _ = index::sync_thumb_metadata(conn, &block.slug, &thumb_path, Some(vault.root()));
+    refresh_written_pictures(conn, vault, &block.slug);
 
     Ok(MediaAssetMutationResult {
         media_ref,
@@ -4296,16 +4280,15 @@ fn attach_downloaded_source_video_inner(
         apply_block_changes(&content, &before, &block).map_err(internal_media_asset_error)?;
     let staged = StagedSourceMutation::stage(vec![
         SourceFileWrite::rename(downloaded.to_path_buf(), media_path.clone()),
-        SourceFileWrite::replace(source_path, content.into_bytes(), patched.into_bytes()),
+        SourceFileWrite::replace(source_path.clone(), content.into_bytes(), patched.into_bytes()),
     ])
     .map_err(internal_media_asset_error)?;
     staged
         .commit_with_index(conn, "attach_downloaded_source_video", |index_conn| {
-            index::upsert_block(index_conn, &block, Some(vault.root())).map(|_| ())
+            reconcile::project_source_path(index_conn, vault, &source_path).map(|_| ())
         })
         .map_err(internal_media_asset_error)?;
-    let _ = thumbnails::generate_for_block(&block, vault);
-    let _ = index::sync_thumb_metadata(conn, &block.slug, &thumb_path, Some(vault.root()));
+    refresh_written_pictures(conn, vault, &block.slug);
 
     Ok(MediaAssetMutationResult {
         media_ref: vault.root_relative_reference(&media_path).unwrap_or(target),
@@ -6889,6 +6872,55 @@ mod tests {
         assert!(indexed.tags.is_empty());
     }
 
+    /// SPEC_THUMBNAILS.md, «Свои записи Mine» (решение пользователя
+    /// 09.11.2026): Delete of a picture a card shows leaves the card drawn
+    /// from what remains as soon as the command returns. The watcher ignores
+    /// the command's own writes, so before 09.11.2026 the feed kept drawing
+    /// the deleted picture in the card's first tile until the next pass over
+    /// the space.
+    #[test]
+    fn deleting_a_picture_redraws_the_card_from_what_remains_at_once() {
+        use crate::storage::derived_preview::fixtures::{
+            drawn_tiles, picture, preview_state, Colour,
+        };
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        picture(&vault.root().join("Media/red.jpg"), Colour::Red);
+        picture(&vault.root().join("Media/green.jpg"), Colour::Green);
+        picture(&vault.root().join("Media/blue.jpg"), Colour::Blue);
+        write_note(
+            &vault,
+            "Cards/Gallery",
+            "---\nsaved_at: 2026-04-22T00:00:00Z\n---\nText.\n\n![[red.jpg]]\n\n![[green.jpg]]\n\n![[blue.jpg]]\n",
+        );
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        derived_preview::reconcile_all_previews(&conn, &vault).unwrap();
+        assert_eq!(
+            drawn_tiles(&conn, &vault, "Cards/Gallery")
+                .into_iter()
+                .map(|(_, colour)| colour)
+                .collect::<Vec<_>>(),
+            [Colour::Red, Colour::Green, Colour::Blue],
+        );
+
+        delete_media_asset_inner(&state, &conn, &vault, "Media/red.jpg".to_string()).unwrap();
+
+        assert_eq!(
+            drawn_tiles(&conn, &vault, "Cards/Gallery"),
+            [
+                ("Media/green.jpg".to_string(), Colour::Green),
+                ("Media/blue.jpg".to_string(), Colour::Blue),
+            ],
+            "the feed draws the card from the pictures it still shows",
+        );
+        assert_eq!(preview_state(&conn, "Cards/Gallery"), "ready");
+        let pass = crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        assert!(
+            pass.upserted.is_empty() && pass.dependency_changed.is_empty(),
+            "the index and the source stamp already hold the written card: {pass:?}",
+        );
+    }
+
     #[test]
     fn rename_media_asset_inner_rewrites_frontmatter_and_inline_refs_only() {
         let (_root, _derived, vault, conn) = make_vault();
@@ -7092,7 +7124,10 @@ mod tests {
             delete_media_asset_inner(&state, &conn, &vault, "photo.png".to_string()).unwrap();
 
         assert_eq!(result.affected_slugs, ["Photo Card", "Source Article"]);
-        assert_eq!(read_names(files::take_note_reads()), (2, named));
+        // Each note that names the file is read to plan its rewrite and once
+        // more after the write, when it is indexed with its source stamp
+        // (SPEC_THUMBNAILS.md, «Свои записи Mine»); no other note is read.
+        assert_eq!(read_names(files::take_note_reads()), (4, named));
         assert!(!vault.root().join("photo.png").exists());
     }
 

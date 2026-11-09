@@ -8,6 +8,7 @@
 // permission to the page's origin instead of the extension's, which is why it
 // is refused there rather than attempted.
 
+import "../../lib/pageFiles.js";
 import "../../lib/standaloneVault.js";
 import { extensionTransportFailure, type ChannelInfo, type NativeResponse } from "./messaging";
 import { validateSaveRequest } from "./protocol";
@@ -58,10 +59,39 @@ export function getStandaloneStatus(): Promise<StandaloneStatus> {
   return toBackground<StandaloneStatus>({ action: "standaloneStatus" });
 }
 
+/**
+ * Save into the browser folder, on a port of its own: an answer owed through
+ * `sendMessage` would end at the browser's 5 minutes of one event, and the
+ * background's `progress`, answered here, keeps it alive through a long write
+ * (SPEC_CLIPPER.md, Б13). A port that closes first says nothing about the write,
+ * so the outcome is asked for.
+ */
 export function standaloneSave(payload: Record<string, unknown>): Promise<NativeResponse> {
   const rejection = validateSaveRequest(payload);
   if (rejection) return Promise.resolve(rejection);
-  return toBackground<NativeResponse>({ action: "standaloneSave", payload });
+  return new Promise((resolve) => {
+    const port = chrome.runtime.connect({ name: `${globalThis.MinePageFiles.SAVE_PORT_PREFIX}${crypto.randomUUID()}` });
+    let answered = false;
+    port.onMessage.addListener((message: { kind?: unknown; response?: unknown }) => {
+      if (message?.kind === "progress") {
+        port.postMessage({ kind: "progress" });
+      } else if (message?.kind === "done") {
+        answered = true;
+        resolve((message.response as NativeResponse | undefined) ?? { ok: false, error: "No response" });
+        port.disconnect();
+      }
+    });
+    port.onDisconnect.addListener(() => {
+      if (answered) return;
+      answered = true;
+      const transportError = chrome.runtime.lastError?.message;
+      const { operation_id: operationId, binding_id: bindingId } = payload;
+      resolve(typeof operationId === "string" && typeof bindingId === "string"
+        ? standaloneLookup(operationId, bindingId)
+        : extensionTransportFailure(transportError));
+    });
+    port.postMessage({ kind: "start", payload });
+  });
 }
 
 export function standaloneLookup(operationId: string, bindingId: string): Promise<NativeResponse> {

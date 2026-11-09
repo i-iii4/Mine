@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 
 use crate::domain::vault::VaultLayout;
 use crate::storage::files;
-use mine_core::save::{next_save_action, PublicationEvidence, SaveAction, SaveEvidence, SavePhase};
+use mine_core::save::{next_plan_action, next_save_action, PublicationEvidence, SaveAction, SaveEvidence, SavePhase};
 
 const RECORD_VERSION: u32 = 1;
 
@@ -185,51 +185,14 @@ pub struct StagedSavePlan {
 }
 
 impl StagedSavePlan {
-    fn evidence(&self, vault: &VaultLayout) -> SaveEvidence {
-        let observations: Vec<_> = self
+    /// The one rule of the core over what each file shows (`next_plan_action`).
+    fn action(&self, step: SavePhase, vault: &VaultLayout) -> SaveAction {
+        let media: Vec<_> = self
             .media
             .iter()
             .map(|target| target.source.evidence(vault))
             .collect();
-        let media = if observations.is_empty() {
-            PublicationEvidence::NotRequired
-        } else if observations.contains(&PublicationEvidence::Conflict) {
-            PublicationEvidence::Conflict
-        } else if observations.contains(&PublicationEvidence::Unreadable) {
-            PublicationEvidence::Unreadable
-        } else if observations.contains(&PublicationEvidence::Missing) {
-            PublicationEvidence::Missing
-        } else {
-            PublicationEvidence::Matches
-        };
-        SaveEvidence {
-            markdown: self.markdown.source.evidence(vault),
-            media,
-        }
-    }
-
-    fn action(&self, step: SavePhase, vault: &VaultLayout) -> SaveAction {
-        let evidence = self.evidence(vault);
-        // A mixed set of missing/existing targets cannot be summarized as all
-        // missing before the first effect. Ask the shared rule for each one.
-        if step == SavePhase::Prepared {
-            for target in &self.media {
-                let action = next_save_action(
-                    step,
-                    &SaveEvidence {
-                        markdown: evidence.markdown,
-                        media: target.source.evidence(vault),
-                    },
-                );
-                if !matches!(
-                    action,
-                    SaveAction::PublishMedia | SaveAction::PublishMarkdown
-                ) {
-                    return action;
-                }
-            }
-        }
-        next_save_action(step, &evidence)
+        next_plan_action(step, self.markdown.source.evidence(vault), &media)
     }
 }
 
@@ -286,13 +249,31 @@ pub struct SaveOperationRecord {
     pub binding_id: String,
     pub fingerprint: String,
     pub reserved_name: Option<String>,
-    #[serde(default)]
-    pub pending_upload_id: Option<String>,
+    /// The uploads a request names (SPEC_CLIPPER.md, «Один путь файла со
+    /// страницы», Б9). A record written before them names one upload as
+    /// `pending_upload_id`, or `null`.
+    #[serde(default, alias = "pending_upload_id", deserialize_with = "one_or_many", skip_serializing_if = "Vec::is_empty")]
+    pub pending_upload_ids: Vec<String>,
     /// The path binding this receipt was made under before it moved to the
     /// space identity; its fingerprint was computed with that binding.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adopted_from: Option<String>,
     pub phase: OperationPhase,
+}
+
+/// A list, written as `null` or one value by an older record.
+fn one_or_many<'de, D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Written {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match Option::<Written>::deserialize(deserializer)? {
+        None => Vec::new(),
+        Some(Written::One(upload)) => vec![upload],
+        Some(Written::Many(uploads)) => uploads,
+    })
 }
 
 /// Owns operation files outside the caller's disposable index/cache tree.
@@ -511,7 +492,7 @@ impl LockedSaveOperations {
             binding_id: self.binding.clone(),
             fingerprint,
             reserved_name: None,
-            pending_upload_id: None,
+            pending_upload_ids: Vec::new(),
             adopted_from: None,
             phase: OperationPhase::StagingV2,
         };

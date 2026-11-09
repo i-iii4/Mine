@@ -9,6 +9,7 @@ pub mod card_association;
 pub mod channel;
 pub mod collection;
 pub mod markdown;
+pub mod markdown_images;
 pub mod markdown_link;
 pub mod media_type;
 pub mod search;

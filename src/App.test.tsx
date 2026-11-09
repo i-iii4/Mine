@@ -1,6 +1,6 @@
 import { commandById, setCommandOverrides } from "@/lib/commandRegistry";
 import { getFeedDisplay, reloadFeedDisplay, setFeedSort } from "@/lib/feedDisplay";
-import { CARD_VIEW_STORAGE_KEY, getCardView, reloadCardView } from "@/lib/cardView";
+import { CARD_VIEW_STORAGE_KEY, getCardView, reloadCardView, setCardView } from "@/lib/cardView";
 import {
   GRAPH_PREFERENCES_STORAGE_KEY,
   reloadGraphPreferences,
@@ -73,6 +73,7 @@ const commandMocks = vi.hoisted(() => ({
   createChannel: vi.fn<(tag: string) => Promise<ChannelDto>>(),
   reorderChannels: vi.fn(async (_items: { tag: string; position: number }[]) => undefined),
   renameBlockFile: vi.fn(),
+  checkBlockRename: vi.fn(),
   prepareDeleteBlock: vi.fn<(slug: string) => Promise<DeleteBlockPlan>>(),
   deleteBlock: vi.fn<(slug: string, deleteUnusedMedia?: boolean, offeredMedia?: string[]) => Promise<DeleteBlockOutcome>>(),
   prepareDeleteBlocks: vi.fn<(slugs: string[]) => Promise<DeleteBlocksPlan>>(),
@@ -161,6 +162,7 @@ vi.mock("@/lib/commands", () => ({
   renameChannel: commandMocks.renameChannel,
   checkCollectionName: commandMocks.checkCollectionName,
   renameBlockFile: commandMocks.renameBlockFile,
+  checkBlockRename: commandMocks.checkBlockRename,
   addTag: commandMocks.addTag,
   removeTag: commandMocks.removeTag,
   setBlocksMembership: commandMocks.setBlocksMembership,
@@ -199,11 +201,15 @@ vi.mock("@/lib/articleAudioDesktopGateway", () => ({
 }));
 
 vi.mock("@/hooks/useSidebarResize", () => ({
-  useSidebarResize: (windowSidebar: { width_px: number; collapsed: boolean } | null = null, overlaid = false) => {
+  useSidebarResize: (
+    windowSidebar: { width_px: number; collapsed: boolean } | null = null,
+    overlaid = false,
+    openForKeyboard = false,
+  ) => {
     sidebarResizeState.windowSidebar = windowSidebar;
     return {
       width: sidebarResizeState.width,
-      collapsed: sidebarResizeState.collapsed,
+      collapsed: sidebarResizeState.collapsed && !openForKeyboard,
       isResizing: sidebarResizeState.isResizing,
       widthAnimating: sidebarResizeState.widthAnimating,
       besideShown: !overlaid,
@@ -268,6 +274,11 @@ vi.mock("@/components/SidebarResizeHandle", () => ({
 // The feed scrolled to its end: like the real Grid there, the mock asks for the
 // next page whenever there is more and nothing is loading.
 const gridScroll = vi.hoisted(() => ({ atEnd: false }));
+/// How the mock feed answers the focus coming back from the sidebar.
+const feedKeyboardFocus = vi.hoisted(() => ({
+  take: vi.fn(() => true),
+  release: vi.fn(),
+}));
 
 // The card thumbnails the Sidebar mock shows in its collection rows.
 const sidebarMockState = vi.hoisted(() => ({
@@ -290,6 +301,8 @@ vi.mock("@/components/Grid", async () => {
     onGroupSelectionStart,
     onSelectionCommandChange,
     onCardMenuShortcutChange,
+    onKeyboardFocusLeave,
+    onKeyboardFocusReturnChange,
     hasMoreBlocks,
     loadingMoreBlocks,
     onLoadMoreBlocks,
@@ -302,7 +315,9 @@ vi.mock("@/components/Grid", async () => {
     onDeleteSelectedBlocks,
     onBatchSetTag,
     onToggleTag,
+    onRequestRename,
   }: {
+    onRequestRename?: (block: LightBlock) => void;
     onBatchSetTag?: (slugs: string[], tag: string, connected: boolean) => void | Promise<unknown>;
     onToggleTag?: (slug: string, tag: string, hasTag: boolean) => void | Promise<unknown>;
     onCreateAndAssign?: (tag: string, blockSlug: string) => void | Promise<void>;
@@ -328,6 +343,8 @@ vi.mock("@/components/Grid", async () => {
     onGroupSelectionStart?: () => void;
     onSelectionCommandChange?: (clear: (() => void) | null) => void;
     onCardMenuShortcutChange?: (activate: (() => void) | null) => void;
+    onKeyboardFocusLeave?: () => boolean;
+    onKeyboardFocusReturnChange?: (feed: typeof feedKeyboardFocus | null) => void;
     hasMoreBlocks?: boolean;
     loadingMoreBlocks?: boolean;
     onLoadMoreBlocks?: () => void;
@@ -337,8 +354,15 @@ vi.mock("@/components/Grid", async () => {
       if (!gridScroll.atEnd || !hasMoreBlocks || loadingMoreBlocks || !onLoadMoreBlocks) return;
       onLoadMoreBlocks();
     }, [blocks.length, hasMoreBlocks, loadingMoreBlocks, onLoadMoreBlocks]);
+    useEffect(() => {
+      onKeyboardFocusReturnChange?.(feedKeyboardFocus);
+      return () => onKeyboardFocusReturnChange?.(null);
+    }, [onKeyboardFocusReturnChange]);
     return (
       <div>
+        <button type="button" onClick={() => onKeyboardFocusLeave?.()}>
+          Reach the feed's left edge
+        </button>
         <div data-testid="grid">
           {`${location?.kind === "author" ? `author ${location.author}` : currentTag ?? "__all__"}:${blocks.length}`}
         </div>
@@ -417,6 +441,10 @@ vi.mock("@/components/Grid", async () => {
         >
           Connect alpha-block to beta
         </button>
+        {/* `Rename…` of the menu of a feed card. */}
+        <button type="button" onClick={() => onRequestRename?.(block(1, "alpha-block"))}>
+          Rename alpha-block in the feed
+        </button>
         {/* The group delete window's `Delete`, which offered one file. */}
         <button
           type="button"
@@ -465,12 +493,14 @@ vi.mock("@/components/Detail", () => ({
     block,
     topChromeMode,
     onClose,
+    onRequestRename,
     onRequestDelete,
     onOpenAuthorFeed,
   }: {
     block: LightBlock | IndexedBlock;
     topChromeMode?: "classic" | "external";
     onClose: () => void;
+    onRequestRename: (block: LightBlock | IndexedBlock) => void;
     onRequestDelete: (slug: string) => void;
     onOpenAuthorFeed?: (author: string) => void;
   }) => (
@@ -492,6 +522,10 @@ vi.mock("@/components/Detail", () => ({
       {/* A related note's row deletes another card. */}
       <button type="button" onClick={() => onRequestDelete("beta-block")}>
         Delete related note
+      </button>
+      {/* A related note's row renames another card. */}
+      <button type="button" onClick={() => onRequestRename(indexedBlock(2, "beta-block"))}>
+        Rename related note
       </button>
       {/* The author heading of an association block. */}
       <button type="button" onClick={() => onOpenAuthorFeed?.("@kotecinho")}>
@@ -538,7 +572,7 @@ vi.mock("@/components/Sidebar", async () => {
   function MockCollectionRow({ tag, children }: { tag: string; children: ReactNode }) {
     const { setNodeRef } = useDroppable({ id: `tag:${tag}` });
     return (
-      <div ref={setNodeRef} data-sidebar-row="" data-sidebar-row-key={`tag:${tag}`}>
+      <div ref={setNodeRef} id={`sidebar-row-${encodeURIComponent(`tag:${tag}`)}`} data-sidebar-row="" data-sidebar-row-key={`tag:${tag}`}>
         {children}
       </div>
     );
@@ -563,7 +597,18 @@ vi.mock("@/components/Sidebar", async () => {
       onDeleteTag,
       onCreateChannel,
       onNavClick,
+      onCardClose,
+      onOpenCardMenu,
+      keyboardFocusRowKey = null,
+      linkedBlockSlug = null,
+      linkedTags = [],
+      onToggleLinkedTag,
     }: {
+      onOpenCardMenu?: (block: LightBlock, point: { x: number; y: number }) => void;
+      keyboardFocusRowKey?: string | null;
+      linkedBlockSlug?: string | null;
+      linkedTags?: string[];
+      onToggleLinkedTag?: (slug: string, tag: string, hasTag: boolean) => void;
       orderedTags: Array<{ tag: string; count: number }>;
       totalBlocks: number;
       searchQuery?: string;
@@ -572,6 +617,7 @@ vi.mock("@/components/Sidebar", async () => {
       onDeleteTag?: (tag: string) => void | Promise<void>;
       onCreateChannel?: (tag: string) => void | Promise<void>;
       onNavClick?: () => void;
+      onCardClose?: () => void;
     }) => {
       const normalizedSearchQuery = searchQuery.trim().toLowerCase();
       const showEverything = !normalizedSearchQuery
@@ -579,7 +625,11 @@ vi.mock("@/components/Sidebar", async () => {
         || "__all__".includes(normalizedSearchQuery);
 
       return (
-        <nav data-sidebar-mock="" data-sidebar-mock-drop-dragging={String(isDropDragging)}>
+        <nav
+          data-sidebar-mock=""
+          data-sidebar-mock-drop-dragging={String(isDropDragging)}
+          data-sidebar-mock-keyboard-row={keyboardFocusRowKey ?? undefined}
+        >
           {topRow}
           {/* The creation row's `Create`: a refusal comes back to the row. */}
           <button
@@ -591,13 +641,30 @@ vi.mock("@/components/Sidebar", async () => {
             Create collection gamma
           </button>
           {showEverything && <Link to="/" onClick={onNavClick}>Everything {totalBlocks}</Link>}
+          <button type="button" onClick={onCardClose}>The row of the current place</button>
+          {/* The right click on a card's preview in the sidebar. */}
+          {["alpha-block", "beta-block"].map((slug, index) => (
+            <button key={slug} type="button" onClick={() => onOpenCardMenu?.(block(index + 1, slug), { x: 10, y: 10 })}>
+              {`Preview menu of ${slug}`}
+            </button>
+          ))}
           {orderedTags
             .filter((tag) => !normalizedSearchQuery || tag.tag.toLowerCase().includes(normalizedSearchQuery))
             .map((tag) => (
               <MockCollectionRow key={tag.tag} tag={tag.tag}>
-                <Link to={`/channel/${encodeURIComponent(tag.tag)}`} onClick={onNavClick}>
+                <Link to={`/channel/${encodeURIComponent(tag.tag)}`} onClick={onNavClick} data-sidebar-row-body="">
                   {tag.tag}
                 </Link>
+                {/* The row's Connect or Disconnect while a card is open. */}
+                {linkedBlockSlug !== null && (
+                  <button
+                    type="button"
+                    data-sidebar-link-action=""
+                    onClick={() => onToggleLinkedTag?.(linkedBlockSlug, tag.tag, linkedTags.includes(tag.tag))}
+                  >
+                    {`${linkedTags.includes(tag.tag) ? "Disconnect" : "Connect"} ${tag.tag}`}
+                  </button>
+                )}
                 {sidebarMockState.thumbnails
                   .filter((thumbnail) => thumbnail.tag === tag.tag)
                   .map((thumbnail) => (
@@ -748,6 +815,7 @@ describe("AppWithVault", () => {
       block_count: 0,
     }));
     commandMocks.renameBlockFile.mockReset();
+    commandMocks.checkBlockRename.mockResolvedValue(null);
     commandMocks.prepareDeleteBlock.mockResolvedValue({
       slug: "alpha-block",
       markdown_file: "alpha-block.md",
@@ -1322,6 +1390,1539 @@ describe("AppWithVault", () => {
     });
     await waitFor(() => {
       expect(screen.queryByTestId("detail-title")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("the keyboard's focus in the sidebar (SPEC_KEYBOARD.md, «Sidebar»)", () => {
+    beforeEach(() => {
+      feedKeyboardFocus.take.mockReset().mockReturnValue(true);
+      feedKeyboardFocus.release.mockReset();
+    });
+
+    const tree = (path: string) => (
+      <MemoryRouter initialEntries={[path]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>
+    );
+    async function renderAt(path: string, grid: string) {
+      const view = render(tree(path));
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent(grid));
+      return view;
+    }
+    const entries = () => Array.from(document.querySelectorAll<HTMLElement>("[data-bar-entry]"))
+      .map((node) => node.dataset.barEntry!);
+    const SIDEBAR_ENTRIES = ["sidebar-navigate", "sidebar-open", "sidebar-menu", "sidebar-go", "sidebar-unfocus"];
+    const focusedRowKey = () => document.querySelector("[data-sidebar-mock]")
+      ?.getAttribute("data-sidebar-mock-keyboard-row") ?? null;
+    const reachEdge = () => fireEvent.click(screen.getByRole("button", { name: "Reach the feed's left edge" }));
+    const bar = (name: string) => within(document.querySelector("[data-bottom-action-bar]") as HTMLElement)
+      .getByRole("button", { name });
+
+    it("shows the sidebar's commands, in order, in place of the card's", async () => {
+      await renderAt("/channel/alpha", "alpha:1");
+      expect(entries()).toContain("navigate");
+      expect(entries().filter((id) => SIDEBAR_ENTRIES.includes(id))).toEqual([]);
+
+      reachEdge();
+      expect(focusedRowKey()).toBe("tag:alpha");
+      expect(screen.getByTestId("grid-keyboard-disabled")).toHaveTextContent("true");
+      expect(entries().filter((id) => SIDEBAR_ENTRIES.includes(id))).toEqual(SIDEBAR_ENTRIES);
+      expect(entries()).not.toContain("navigate");
+      expect(bar("↑↓ Navigate")).toBeInTheDocument();
+      expect(bar("↵ Open")).toBeInTheDocument();
+      expect(bar("⌘K Command")).toBeInTheDocument();
+      expect(bar("→ Back")).toBeInTheDocument();
+      expect(bar("esc Unfocus")).toBeInTheDocument();
+      fireEvent.keyDown(window, { key: "ArrowUp" });
+      expect(focusedRowKey()).toBe("all");
+      expect(bar("→ Back")).toBeInTheDocument();
+    });
+
+    it("offers no menu on Everything's row, which has none", async () => {
+      await renderAt("/", "__all__:2");
+      reachEdge();
+      expect(focusedRowKey()).toBe("all");
+      expect(entries()).toContain("sidebar-open");
+      expect(entries()).not.toContain("sidebar-menu");
+    });
+
+    describe("an author's feed, which has no row of its own (М1)", () => {
+      const onAuthor = () => renderAt("/author/%40kotecinho", "author @kotecinho");
+
+      it("← lands on the top visible row, with the sidebar's commands in the bar", async () => {
+        await onAuthor();
+        reachEdge();
+        expect(focusedRowKey()).toBe("all");
+        expect(entries().filter((id) => SIDEBAR_ENTRIES.includes(id))).toEqual(
+          SIDEBAR_ENTRIES.filter((id) => id !== "sidebar-menu"),
+        );
+        expect(bar("↵ Open")).toBeInTheDocument();
+        expect(bar("→ Back")).toBeInTheDocument();
+        expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+      });
+
+      it("→ from another row returns to the same feed: it opens nothing and changes no route", async () => {
+        await onAuthor();
+        reachEdge();
+        fireEvent.keyDown(window, { key: "ArrowDown" });
+        expect(focusedRowKey()).toBe("tag:alpha");
+        const route = commandMocks.listGridBlocks.mock.calls.length;
+        fireEvent.keyDown(window, { key: "ArrowRight" });
+        expect(focusedRowKey()).toBeNull();
+        expect(feedKeyboardFocus.take).toHaveBeenCalledTimes(1);
+        await act(async () => undefined);
+        expect(screen.getByTestId("grid")).toHaveTextContent("author @kotecinho");
+        expect(commandMocks.listGridBlocks.mock.calls.length).toBe(route);
+      });
+
+      it("Enter on a row opens that collection, and the focus stays on it", async () => {
+        await onAuthor();
+        reachEdge();
+        fireEvent.keyDown(window, { key: "ArrowDown" });
+        fireEvent.keyDown(window, { key: "Enter" });
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+        expect(focusedRowKey()).toBe("tag:alpha");
+        expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+      });
+
+      it("Escape leaves with nothing focused, and a hidden sidebar goes", async () => {
+        sidebarResizeState.collapsed = true;
+        await onAuthor();
+        reachEdge();
+        expect(focusedRowKey()).toBe("all");
+        expect(bar("⌃⌘S Hide Sidebar")).toBeInTheDocument();
+        fireEvent.keyDown(window, { key: "Escape" });
+        expect(focusedRowKey()).toBeNull();
+        expect(feedKeyboardFocus.release).toHaveBeenCalledTimes(1);
+        expect(bar("⌃⌘S Show Sidebar")).toBeInTheDocument();
+      });
+
+      it("with no row matching a query, ← lands in the field, and Escape comes to the top of the whole list", async () => {
+        await onAuthor();
+        const field = screen.getByRole("textbox", { name: "Find or create collection" }) as HTMLInputElement;
+        act(() => field.focus());
+        fireEvent.change(field, { target: { value: "zzz" } });
+        act(() => field.blur());
+        reachEdge();
+        expect(field).toHaveFocus();
+        expect(field.selectionStart).toBe(3);
+        fireEvent.keyDown(field, { key: "Escape" });
+        expect(field).toHaveValue("");
+        expect(focusedRowKey()).toBe("all");
+      });
+
+      describe("with a card open over it, the card's rules hold", () => {
+        async function cardOverAuthor() {
+          await onAuthor();
+          const cards = await screen.findAllByRole("button", { name: /^Open (alpha|beta)-block$/ });
+          fireEvent.click(cards[0] as HTMLElement);
+          await waitFor(() => expect(screen.queryByTestId("detail-title")).not.toBeNull());
+          fireEvent.keyDown(window, { key: "ArrowLeft" });
+          expect(focusedRowKey()).toBe("all");
+        }
+
+        it("→ from any row returns to the card, which stays, and the route too", async () => {
+          await cardOverAuthor();
+          fireEvent.keyDown(window, { key: "ArrowDown" });
+          expect(bar("→ Back")).toBeInTheDocument();
+          fireEvent.keyDown(window, { key: "ArrowRight" });
+          expect(focusedRowKey()).toBeNull();
+          expect(screen.queryByTestId("detail-title")).not.toBeNull();
+          expect(screen.getByTestId("grid")).toHaveTextContent("author @kotecinho");
+          expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+        });
+
+        it("Enter toggles the connection on a collection's row, and opens nothing", async () => {
+          commandMocks.addTag.mockClear();
+          await cardOverAuthor();
+          fireEvent.keyDown(window, { key: "ArrowDown" });
+          expect(bar("↵ Connect")).toBeInTheDocument();
+          fireEvent.keyDown(window, { key: "Enter" });
+          await waitFor(() => expect(commandMocks.addTag).toHaveBeenCalledWith(expect.any(String), "alpha"));
+          expect(focusedRowKey()).toBe("tag:alpha");
+          expect(screen.queryByTestId("detail-title")).not.toBeNull();
+          expect(screen.getByTestId("grid")).toHaveTextContent("author @kotecinho");
+        });
+      });
+    });
+
+    describe("a hidden sidebar (М8)", () => {
+      beforeEach(() => {
+        sidebarResizeState.collapsed = true;
+        sidebarResizeState.toggleCollapsed.mockClear();
+      });
+
+      it("opens for the keyboard, without the toggle that stores it", async () => {
+        await renderAt("/", "__all__:2");
+        expect(bar("⌃⌘S Show Sidebar")).toBeInTheDocument();
+        reachEdge();
+        expect(focusedRowKey()).toBe("all");
+        expect(bar("⌃⌘S Hide Sidebar")).toBeInTheDocument();
+        expect(sidebarResizeState.toggleCollapsed).not.toHaveBeenCalled();
+        expect(commandMocks.setWindowSidebar).not.toHaveBeenCalled();
+      });
+
+      it("hides on → Back and on esc Unfocus", async () => {
+        await renderAt("/", "__all__:2");
+        reachEdge();
+        fireEvent.click(bar("→ Back"));
+        expect(focusedRowKey()).toBeNull();
+        expect(feedKeyboardFocus.take).toHaveBeenCalledTimes(1);
+        expect(bar("⌃⌘S Show Sidebar")).toBeInTheDocument();
+
+        reachEdge();
+        fireEvent.click(bar("esc Unfocus"));
+        expect(feedKeyboardFocus.release).toHaveBeenCalledTimes(1);
+        expect(bar("⌃⌘S Show Sidebar")).toBeInTheDocument();
+        expect(commandMocks.setWindowSidebar).not.toHaveBeenCalled();
+      });
+
+      it("→ Back on another row hides it at once, and the route stays", async () => {
+        await renderAt("/", "__all__:2");
+        reachEdge();
+        fireEvent.keyDown(window, { key: "ArrowDown" });
+        expect(focusedRowKey()).toBe("tag:alpha");
+        const route = commandMocks.listGridBlocks.mock.calls.length;
+        fireEvent.click(bar("→ Back"));
+        expect(bar("⌃⌘S Show Sidebar")).toBeInTheDocument();
+        expect(focusedRowKey()).toBeNull();
+        expect(feedKeyboardFocus.take).toHaveBeenCalledTimes(1);
+        await act(async () => undefined);
+        expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+        expect(commandMocks.listGridBlocks.mock.calls.length).toBe(route);
+      });
+
+      it("stays through ↵ Open, and the next → is Back", async () => {
+        await renderAt("/", "__all__:2");
+        reachEdge();
+        fireEvent.keyDown(window, { key: "ArrowDown" });
+        fireEvent.click(bar("↵ Open"));
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha"));
+        expect(focusedRowKey()).toBe("tag:alpha");
+        expect(bar("⌃⌘S Hide Sidebar")).toBeInTheDocument();
+        expect(bar("→ Back")).toBeInTheDocument();
+        expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+      });
+
+      it("⌘⌥↑↓ moves the focus with the route, and it stays", async () => {
+        await renderAt("/", "__all__:2");
+        reachEdge();
+        fireEvent.keyDown(window, { key: "ArrowDown", metaKey: true, altKey: true });
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha"));
+        expect(focusedRowKey()).toBe("tag:alpha");
+        expect(bar("⌃⌘S Hide Sidebar")).toBeInTheDocument();
+      });
+
+      it("the bar's Hide Sidebar hides what is on screen, with nothing to store", async () => {
+        await renderAt("/", "__all__:2");
+        reachEdge();
+        fireEvent.click(bar("⌃⌘S Hide Sidebar"));
+        await waitFor(() => expect(focusedRowKey()).toBeNull());
+        expect(bar("⌃⌘S Show Sidebar")).toBeInTheDocument();
+        expect(sidebarResizeState.toggleCollapsed).not.toHaveBeenCalled();
+        expect(feedKeyboardFocus.take).toHaveBeenCalledTimes(1);
+      });
+
+      it("after the pointer took over a later route change still hides it", async () => {
+        await renderAt("/", "__all__:2");
+        reachEdge();
+        fireEvent.pointerDown(document.body);
+        expect(focusedRowKey()).toBeNull();
+        expect(bar("⌃⌘S Hide Sidebar")).toBeInTheDocument();
+
+        fireEvent.click(within(document.querySelector("[data-sidebar-mock]") as HTMLElement).getByRole("link", { name: "alpha" }));
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha"));
+        await waitFor(() => expect(bar("⌃⌘S Show Sidebar")).toBeInTheDocument());
+        expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+      });
+
+      it("leaves the sidebar over the feed closed in the same way (У4)", async () => {
+        const narrowWindow = window.innerWidth;
+        window.innerWidth = 500;
+        try {
+          await renderAt("/", "__all__:2");
+          expect(document.querySelector("[data-sidebar-overlay]")).toBeNull();
+          reachEdge();
+          expect(document.querySelector("[data-sidebar-overlay]")).toHaveAttribute("data-sidebar-overlay");
+          expect(focusedRowKey()).toBe("all");
+          const panel = document.querySelector("[data-sidebar-overlay-panel]") as HTMLElement;
+
+          // Escape is heard by the panel first, and is the focus's own.
+          fireEvent.keyDown(panel, { key: "Escape" });
+          expect(focusedRowKey()).toBeNull();
+          expect(feedKeyboardFocus.release).toHaveBeenCalledTimes(1);
+          expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+          expect(commandMocks.setWindowSidebar).not.toHaveBeenCalled();
+        } finally {
+          window.innerWidth = narrowWindow;
+        }
+      });
+    });
+
+    describe("from an open card (М9)", () => {
+      async function openCard(path = "/", grid = "__all__:2") {
+        const view = await renderAt(path, grid);
+        fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+        await waitFor(() => expect(screen.getByTestId("detail-title")).toBeInTheDocument());
+        return view;
+      }
+      const hasCard = () => screen.queryByTestId("detail-title") !== null;
+
+      afterEach(() => {
+        localStorage.removeItem(CARD_VIEW_STORAGE_KEY);
+        reloadCardView();
+        delete (HTMLElement.prototype as { animate?: unknown }).animate;
+      });
+
+      it("ArrowLeft goes to the row, and the sidebar's commands take the bar from the card's", async () => {
+        await openCard();
+        expect(entries()).toEqual(expect.arrayContaining(["element-menu", "close-element"]));
+        fireEvent.keyDown(window, { key: "ArrowLeft" });
+        expect(focusedRowKey()).toBe("all");
+        expect(entries()).not.toContain("element-menu");
+        expect(entries()).not.toContain("close-element");
+        expect(entries()).toEqual(expect.arrayContaining(["sidebar-go", "sidebar-unfocus"]));
+      });
+
+      it("works the same in the card's window", async () => {
+        Object.defineProperty(HTMLElement.prototype, "animate", {
+          configurable: true,
+          value: vi.fn(() => ({ onfinish: null, cancel: vi.fn() })),
+        });
+        setCardView("peek");
+        await openCard();
+        await waitFor(() => expect(document.querySelector("[data-card-peek]")).not.toBeNull());
+        fireEvent.keyDown(window, { key: "ArrowLeft" });
+        expect(focusedRowKey()).toBe("all");
+        fireEvent.keyDown(window, { key: "ArrowRight" });
+        expect(focusedRowKey()).toBeNull();
+        expect(hasCard()).toBe(true);
+      });
+
+      it("a field in focus keeps ArrowLeft", async () => {
+        await openCard();
+        const field = document.createElement("input");
+        document.body.append(field);
+        field.focus();
+        fireEvent.keyDown(field, { key: "ArrowLeft" });
+        expect(focusedRowKey()).toBeNull();
+        field.remove();
+      });
+
+      it("→ Back returns to the card, which stays open, and the card's commands come back", async () => {
+        await openCard();
+        fireEvent.keyDown(window, { key: "ArrowLeft" });
+        fireEvent.click(bar("→ Back"));
+        expect(focusedRowKey()).toBeNull();
+        expect(hasCard()).toBe(true);
+        expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+        expect(entries()).toContain("close-element");
+      });
+
+      it("no ↵ entry on Everything's row, and Connect or Disconnect by the row's state on a collection's", async () => {
+        await openCard();
+        fireEvent.keyDown(window, { key: "ArrowLeft" });
+        expect(focusedRowKey()).toBe("all");
+        expect(entries()).not.toContain("sidebar-open");
+        expect(entries()).not.toContain("sidebar-menu");
+        expect(bar("→ Back")).toBeInTheDocument();
+
+        fireEvent.keyDown(window, { key: "ArrowDown" });
+        expect(focusedRowKey()).toBe("tag:alpha");
+        expect(bar("→ Back")).toBeInTheDocument();
+        const linked = /↵ (Connect|Disconnect)/;
+        expect(within(document.querySelector("[data-bottom-action-bar]") as HTMLElement)
+          .getByRole("button", { name: linked })).toBeInTheDocument();
+      });
+
+      it("↵ toggles the file's connection twice, the bar and the button following, the focus and the card staying", async () => {
+        const tags = new Set<string>();
+        commandMocks.addTag.mockClear();
+        commandMocks.removeTag.mockClear();
+        commandMocks.addTag.mockImplementation(async (_slug, tag) => { tags.add(tag); });
+        commandMocks.removeTag.mockImplementation(async (_slug, tag) => { tags.delete(tag); });
+        commandMocks.getBlock.mockImplementation(async (slug: string) => ({ ...indexedBlock(1, slug), tags: [...tags] }));
+        await openCard();
+        const route = commandMocks.listGridBlocks.mock.calls.length;
+        fireEvent.keyDown(window, { key: "ArrowLeft" });
+        fireEvent.keyDown(window, { key: "ArrowDown" });
+        expect(focusedRowKey()).toBe("tag:alpha");
+        expect(bar("↵ Connect")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Connect alpha" })).toBeInTheDocument();
+
+        fireEvent.keyDown(window, { key: "Enter" });
+        await waitFor(() => expect(commandMocks.addTag).toHaveBeenCalledWith("alpha-block", "alpha"));
+        await waitFor(() => expect(bar("↵ Disconnect")).toBeInTheDocument());
+        expect(screen.getByRole("button", { name: "Disconnect alpha" })).toBeInTheDocument();
+        expect(focusedRowKey()).toBe("tag:alpha");
+
+        fireEvent.click(bar("↵ Disconnect"));
+        await waitFor(() => expect(commandMocks.removeTag).toHaveBeenCalledWith("alpha-block", "alpha"));
+        await waitFor(() => expect(bar("↵ Connect")).toBeInTheDocument());
+        expect(focusedRowKey()).toBe("tag:alpha");
+        expect(commandMocks.addTag).toHaveBeenCalledTimes(1);
+        expect(commandMocks.removeTag).toHaveBeenCalledTimes(1);
+
+        expect(hasCard()).toBe(true);
+        expect(screen.getByTestId("grid")).toHaveTextContent("__all__");
+        expect(commandMocks.listGridBlocks.mock.calls.slice(route).every(([tag]) => tag === undefined)).toBe(true);
+      });
+
+      it("→ Back after ← on the same row keeps the route and the card", async () => {
+        await openCard();
+        fireEvent.keyDown(window, { key: "ArrowLeft" });
+        expect(bar("→ Back")).toBeInTheDocument();
+        fireEvent.keyDown(window, { key: "ArrowRight" });
+        expect(focusedRowKey()).toBeNull();
+        expect(hasCard()).toBe(true);
+        expect(screen.getByTestId("grid")).toHaveTextContent("__all__");
+      });
+
+      it("→ Back on another row returns to the card too: no route change, and the card stays", async () => {
+        await openCard();
+        fireEvent.keyDown(window, { key: "ArrowLeft" });
+        fireEvent.keyDown(window, { key: "ArrowDown" });
+        expect(focusedRowKey()).toBe("tag:alpha");
+        expect(bar("→ Back")).toBeInTheDocument();
+        fireEvent.keyDown(window, { key: "ArrowRight" });
+        expect(focusedRowKey()).toBeNull();
+        expect(hasCard()).toBe(true);
+        expect(screen.getByTestId("grid")).toHaveTextContent("__all__");
+        expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+      });
+
+      it("a click on a row still opens the collection and closes the card", async () => {
+        await openCard();
+        fireEvent.click(within(document.querySelector("[data-sidebar-mock]") as HTMLElement).getByRole("link", { name: "alpha" }));
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha"));
+        await waitFor(() => expect(hasCard()).toBe(false));
+      });
+
+      it("opens a hidden sidebar for the visit and hides it on the way back, storing nothing", async () => {
+        sidebarResizeState.collapsed = true;
+        await openCard();
+        fireEvent.keyDown(window, { key: "ArrowLeft" });
+        expect(focusedRowKey()).toBe("all");
+        expect(bar("⌃⌘S Hide Sidebar")).toBeInTheDocument();
+        fireEvent.keyDown(window, { key: "Escape" });
+        expect(focusedRowKey()).toBeNull();
+        expect(hasCard()).toBe(true);
+        expect(bar("⌃⌘S Show Sidebar")).toBeInTheDocument();
+        expect(commandMocks.setWindowSidebar).not.toHaveBeenCalled();
+      });
+
+      it("a card opened over the feed's focus by other means returns the focus to the page", async () => {
+        await renderAt("/", "__all__:2");
+        reachEdge();
+        fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+        await waitFor(() => expect(hasCard()).toBe(true));
+        await waitFor(() => expect(focusedRowKey()).toBeNull());
+        expect(feedKeyboardFocus.take).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it("leaves a sidebar the person keeps open as it is", async () => {
+      await renderAt("/", "__all__:2");
+      reachEdge();
+      fireEvent.keyDown(window, { key: "ArrowDown", metaKey: true, altKey: true });
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha"));
+      expect(focusedRowKey()).toBe("tag:alpha");
+      expect(bar("⌃⌘S Hide Sidebar")).toBeInTheDocument();
+      expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+    });
+
+    it("→ Back returns the focus to the page, and stays when the feed has no card", async () => {
+      await renderAt("/", "__all__:2");
+      reachEdge();
+      feedKeyboardFocus.take.mockReturnValueOnce(false);
+      fireEvent.click(bar("→ Back"));
+      expect(focusedRowKey()).toBe("all");
+
+      fireEvent.click(bar("→ Back"));
+      expect(focusedRowKey()).toBeNull();
+      expect(feedKeyboardFocus.take).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId("grid-keyboard-disabled")).toHaveTextContent("false");
+      expect(entries()).toContain("navigate");
+    });
+
+    describe("moving a row (SPEC_KEYBOARD.md, М11)", () => {
+      const NAMES = ["alpha", "beta", "gamma"];
+      let positions: Map<string, number>;
+      const order = () => within(document.querySelector("[data-sidebar-mock]") as HTMLElement)
+        .getAllByRole("link")
+        .map((link) => link.textContent ?? "")
+        .filter((name) => NAMES.includes(name));
+      /** The page's pages: their positions are the vault's, as the last write left them. */
+      const snapshot = async () => {
+        const channels = [...positions.entries()]
+          .sort(([, one], [, two]) => one - two)
+          .map(([tag, position]) => ({
+            tag,
+            description: null,
+            color: null,
+            icon: null,
+            position,
+            created_at: "2026-04-17T00:00:00Z",
+            block_count: 1,
+          }));
+        return { generation: 1, tags: channels.map(({ tag }) => ({ tag, count: 1 })), channels };
+      };
+      const written = (items: { tag: string; position: number }[]) => {
+        for (const { tag, position } of items) positions.set(tag, position);
+      };
+      const move = (key: "ArrowUp" | "ArrowDown", repeat = false) => (
+        fireEvent.keyDown(document.body, { key, metaKey: true, shiftKey: true, repeat })
+      );
+      const settled = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      const FIRST = [{ tag: "beta", position: 0 }, { tag: "alpha", position: 1 }, { tag: "gamma", position: 2 }];
+
+      beforeEach(() => {
+        positions = new Map(NAMES.map((name, index) => [name, index]));
+        commandMocks.listTaxonomySnapshot.mockImplementation(snapshot as never);
+        commandMocks.reorderChannels.mockReset();
+        commandMocks.reorderChannels.mockImplementation(async (items) => {
+          written(items);
+          return undefined;
+        });
+      });
+      afterEach(() => {
+        commandMocks.reorderChannels.mockReset();
+        commandMocks.reorderChannels.mockImplementation(async () => undefined);
+      });
+
+      it("⌘⇧↓ and ⌘⇧↑ move the row one place through the command a drag writes, and the focus stays", async () => {
+        await renderAt("/channel/alpha", "alpha:1");
+        reachEdge();
+        expect(order()).toEqual(NAMES);
+
+        expect(move("ArrowDown")).toBe(false);
+        expect(order()).toEqual(["beta", "alpha", "gamma"]);
+        expect(focusedRowKey()).toBe("tag:alpha");
+        expect(commandMocks.reorderChannels).toHaveBeenCalledTimes(1);
+        expect(commandMocks.reorderChannels).toHaveBeenLastCalledWith(FIRST);
+        await settled();
+        expect(order()).toEqual(["beta", "alpha", "gamma"]);
+        expect(focusedRowKey()).toBe("tag:alpha");
+
+        move("ArrowUp");
+        expect(order()).toEqual(NAMES);
+        expect(commandMocks.reorderChannels).toHaveBeenLastCalledWith([
+          { tag: "alpha", position: 0 },
+          { tag: "beta", position: 1 },
+          { tag: "gamma", position: 2 },
+        ]);
+        await settled();
+        expect(order()).toEqual(NAMES);
+        expect(focusedRowKey()).toBe("tag:alpha");
+        expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1");
+        expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+      });
+
+      it("adds no entry to the bottom bar", async () => {
+        await renderAt("/channel/alpha", "alpha:1");
+        reachEdge();
+        expect(entries()).not.toContain("sidebar-move-up");
+        expect(entries()).not.toContain("sidebar-move-down");
+      });
+
+      it("Everything's row does not move, and nothing moves above it", async () => {
+        await renderAt("/", "__all__:2");
+        reachEdge();
+        expect(focusedRowKey()).toBe("all");
+        expect(move("ArrowDown")).toBe(false);
+        expect(move("ArrowUp")).toBe(false);
+        fireEvent.keyDown(document.body, { key: "ArrowDown" });
+        expect(focusedRowKey()).toBe("tag:alpha");
+        expect(move("ArrowUp")).toBe(false);
+        expect(order()).toEqual(NAMES);
+        expect(focusedRowKey()).toBe("tag:alpha");
+        expect(commandMocks.reorderChannels).not.toHaveBeenCalled();
+      });
+
+      it("does nothing at the end of the list, with no wrap", async () => {
+        await renderAt("/channel/alpha", "alpha:1");
+        reachEdge();
+        fireEvent.keyDown(document.body, { key: "ArrowDown" });
+        fireEvent.keyDown(document.body, { key: "ArrowDown" });
+        expect(focusedRowKey()).toBe("tag:gamma");
+        expect(move("ArrowDown")).toBe(false);
+        expect(order()).toEqual(NAMES);
+        expect(commandMocks.reorderChannels).not.toHaveBeenCalled();
+      });
+
+      it("does nothing under a query, whose list is ranked, and the key is still taken", async () => {
+        await renderAt("/channel/alpha", "alpha:1");
+        reachEdge();
+        fireEvent.keyDown(document.body, { key: "b" });
+        const field = screen.getByRole("textbox", { name: "Find or create collection" });
+        fireEvent.change(field, { target: { value: "be" } });
+        fireEvent.keyDown(field, { key: "ArrowDown" });
+        expect(focusedRowKey()).toBe("tag:beta");
+        expect(move("ArrowUp")).toBe(false);
+        expect(commandMocks.reorderChannels).not.toHaveBeenCalled();
+      });
+
+      it("does not start from the filter's field", async () => {
+        await renderAt("/channel/alpha", "alpha:1");
+        reachEdge();
+        fireEvent.keyDown(document.body, { key: "b" });
+        const field = screen.getByRole("textbox", { name: "Find or create collection" });
+        fireEvent.keyDown(field, { key: "ArrowDown", metaKey: true, shiftKey: true });
+        expect(commandMocks.reorderChannels).not.toHaveBeenCalled();
+      });
+
+      it("a held key writes one at a time and in order, the last order winning", async () => {
+        const writes: Array<{ items: { tag: string; position: number }[]; done: () => void }> = [];
+        let inFlight = 0;
+        let mostInFlight = 0;
+        commandMocks.reorderChannels.mockImplementation((items) => new Promise<undefined>((resolve) => {
+          inFlight += 1;
+          mostInFlight = Math.max(mostInFlight, inFlight);
+          writes.push({
+            items,
+            done: () => {
+              inFlight -= 1;
+              written(items);
+              resolve(undefined);
+            },
+          });
+        }));
+        await renderAt("/channel/alpha", "alpha:1");
+        reachEdge();
+        const reads = commandMocks.listTaxonomySnapshot.mock.calls.length;
+
+        move("ArrowDown");
+        move("ArrowDown", true);
+        // Both steps show at once; the second waits for the first's write.
+        expect(order()).toEqual(["beta", "gamma", "alpha"]);
+        expect(writes).toHaveLength(1);
+        expect(writes[0]?.items).toEqual(FIRST);
+
+        // A step back while it waits: only the latest order goes on.
+        move("ArrowUp", true);
+        expect(order()).toEqual(["beta", "alpha", "gamma"]);
+        move("ArrowDown", true);
+        expect(order()).toEqual(["beta", "gamma", "alpha"]);
+        expect(writes).toHaveLength(1);
+
+        await act(async () => { writes[0]?.done(); });
+        await waitFor(() => expect(writes).toHaveLength(2));
+        expect(writes[1]?.items).toEqual([
+          { tag: "beta", position: 0 },
+          { tag: "gamma", position: 1 },
+          { tag: "alpha", position: 2 },
+        ]);
+        // No row snaps back between the writes, and nothing is read until the last.
+        expect(order()).toEqual(["beta", "gamma", "alpha"]);
+        expect(commandMocks.listTaxonomySnapshot.mock.calls.length).toBe(reads);
+
+        await act(async () => { writes[1]?.done(); });
+        await settled();
+        expect(writes).toHaveLength(2);
+        expect(mostInFlight).toBe(1);
+        expect(commandMocks.listTaxonomySnapshot.mock.calls.length).toBe(reads + 1);
+        expect(order()).toEqual(["beta", "gamma", "alpha"]);
+        expect([...positions.entries()].sort(([, one], [, two]) => one - two).map(([tag]) => tag))
+          .toEqual(["beta", "gamma", "alpha"]);
+        expect(focusedRowKey()).toBe("tag:alpha");
+      });
+
+      it("a step made while the list is read back is written too", async () => {
+        await renderAt("/channel/alpha", "alpha:1");
+        reachEdge();
+        let finishRead: (() => void) | undefined;
+        commandMocks.listTaxonomySnapshot.mockImplementationOnce((() => new Promise((resolve) => {
+          finishRead = () => { void snapshot().then(resolve); };
+        })) as never);
+        move("ArrowDown");
+        await waitFor(() => expect(finishRead).toBeDefined());
+        move("ArrowDown", true);
+        expect(order()).toEqual(["beta", "gamma", "alpha"]);
+        await act(async () => { finishRead?.(); });
+        await settled();
+        expect(commandMocks.reorderChannels).toHaveBeenCalledTimes(2);
+        expect(order()).toEqual(["beta", "gamma", "alpha"]);
+      });
+
+      it("a failed write gives the list back to what the vault says", async () => {
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        commandMocks.reorderChannels.mockImplementationOnce(async () => { throw new Error("no"); });
+        await renderAt("/channel/alpha", "alpha:1");
+        reachEdge();
+        move("ArrowDown");
+        await settled();
+        expect(order()).toEqual(NAMES);
+        expect(focusedRowKey()).toBe("tag:alpha");
+        consoleError.mockRestore();
+      });
+
+      it("a write failing after another landed reads what landed", async () => {
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        let finishFirst: (() => void) | undefined;
+        commandMocks.reorderChannels.mockImplementationOnce((items) => new Promise<undefined>((resolve) => {
+          finishFirst = () => { written(items); resolve(undefined); };
+        }));
+        commandMocks.reorderChannels.mockImplementationOnce(async () => { throw new Error("no"); });
+        await renderAt("/channel/alpha", "alpha:1");
+        reachEdge();
+        move("ArrowDown");
+        move("ArrowDown", true);
+        await act(async () => { finishFirst?.(); });
+        await settled();
+        expect(order()).toEqual(["beta", "alpha", "gamma"]);
+        consoleError.mockRestore();
+      });
+
+      it("works over an open card, which stays", async () => {
+        await renderAt("/", "__all__:2");
+        fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+        await waitFor(() => expect(screen.queryByTestId("detail-title")).not.toBeNull());
+        fireEvent.keyDown(window, { key: "ArrowLeft" });
+        fireEvent.keyDown(window, { key: "ArrowDown" });
+        expect(focusedRowKey()).toBe("tag:alpha");
+        move("ArrowDown");
+        expect(order()).toEqual(["beta", "alpha", "gamma"]);
+        expect(commandMocks.reorderChannels).toHaveBeenLastCalledWith(FIRST);
+        await settled();
+        expect(focusedRowKey()).toBe("tag:alpha");
+        expect(screen.queryByTestId("detail-title")).not.toBeNull();
+      });
+
+      it("works on the graph, which stays", async () => {
+        await renderAt("/channel/alpha", "alpha:1");
+        fireEvent.keyDown(window, { key: "Tab" });
+        await screen.findByTestId("graph-view");
+        fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+        expect(focusedRowKey()).toBe("tag:alpha");
+        move("ArrowDown");
+        expect(order()).toEqual(["beta", "alpha", "gamma"]);
+        expect(commandMocks.reorderChannels).toHaveBeenLastCalledWith(FIRST);
+        await settled();
+        expect(focusedRowKey()).toBe("tag:alpha");
+        expect(screen.getByTestId("graph-view")).toHaveTextContent("alpha");
+      });
+    });
+
+    describe("typing in the menu (SPEC_KEYBOARD.md, «Ввод текста в меню»)", () => {
+      const field = () => screen.getByRole("textbox", { name: "Find or create collection" }) as HTMLInputElement;
+      const rowLink = (name: RegExp) => within(document.querySelector("[data-sidebar-mock]") as HTMLElement)
+        .queryByRole("link", { name });
+      /** A key where the keyboard stands, as a browser aims it. False when it was taken. */
+      const press = (init: KeyboardEventInit) => fireEvent.keyDown(document.activeElement ?? document.body, init);
+      const filterTo = (value: string) => fireEvent.change(field(), { target: { value } });
+      const grid = () => screen.getByTestId("grid");
+      const hasCard = () => screen.queryByTestId("detail-title") !== null;
+
+      async function onRow(path = "/channel/alpha", feed = "alpha:1") {
+        await renderAt(path, feed);
+        reachEdge();
+        expect(focusedRowKey()).toBe(path === "/" ? "all" : "tag:alpha");
+      }
+      /** On a row of the list `query` leaves, come to by typing on the current one. */
+      async function onFilteredRow(query: string, path = "/channel/alpha", feed = "alpha:1") {
+        await onRow(path, feed);
+        press({ key: query[0] });
+        filterTo(query);
+        press({ key: "ArrowDown" });
+      }
+      async function onCardRow() {
+        await renderAt("/", "__all__:2");
+        fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+        await waitFor(() => expect(hasCard()).toBe(true));
+        fireEvent.keyDown(window, { key: "ArrowLeft" });
+        expect(focusedRowKey()).toBe("all");
+      }
+
+      describe("on a row, with no query", () => {
+        it.each([
+          ["a letter", { key: "b" }, "b"],
+          ["a capital, with ⇧", { key: "B", shiftKey: true }, "B"],
+          ["a letter of the Russian layout", { key: "ф", code: "KeyA" }, "ф"],
+          ["a digit", { key: "1" }, "1"],
+          ["a sign", { key: "-" }, "-"],
+        ])("%s takes the focus to the field, and becomes the query", async (_name, init, value) => {
+          await onRow();
+          expect(press(init)).toBe(false);
+          expect(field()).toHaveFocus();
+          expect(field()).toHaveValue(value);
+          expect(focusedRowKey()).toBeNull();
+          expect(entries().filter((id) => SIDEBAR_ENTRIES.includes(id))).toEqual([]);
+          expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+          expect(feedKeyboardFocus.release).not.toHaveBeenCalled();
+        });
+
+        it.each([
+          ["a space", { key: " " }],
+          ["Backspace", { key: "Backspace" }],
+          ["a dead key", { key: "Dead" }],
+          ["⌥ with a character", { key: "å", altKey: true }],
+          ["⌘ with a character", { key: "b", metaKey: true }],
+          ["⌃ with a character", { key: "b", ctrlKey: true }],
+        ])("%s does nothing to the field", async (_name, init) => {
+          await onRow();
+          press(init);
+          expect(field()).not.toHaveFocus();
+          expect(field()).toHaveValue("");
+          expect(focusedRowKey()).toBe("tag:alpha");
+        });
+
+        it("⇧⌘F goes as a character does, with no character", async () => {
+          await onRow();
+          fireEvent.keyDown(window, { key: "F", code: "KeyF", metaKey: true, shiftKey: true });
+          await waitFor(() => expect(field()).toHaveFocus());
+          expect(focusedRowKey()).toBeNull();
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBe("tag:alpha");
+        });
+
+        it("ArrowUp on the top row stays there (М2)", async () => {
+          await onRow("/", "__all__:2");
+          press({ key: "ArrowUp" });
+          expect(focusedRowKey()).toBe("all");
+          expect(field()).not.toHaveFocus();
+        });
+
+        it("names Escape Unfocus", async () => {
+          await onRow();
+          expect(bar("esc Unfocus")).toBeInTheDocument();
+        });
+      });
+
+      describe("in the field, a row remembered", () => {
+        it("leaves the caret's keys to the field, and the menu stays", async () => {
+          await onRow();
+          press({ key: "b" });
+          expect(press({ key: "ArrowLeft" })).toBe(true);
+          expect(press({ key: "ArrowRight" })).toBe(true);
+          expect(press({ key: "Backspace" })).toBe(true);
+          expect(press({ key: "a", metaKey: true })).toBe(true);
+          expect(field()).toHaveFocus();
+          expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+        });
+
+        it("the field emptied keeps the focus, and the list is whole", async () => {
+          await onRow();
+          press({ key: "b" });
+          expect(rowLink(/alpha/)).toBeNull();
+          filterTo("");
+          expect(field()).toHaveFocus();
+          expect(rowLink(/alpha/)).not.toBeNull();
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBe("tag:alpha");
+        });
+
+        it("no matches keep the focus in the field, and matches come back under it", async () => {
+          await onRow();
+          press({ key: "z" });
+          expect(field()).toHaveFocus();
+          expect(rowLink(/alpha/)).toBeNull();
+          expect(rowLink(/beta/)).toBeNull();
+          press({ key: "ArrowDown" });
+          expect(field()).toHaveFocus();
+          expect(focusedRowKey()).toBeNull();
+          expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+          expect(feedKeyboardFocus.release).not.toHaveBeenCalled();
+          filterTo("be");
+          expect(field()).toHaveFocus();
+          expect(rowLink(/beta/)).not.toBeNull();
+        });
+
+        it("ArrowDown goes to the top row of the list, which can be Everything", async () => {
+          await onRow();
+          press({ key: "b" });
+          filterTo("be");
+          press({ key: "ArrowDown" });
+          expect(focusedRowKey()).toBe("tag:beta");
+          expect(field()).not.toHaveFocus();
+          expect(field()).toHaveValue("be");
+          press({ key: "ArrowUp" });
+          filterTo("al");
+          press({ key: "ArrowDown" });
+          expect(focusedRowKey()).toBe("all");
+        });
+
+        it("ArrowUp does nothing", async () => {
+          await onRow();
+          press({ key: "b" });
+          expect(press({ key: "ArrowUp" })).toBe(false);
+          expect(field()).toHaveFocus();
+          expect(focusedRowKey()).toBeNull();
+        });
+
+        it("Tab is the field's", async () => {
+          await onRow();
+          press({ key: "b" });
+          expect(press({ key: "Tab", code: "Tab" })).toBe(true);
+          expect(screen.queryByTestId("graph-view")).toBeNull();
+        });
+
+        it("Enter on an existing name opens it: the query stays, the caret too, and its row is the one to return to", async () => {
+          await onRow("/", "__all__:2");
+          press({ key: "A" });
+          filterTo("ALPHA");
+          press({ key: "Enter" });
+          await waitFor(() => expect(grid()).toHaveTextContent("alpha:1"));
+          expect(field()).toHaveFocus();
+          expect(field()).toHaveValue("ALPHA");
+          press({ key: "Escape" });
+          expect(field()).toHaveValue("");
+          expect(focusedRowKey()).toBe("tag:alpha");
+        });
+
+        it("Enter on a new name creates it: the query goes, the caret stays, and the row is still remembered", async () => {
+          await onRow();
+          press({ key: "G" });
+          filterTo("Gamma");
+          press({ key: "Enter" });
+          await waitFor(() => expect(commandMocks.createChannel).toHaveBeenCalledWith("Gamma"));
+          await waitFor(() => expect(field()).toHaveValue(""));
+          expect(field()).toHaveFocus();
+          expect(grid()).toHaveTextContent("alpha:1");
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBe("tag:alpha");
+        });
+
+        it("Enter on a refused name creates nothing", async () => {
+          commandMocks.checkCollectionName.mockImplementationOnce(async () => "That name is taken.");
+          await onRow();
+          press({ key: "G" });
+          filterTo("Gamma");
+          press({ key: "Enter" });
+          await waitFor(() => expect(commandMocks.checkCollectionName).toHaveBeenCalledWith(null, "Gamma"));
+          await act(async () => undefined);
+          expect(commandMocks.createChannel).not.toHaveBeenCalled();
+          expect(field()).toHaveValue("Gamma");
+        });
+
+        it("Enter in the empty field does nothing", async () => {
+          await onRow();
+          press({ key: "b" });
+          filterTo("");
+          expect(press({ key: "Enter" })).toBe(true);
+          expect(field()).toHaveFocus();
+          expect(commandMocks.createChannel).not.toHaveBeenCalled();
+        });
+
+        it("Escape returns to the row with the list whole, and the next one leaves as ever", async () => {
+          await onRow();
+          press({ key: "b" });
+          filterTo("be");
+          press({ key: "Escape" });
+          expect(field()).toHaveValue("");
+          expect(field()).not.toHaveFocus();
+          expect(focusedRowKey()).toBe("tag:alpha");
+          expect(rowLink(/alpha/)).not.toBeNull();
+          expect(bar("esc Unfocus")).toBeInTheDocument();
+          expect(feedKeyboardFocus.release).not.toHaveBeenCalled();
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBeNull();
+          expect(feedKeyboardFocus.release).toHaveBeenCalledTimes(1);
+        });
+
+        it("the clear button keeps the caret through the press and the row remembered", async () => {
+          await onRow();
+          press({ key: "b" });
+          const clear = screen.getByRole("button", { name: "Clear collection search" });
+          expect(fireEvent.mouseDown(clear)).toBe(false);
+          fireEvent.click(clear);
+          expect(field()).toHaveValue("");
+          expect(field()).toHaveFocus();
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBe("tag:alpha");
+        });
+
+        it("⌘⌥↑↓ does nothing", async () => {
+          await onRow();
+          press({ key: "b" });
+          press({ key: "ArrowUp", metaKey: true, altKey: true });
+          press({ key: "ArrowDown", metaKey: true, altKey: true });
+          await act(async () => undefined);
+          expect(grid()).toHaveTextContent("alpha:1");
+          expect(field()).toHaveFocus();
+          expect(focusedRowKey()).toBeNull();
+        });
+
+        it.each([
+          ["isComposing", { key: "Enter", isComposing: true }],
+          ["the key code WebKit reports", { key: "Enter", keyCode: 229 }],
+        ])("a composing Enter does not act on the name, by %s", async (_name, init) => {
+          await onRow();
+          press({ key: "G" });
+          filterTo("Gamma");
+          press(init);
+          await act(async () => undefined);
+          expect(commandMocks.checkCollectionName).not.toHaveBeenCalledWith(null, "Gamma");
+          expect(field()).toHaveValue("Gamma");
+        });
+
+        it("a composing Escape stays the input method's", async () => {
+          await onRow();
+          press({ key: "G" });
+          press({ key: "Escape", isComposing: true });
+          expect(field()).toHaveValue("G");
+          expect(field()).toHaveFocus();
+        });
+
+        it("the pointer moving changes nothing, and the typing goes on", async () => {
+          await onRow();
+          press({ key: "b" });
+          fireEvent.pointerMove(window, { clientX: 5, clientY: 5, movementX: 3 });
+          fireEvent.pointerDown(document.querySelector("[data-bottom-action-bar]") as HTMLElement);
+          expect(field()).toHaveFocus();
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBe("tag:alpha");
+        });
+
+        it("leaving the field keeps the query and forgets the row", async () => {
+          await onRow();
+          press({ key: "b" });
+          act(() => field().blur());
+          expect(field()).toHaveValue("b");
+          expect(focusedRowKey()).toBeNull();
+          expect(feedKeyboardFocus.release).toHaveBeenCalledTimes(1);
+          act(() => field().focus());
+          press({ key: "Escape" });
+          expect(field()).toHaveValue("");
+          expect(field()).toHaveFocus();
+          expect(focusedRowKey()).toBeNull();
+        });
+
+        it("another window taking the keyboard for a while forgets nothing", async () => {
+          await onRow();
+          press({ key: "b" });
+          fireEvent.blur(field());
+          expect(document.activeElement).toBe(field());
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBe("tag:alpha");
+        });
+
+        it("shows the page's entries in the bar, the row's having gone", async () => {
+          await onRow();
+          press({ key: "b" });
+          expect(entries().filter((id) => SIDEBAR_ENTRIES.includes(id))).toEqual([]);
+          expect(entries()).toContain("navigate");
+        });
+      });
+
+      describe("on a row, with a query", () => {
+        it("walks the list it leaves and stops at its end; ArrowUp on its top row is the field's", async () => {
+          await onFilteredRow("al");
+          expect(focusedRowKey()).toBe("all");
+          press({ key: "ArrowDown" });
+          expect(focusedRowKey()).toBe("tag:alpha");
+          press({ key: "ArrowDown" });
+          expect(focusedRowKey()).toBe("tag:alpha");
+          press({ key: "ArrowUp" });
+          expect(focusedRowKey()).toBe("all");
+          press({ key: "ArrowUp" });
+          expect(focusedRowKey()).toBeNull();
+          expect(field()).toHaveFocus();
+          expect(field().selectionStart).toBe(2);
+          expect(field().selectionEnd).toBe(2);
+          // The row remembered is still the one the typing started on.
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBe("tag:alpha");
+        });
+
+        it("a character goes on with the query from the field, the row remembered staying", async () => {
+          await onFilteredRow("be");
+          expect(press({ key: "t" })).toBe(false);
+          expect(field()).toHaveFocus();
+          expect(field()).toHaveValue("bet");
+          expect(focusedRowKey()).toBeNull();
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBe("tag:alpha");
+        });
+
+        it("a letter of the Russian layout goes on with it as well", async () => {
+          await onFilteredRow("be");
+          press({ key: "ф", code: "KeyA" });
+          expect(field()).toHaveValue("beф");
+          expect(field()).toHaveFocus();
+        });
+
+        it("a space goes on with it, a name may hold one", async () => {
+          await onFilteredRow("be");
+          press({ key: " " });
+          expect(field()).toHaveFocus();
+          expect(field()).toHaveValue("be ");
+        });
+
+        it("Backspace edits it from the field", async () => {
+          await onFilteredRow("be");
+          expect(press({ key: "Backspace" })).toBe(false);
+          expect(field()).toHaveFocus();
+          expect(field()).toHaveValue("b");
+        });
+
+        it("Enter in the feed opens the row: the focus and the query stay, and its row is the one to return to", async () => {
+          await onFilteredRow("be");
+          expect(bar("↵ Open")).toBeInTheDocument();
+          press({ key: "Enter" });
+          await waitFor(() => expect(grid()).toHaveTextContent("beta:1"));
+          expect(focusedRowKey()).toBe("tag:beta");
+          expect(field()).toHaveValue("be");
+          press({ key: "Escape" });
+          expect(field()).toHaveValue("");
+          expect(focusedRowKey()).toBe("tag:beta");
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBeNull();
+        });
+
+        it("ArrowRight on the current route's row goes back, the query gone and the list whole", async () => {
+          await onFilteredRow("alp");
+          expect(focusedRowKey()).toBe("tag:alpha");
+          expect(rowLink(/beta/)).toBeNull();
+          expect(bar("→ Back")).toBeInTheDocument();
+          press({ key: "ArrowRight" });
+          expect(focusedRowKey()).toBeNull();
+          expect(feedKeyboardFocus.take).toHaveBeenCalledTimes(1);
+          expect(field()).toHaveValue("");
+          expect(rowLink(/beta/)).not.toBeNull();
+        });
+
+        it("ArrowRight on another row goes back without opening it, the query gone and the list whole", async () => {
+          await onFilteredRow("be");
+          expect(focusedRowKey()).toBe("tag:beta");
+          expect(rowLink(/alpha/)).toBeNull();
+          expect(bar("→ Back")).toBeInTheDocument();
+          press({ key: "ArrowRight" });
+          expect(focusedRowKey()).toBeNull();
+          expect(feedKeyboardFocus.take).toHaveBeenCalledTimes(1);
+          await act(async () => undefined);
+          expect(grid()).toHaveTextContent("alpha:1");
+          expect(field()).toHaveValue("");
+          expect(rowLink(/alpha/)).not.toBeNull();
+          // The current collection's row is back, and ArrowLeft lands on it.
+          reachEdge();
+          expect(focusedRowKey()).toBe("tag:alpha");
+        });
+
+        it("ArrowRight with no card in the feed keeps the focus and the query", async () => {
+          await onFilteredRow("be");
+          feedKeyboardFocus.take.mockReturnValue(false);
+          press({ key: "ArrowRight" });
+          expect(focusedRowKey()).toBe("tag:beta");
+          expect(field()).toHaveValue("be");
+        });
+
+        it("a click on a row keeps the query, as Enter does", async () => {
+          await onFilteredRow("be");
+          fireEvent.pointerDown(document.body);
+          fireEvent.click(rowLink(/beta/) as HTMLElement);
+          await waitFor(() => expect(grid()).toHaveTextContent("beta:1"));
+          expect(field()).toHaveValue("be");
+        });
+
+        it("Escape returns to the remembered row, under the name Clear", async () => {
+          await onFilteredRow("be");
+          expect(bar("esc Clear")).toBeInTheDocument();
+          press({ key: "Escape" });
+          expect(field()).toHaveValue("");
+          expect(focusedRowKey()).toBe("tag:alpha");
+          expect(bar("esc Unfocus")).toBeInTheDocument();
+        });
+
+        it("esc Clear in the bar does what the key does", async () => {
+          await onFilteredRow("be");
+          fireEvent.click(bar("esc Clear"));
+          expect(field()).toHaveValue("");
+          expect(focusedRowKey()).toBe("tag:alpha");
+        });
+
+        it("with no row remembered, Escape clears the query and stays on the row", async () => {
+          await renderAt("/channel/alpha", "alpha:1");
+          act(() => field().focus());
+          filterTo("alp");
+          act(() => field().blur());
+          reachEdge();
+          expect(focusedRowKey()).toBe("tag:alpha");
+          press({ key: "Escape" });
+          expect(field()).toHaveValue("");
+          expect(focusedRowKey()).toBe("tag:alpha");
+          expect(feedKeyboardFocus.release).not.toHaveBeenCalled();
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBeNull();
+          expect(feedKeyboardFocus.release).toHaveBeenCalledTimes(1);
+        });
+
+        it("⌘K opens the row's own menu, as with no query", async () => {
+          await onFilteredRow("be");
+          expect(bar("⌘K Command")).toBeInTheDocument();
+        });
+
+        it("the pointer ends the mode, the query staying and the row forgotten", async () => {
+          await onFilteredRow("be");
+          fireEvent.pointerDown(document.body);
+          expect(focusedRowKey()).toBeNull();
+          expect(field()).toHaveValue("be");
+          expect(feedKeyboardFocus.release).toHaveBeenCalledTimes(1);
+          act(() => field().focus());
+          press({ key: "Escape" });
+          expect(field()).toHaveFocus();
+          expect(focusedRowKey()).toBeNull();
+        });
+      });
+
+      describe("over an open card", () => {
+        async function onFilteredCardRow() {
+          await onCardRow();
+          press({ key: "b" });
+          filterTo("be");
+          press({ key: "ArrowDown" });
+          expect(focusedRowKey()).toBe("tag:beta");
+        }
+
+        it("Enter on a row toggles its connection, the query and the row remembered staying", async () => {
+          await onFilteredCardRow();
+          commandMocks.addTag.mockClear();
+          expect(bar("↵ Connect")).toBeInTheDocument();
+          press({ key: "Enter" });
+          await waitFor(() => expect(commandMocks.addTag).toHaveBeenCalledWith("alpha-block", "beta"));
+          expect(focusedRowKey()).toBe("tag:beta");
+          expect(field()).toHaveValue("be");
+          expect(hasCard()).toBe(true);
+          press({ key: "Escape" });
+          expect(field()).toHaveValue("");
+          expect(focusedRowKey()).toBe("all");
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBeNull();
+          expect(hasCard()).toBe(true);
+        });
+
+        it("ArrowRight on any row goes back to the card, the query gone and the list whole", async () => {
+          await onFilteredCardRow();
+          expect(bar("→ Back")).toBeInTheDocument();
+          press({ key: "ArrowRight" });
+          expect(focusedRowKey()).toBeNull();
+          expect(hasCard()).toBe(true);
+          expect(field()).toHaveValue("");
+          expect(rowLink(/alpha/)).not.toBeNull();
+          expect(grid()).toHaveTextContent("__all__");
+        });
+
+        it("Enter in the field on an existing name opens it and the card closes, as a route does", async () => {
+          await onCardRow();
+          press({ key: "a" });
+          filterTo("alpha");
+          press({ key: "Enter" });
+          await waitFor(() => expect(grid()).toHaveTextContent("alpha:1"));
+          await waitFor(() => expect(hasCard()).toBe(false));
+          expect(field()).toHaveFocus();
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBe("tag:alpha");
+        });
+
+        it("Enter in the field on a new name leaves the card and its connections alone", async () => {
+          await onCardRow();
+          commandMocks.addTag.mockClear();
+          press({ key: "G" });
+          filterTo("Gamma");
+          press({ key: "Enter" });
+          await waitFor(() => expect(commandMocks.createChannel).toHaveBeenCalledWith("Gamma"));
+          await waitFor(() => expect(field()).toHaveValue(""));
+          expect(hasCard()).toBe(true);
+          expect(commandMocks.addTag).not.toHaveBeenCalled();
+        });
+      });
+
+      describe("ArrowLeft with a query left in the field (М1)", () => {
+        /** The query as a mouse leaves it: typed in the field, and the field left. */
+        async function queryLeft(value: string, path = "/channel/alpha", feed = "alpha:1") {
+          await renderAt(path, feed);
+          act(() => field().focus());
+          filterTo(value);
+          act(() => field().blur());
+        }
+
+        it("lands on the top visible row when the query hides the current row, and the query stays", async () => {
+          await queryLeft("be");
+          reachEdge();
+          expect(focusedRowKey()).toBe("tag:beta");
+          expect(field()).toHaveValue("be");
+          expect(field()).not.toHaveFocus();
+          expect(bar("esc Clear")).toBeInTheDocument();
+        });
+
+        it("lands in the field with the caret after the text when no row matches, and the query stays", async () => {
+          await queryLeft("zzz");
+          reachEdge();
+          expect(focusedRowKey()).toBeNull();
+          expect(field()).toHaveFocus();
+          expect(field()).toHaveValue("zzz");
+          expect(field().selectionStart).toBe(3);
+          expect(field().selectionEnd).toBe(3);
+          // Its Escape comes to the current row of the whole list; the next one leaves.
+          press({ key: "Escape" });
+          expect(field()).toHaveValue("");
+          expect(focusedRowKey()).toBe("tag:alpha");
+          expect(feedKeyboardFocus.release).not.toHaveBeenCalled();
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBeNull();
+          expect(feedKeyboardFocus.release).toHaveBeenCalledTimes(1);
+        });
+
+        it("does the same from an open card", async () => {
+          await queryLeft("be", "/", "__all__:2");
+          fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+          await waitFor(() => expect(hasCard()).toBe(true));
+          fireEvent.keyDown(window, { key: "ArrowLeft" });
+          expect(focusedRowKey()).toBe("tag:beta");
+          expect(field()).toHaveValue("be");
+          expect(hasCard()).toBe(true);
+        });
+
+        it("does the same from the graph", async () => {
+          await queryLeft("zzz");
+          fireEvent.keyDown(window, { key: "Tab" });
+          await screen.findByTestId("graph-view");
+          fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+          expect(field()).toHaveFocus();
+          expect(field().selectionStart).toBe(3);
+          expect(field()).toHaveValue("zzz");
+        });
+
+        it.each([
+          ["be", "tag:beta", false],
+          ["zzz", null, true],
+        ])("a hidden sidebar opens for it and shows the query %s", async (value, row, inField) => {
+          sidebarResizeState.collapsed = true;
+          sidebarResizeState.toggleCollapsed.mockClear();
+          await onRow();
+          press({ key: "x" });
+          filterTo(value);
+          act(() => field().blur());
+          fireEvent.click(bar("⌃⌘S Hide Sidebar"));
+          expect(bar("⌃⌘S Show Sidebar")).toBeInTheDocument();
+          expect(screen.queryByRole("textbox", { name: "Find or create collection" })).toBeNull();
+
+          reachEdge();
+          expect(bar("⌃⌘S Hide Sidebar")).toBeInTheDocument();
+          expect(field()).toHaveValue(value);
+          expect(focusedRowKey()).toBe(row);
+          expect(document.activeElement === field()).toBe(inField);
+          expect(sidebarResizeState.toggleCollapsed).not.toHaveBeenCalled();
+          expect(commandMocks.setWindowSidebar).not.toHaveBeenCalled();
+        });
+      });
+
+      describe("a sidebar shown for the keyboard (М8)", () => {
+        it("stays through Enter in the field and goes as the focus leaves it, storing nothing", async () => {
+          sidebarResizeState.collapsed = true;
+          sidebarResizeState.toggleCollapsed.mockClear();
+          await onRow("/", "__all__:2");
+          expect(bar("⌃⌘S Hide Sidebar")).toBeInTheDocument();
+          press({ key: "A" });
+          filterTo("alpha");
+          press({ key: "Enter" });
+          await waitFor(() => expect(grid()).toHaveTextContent("alpha:1"));
+          expect(bar("⌃⌘S Hide Sidebar")).toBeInTheDocument();
+          expect(field()).toHaveFocus();
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBe("tag:alpha");
+          expect(bar("⌃⌘S Hide Sidebar")).toBeInTheDocument();
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBeNull();
+          expect(bar("⌃⌘S Show Sidebar")).toBeInTheDocument();
+          expect(sidebarResizeState.toggleCollapsed).not.toHaveBeenCalled();
+          expect(commandMocks.setWindowSidebar).not.toHaveBeenCalled();
+        });
+
+        it("goes on ArrowRight, the route staying and the query gone from its next showing", async () => {
+          sidebarResizeState.collapsed = true;
+          await onFilteredRow("al");
+          expect(focusedRowKey()).toBe("all");
+          press({ key: "ArrowRight" });
+          expect(bar("⌃⌘S Show Sidebar")).toBeInTheDocument();
+          expect(grid()).toHaveTextContent("alpha:1");
+          reachEdge();
+          expect(focusedRowKey()).toBe("tag:alpha");
+          expect(field()).toHaveValue("");
+        });
+
+        it("over the feed the panel stays through Enter in the field as well", async () => {
+          sidebarResizeState.collapsed = true;
+          const narrowWindow = window.innerWidth;
+          window.innerWidth = 500;
+          try {
+            await onRow("/", "__all__:2");
+            press({ key: "A" });
+            expect(document.querySelector("[data-sidebar-overlay-panel]")).toContainElement(field());
+            filterTo("alpha");
+            press({ key: "Enter" });
+            await waitFor(() => expect(grid()).toHaveTextContent("alpha:1"));
+            expect(document.querySelector("[data-sidebar-overlay]")).not.toBeNull();
+            // The field's Escape is the field's; the next one is the focus's, and the panel goes.
+            press({ key: "Escape" });
+            expect(focusedRowKey()).toBe("tag:alpha");
+            expect(document.querySelector("[data-sidebar-overlay]")).not.toBeNull();
+            fireEvent.keyDown(document.querySelector("[data-sidebar-overlay-panel]") as HTMLElement, { key: "Escape" });
+            expect(focusedRowKey()).toBeNull();
+          } finally {
+            window.innerWidth = narrowWindow;
+          }
+        });
+      });
+    });
+
+    it("esc Unfocus takes the focus off, and nothing is focused", async () => {
+      await renderAt("/", "__all__:2");
+      reachEdge();
+      fireEvent.click(bar("esc Unfocus"));
+      expect(focusedRowKey()).toBeNull();
+      expect(feedKeyboardFocus.release).toHaveBeenCalledTimes(1);
+      expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+    });
+
+    it("the keys do what the bar's entries do", async () => {
+      await renderAt("/", "__all__:2");
+      reachEdge();
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      expect(feedKeyboardFocus.take).toHaveBeenCalledTimes(1);
+      expect(focusedRowKey()).toBeNull();
+    });
+
+    it("returns to the page as the sidebar is hidden", async () => {
+      const { rerender } = await renderAt("/", "__all__:2");
+      reachEdge();
+      sidebarResizeState.collapsed = true;
+      rerender(tree("/"));
+      await waitFor(() => expect(focusedRowKey()).toBeNull());
+      expect(feedKeyboardFocus.take).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("grid-keyboard-disabled")).toHaveTextContent("false");
+    });
+
+    it("moves with the route under ⌘⌥↑↓", async () => {
+      await renderAt("/", "__all__:2");
+      reachEdge();
+      fireEvent.keyDown(window, { key: "ArrowDown", metaKey: true, altKey: true });
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha"));
+      expect(focusedRowKey()).toBe("tag:alpha");
+    });
+
+    it("ends on Tab to the graph", async () => {
+      await renderAt("/", "__all__:2");
+      reachEdge();
+      fireEvent.keyDown(window, { key: "Tab" });
+      expect(await screen.findByTestId("graph-view")).toBeInTheDocument();
+      await waitFor(() => expect(focusedRowKey()).toBeNull());
+      expect(entries().filter((id) => SIDEBAR_ENTRIES.includes(id))).toEqual([]);
+    });
+
+    describe("from the graph (SPEC_KEYBOARD.md, «Graph»)", () => {
+      const field = () => screen.getByRole("textbox", { name: "Find or create collection" }) as HTMLInputElement;
+      const graph = () => screen.getByTestId("graph-view");
+      async function onGraph(path = "/channel/alpha", feed = "alpha:1") {
+        await renderAt(path, feed);
+        fireEvent.keyDown(window, { key: "Tab" });
+        await screen.findByTestId("graph-view");
+      }
+
+      it("ArrowLeft goes to the current route's row, with the bar's labels of the feed", async () => {
+        await onGraph();
+        fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+        expect(focusedRowKey()).toBe("tag:alpha");
+        expect(entries().filter((id) => SIDEBAR_ENTRIES.includes(id))).toEqual(SIDEBAR_ENTRIES);
+        expect(bar("↵ Open")).toBeInTheDocument();
+        expect(bar("→ Back")).toBeInTheDocument();
+        expect(bar("esc Unfocus")).toBeInTheDocument();
+        fireEvent.keyDown(document.body, { key: "ArrowDown" });
+        expect(focusedRowKey()).toBe("tag:beta");
+        expect(bar("→ Back")).toBeInTheDocument();
+      });
+
+      it("→ Back and Escape return to the graph with nothing focused, and the feed takes no card", async () => {
+        await onGraph();
+        fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+        fireEvent.keyDown(document.body, { key: "ArrowRight" });
+        expect(focusedRowKey()).toBeNull();
+        fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+        expect(focusedRowKey()).toBe("tag:alpha");
+        fireEvent.keyDown(document.body, { key: "Escape" });
+        expect(focusedRowKey()).toBeNull();
+        expect(graph()).toBeInTheDocument();
+        expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+      });
+
+      it("→ on another row returns to the graph too: it opens nothing, and nothing is focused", async () => {
+        await onGraph();
+        fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+        fireEvent.keyDown(document.body, { key: "ArrowDown" });
+        expect(focusedRowKey()).toBe("tag:beta");
+        fireEvent.keyDown(document.body, { key: "ArrowRight" });
+        expect(focusedRowKey()).toBeNull();
+        await act(async () => undefined);
+        expect(graph()).toHaveTextContent("alpha");
+        expect(graph()).not.toHaveTextContent("beta");
+        expect(screen.queryByTestId("grid")).toBeNull();
+        expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+      });
+
+      it("Enter opens the row in the graph, and the focus stays on it", async () => {
+        await onGraph();
+        fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+        fireEvent.keyDown(document.body, { key: "ArrowDown" });
+        fireEvent.keyDown(document.body, { key: "Enter" });
+        await waitFor(() => expect(graph()).toHaveTextContent("beta"));
+        expect(focusedRowKey()).toBe("tag:beta");
+        expect(screen.queryByTestId("grid")).toBeNull();
+        expect(bar("→ Back")).toBeInTheDocument();
+      });
+
+      it("opens a hidden sidebar for the visit, and it goes as the focus leaves, storing nothing", async () => {
+        sidebarResizeState.collapsed = true;
+        sidebarResizeState.toggleCollapsed.mockClear();
+        await onGraph();
+        expect(bar("⌃⌘S Show Sidebar")).toBeInTheDocument();
+        fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+        expect(focusedRowKey()).toBe("tag:alpha");
+        expect(bar("⌃⌘S Hide Sidebar")).toBeInTheDocument();
+        fireEvent.keyDown(document.body, { key: "ArrowRight" });
+        expect(bar("⌃⌘S Show Sidebar")).toBeInTheDocument();
+        expect(sidebarResizeState.toggleCollapsed).not.toHaveBeenCalled();
+        expect(commandMocks.setWindowSidebar).not.toHaveBeenCalled();
+      });
+
+      it("typing works from a row, and ArrowDown from the field lands on the top row", async () => {
+        await onGraph();
+        fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+        fireEvent.keyDown(document.body, { key: "ф", code: "KeyA" });
+        expect(field()).toHaveFocus();
+        expect(field()).toHaveValue("ф");
+        expect(focusedRowKey()).toBeNull();
+        fireEvent.change(field(), { target: { value: "be" } });
+        fireEvent.keyDown(field(), { key: "ArrowDown" });
+        expect(focusedRowKey()).toBe("tag:beta");
+        expect(field()).not.toHaveFocus();
+        expect(field()).not.toHaveAttribute("aria-activedescendant");
+        fireEvent.keyDown(document.body, { key: "Escape" });
+        expect(field()).toHaveValue("");
+        expect(focusedRowKey()).toBe("tag:alpha");
+      });
+
+      it("ArrowDown from the field works after ⇧⌘F too", async () => {
+        await onGraph();
+        fireEvent.keyDown(window, { key: "F", code: "KeyF", metaKey: true, shiftKey: true });
+        await waitFor(() => expect(field()).toHaveFocus());
+        fireEvent.change(field(), { target: { value: "alp" } });
+        fireEvent.keyDown(field(), { key: "ArrowDown" });
+        expect(focusedRowKey()).toBe("tag:alpha");
+        fireEvent.keyDown(document.body, { key: "Enter" });
+        await waitFor(() => expect(graph()).toHaveTextContent("alpha"));
+        expect(focusedRowKey()).toBe("tag:alpha");
+      });
+
+      it("Tab to the feed ends the visit with nothing focused, and the sidebar goes", async () => {
+        sidebarResizeState.collapsed = true;
+        await onGraph();
+        fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+        expect(bar("⌃⌘S Hide Sidebar")).toBeInTheDocument();
+        fireEvent.keyDown(document.body, { key: "Tab" });
+        await screen.findByTestId("grid");
+        await waitFor(() => expect(focusedRowKey()).toBeNull());
+        expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+        expect(bar("⌃⌘S Show Sidebar")).toBeInTheDocument();
+      });
     });
   });
 
@@ -1946,7 +3547,7 @@ describe("AppWithVault", () => {
     }
   });
 
-  it("answers Paste and Commands rebound after the window rendered (Б5.3, Ф11)", async () => {
+  it("answers Commands rebound after the window rendered (Б5.3, Ф11)", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
@@ -1956,28 +3557,20 @@ describe("AppWithVault", () => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
 
-    // Settings rebinds both while this window is on screen; the registry
+    // Settings rebinds it while this window is on screen; the registry
     // changes without re-rendering anything here.
-    setCommandOverrides({
-      paste: { key: "b", meta: true, shift: true },
-      "commands-overlay": { key: "y", meta: true },
-    });
+    setCommandOverrides({ "commands-overlay": { key: "y", meta: true } });
     try {
-      const oldPaste = fireEvent.keyDown(window, { key: "v", code: "KeyV", metaKey: true });
       const oldCommands = fireEvent.keyDown(window, { key: "/", code: "Slash", metaKey: true });
-      expect(oldPaste).toBe(true);
       expect(oldCommands).toBe(true);
       await act(async () => {
         await Promise.resolve();
       });
-      expect(commandMocks.readClipboardPayload).not.toHaveBeenCalled();
       expect(commandMocks.openSettingsWindow).not.toHaveBeenCalled();
 
-      fireEvent.keyDown(window, { key: "B", code: "KeyB", metaKey: true, shiftKey: true });
       const commands = fireEvent.keyDown(window, { key: "y", code: "KeyY", metaKey: true });
       expect(commands).toBe(false);
       await waitFor(() => {
-        expect(commandMocks.readClipboardPayload).toHaveBeenCalledTimes(1);
         expect(commandMocks.openSettingsWindow).toHaveBeenCalledExactlyOnceWith("shortcuts");
       });
     } finally {
@@ -2136,6 +3729,103 @@ describe("AppWithVault", () => {
     );
     // The row's own content comes back: Grid and Graph, no count.
     expect(within(secondaryContentSegment!).getByRole("tablist", { name: "View mode" })).toBeInTheDocument();
+  });
+
+  // SPEC_CARD_PEEK.md, О5, О11 (user's decision of 05.11.2026): what changes
+  // the collection or the view under the card's window makes it fade down
+  // over the new place, and only that.
+  describe("the card's window over a change of collection or view", () => {
+    /** The window's exit by a change of collection or view, as the page asks
+     *  it: jsdom has no animations of its own. */
+    function openWindow() {
+      const animate = vi.fn(() => ({ onfinish: null, cancel: vi.fn() }));
+      Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
+      setCardView("peek");
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      return animate;
+    }
+    const isSwitching = () => document.querySelector("[data-card-peek-switching]") !== null;
+
+    async function openCard() {
+      await waitFor(() => {
+        expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+      // Past its preparation: one closed before that never showed.
+      await waitFor(() => {
+        const shown = document.querySelector("[data-card-peek]");
+        expect(shown).not.toBeNull();
+        expect(shown).not.toHaveAttribute("data-card-peek-preparing");
+      });
+    }
+
+    afterEach(() => {
+      delete (HTMLElement.prototype as { animate?: unknown }).animate;
+      localStorage.removeItem(CARD_VIEW_STORAGE_KEY);
+      reloadCardView();
+    });
+
+    it("fades down when a sidebar row takes the feed to another collection", async () => {
+      openWindow();
+      await openCard();
+      fireEvent.click(screen.getByRole("link", { name: "alpha" }));
+      await waitFor(() => {
+        expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith("alpha", 0, 200, "newest");
+      });
+      await waitFor(() => expect(isSwitching()).toBe(true));
+    });
+
+    it("fades down on the collections' shortcut", async () => {
+      openWindow();
+      await openCard();
+      fireEvent.keyDown(window, { key: "ArrowDown", metaKey: true, altKey: true });
+      await waitFor(() => {
+        expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith("alpha", 0, 200, "newest");
+      });
+      await waitFor(() => expect(isSwitching()).toBe(true));
+    });
+
+    it("fades down when the view changes in the top row during a closing by its ×", async () => {
+      openWindow();
+      await openCard();
+      const surface = document.querySelector<HTMLElement>("[data-card-peek-surface]")!;
+      fireEvent.click(within(surface).getByRole("button", { name: "Close" }));
+      await waitFor(() => {
+        expect(document.querySelector("[data-card-peek-closing]")).not.toBeNull();
+      });
+      expect(isSwitching()).toBe(false);
+      const viewSwitcher = document.querySelector("[data-main-view-mode-switcher]") as HTMLElement;
+      fireEvent.mouseDown(within(viewSwitcher).getByRole("tab", { name: "Graph" }), { button: 0 });
+      expect(await screen.findByTestId("graph-view")).toBeInTheDocument();
+      await waitFor(() => expect(isSwitching()).toBe(true));
+    });
+
+    it("keeps the landing on the sidebar's row of the place the feed stands on", async () => {
+      const animate = openWindow();
+      await openCard();
+      fireEvent.click(screen.getByRole("button", { name: "The row of the current place" }));
+      await waitFor(() => {
+        expect(document.querySelector("[data-card-peek-closing]")).not.toBeNull();
+      });
+      expect(isSwitching()).toBe(false);
+      expect(animate).not.toHaveBeenCalled();
+    });
+
+    it("keeps the landing on its ×", async () => {
+      const animate = openWindow();
+      await openCard();
+      const surface = document.querySelector<HTMLElement>("[data-card-peek-surface]")!;
+      fireEvent.click(within(surface).getByRole("button", { name: "Close" }));
+      await waitFor(() => {
+        expect(document.querySelector("[data-card-peek-closing]")).not.toBeNull();
+      });
+      expect(isSwitching()).toBe(false);
+      expect(animate).not.toHaveBeenCalled();
+    });
   });
 
   // SPEC_CARD_PEEK.md, О1, О9, О16 (user's decision of 30.10.2026): the open
@@ -2895,7 +4585,7 @@ describe("AppWithVault", () => {
     expect(commandMocks.listGridBlocks).toHaveBeenCalledTimes(gridCallsBeforeSearch);
   });
 
-  it("navigates sidebar search results with arrows while keeping the search input focused", async () => {
+  it("ArrowDown from the filter takes the focus to its top row, whichever way the caret got there", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
@@ -2905,6 +4595,8 @@ describe("AppWithVault", () => {
     await waitFor(() => {
       expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
     });
+    const keyboardRow = () => document.querySelector("[data-sidebar-mock]")
+      ?.getAttribute("data-sidebar-mock-keyboard-row") ?? null;
 
     fireEvent.keyDown(window, { key: "F", code: "KeyF", metaKey: true, shiftKey: true });
     const input = screen.getByRole("textbox", { name: "Find or create collection" });
@@ -2915,19 +4607,201 @@ describe("AppWithVault", () => {
     fireEvent.change(input, { target: { value: "alp" } });
     fireEvent.keyDown(input, { key: "ArrowDown" });
 
-    expect(input).toHaveFocus();
+    expect(input).not.toHaveFocus();
     expect(input).toHaveValue("alp");
-    expect(input).toHaveAttribute("aria-activedescendant", "sidebar-row-tag%3Aalpha");
-
-    fireEvent.change(input, { target: { value: "alph" } });
-    expect(input).toHaveFocus();
     expect(input).not.toHaveAttribute("aria-activedescendant");
+    expect(keyboardRow()).toBe("tag:alpha");
+
+    // A character on the row goes on with the query, from the field.
+    fireEvent.keyDown(document.body, { key: "h" });
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue("alph");
+    expect(keyboardRow()).toBeNull();
 
     fireEvent.keyDown(input, { key: "ArrowDown" });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(document.body, { key: "Enter" });
 
     await waitFor(() => {
       expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1");
+    });
+  });
+
+  // User's decision of 05.11.2026 (SPEC_FRONTEND.md, «RenameBlockDialog»): the
+  // open card's `Rename…` puts the user in its name in the header, not in the
+  // dialog; the dialog stays where that name cannot take the request.
+  describe("the open card's Rename…", () => {
+    const nameField = () => screen.queryByRole("textbox", { name: "Rename file" });
+    const dialogField = () => screen.queryByRole("textbox", { name: "Filename" });
+    const name = () => document.querySelector("[data-secondary-detail-card-name]");
+    const pressMenu = (trigger: HTMLElement) => {
+      fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+      fireEvent.click(trigger);
+    };
+    /** The focus the closing menu could still take back has had its turn. */
+    const menuGone = async () => {
+      await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+    };
+
+    async function renderFeed() {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+    }
+
+    async function openFullPage() {
+      await renderFeed();
+      fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+      await waitFor(() => {
+        expect(document.querySelector("[data-secondary-detail-top-menu]")).toHaveAttribute("data-entered", "true");
+      });
+      return document.querySelector<HTMLElement>("[data-secondary-detail-top-menu]")!;
+    }
+
+    async function openWindow() {
+      Object.defineProperty(HTMLElement.prototype, "animate", {
+        configurable: true,
+        value: vi.fn(() => ({ onfinish: null, cancel: vi.fn() })),
+      });
+      setCardView("peek");
+      await renderFeed();
+      fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+      await waitFor(() => {
+        const shown = document.querySelector("[data-card-peek]");
+        expect(shown).not.toBeNull();
+        expect(shown).not.toHaveAttribute("data-card-peek-preparing");
+      });
+      return document.querySelector<HTMLElement>("[data-card-peek-plate]")!;
+    }
+
+    afterEach(() => {
+      delete (HTMLElement.prototype as { animate?: unknown }).animate;
+      localStorage.removeItem(CARD_VIEW_STORAGE_KEY);
+      reloadCardView();
+    });
+
+    /** The field stands in `header` as a click would leave it, cursor at the end. */
+    async function expectFieldIn(header: HTMLElement) {
+      await waitFor(() => expect(nameField()).toHaveFocus());
+      await menuGone();
+      const field = nameField() as HTMLInputElement;
+      expect(field).toHaveFocus();
+      expect(header).toContainElement(field);
+      expect(field).toHaveValue("alpha-block");
+      expect(field.selectionStart).toBe("alpha-block".length);
+      expect(field.selectionEnd).toBe("alpha-block".length);
+      expect(dialogField()).toBeNull();
+      return field;
+    }
+
+    it("opens the name in the top row from the `⋯` of the full page", async () => {
+      const header = await openFullPage();
+      pressMenu(within(header).getByRole("button", { name: "Card actions" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+      await expectFieldIn(header);
+    });
+
+    it("opens the name in the window's header from its `⋯`", async () => {
+      const header = await openWindow();
+      pressMenu(within(header).getByRole("button", { name: "Card actions" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+      await expectFieldIn(header);
+    });
+
+    it("keeps the focus in the field when ⌘K and Enter chose the item on the full page", async () => {
+      const header = await openFullPage();
+      fireEvent.keyDown(document.body, { key: "k", metaKey: true });
+      fireEvent.keyDown(await screen.findByRole("menuitem", { name: "Rename…" }), { key: "Enter" });
+      await expectFieldIn(header);
+      // The menu's button is not left drawn as the keyboard's.
+      expect(within(header).getByRole("button", { name: "Card actions" })).not.toHaveAttribute("data-top-chrome-keyboard-focus");
+    });
+
+    it("keeps the focus in the field when ⌘K and Enter chose the item in the window", async () => {
+      const header = await openWindow();
+      fireEvent.keyDown(document.body, { key: "k", metaKey: true });
+      fireEvent.keyDown(await screen.findByRole("menuitem", { name: "Rename…" }), { key: "Enter" });
+      await expectFieldIn(header);
+    });
+
+    it("opens the name from the menu of the same card in the sidebar", async () => {
+      const header = await openFullPage();
+      fireEvent.click(screen.getByRole("button", { name: "Preview menu of alpha-block" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+      await expectFieldIn(header);
+    });
+
+    it("saves on Enter through the same rename as a click on the name", async () => {
+      commandMocks.renameBlockFile.mockResolvedValue({ old_slug: "alpha-block", new_slug: "gamma-block" });
+      const header = await openFullPage();
+      pressMenu(within(header).getByRole("button", { name: "Card actions" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+      const field = await expectFieldIn(header);
+      fireEvent.change(field, { target: { value: "gamma-block" } });
+      fireEvent.keyDown(field, { key: "Enter" });
+      await waitFor(() => expect(commandMocks.renameBlockFile).toHaveBeenCalledWith("alpha-block", "gamma-block"));
+      await waitFor(() => expect(nameField()).toBeNull());
+    });
+
+    async function expectEscapeKeepsName(header: HTMLElement) {
+      pressMenu(within(header).getByRole("button", { name: "Card actions" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+      const field = await expectFieldIn(header);
+      fireEvent.change(field, { target: { value: "gamma-block" } });
+      fireEvent.keyDown(field, { key: "Escape" });
+      expect(nameField()).toBeNull();
+      expect(name()).toHaveTextContent("alpha-block");
+      expect(commandMocks.renameBlockFile).not.toHaveBeenCalled();
+    }
+
+    it("keeps the old name on Escape on the full page", async () => {
+      await expectEscapeKeepsName(await openFullPage());
+    });
+
+    it("keeps the old name on Escape in the window, and the window stays", async () => {
+      const header = await openWindow();
+      // At rest: while the window grows, Escape reaches it wherever the focus
+      // is (SPEC_CARD_PEEK.md, О12).
+      await waitFor(() => expect(document.querySelector("[data-peek-piece]")).toBeNull(), { timeout: 3000 });
+      await expectEscapeKeepsName(header);
+      expect(document.querySelector("[data-card-peek-closing]")).toBeNull();
+    });
+
+    it("opens the dialog from the feed's menu when no card is open", async () => {
+      await renderFeed();
+      fireEvent.click(screen.getByRole("button", { name: "Rename alpha-block in the feed" }));
+      await waitFor(() => expect(dialogField()).toHaveValue("alpha-block"));
+      expect(nameField()).toBeNull();
+    });
+
+    it("opens the dialog from a menu of another card, in the open card and in the sidebar", async () => {
+      await openFullPage();
+      fireEvent.click(screen.getByRole("button", { name: "Rename related note" }));
+      await waitFor(() => expect(dialogField()).toHaveValue("beta-block"));
+      expect(nameField()).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(dialogField()).toBeNull());
+
+      fireEvent.click(screen.getByRole("button", { name: "Preview menu of beta-block" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+      await waitFor(() => expect(dialogField()).toHaveValue("beta-block"));
+      expect(nameField()).toBeNull();
+    });
+
+    // The search is modal and keeps the focus: the name under it could not.
+    it("opens the dialog from a search result that names the open card", async () => {
+      await openFullPage();
+      fireEvent(window, new CustomEvent("surface-search-shortcut", { detail: { payload: "main" } }));
+      await waitFor(() => expect(document.querySelector("[data-card-row-actions]")).not.toBeNull());
+      fireEvent.keyDown(screen.getByRole("combobox"), { key: "k", metaKey: true });
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+      await waitFor(() => expect(dialogField()).toHaveValue("alpha-block"));
+      expect(nameField()).toBeNull();
     });
   });
 
@@ -3131,7 +5005,10 @@ describe("AppWithVault", () => {
     await waitFor(() => expect(screen.queryByText("Could not read 1 note")).toBeNull());
   });
 
-  describe("⌘V into the feed (SPEC_DEEP_AUDIT.md, Е6.4)", () => {
+  // ⌘V is the Edit menu's stock Paste: in a tab page, a child webview, the
+  // menu takes the chord first, and the page gets the `paste` event, never a
+  // ⌘V keydown (SPEC_KEYBOARD.md, «Global»).
+  describe("⌘V into the feed (SPEC_DEEP_AUDIT.md, Е6.4; SPEC_KEYBOARD.md, «Global»)", () => {
     async function renderFeed() {
       render(
         <MemoryRouter initialEntries={["/"]}>
@@ -3141,12 +5018,64 @@ describe("AppWithVault", () => {
       await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
     }
 
+    /** What reaches the page from Edit → Paste: WebKit aims it at the selection,
+     *  the page's body when nothing is selected. */
+    const menuPaste = (target: Element = document.body) => fireEvent.paste(target);
+
+    it("pastes into the feed on the menu's paste event, which nothing else on the page took", async () => {
+      await renderFeed();
+
+      const taken = !menuPaste();
+
+      expect(taken).toBe(true);
+      await waitFor(() => expect(commandMocks.readClipboardPayload).toHaveBeenCalledTimes(1));
+    });
+
+    it("does not answer a ⌘V keydown, so a page that gets both pastes once", async () => {
+      await renderFeed();
+
+      const unanswered = fireEvent.keyDown(window, { key: "v", code: "KeyV", metaKey: true });
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(unanswered).toBe(true);
+      expect(commandMocks.readClipboardPayload).not.toHaveBeenCalled();
+    });
+
+    it("leaves the paste to a field, a dialog and an open card", async () => {
+      await renderFeed();
+
+      const field = screen.getByRole("textbox", { name: "Find or create collection" });
+      field.focus();
+      expect(menuPaste(field)).toBe(true);
+
+      // A dialog holds the focus while the selection, and the event, stay on the body.
+      const dialog = document.createElement("div");
+      dialog.setAttribute("role", "dialog");
+      const button = document.createElement("button");
+      dialog.append(button);
+      document.body.append(dialog);
+      button.focus();
+      expect(menuPaste()).toBe(true);
+      dialog.remove();
+
+      fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+      await screen.findByTestId("detail-title");
+      expect(menuPaste()).toBe(true);
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(commandMocks.readClipboardPayload).not.toHaveBeenCalled();
+    });
+
     it("says when the pasted element could not be created", async () => {
       commandMocks.readClipboardPayload.mockResolvedValueOnce({ kind: "text", text: "A note" } as never);
       commandMocks.createBlock.mockRejectedValueOnce(new Error("The disk is full."));
       await renderFeed();
 
-      fireEvent.keyDown(window, { key: "v", code: "KeyV", metaKey: true });
+      menuPaste();
 
       expect(await screen.findByText("Could not create an element")).toBeInTheDocument();
       expect(screen.getByText("The disk is full.")).toBeInTheDocument();
@@ -3162,9 +5091,9 @@ describe("AppWithVault", () => {
         .mockResolvedValueOnce({} as IndexedBlock);
       await renderFeed();
 
-      fireEvent.keyDown(window, { key: "v", code: "KeyV", metaKey: true });
+      menuPaste();
       await waitFor(() => expect(commandMocks.createBlock).toHaveBeenCalledTimes(1));
-      fireEvent.keyDown(window, { key: "v", code: "KeyV", metaKey: true });
+      menuPaste();
       await act(async () => finishFirst());
 
       await waitFor(() => expect(commandMocks.createBlock).toHaveBeenCalledTimes(2));
@@ -4607,6 +6536,47 @@ describe("AppWithVault", () => {
     expect(screen.queryByText("Open deleted")).not.toBeInTheDocument();
   });
 
+  // SPEC_THUMBNAILS.md, «Свои записи Mine»: a command that dropped the first
+  // picture of a card rebuilds its tiles and then says `thumb:updated`. The
+  // feed takes the card's new tile list from the index and a new version for
+  // the tile addresses: the tiles are named by place, so the old address
+  // would show the browser's copy of the dropped picture.
+  it("follows a card's new tile list when its pictures were rebuilt", async () => {
+    const tiles = (...names: string[]) => JSON.stringify({
+      kind: "composite",
+      primary_preview_path: "Cards/Gallery.jpg",
+      width: null,
+      height: null,
+      tiles: names.map((name, index) => ({
+        source_path: `Media/${name}.jpg`,
+        preview_path: `Cards/Gallery.preview-${index + 1}.jpg`,
+        width: 96,
+        height: 64,
+        is_video: false,
+        is_video_poster: false,
+      })),
+      overflow_count: 0,
+    });
+    const before = { ...block(1, "Cards/Gallery"), preview_manifest: tiles("image 1", "image 2") };
+    const after = { ...before, preview_manifest: tiles("image 2", "image 3") };
+    commandMocks.listGridBlocks.mockResolvedValue(gridSnapshot([before]));
+    commandMocks.getGridRows.mockResolvedValue({ path: "/vault", generation: 2, blocks: [after] });
+    render(<MemoryRouter><AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("grid-previews")).toHaveTextContent("Media/image 1.jpg"));
+    expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent("Cards/Gallery=0");
+
+    fireEvent(window, new CustomEvent("thumb:updated", {
+      detail: { payload: { path: "/vault", slug: "Cards/Gallery", is_text: false } },
+    }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grid-previews")).toHaveTextContent(`Cards/Gallery:${after.preview_manifest}:0`);
+      expect(screen.getByTestId("grid-thumb-versions")).toHaveTextContent("Cards/Gallery=1");
+    });
+    expect(screen.getByTestId("grid-previews")).not.toHaveTextContent("Media/image 1.jpg");
+    expect(commandMocks.getGridRows).toHaveBeenCalledWith("/vault", ["Cards/Gallery"]);
+  });
+
   it("reads again a new card whose preview landed while the feed read was in flight", async () => {
     // The preview landed before the feed held the card, and the feed then
     // applied the card as read before the preview existed: without a second
@@ -4801,6 +6771,15 @@ describe("AppWithVault", () => {
       // The backend already holds this view: nothing to report.
       await waitReportInterval();
       expect(commandMocks.reportTabView).not.toHaveBeenCalled();
+    });
+
+    it("a query kept across a reload: ArrowLeft lands on the top visible row, the query intact", async () => {
+      const view = tabView({ location: { kind: "collection", tag: "alpha" }, collection_filter: "be" });
+      renderTab({ restore: { path: "/vault", view, saved: view } });
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+      fireEvent.click(screen.getByRole("button", { name: "Reach the feed's left edge" }));
+      expect(document.querySelector("[data-sidebar-mock]")).toHaveAttribute("data-sidebar-mock-keyboard-row", "tag:beta");
+      expect(screen.getByRole("textbox", { name: "Find or create collection" })).toHaveValue("be");
     });
 
     it("restores Graph as the tab's mode", async () => {
@@ -5171,6 +7150,78 @@ describe("AppWithVault", () => {
       expect(screen.queryByRole("button", { name: "Open other space in a new tab" })).toBeNull();
     });
 
+    describe("the sidebar shown for the keyboard hears the backend (SPEC_KEYBOARD.md, М8)", () => {
+      beforeEach(() => {
+        sidebarResizeState.collapsed = true;
+        sidebarResizeState.toggleCollapsed.mockClear();
+        commandMocks.reportSidebarOverlay.mockClear();
+        commandMocks.setWindowSidebar.mockClear();
+        feedKeyboardFocus.take.mockReset().mockReturnValue(true);
+        feedKeyboardFocus.release.mockReset();
+      });
+
+      afterEach(() => {
+        sidebarResizeState.collapsed = false;
+      });
+
+      const barEntry = (name: string) => within(document.querySelector("[data-bottom-action-bar]") as HTMLElement)
+        .queryByRole("button", { name });
+      const focusedRowKey = () => document.querySelector("[data-sidebar-mock]")
+        ?.getAttribute("data-sidebar-mock-keyboard-row") ?? null;
+
+      async function visit() {
+        renderTab();
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        expect(commandMocks.reportSidebarOverlay).toHaveBeenLastCalledWith("beside");
+        fireEvent.click(screen.getByRole("button", { name: "Reach the feed's left edge" }));
+        expect(focusedRowKey()).toBe("all");
+        expect(barEntry("⌃⌘S Hide Sidebar")).not.toBeNull();
+        expect(commandMocks.reportSidebarOverlay).toHaveBeenLastCalledWith("open");
+      }
+
+      it.each([
+        ["the toggle of ⌃⌘S, the View item and the tab bar's button", { kind: "toggle" }],
+        ["the swipe left", { kind: "swipe", open: false }],
+      ])("%s ends the visit, hides it and stores nothing", async (_name, intent) => {
+        await visit();
+        act(() => send("sidebar-overlay-command", intent));
+        await waitFor(() => expect(focusedRowKey()).toBeNull());
+        expect(barEntry("⌃⌘S Show Sidebar")).not.toBeNull();
+        // As ArrowRight: the page takes the focus back.
+        expect(feedKeyboardFocus.take).toHaveBeenCalledTimes(1);
+        expect(commandMocks.reportSidebarOverlay).toHaveBeenLastCalledWith("beside");
+        // The stored state stays hidden: no write, and no toggle of it either.
+        expect(commandMocks.setWindowSidebar).not.toHaveBeenCalled();
+        expect(sidebarResizeState.toggleCollapsed).not.toHaveBeenCalled();
+      });
+
+      it("the swipe right changes nothing", async () => {
+        await visit();
+        act(() => send("sidebar-overlay-command", { kind: "swipe", open: true }));
+        expect(focusedRowKey()).toBe("all");
+        expect(barEntry("⌃⌘S Hide Sidebar")).not.toBeNull();
+        expect(feedKeyboardFocus.take).not.toHaveBeenCalled();
+        expect(commandMocks.setWindowSidebar).not.toHaveBeenCalled();
+        expect(sidebarResizeState.toggleCollapsed).not.toHaveBeenCalled();
+      });
+
+      it("a second toggle after the visit is the person's own, once", async () => {
+        await visit();
+        act(() => send("sidebar-overlay-command", { kind: "toggle" }));
+        await waitFor(() => expect(focusedRowKey()).toBeNull());
+        // The mirror lags the page by a report: the backend forwards this one too.
+        act(() => send("sidebar-overlay-command", { kind: "toggle" }));
+        expect(sidebarResizeState.toggleCollapsed).toHaveBeenCalledTimes(1);
+      });
+
+      it("the report says beside after → Back too", async () => {
+        await visit();
+        fireEvent.click(within(document.querySelector("[data-bottom-action-bar]") as HTMLElement).getByRole("button", { name: "→ Back" }));
+        expect(focusedRowKey()).toBeNull();
+        expect(commandMocks.reportSidebarOverlay).toHaveBeenLastCalledWith("beside");
+      });
+    });
+
     describe("in a narrow window (SPEC_NARROW_WINDOW.md, У4 по У7, У12)", () => {
       const wideWindow = window.innerWidth;
       const resizeWindow = (width: number) => act(() => {
@@ -5324,6 +7375,20 @@ describe("AppWithVault", () => {
         expect(place()).not.toBeNull();
         expect(contentSegment().previousElementSibling).toBe(place());
         expect(contentSegment()).not.toHaveAttribute("data-path-card-line");
+      });
+
+      // Everything under the panel is inert: the open card's name cannot take
+      // the focus (SPEC_FRONTEND.md, «RenameBlockDialog»).
+      it("opens the dialog from a menu of the open card while the sidebar lies over the feed", async () => {
+        renderTab();
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+        await waitFor(() => expect(document.querySelector("[data-secondary-detail-card-name]")).not.toBeNull());
+        act(() => send("sidebar-overlay-command", { kind: "toggle" }));
+        fireEvent.click(within(panel() as HTMLElement).getByRole("button", { name: "Preview menu of alpha-block" }));
+        fireEvent.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+        await waitFor(() => expect(screen.getByRole("textbox", { name: "Filename" })).toHaveValue("alpha-block"));
+        expect(screen.queryByRole("textbox", { name: "Rename file" })).toBeNull();
       });
 
       it("leaves a collapsed sidebar collapsed when the window widens with it closed (У7)", async () => {

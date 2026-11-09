@@ -207,14 +207,76 @@ select,
   pointer-events: none;
 }
 
+/* Under the keyboard's focus in the feed (SPEC_KEYBOARD.md, М5; user's decision of
+   06.11.2026) the row shows no button, as Enter does not press one, and its count stands
+   where they stood. No layout moves: they keep their places, unseen. */
+[data-sidebar-scroll]:not([data-sidebar-link-editor-mode="true"]) [data-sidebar-row-keyboard-focus="true"] > :is([data-sidebar-link-action], [data-sidebar-row-connected-pill]) {
+  visibility: hidden;
+}
+[data-sidebar-scroll]:not([data-sidebar-link-editor-mode="true"]) [data-sidebar-row-keyboard-focus="true"] [data-sidebar-meta-count] {
+  opacity: 1;
+  transition: none;
+}
+/* Over an open card the row's button stands on the keyboard's plate as on any surface:
+   a real button's fills follow it (`state-active`), and the Contents list's bare words
+   are masked with the plate's colour instead of the panel's, so no box shows around
+   them (SPEC_KEYBOARD.md, М5). The same mix as the layer `state-active` paints. */
+[data-sidebar-row-keyboard-focus="true"] {
+  --sidebar-word-ground: color-mix(in srgb, var(--under), var(--foreground) var(--active-alpha));
+}
+
 [data-sidebar-scroll]:not([data-sidebar-link-editor-mode="true"]) [data-sidebar-row-active="true"] [data-sidebar-row-text] {
   color: var(--foreground);
 }
 
 /* The row under the pointer answers in the feed and in an open card alike:
-   the row is a way into its collection from both. */
-[data-sidebar-scroll][data-sidebar-row-focus-mode="true"] [data-sidebar-row-focused="true"] [data-sidebar-row-text] {
+   the row is a way into its collection from both. Over the row's button the button
+   answers instead, and the name stays as at rest: what lights up is what a click does
+   (SPEC_CARD_STATES.md, С7.10; user's decision of 06.11.2026). */
+[data-sidebar-scroll][data-sidebar-row-focus-mode="true"] [data-sidebar-row-focused="true"]:not(:has(> [data-sidebar-link-action][data-sidebar-link-pointer])) [data-sidebar-row-text] {
   color: var(--foreground);
+}
+
+/* What the keyboard's focus lights is what its key does (SPEC_KEYBOARD.md, М5; user's
+   decision of 07.11.2026). Enter opens the collection in the feed and on the graph, so
+   the name lights, as under the pointer; over an open card Enter presses the button, and
+   the name stays quiet. The count does not answer. */
+[data-sidebar-scroll]:not([data-sidebar-link-editor-mode="true"]) [data-sidebar-row-keyboard-focus="true"] [data-sidebar-row-text]:not([data-sidebar-meta-count]) {
+  color: var(--foreground);
+}
+
+/* The keyboard's walk moves nothing: the name, the count and the button with its word and
+   mark are in place in the frame the focus arrives, and leave the same way (М5; user's
+   decision of 07.11.2026). A step starts no turn of the mark: only a change of state does. */
+[data-sidebar-scroll][data-sidebar-keyboard-walk] :is(
+  [data-sidebar-row-text],
+  [data-sidebar-compact-stack],
+  [data-sidebar-row-connected-pill],
+  [data-sidebar-link-action],
+  [data-sidebar-link-action] *
+),
+[data-sidebar-scroll][data-sidebar-keyboard-walk] [data-sidebar-link-label]::before {
+  transition: none !important;
+}
+
+/* The button's words: `Connected` or a share of the selection at rest, `Disconnect` or
+   `Connect` once the button itself answers: under the pointer's mark, in DOM focus, or
+   under the keyboard's focus, whose Enter presses it (SPEC_KEYBOARD.md, М5). Over the
+   rest of the row they stay at rest (SPEC_CARD_STATES.md, С7.10). */
+[data-sidebar-link-word] {
+  transition-duration: var(--hover-intent-fade-out);
+}
+[data-sidebar-link-word="press"] {
+  opacity: 0;
+}
+[data-sidebar-link-action]:is([data-sidebar-link-pointer], :focus-visible, [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-word] {
+  transition-duration: var(--hover-intent-fade-in);
+}
+[data-sidebar-link-action]:is([data-sidebar-link-pointer], :focus-visible, [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-word="rest"] {
+  opacity: 0;
+}
+[data-sidebar-link-action]:is([data-sidebar-link-pointer], :focus-visible, [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-word="press"] {
+  opacity: 1;
 }
 
 /* A row link holding the keyboard's DOM focus (Tab with macOS keyboard
@@ -223,8 +285,15 @@ select,
   color: var(--foreground);
 }
 
-[data-sidebar-scroll][data-sidebar-link-editor-mode="true"] [data-sidebar-row-linked="true"] [data-sidebar-row-text] {
+/* With a card open only the current collection's row stays bright at rest. The other
+   connected rows keep a muted name and a muted `Connected`, on the same button; the
+   pointer brightens them as any row (SPEC_CARD_STATES.md, С7.10; user's decision of
+   06.11.2026). */
+[data-sidebar-scroll][data-sidebar-link-editor-mode="true"] [data-sidebar-row-linked="true"][data-sidebar-row-active="true"] [data-sidebar-row-text] {
   color: var(--foreground);
+}
+[data-sidebar-scroll][data-sidebar-link-editor-mode="true"] [data-sidebar-row-linked="true"]:not([data-sidebar-row-active="true"]) [data-sidebar-link-connected] {
+  color: var(--muted-foreground);
 }
 
 /* One card state system (SPEC_CARD_STATES.md). Keyboard focus colours the
@@ -242,11 +311,21 @@ select,
 
 /* A state colours the frame through --card-frame-color: its line
    ([data-feed-card-frame]::after below) and its media's outline
-   ([data-card-media-outline]) follow together. */
+   ([data-card-media-outline]) follow together, except under keyboard focus
+   (below). */
 [data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-block-slug],
 [data-grid-scroll] [data-feed-grid-item-collection-lit="true"] [data-block-slug] {
   --card-frame-color: var(--border-accent);
   --card-frame-fade: var(--hover-intent-fade-in);
+}
+
+/* Keyboard focus lights the frame's outer line alone (SPEC_FEED_DISPLAY.md, Д20;
+   user's decision of 05.11.2026): the line between media and text keeps its
+   resting colour, --border, the frame's own at rest. A selected card and a
+   collection's highlight keep the outline on the frame's colour. Only the
+   colour differs, so the ring lines up with the frame's corners as ever. */
+[data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"]:not([data-feed-grid-item-selected="true"], [data-feed-grid-item-collection-lit="true"]) [data-card-media-outline] {
+  border-color: var(--border);
 }
 
 /* Five attribute selectors: more specific than the focus rule above, so a
@@ -296,13 +375,15 @@ select,
   right: -0.5px;
   bottom: -0.5px;
   transition:
-    transform 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform var(--lift-down),
     border-color var(--card-frame-fade, 0s) cubic-bezier(0.22, 1, 0.36, 1);
 }
 [data-card-lift-hover]:hover [data-card-media-outline="on-lift"],
 [data-card-lift-pinned] [data-card-media-outline="on-lift"] {
   transform: translateY(calc(-1 * var(--card-lift)));
-  transition-duration: 200ms, var(--card-frame-fade, 0s);
+  transition:
+    transform var(--lift-up),
+    border-color var(--card-frame-fade, 0s) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* The wash lives on the media window, not on the slot: a card lift moves the
@@ -352,9 +433,20 @@ select,
    hints at the motion (8px). Bare media (a picture or a video without a
    frame, or a card `Media` shows as media alone) brings up its caption too,
    and the caption sets --card-lift to its own height on the frame. The frame
-   clips everything; its outer box never moves. Raising runs 200ms, settling
-   150ms, on the project's ease-out. Reduced motion lands at once through the
-   global rule (Ф12). */
+   clips everything; its outer box never moves. Every part runs on one clock
+   per direction, opacity included (С8.4, user's decision of 06.11.2026):
+   raising 200ms, settling 150ms. The two lift curves live here alone; each is
+   a cubic-bezier fitted by least squares to the share of the path measured at
+   10, 25, 50, 75 and 90 percent of the time in a recording of another app.
+   Everything that travels with the lift shares one timing, so the row stays
+   under the text in every frame and a reversal starts from where each part
+   stands. Reduced motion lands at once through the global rule (Ф12). */
+:root {
+  --card-lift-curve-up: cubic-bezier(0.45, 0, 0.2, 1);
+  --card-lift-curve-down: cubic-bezier(0.61, 0, 0.39, 1);
+  --lift-up: 200ms var(--card-lift-curve-up);
+  --lift-down: 150ms var(--card-lift-curve-down);
+}
 [data-feed-card-frame] {
   --card-lift-drift: 8px;
 }
@@ -389,12 +481,12 @@ select,
 }
 
 [data-card-lift] {
-  transition: transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform var(--lift-down);
 }
 
 [data-card-lift-hover]:hover [data-card-lift],
 [data-card-lift-pinned] [data-card-lift] {
-  transition-duration: 200ms;
+  transition: transform var(--lift-up);
 }
 
 [data-card-lift-hover]:hover [data-card-lift="window"],
@@ -418,8 +510,8 @@ select,
 [data-card-lift="tray"] {
   transform: translateY(var(--card-lift));
   transition:
-    transform 150ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1);
+    transform var(--lift-down),
+    opacity var(--lift-down);
 }
 
 /* Over a playing video the row needs a layer of its own (CardHoverMenu.tsx). */
@@ -430,7 +522,9 @@ select,
 [data-card-lift-hover]:hover [data-card-lift="tray"],
 [data-card-lift-pinned] [data-card-lift="tray"] {
   transform: translateY(0);
-  transition-duration: 200ms, var(--hover-intent-fade-in);
+  transition:
+    transform var(--lift-up),
+    opacity var(--lift-up);
 }
 
 [data-card-lift-hover]:hover [data-card-lift="tray"][data-card-lift-gpu],
@@ -449,24 +543,44 @@ select,
   -webkit-mask-position: 0 -24px;
   mask-position: 0 -24px;
   transition:
-    -webkit-mask-position 150ms cubic-bezier(0.22, 1, 0.36, 1),
-    mask-position 150ms cubic-bezier(0.22, 1, 0.36, 1);
+    -webkit-mask-position var(--lift-down),
+    mask-position var(--lift-down);
 }
 
 [data-card-lift-hover]:hover [data-card-lift-fade],
 [data-card-lift-pinned] [data-card-lift-fade] {
   -webkit-mask-position: 0 0;
   mask-position: 0 0;
-  transition-duration: 200ms;
+  transition:
+    -webkit-mask-position var(--lift-up),
+    mask-position var(--lift-up);
 }
 
+/* The caption fades as it rises. */
 [data-card-lift="caption"] {
   transform: translateY(100%);
+  opacity: 0;
+  transition:
+    transform var(--lift-down),
+    opacity var(--lift-down);
 }
 
 [data-card-lift-hover]:hover [data-card-lift="caption"],
 [data-card-lift-pinned] [data-card-lift="caption"] {
   transform: translateY(0);
+  opacity: 1;
+  transition:
+    transform var(--lift-up),
+    opacity var(--lift-up);
+}
+
+/* The top buttons fade on the lift's clock. */
+:is([data-card-hover-more-action], [data-card-hover-overlay]) {
+  transition: opacity var(--lift-down);
+}
+[data-card-lift-hover]:hover :is([data-card-hover-more-action], [data-card-hover-overlay]),
+[data-card-lift-pinned] :is([data-card-hover-more-action], [data-card-hover-overlay]) {
+  transition: opacity var(--lift-up);
 }
 
 /* A card preview (hover, search) stands unfolded from its first frame
@@ -1025,8 +1139,11 @@ body {
   --sidebar-ring: oklch(0.568 0 0);
   --border-accent: oklch(0.669 0 0);
   --feed-selection-frame: oklch(0.145 0 0);
-  /* Focus wash on an image: 3 s of the foreground on the canvas. */
-  --graphic-card-focus-overlay: color-mix(in srgb, oklch(0.145 0 0) 12.21%, transparent);
+  /* The wash on a picture: 2 s of the foreground on the canvas (user's decision
+     of 05.11.2026, was 3 s, 12.21%): the law's whole step for an area signal,
+     between the state layer 1 s and the former 3 s, found too strong. Hover,
+     selection and keyboard focus share it and differ by their outline. */
+  --graphic-card-focus-alpha: 8.17%;
   /* K12: hue and chroma from macOS, lightness by role. Destructive removes
      content, detach breaks a link and keeps the content (Disconnect, Remove
      from Element). The search marker is macOS's, the same in both themes. */
@@ -1139,7 +1256,7 @@ body {
     --sidebar-ring: oklch(0.757 0 0);
     --border-accent: oklch(0.612 0 0);
     --feed-selection-frame: oklch(0.985 0 0);
-    --graphic-card-focus-overlay: color-mix(in srgb, oklch(0.985 0 0) 16.93%, transparent);
+    --graphic-card-focus-alpha: 10.92%;
     --destructive: oklch(0.717 0.177 28.7);
     --detach: oklch(0.744 0.17 62.6);
     --destructive-fill-alpha: 17.75%;
@@ -1225,7 +1342,7 @@ body {
   --sidebar-ring: oklch(0.757 0 0);
   --border-accent: oklch(0.612 0 0);
   --feed-selection-frame: oklch(0.985 0 0);
-  --graphic-card-focus-overlay: color-mix(in srgb, oklch(0.985 0 0) 16.93%, transparent);
+  --graphic-card-focus-alpha: 10.92%;
   --destructive: oklch(0.717 0.177 28.7);
   --detach: oklch(0.744 0.17 62.6);
   --destructive-fill-alpha: 17.75%;
@@ -1303,7 +1420,7 @@ body {
   --sidebar-ring: oklch(0.568 0 0);
   --border-accent: oklch(0.669 0 0);
   --feed-selection-frame: oklch(0.145 0 0);
-  --graphic-card-focus-overlay: color-mix(in srgb, oklch(0.145 0 0) 12.21%, transparent);
+  --graphic-card-focus-alpha: 8.17%;
   --destructive: oklch(0.596 0.232 28.7);
   --detach: oklch(0.577 0.132 62.6);
   --destructive-fill-alpha: 11.66%;
@@ -1408,9 +1525,14 @@ body {
    does not inherit: an inherited value that changes on the root restyles
    every element of the page in each such frame, the sidebar's thumbnails
    and the feed's cards with it (SPEC_SIDEBAR_STRIP.md, ЛМ2). The value
-   stands on the root and on each element laid out by it, the name's column
-   below too. */
+   stands on the root and on each element laid out by it. The columns' width
+   (`--sidebar-columns-width`) is the same, except that it stays the open
+   width through a collapse and while the sidebar is out of the row. */
 @property --sidebar-width {
+  syntax: "*";
+  inherits: false;
+}
+@property --sidebar-columns-width {
   syntax: "*";
   inherits: false;
 }
@@ -1421,10 +1543,11 @@ body {
 /* The name's column. At the minimum the name sits on its floor and the three
    zones are equal; every extra pixel of panel width is split evenly with the
    previews, up to the name's cap. It is worked out on each element that
-   lays itself out by it, from the sidebar's width that element holds: the
+   lays itself out by it, from the columns' width that element holds: the
    name's cell and the guideline after it; and on the root, for the trial
    order of the columns (sidebarColumnLayout.ts), whose places the root
-   carries. */
+   carries. A collapse leaves it where it stands (user's decision of
+   05.11.2026). Over the feed the panel's own width stands in. */
 :root,
 [data-sidebar-name-cell],
 [data-sidebar-guideline] {
@@ -1432,7 +1555,7 @@ body {
     var(--sidebar-name-floor),
     calc(
       var(--sidebar-name-floor)
-      + (var(--sidebar-width) - var(--sidebar-equal-zones-width)) / 2
+      + (var(--sidebar-columns-width, var(--sidebar-width)) - var(--sidebar-equal-zones-width)) / 2
     ),
     150px
   );
@@ -1497,6 +1620,7 @@ body {
 :root,
 [data-theme] {
   --active: color-mix(in srgb, var(--foreground) var(--active-alpha), transparent);
+  --graphic-card-focus-overlay: color-mix(in srgb, var(--foreground) var(--graphic-card-focus-alpha), transparent);
   /* The flash of a press: half a state layer over the hover one (05.10.2026). */
   --press: color-mix(in srgb, var(--foreground) calc(var(--active-alpha) / 2), transparent);
   --muted-foreground: color-mix(in srgb, var(--foreground) var(--muted-alpha), transparent);
@@ -1607,6 +1731,18 @@ body {
   width: auto;
 }
 
+/* A name being edited stands in the name's own cell (Sidebar.tsx,
+   SidebarEditableRowBody; user's decision of 05.11.2026), whichever columns the
+   trial leaves. The unseen copies of the name and the count that keep a
+   Contents row's height lay out in that list alone («List sidebar»). */
+:root[data-sidebar-hide-name] [data-sidebar-row-editing] [data-sidebar-name-cell] {
+  display: block;
+}
+[data-sidebar-editable-row-ghost] {
+  display: none;
+  visibility: hidden;
+}
+
 /* The name's dissolve toward its zone's end (Sidebar.tsx publishes it), only
    while the name does not fit (textClip.ts): a name that ends inside its
    zone stays whole (user's decision of 22.10.2026). */
@@ -1618,23 +1754,25 @@ body {
 /* Compact rows (PLAN 50.36, experiment of 22.10.2026; DESIGN_SYSTEM.md,
    «Компактная строка боковой панели»). A list narrower than 366.2px (a panel
    narrower than 367.2px) shows fewer than 2.8 thumbnails before the
-   previews' edge (user's decision of 22.10.2026) (appLayout.ts, sidebarCompactRowsBelowPx; MUST equal the
-   number below, sidebarColumns.test.ts holds both). There the list is
+   previews' edge (user's decision of 22.10.2026; appLayout.ts,
+   sidebarCompactRowsBelowPx, the one place the number lives,
+   sidebarColumns.test.ts holds it). There the list is
    shadcn/ui's Sidebar menu with its own sizes, on Mine's tokens: the group's
    inset `p-2` (--spacing-plate), items `gap-1` apart (--spacing-surface), each
    item a `size="lg"` menu button: 48 tall (--spacing-s6), `p-2`, `gap-2`, the
    name and under it the count, the 7.23 stack at the right in the avatar's
-   place, the row's state layer (`state-active`, `rounded-1`) over the whole
-   item on hover and on the open collection. No zones, guidelines or seams.
+   place. No zones, guidelines or seams.
    Connect, Connected and Disconnect stand as `SidebarMenuAction` does,
-   `right-1` (--spacing-surface), over the stack. The container is the list's
-   scrollport (and the lifted copy of a row), not the panel, so the curtain of
-   a collapse moves the layout no earlier than the list narrows. Above the
-   threshold nothing here applies. */
-[data-sidebar-scroll],
-[data-sidebar-drag-row] {
-  container: sidebar-rows / inline-size;
-}
+   `right-1` (--spacing-surface), over the stack. The look is an attribute,
+   `data-sidebar-look="compact"`, of the list's scrollport and of the lifted
+   copy of a row (src/lib/sidebarLook.ts): the scrollport's follows its own
+   width, not the panel's, so the curtain of a collapse moves the layout no
+   earlier than the list narrows, and sidebarListMorph.ts keeps the table
+   while the rows move to the List; the copy's follows the copy's width.
+   Under the narrow table's morph (`data-sidebar-morph`) the wide layout
+   stays. Above the threshold nothing here applies. The rules add no weight
+   to the selectors they nest (`:where`): the cascade is as it was under the
+   container query they replaced (user's decision of 01.11.2026). */
 [data-sidebar-compact-stack] {
   display: none;
 }
@@ -1645,30 +1783,31 @@ body {
    COMPACT_TABLE_POSTPONED): the narrow table below, with its stack of
    thumbnails, is out of use while the List look is developed; the List
    rules further down take this width. */
-@container sidebar-rows (width < 366.2px) {
+:where([data-sidebar-look="compact"]:not([data-sidebar-morph])) {
   /* The narrow table (user's decisions of 23.10.2026): rows one under the
      other as the wide table's, each closed by its line, the line 16px in
      from the panel's edges, as the name and the stack are. The list keeps
      its 8px above and below. */
-  [data-sidebar-rows] {
+  & [data-sidebar-rows] {
     display: flex;
     flex-direction: column;
     padding-block: var(--spacing-plate);
   }
-  [data-sidebar-row-surface]::after {
+  & [data-sidebar-row-surface]::after {
     inset-inline: var(--spacing-s3);
   }
-  [data-sidebar-guidelines],
-  [data-sidebar-editable-row-guideline],
-  [data-sidebar-preview-rail] {
+  & [data-sidebar-guidelines],
+  & [data-sidebar-editable-row-guideline],
+  & [data-sidebar-preview-rail] {
     display: none;
   }
   /* Insets of an item: the button's padding is its rows' inset, the zones'
      leads and the trial's offsets are gone, actions stand at `right-1`. */
-  [data-sidebar-row],
-  [data-sidebar-tag-drag-preview] {
+  & [data-sidebar-row],
+  & [data-sidebar-tag-drag-preview] {
     --sidebar-row-pad-x: var(--spacing-plate);
     --sidebar-name-lead: 0px;
+    --sidebar-name-left: 0px;
     --sidebar-meta-lead: 0px;
     --sidebar-meta-right: 0px;
     --sidebar-action-inset: var(--spacing-surface);
@@ -1677,7 +1816,7 @@ body {
      included): the name on one line, centred in its cell, beside the stack;
      no count. The name and the stack keep the wide rows' 16px from the
      panel's edges. */
-  [data-sidebar-row-body] {
+  & [data-sidebar-row-body] {
     --sidebar-row-pad-x: 0px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -1688,7 +1827,7 @@ body {
     padding: 0 var(--spacing-s3) 1px;
   }
   /* The lifted copy draws its own 1px frame: the same text inside it. */
-  [data-sidebar-tag-drag-preview] > [data-sidebar-row-body] {
+  & [data-sidebar-tag-drag-preview] > [data-sidebar-row-body] {
     min-height: 0;
     padding-block: 0;
     padding-inline: calc(var(--spacing-plate) - 1px);
@@ -1699,7 +1838,7 @@ body {
      the stack, or before Connect while it is there (user's decision of
      22.10.2026; no ellipsis). The optical pixel stays in its padding, so
      names keep their 17px. */
-  [data-sidebar-name-cell] {
+  & [data-sidebar-name-cell] {
     grid-column: 1;
     grid-row: 1;
     align-self: center;
@@ -1708,11 +1847,11 @@ body {
     line-height: var(--text-sm--line-height);
   }
   /* No count in the narrow table (user's decision of 23.10.2026). */
-  [data-sidebar-meta-count] {
+  & [data-sidebar-meta-count] {
     display: none;
   }
   /* The stack in the avatar's place, centred in the row. */
-  [data-sidebar-meta-cell] {
+  & [data-sidebar-meta-cell] {
     grid-column: 2;
     grid-row: 1;
     display: flex;
@@ -1720,33 +1859,33 @@ body {
     justify-content: flex-end;
     width: auto;
   }
-  [data-sidebar-compact-stack] {
+  & [data-sidebar-compact-stack] {
     display: block;
   }
   /* TRIAL (PLAN 50.38): the stack before the name when the sidebar's
      columns put the previews before it (sidebarColumnLayout.ts), the
      avatar's place in shadcn's menu button; the lines follow it after the
      same `gap-2`. */
-  :root[data-sidebar-stack-left] [data-sidebar-row-body] {
+  :root[data-sidebar-stack-left] & [data-sidebar-row-body] {
     grid-template-columns: auto minmax(0, 1fr);
   }
-  :root[data-sidebar-stack-left] [data-sidebar-meta-cell] {
+  :root[data-sidebar-stack-left] & [data-sidebar-meta-cell] {
     grid-column: 1;
     justify-content: flex-start;
   }
-  :root[data-sidebar-stack-left] [data-sidebar-name-cell],
-  :root[data-sidebar-stack-left] [data-sidebar-meta-count] {
+  :root[data-sidebar-stack-left] & [data-sidebar-name-cell],
+  :root[data-sidebar-stack-left] & [data-sidebar-meta-count] {
     grid-column: 2;
   }
-  [data-sidebar-count-noun] {
+  & [data-sidebar-count-noun] {
     display: inline;
   }
   /* While Connect, Disconnect or Connected is there, the lines end
      `gap-2` before it (shadcn's `pr-8` beside a SidebarMenuAction): the
      column under the action is the action's width less the inset it gains
      by standing at `right-1` instead of on the padding. */
-  [data-sidebar-row]:has(> [data-sidebar-link-action]) [data-sidebar-meta-cell],
-  [data-sidebar-row]:has(> [data-sidebar-row-connected-pill][data-state="on"]) [data-sidebar-meta-cell] {
+  & [data-sidebar-row]:has(> [data-sidebar-link-action]) [data-sidebar-meta-cell],
+  & [data-sidebar-row]:has(> [data-sidebar-row-connected-pill][data-state="on"]) [data-sidebar-meta-cell] {
     min-width: calc(var(--sidebar-zone) - 2 * var(--spacing-plate) - var(--spacing-plate) + var(--spacing-surface));
   }
   /* The pointer's, the keyboard's and the open collection's item answer as
@@ -1755,10 +1894,10 @@ body {
      never changes. */
   /* Hidden columns of the trial (PLAN 47.6) stay hidden; the order has
      nothing to order here. Hiding the count leaves the stack. */
-  :root[data-sidebar-hide-meta]:not([data-sidebar-hide-previews]) [data-sidebar-meta-cell] {
+  :root[data-sidebar-hide-meta]:not([data-sidebar-hide-previews]) & [data-sidebar-meta-cell] {
     display: flex;
   }
-  :root[data-sidebar-hide-previews] [data-sidebar-compact-stack] {
+  :root[data-sidebar-hide-previews] & [data-sidebar-compact-stack] {
     display: none;
   }
 }
@@ -1820,8 +1959,8 @@ body {
    across the compact threshold the rows' lines shorten to the narrow
    table's insets, the column lines and the count fade, and the strip's
    thumbnails flatten into the stack, on the stack's spring. While they move
-   the list keeps the wide layout: without its container name the compact
-   rows do not apply. The strip, moved toward the stack, carries its clipping
+   the list keeps the wide layout: the compact rows do not apply under the
+   morph's mark. The strip, moved toward the stack, carries its clipping
    edge with it; past the panel's edge it is cut, not scrolled to. Its first
    three thumbnails lie as the stack's cards do, the collection's first on
    top, and bring the cards' edge: Shadow (`shadow-sm`) or the Ring of the
@@ -1829,7 +1968,6 @@ body {
    the swap. With "Reduce motion" none of this runs: the layout switches at
    once. */
 [data-sidebar-scroll][data-sidebar-morph] {
-  container-name: none;
   overflow-x: hidden;
 }
 [data-sidebar-scroll][data-sidebar-morph] [data-sidebar-compact-stack] {
@@ -1892,48 +2030,52 @@ body {
    under the pointer and the keyboard as a table row's (С7.10); the open
    collection lit, with a dot after its name. Rows step 24px. The panel
    keeps its divider. */
-@container sidebar-rows (width < 366.2px) {
-  :root[data-sidebar-list] :is(
+:where([data-sidebar-look="compact"]:not([data-sidebar-morph])) {
+  :root[data-sidebar-list] & :is(
     [data-sidebar-preview-rail],
     [data-sidebar-meta-cell],
     [data-sidebar-compact-stack],
     [data-sidebar-guidelines]
   ),
-  :root[data-sidebar-list]:not([data-sidebar-list-toc]) [data-sidebar-meta-count] {
+  :root[data-sidebar-list]:not([data-sidebar-list-toc]) & [data-sidebar-meta-count] {
     display: none !important;
   }
-  :root[data-sidebar-list] [data-sidebar-row-surface]::after {
+  :root[data-sidebar-list] & [data-sidebar-row-surface]::after {
     display: none;
   }
-  :root[data-sidebar-list] [data-sidebar-rows] {
+  :root[data-sidebar-list] & [data-sidebar-rows] {
     --sidebar-row-height: var(--spacing-s4);
     gap: 0;
   }
-  :root[data-sidebar-list] [data-sidebar-row-body] {
+  :root[data-sidebar-list] & [data-sidebar-row-body] {
     display: flex;
     min-height: var(--spacing-s4);
     padding-block: 0;
   }
-  :root[data-sidebar-list] [data-sidebar-name-cell] {
+  :root[data-sidebar-list] & [data-sidebar-name-cell] {
     flex: 1 1 auto;
     width: auto;
   }
-  :root[data-sidebar-list] [data-sidebar-scroll]:not([data-sidebar-link-editor-mode="true"]) [data-sidebar-row-active="true"] [data-sidebar-name-cell]::after {
-    content: "";
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    margin-left: var(--spacing-plate);
-    border-radius: 9999px;
-    background-color: currentColor;
-    vertical-align: middle;
+  /* A name being edited runs on to the submit button, past the row's inset.
+     Contents keeps the inset: its columns give the name its lines. */
+  :root[data-sidebar-list]:not([data-sidebar-list-toc]) & [data-sidebar-row-editing] [data-sidebar-row-body] {
+    padding-right: 0;
+  }
+  /* The label that founds a collection starts where a name starts. */
+  :root[data-sidebar-list] & [data-sidebar-create-channel-row-body] {
+    padding-left: var(--spacing-s3);
+    padding-bottom: 0;
+  }
+  /* The open collection's dot (drawn in «List and table» below). */
+  :root[data-sidebar-list]:not([data-sidebar-list-toc]) & [data-sidebar-rows] {
+    --sidebar-list-dot: "";
   }
   /* TRIAL (PLAN 50.38): List spacing Table, the table's step (40px, its
      line's pixel included) with no line drawn. */
-  :root[data-sidebar-list][data-sidebar-list-roomy] [data-sidebar-rows] {
+  :root[data-sidebar-list][data-sidebar-list-roomy] & [data-sidebar-rows] {
     --sidebar-row-height: var(--spacing-card-row);
   }
-  :root[data-sidebar-list][data-sidebar-list-roomy] [data-sidebar-row-body] {
+  :root[data-sidebar-list][data-sidebar-list-roomy] & [data-sidebar-row-body] {
     min-height: var(--sidebar-row-height);
   }
   /* TRIAL (PLAN 50.38): List style Contents, a book's table of contents
@@ -1948,7 +2090,7 @@ body {
      the dots of every row stand in columns and only whole dots show; the
      name's text and the count cover them with the panel's fill. The leader
      is not read aloud. */
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-row-body] {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-row-body] {
     position: relative;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -1960,23 +2102,15 @@ body {
     min-height: 0;
     padding-block: var(--toc-row-pad);
   }
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-row-body]::before {
-    content: ". . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . ." / "";
-    position: absolute;
-    inset-inline: var(--spacing-s3);
-    bottom: var(--toc-row-pad);
-    overflow: hidden;
-    direction: rtl;
-    white-space: nowrap;
-    line-height: var(--text-sm--line-height);
-    color: var(--tertiary-foreground);
-    pointer-events: none;
+  /* The leader (drawn in «List and table» below). */
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-row-body] {
+    --sidebar-toc-leader: block;
   }
   /* The numbers' column is never narrower than the longest word that takes
      their place (Disconnect), so a long name never runs under Connect,
      Disconnect or Connected; the leader runs on through the empty room up
      to the number. */
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-row-body]::after {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-row-body]::after {
     content: "Disconnect" / "";
     grid-column: 2;
     grid-row: 1;
@@ -1987,7 +2121,7 @@ body {
     font-size: var(--text-interface);
     white-space: nowrap;
   }
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-name-cell] {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-name-cell] {
     grid-column: 1;
     overflow: clip;
     white-space: normal;
@@ -1995,18 +2129,39 @@ body {
     -webkit-mask-image: none;
     mask-image: none;
   }
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-name-text] {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-name-text] {
     position: relative;
     padding-right: var(--spacing-surface);
     background-color: var(--surface);
   }
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-scroll]:not([data-sidebar-link-editor-mode="true"]) [data-sidebar-row-active="true"] [data-sidebar-name-cell]::after {
-    content: none;
+  /* A name being edited (Sidebar.tsx, SidebarEditableRowBody): an unseen copy of
+     the name in its lines and of the count beside it keeps the row's height;
+     the field lies over the first line, and ends clear of the submit button,
+     which stands over the count's column. No leader runs under it. */
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-row-editing] [data-sidebar-name-cell] {
+    display: grid;
+  }
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-row-editing] [data-sidebar-name-cell] > * {
+    grid-area: 1 / 1;
+    min-width: 0;
+  }
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-name-cell] > [data-sidebar-editable-row-ghost] {
+    display: block;
+  }
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-inline-channel-editor-row] {
+    align-self: start;
+    padding-right: var(--spacing-plate) !important;
+  }
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-row-editing] [data-sidebar-row-body] {
+    --sidebar-toc-leader: none;
+  }
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-inline-submit-action] {
+    top: calc(var(--toc-row-pad) + var(--text-sm--line-height) / 2);
   }
   /* The number in the name's own size, as a book sets its page numbers in
      the entries' type, in figures of one width, so the column of numbers
      stands straight. */
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-meta-count] {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-meta-count] {
     position: relative;
     display: block;
     grid-column: 2;
@@ -2021,12 +2176,12 @@ body {
     font-variant-numeric: tabular-nums;
     background-color: var(--surface);
   }
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-row] [data-sidebar-meta-count][data-sidebar-row-text] {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-row] [data-sidebar-meta-count][data-sidebar-row-text] {
     color: var(--tertiary-foreground);
   }
   /* The row's own measures, shared by its body and by Connect and
      Connected beside it. */
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-row] {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-row] {
     --toc-row-pad: calc((var(--sidebar-row-height) - var(--text-sm--line-height)) / 2);
     --sidebar-action-inset: var(--spacing-s3);
   }
@@ -2040,7 +2195,7 @@ body {
      right edge (user's decision of 24.10.2026): a pointer coming from the
      side or from above lights the row and the word in the same move. The
      word keeps its place on the last line; only that line is filled. */
-  :root[data-sidebar-list][data-sidebar-list-toc] :is([data-sidebar-link-action], [data-sidebar-row-connected-pill]) {
+  :root[data-sidebar-list][data-sidebar-list-toc] & :is([data-sidebar-link-action], [data-sidebar-row-connected-pill]) {
     top: 0;
     bottom: 0;
     right: var(--sidebar-meta-right, 0px) !important;
@@ -2055,8 +2210,9 @@ body {
     font-family: inherit;
     font-size: var(--text-interface);
     line-height: var(--text-sm--line-height);
-    /* The panel's own fill: a control re-bases --surface to its face. */
-    background: linear-gradient(var(--sidebar), var(--sidebar)) left bottom / 100% var(--text-sm--line-height) no-repeat content-box !important;
+    /* The ground's own fill, the panel's or the keyboard's plate: a control re-bases
+       --surface to its face. */
+    background: linear-gradient(var(--sidebar-word-ground, var(--sidebar)), var(--sidebar-word-ground, var(--sidebar))) left bottom / 100% var(--text-sm--line-height) no-repeat content-box !important;
     box-shadow: none !important;
     outline: none;
   }
@@ -2064,16 +2220,16 @@ body {
      only reports (Everything's) on the numbers' tertiary step; Connect and
      Connected of a collection one step up, muted; bright only under the
      pointer. Disconnect keeps its own colour. */
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-row-connected-pill] {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-row-connected-pill] {
     color: var(--tertiary-foreground);
   }
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-action] {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-action] {
     color: var(--muted-foreground);
   }
   /* A collection's Connected stands as bright as the name beside it (user's
      decision of 24.10.2026). */
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-action][data-link-checked],
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-action]:is(:hover, [data-sidebar-link-pointer]) {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-action][data-link-checked],
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-action]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *) {
     color: var(--foreground);
   }
   /* Under the pointer the word steps left and a mark comes in at its right
@@ -2081,17 +2237,17 @@ body {
      connected, the same plus turned a quarter of its way, a cross, where it
      can be disconnected; the mark turns as the state changes. The size of
      the type, 4px from the word; the hover answers' timing. */
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-label] {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-label] {
     position: relative;
     padding-left: var(--spacing-surface);
-    background-color: var(--sidebar);
+    background-color: var(--sidebar-word-ground, var(--sidebar));
     transition: translate var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1);
   }
   /* Where the stepped word stands over the name's last line, the name and
      the leader under it fade into the word over the edge fade's width
      (user's decision of 28.10.2026; Sidebar.tsx, nameRunsUnderLinkWord). A
      name that ends before the word keeps the leader as it is. */
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-label]::before {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-label]::before {
     content: "";
     position: absolute;
     top: 0;
@@ -2099,20 +2255,20 @@ body {
     right: 100%;
     /* The edge fade's width, 24px (EDGE_FADE_WIDTH, src/lib/edgeFade.ts). */
     width: 24px;
-    background: linear-gradient(to left, var(--sidebar), transparent);
+    background: linear-gradient(to left, var(--sidebar-word-ground, var(--sidebar)), transparent);
     opacity: 0;
     pointer-events: none;
     /* Goes and comes with the word's step, on its timing. */
     transition: opacity var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1);
   }
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-action][data-sidebar-link-over-name]:is(:hover, [data-sidebar-link-pointer]) [data-sidebar-link-label]::before {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-action][data-sidebar-link-over-name]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-label]::before {
     opacity: 1;
     transition-duration: var(--hover-intent-fade-in);
   }
   /* The stepped word's box reaches as far left as the word went, so the
      pointer on its first letter still holds it (Sidebar.tsx keeps the same
      reach for its pointer mark). */
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-action]:is(:hover, [data-sidebar-link-pointer])::after {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-action]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *)::after {
     content: "";
     position: absolute;
     top: 0;
@@ -2120,11 +2276,11 @@ body {
     right: 100%;
     width: calc(var(--text-interface) + var(--spacing-surface));
   }
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-action]:is(:hover, [data-sidebar-link-pointer]) [data-sidebar-link-label] {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-action]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-label] {
     translate: calc(-1 * (var(--text-interface) + var(--spacing-surface))) 0;
     transition-duration: var(--hover-intent-fade-in);
   }
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-icon] {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-icon] {
     display: block;
     position: absolute;
     right: var(--sidebar-action-inset);
@@ -2138,31 +2294,207 @@ body {
        (Sidebar.tsx, LINK_ICON_SPRING_STYLE). */
     animation: sidebar-link-icon-to-plus var(--channel-icon-duration) var(--channel-icon-easing);
   }
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-action]:is(:hover, [data-sidebar-link-pointer]) [data-sidebar-link-icon] {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-action]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-icon] {
     opacity: 1;
     transition-duration: var(--hover-intent-fade-in);
   }
   /* A pointer that lands right on the word, its row not yet lit: the word
      comes in already stepped left with its mark, in the button's own fade,
      one step instead of two (user's decision of 24.10.2026). */
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-action][data-sidebar-link-pointer="instant"] :is([data-sidebar-link-label], [data-sidebar-link-icon]) {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-action][data-sidebar-link-pointer="instant"] :is([data-sidebar-link-label], [data-sidebar-link-icon]) {
     transition: none;
   }
   /* The cross takes the word's colour: Disconnect's, which stands beside it
      whenever the cross shows. */
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-link-action][data-link-checked] [data-sidebar-link-icon] {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-action][data-link-checked] [data-sidebar-link-icon] {
     rotate: 45deg;
     color: var(--color-detach, var(--detach));
     animation-name: sidebar-link-icon-to-cross;
   }
-  :root[data-sidebar-list][data-sidebar-list-toc] :is([data-sidebar-link-label], [data-sidebar-row-connected-pill]) > span {
+  :root[data-sidebar-list][data-sidebar-list-toc] & :is([data-sidebar-link-label], [data-sidebar-row-connected-pill]) > span {
     place-items: center end;
   }
   /* The number alone, as a book's page number (user's decision of
      23.10.2026). */
-  :root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-count-noun] {
+  :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-count-noun] {
     display: none;
   }
+}
+
+/* List and table (user's decision of 01.11.2026; DESIGN_SYSTEM.md,
+   «Переход между List и таблицей»; src/lib/sidebarListMorph.ts). Across the
+   threshold the rows spread from the List's step to the table's in one
+   move, or gather back, while the parts of one look fade. The table is laid
+   out for the whole move: going to it the scrollport takes the table's look
+   in the frame that crossed, before it paints; going back it keeps it
+   until the rows stand where the List has them, so the frame that narrows
+   the list across the threshold still lays out the table and its strips
+   keep their tiles. Held narrower than the table's columns, nothing scrolls
+   across. The move keeps its own anchor: the engine's own scroll anchoring
+   would move the list at every switch of layout. */
+[data-sidebar-scroll] {
+  overflow-anchor: none;
+}
+[data-sidebar-scroll][data-sidebar-look="table"] {
+  overflow-x: hidden;
+}
+/* The List's own marks, drawn wherever their properties are set: by the
+   List rules above, and on the table while the rows move
+   (`data-sidebar-list-marks`), where the move fades them. The open collection's dot after its name, 8px from it, in the
+   text's colour. */
+[data-sidebar-scroll]:not([data-sidebar-link-editor-mode="true"]) [data-sidebar-row-active="true"]:not([data-sidebar-row-editing]) [data-sidebar-name-cell]::after {
+  content: var(--sidebar-list-dot, none);
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: var(--spacing-plate);
+  border-radius: 9999px;
+  background-color: currentColor;
+  vertical-align: middle;
+}
+/* The Contents leader, set as the List rules above tell. */
+:root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-row-body]::before {
+  content: ". . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . ." / "";
+  display: var(--sidebar-toc-leader, none);
+  position: absolute;
+  inset-inline: var(--spacing-s3);
+  bottom: var(--toc-row-pad);
+  overflow: hidden;
+  direction: rtl;
+  white-space: nowrap;
+  line-height: var(--text-sm--line-height);
+  color: var(--tertiary-foreground);
+  pointer-events: none;
+}
+:root[data-sidebar-list]:not([data-sidebar-list-toc]) [data-sidebar-scroll][data-sidebar-list-marks] [data-sidebar-row-active="true"] [data-sidebar-name-cell] {
+  --sidebar-list-dot: "";
+}
+/* On the table the leader stands on the name's line, the middle of the row
+   above its line's pixel, and the name and the List's count cover it with
+   the panel's fill, as they do in the List. The name's cover reaches 4px
+   past it without taking room, so whether the name fits does not change. */
+:root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-scroll][data-sidebar-list-marks] [data-sidebar-row-body] {
+  --sidebar-toc-leader: block;
+  --toc-row-pad: calc((var(--sidebar-row-height) + 1px - var(--text-sm--line-height)) / 2);
+}
+:root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-scroll][data-sidebar-list-marks] [data-sidebar-name-text] {
+  position: relative;
+  background-color: var(--surface);
+  box-shadow: var(--spacing-surface) 0 0 var(--surface);
+}
+/* The List's count is a part of its own, not the table's count moved: on
+   the rows the move shows (`data-sidebar-list-count`), at its place in the
+   List (sidebarListMorph.ts measures it), in
+   its own type, the name's size in figures of one width, on the tertiary
+   step, covering the leader. The table's count is the count itself. */
+:root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-scroll][data-sidebar-list-marks] [data-sidebar-row-body][data-sidebar-list-count]::after {
+  content: attr(data-sidebar-count);
+  position: absolute;
+  top: var(--sidebar-list-count-top);
+  right: var(--sidebar-list-count-right);
+  padding-left: var(--spacing-surface);
+  white-space: nowrap;
+  font-family: var(--sidebar-list-count-font);
+  font-size: var(--text-interface);
+  line-height: var(--text-sm--line-height);
+  font-variant-numeric: tabular-nums;
+  color: var(--tertiary-foreground);
+  background-color: var(--surface);
+  pointer-events: none;
+}
+/* The leader stands on the line of the List's count: the name's last line. */
+:root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-scroll][data-sidebar-list-marks] [data-sidebar-row-body][data-sidebar-list-count]::before {
+  top: var(--sidebar-list-count-top);
+  bottom: auto;
+}
+/* A name that one of the two looks cuts, on a row the move shows
+   (`data-sidebar-name-slide`, sidebarListMorph.ts): its visible end slides
+   from where one look cuts it to where the other does, on the move's spring,
+   and its dissolve rides with that end (user's decision of 01.11.2026).
+   Through the move its cell is as wide as the List's, the margin after it
+   giving the table's column back, so nothing beside it moves; the cell cuts
+   at the List's width as the List does, and the mask cuts at the end that
+   slides. Only `--sidebar-name-q` moves, from 0 (the table's end) to 1 (the
+   List's): no frame lays anything out. A look in which the name fits gives
+   an end at least past the text's end and its dissolve
+   (`--sidebar-name-edge-table`, `--sidebar-name-edge-list`), so no part of
+   the name dissolves there. The widths follow the sidebar's while a drag
+   goes on. Without the previews the table's cell takes what the meta zone
+   leaves (`--sidebar-name-table-inset`). */
+@property --sidebar-name-q {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+[data-sidebar-scroll] [data-sidebar-name-cell][data-sidebar-name-slide] {
+  --sidebar-name-table-w: calc(var(--sidebar-name-lead, 0px) + var(--sidebar-row-pad-x) + var(--sidebar-name-col));
+  --sidebar-name-list-w: calc(var(--sidebar-columns-width, var(--sidebar-width)) - var(--sidebar-name-list-inset));
+  flex: none;
+  width: var(--sidebar-name-list-w);
+  margin-right: calc(var(--sidebar-name-table-w) - var(--sidebar-name-list-w));
+  -webkit-mask-image: var(--sidebar-name-mask);
+  mask-image: var(--sidebar-name-mask);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: calc(var(--sidebar-name-edge-table) + var(--sidebar-name-q) * (var(--sidebar-name-edge-list) - var(--sidebar-name-edge-table))) 100%;
+  mask-size: calc(var(--sidebar-name-edge-table) + var(--sidebar-name-q) * (var(--sidebar-name-edge-list) - var(--sidebar-name-edge-table))) 100%;
+}
+:root[data-sidebar-hide-previews] [data-sidebar-scroll] [data-sidebar-name-cell][data-sidebar-name-slide] {
+  --sidebar-name-table-w: calc(var(--sidebar-columns-width, var(--sidebar-width)) - var(--sidebar-name-table-inset));
+}
+/* A name that fits where the move began, going to the List, which a drag going
+   on would cut (`data-sidebar-name-whole`): it lands whole, so nothing cuts it
+   on the way. */
+[data-sidebar-scroll] [data-sidebar-name-cell][data-sidebar-name-whole] {
+  overflow: visible;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+/* In Contents the List wraps a long name, so through the move the cell is the
+   List's text already: it wraps as the List wraps it, in the List's lines,
+   and takes one line of the table's row, the rest hanging below it
+   (`--sidebar-name-list-h`, measured in the List; the margin gives the row its
+   line back). The first line's end slides as a Plain name's does, and the
+   lines after it show over the second half of the way, so the frame that
+   lands changes nothing in the name (user's decision of 05.11.2026). */
+:root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-scroll] [data-sidebar-name-cell][data-sidebar-name-slide] {
+  height: var(--sidebar-name-list-h);
+  margin-bottom: calc(var(--text-sm--line-height) - var(--sidebar-name-list-h));
+  line-height: var(--text-sm--line-height);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  -webkit-mask-image: var(--sidebar-name-mask), linear-gradient(rgb(0 0 0 / calc(2 * var(--sidebar-name-q) - 1)), rgb(0 0 0 / calc(2 * var(--sidebar-name-q) - 1)));
+  mask-image: var(--sidebar-name-mask), linear-gradient(rgb(0 0 0 / calc(2 * var(--sidebar-name-q) - 1)), rgb(0 0 0 / calc(2 * var(--sidebar-name-q) - 1)));
+  -webkit-mask-position: 0 0, 0 100%;
+  mask-position: 0 0, 0 100%;
+  -webkit-mask-size: calc(var(--sidebar-name-edge-table) + var(--sidebar-name-q) * (var(--sidebar-name-edge-list) - var(--sidebar-name-edge-table))) var(--text-sm--line-height), 100% calc(100% - var(--text-sm--line-height));
+  mask-size: calc(var(--sidebar-name-edge-table) + var(--sidebar-name-q) * (var(--sidebar-name-edge-list) - var(--sidebar-name-edge-table))) var(--text-sm--line-height), 100% calc(100% - var(--text-sm--line-height));
+}
+:root[data-sidebar-list][data-sidebar-list-toc] [data-sidebar-scroll] [data-sidebar-name-cell][data-sidebar-name-slide] [data-sidebar-name-text] {
+  padding-right: var(--spacing-surface);
+}
+/* Going back to the List, once the table's own parts are gone
+   (`data-sidebar-rows-bare`, after the first third), they are out of the
+   layout: the strips under the narrowing edge lay out no tiles for frames
+   that do not show them. Nothing else moves: each of them stands over the
+   row or at its own end. */
+[data-sidebar-scroll][data-sidebar-rows-bare] :is([data-sidebar-preview-rail], [data-sidebar-guidelines], [data-sidebar-editable-row-guideline], [data-sidebar-meta-count]),
+[data-sidebar-scroll][data-sidebar-rows-bare] [data-sidebar-row-surface]::after {
+  display: none;
+}
+/* The parts of one look start their fade from here, in the frame that
+   crosses (sidebarListMorph.ts animates them from the move's second frame
+   on, when the page's style is settled): going to the table its parts
+   start from nothing, the counts and Contents' Connect too; going to the
+   List, so do the List's marks and its count. The rows the move does not
+   show are out of the scrollport the whole move, and their parts too. */
+[data-sidebar-scroll][data-sidebar-rows-fade="table"] [data-sidebar-row-surface]::after,
+[data-sidebar-scroll][data-sidebar-rows-fade="table"] :is([data-sidebar-guidelines], [data-sidebar-preview-rail], [data-sidebar-editable-row-guideline], [data-sidebar-meta-count]),
+:root[data-sidebar-list-toc] [data-sidebar-scroll][data-sidebar-rows-fade="table"] [data-sidebar-row-surface] > :is([data-sidebar-link-action], [data-sidebar-row-connected-pill]),
+[data-sidebar-scroll][data-sidebar-rows-fade="list"] [data-sidebar-name-cell]::after,
+[data-sidebar-scroll][data-sidebar-rows-fade="list"] [data-sidebar-row-body]::before,
+[data-sidebar-scroll][data-sidebar-rows-fade="list"] [data-sidebar-row-body]::after {
+  opacity: 0;
 }
 
 /* The sidebar over the feed in a narrow window (SPEC_NARROW_WINDOW.md, У4,
@@ -2433,6 +2765,28 @@ button:active:not(:disabled) > .button-depth,
 }
 [data-card-peek-hidden] {
   opacity: 0 !important;
+}
+/* The hover preview window (SPEC_CARD_STATES.md, С7.11). At rest its card holds
+   no layer of its own. While a card or a height changes, the frame stands in
+   pieces round the cards, as the card's window's does, so each card keeps only
+   its content: no line, no fill, no shadow, no clip of its own. */
+[data-hover-preview-window] [data-feed-card-frame] {
+  transform: none !important;
+  backface-visibility: visible !important;
+}
+[data-hover-preview-window][data-frame-moving] [data-feed-card-frame] {
+  contain: none !important;
+  box-shadow: none;
+}
+[data-hover-preview-window][data-frame-moving] [data-feed-card-frame]::after {
+  border-color: transparent;
+}
+[data-hover-preview-window][data-frame-moving] [data-card-frame-clip] {
+  overflow: visible;
+  background-color: transparent;
+}
+[data-hover-preview-window] [data-card-preview-media-box] {
+  transform-origin: 50% 0;
 }
 /* The hint over the window while the pointer rests on the scrim (О15): it
    shows and goes as the hover answers do (С7.6). */

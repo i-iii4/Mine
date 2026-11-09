@@ -11,6 +11,14 @@ const root = new URL('../', import.meta.url);
 const cargo = readFileSync(new URL('src-tauri/Cargo.toml', root), 'utf8');
 const config = JSON.parse(readFileSync(new URL('src-tauri/tauri.conf.json', root), 'utf8'));
 
+test('release build keeps build-time macro libraries unstripped', () => {
+  // A stripped proc macro library can fail to load, which stops the whole app
+  // build with E0463 for tauri_macros (06.11.2026).
+  const workspace = readFileSync(new URL('Cargo.toml', root), 'utf8');
+  assert.match(workspace, /\[profile\.release\.build-override\]\nstrip = false/);
+  assert.match(workspace, /\[profile\.release\]\nstrip = true/);
+});
+
 test('native IPC smoke does not create a second production app bundle', () => {
   const script = readFileSync(new URL('scripts/native-shell-smoke.mjs', root), 'utf8');
   assert.match(script, /"tauri", "build", "--debug", "--no-bundle"/);

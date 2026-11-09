@@ -241,3 +241,70 @@ fn a_failed_folder_chooser_is_told_and_journaled() {
     assert_eq!(&line[10..11], "T", "{line}");
     assert_eq!(&line[19..20], ".", "{line}");
 }
+
+/// One route of a file through the real helper (SPEC_CLIPPER.md, «Один путь файла
+/// со страницы», Б7, Б9): the status names the route, the plan answers without
+/// writing, a file from the browser goes through the upload server into the card,
+/// and an upload no Save took is discarded. The addresses are of the documentation
+/// range, which the helper's own fetch refuses: no site can be reached.
+#[test]
+fn a_file_from_the_browser_goes_through_the_upload_server_into_the_card() {
+    const ANSWER: Duration = Duration::from_secs(30);
+    let mut helper = Helper::start("exit 0");
+    let space = helper.space();
+    helper.send(serde_json::json!({ "_messageId": 1, "action": "get_status", "vault_path": space }));
+    let status = helper.answer(1, ANSWER);
+    assert!(status["features"].as_array().unwrap().iter().any(|feature| feature == "browser_files_v1"), "{status}");
+    let token = status["upload_token"].as_str().unwrap().to_string();
+    let port = status["upload_port"].as_u64().unwrap();
+
+    let picture = "http://192.0.2.1/picture.jpg";
+    let body = format!("# A file\n\n![a]({picture})\n");
+    helper.send(serde_json::json!({
+        "_messageId": 2, "action": "plan_page_files", "document_url": "http://192.0.2.1/page", "body": body,
+    }));
+    let plan = helper.answer(2, ANSWER);
+    assert_eq!(plan["ok"], true, "{plan}");
+    assert_eq!((plan["parallel"].as_u64(), plan["per_domain"].as_u64()), (Some(3), Some(2)));
+    let planned = &plan["files"][0];
+    assert_eq!(planned["url"], picture);
+    assert_eq!(planned["reachable"], false, "{plan}");
+    assert_eq!(planned["cookies"], true, "{plan}");
+    assert_eq!(planned["referer"], "http://192.0.2.1/", "{plan}");
+
+    let upload = |bytes: &[u8]| -> String {
+        let address = url::Url::parse_with_params(
+            &format!("http://127.0.0.1:{port}/upload"),
+            [("filename", "picture.jpg"), ("source", "browser_file"), ("vault_path", space.as_str())],
+        )
+        .unwrap();
+        let response: serde_json::Value = ureq::post(address.as_str())
+            .set("Authorization", &format!("Bearer {token}"))
+            .set("Content-Type", "image/jpeg")
+            .send_bytes(bytes)
+            .unwrap()
+            .into_json()
+            .unwrap();
+        response["upload_id"].as_str().unwrap().to_string()
+    };
+    let bytes = [&[0xFF, 0xD8, 0xFF, 0xE0][..], b"the file of the browser"].concat();
+    let taken = upload(&bytes);
+    helper.send(serde_json::json!({
+        "_messageId": 3, "action": "save_block", "vault_path": space, "operation_id": "route-of-a-file",
+        "block_type": "article", "url": "http://192.0.2.1/page", "body": body, "tags": [],
+        "browser_files": [{ "url": picture, "upload_id": taken, "source": "page" }],
+    }));
+    let saved = helper.answer(3, ANSWER);
+    assert_eq!(saved["outcome"], "committed", "{saved}");
+    assert_eq!(saved["remote_media"], serde_json::json!([]), "{saved}");
+    let media: Vec<_> = std::fs::read_dir(Path::new(&space).join("Media")).unwrap().flatten().map(|entry| entry.path()).collect();
+    assert_eq!(media.len(), 1, "{media:?}");
+    assert_eq!(std::fs::read(&media[0]).unwrap(), bytes);
+
+    let unused = upload(&bytes);
+    helper.send(serde_json::json!({
+        "_messageId": 4, "action": "discard_pending_uploads", "vault_path": space, "upload_ids": [unused, taken],
+    }));
+    let discarded = helper.answer(4, ANSWER);
+    assert_eq!(discarded, serde_json::json!({ "_messageId": 4, "ok": true, "discarded": 1 }));
+}

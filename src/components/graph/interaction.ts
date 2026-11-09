@@ -1,5 +1,5 @@
-import type { ForceGraphMethods } from "react-force-graph-2d";
-import { thumbnailLevelUrl, thumbnailUrl, type ThumbLevel } from "@/lib/assets";
+import { thumbnailLevelUrl, thumbnailUrl, withQueryParam, type ThumbLevel } from "@/lib/assets";
+import type { HoverPreviewPlace } from "@/lib/hoverPreviewWindow";
 import {
   GRAPH_PREVIEW_GAP,
   GRAPH_PREVIEW_VIEWPORT_MARGIN,
@@ -9,10 +9,8 @@ import {
   GRAPH_ZOOM_MIN,
   GRAPH_ZOOM_PADDING_PX,
   GRAPH_ZOOM_SPREAD_ALLOWANCE,
-  type GraphCanvasLink,
   type GraphCanvasNode,
   type GraphCardMenuPoint,
-  type GraphPreviewPosition,
   type PositionedGraphCanvasNode,
 } from "./contracts";
 
@@ -68,41 +66,39 @@ function graphNodePaintOrder(node: GraphCanvasNode): number {
   return node.kind === "collection" ? 1 : 0;
 }
 
-export function computeGraphPreviewPosition(
-  graph: ForceGraphMethods<GraphCanvasNode, GraphCanvasLink> | undefined,
-  container: HTMLElement | null,
-  node: GraphCanvasNode | undefined,
+/**
+ * Where a card's preview stands for its node: under the node, or over it when
+ * it does not fit below, from where the node stands on screen. Coordinates
+ * only, so it can run every frame the window follows the node.
+ */
+export function graphPreviewPlace(
+  screenPoint: { x: number; y: number },
+  container: { left: number; top: number },
   previewHeight: number,
   nodeScreenSize: number,
-): GraphPreviewPosition | null {
-  if (!graph || !container || !node || !hasNodePosition(node)) return null;
-
-  const containerRect = container.getBoundingClientRect();
-  const screenPoint = graph.graph2ScreenCoords(node.x, node.y);
-  const triggerLeft = containerRect.left + screenPoint.x - nodeScreenSize / 2;
-  const triggerTop = containerRect.top + screenPoint.y - nodeScreenSize / 2;
+  viewport: { width: number; height: number },
+): HoverPreviewPlace {
+  const triggerLeft = container.left + screenPoint.x - nodeScreenSize / 2;
+  const triggerTop = container.top + screenPoint.y - nodeScreenSize / 2;
   const triggerBottom = triggerTop + nodeScreenSize;
-  const viewportWidth = window.innerWidth;
-  const viewportHeight = window.innerHeight;
 
   const left = Math.max(
     GRAPH_PREVIEW_VIEWPORT_MARGIN,
     Math.min(
       triggerLeft,
-      viewportWidth - GRAPH_PREVIEW_VIEWPORT_MARGIN - GRAPH_PREVIEW_WIDTH,
+      viewport.width - GRAPH_PREVIEW_VIEWPORT_MARGIN - GRAPH_PREVIEW_WIDTH,
     ),
   );
   const canOpenDown =
     triggerBottom + GRAPH_PREVIEW_GAP + previewHeight <=
-    viewportHeight - GRAPH_PREVIEW_VIEWPORT_MARGIN;
-  const top = canOpenDown
-    ? triggerBottom + GRAPH_PREVIEW_GAP
-    : Math.max(
-        GRAPH_PREVIEW_VIEWPORT_MARGIN,
-        triggerTop - GRAPH_PREVIEW_GAP - previewHeight,
-      );
-
-  return { top, left };
+    viewport.height - GRAPH_PREVIEW_VIEWPORT_MARGIN;
+  return canOpenDown
+    ? { left, top: triggerBottom + GRAPH_PREVIEW_GAP, side: "below" }
+    : {
+        left,
+        top: Math.max(GRAPH_PREVIEW_VIEWPORT_MARGIN, triggerTop - GRAPH_PREVIEW_GAP - previewHeight),
+        side: "above",
+      };
 }
 
 export function graphClientPointFromEvent(event: Event): GraphCardMenuPoint | null {
@@ -121,8 +117,8 @@ export function graphThumbnailUrl(
   thumbVersion: number,
   level: ThumbLevel,
 ): string {
-  const cacheBuster = thumbVersion > 0 ? `?v=${thumbVersion}` : "";
-  return `${thumbnailLevelUrl(thumbsRootPath, slug, level)}${cacheBuster}`;
+  const url = thumbnailLevelUrl(thumbsRootPath, slug, level);
+  return thumbVersion > 0 ? withQueryParam(url, "v", thumbVersion) : url;
 }
 
 /// The full thumbnail, for a card whose levels are missing entirely.
@@ -131,8 +127,8 @@ export function graphFullThumbnailUrl(
   slug: string,
   thumbVersion: number,
 ): string {
-  const cacheBuster = thumbVersion > 0 ? `?v=${thumbVersion}` : "";
-  return `${thumbnailUrl(thumbsRootPath, slug)}${cacheBuster}`;
+  const url = thumbnailUrl(thumbsRootPath, slug);
+  return thumbVersion > 0 ? withQueryParam(url, "v", thumbVersion) : url;
 }
 
 /// Which level a node needs at this size. The step is the micro level's own

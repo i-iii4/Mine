@@ -15,7 +15,8 @@
     "unlimitedStorage",
     "scripting",
     "tabs",
-    "cookies"
+    "cookies",
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "http://127.0.0.1/*",

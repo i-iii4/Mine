@@ -33,6 +33,18 @@ describe("card state styles", () => {
     expect(ruleFor('[data-card-lift-pinned] [data-card-media-outline="on-lift"]', "translateY(calc(-1 * var(--card-lift)))")).toBe(true);
   });
 
+  it("keyboard focus lights the frame's outer line alone: the media's outline keeps its resting colour (Д20)", () => {
+    const rule = rules.find((block) => block.includes('[data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"]:not(') && block.includes("[data-card-media-outline] {"))!;
+    expect(rule).toContain("border-color: var(--border)");
+    // A selected card and a collection's highlight keep the outline on the frame's colour.
+    expect(rule).toContain('[data-feed-grid-item-selected="true"]');
+    expect(rule).toContain('[data-feed-grid-item-collection-lit="true"]');
+    // The frame's resting colour is that same token, and only the colour changes.
+    expect(ruleFor("[data-feed-card-frame] {", "--card-frame-color: var(--border)")).toBe(true);
+    const declarations = rule.slice(rule.lastIndexOf("{") + 1).split(";").map((part) => part.trim()).filter(Boolean);
+    expect(declarations).toEqual(["border-color: var(--border)"]);
+  });
+
   it("leaves pointer hover without a border or a wash", () => {
     expect(css).not.toMatch(/\[data-feed-grid-item[^\]]*\]:hover/);
   });
@@ -61,6 +73,17 @@ describe("card state styles", () => {
     ]) {
       expect(ruleFor(`${state} [data-card-media-clip] > [data-card-lift="window"]::after`, "opacity: 1")).toBe(true);
     }
+  });
+
+  it("washes a picture on its media window, with the focus token", () => {
+    expect(ruleFor('[data-card-media-clip] > [data-card-lift="window"]::after {', "background: var(--graphic-card-focus-overlay)")).toBe(true);
+    expect(ruleFor('[data-card-media-clip] > [data-card-lift="window"]::after {', "opacity: 0")).toBe(true);
+  });
+
+  it("keeps the frame clip a stacking context, or the media's outline would rise over the frame's line", () => {
+    expect(ruleFor("[data-card-media-outline] {", "z-index: 2")).toBe(true);
+    expect(ruleFor("[data-feed-card-frame]::after {", "z-index: 1")).toBe(true);
+    expect(readFileSync("src/components/Card.tsx", "utf8")).toMatch(/CARD_FRAME_CLIP_CLASS =\s*"relative isolate /);
   });
 
   it("lights a chosen collection's cards with the border only, never the wash (С3, С7)", () => {

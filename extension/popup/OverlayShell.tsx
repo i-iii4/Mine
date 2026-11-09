@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { flushSync } from "react-dom";
 import { DropdownMenuPortalContainerProvider } from "@/components/ui/dropdown-menu";
 import { usePressDragGesture, type PressDragOrigin } from "@/hooks/usePressDragGesture";
 import { cn } from "@/lib/utils";
@@ -24,6 +25,10 @@ import {
 // person grabs: a press on it moves the panel past the threshold and stays
 // its own click without it. The "…" and close buttons stay plain buttons.
 const HEADER_CONTROLS = "button, input, textarea, select, a[href], [role='button'], [role='menuitem'], [data-slot='dropdown-menu-trigger']";
+
+/** The clipper inside the panel: where the panel stands and how tall it is
+ *  are the shell's state, and a move or a change of height does not run it. */
+const ClipperInPanel = memo(PopupApp);
 
 /** Each corner's place on the panel and its cursor: the diagonal it resizes along. */
 const CORNER_CLASSES: Record<OverlayCorner, string> = {
@@ -124,7 +129,9 @@ export function OverlayShell({ portalContainer, edits, restored = null, initialB
   useEffect(() => {
     const panel = ref.current;
     if (!panel || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => setContentHeight(panel.getBoundingClientRect().height));
+    // Committed before this frame is painted: a panel that grew past the bottom
+    // inset moves up in the same frame, with its Save inside the window.
+    const observer = new ResizeObserver(() => flushSync(() => setContentHeight(panel.getBoundingClientRect().height)));
     observer.observe(panel);
     return () => observer.disconnect();
   }, []);
@@ -241,7 +248,7 @@ export function OverlayShell({ portalContainer, edits, restored = null, initialB
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           <ClipperEditsContext.Provider value={edits}>
             <OpenClipContext.Provider value={restored}>
-              <PopupApp />
+              <ClipperInPanel />
             </OpenClipContext.Provider>
           </ClipperEditsContext.Provider>
         </div>

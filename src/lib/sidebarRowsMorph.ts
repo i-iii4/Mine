@@ -9,9 +9,9 @@
 // card at its card's size, the rest under the bottom card where they fade.
 // Widening runs the same path back. The name does not move.
 //
-// The container query switches the layout at once; this module only moves.
-// The whole flight runs in the wide layout: narrowing holds it
-// (`data-sidebar-morph` takes the list's container name away) and lets the
+// The look (sidebarLook.ts) switches the layout at once; this module only
+// moves. The whole flight runs in the wide layout: narrowing holds it
+// (`data-sidebar-morph`, under which the compact rules do not apply) and lets the
 // narrow layout in once every part stands where the narrow one has it;
 // widening is already there. So the strip, its clipping edge and its
 // thumbnails, already loaded, are what flies, and the first frame is the old
@@ -23,6 +23,7 @@
 import { sidebarCompactRowsBelowPx } from "./appLayout";
 import { SPRING_RESPONSE_S, SPRING_SAMPLES, SPRING_SETTLE } from "./channelIcon";
 import { getSidebarStyle } from "./compactStack";
+import { setSidebarLook, sidebarLookOf } from "./sidebarLook";
 import { prefersReducedMotion } from "./motion";
 
 // ─── The spring ─────────────────────────────────────────────────────────
@@ -279,8 +280,9 @@ function readNarrowCards(row: HTMLElement): { width: number; cards: RowBox[] } {
 }
 
 /** Whether WAAPI animates a pseudo-element here (the rows' lines, the
- *  thumbnails' shadows). Without it those parts change with the layout. */
-function animatesPseudoElements(element: Element): boolean {
+ *  thumbnails' shadows, the List's marks). Without it those parts change
+ *  with the layout. */
+export function animatesPseudoElements(element: Element): boolean {
   try {
     return new KeyframeEffect(element, null, { pseudoElement: "::after" }).pseudoElement === "::after";
   } catch {
@@ -329,14 +331,17 @@ export function observeSidebarRowsMorph(nav: HTMLElement): () => void {
   };
 
   /** Reads the rows' wide layout and, unless kept, their narrow one at two
-   *  widths, with the scrollport held to each in turn. Leaves the wide
-   *  layout held. Nothing is painted in between. */
+   *  widths, with the scrollport held to each in turn, in the compact look
+   *  for the narrow reads (sidebarLook.ts). Leaves the wide layout held and
+   *  the look as it was. Nothing is painted in between. */
   const measure = (rows: HTMLElement[], keep: Map<HTMLElement, NarrowRow> | null) => {
     nav.setAttribute(MEASURE_ATTRIBUTE, "");
     nav.setAttribute(MORPH_ATTRIBUTE, "");
     const wide = new Map(rows.map((row) => [row, readWide(row)]));
     let narrow = keep;
     if (!narrow) {
+      const look = sidebarLookOf(nav);
+      setSidebarLook(nav, "compact");
       nav.removeAttribute(MORPH_ATTRIBUTE);
       const { maxWidth, minWidth } = nav.style;
       nav.style.minWidth = "0px";
@@ -348,6 +353,7 @@ export function observeSidebarRowsMorph(nav: HTMLElement): () => void {
       const atFar = new Map(rows.map((row) => [row, readNarrowCards(row)]));
       nav.style.maxWidth = maxWidth;
       nav.style.minWidth = minWidth;
+      if (look) setSidebarLook(nav, look);
       nav.setAttribute(MORPH_ATTRIBUTE, "");
       narrow = new Map(rows.map((row) => {
         const a = atNear.get(row)!;

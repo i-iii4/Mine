@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import ReactMarkdown from "react-markdown";
+import { createContext, memo, useContext, useState, useEffect, useCallback, useMemo } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { safeMarkdownUrl } from "@/lib/markdownUrl";
 import { PlayBadge } from "@/components/PlayBadge";
@@ -13,8 +13,9 @@ import { ScreenshotPreview } from "./components/ScreenshotPreview";
 import { VaultSelect } from "./components/VaultSelect";
 import { StandaloneSetup, StandaloneFolderRow } from "./components/StandaloneSetup";
 import { emptyContentMessage } from "./lib/articleExtractionState";
-import { remoteMediaNotice as remoteMediaNoticeOf } from "./lib/messaging";
+import { remoteMediaNotice as remoteMediaNoticeOf, type EmbeddedVideoPreview } from "./lib/messaging";
 import { buildEmbeddedVideoPreviewMap, isVideoUrl, markdownMediaKeys, videoPreviewKey } from "./lib/videoPreview";
+import { cn } from "@/lib/utils";
 
 function VideoPosterPreview({
   posterUrl,
@@ -25,13 +26,14 @@ function VideoPosterPreview({
 }) {
   return (
     // not-prose: inside the body preview, prose image margins would pad the poster.
-    <div className="not-prose relative overflow-hidden rounded-1 bg-accent" aria-label={title}>
+    // The height stands before the poster loads (SPEC_CLIPPER.md, Layout).
+    <div className="not-prose relative flex h-[120px] items-center justify-center overflow-hidden rounded-1 bg-accent" aria-label={title}>
       {posterUrl ? (
         <img
           src={posterUrl}
           alt=""
           loading="lazy"
-          className="mx-auto block max-h-[120px] w-auto max-w-full rounded-1 object-contain"
+          className="block max-h-[120px] w-auto max-w-full rounded-1 object-contain"
         />
       ) : (
         <div className="h-[120px] w-full bg-muted" />
@@ -42,6 +44,63 @@ function VideoPosterPreview({
     </div>
   );
 }
+
+/** What the body's Markdown needs to draw a video at its place. */
+interface BodyMedia {
+  videoBySrc: Map<string, EmbeddedVideoPreview>;
+  fallbackPoster: string | null;
+}
+
+const BodyMediaContext = createContext<BodyMedia>({ videoBySrc: new Map(), fallbackPoster: null });
+
+const NO_VIDEOS: EmbeddedVideoPreview[] = [];
+const BODY_REMARK_PLUGINS = [remarkGfm];
+
+// An extractor that registered a source already knows it is video, whatever
+// the URL looks like; that answer outranks guessing from the extension,
+// which API-style URLs (a method name, not a file type) do not carry.
+function isBodyVideo(videoBySrc: BodyMedia["videoBySrc"], src: string | null | undefined): boolean {
+  return videoBySrc.has(videoPreviewKey(src) ?? "") || isVideoUrl(src);
+}
+
+// At module level on purpose: React keeps an element only while its type is the
+// same function. Components made during a render are new types each time, so
+// every render of the clipper recreated the body's pictures, and a picture
+// loading again changed the panel's height, which rendered the clipper again
+// (SPEC_CLIPPER.md, Layout).
+const BODY_COMPONENTS: Components = {
+  // A paragraph that is only a video holds a block poster, which a <p> may not
+  // contain.
+  p: function BodyParagraph({ node, children, ...props }) {
+    const { videoBySrc } = useContext(BodyMediaContext);
+    const content = node?.children.filter((child) => child.type !== "text" || child.value.trim());
+    const only = content?.length === 1 ? content[0] : undefined;
+    return only?.type === "element" && only.tagName === "img" && isBodyVideo(videoBySrc, String(only.properties.src ?? ""))
+      ? <div className="my-[0.75em]">{children}</div>
+      : <p {...props}>{children}</p>;
+  },
+  img: function BodyImage({ src, alt, node: _node, ...props }) {
+    const { videoBySrc, fallbackPoster } = useContext(BodyMediaContext);
+    if (isBodyVideo(videoBySrc, src)) {
+      const video = videoBySrc.get(videoPreviewKey(src) ?? "");
+      return (
+        <VideoPosterPreview
+          posterUrl={video?.poster ?? fallbackPoster}
+          title={video?.title || (alt ? `Video preview: ${alt}` : "Video preview")}
+        />
+      );
+    }
+    return <img src={src} alt={alt ?? ""} loading="lazy" {...props} />;
+  },
+};
+
+const BodyMarkdown = memo(function BodyMarkdown({ text }: { text: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={BODY_REMARK_PLUGINS} urlTransform={safeMarkdownUrl} components={BODY_COMPONENTS}>
+      {text}
+    </ReactMarkdown>
+  );
+});
 
 /** The in-page overlay's controls (overlay-entry.tsx); absent in the window. */
 interface MineOverlayControls {
@@ -244,12 +303,16 @@ export function PopupApp() {
   const ogImage = capture.kind === "image"
     ? capture.imageUrl
     : metadata?.image ?? null;
-  const embeddedVideoPreviews = articleData?.embeddedVideos ?? [];
+  const embeddedVideoPreviews = articleData?.embeddedVideos ?? NO_VIDEOS;
   const videoFallbackPoster = /(?:twitter\.com|x\.com)\/[^/]+\/status\/\d+/i.test(metadata?.url ?? "")
     ? null : ogImage;
   const embeddedVideoBySrc = useMemo(() => {
     return buildEmbeddedVideoPreviewMap(embeddedVideoPreviews);
   }, [embeddedVideoPreviews]);
+  const bodyMedia = useMemo<BodyMedia>(
+    () => ({ videoBySrc: embeddedVideoBySrc, fallbackPoster: videoFallbackPoster }),
+    [embeddedVideoBySrc, videoFallbackPoster],
+  );
   // A video the body holds is drawn at its place there; the strip above the
   // text keeps only videos the body does not have (SPEC_CLIPPER.md, «Пост с
   // цитатой как в оригинале», rule 3).
@@ -258,11 +321,11 @@ export function PopupApp() {
     () => embeddedVideoPreviews.filter((video) => !bodyMediaKeys.has(videoPreviewKey(video.src) ?? "")),
     [embeddedVideoPreviews, bodyMediaKeys],
   );
-  // An extractor that registered a source already knows it is video, whatever
-  // the URL looks like; that answer outranks guessing from the extension,
-  // which API-style URLs (a method name, not a file type) do not carry.
-  const isBodyVideo = (src: string | null | undefined) =>
-    embeddedVideoBySrc.has(videoPreviewKey(src) ?? "") || isVideoUrl(src);
+  // A picture has no height until it loads and its size is not known before
+  // that: a body that holds one takes the box's whole limit from the first
+  // frame, so nothing below the box moves when the picture arrives
+  // (SPEC_CLIPPER.md, Layout).
+  const bodyHoldsPicture = resolvedBody.source !== "selection" && bodyMediaKeys.size > 0;
   const hasTypeRow = metadata?.detectedType !== "image";
   const previous = clipper.previousOperation;
   const previousSavePanel = previous && (
@@ -372,11 +435,11 @@ export function PopupApp() {
           {clipper.currentType === "link" && (
             <div className="space-y-1.5 rounded-1 border border-border p-2">
               {ogImage && (
-                <div className="rounded-1 bg-accent">
+                <div className="flex h-[120px] items-center justify-center rounded-1 bg-accent">
                   <img
                     src={ogImage}
                     alt=""
-                    className="mx-auto block max-h-[120px] w-auto max-w-full rounded-1 object-contain"
+                    className="block max-h-[120px] w-auto max-w-full rounded-1 object-contain"
                   />
                 </div>
               )}
@@ -390,7 +453,7 @@ export function PopupApp() {
 
           {clipper.currentType === "content" && (
             <div
-              className="max-h-[280px] min-h-24 overflow-y-auto rounded-1 border border-border p-2"
+              className={cn("min-h-24 overflow-y-auto rounded-1 border border-border p-2", bodyHoldsPicture ? "h-[280px]" : "max-h-[280px]")}
               data-clipper-scrollbar=""
               data-clipper-preview=""
             >
@@ -432,35 +495,9 @@ export function PopupApp() {
                 </div>
               ) : resolvedBody.text ? (
                 <div className="mine-clipper-article-preview prose prose-sm mt-1.5 max-w-none">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    urlTransform={safeMarkdownUrl}
-                    components={{
-                      // A paragraph that is only a video holds a block poster,
-                      // which a <p> may not contain.
-                      p: ({ node, children, ...props }) => {
-                        const content = node?.children.filter((child) => child.type !== "text" || child.value.trim());
-                        const only = content?.length === 1 ? content[0] : undefined;
-                        return only?.type === "element" && only.tagName === "img" && isBodyVideo(String(only.properties.src ?? ""))
-                          ? <div className="my-[0.75em]">{children}</div>
-                          : <p {...props}>{children}</p>;
-                      },
-                      img: ({ src, alt, node: _node, ...props }) => {
-                        if (isBodyVideo(src)) {
-                          const video = embeddedVideoBySrc.get(videoPreviewKey(src) ?? "");
-                          return (
-                            <VideoPosterPreview
-                              posterUrl={video?.poster ?? videoFallbackPoster}
-                              title={video?.title || (alt ? `Video preview: ${alt}` : "Video preview")}
-                            />
-                          );
-                        }
-                        return <img src={src} alt={alt ?? ""} loading="lazy" {...props} />;
-                      },
-                    }}
-                  >
-                    {resolvedBody.text}
-                  </ReactMarkdown>
+                  <BodyMediaContext.Provider value={bodyMedia}>
+                    <BodyMarkdown text={resolvedBody.text} />
+                  </BodyMediaContext.Provider>
                 </div>
               ) : (
                 <p className="mt-1.5 text-sm text-muted-foreground">
@@ -473,11 +510,11 @@ export function PopupApp() {
           )}
 
           {clipper.currentType === "image" && ogImage && (
-            <div className="flex min-h-24 shrink justify-center overflow-hidden rounded-1 border border-border bg-accent" data-clipper-preview="">
+            <div className="flex h-[220px] min-h-24 shrink justify-center overflow-hidden rounded-1 border border-border bg-accent" data-clipper-preview="">
               <img
                 src={ogImage}
                 alt=""
-                className="block max-h-[220px] min-h-0 w-auto max-w-full rounded-1 object-contain"
+                className="block max-h-[220px] min-h-0 w-auto max-w-full rounded-1 object-scale-down"
               />
             </div>
           )}

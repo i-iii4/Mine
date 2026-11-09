@@ -361,27 +361,6 @@ fn inline_media_left_on_other_servers_are_named_in_the_answer() {
     assert!(!note.contains(&at("odd.j-pg")), "a strange extension left a picture remote: {note}");
 }
 
-/// Е4.1, Н10: the pictures past the limit of 30 stay links, and are named.
-#[test]
-fn pictures_past_the_limit_are_named_in_the_answer() {
-    let (_tmp, vault) = space();
-    let at = |index: usize| format!("https://e4-1-limit.media.test/{index}.png");
-    let mut body = String::from("# Article\n\n");
-    for index in 0..=MAX_INLINE_IMAGES as usize {
-        fake_web::serve(&at(index), fake_web::Answer::Bytes { content_type: "image/png", body: PNG.to_vec() });
-        body.push_str(&format!("![p]({})\n\n", at(index)));
-    }
-
-    let response = saved(&vault, article_request("e4-1-limit", &body));
-
-    assert_eq!(response["outcome"], "committed", "{response}");
-    assert_eq!(
-        response["remote_media"],
-        serde_json::json!([{ "url": at(MAX_INLINE_IMAGES as usize), "kind": "image", "reason": "limit" }]),
-        "{response}"
-    );
-}
-
 /// Е4.1, Н10: a video that stays remote and a poster that cannot be saved
 /// for it are both named.
 #[test]

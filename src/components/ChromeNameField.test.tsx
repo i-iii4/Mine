@@ -1,6 +1,7 @@
+import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ChromeNameField } from "./ChromeNameField";
+import { ChromeNameField, type ChromeNameFieldHandle } from "./ChromeNameField";
 import { TooltipProvider } from "./ui/tooltip";
 
 // The one way a name in the top row's path is renamed in place: the open
@@ -23,6 +24,46 @@ describe("ChromeNameField", () => {
     const view = render(element(resetKey));
     return { ...view, rerenderWith: (key: string) => view.rerender(element(key)) };
   }
+
+  // SPEC_FRONTEND.md, «RenameBlockDialog»: the open card's `Rename…` comes in
+  // by the click's own way.
+  it("opens from elsewhere as a click does: cursor at the end, Enter saves, Escape keeps the name", async () => {
+    const save = vi.fn(async () => undefined);
+    const ref = createRef<ChromeNameFieldHandle>();
+    const { container } = render(
+      <TooltipProvider>
+        <ChromeNameField
+          ref={ref}
+          name="Inbox"
+          title="Inbox"
+          fieldLabel="Rename collection"
+          save={save}
+          reasonOf={() => "Could not rename."}
+          resetKey="one"
+          marker="audit-name"
+        />
+      </TooltipProvider>,
+    );
+
+    act(() => ref.current!.startEditing());
+    const input = screen.getByRole("textbox", { name: "Rename collection" });
+    expect(input).toHaveFocus();
+    expect(input).toHaveProperty("selectionStart", "Inbox".length);
+    expect(input).toHaveProperty("selectionEnd", "Inbox".length);
+    fireEvent.change(input, { target: { value: "Dropped" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("textbox", { name: "Rename collection" })).toBeNull();
+    expect(container.querySelector("[data-audit-name]")).toHaveTextContent("Inbox");
+    expect(save).not.toHaveBeenCalled();
+
+    act(() => ref.current!.startEditing());
+    const again = screen.getByRole("textbox", { name: "Rename collection" });
+    fireEvent.change(again, { target: { value: "Saved" } });
+    await act(async () => {
+      fireEvent.keyDown(again, { key: "Enter" });
+    });
+    expect(save).toHaveBeenCalledWith("Saved");
+  });
 
   it("keeps the field, the typed name and the reason under it when Enter is refused", async () => {
     const save = vi.fn(async () => {

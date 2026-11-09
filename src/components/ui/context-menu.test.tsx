@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { subscribeContextMenus } from "@/lib/openMenus";
+import { afterMenuCloses, subscribeContextMenus } from "@/lib/openMenus";
 
 import {
   ContextMenu,
@@ -196,5 +196,34 @@ describe("ContextMenu over the page", () => {
     } finally {
       unsubscribe();
     }
+  });
+
+  // SPEC_FRONTEND.md, «RenameBlockDialog»: a command that moves the focus out
+  // of the menu keeps it from going back where it was before the menu.
+  it("hands the focus over instead of giving it back", async () => {
+    render(
+      <>
+        <button type="button">Before</button>
+        <input aria-label="Field" />
+        <ContextMenu modal={false}>
+          <ContextMenuTrigger>Open context menu</ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem onSelect={() => afterMenuCloses(() => screen.getByLabelText("Field").focus())}>
+              Action item
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      </>,
+    );
+    screen.getByText("Before").focus();
+
+    fireEvent.contextMenu(screen.getByText("Open context menu"));
+    fireEvent.click(screen.getByText("Action item"));
+
+    await waitFor(() => expect(screen.getByLabelText("Field")).toHaveFocus());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(screen.getByLabelText("Field")).toHaveFocus();
   });
 });

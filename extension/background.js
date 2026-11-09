@@ -23,7 +23,7 @@
 // answers the channel of a YouTube clip. dist/build-identity.js is the build
 // this worker's code belongs to, written by the extension build, and
 // lib/extensionBuild.js compares it with the build of the files on disk (К4).
-importScripts("dist/build-identity.js", "lib/extensionBuild.js", "generated/save-core/mine_core.js", "lib/mineCore.js", "lib/saveProtocol.js", "lib/standaloneVault.js", "lib/youtubeSource.js", "lib/browserFile.js");
+importScripts("dist/build-identity.js", "lib/extensionBuild.js", "generated/save-core/mine_core.js", "lib/mineCore.js", "lib/saveProtocol.js", "lib/standaloneVault.js", "lib/youtubeSource.js", "lib/browserFile.js", "lib/pageFiles.js");
 
 const HOST_NAME = "com.mine.clipper.v1";
 // Must match extension/popup/popup-layout.css body { width: 360px }
@@ -1783,22 +1783,23 @@ async function uploadFileToNativeHost(payload) {
   }
 }
 
-// ── Picture file from the browser (SPEC_CLIPPER.md, «Файл картинки из
-// браузера, отказ сайта и причина ошибки», Б1) ─────────────────────────────
+// ── Files of the page (SPEC_CLIPPER.md, «Один путь файла со страницы») ──────
 //
-// When the page shows the very file a picture card saves, the bytes the
-// browser already loaded go to the helper through its upload server, as a
-// screenshot does, and the site is not asked again. lib/browserFile.js reads
-// them in the page's top frame from the cache and hands them over on a port,
-// one part at a time; this worker puts them together and uploads them. A
-// file it cannot get this way is downloaded by the helper, as before.
+// Before a Save the browser gets the files of the clip: the page's cache and the
+// page's own request through lib/browserFile.js in its top frame (Б5), a request
+// from here under one rule of the `Referer` for a file of another domain (Б6).
+// The bytes go to the helper's upload server, and the helper downloads only what
+// the browser did not get (Б8), or to the storage of a browser folder, which has
+// no helper (Б13). lib/pageFiles.js keeps the order of the work.
 
 /// How long the page may stay silent while it hands a file over.
 const BROWSER_FILE_IDLE_MS = 15_000;
-/// How long the upload of a file from the browser (up to 500 MiB) may take.
+/// How long the upload of a file from the browser (up to 500 MiB) may take,
+/// counted from the start of sending this file, not from the queue (Б11).
 const BROWSER_FILE_UPLOAD_TIMEOUT_MS = 120_000;
 
-/** @typedef {{ ok: true, blob: Blob } | { ok: false, reason: string }} BrowserFileResult */
+/** @typedef {import("./lib/browserFile.types").PageFileAnswer} PageFileAnswer */
+/** @typedef {import("./lib/pageFiles.types").FileAnswer} FileAnswer */
 
 /// Transfers waiting for their page, by transfer id.
 /** @type {Map<string, (port: chrome.runtime.Port) => void>} */
@@ -1821,19 +1822,21 @@ async function decodedPart(data) {
   return (await fetch(`data:application/octet-stream;base64,${data}`)).blob();
 }
 
-/// Take a file from the top frame of `tabId` on `port`: a `start` with its
-/// type and size, its parts, an `end`. Anything else, a silence longer than
-/// BROWSER_FILE_IDLE_MS or another sender ends the transfer without a file.
+/// Take the answer of the top frame of `tabId` on `port`: a `start` with its
+/// type, its parts, an `end`, or one `answer` without a file. Anything else, a
+/// silence longer than BROWSER_FILE_IDLE_MS or another sender ends the transfer
+/// without a file; closing the port stops the page's request.
 /**
  * @param {chrome.runtime.Port} port
  * @param {number} tabId
- * @param {(result: BrowserFileResult) => void} done
+ * @param {(result: PageFileAnswer | FileAnswer) => void} done
+ * @param {AbortSignal} [signal]
  */
-function receiveBrowserFile(port, tabId, done) {
+function receiveBrowserFile(port, tabId, done, signal) {
   let finished = false;
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let idle;
-  /** @param {BrowserFileResult} result */
+  /** @param {PageFileAnswer | FileAnswer} result */
   const finish = (result) => {
     if (finished) return;
     finished = true;
@@ -1843,86 +1846,102 @@ function receiveBrowserFile(port, tabId, done) {
   };
   const awake = () => {
     clearTimeout(idle);
-    idle = setTimeout(() => finish({ ok: false, reason: "stalled" }), BROWSER_FILE_IDLE_MS);
+    idle = setTimeout(() => finish({ kind: "stalled" }), BROWSER_FILE_IDLE_MS);
   };
   if (port.sender?.tab?.id !== tabId || port.sender.frameId !== 0) {
-    finish({ ok: false, reason: "other_sender" });
+    finish({ kind: "elsewhere" });
     return;
   }
   /** @type {Blob[]} */
   const parts = [];
   let received = 0;
-  /** @type {{ contentType: string, size: number } | null} */
+  /** @type {{ contentType: string, source: "cache" | "page", finalUrl: string } | null} */
   let header = null;
-  port.onDisconnect.addListener(() => finish({ ok: false, reason: "transfer_closed" }));
+  /// An `end` waits for the part still being decoded.
+  let decoding = Promise.resolve();
+  port.onDisconnect.addListener(() => finish({ kind: "failure", failure: "no_answer" }));
+  // The clipper closed: closing this port stops the page's request.
+  signal?.addEventListener("abort", () => finish({ kind: "failure", failure: "no_answer" }), { once: true });
   port.onMessage.addListener((/** @type {unknown} */ raw) => {
     const message = asRecord(raw);
     awake();
-    if (message.kind === "start" && header === null && typeof message.size === "number"
-      && typeof message.contentType === "string") {
-      if (message.size > globalThis.MineBrowserFile.MAX_BYTES) {
-        finish({ ok: false, reason: "too_large" });
-        return;
-      }
-      header = { contentType: message.contentType, size: message.size };
+    if (message.kind === "answer") {
+      finish(/** @type {PageFileAnswer} */ (message.answer));
+    } else if (message.kind === "start" && header === null && typeof message.contentType === "string") {
+      header = {
+        contentType: message.contentType,
+        source: message.source === "cache" ? "cache" : "page",
+        finalUrl: typeof message.finalUrl === "string" ? message.finalUrl : "",
+      };
       port.postMessage({ kind: "next" });
     } else if (message.kind === "part" && header !== null && typeof message.data === "string") {
-      const expected = header.size;
-      decodedPart(message.data).then((part) => {
+      decoding = decodedPart(message.data).then((part) => {
         received += part.size;
-        if (received > expected) {
-          finish({ ok: false, reason: "size_mismatch" });
+        if (received > globalThis.MineBrowserFile.MAX_BYTES) {
+          finish({ kind: "failure", failure: "too_large" });
           return;
         }
         parts.push(part);
         if (!finished) port.postMessage({ kind: "next" });
-      }, () => finish({ ok: false, reason: "unreadable_part" }));
+      }, () => finish({ kind: "failure", failure: "no_answer" }));
     } else if (message.kind === "end" && header !== null) {
-      const blob = new Blob(parts, { type: header.contentType });
-      finish(blob.size === header.size && blob.size > 0
-        ? { ok: true, blob }
-        : { ok: false, reason: "size_mismatch" });
+      const { contentType, source, finalUrl } = header;
+      void decoding.then(() => {
+        const blob = new Blob(parts, { type: contentType });
+        finish(blob.size > 0 ? { kind: "file", blob, source, finalUrl } : { kind: "failure", failure: "not_a_file" });
+      });
     } else {
-      finish({ ok: false, reason: "unexpected_message" });
+      finish({ kind: "failure", failure: "no_answer" });
     }
   });
   awake();
 }
 
-/// The bytes of `url` as the top frame of `tabId` already has them, or why
-/// not (lib/browserFile.js).
-/** @param {number} tabId @param {string} url @returns {Promise<BrowserFileResult>} */
-async function readBrowserFile(tabId, url) {
+/// What the top frame of `tabId` answers about `url`: from its cache, or by its
+/// own request. A page that cannot be asked is `elsewhere`.
+/**
+ * @param {number} tabId
+ * @param {string} url
+ * @param {"cache" | "request"} mode
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<PageFileAnswer | FileAnswer>}
+ */
+async function readBrowserFile(tabId, url, mode, signal) {
   const transferId = crypto.randomUUID();
-  /** @type {Promise<BrowserFileResult>} */
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let noPort;
+  /** @type {Promise<PageFileAnswer | FileAnswer>} */
   const received = new Promise((resolve) => {
-    browserFileReceivers.set(transferId, (port) => receiveBrowserFile(port, tabId, resolve));
+    // A page that never opens its port is as silent as one that stops.
+    noPort = setTimeout(() => resolve({ kind: "stalled" }), BROWSER_FILE_IDLE_MS);
+    browserFileReceivers.set(transferId, (port) => {
+      clearTimeout(noPort);
+      receiveBrowserFile(port, tabId, resolve, signal);
+    });
   });
   try {
     const target = { tabId, frameIds: [0] };
     await chrome.scripting.executeScript({ target, files: ["lib/browserFile.js"] });
-    const [injection] = await chrome.scripting.executeScript({
+    await chrome.scripting.executeScript({
       target,
-      func: (address, id) => globalThis.MineBrowserFile.send(address, id),
-      args: [url, transferId],
+      func: (address, id, how) => globalThis.MineBrowserFile.send(address, id, /** @type {"cache" | "request"} */ (how)),
+      args: [url, transferId, mode],
     });
-    /** @type {unknown} */
-    const sent = injection?.result;
-    if (!isRecord(sent) || sent.ok !== true) {
-      return { ok: false, reason: typeof asRecord(sent).reason === "string" ? String(asRecord(sent).reason) : "not_read" };
-    }
     return await received;
   } catch (error) {
-    return { ok: false, reason: failureText(error) };
+    console.warn("[Mine] the page could not be asked for a file:", failureText(error));
+    return { kind: "elsewhere" };
   } finally {
+    clearTimeout(noPort);
     browserFileReceivers.delete(transferId);
   }
 }
 
-/// Upload the picture at `url` from the browser's own bytes; `payload` is the
-/// request as the clipper sent it, the tab is the sender's own for an overlay
-/// and named for the clipper window. A refusal carries the reason, and the
-/// clipper then asks the helper to download the file.
+/// Upload the picture at `url` from the bytes the browser's cache has, for a
+/// helper without `browser_files_v1` (Б12); `payload` is the request as the
+/// clipper sent it, the tab is the sender's own for an overlay and named for the
+/// clipper window. A refusal carries the reason, and the clipper then asks the
+/// helper to download the file.
 /**
  * @param {unknown} payload
  * @param {chrome.runtime.MessageSender} sender
@@ -1935,22 +1954,315 @@ async function uploadBrowserFileToNativeHost(payload, sender) {
   if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return { ok: false, reason: "not_web_address" };
   const tab = isExtensionPage(sender) ? tabId : sender.tab?.id;
   if (typeof tab !== "number" || !Number.isInteger(tab) || tab < 0) return { ok: false, reason: "no_tab" };
-  const file = await readBrowserFile(tab, url);
-  if (!file.ok) return { ok: false, reason: file.reason };
+  if ((await filesOfRunningBuild()) !== "same") return { ok: false, reason: "other_build" };
+  const file = await readBrowserFile(tab, url, "cache");
+  if (file.kind !== "file") return { ok: false, reason: file.kind };
+  return uploadedFile(file.blob, url, /** @type {number} */ (port), /** @type {string} */ (token), vaultPath);
+}
+
+/// The uploads go one by one, because the upload server takes one request at a
+/// time and a time limit must count from the sending of its own file (Б11).
+/** @type {Promise<unknown>} */
+let uploadTurn = Promise.resolve();
+
+/// POST the bytes of `url` as a file from the browser.
+/**
+ * @param {Blob} blob
+ * @param {string} url
+ * @param {number} port
+ * @param {string} token
+ * @param {unknown} vaultPath
+ * @returns {Promise<unknown>}
+ */
+function uploadedFile(blob, url, port, token, vaultPath) {
+  const params = new URLSearchParams({
+    filename: globalThis.MineBrowserFile.uploadName(url, blob.type),
+    source: "browser_file",
+  });
+  if (typeof vaultPath === "string" && vaultPath.length > 0) params.set("vault_path", vaultPath);
+  const post = () => postUpload({
+    port, token, params, contentType: blob.type, blob, timeoutMs: BROWSER_FILE_UPLOAD_TIMEOUT_MS,
+  }).catch((/** @type {unknown} */ error) => ({ ok: false, error: failureText(error) }));
+  const result = uploadTurn.then(post, post);
+  uploadTurn = result;
+  return result;
+}
+
+// One rule of the `Referer` per request from outside the page (Б6). The browser
+// erases session rules when it closes and when a new version installs, but they
+// outlive a restart of this worker, so its first act is to remove what the last
+// run left. No rule is added before that is done.
+
+/** @type {number} */
+let lastRefererRule = 0;
+
+/** @type {Promise<void>} */
+const leftRefererRulesRemoved = (async () => {
+  const net = chrome.declarativeNetRequest;
+  if (!net) return;
   try {
-    const params = new URLSearchParams({
-      filename: globalThis.MineBrowserFile.uploadName(url, file.blob.type),
-      source: "browser_file",
-    });
-    if (typeof vaultPath === "string" && vaultPath.length > 0) params.set("vault_path", vaultPath);
-    return await postUpload({
-      port: /** @type {number} */ (port), token: /** @type {string} */ (token), params,
-      contentType: file.blob.type, blob: file.blob, timeoutMs: BROWSER_FILE_UPLOAD_TIMEOUT_MS,
-    });
+    const left = await net.getSessionRules();
+    if (left.length > 0) await net.updateSessionRules({ removeRuleIds: left.map((rule) => rule.id) });
   } catch (error) {
-    return { ok: false, error: failureText(error) };
+    console.warn("[Mine] session rules could not be read:", failureText(error));
+  }
+})();
+
+/// The rule that gives the request of `address` from this worker its `Referer`,
+/// or null: then the request goes without one (Б6, Safari in Б12).
+/**
+ * @param {string} address
+ * @param {string | null} referer
+ * @returns {Promise<number | null>}
+ */
+async function addRefererRule(address, referer) {
+  const net = chrome.declarativeNetRequest;
+  if (!net || !referer) return null;
+  await leftRefererRulesRemoved;
+  lastRefererRule += 1;
+  const id = lastRefererRule;
+  try {
+    await net.updateSessionRules({ addRules: [{
+      id,
+      priority: 1,
+      condition: {
+        urlFilter: `|${address}|`,
+        tabIds: [chrome.tabs.TAB_ID_NONE],
+        initiatorDomains: [chrome.runtime.id],
+        requestMethods: [chrome.declarativeNetRequest.RequestMethod.GET],
+        resourceTypes: [chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST],
+      },
+      action: {
+        type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
+        requestHeaders: [{ header: "referer", operation: chrome.declarativeNetRequest.HeaderOperation.SET, value: referer }],
+      },
+    }] });
+    return id;
+  } catch (error) {
+    console.warn("[Mine] the Referer rule was refused:", failureText(error));
+    return null;
   }
 }
+
+/** @param {number | null} rule @returns {Promise<void>} */
+async function removeRefererRule(rule) {
+  if (rule === null) return;
+  try {
+    await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [rule] });
+  } catch (error) {
+    console.warn("[Mine] the Referer rule was not removed:", failureText(error));
+  }
+}
+
+/// The limits of the requests of all Saves together (Б11).
+const pageFileLimiter = globalThis.MinePageFiles.createLimiter();
+
+/// How often the worker speaks on a port of a browser folder. No connection to
+/// the helper keeps it alive there, and the clipper's answer is an event that
+/// resets its idle time, 30 seconds (Б13).
+const BROWSER_FOLDER_PROGRESS_MS = 20_000;
+
+/// A collection on its port (Б9): one `start` from the clipper, one `done` from
+/// here. A port that closes before the clipper fixed its operation (`keep`)
+/// stops the requests and takes what they kept with it: the helper's uploads, or
+/// the files of a browser folder (Б13).
+/** @param {chrome.runtime.Port} port */
+function servePageFiles(port) {
+  const controller = new AbortController();
+  /** @type {string[]} */
+  const uploaded = [];
+  let started = false;
+  let kept = false;
+  let settled = false;
+  let closed = false;
+  let browserFolder = false;
+  /** @type {ReturnType<typeof setInterval> | undefined} */
+  let progress;
+  /** @type {unknown} */
+  let vaultPath = null;
+
+  const discardUnkept = () => {
+    if (!closed || !settled || kept || uploaded.length === 0) return;
+    const upload_ids = uploaded.splice(0);
+    if (browserFolder) {
+      void globalThis.MineStandaloneVault.discardPageFiles(upload_ids);
+      return;
+    }
+    void sendNativeMessage({ action: "discard_pending_uploads", vault_path: vaultPath, upload_ids }).then((reply) => {
+      if (!reply.ok) console.warn("[Mine] uploads were not discarded:", reply.error);
+    });
+  };
+
+  port.onDisconnect.addListener(() => {
+    closed = true;
+    clearInterval(progress);
+    controller.abort();
+    discardUnkept();
+  });
+  port.onMessage.addListener((/** @type {unknown} */ raw) => {
+    const message = asRecord(raw);
+    if (message.kind === "keep") {
+      kept = true;
+      return;
+    }
+    if (message.kind !== "start" || started) return;
+    started = true;
+    vaultPath = message.vault_path;
+    browserFolder = message.executor === "browser";
+    if (browserFolder) progress = setInterval(() => port.postMessage({ kind: "progress" }), BROWSER_FOLDER_PROGRESS_MS);
+    // The clipper waits for this answer without a deadline of its own, so a
+    // failure here is an answer too: no files, and the helper downloads them or,
+    // in a browser folder, they stay links.
+    void (browserFolder ? collectForBrowserFolder(message, port, controller.signal, uploaded) : collectPageFiles(message, port, controller.signal, uploaded)).catch((/** @type {unknown} */ error) => {
+      console.warn("[Mine] the files of the page were not collected:", failureText(error));
+      return [];
+    }).then((entries) => {
+      settled = true;
+      clearInterval(progress);
+      if (closed) discardUnkept();
+      else port.postMessage({ kind: "done", browser_files: entries });
+    });
+  });
+}
+
+/// The page's half and the request from outside of a collection (Б5, Б6).
+/**
+ * @param {Record<string, unknown>} start
+ * @param {chrome.runtime.Port} port
+ * @param {AbortSignal} signal
+ */
+async function pageFileRequests(start, port, signal) {
+  const sender = port.sender;
+  const tab = sender && isExtensionPage(sender) ? start.tab_id : sender?.tab?.id;
+  // A script of another build must not meet this worker (К4).
+  const pageAllowed = typeof tab === "number" && Number.isInteger(tab) && tab >= 0
+    && (await filesOfRunningBuild()) === "same";
+  return {
+    signal,
+    limiter: pageFileLimiter,
+    /** @type {import("./lib/pageFiles.types").PageFileWork["pageRead"]} */
+    pageRead: async (url, mode) => (pageAllowed ? readBrowserFile(/** @type {number} */ (tab), url, mode, signal) : { kind: "elsewhere" }),
+    /** @type {import("./lib/pageFiles.types").PageFileWork["request"]} */
+    request: (file) => globalThis.MinePageFiles.requestFile(file, {
+      signal,
+      idleMs: BROWSER_FILE_IDLE_MS,
+      fetchFile: fetch.bind(globalThis),
+      addRefererRule,
+      removeRefererRule,
+    }),
+  };
+}
+
+/// The entries of `browser_files` for the request `start`: none when the helper
+/// gave no plan, and the Save goes as it did before this route (Б7).
+/**
+ * @param {Record<string, unknown>} start
+ * @param {chrome.runtime.Port} port
+ * @param {AbortSignal} signal
+ * @param {string[]} uploaded where each upload id is written as soon as it exists
+ * @returns {Promise<import("./lib/pageFiles.types").BrowserFileEntry[]>}
+ */
+async function collectPageFiles(start, port, signal, uploaded) {
+  const { upload_port: uploadPort, upload_token: uploadToken, vault_path: vaultPath } = start;
+  if (uploadServerProblem(uploadPort, uploadToken)) return [];
+  const answer = await sendNativeMessage({
+    action: "plan_page_files",
+    document_url: start.document_url,
+    body: start.body ?? null,
+    image_url: start.image_url ?? null,
+    video_posters: start.video_posters ?? null,
+  });
+  const files = answer.files;
+  if (!answer.ok || !Array.isArray(files) || typeof answer.parallel !== "number" || typeof answer.per_domain !== "number") {
+    console.warn("[Mine] no plan of the page's files:", answer.error ?? "unexpected answer");
+    return [];
+  }
+  return globalThis.MinePageFiles.collect({ parallel: answer.parallel, per_domain: answer.per_domain, files }, {
+    ...(await pageFileRequests(start, port, signal)),
+    store: async (blob, url) => {
+      if (signal.aborted) return null;
+      const result = asRecord(await uploadedFile(blob, url, /** @type {number} */ (uploadPort), /** @type {string} */ (uploadToken), vaultPath));
+      if (result.ok !== true || typeof result.upload_id !== "string") return null;
+      uploaded.push(result.upload_id);
+      return result.upload_id;
+    },
+  });
+}
+
+/// The same collection for a browser folder: the plan of the core, the bytes in
+/// its own storage, and no helper anywhere on the way (Б13).
+/**
+ * @param {Record<string, unknown>} start
+ * @param {chrome.runtime.Port} port
+ * @param {AbortSignal} signal
+ * @param {string[]} kept where each file's id is written as soon as it exists
+ * @returns {Promise<import("./lib/pageFiles.types").BrowserFileEntry[]>}
+ */
+async function collectForBrowserFolder(start, port, signal, kept) {
+  const request = /** @type {import("../src/types/generated").PageFilesRequest} */ ({
+    document_url: start.document_url,
+    body: start.body ?? null,
+    image_url: start.image_url ?? null,
+    video_posters: start.video_posters ?? null,
+  });
+  return globalThis.MineStandaloneVault.collectPageFiles(request, {
+    ...(await pageFileRequests(start, port, signal)),
+    stored: (id) => kept.push(id),
+  });
+}
+
+/// A Save into a browser folder on its port: one `start` from the clipper, one
+/// `done` from here (Б13). An answer owed through `sendMessage` counts as one
+/// event, which the browser ends at 5 minutes, and a long write must outlive
+/// that. A worker that stops closes the port, and the clipper asks for the
+/// outcome.
+/** @param {chrome.runtime.Port} port */
+function serveStandaloneSave(port) {
+  let started = false;
+  let closed = false;
+  const progress = setInterval(() => port.postMessage({ kind: "progress" }), BROWSER_FOLDER_PROGRESS_MS);
+  port.onDisconnect.addListener(() => {
+    closed = true;
+    clearInterval(progress);
+  });
+  port.onMessage.addListener((/** @type {unknown} */ raw) => {
+    const message = asRecord(raw);
+    if (message.kind !== "start" || started) return;
+    started = true;
+    // The save core validates every field; a payload that is no object
+    // carries none, as `?? {}` and spreading it did.
+    const payload = isRecord(message.payload) ? message.payload : {};
+    void trackBrowserWrite(() => globalThis.MineStandaloneVault.saveStandaloneBlock(payload)).then((response) => {
+      if (response?.ok && payload.tags) void broadcastChannelsChanged(null);
+      return response;
+    }, (error) => ({ ok: false, error: failureText(error) })).then((response) => {
+      clearInterval(progress);
+      if (!closed) port.postMessage({ kind: "done", response });
+    });
+  });
+}
+
+// What a browser that fell between a collection and its Save left in the storage
+// of a browser folder goes as the worker starts (Б13). The clipper's fixed
+// operations are read only when there is an old file to judge.
+void globalThis.MineStandaloneVault.sweepPageFiles(async () => {
+  const stored = await chrome.storage.local.get(null);
+  return Object.entries(stored).flatMap(([key, value]) => {
+    if (!key.startsWith("minePendingSaveOperation:")) return [];
+    const browserFiles = asRecord(asRecord(value).payload).browser_files;
+    return Array.isArray(browserFiles) ? browserFiles.flatMap((entry) => {
+      const id = asRecord(entry).upload_id;
+      return typeof id === "string" ? [id] : [];
+    }) : [];
+  });
+}).catch((/** @type {unknown} */ error) => {
+  console.warn("[Mine] the kept files of the browser folder were not swept:", failureText(error));
+});
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name.startsWith(globalThis.MinePageFiles.PORT_PREFIX)) servePageFiles(port);
+  else if (port.name.startsWith(globalThis.MinePageFiles.SAVE_PORT_PREFIX)) serveStandaloneSave(port);
+});
 
 
 // ── Authenticated tweet video ─────────────────────────────────────────────
@@ -2280,19 +2592,6 @@ chrome.runtime.onMessage.addListener((/** @type {unknown} */ message, sender, se
     }
     globalThis.MineStandaloneVault.lookupOperation(operationId, bindingId).then(sendResponse,
       (error) => sendResponse({ ok: false, outcome: "unknown", error: failureText(error) }));
-    return true;
-  }
-
-  if (msg.action === "standaloneSave") {
-    // The save core validates every field; a payload that is no object
-    // carries none, as `?? {}` and spreading it did.
-    const payload = isRecord(msg.payload) ? msg.payload : {};
-    trackBrowserWrite(() => globalThis.MineStandaloneVault.saveStandaloneBlock(payload)).then((response) => {
-      if (response?.ok && payload.tags) {
-        void broadcastChannelsChanged(null);
-      }
-      sendResponse(response);
-    }, (error) => sendResponse({ ok: false, error: failureText(error) }));
     return true;
   }
 

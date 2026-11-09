@@ -20,6 +20,15 @@ const MARQUEE_AUTOSCROLL_MIN_SPEED_PX_PER_S = 160;
 const MARQUEE_AUTOSCROLL_MAX_SPEED_PX_PER_S = 1800;
 
 export type GridArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
+export type HorizontalArrowKey = "ArrowLeft" | "ArrowRight";
+/** The last sideways step of the arrow keys, the one remembered step. */
+export type HorizontalStep = {
+  from: string;
+  to: string;
+  direction: HorizontalArrowKey;
+  /** The layout it was made on: a step does not outlive its layout. */
+  positions: readonly MasonryPosition[];
+};
 export type FeedInteractionMode = "keyboard" | "pointer";
 export type FeedPointerPosition = {
   x: number;
@@ -85,13 +94,6 @@ export function isStationaryFeedPointerMove(event: ReactPointerEvent): boolean {
   return event.movementX === 0 && event.movementY === 0;
 }
 
-function positionCenter(position: MasonryPosition): { x: number; y: number } {
-  return {
-    x: position.left + position.width / 2,
-    y: position.top + position.height / 2,
-  };
-}
-
 export function findPositionForSlug(
   positions: readonly MasonryPosition[],
   blocks: readonly LightBlock[],
@@ -102,6 +104,75 @@ export function findPositionForSlug(
   return positions.find((position) => position.index === blockIndex) ?? null;
 }
 
+/** The previous or next live card of the current column. */
+function neighborInColumn(
+  live: readonly MasonryPosition[],
+  current: MasonryPosition,
+  direction: "ArrowUp" | "ArrowDown",
+): MasonryPosition | null {
+  let best: MasonryPosition | null = null;
+  for (const candidate of live) {
+    if (candidate.left !== current.left) continue;
+    const closer = direction === "ArrowDown"
+      ? candidate.top > current.top && (best === null || candidate.top < best.top)
+      : candidate.top < current.top && (best === null || candidate.top > best.top);
+    if (closer) best = candidate;
+  }
+  return best;
+}
+
+/**
+ * The card a sideways step lands on: in the nearest column that way with a
+ * live card, the one sharing the most height with the current card; on a tie
+ * or with nothing shared, the nearest by vertical gap, then the upper one.
+ */
+function neighborInAdjacentColumn(
+  live: readonly MasonryPosition[],
+  current: MasonryPosition,
+  direction: HorizontalArrowKey,
+): MasonryPosition | null {
+  let columnLeft: number | null = null;
+  for (const { left } of live) {
+    const inDirection = direction === "ArrowRight" ? left > current.left : left < current.left;
+    if (!inDirection) continue;
+    const nearer = columnLeft === null
+      || (direction === "ArrowRight" ? left < columnLeft : left > columnLeft);
+    if (nearer) columnLeft = left;
+  }
+  if (columnLeft === null) return null;
+
+  let best: MasonryPosition | null = null;
+  let bestOverlap = 0;
+  let bestGap = 0;
+  for (const candidate of live) {
+    if (candidate.left !== columnLeft) continue;
+    const overlap = Math.max(
+      0,
+      Math.min(candidate.bottom, current.bottom) - Math.max(candidate.top, current.top),
+    );
+    const gap = Math.max(0, candidate.top - current.bottom, current.top - candidate.bottom);
+    if (
+      best === null
+      || overlap > bestOverlap
+      || (overlap === bestOverlap && (
+        gap < bestGap || (gap === bestGap && candidate.top < best.top)
+      ))
+    ) {
+      best = candidate;
+      bestOverlap = overlap;
+      bestGap = gap;
+    }
+  }
+  return best;
+}
+
+/**
+ * Where an arrow key goes from the current card (SPEC_KEYBOARD.md, «Feed»). A
+ * column is the cards that share one `left`, the layout's own number, so no
+ * distance is guessed: up and down stay in the column, left and right go to
+ * the adjacent column that holds a live card. Null when there is nowhere to
+ * go; the leftmost such column then hands the focus to the sidebar (М1).
+ */
 export function findLayoutNeighborSlug(
   positions: readonly MasonryPosition[],
   blocks: readonly LightBlock[],
@@ -112,37 +183,33 @@ export function findLayoutNeighborSlug(
   const current = findPositionForSlug(positions, blocks, currentSlug);
   if (!current) return null;
 
-  const currentCenter = positionCenter(current);
-  const horizontal = direction === "ArrowLeft" || direction === "ArrowRight";
-  let bestSlug: string | null = null;
-  let bestScore = Infinity;
+  const live = positions.filter((position) => {
+    const block = blocks[position.index];
+    return block !== undefined && liveBlockIds.has(block.id);
+  });
+  const neighbor = direction === "ArrowUp" || direction === "ArrowDown"
+    ? neighborInColumn(live, current, direction)
+    : neighborInAdjacentColumn(live, current, direction);
+  return neighbor ? blocks[neighbor.index]?.slug ?? null : null;
+}
 
-  for (const candidate of positions) {
-    if (candidate.index === current.index) continue;
-    const block = blocks[candidate.index];
-    if (!block || !liveBlockIds.has(block.id)) continue;
-
-    const candidateCenter = positionCenter(candidate);
-    const dx = candidateCenter.x - currentCenter.x;
-    const dy = candidateCenter.y - currentCenter.y;
-    const valid =
-      direction === "ArrowRight" ? dx > 10 :
-      direction === "ArrowLeft" ? dx < -10 :
-      direction === "ArrowDown" ? dy > 10 :
-      dy < -10;
-    if (!valid) continue;
-
-    const score = horizontal
-      ? Math.abs(dx) + Math.abs(dy) * 3
-      : Math.abs(dy) + Math.abs(dx) * 3;
-
-    if (score < bestScore) {
-      bestScore = score;
-      bestSlug = block.slug;
-    }
-  }
-
-  return bestSlug;
+/**
+ * The card the opposite key returns to right after a sideways step, so ← then
+ * → is a pair (SPEC_KEYBOARD.md, «Feed»). Null when this press is no such
+ * return: another key, the focus elsewhere, another layout, or the card gone.
+ */
+export function horizontalStepBackSlug(
+  step: HorizontalStep | null,
+  positions: readonly MasonryPosition[],
+  blocks: readonly LightBlock[],
+  currentSlug: string,
+  direction: GridArrowKey,
+  liveBlockIds: ReadonlySet<number>,
+): string | null {
+  if (step === null || step.positions !== positions || step.to !== currentSlug) return null;
+  const opposite: HorizontalArrowKey = step.direction === "ArrowLeft" ? "ArrowRight" : "ArrowLeft";
+  if (direction !== opposite) return null;
+  return isLiveSlug(positions, blocks, step.from, liveBlockIds) ? step.from : null;
 }
 
 export function firstVisibleSlug(

@@ -9,12 +9,19 @@
 //   lights a row's name from it: the row the click will reach, but not every
 //   row a fast sweep crosses.
 // - `chosen`: the target the pointer has attended to, after a short dwell at
-//   slow speed. The collection links (pills, the lit feed, a row's button, the
-//   big preview) answer this one.
-// - `raised`: the card the pointer has arrived on, at once below a looser
-//   speed, and held while the pointer stays on it at any speed. A card lifts
-//   and shows its buttons for this one (С8.6), so a sweep across the feed
+//   slow speed. The collection links (pills, the lit feed, a row's button)
+//   answer this one.
+// - `raised`: the card the pointer has arrived on, at once while the lift mode
+//   is on, and held while the pointer stays on it at any speed. A card lifts
+//   and shows its buttons for this one (С8.6), so a fast sweep across the feed
 //   lifts nothing.
+// - `isAttending`: the hover preview window's attending mode (С7.11). The
+//   window reads it and hears it change through `setAttendingListener`; it is
+//   no part of `HoverIntentState`.
+//
+// The lift reads its speed through a mode with two thresholds: on at or below
+// the entry, off above the exit, and once off the pointer must slow to the entry
+// again. The preview window has one threshold, `previewSpeed`.
 //
 // Pure: no React, no DOM. Time and timers come from a clock, so every rule is
 // testable to the millisecond.
@@ -32,12 +39,19 @@ export const HOVER_INTENT = {
    */
   maxSpeed: 0.25,
   /**
-   * С8.6: the fastest the pointer may move, in px/ms, and still arrive on a
-   * card for its lift. Looser than `maxSpeed`: a card is a large target, and
-   * the lift must answer the moment the hand settles. Crossing the feed at 1
-   * to 3 still lifts nothing.
+   * С7.11: the preview window attends at or below this, in px/ms, and not
+   * above it (user's decision of 05.11.2026). A normal hand move to the next
+   * row peaks near it; a separate, lower entry left the card on the row before.
    */
-  liftMaxSpeed: 0.5,
+  previewSpeed: 0.5,
+  /**
+   * С8.6, only the feed's cards (user's decision of 05.11.2026): the lift mode
+   * turns on at or below `liftEntrySpeed` and off above `liftExitSpeed`, in
+   * px/ms. A card is a large target and the lift must answer the moment the
+   * hand settles, so these sit far above `maxSpeed`.
+   */
+  liftEntrySpeed: 3,
+  liftExitSpeed: 3.5,
   /** С7.2: the stretch of recent movement the speed is measured over. */
   velocityWindowMs: 60,
   /**
@@ -103,6 +117,11 @@ interface Sample {
 const FRAME_MS = 16;
 const MIN_STEP_MS = 4;
 
+/** A mode with two thresholds: on at or below `entry`, off above `exit`. */
+function nextMode(on: boolean, speed: number, entry: number, exit: number): boolean {
+  return speed <= (on ? exit : entry);
+}
+
 export class HoverIntent {
   private readonly clock: HoverIntentClock;
   private readonly timing: HoverIntentTiming;
@@ -127,6 +146,11 @@ export class HoverIntent {
   private slow: string | null = null;
   private lastEmittedChosen: string | null = null;
   private raised: string | null = null;
+  /** С8.6: another card takes the lift only in this mode. */
+  private liftMode = false;
+  /** С7.11: what the preview window last told its listener. */
+  private previewAttending = false;
+  private attendingListener: (() => void) | null = null;
 
   private timer: unknown = null;
 
@@ -150,17 +174,32 @@ export class HoverIntent {
   }
 
   /**
+   * С7.11: whether the preview window attends to the pointer right now: the
+   * mode is on and the surface answers at all.
+   */
+  isAttending(): boolean {
+    const now = this.clock.now();
+    return this.answers(now) && this.speed(now) <= this.timing.previewSpeed;
+  }
+
+  /** С7.11: hears `isAttending` change, without new pointer movement too. */
+  setAttendingListener(listener: (() => void) | null): void {
+    this.attendingListener = listener;
+  }
+
+  /**
    * The pointer is over the surface at (x, y), above `target` or a gap
    * (`null`). A report at the same point is not movement: WebKit repeats the
-   * last point when content slides under a still pointer.
+   * last point when content slides under a still pointer, and when a menu goes
+   * away from over it, after a `leave` as well (С7.8).
    */
   move(target: string | null, x: number, y: number): void {
     const now = this.clock.now();
     const last = this.lastPoint;
-    // The first point after entering says nothing about speed: until the
-    // window has passed, the pointer may be sweeping straight through.
-    const step = last ? Math.hypot(x - last.x, y - last.y) : Infinity;
-    if (!last || step > 0) {
+    if (last === null || last.x !== x || last.y !== y) {
+      // The first point after entering says nothing about speed: until the
+      // window has passed, the pointer may be sweeping straight through.
+      const step = last && this.inside ? Math.hypot(x - last.x, y - last.y) : Infinity;
       const previous = this.samples[this.samples.length - 1];
       const elapsed = previous ? Math.min(Math.max(now - previous.t, MIN_STEP_MS), FRAME_MS) : FRAME_MS;
       this.samples.push({ x, y, t: now, step, stepSpeed: step / elapsed });
@@ -179,7 +218,6 @@ export class HoverIntent {
     this.inside = false;
     this.under = null;
     this.leftAt = now;
-    this.lastPoint = null;
     this.samples = [];
     this.evaluate(now);
   }
@@ -227,34 +265,47 @@ export class HoverIntent {
    * once its last step ages out of the window.
    */
   private speed(now: number): number {
-    const from = now - this.timing.velocityWindowMs;
     let distance = 0;
     let fastestStep = 0;
     for (let index = this.samples.length - 1; index >= 0; index -= 1) {
       const sample = this.samples[index]!;
-      if (sample.t <= from) break;
+      if (this.agedOut(sample, now)) break;
       distance += sample.step;
       fastestStep = Math.max(fastestStep, sample.stepSpeed);
     }
     return Math.max(distance / this.timing.velocityWindowMs, fastestStep);
   }
 
+  /**
+   * One sum for the speed, the trim and the timer. The clock's times carry
+   * rounding noise, and `now - window` can read a sample as fresh at the very
+   * moment `t + window` says it is due: the timer found no moment left, and the
+   * card stayed down under a resting pointer.
+   */
+  private agedOut(sample: Sample, now: number): boolean {
+    return sample.t + this.timing.velocityWindowMs <= now;
+  }
+
+  private answers(now: number): boolean {
+    return this.inside && !this.suspended && !this.needsMove && now >= this.quietUntil;
+  }
+
   private evaluate(now: number): void {
-    const { dwellMs, maxSpeed, liftMaxSpeed, velocityWindowMs } = this.timing;
+    const { dwellMs, maxSpeed, previewSpeed, liftEntrySpeed, liftExitSpeed } = this.timing;
     // Keep only what the speed can still read.
-    const horizon = now - velocityWindowMs;
-    while (this.samples.length > 1 && this.samples[1]!.t <= horizon) this.samples.shift();
+    while (this.samples.length > 1 && this.agedOut(this.samples[1]!, now)) this.samples.shift();
 
     const speed = this.speed(now);
-    const attending = this.inside && !this.suspended && !this.needsMove && now >= this.quietUntil;
+    this.liftMode = nextMode(this.liftMode, speed, liftEntrySpeed, liftExitSpeed);
+    const attending = this.answers(now);
     const slow = attending && this.under !== null && speed <= maxSpeed ? this.under : null;
 
     // С8.6: a card stays raised while the pointer is on it, however fast it
-    // moves there; another card takes the lift only at lifting speed.
+    // moves there; another card takes the lift only in the lift mode.
     const keepsRaised = attending && this.raised !== null && this.under === this.raised;
     const raised = keepsRaised
       ? this.raised
-      : attending && this.under !== null && speed <= liftMaxSpeed ? this.under : null;
+      : attending && this.under !== null && this.liftMode ? this.under : null;
 
     if (slow === null) {
       this.candidate = null;
@@ -290,6 +341,11 @@ export class HoverIntent {
       this.lastEmittedChosen = this.chosen;
       this.onChange({ slow: this.slow, chosen: this.chosen, raised: this.raised });
     }
+    const previewAttending = attending && speed <= previewSpeed;
+    if (previewAttending !== this.previewAttending) {
+      this.previewAttending = previewAttending;
+      this.attendingListener?.();
+    }
     this.schedule(now, speed);
   }
 
@@ -316,8 +372,7 @@ export class HoverIntent {
     // reading changes each time the oldest sample in the window ages out, so
     // a pointer settling on a card lifts it the moment it is slow enough.
     if (speed > 0) {
-      const from = now - velocityWindowMs;
-      const oldest = this.samples.find((sample) => sample.t > from);
+      const oldest = this.samples.find((sample) => !this.agedOut(sample, now));
       if (oldest) moments.push(oldest.t + velocityWindowMs);
     }
     if (this.candidate && this.chosen !== this.candidate.target) {

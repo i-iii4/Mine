@@ -13,6 +13,7 @@ import {
 import { SettingsApp } from "./SettingsApp";
 import "@/styles/global.css";
 import { hydrateCommandOverrides, watchCommandOverrides } from "@/lib/shortcutOverrides";
+import { answerSwipeQuestion } from "@/lib/horizontalScroller";
 
 // The settings window applies the stored theme itself — it cannot rely on the
 // main window having done so for this webview.
@@ -21,6 +22,10 @@ applyCardRadius(getStoredCardRadius());
 applyDensity(getStoredDensity());
 applyInterfaceFont(getStoredInterfaceFont());
 applyContentFont(getStoredContentFont());
+
+// The two-finger swipe asks the page what stands under the pointer
+// (SPEC_NARROW_WINDOW.md, У17).
+answerSwipeQuestion();
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {

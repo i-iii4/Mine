@@ -889,14 +889,13 @@ fn index_md_file_inner(
         });
     }
 
-    index::upsert_block_with_resolver(
-        conn,
-        &block,
-        &mut media_resolver,
-        Some(parsed.origin.as_str()),
-        parsed.index_warning.as_deref(),
-    )
-    .with_context(|| format!("indexing {}", path.display()))?;
+    // The row and the source stamp together, as a pass over the space
+    // projects the note: with the stamp left behind, the preview pass queued
+    // for the card saw no change and published the old tiles at their new
+    // places, until the next pass over the space (SPEC_THUMBNAILS.md, «Свои
+    // записи Mine»; решение пользователя 09.11.2026).
+    let block = reconcile::project_source_path(conn, vault, path)
+        .with_context(|| format!("indexing {}", path.display()))?;
     let audio_invalidated = article_audio::invalidate_for_block(vault, &block)?;
 
     Ok(IndexMdOutcome {
@@ -2578,6 +2577,53 @@ mod tests {
             .expect("the card has a preview to reconcile");
         let remade = std::fs::read(&preview).expect("the preview is made again");
         assert_ne!(remade, b"preview of the first media");
+    }
+
+    /// SPEC_THUMBNAILS.md, «Свои записи Mine» (решение пользователя
+    /// 09.11.2026): an edit made outside Mine that drops a picture reaches
+    /// the feed at once too. The watcher indexes the note with its source
+    /// stamp, so the preview pass it queues sees the change and draws the
+    /// card from the pictures it still shows. Before, the row moved without
+    /// the stamp, the pass saw nothing new and published the old tiles at
+    /// their new places.
+    #[test]
+    fn an_outside_edit_that_drops_a_picture_redraws_the_card_at_once() {
+        use crate::storage::derived_preview::fixtures::{
+            drawn_tiles, picture, preview_state, Colour,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let derived = tempfile::tempdir().unwrap();
+        let vault =
+            VaultLayout::with_derived_root(root.path().to_path_buf(), derived.path().to_path_buf());
+        let conn = crate::storage::db::open_or_create(&vault.index_db_path()).unwrap();
+        picture(&vault.root().join("red.jpg"), Colour::Red);
+        picture(&vault.root().join("green.jpg"), Colour::Green);
+        picture(&vault.root().join("blue.jpg"), Colour::Blue);
+        let path = vault.block_path("Gallery");
+        let front = "---\nsaved_at: 2026-04-22T00:00:00Z\n---\nText.\n\n";
+        std::fs::write(&path, format!("{front}![[red.jpg]]\n\n![[green.jpg]]\n\n![[blue.jpg]]\n")).unwrap();
+        crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        crate::storage::derived_preview::reconcile_all_previews(&conn, &vault).unwrap();
+
+        std::fs::write(&path, format!("{front}![[green.jpg]]\n\n![[blue.jpg]]\n")).unwrap();
+        handle_event(&conn, &vault, &VaultEvent::BlockChanged(path), None).unwrap();
+        // The pass the watcher queues for the card (`schedule_preview_reconcile`).
+        crate::storage::derived_preview::reconcile_preview_for_slug(&conn, &vault, "Gallery")
+            .unwrap();
+
+        assert_eq!(
+            drawn_tiles(&conn, &vault, "Gallery"),
+            [
+                ("green.jpg".to_string(), Colour::Green),
+                ("blue.jpg".to_string(), Colour::Blue),
+            ],
+        );
+        assert_eq!(preview_state(&conn, "Gallery"), "ready");
+        let pass = crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
+        assert!(
+            pass.upserted.is_empty() && pass.dependency_changed.is_empty(),
+            "the index and the source stamp already hold the edited note: {pass:?}",
+        );
     }
 
     /// Г2.3: media deleted from `Media/`: the preview of the card that showed

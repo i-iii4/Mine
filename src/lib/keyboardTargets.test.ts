@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { isDetailShortcutBlockedTarget, isOverlayKeyboardTarget } from "./keyboardTargets";
+import { isDetailShortcutBlockedTarget, isKeyboardInText, isOverlayKeyboardTarget } from "./keyboardTargets";
 
 function mount(html: string): HTMLElement {
   document.body.innerHTML = html;
@@ -33,5 +33,29 @@ describe("isDetailShortcutBlockedTarget: which layers own the page's shortcuts",
 
   it("keeps the sidebar over the feed an overlay for the feed's own keys", () => {
     expect(isOverlayKeyboardTarget(mount(`<div role="dialog" data-sidebar-overlay-panel><a data-target></a></div>`))).toBe(true);
+  });
+});
+
+describe("isKeyboardInText: where the caret stands (SPEC_KEYBOARD.md, М9)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it.each([
+    ["an input", `<input data-target />`],
+    ["a textarea", `<textarea data-target></textarea>`],
+    ["a select", `<select data-target></select>`],
+    ["an editable block, as CodeMirror's text", `<div contenteditable="true" tabindex="-1" data-target></div>`],
+  ])("says yes in %s", (_name, html) => {
+    mount(html).focus();
+    expect(isKeyboardInText()).toBe(true);
+  });
+
+  it("says no on the card's root, on a button and with nothing focused", () => {
+    expect(isKeyboardInText()).toBe(false);
+    mount(`<div tabindex="-1" data-detail-scroll data-target></div>`).focus();
+    expect(isKeyboardInText()).toBe(false);
+    mount(`<button data-target></button>`).focus();
+    expect(isKeyboardInText()).toBe(false);
   });
 });

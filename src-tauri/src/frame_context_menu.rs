@@ -110,7 +110,7 @@ impl PageViews {
 
 /// View coordinates in points to CSS pixels from the top left of the page.
 #[cfg(any(target_os = "macos", test))]
-fn css_point(x: f64, y: f64, view_height: f64, flipped: bool, page_zoom: f64) -> MenuPoint {
+pub(crate) fn css_point(x: f64, y: f64, view_height: f64, flipped: bool, page_zoom: f64) -> MenuPoint {
     let top = if flipped { y } else { view_height - y };
     let zoom = if page_zoom > 0.0 { page_zoom } else { 1.0 };
     MenuPoint { x: x / zoom, y: top / zoom }

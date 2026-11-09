@@ -29,7 +29,7 @@ describe("ShortcutsSection", () => {
   it("groups editable commands in compact rows with the shared shortcut button style", () => {
     render(<ShortcutsSection />);
     expect(document.querySelector("[data-shortcuts-section]")).toHaveClass("max-w-[720px]");
-    for (const context of ["global", "feed", "element", "selection"]) {
+    for (const context of ["global", "feed", "element", "selection", "sidebar"]) {
       expect(document.querySelector(`[data-shortcuts-group="${context}"]`)).toBeInTheDocument();
     }
     expect(row("find-elements")).toHaveClass("min-h-10", "flex");

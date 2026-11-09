@@ -1,5 +1,6 @@
-import type { SaveOutcome, SavePhase, VaultWriteLayoutDto } from "../../src/types/generated";
+import type { PageFilesRequest, SaveOutcome, SavePhase, VaultWriteLayoutDto } from "../../src/types/generated";
 import type { CollectionCount } from "./mineCore.types";
+import type { BrowserFileEntry, PageFileWork } from "./pageFiles.types";
 import type { SaveProtocolRejection } from "./saveProtocol.types";
 
 /** What the browser executor can do; the clipper reads it from the status. */
@@ -46,9 +47,14 @@ export interface StandaloneSaveRequest {
   width?: number | null;
   height?: number | null;
   selection?: boolean;
-  /** The picture the save downloads: a screenshot, else an image address. */
+  /** The bytes of a screenshot: they are at hand, and take no route. */
   screenshot_data_url?: string;
+  /** The file of the card, a preview or a picture: its address names an entry of `browser_files`, or a `data:` address holds it. */
   image_url?: string;
+  /** The posters of the videos of the body (SPEC_CLIPPER.md, Б7). */
+  video_posters?: Array<{ video_url: string; poster_url: string }> | null;
+  /** What the browser did about each file of the clip (Б9). */
+  browser_files?: BrowserFileEntry[];
   save_protocol?: unknown;
   required_capabilities?: unknown;
   [key: string]: unknown;
@@ -66,6 +72,12 @@ export type StandaloneCommitted = {
   block_type: string;
   /** The reference cards name a new collection by. */
   tag?: string;
+  /** The media that stayed links, each with its place in the text (Н10). */
+  remote_media: StandaloneRemoteMedia[];
+  /** Why each address stayed a link, with the code of the answer (Б13). */
+  media_reasons?: StandaloneMediaReason[];
+  /** Why the card has no preview (Б3). */
+  warning?: string;
 };
 
 /** A save, lookup or listing that did not commit, and whether it may have. */
@@ -90,7 +102,51 @@ export type StandaloneSaveReply = StandaloneCommitted | StandaloneFailure | Save
 
 export type StandaloneChannelsReply = { ok: true; channels: CollectionCount[] } | StandaloneFailure;
 
-/** The medium of a prepared save: its bytes and the path it is published at. */
+/** A place of the text that stays a link to someone else's server (SPEC_DEEP_AUDIT.md, Н10). */
+export interface StandaloneRemoteMedia {
+  url: string;
+  kind: "image" | "video" | "file" | "poster";
+  reason: "download_failed" | "name";
+}
+
+/** Why a file was not obtained, in the clipper's words (Б3). */
+export interface StandaloneMediaReason {
+  url: string;
+  reason: string;
+}
+
+/** The bytes of one file of a clip, kept until its operation ends (Б13). */
+export interface StandalonePageFile {
+  id: string;
+  url: string;
+  blob: Blob;
+  size: number;
+  /** SHA-256 of the SHA-256 of each 4 MiB part, lowercase hex. */
+  hash: string;
+  /** Milliseconds since the Unix epoch: a file nothing names goes after a day. */
+  stored_at: number;
+}
+
+/** One file a prepared save publishes. The bytes wait in `page_files`. */
+export interface StandaloneFileRecord {
+  path: string;
+  hash: string;
+  size: number;
+  upload_id?: string;
+  /** The bytes of a medium of an entry written before this list; its `hash` is the plain SHA-256. */
+  blob?: Blob;
+}
+
+/** The parts of a collection for a browser folder its worker provides. */
+export interface StandaloneCollection extends Pick<PageFileWork, "signal" | "limiter" | "pageRead" | "request"> {
+  /** Called with the id of each file as soon as it is kept. */
+  stored(id: string): void;
+}
+
+/**
+ * The medium of a save prepared before the list of files: its bytes and the path
+ * it is published at. Only entries already in a journal hold one.
+ */
 export interface StandaloneMediaRecord {
   blob: Blob;
   extension: string;
@@ -115,7 +171,15 @@ export interface StandaloneOperationRecord {
   markdown: string;
   /** SHA-256 of `markdown`, lowercase hex. */
   hash: string;
-  media: StandaloneMediaRecord | null;
+  /** What the save publishes before the note, without its bytes (Б13). */
+  files?: StandaloneFileRecord[];
+  /** Every kept file the operation names, used or not: they go when it ends. */
+  uploads?: string[];
+  remote_media?: StandaloneRemoteMedia[];
+  media_reasons?: StandaloneMediaReason[];
+  warning?: string;
+  /** An entry written before `files`. */
+  media?: StandaloneMediaRecord | null;
 }
 
 /** The receipt of a committed save. */
@@ -128,6 +192,9 @@ export interface StandaloneReceipt {
   block_type: string;
   kind: "capture" | "collection";
   tag?: string;
+  remote_media?: StandaloneRemoteMedia[];
+  media_reasons?: StandaloneMediaReason[];
+  warning?: string;
 }
 
 /** A save refused before any effect; `response` is its final reply. */
@@ -146,6 +213,9 @@ export type StandaloneJournalEntry = StandaloneOperationRecord | StandaloneRecei
 export interface StandaloneStore {
   get(store: string, key: string): Promise<unknown>;
   put(store: string, key: string, value: unknown): Promise<unknown>;
+  delete(store: string, key: string): Promise<unknown>;
+  /** Every value of a store. */
+  all(store: string): Promise<unknown[]>;
 }
 
 /** Seams of the browser executor for tests; the worker passes none. */
@@ -156,7 +226,7 @@ export interface StandaloneOptions {
   binding_id?: string;
   /** The journal instead of IndexedDB. */
   store?: StandaloneStore;
-  /** How the picture of a save is downloaded instead of `fetch`. */
+  /** How the bytes of a screenshot or a `data:` address are read instead of `fetch`. */
   fetch?: (url: string) => Promise<Response>;
   /** Runs once the prepared save is in the journal, before any effect. */
   afterPrepared?: (record: StandaloneOperationRecord) => unknown;
@@ -198,5 +268,11 @@ declare global {
     /** Create the page of collection `tag` in the folder of `bindingId`, else the chosen one. */
     createStandaloneChannel(tag: string, bindingId: string | null, options?: StandaloneOptions): Promise<StandaloneSaveReply>;
     listStandaloneChannels(options?: StandaloneOptions): Promise<StandaloneChannelsReply>;
+    /** The files of a clip by the one route, their bytes kept for its Save (SPEC_CLIPPER.md, Б13). */
+    collectPageFiles(request: PageFilesRequest, work: StandaloneCollection, options?: StandaloneOptions): Promise<BrowserFileEntry[]>;
+    /** Remove the kept files of a collection whose clipper left before its Save. */
+    discardPageFiles(ids: string[], options?: StandaloneOptions): Promise<void>;
+    /** Remove what nothing names any more, older than a day; the worker runs it as it starts. */
+    sweepPageFiles(namedByClipper: () => Promise<string[]>, options?: StandaloneOptions): Promise<void>;
   };
 }

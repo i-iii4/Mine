@@ -161,5 +161,58 @@ describe("useSidebarOverlay: the sidebar over the feed (SPEC_NARROW_WINDOW.md, Ð
     expect(sidebarOverlayReport(false, true)).toBe("beside");
     expect(sidebarOverlayReport(true, false)).toBe("closed");
     expect(sidebarOverlayReport(true, true)).toBe("open");
+    expect(sidebarOverlayReport(false, false, true)).toBe("open");
+    expect(sidebarOverlayReport(true, false, true)).toBe("open");
+  });
+
+  describe("the sidebar shown for the keyboard (SPEC_KEYBOARD.md, Ðœ8)", () => {
+    const options = (): UseSidebarOverlayOptions => ({
+      tab: true,
+      onWidenWhileOpen: vi.fn(),
+      onBesideIntent: vi.fn(),
+    });
+    const visit = (base: UseSidebarOverlayOptions) => renderHook(
+      ({ openedForKeyboard }: { openedForKeyboard: boolean }) => useSidebarOverlay({ ...base, openedForKeyboard }),
+      { initialProps: { openedForKeyboard: false } },
+    );
+
+    it("reports open beside the feed for the visit, and what the window has after it", () => {
+      window.innerWidth = 1200;
+      const { rerender } = visit(options());
+      expect(commands.reportSidebarOverlay).toHaveBeenLastCalledWith("beside");
+      rerender({ openedForKeyboard: true });
+      expect(commands.reportSidebarOverlay).toHaveBeenLastCalledWith("open");
+      rerender({ openedForKeyboard: false });
+      expect(commands.reportSidebarOverlay).toHaveBeenLastCalledWith("beside");
+    });
+
+    it("hands the sidebar beside the feed what the backend forwards, as it would not store it", () => {
+      window.innerWidth = 1200;
+      const base = options();
+      const { rerender } = visit(base);
+      rerender({ openedForKeyboard: true });
+      command({ kind: "toggle" });
+      expect(base.onBesideIntent).toHaveBeenCalledWith({ kind: "toggle" });
+    });
+
+    it("says what the window has while its tab is hidden, and open again as it returns", () => {
+      window.innerWidth = 1200;
+      const { rerender } = visit(options());
+      rerender({ openedForKeyboard: true });
+      act(() => setTabVisible(false));
+      expect(commands.reportSidebarOverlay).toHaveBeenLastCalledWith("beside");
+      act(() => setTabVisible(true));
+      expect(commands.reportSidebarOverlay).toHaveBeenLastCalledWith("open");
+    });
+
+    it("reports closed over the feed after the visit, as the window has it", () => {
+      const { rerender, result } = visit(options());
+      act(() => result.current.openOverlay());
+      rerender({ openedForKeyboard: true });
+      expect(commands.reportSidebarOverlay).toHaveBeenLastCalledWith("open");
+      act(() => result.current.close());
+      rerender({ openedForKeyboard: false });
+      expect(commands.reportSidebarOverlay).toHaveBeenLastCalledWith("closed");
+    });
   });
 });

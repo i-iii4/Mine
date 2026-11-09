@@ -18,6 +18,7 @@ describe("FadeScrollRow: one row that scrolls sideways (SPEC_NARROW_WINDOW.md, Ð
     const row = container.querySelector<HTMLElement>("[data-row]");
     if (!row) throw new Error("no row");
     expect(row).toHaveClass("overflow-x-auto");
+    expect(row).toHaveClass("[scrollbar-width:none]", "[&::-webkit-scrollbar]:hidden");
     expect(row.dataset.fadeLeft).toBeUndefined();
     expect(row.dataset.fadeRight).toBeUndefined();
 

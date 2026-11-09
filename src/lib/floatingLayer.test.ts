@@ -7,6 +7,12 @@ const css = readFileSync(path.join(process.cwd(), "src/styles/global.css"), "utf
 
 // DESIGN_SYSTEM.md, «Всплывающие элементы», «Отступ от кнопки» (11.10.2026).
 describe("a menu's place off its button's plate", () => {
+  it("hangs a menu off a plate beside its trigger: flush with the plate's far edge, the same gap below (С8.8)", () => {
+    const trigger = { top: 8, right: 100, bottom: 32, left: 76 };
+    const badge = { top: 8, right: 140, bottom: 32, left: 104 };
+    expect(menuPlateOffsets(trigger, badge, "bottom", "end")).toEqual({ sideOffset: MENU_PLATE_GAP_PX, alignOffset: -40 });
+  });
+
   it("keeps the surface inset, not a number of its own", () => {
     expect(css).toMatch(/--spacing-surface: var\(--spacing-s1\);/);
     expect(css).toMatch(new RegExp(`--spacing-s1: ${MENU_PLATE_GAP_PX}px;`));

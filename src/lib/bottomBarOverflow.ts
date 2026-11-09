@@ -19,9 +19,10 @@
 /// universally known key in any interface, so its entry is a courtesy, not a
 /// lifeline — it leaves before anything the user could only learn here.
 ///
-/// Hide order: Navigate → Switch collection → Close → Clear selection →
-/// Settings → Hide Sidebar → New Collection → Find elements → Commands →
-/// Command → Focus.
+/// Hide order: Navigate → Navigate in the sidebar → Switch collection → Close →
+/// Clear selection → Unfocus → Settings → Hide Sidebar → New Collection →
+/// Find elements → Commands → Command → the sidebar's Command → the sidebar's → →
+/// Focus → the sidebar's ↵.
 ///
 /// Only the order lives here. Whether anything must go at all is measured on
 /// the bar itself (`scrollWidth > clientWidth`) rather than computed from
@@ -31,17 +32,22 @@
 export const BAR_HIDE_PRIORITIES: Record<string, number> = {
   // Reference entries — nothing to press, so nothing is lost.
   navigate: 1,
-  "switch-collection": 2,
+  "sidebar-navigate": 2,
+  "switch-collection": 3,
   // Escape — known everywhere, needs no reminder here.
-  "close-element": 3,
-  "clear-selection": 4,
+  "close-element": 4,
+  "clear-selection": 5,
+  "sidebar-unfocus": 6,
   // Learned commands — always available, and also in the native menu.
-  settings: 5,
-  "toggle-sidebar": 6,
-  "new-collection": 7,
-  "find-elements": 8,
-  "commands-overlay": 9,
+  settings: 7,
+  "toggle-sidebar": 8,
+  "new-collection": 9,
+  "find-elements": 10,
+  "commands-overlay": 11,
   // Situational commands — the bar is the only place they are ever shown.
-  "element-menu": 10,
-  "open-focused": 11,
+  "element-menu": 12,
+  "sidebar-menu": 13,
+  "sidebar-go": 14,
+  "open-focused": 15,
+  "sidebar-open": 16,
 };

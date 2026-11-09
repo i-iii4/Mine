@@ -4,6 +4,15 @@ import "@testing-library/jest-dom/vitest";
 // result stream. Warnings and errors remain untouched.
 vi.spyOn(console, "info").mockImplementation(() => undefined);
 
+// A browser stamps a frame on the clock of `performance.now()`. jsdom counts from the
+// window's creation, while `performance` here is Node's, counted from the process's start,
+// so code comparing the two saw a gap as long as the process took to start: a second and
+// more on a busy machine, longer than a test waits (the card's window, CardPeek.tsx).
+const jsdomRequestAnimationFrame = window.requestAnimationFrame;
+window.requestAnimationFrame = (callback) => (
+  jsdomRequestAnimationFrame(() => callback(performance.now()))
+);
+
 // Mock ResizeObserver for components that measure their layout in tests.
 globalThis.ResizeObserver = class ResizeObserver {
   observe() {}
@@ -130,3 +139,17 @@ vi.mock("@tauri-apps/api/app", () => ({
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn().mockResolvedValue(null),
 }));
+
+// The page hears `thumb:updated` for the versions of card pictures as the
+// app does (main.tsx), and every case starts with none
+// (SPEC_THUMBNAILS.md, «Адрес картинки»). Loaded once the test file has
+// declared its own mocks: a file that mocks the page's webview hears its
+// events through its mock.
+beforeAll(async () => {
+  const { startCardPictureVersions } = await import("@/lib/pictureVersions");
+  void startCardPictureVersions();
+});
+afterEach(async () => {
+  const { forgetCardPictureVersions } = await import("@/lib/pictureVersions");
+  forgetCardPictureVersions();
+});

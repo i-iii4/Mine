@@ -98,7 +98,7 @@ export function deriveLightLadder(canvas: number): Record<string, string> {
     "--ring": ring,
     "--sidebar-ring": ring,
     "--border-accent": grey(greyForContrast(canvas, K6)),
-    "--graphic-card-focus-overlay": `color-mix(in srgb, oklch(${LIGHT_FOREGROUND} 0 0) ${share(alphaForDelta(LIGHT_FOREGROUND, canvas, 3 * QUIET))}, transparent)`,
+    "--graphic-card-focus-alpha": share(alphaForDelta(LIGHT_FOREGROUND, canvas, 2 * QUIET)),
     "--destructive-fill-alpha": share(destructiveRest),
     "--destructive-fill-hover-alpha": share(destructiveHover),
     // Down, never up: the text must keep K5 once written with four digits.

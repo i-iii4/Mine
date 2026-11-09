@@ -13,3 +13,9 @@ codegen-units = 1
 # is responding to asset requests on the main thread (asset_protocol.rs),
 # which serializes the respond block with WebKit's task cancellation.
 panic = "unwind"
+
+# A stripped proc macro library can fail to load: dyld refuses it with
+# "mis-aligned LINKEDIT string pool", and rustc reports E0463 for tauri_macros
+# (06.11.2026). Stripping matters only for what ships, not for build-time code.
+[profile.release.build-override]
+strip = false

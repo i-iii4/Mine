@@ -374,6 +374,73 @@ pub fn reconcile_preview_for_slug(
     )
 }
 
+/// What [`refresh_written_card`] did to the pictures of a card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WrittenCardPictures {
+    /// A picture of the card or the state of its preview changed: whatever
+    /// draws the card reads it again (`thumb:updated`).
+    pub changed: bool,
+    /// The card's thumbnail is its text placeholder.
+    pub is_text: bool,
+}
+
+/// Make every picture of the card `slug` from the card as the index now
+/// holds it, right after Mine wrote the card itself (SPEC_THUMBNAILS.md,
+/// «Свои записи Mine»).
+///
+/// The watcher never hears of Mine's own writes (SPEC_EDITING.md, Л3.6, and
+/// the paths a command suppresses), and the command projects the written
+/// note with its source stamp (`reconcile::project_source_path`), so no
+/// later pass finds anything to do: the pictures are made here or not at
+/// all. The plan's artifacts, the feed's tiles and the primary preview with
+/// its levels, are made anew when the stamp moved, as a pass over the space
+/// would make them; the card's thumbnail follows, the text placeholder of a
+/// card without pictures included; a card left with nothing to draw loses
+/// the thumbnail it had.
+///
+/// `None` when the card is not in the index (a collection page, a card gone).
+///
+/// # Errors
+///
+/// When the index cannot be read or written, or holds a row that does not
+/// read back.
+pub fn refresh_written_card(
+    conn: &Connection,
+    vault: &VaultLayout,
+    slug: &str,
+) -> Result<Option<WrittenCardPictures>> {
+    let Some(row) = index::get_block(conn, slug)? else {
+        return Ok(None);
+    };
+    let block = row
+        .to_domain_block()
+        .with_context(|| format!("the index row of '{slug}' does not read back"))?;
+    let plan = reconcile_preview_for_slug(conn, vault, slug)?;
+    let mut changed = plan
+        .as_ref()
+        .is_some_and(|outcome| outcome.regenerated || outcome.state_changed);
+    let thumb_path = vault.thumb_path(slug);
+    if !thumbnails::block_has_renderable_source(&block) {
+        if thumb_path.exists() {
+            std::fs::remove_file(&thumb_path).with_context(|| {
+                format!("the thumbnail of '{slug}', which has nothing to draw, stays")
+            })?;
+            thumbnails::remove_thumb_levels(vault, slug);
+            changed = true;
+        }
+    } else if !thumbnails::is_thumb_fresh(&thumb_path, &vault.block_path(slug), &block, vault)
+        && thumbnails::generate_for_block(&block, vault) != thumbnails::ThumbSource::None
+    {
+        changed = true;
+    }
+    index::sync_thumb_metadata(conn, slug, &thumb_path, Some(vault.root()))?;
+    Ok(Some(WrittenCardPictures {
+        changed,
+        is_text: thumbnails::preview_origin(&thumb_path)
+            == Some(thumbnails::PreviewOrigin::TextPlaceholder),
+    }))
+}
+
 fn reconcile_slug(
     conn: &Connection,
     resolver: &mut media_refs::MediaResolver<'_>,
@@ -1272,6 +1339,104 @@ fn merge_report(target: &mut PreviewReconcileReport, source: PreviewReconcileRep
     target.changed_slugs.extend(source.changed_slugs);
     target.failed.extend(source.failed);
     target.cancelled |= source.cancelled;
+}
+
+/// Pictures of one colour and what the feed draws of a card, for the tests
+/// of the commands that write cards (SPEC_THUMBNAILS.md, «Свои записи Mine»).
+#[cfg(test)]
+pub(crate) mod fixtures {
+    use std::path::Path;
+
+    use rusqlite::Connection;
+
+    use crate::domain::vault::VaultLayout;
+    use crate::storage::block_queries;
+    use crate::storage::index::FeedPreviewManifest;
+
+    /// The colours the fixtures paint, told apart by their strongest channel.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Colour {
+        Red,
+        Green,
+        Blue,
+    }
+
+    impl Colour {
+        fn rgb(self) -> [u8; 3] {
+            match self {
+                Self::Red => [220, 20, 20],
+                Self::Green => [20, 200, 20],
+                Self::Blue => [20, 20, 220],
+            }
+        }
+    }
+
+    /// Write a JPEG of one colour at `path`.
+    pub(crate) fn picture(path: &Path, colour: Colour) {
+        std::fs::create_dir_all(path.parent().expect("a picture lies in a folder"))
+            .expect("the folder of a picture is made");
+        image::RgbImage::from_pixel(96, 64, image::Rgb(colour.rgb()))
+            .save(path)
+            .expect("a picture of one colour is written");
+    }
+
+    /// The colour in the middle of the picture at `path`.
+    pub(crate) fn colour_of(path: &Path) -> Colour {
+        let picture = image::open(path)
+            .unwrap_or_else(|error| panic!("{} does not open: {error}", path.display()))
+            .to_rgb8();
+        let [red, green, blue] = picture
+            .get_pixel(picture.width() / 2, picture.height() / 2)
+            .0;
+        if red > green && red > blue {
+            Colour::Red
+        } else if green > blue {
+            Colour::Green
+        } else {
+            Colour::Blue
+        }
+    }
+
+    /// The tiles the feed draws for the card `slug`, as the feed reads its
+    /// row: each tile's source and the colour of the picture it paints.
+    /// Empty when the feed draws no plan for the card.
+    pub(crate) fn drawn_tiles(
+        conn: &Connection,
+        vault: &VaultLayout,
+        slug: &str,
+    ) -> Vec<(String, Colour)> {
+        let rows = block_queries::grid_rows_by_slug(conn, &[slug.to_string()])
+            .expect("the feed reads the card's row");
+        let Some(raw) = rows.first().and_then(|row| row.preview_manifest.as_deref()) else {
+            return Vec::new();
+        };
+        let manifest: FeedPreviewManifest =
+            serde_json::from_str(raw).expect("the drawn manifest reads back");
+        manifest
+            .tiles
+            .iter()
+            .map(|tile| {
+                let preview = tile
+                    .preview_path
+                    .as_deref()
+                    .expect("every drawn tile names its derived picture");
+                (
+                    tile.source_path.clone(),
+                    colour_of(&vault.thumbs_dir().join(preview)),
+                )
+            })
+            .collect()
+    }
+
+    /// The preview state of the card `slug` in the index.
+    pub(crate) fn preview_state(conn: &Connection, slug: &str) -> String {
+        conn.query_row(
+            "SELECT preview_state FROM blocks WHERE slug = ?1",
+            [slug],
+            |row| row.get(0),
+        )
+        .expect("the card has a row")
+    }
 }
 
 #[cfg(test)]

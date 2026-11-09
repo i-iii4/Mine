@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyPendingTagOrder, reorderedPositions } from "./collectionOrder";
+import { applyPendingTagOrder, keyboardMoveTarget, reorderedPositions } from "./collectionOrder";
 import type { TagCount } from "@/types";
 
 function tags(...names: string[]): TagCount[] {
@@ -57,5 +57,32 @@ describe("reorderedPositions", () => {
       { tag: "b", position: 0 },
       { tag: "a", position: 1 },
     ]);
+  });
+});
+
+describe("keyboardMoveTarget (SPEC_KEYBOARD.md, М11)", () => {
+  const order = tags("a", "b", "c");
+
+  it("takes the place of the neighbour, either way", () => {
+    expect(keyboardMoveTarget("tag:b", -1, order, true)).toBe("a");
+    expect(keyboardMoveTarget("tag:b", 1, order, true)).toBe("c");
+  });
+
+  it("stops at both ends of the list, with no wrap", () => {
+    expect(keyboardMoveTarget("tag:a", -1, order, true)).toBeNull();
+    expect(keyboardMoveTarget("tag:c", 1, order, true)).toBeNull();
+  });
+
+  it("does not move Everything's row, which is no collection", () => {
+    expect(keyboardMoveTarget("all", 1, order, true)).toBeNull();
+    expect(keyboardMoveTarget("all", -1, order, true)).toBeNull();
+  });
+
+  it("does nothing where the order is not the manual one: under a query, or during a drag", () => {
+    expect(keyboardMoveTarget("tag:b", 1, order, false)).toBeNull();
+  });
+
+  it("does nothing for a row the list does not hold", () => {
+    expect(keyboardMoveTarget("tag:gone", 1, order, true)).toBeNull();
   });
 });

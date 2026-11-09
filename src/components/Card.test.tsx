@@ -1016,6 +1016,40 @@ describe("Card", () => {
     expect(images[3]?.getAttribute("src")).toContain("/test-block.preview-4.jpg");
   });
 
+  // SPEC_THUMBNAILS.md, «Адрес картинки»: WebKit loads an image address once
+  // per page and gives every later image with that address the bytes it
+  // loaded first, whatever the response says. The tiles of a card are
+  // rewritten in place, so after `thumb:updated` every tile of the card
+  // takes a new address, also when the card was not in the loaded feed when
+  // the event came (09.11.2026: two of four tiles kept the old pictures).
+  it("gives every tile of a card a new address once its pictures were rebuilt", () => {
+    const b = block({
+      block_type: "article",
+      url: "https://x.com/a/status/1",
+      author: "@artist",
+      body: "![](img0.jpg)\n![](img1.jpg)\n![](img2.jpg)\n![](img3.jpg)",
+      media_urls: "[\"img0.jpg\",\"img1.jpg\",\"img2.jpg\",\"img3.jpg\"]",
+    });
+    const tileSources = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll("img")).map((img) => img.getAttribute("src") ?? "");
+    const { container, unmount } = render(<Card block={b} vaultPath={VAULT} thumbsRootPath="/thumbs" onClick={vi.fn()} />);
+    const before = tileSources(container);
+    expect(before).toHaveLength(4);
+    unmount();
+
+    fireEvent(window, new CustomEvent("thumb:updated", {
+      detail: { payload: { slug: "test-block", is_text: false } },
+    }));
+
+    const again = render(<Card block={b} vaultPath={VAULT} thumbsRootPath="/thumbs" onClick={vi.fn()} />);
+    const after = tileSources(again.container);
+    expect(after).toHaveLength(4);
+    after.forEach((source, index) => {
+      expect(source).toContain(`/test-block.preview-${index + 1}.jpg`);
+      expect(source).not.toBe(before[index]);
+    });
+  });
+
   it("does not add a phantom top gap before social media when top content is absent", () => {
     const b = block({
       block_type: "article",
@@ -2660,6 +2694,105 @@ describe("Card lift on hover (SPEC_CARD_STATES.md, С8)", () => {
   });
 });
 
+describe("a card with no picture", () => {
+  it("has the frame clip and no picture layer", () => {
+    const { container } = render(
+      <Card block={block({ card_kind: "article", block_type: "article", title: "Note", body: "Words", preview_text: "Words", media_file: null, first_image: null })} vaultPath={VAULT} onClick={vi.fn()} />,
+    );
+    expect(container.querySelector("[data-feed-card-frame] > [data-card-frame-clip]")).not.toBeNull();
+    expect(container.querySelector("[data-card-graphic-surface]")).toBeNull();
+  });
+});
+
+describe("the card lift's motion in global.css (SPEC_CARD_STATES.md, С8.4; SPEC_FEED_DISPLAY.md, Д29)", () => {
+  const css = readFileSync("src/styles/global.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const rules = css.split("}");
+  /** The body of the rule whose selector list names exactly `selector`. */
+  const bodyOf = (selector: string) => {
+    const rule = rules.find((candidate) => {
+      const opening = candidate.indexOf("{");
+      return opening !== -1 && candidate.slice(0, opening).split(/,\s*\n/).map((part) => part.trim()).includes(selector);
+    });
+    return rule ? rule.slice(rule.indexOf("{") + 1) : "";
+  };
+  const TOP_BUTTONS = ":is([data-card-hover-more-action], [data-card-hover-overlay])";
+  const TRAVELLING = ["[data-card-lift]", '[data-card-media-outline="on-lift"]', "[data-card-lift-fade]", '[data-card-lift="tray"]', '[data-card-lift="caption"]', TOP_BUTTONS];
+  const hovered = (part: string) => `[data-card-lift-hover]:hover ${part}`;
+  const pinned = (part: string) => `[data-card-lift-pinned] ${part}`;
+  const allStates = TRAVELLING.flatMap((part) => [part, hovered(part), pinned(part)]);
+  // The outline's colour fades with the frame's line, not with the lift (С8).
+  const withoutFrameFade = (body: string) => body.replace(/border-color var\(--card-frame-fade[^;]*;/g, "");
+
+  it("holds the two lift curves in one place", () => {
+    const curves = rules.find((rule) => rule.includes("--card-lift-curve-up:"))!;
+    expect(curves).toContain("--card-lift-curve-up: cubic-bezier(0.45, 0, 0.2, 1)");
+    expect(curves).toContain("--card-lift-curve-down: cubic-bezier(0.61, 0, 0.39, 1)");
+    expect(css.split("cubic-bezier(0.45, 0, 0.2, 1)")).toHaveLength(2);
+    expect(css.split("cubic-bezier(0.61, 0, 0.39, 1)")).toHaveLength(2);
+  });
+
+  it("runs moves and fades on one clock per direction, with the lift's times", () => {
+    const clock = rules.find((rule) => rule.includes("--lift-up:"))!;
+    expect(clock).toContain("--lift-up: 200ms var(--card-lift-curve-up)");
+    expect(clock).toContain("--lift-down: 150ms var(--card-lift-curve-down)");
+  });
+
+  it("carries no flag on the root and no second clock", () => {
+    expect(css).not.toMatch(/data-(slow|smooth)-card-lift|data-instant-card-tint|data-feed-grid-item-tinted|--card-tint-fade-out|--lift-fade/);
+    expect(css).not.toContain("440ms");
+  });
+
+  it("names no time or curve of its own in the rules: everything reads the clock", () => {
+    for (const selector of allStates) {
+      const body = bodyOf(selector);
+      expect(body, selector).toContain("transition");
+      expect(withoutFrameFade(body), selector).not.toMatch(/\d+ms|cubic-bezier/);
+    }
+  });
+
+  it("gives everything that travels with the lift one timing, so the row stays under the text in every frame", () => {
+    for (const part of TRAVELLING) {
+      expect(bodyOf(part), part).toContain("var(--lift-down)");
+      expect(bodyOf(part), part).not.toContain("--lift-up");
+      for (const lifted of [hovered(part), pinned(part)]) {
+        expect(bodyOf(lifted), lifted).toContain("var(--lift-up)");
+        expect(bodyOf(lifted), lifted).not.toContain("--lift-down");
+      }
+    }
+  });
+
+  it("fades the row, the caption and the top buttons, the buttons with no transition of their own", () => {
+    for (const part of ['[data-card-lift="tray"]', '[data-card-lift="caption"]', TOP_BUTTONS]) {
+      expect(bodyOf(part), part).toContain("opacity var(--lift-down)");
+      expect(bodyOf(hovered(part)), part).toContain("opacity var(--lift-up)");
+      expect(bodyOf(pinned(part)), part).toContain("opacity var(--lift-up)");
+    }
+    expect(readFileSync("src/components/CardHoverMenu.tsx", "utf8")).not.toContain("transition-opacity");
+  });
+
+  it("lets the caption appear as it rises", () => {
+    expect(bodyOf('[data-card-lift="caption"]')).toContain("opacity: 0");
+    expect(bodyOf('[data-card-lift="caption"]')).toContain("transform: translateY(100%)");
+    expect(bodyOf(hovered('[data-card-lift="caption"]'))).toContain("opacity: 1");
+    expect(bodyOf(pinned('[data-card-lift="caption"]'))).toContain("transform: translateY(0)");
+  });
+
+  it("transitions by CSS only, on transform and opacity, so a reversal starts from the current position", () => {
+    const bodies = allStates.map(bodyOf);
+    const transitions = bodies.flatMap((body) => body.match(/transition:[^;]*;/g) ?? []).join(" ");
+    expect(transitions).not.toMatch(/\b(top|left|bottom|right|height|width|margin|padding)\b/);
+    expect(bodies.join("")).not.toContain("animation");
+  });
+
+  it("keeps a preview unfolded from its first frame", () => {
+    for (const selector of ["[data-card-preview] [data-card-lift]", "[data-card-preview] [data-card-lift-fade]", "[data-card-preview] [data-card-media-outline]"]) {
+      expect(bodyOf(selector), selector).toContain("transition: none");
+    }
+    // Later than the lift's own rules of the same weight, so it outranks them.
+    expect(css.indexOf("[data-card-preview] [data-card-lift],")).toBeGreaterThan(css.lastIndexOf('[data-card-lift-pinned] [data-card-lift="caption"]'));
+  });
+});
+
 describe("Card previews show the feed card in its final hover state (SPEC_CARD_STATES.md, С10)", () => {
   const menuProps = {
     tags: [],
@@ -2741,7 +2874,7 @@ describe("Card previews show the feed card in its final hover state (SPEC_CARD_S
       // preview's caption under it: compared as the content around them.
       const feed = contentOf(
         frameIn(parse(feedMarkup(value, show))),
-        "[data-card-hover-overlay], [data-card-hover-more-action], [data-card-hover-bottom-actions], [data-card-caption]",
+        "[data-card-hover-overlay], [data-card-top-row], [data-card-hover-bottom-actions], [data-card-caption]",
       );
       const preview = contentOf(
         frameIn(parse(previewMarkup(value))),

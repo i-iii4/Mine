@@ -19,7 +19,9 @@ export function FadeScrollRow({ className, style, children, ...props }: HTMLAttr
     <div
       {...props}
       ref={rowRef}
-      className={cn("flex min-w-0 items-center overflow-x-auto overflow-y-hidden", className)}
+      // The dissolving edges say there is more, as in the tab bar's strip: no
+      // scrollbar, which macOS draws when a mouse is connected.
+      className={cn("flex min-w-0 items-center overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", className)}
       style={{ ...style, ...stripFadeMaskStyle(edges) }}
       onScroll={sync}
       data-fade-left={edges.left ? "true" : undefined}

@@ -15,12 +15,23 @@ use crate::storage::index::IndexedBlock;
 use crate::storage::note_edit::{
     self, NoteBodyState, NoteEditError, NoteSaveError, SaveNoteBodyParams, SavedNoteBody,
 };
-use crate::storage::thumbnails::ThumbSource;
 use crate::storage::db;
 
 /// How long after the last save of a note its preview waits (Л3.3 step 8):
 /// typing writes several times a second, the preview is made once it rests.
 pub const EDIT_PREVIEW_IDLE_MS: u64 = 3000;
+
+/// When the preview of a saved note is made (Л3.3 step 8, Л3.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreviewDue {
+    /// The save changed the card's pictures: the feed and every picture
+    /// made from the card follow it at once (решение пользователя
+    /// 09.11.2026).
+    Now,
+    /// New words over the same pictures: the preview waits for the note to
+    /// rest.
+    WhenRested,
+}
 
 /// The layout of the calling tab's space and the space's id.
 fn tab_vault(state: &AppState, webview: &Webview) -> Option<(String, VaultLayout)> {
@@ -81,7 +92,12 @@ async fn save_note_body_unannounced(
         if let Some(body_hash) = saved.block.body_hash.as_deref() {
             edit_sessions::announce_note(app, &vault_id, slug, body_hash, webview.label());
         }
-        schedule_preview(app, &vault_id, preview_vault, slug);
+        let due = if saved.pictures_changed {
+            PreviewDue::Now
+        } else {
+            PreviewDue::WhenRested
+        };
+        schedule_preview(app, &vault_id, preview_vault, slug, due);
     }
     Ok(saved)
 }
@@ -121,15 +137,21 @@ struct PreviewQueue {
 
 impl PreviewQueue {
     /// The note `slug` of `vault_id` was saved at `now`: its preview is due
-    /// [`EDIT_PREVIEW_IDLE_MS`] after the last save.
-    fn schedule(&mut self, vault_id: &str, vault: VaultLayout, slug: &str, now: Instant) {
-        self.pending.insert(
-            (vault_id.to_string(), slug.to_string()),
-            PendingPreview {
-                vault,
-                due: now + Duration::from_millis(EDIT_PREVIEW_IDLE_MS),
-            },
-        );
+    /// [`EDIT_PREVIEW_IDLE_MS`] after the last save, or at once for a save
+    /// that changed the card's pictures. A preview already due stays due: a
+    /// save of new words right after one of a picture does not put the
+    /// picture off.
+    fn schedule(&mut self, vault_id: &str, vault: VaultLayout, slug: &str, now: Instant, due: PreviewDue) {
+        let key = (vault_id.to_string(), slug.to_string());
+        let due = match due {
+            PreviewDue::Now => now,
+            PreviewDue::WhenRested => now + Duration::from_millis(EDIT_PREVIEW_IDLE_MS),
+        };
+        let due = match self.pending.get(&key) {
+            Some(waiting) if waiting.due <= now => waiting.due,
+            _ => due,
+        };
+        self.pending.insert(key, PendingPreview { vault, due });
     }
 
     /// The session of the note ended: its preview is due now, if it waits.
@@ -172,12 +194,12 @@ impl EditPreviews {
     }
 }
 
-/// Put off the preview of the note `slug` until it rests (Л3.3 step 8).
-fn schedule_preview(app: &AppHandle, vault_id: &str, vault: VaultLayout, slug: &str) {
+/// Make the preview of the note `slug` when `due` says (Л3.3 step 8).
+fn schedule_preview(app: &AppHandle, vault_id: &str, vault: VaultLayout, slug: &str, due: PreviewDue) {
     let previews = &app.state::<AppState>().edit_previews;
     let start_worker = {
         let mut queue = previews.queue();
-        queue.schedule(vault_id, vault, slug, Instant::now());
+        queue.schedule(vault_id, vault, slug, Instant::now(), due);
         !std::mem::replace(&mut queue.worker, true)
     };
     previews.changed.notify_all();
@@ -245,7 +267,7 @@ fn preview_worker(app: &AppHandle) {
     }
 }
 
-/// Make the preview of the note `slug` and tell the space's tabs.
+/// Make the pictures of the note `slug` and tell the space's tabs.
 fn make_preview(app: &AppHandle, vault: &VaultLayout, slug: &str) {
     if !app.state::<AppState>().is_open_root(vault.root()) {
         return;
@@ -253,14 +275,14 @@ fn make_preview(app: &AppHandle, vault: &VaultLayout, slug: &str) {
     let made = db::open_or_create(&vault.index_db_path())
         .and_then(|conn| note_edit::generate_note_preview(&conn, vault, slug));
     match made {
-        Ok(Some(thumb)) if thumb != ThumbSource::None => {
+        Ok(Some(pictures)) if pictures.changed => {
             super::space_events::announce_to_vault(
                 app,
                 vault,
                 "thumb:updated",
                 super::blocks::ThumbUpdatedPayload {
                     slug: slug.to_string(),
-                    is_text: thumb == ThumbSource::Text,
+                    is_text: pictures.is_text,
                 },
             );
         }
@@ -284,8 +306,8 @@ mod tests {
         let mut queue = PreviewQueue::default();
         let start = Instant::now();
         let idle = Duration::from_millis(EDIT_PREVIEW_IDLE_MS);
-        queue.schedule("space-x", layout(), "Note", start);
-        queue.schedule("space-x", layout(), "Note", start + Duration::from_millis(1000));
+        queue.schedule("space-x", layout(), "Note", start, PreviewDue::WhenRested);
+        queue.schedule("space-x", layout(), "Note", start + Duration::from_millis(1000), PreviewDue::WhenRested);
         assert_eq!(queue.next_due(), Some(start + Duration::from_millis(1000) + idle));
         assert!(queue.take_due(start + idle).is_empty(), "a save did not put the preview off");
         let due = queue.take_due(start + Duration::from_millis(1000) + idle);
@@ -293,11 +315,32 @@ mod tests {
         assert_eq!(due[0].1, "Note");
         assert!(queue.take_due(start + idle * 10).is_empty(), "the preview was made twice");
 
-        queue.schedule("space-x", layout(), "Other", start);
+        queue.schedule("space-x", layout(), "Other", start, PreviewDue::WhenRested);
         queue.make_due("space-x", "Other", start);
         queue.make_due("space-x", "Unknown", start);
         assert_eq!(queue.take_due(start).len(), 1);
         assert_eq!(queue.next_due(), None);
+    }
+
+    /// Л3.7 (решение пользователя 09.11.2026): a save that changed the
+    /// card's pictures has its preview due at once, and a save of words
+    /// right after it does not put that preview off; words alone still wait
+    /// for the note to rest.
+    #[test]
+    fn a_save_that_changes_the_pictures_is_drawn_at_once() {
+        let mut queue = PreviewQueue::default();
+        let start = Instant::now();
+        let idle = Duration::from_millis(EDIT_PREVIEW_IDLE_MS);
+        queue.schedule("space-x", layout(), "Note", start, PreviewDue::Now);
+        assert_eq!(queue.next_due(), Some(start));
+        queue.schedule("space-x", layout(), "Note", start + Duration::from_millis(5), PreviewDue::WhenRested);
+        assert_eq!(queue.next_due(), Some(start), "words after a picture put the picture off");
+        assert_eq!(queue.take_due(start + Duration::from_millis(5)).len(), 1);
+
+        queue.schedule("space-x", layout(), "Note", start, PreviewDue::WhenRested);
+        assert_eq!(queue.next_due(), Some(start + idle));
+        queue.schedule("space-x", layout(), "Note", start + Duration::from_millis(5), PreviewDue::Now);
+        assert_eq!(queue.next_due(), Some(start + Duration::from_millis(5)));
     }
 
     /// The previews of two spaces with the same slug are apart.
@@ -305,8 +348,8 @@ mod tests {
     fn previews_are_kept_per_space() {
         let mut queue = PreviewQueue::default();
         let start = Instant::now();
-        queue.schedule("space-x", layout(), "Note", start);
-        queue.schedule("space-y", layout(), "Note", start);
+        queue.schedule("space-x", layout(), "Note", start, PreviewDue::WhenRested);
+        queue.schedule("space-y", layout(), "Note", start, PreviewDue::WhenRested);
         queue.make_due("space-x", "Note", start);
         assert_eq!(queue.take_due(start).len(), 1);
         assert_eq!(queue.pending.len(), 1);

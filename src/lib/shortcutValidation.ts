@@ -53,11 +53,11 @@ const RESERVED_BINDINGS: readonly CommandBinding[] = [
 const RESERVED = new Set(RESERVED_BINDINGS.map(bindingId));
 
 /// Contexts that can be active at the same time as the given one. Feed,
-/// element and selection are mutually exclusive surfaces, so a combo may mean
+/// element, selection and sidebar are mutually exclusive surfaces, so a combo may mean
 /// different things in each — but every one of them coexists with global.
 function coexisting(context: CommandContext): CommandContext[] {
   return context === "global"
-    ? ["global", "feed", "element", "selection"]
+    ? ["global", "feed", "element", "selection", "sidebar"]
     : ["global", context];
 }
 

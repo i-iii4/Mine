@@ -35,6 +35,8 @@ import type {
 } from "@/types";
 
 const VAULT_PATH = "/Users/me/References";
+/** The derived store of the showcase space, beside it as in the app. */
+const THUMBS_ROOT = "/Users/me/Library/Application Support/com.mine.app/vaults/showcase/cache/thumbs";
 
 function noop() {
   return undefined;
@@ -317,6 +319,7 @@ function OnePopup({ id }: { id: PopupId }) {
           <DeleteMediaAssetDialog
             asset={MEDIA_ASSET}
             vaultPath={VAULT_PATH}
+            thumbsRootPath={THUMBS_ROOT}
             open
             onOpenChange={noop}
             onDelete={noopAsync}

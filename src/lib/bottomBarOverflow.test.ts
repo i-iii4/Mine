@@ -20,6 +20,9 @@ describe("bottom-bar hide order", () => {
       before("navigate", pressable);
       before("switch-collection", pressable);
     }
+    for (const pressable of ["sidebar-unfocus", "sidebar-menu", "sidebar-go", "sidebar-open"]) {
+      before("sidebar-navigate", pressable);
+    }
   });
 
   it("drops Escape with the learned commands, not last", () => {
@@ -27,6 +30,8 @@ describe("bottom-bar hide order", () => {
     // a courtesy, not a lifeline.
     before("close-element", "element-menu");
     before("clear-selection", "open-focused");
+    before("sidebar-unfocus", "sidebar-menu");
+    before("sidebar-unfocus", "sidebar-open");
   });
 
   it("keeps the situational commands longest", () => {
@@ -35,6 +40,9 @@ describe("bottom-bar hide order", () => {
     for (const learned of ["settings", "toggle-sidebar", "new-collection", "find-elements"]) {
       before(learned, "element-menu");
       before(learned, "open-focused");
+      before(learned, "sidebar-menu");
+      before(learned, "sidebar-go");
+      before(learned, "sidebar-open");
     }
   });
 

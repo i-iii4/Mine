@@ -18,6 +18,9 @@ import {
   listKnownVaults,
   uploadFile,
   uploadBrowserFile,
+  openPageFiles,
+  type PageFilesCollection,
+  type PageFilesStart,
   cacheScreenshotUpload,
   getClipperLaunch,
   extractMetadata,
@@ -1642,6 +1645,7 @@ export function useClipperState() {
     // written takes the collections away from it: the Save stops and the
     // editor names both folders, as В4.4 has it (Г3.2).
     const movesWhenPressed = destinationMoveRef.current;
+    let pageFiles: PageFilesCollection | null = null;
     try {
     await negotiateWidgetProtocol();
     const pending = operationRef.current ?? preparedOperationRef.current;
@@ -1720,6 +1724,9 @@ export function useClipperState() {
     const chosenFolderLabel = chosenExecutor === "browser" ? destinationLabelRef.current ?? "Folder" : chosenVault ?? undefined;
     const chosenTags = selectedTagsRef.current;
     const capture = resolveCaptureResult(currentType, saveMetadata, articleDataRef.current);
+    // The files of a clip take the one route, in a browser folder and with a
+    // helper that has it (Б4, Б12, Б13).
+    const collectsFiles = chosenExecutor === "browser" || nativeFeaturesRef.current.includes("browser_files_v1");
 
     let blockType: string;
     if (currentType === "content") {
@@ -1868,21 +1875,47 @@ export function useClipperState() {
           error: "No image available — pick another type or capture a screenshot.",
         };
       }
-      // The helper takes the bytes the browser already has when the page
-      // shows this very file, and downloads it otherwise (Б1).
-      const port = uploadPortRef.current;
-      const token = uploadTokenRef.current;
-      const fromBrowser = chosenExecutor === "native" && supportsPendingUploadsRef.current && port && token
-        ? () => uploadBrowserFile({
-          tabId: tabIdRef.current === CONTENT_SCRIPT_CONTEXT ? null : tabIdRef.current,
-          url: imageUrl, port, token, vaultPath: chosenVault,
-        })
-        : null;
-      Object.assign(payload, await pictureFileSource(imageUrl, fromBrowser));
+      if (collectsFiles) {
+        // The file takes the one route with the rest of the clip's files (Б4).
+        payload.image_url = imageUrl;
+      } else {
+        // A helper without the route takes the bytes of the browser's cache as
+        // an upload and downloads the file otherwise (Б12).
+        const port = uploadPortRef.current;
+        const token = uploadTokenRef.current;
+        const fromBrowser = chosenExecutor === "native" && supportsPendingUploadsRef.current && port && token
+          ? () => uploadBrowserFile({
+            tabId: tabIdRef.current === CONTENT_SCRIPT_CONTEXT ? null : tabIdRef.current,
+            url: imageUrl, port, token, vaultPath: chosenVault,
+          })
+          : null;
+        Object.assign(payload, await pictureFileSource(imageUrl, fromBrowser));
+      }
       payload.width = saveMetadata.imageWidth ?? null;
       payload.height = saveMetadata.imageHeight ?? null;
     } else if (saveMetadata.image && (currentType === "link" || saveMetadata.detectedType === "video")) {
       payload.image_url = saveMetadata.image;
+    }
+
+    // The browser gets the files of the clip before the operation is fixed, so
+    // a repeat and a check of its outcome take the same uploads and do not ask
+    // the site again (Б9). A closed background gives no files: the helper
+    // downloads them, or in a browser folder they stay links (Б13).
+    if (collectsFiles && (chosenExecutor === "browser" || (uploadPortRef.current && uploadTokenRef.current))
+      && (payload.image_url || (typeof payload.body === "string" && payload.body.length > 0))) {
+      pageFiles = openPageFiles({
+        documentUrl: saveMetadata.documentUrl ?? capture.sourceUrl,
+        body: typeof payload.body === "string" ? payload.body : null,
+        imageUrl: typeof payload.image_url === "string" ? payload.image_url : null,
+        videoPosters: (payload.video_posters as PageFilesStart["videoPosters"] | undefined) ?? null,
+        tabId: tabIdRef.current === CONTENT_SCRIPT_CONTEXT ? null : tabIdRef.current,
+        uploadPort: chosenExecutor === "browser" ? null : uploadPortRef.current,
+        uploadToken: chosenExecutor === "browser" ? null : uploadTokenRef.current,
+        vaultPath: chosenVault,
+        ...(chosenExecutor === "browser" ? { executor: "browser" as const } : {}),
+      });
+      const browserFiles = await pageFiles.files;
+      if (browserFiles.length > 0) payload.browser_files = browserFiles;
     }
 
     const operation: PinnedSaveOperation = {
@@ -1908,6 +1941,7 @@ export function useClipperState() {
     preparedOperationRef.current = operation;
     setSavePrepared(true);
     await persistPendingSave(operation);
+    pageFiles?.keep();
     preparedOperationRef.current = null;
     setSavePrepared(false);
     operationRef.current = operation;
@@ -1927,6 +1961,7 @@ export function useClipperState() {
     } catch (cause) {
       return { ok: false as const, error: cause instanceof Error ? cause.message : String(cause) };
     } finally {
+      pageFiles?.close();
       endSaving();
     }
   }, [

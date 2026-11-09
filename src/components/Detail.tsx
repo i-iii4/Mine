@@ -103,6 +103,7 @@ import {
   fallbackThumbsRoot,
   withRetry,
 } from "@/lib/assets";
+import { useCardPicturesVersion } from "@/lib/pictureVersions";
 import {
   CLOUD_BADGE_DELAY_MS,
   CLOUD_DOWNLOADING_LABEL,
@@ -120,6 +121,8 @@ import { collectionRefLabel } from "@/lib/collections";
 import type { FloatingMenuWidth } from "@/lib/floatingLayer";
 import { useHoverIntent, type HoverIntentHandle } from "@/hooks/useHoverIntent";
 import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
+import { hoverPreviewBesidePanel, type HoverPreviewElementTarget } from "@/lib/hoverPreviewWindow";
+import { RestingPointer } from "@/lib/restingPointer";
 import {
   findPreviewTileForSource,
   normalizeDetailPreviewManifest,
@@ -181,6 +184,7 @@ import { QuantizedMenuScrollArea } from "./QuantizedMenuScrollArea";
 import { SearchMenuInput } from "./SearchMenuInput";
 import { microPreviewFromIndexedBlock, microPreviewFromLightBlock } from "./MicroPreviewThumbnail";
 import { CardRow } from "./CardRow";
+import { HoverPreviewWindowLayer, useHoverPreviewWindow } from "./HoverPreviewWindow";
 import { CardRowActions, cardRowActionsReservePx } from "./CardRowActions";
 import { deriveSearchResultRow } from "@/lib/searchResultRow";
 import { associationHeading, authorFeedHint } from "@/lib/cardAssociations";
@@ -332,9 +336,25 @@ function collectCardImages(origin: HTMLElement | null): ImagePreviewSibling[] {
     const src = frame
       .querySelector("img:not([data-detail-preview-backing])")
       ?.getAttribute("src");
-    if (mediaRef && src) found.push({ src, mediaRef });
+    if (mediaRef && src) found.push({ src, mediaRef, source: frame });
   }
   return found;
+}
+
+/// The viewer's request for the picture in the media frame `origin` stands in:
+/// the one place a request gets where the picture opens out of and what opened
+/// it (SPEC_MEDIA_ASSET_ACTIONS.md, «Движение просмотра изображения»). A click
+/// with no press behind it (`detail` 0) came from a key.
+function imagePreviewRequest(
+  picture: Pick<ImagePreviewRequest, "src" | "mediaRef" | "siblings">,
+  origin: HTMLElement,
+  event: { detail: number },
+): ImagePreviewRequest {
+  return {
+    ...picture,
+    source: origin.closest<HTMLElement>("[data-detail-media-action-frame]"),
+    openedBy: event.detail === 0 ? "keyboard" : "pointer",
+  };
 }
 
 function getElementLayoutWidth(node: HTMLElement): number {
@@ -642,6 +662,22 @@ export function Detail({
     return () => document.removeEventListener("keydown", handler, true);
   }, [onClose]);
 
+  // Escape the editor did not take for itself leaves the text: the card's root takes
+  // the focus, with no caret, and the next Escape closes the card (SPEC_EDITING.md,
+  // Л16). After the editor's own keys, which mark what they took; a table cell's first
+  // Escape goes to the main editor that way.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || e.metaKey || e.altKey || e.ctrlKey) return;
+      const root = panelRef.current;
+      if (e.target instanceof Element && e.target.matches(".cm-content") && root?.contains(e.target)) {
+        root.focus({ preventScroll: true });
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
   useEffect(() => {
     if (topChromeMode === "external") return;
     const handler = (event: KeyboardEvent) => {
@@ -919,11 +955,26 @@ function MetadataPanel({
   onOpenRelatedNote,
   onOpenAuthorFeed,
 }: MetadataPanelProps) {
-  const relatedNoteRowRefs = useRef(new Map<string, HTMLElement>());
-  const hoverPreviewRef = useRef<HTMLDivElement | null>(null);
-  // The pointer's speed over the panel's rows: a preview waits for it to rest.
+  const panelSectionsRef = useRef<HTMLDivElement | null>(null);
+  // The pointer's speed over the panel's rows, for their preview window.
   const rowPointer = useHoverIntent();
-  const rowPreviewOpener = useHoverPreviewOpener(rowPointer.isSlow);
+  // The one preview window over the rows, as the sidebar's (С7.11).
+  const rowPreview = useHoverPreviewWindow<HoverPreviewElementTarget, LightBlock | IndexedBlock>({
+    intent: rowPointer,
+    readCard: getBlock,
+    place: hoverPreviewBesidePanel(() => {
+      const sections = panelSectionsRef.current;
+      const panel = sections?.closest("[data-detail-panel-column]") ?? sections?.closest("[data-detail-stacked-panel]");
+      return panel?.getBoundingClientRect() ?? null;
+    }, "before"),
+  });
+  // A row's menu holds the panel: no preview while it is open (С7.8).
+  const rowMenuOpenRef = useRef(false);
+  // Rows that arrive under a resting pointer stay silent until it moves (С7.5).
+  const [restingPointer] = useState(() => new RestingPointer());
+  // The row the pointer is on, by row identity: a note linked twice is two
+  // rows, one card in two lists too.
+  const [pointerRowKey, setPointerRowKey] = useState<string | null>(null);
   const displayBlock = fullBlock ?? block;
   const indexWarning = getIndexWarning(displayBlock);
   const relatedNotes = useMemo(
@@ -944,8 +995,6 @@ function MetadataPanel({
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
   const [relatedNoteBlocks, setRelatedNoteBlocks] = useState<Map<string, IndexedBlock | null> | null>(null);
   const motionGate = useDetailMotionGate();
-  const [hoveredRelatedNote, setHoveredRelatedNote] = useState<HoveredRelatedNote | null>(null);
-  const [hoverPreviewPosition, setHoverPreviewPosition] = useState<HoverPreviewPosition | null>(null);
 
   useEffect(() => {
     if (relatedNotes.length === 0) {
@@ -972,69 +1021,54 @@ function MetadataPanel({
     };
   }, [motionGate, relatedNotes, relatedNotesKey]);
 
-  const openRelatedNotePreview = useCallback((note: HoveredRelatedNote) => {
-    setHoveredRelatedNote(null);
-    rowPreviewOpener.request(() => setHoveredRelatedNote(note));
-  }, [rowPreviewOpener]);
+  // A row's plate and commands answer the pointer's own movement, not what the
+  // browser reports when content changes under it.
+  const enterPanelRow = useCallback((rowKey: string) => {
+    if (restingPointer.lastReportStepped()) setPointerRowKey(rowKey);
+  }, [restingPointer]);
 
-  const requestCloseRelatedNotePreview = useCallback(() => {
-    rowPreviewOpener.hide();
-    setHoveredRelatedNote(null);
-  }, [rowPreviewOpener]);
+  const leavePanelRow = useCallback((rowKey: string) => {
+    setPointerRowKey((current) => (current === rowKey ? null : current));
+  }, []);
 
-  // Every card a row of the panel shows, for the row's hover preview.
-  const panelRowBlocks = useMemo(() => {
-    const byslug = new Map<string, LightBlock | IndexedBlock>();
-    for (const [slug, relatedBlock] of relatedNoteBlocks ?? []) {
-      if (relatedBlock) byslug.set(slug, relatedBlock);
-    }
-    for (const group of associationGroups) {
-      for (const associated of group.blocks) {
-        if (!byslug.has(associated.slug)) byslug.set(associated.slug, associated);
-      }
-    }
-    return byslug;
-  }, [associationGroups, relatedNoteBlocks]);
-  const hoveredRelatedNoteBlock = hoveredRelatedNote
-    ? panelRowBlocks.get(hoveredRelatedNote.slug) ?? null
-    : null;
+  const quietPanelRows = useCallback(() => {
+    restingPointer.displace();
+    rowPointer.displace();
+    setPointerRowKey(null);
+  }, [restingPointer, rowPointer]);
 
+  const rowMenuOpenChange = useCallback((open: boolean) => {
+    rowMenuOpenRef.current = open;
+    rowPointer.suspend("menu", open);
+    if (open) rowPreview.dismiss();
+  }, [rowPointer, rowPreview]);
+
+  // What the rows stand on: the open card, whether it is read in full (its
+  // metadata above the rows), and each row with whether its card has arrived.
+  // A removed row reports no leave, so any change lets go here, before paint.
+  const panelRowsKey = useMemo(() => [
+    displayBlock.slug,
+    isIndexedBlock(displayBlock),
+    ...relatedNotes.map((note) => `${note}:${relatedNoteBlocks?.get(baseRelatedNoteSlug(note)) ? 1 : 0}`),
+    ...associationGroups.flatMap((group) => [group.kind, ...group.blocks.map((associated) => associated.slug)]),
+  ].join("\u0000"), [associationGroups, displayBlock, relatedNoteBlocks, relatedNotes]);
+
+  useLayoutEffect(() => {
+    quietPanelRows();
+    rowPreview.dismiss();
+  }, [panelRowsKey, quietPanelRows, rowPreview]);
+
+  // A scroll of the panel or of the page that holds it slides the rows too.
   useEffect(() => {
-    if (!hoveredRelatedNote) {
-      setHoverPreviewPosition(null);
-      return;
-    }
-    const button = relatedNoteRowRefs.current.get(hoveredRelatedNote.rowKey);
-    if (!button) {
-      setHoverPreviewPosition(null);
-      return;
-    }
-
-    const triggerRect = button.getBoundingClientRect();
-    const previewHeight =
-      hoverPreviewRef.current?.getBoundingClientRect().height ??
-      HOVER_CARD_FALLBACK_HEIGHT;
-    setHoverPreviewPosition(computeHoverPreviewPosition(triggerRect, previewHeight, hoverPreviewBounds(button)));
-  }, [hoveredRelatedNote, hoveredRelatedNoteBlock]);
-
-  useEffect(() => {
-    if (!hoveredRelatedNote || !hoverPreviewPosition || !hoverPreviewRef.current) {
-      return;
-    }
-    const button = relatedNoteRowRefs.current.get(hoveredRelatedNote.rowKey);
-    if (!button) return;
-
-    const triggerRect = button.getBoundingClientRect();
-    const previewHeight = hoverPreviewRef.current.getBoundingClientRect().height;
-    const nextPosition = computeHoverPreviewPosition(triggerRect, previewHeight, hoverPreviewBounds(button));
-    if (
-      Math.abs(nextPosition.top - hoverPreviewPosition.top) > 1 ||
-      Math.abs(nextPosition.left - hoverPreviewPosition.left) > 1
-    ) {
-      setHoverPreviewPosition(nextPosition);
-    }
-  }, [hoveredRelatedNote, hoverPreviewPosition, hoveredRelatedNoteBlock]);
-
+    const onScroll = (event: Event) => {
+      const sections = panelSectionsRef.current;
+      if (!sections || !(event.target instanceof Node) || !event.target.contains(sections)) return;
+      quietPanelRows();
+      rowPreview.leave();
+    };
+    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => window.removeEventListener("scroll", onScroll, { capture: true });
+  }, [quietPanelRows, rowPreview]);
 
   const panelRowProps: PanelRowsProps = {
     resolvedThumbsRoot,
@@ -1046,32 +1080,20 @@ function MetadataPanel({
     onRequestRename,
     onRequestDelete,
     onOpenRow: onOpenRelatedNote,
-    rowRefs: relatedNoteRowRefs,
-    onRowPreviewEnter: openRelatedNotePreview,
-    onRowPreviewLeave: requestCloseRelatedNotePreview,
+    pointerRowKey,
+    onRowPointerEnter: enterPanelRow,
+    onRowPointerLeave: leavePanelRow,
+    onRowMenuOpenChange: rowMenuOpenChange,
   };
 
   return (
     <>
-      {hoverPreviewPosition && hoveredRelatedNoteBlock && (
-        <div
-          ref={hoverPreviewRef}
-          className="pointer-events-none fixed z-40"
-          style={{
-            top: hoverPreviewPosition.top,
-            left: hoverPreviewPosition.left,
-            width: HOVER_CARD_WIDTH,
-          }}
-          data-related-note-hover-preview
-        >
-          <ReadOnlyCardPreview
-            block={hoveredRelatedNoteBlock}
-            vaultPath={vaultPath}
-            thumbsRootPath={resolvedThumbsRoot}
-            width={HOVER_CARD_WIDTH}
-          />
-        </div>
-      )}
+      <HoverPreviewWindowLayer
+        controller={rowPreview}
+        vaultPath={vaultPath}
+        thumbsRootPath={resolvedThumbsRoot}
+        attribute="data-related-note-hover-preview"
+      />
       <div className="min-w-0 overflow-x-hidden">
         {ARTICLE_AUDIO_ENABLED && (
           <ArticleAudioControls
@@ -1082,12 +1104,28 @@ function MetadataPanel({
         )}
 
         <div
+          ref={panelSectionsRef}
           // The boxes stand as far apart as the feed's cards and the page's
           // edge: the interface spacing, Display's Spacing (user's decision
           // of 08.10.2026).
           className="flex min-w-0 flex-col gap-[var(--edge-rhythm,32px)]"
-          onPointerMove={(event) => rowPointer.move(null, event.clientX, event.clientY)}
-          onPointerLeave={() => rowPointer.leave()}
+          // In the capture phase, so a row answering this step reads this step.
+          onPointerMoveCapture={(event) => {
+            const stepped = restingPointer.move(event.clientX, event.clientY);
+            rowPointer.move(null, event.clientX, event.clientY);
+            if (!stepped || rowMenuOpenRef.current) return;
+            const row = event.target instanceof Element
+              ? event.target.closest<HTMLElement>("[data-panel-row-key]")
+              : null;
+            rowPreview.pointer(
+              row ? { key: row.dataset.panelRowKey!, slug: row.dataset.panelRowSlug!, element: row } : null,
+            );
+          }}
+          onPointerLeave={() => {
+            restingPointer.leave();
+            rowPointer.leave();
+            rowPreview.leave();
+          }}
           data-metadata-sections
         >
           <DetailPanelCard data-detail-metadata-card>
@@ -1330,9 +1368,12 @@ interface PanelRowsProps {
   onRequestDelete: (slug: string) => void;
   /** Opens the card of a row. */
   onOpenRow: (slug: string) => void;
-  rowRefs: { current: Map<string, HTMLElement> };
-  onRowPreviewEnter: (note: HoveredRelatedNote) => void;
-  onRowPreviewLeave: () => void;
+  /** The row the pointer is on, across all the panel's lists. */
+  pointerRowKey: string | null;
+  /** The pointer moved on a row it is not yet on. */
+  onRowPointerEnter: (rowKey: string) => void;
+  onRowPointerLeave: (rowKey: string) => void;
+  onRowMenuOpenChange: (open: boolean) => void;
 }
 
 /** One row of a panel list: the slug it opens and its card, `null` while the
@@ -1363,9 +1404,10 @@ function PanelCardRows({
   onRequestRename,
   onRequestDelete,
   onOpenRow,
-  rowRefs,
-  onRowPreviewEnter,
-  onRowPreviewLeave,
+  pointerRowKey,
+  onRowPointerEnter,
+  onRowPointerLeave,
+  onRowMenuOpenChange,
 }: PanelRowsProps & {
   listKey: string;
   rows: readonly PanelRow[];
@@ -1373,9 +1415,6 @@ function PanelCardRows({
   kind: "related" | "association";
 }) {
   const related = kind === "related";
-  // The row the pointer is on, by row identity: a note linked twice is two
-  // rows. Leaving the row or turning the wheel lets go of it.
-  const [pointerRowKey, setPointerRowKey] = useState<string | null>(null);
   // The row whose menu is open holds its commands and its light; the
   // pointer on its way to the menu moves nothing (SPEC_CARD_STATES.md, С7.8).
   const [menuRowKey, setMenuRowKey] = useState<string | null>(null);
@@ -1391,7 +1430,6 @@ function PanelCardRows({
     // light off the frame.
     <div
       className="flex w-full min-w-0 flex-col"
-      onWheel={() => setPointerRowKey(null)}
       data-related-notes-list={related ? "" : undefined}
       data-card-association-list={related ? undefined : ""}
     >
@@ -1419,13 +1457,6 @@ function PanelCardRows({
         return (
           <CardRow
             key={rowKey}
-            rowRef={(node) => {
-              if (node) {
-                rowRefs.current.set(rowKey, node);
-              } else {
-                rowRefs.current.delete(rowKey);
-              }
-            }}
             row={deriveSearchResultRow(block)}
             preview={isIndexedBlock(block)
               ? microPreviewFromIndexedBlock(block, resolvedThumbsRoot)
@@ -1433,18 +1464,12 @@ function PanelCardRows({
             active={actionsShown}
             actionsReservePx={actionsShown ? cardRowActionsReservePx(block) : 0}
             onPointerMove={() => {
-              if (menuRowKey === null && pointerRowKey !== rowKey) setPointerRowKey(rowKey);
+              if (menuRowKey === null && pointerRowKey !== rowKey) onRowPointerEnter(rowKey);
             }}
-            onPointerLeave={() => {
-              setPointerRowKey((current) => (current === rowKey ? null : current));
-            }}
+            onPointerLeave={() => onRowPointerLeave(rowKey)}
             onPointerDown={(event) => {
               event.stopPropagation();
             }}
-            onMouseEnter={() => {
-              if (menuRowKey === null) onRowPreviewEnter({ rowKey, slug });
-            }}
-            onMouseLeave={onRowPreviewLeave}
             item={{
               as: "button",
               props: {
@@ -1468,12 +1493,13 @@ function PanelCardRows({
                 onRequestDelete={onRequestDelete}
                 onMenuOpenChange={(_slug, open) => {
                   setMenuRowKey((current) => (open ? rowKey : current === rowKey ? null : current));
-                  // The card preview steps aside for the menu.
-                  if (open) onRowPreviewLeave();
+                  onRowMenuOpenChange(open);
                 }}
                 onMenuCloseAutoFocus={handleMenuCloseAutoFocus}
               />
             )}
+            data-panel-row-key={rowKey}
+            data-panel-row-slug={slug}
             data-related-note-item={related ? "button" : undefined}
             data-card-association-item={related ? undefined : "button"}
           />
@@ -1988,6 +2014,9 @@ function BlockContent({
   onBodyStale: () => void;
 }) {
   const resolvedThumbsRoot = thumbsRootPath ?? fallbackThumbsRoot(vaultPath);
+  // The open card draws its previews again under their new addresses once
+  // its pictures were written again (SPEC_THUMBNAILS.md, «Адрес картинки»).
+  useCardPicturesVersion(block.slug);
   // By the manifest's text: a card read anew with the same manifest keeps it.
   const rawPreviewManifest = (fullBlock ?? block).preview_manifest;
   const previewManifest = useMemo(
@@ -2036,6 +2065,7 @@ function BlockContent({
               <MediaAssetActionFrame
                 asset={mediaAssetFromPrimary(block, "video")}
                 vaultPath={vaultPath}
+                thumbsRootPath={resolvedThumbsRoot}
                 tags={tags}
                 currentTag={currentTag}
                 canDrag={false}
@@ -2155,6 +2185,7 @@ function BlockContent({
             <MediaAssetActionFrame
               asset={mediaAssetFromPrimary(block, "image")}
               vaultPath={vaultPath}
+              thumbsRootPath={resolvedThumbsRoot}
               tags={tags}
               currentTag={currentTag}
               canDrag
@@ -2222,6 +2253,7 @@ function BlockContent({
                 <MediaAssetActionFrame
                   asset={null}
                   vaultPath={vaultPath}
+                  thumbsRootPath={resolvedThumbsRoot}
                   tags={tags}
                   currentTag={currentTag}
                   canDrag={false}
@@ -2249,6 +2281,7 @@ function BlockContent({
                       : mediaAssetFromMediaRef(block.slug, videoSourcePath, "video", "frontmatter_file")
                     : null}
                   vaultPath={vaultPath}
+                  thumbsRootPath={resolvedThumbsRoot}
                   tags={tags}
                   currentTag={currentTag}
                   canDrag={false}
@@ -2422,6 +2455,7 @@ function DetailLinkPicture({
 function MediaAssetActionFrame({
   asset,
   vaultPath,
+  thumbsRootPath,
   tags,
   currentTag,
   canDrag,
@@ -2439,6 +2473,9 @@ function MediaAssetActionFrame({
 }: {
   asset: MediaAssetRef | null;
   vaultPath: string;
+  /** The space's thumbnails: the delete window draws the cards that use the
+   *  file from there. */
+  thumbsRootPath: string;
   tags: TagCount[];
   currentTag?: string;
   canDrag: boolean;
@@ -2564,11 +2601,11 @@ function MediaAssetActionFrame({
               // What a click on the picture means is decided with the
               // editor's (SPEC_EDITING.md, Л11.1).
               actOnReadingElement({ kind: "image" }, clickEvent(event), {
-                openImagePreview: () => onOpenImagePreview({
+                openImagePreview: () => onOpenImagePreview(imagePreviewRequest({
                   src: fullSizeImageSrc,
                   mediaRef: asset.media_ref,
                   siblings: collectCardImages(origin),
-                }),
+                }, origin, event)),
               });
             }}
             onContextMenu={(event) => {
@@ -2604,12 +2641,12 @@ function MediaAssetActionFrame({
               >
                 {canOpenImagePreview && fullSizeImageSrc && (
                   <ExpandImageButton
-                    onExpand={(origin) => {
-                      onOpenImagePreview({
+                    onExpand={(origin, event) => {
+                      onOpenImagePreview(imagePreviewRequest({
                         src: fullSizeImageSrc,
                         mediaRef: asset.media_ref,
                         siblings: collectCardImages(origin),
-                      });
+                      }, origin, event));
                     }}
                   />
                 )}
@@ -2641,6 +2678,7 @@ function MediaAssetActionFrame({
       <DeleteMediaAssetDialog
         asset={asset}
         vaultPath={vaultPath}
+        thumbsRootPath={thumbsRootPath}
         open={dialog === "delete"}
         onOpenChange={(open) => setDialog(open ? "delete" : null)}
         onDelete={onDeleteMediaAsset}
@@ -2661,7 +2699,11 @@ const DETAIL_MEDIA_ACTION_FRAME_CLASSES =
   "not-prose relative inline-flex max-h-[var(--detail-media-max-height)] max-w-full overflow-hidden align-top leading-none [&_img]:m-0 [&_img]:block [&_video]:m-0 [&_video]:block";
 
 /** ⤢: opens the picture in the viewer over the window. */
-function ExpandImageButton({ onExpand }: { onExpand: (origin: HTMLElement) => void }) {
+function ExpandImageButton({
+  onExpand,
+}: {
+  onExpand: (origin: HTMLElement, event: { detail: number }) => void;
+}) {
   return (
     <Button
       type="button"
@@ -2669,7 +2711,7 @@ function ExpandImageButton({ onExpand }: { onExpand: (origin: HTMLElement) => vo
       size="icon"
       aria-label="Expand image"
       data-detail-media-expand-button
-      onClick={(event) => onExpand(event.currentTarget)}
+      onClick={(event) => onExpand(event.currentTarget, event)}
     >
       <Expand className="size-[13px]" />
     </Button>
@@ -2693,13 +2735,18 @@ function ExpandableImageFrame({
   onOpenImagePreview: (preview: ImagePreviewRequest) => void;
   children: ReactNode;
 }) {
-  const open = () => onOpenImagePreview({ src, mediaRef: null });
+  const open = (origin: HTMLElement, event: { detail: number }) => {
+    onOpenImagePreview(imagePreviewRequest({ src, mediaRef: null }, origin, event));
+  };
   return (
     <div
       className={cn(DETAIL_MEDIA_ACTION_FRAME_CLASSES, "group/detail-media")}
       data-detail-media-action-frame
       onClick={(event) => {
-        actOnReadingElement({ kind: "image" }, clickEvent(event), { openImagePreview: open });
+        const origin = event.currentTarget;
+        actOnReadingElement({ kind: "image" }, clickEvent(event), {
+          openImagePreview: () => open(origin, event),
+        });
       }}
     >
       {children}
@@ -3247,6 +3294,7 @@ export function deleteMediaFileDescription(
 export function DeleteMediaAssetDialog({
   asset,
   vaultPath,
+  thumbsRootPath,
   open,
   onOpenChange,
   onDelete,
@@ -3254,6 +3302,10 @@ export function DeleteMediaAssetDialog({
 }: {
   asset: MediaAssetRef;
   vaultPath: string | null;
+  /** The space's thumbnails, where the cards that use the file are drawn
+   *  from. Until 09.11.2026 the window looked in the old folder inside the
+   *  space, which a space with its own derived store leaves empty. */
+  thumbsRootPath: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onDelete: (asset: MediaAssetRef) => Promise<void>;
@@ -3266,7 +3318,6 @@ export function DeleteMediaAssetDialog({
   const [planError, setPlanError] = useState<string | null>(null);
   const previewSrc = vaultPath ? mediaUrl(vaultPath, asset.media_ref) : "";
   const references = plan?.referenced_by ?? [];
-  const resolvedThumbsRoot = vaultPath ? fallbackThumbsRoot(vaultPath) : "";
 
   useEffect(() => {
     if (!open) {
@@ -3356,7 +3407,7 @@ export function DeleteMediaAssetDialog({
               <MediaAssetReferenceCards
                 references={references}
                 vaultPath={vaultPath}
-                thumbsRootPath={resolvedThumbsRoot}
+                thumbsRootPath={thumbsRootPath}
                 onOpenRelatedNote={onOpenRelatedNote}
               />
             ) : (
@@ -4007,6 +4058,9 @@ function ArticleBodyImage({ node, src, alt, ...props }: ComponentProps<"img"> & 
   const media = useContext(ArticleMediaContext);
   // Drawn in the editor's widget: its place is the editor's to count.
   const editorPlacement = useContext(EditorImagePlacementContext);
+  // The preview under the picture takes its new address once the card's
+  // pictures were written again (SPEC_THUMBNAILS.md, «Адрес картинки»).
+  useCardPicturesVersion(media?.sourceSlug ?? "");
   if (!media) return null;
   const {
     body,
@@ -4054,6 +4108,7 @@ function ArticleBodyImage({ node, src, alt, ...props }: ComponentProps<"img"> & 
       <MediaAssetActionFrame
         asset={videoAsset}
         vaultPath={vaultPath}
+        thumbsRootPath={thumbsRootPath}
         tags={tags}
         currentTag={currentTag}
         canDrag={false}
@@ -4087,6 +4142,7 @@ function ArticleBodyImage({ node, src, alt, ...props }: ComponentProps<"img"> & 
     <MediaAssetActionFrame
       asset={asset}
       vaultPath={vaultPath}
+      thumbsRootPath={thumbsRootPath}
       tags={tags}
       currentTag={currentTag}
       canDrag

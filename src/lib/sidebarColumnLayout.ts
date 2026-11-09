@@ -131,6 +131,10 @@ export function sidebarColumnRootStyle(layout: SidebarColumnLayout): Record<stri
     if (index > 0) terms.push(`${index * GUIDE_PX}px`);
     return `calc(${terms.join(" + ")})`;
   });
+  // Where the name's zone starts: the guideline before it. A row being edited
+  // has no other columns, and its name stands there all the same.
+  const nameIndex = shown.indexOf("name");
+  if (nameIndex > 0) style["--sidebar-name-left"] = guides[nameIndex - 1]!;
   style["--sidebar-guide-1-left"] = guides[0] ?? "-1px";
   style["--sidebar-guide-2-left"] = guides[1] ?? "-1px";
   style["--sidebar-guide-2-right"] = "auto";
@@ -147,6 +151,7 @@ export function sidebarColumnRootStyle(layout: SidebarColumnLayout): Record<stri
 const ROOT_VARIABLES = [
   ...SIDEBAR_COLUMNS.map((column) => `--sidebar-${column}-order`),
   ...SIDEBAR_COLUMNS.map((column) => `--sidebar-${column}-lead`),
+  "--sidebar-name-left",
   "--sidebar-guide-1-left",
   "--sidebar-guide-2-left",
   "--sidebar-guide-2-right",

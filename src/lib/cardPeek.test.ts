@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { APP_MAIN_MIN_WIDTH_PX } from "./appLayout";
 import { CHANNEL_ICON_SPRING_MS, springSettleMs } from "./channelIcon";
+import { MODAL_SURFACE_CLASS } from "@/components/ui/modal-window";
 import {
   CARD_PEEK_MARGIN_PX,
   CARD_PEEK_MIN_AREA_WIDTH_PX,
@@ -12,6 +13,7 @@ import {
   CARD_PEEK_CONTENT_IN_FROM_MS,
   CARD_PEEK_SPRING_MS,
   CARD_PEEK_SPRING_RESPONSE_S,
+  CARD_PEEK_SWITCH_EXIT_MS,
   CARD_PEEK_FRAME_STEP_MS,
   CARD_PEEK_INPUT_WINDOW_MS,
   CARD_PEEK_MAX_WIDTH,
@@ -28,6 +30,7 @@ import {
   lerpPeekRect,
   peekBoxTransform,
   peekClosingKind,
+  peekSwitchExitKeyframes,
   peekContentOpacity,
   peekFrameCut,
   peekFramePieceBoxes,
@@ -460,12 +463,25 @@ describe("card peek opening and closing (О10, О11, О13)", () => {
     });
     expect(close({})).toBe("card");
     expect(close({ cardOnScreen: false })).toBe("center");
-    expect(close({ exit: "center" })).toBe("center");
     expect(close({ openedAs: "center" })).toBe("center");
     expect(close({ openedAs: "fade" })).toBe("fade");
-    expect(close({ openedAs: "fade", exit: "center" })).toBe("fade");
     expect(close({ exit: "fade" })).toBe("fade");
     expect(close({ reducedMotion: true })).toBe("fade");
+  });
+
+  // О11 (user's decision of 05.11.2026): a change of collection or view.
+  it("leaves a change of collection or view in the dialogs' time, down by the close hint's step, with no scale", () => {
+    expect(CARD_PEEK_SWITCH_EXIT_MS).toBe(200);
+    expect(MODAL_SURFACE_CLASS).toContain(`duration-${CARD_PEEK_SWITCH_EXIT_MS}`);
+    expect(CARD_PEEK_NUDGE_OFFSET_PX).toBeCloseTo(6.667, 3);
+    expect(peekSwitchExitKeyframes(false)).toEqual({
+      window: { opacity: 0, transform: "translateY(6.667px)" },
+      scrim: { opacity: 0 },
+    });
+  });
+
+  it("only fades on a change of collection or view with reduced motion (О13)", () => {
+    expect(peekSwitchExitKeyframes(true)).toEqual({ window: { opacity: 0 }, scrim: { opacity: 0 } });
   });
 });
 

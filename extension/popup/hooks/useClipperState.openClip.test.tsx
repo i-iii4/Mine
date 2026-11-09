@@ -60,6 +60,8 @@ vi.mock("../lib/messaging", async (importOriginal) => ({
   extractArticleAsync: async () => ({ title: "Story A", content: "Text of A", byline: null, excerpt: "",
     documentUrl: page.documentUrl, captureGeneration: page.captureGeneration }),
   currentCaptureDocument: () => ({ ...page }),
+  // No worker here: a collection gets no file.
+  openPageFiles: () => ({ files: Promise.resolve([]), keep: () => undefined, close: () => undefined }),
   cacheScreenshotUpload: async () => "cached",
 }));
 vi.mock("../lib/standalone", () => ({

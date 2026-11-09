@@ -1,6 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { afterMenuCloses } from "@/lib/openMenus";
 
 import { Button } from "./button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./dialog";
@@ -440,5 +442,99 @@ describe("DropdownMenu over the page", () => {
 
     await waitFor(() => expect(screen.queryByText("Action item")).not.toBeInTheDocument());
     expect(screen.getByText("Dialog title")).toBeInTheDocument();
+  });
+});
+
+// SPEC_FRONTEND.md, «RenameBlockDialog»: a menu's command that moves the focus
+// out of the menu hands it over once the closing surface is gone.
+describe("afterMenuCloses", () => {
+  const CLOSING_ANIMATION = "menu-closing";
+
+  /// Fades as the app's menus do: jsdom runs no animation, so the surface
+  /// stays until its `animationend`.
+  function fadingMenus() {
+    const style = document.createElement("style");
+    style.textContent = `
+      [data-slot="dropdown-menu-content"][data-state="open"] { animation-name: menu-opening; }
+      [data-slot="dropdown-menu-content"][data-state="closed"] { animation-name: ${CLOSING_ANIMATION}; }
+    `;
+    document.head.append(style);
+    vi.stubGlobal("CSS", { escape: (value: string) => value });
+    return () => {
+      style.remove();
+      vi.unstubAllGlobals();
+    };
+  }
+
+  function renderMenu(onSelect: () => void) {
+    render(
+      <>
+        <input aria-label="Field" />
+        <DropdownMenu>
+          <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem onSelect={onSelect}>First item</DropdownMenuItem>
+            <DropdownMenuItem>Second item</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </>,
+    );
+    return { field: screen.getByLabelText("Field"), trigger: screen.getByText("Open menu") };
+  }
+
+  /** The focus the closing menu could still take back has had its turn. */
+  const settle = () => act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  it("runs at once with no menu open", () => {
+    const take = vi.fn();
+    afterMenuCloses(take);
+    expect(take).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands the focus over when the fading surface is gone, and not to the trigger", async () => {
+    const stopFading = fadingMenus();
+    try {
+      const user = userEvent.setup();
+      const take = vi.fn();
+      const { field, trigger } = renderMenu(() => afterMenuCloses(() => {
+        take();
+        field.focus();
+      }));
+
+      await user.click(trigger);
+      await user.click(screen.getByText("First item"));
+
+      // While the surface fades it still answers the pointer: Radix focuses
+      // the item under it, and a field focused by now would have lost it.
+      const surface = document.querySelector<HTMLElement>("[data-slot='dropdown-menu-content']")!;
+      expect(surface).toHaveAttribute("data-state", "closed");
+      fireEvent.pointerMove(screen.getByText("Second item"), { pointerType: "mouse", clientX: 5 });
+      await settle();
+      expect(take).not.toHaveBeenCalled();
+
+      act(() => {
+        surface.dispatchEvent(Object.assign(new Event("animationend", { bubbles: true }), { animationName: CLOSING_ANIMATION }));
+      });
+      await waitFor(() => expect(take).toHaveBeenCalledTimes(1));
+      await settle();
+      expect(screen.queryByText("First item")).not.toBeInTheDocument();
+      expect(field).toHaveFocus();
+      expect(trigger).not.toHaveFocus();
+    } finally {
+      stopFading();
+    }
+  });
+
+  it("leaves the menu's usual return to its trigger to a command that takes nothing", async () => {
+    const user = userEvent.setup();
+    const { trigger } = renderMenu(() => undefined);
+
+    await user.click(trigger);
+    await user.click(screen.getByText("First item"));
+
+    await waitFor(() => expect(screen.queryByText("First item")).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 });

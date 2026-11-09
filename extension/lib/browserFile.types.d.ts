@@ -1,30 +1,46 @@
-/** Why the browser's bytes of a picture were not taken; the helper downloads it then. */
-export type BrowserFileRefusal = { ok: false; reason: string };
+// Declarations for lib/browserFile.js (SPEC_CLIPPER.md, «Один путь файла со
+// страницы», Б5).
+
+/** Why the browser has no file for an address (Б9). */
+export type BrowserFileFailure = "no_answer" | "not_a_file" | "too_large" | "host_limited" | "not_stored";
+
+/** Where a file of the browser came from (Б4). */
+export type BrowserFileSource = "cache" | "page" | "browser";
+
+/** An answer of the page about a file, without the file. */
+export type PageFileAnswer =
+  /** The file is not of the page's origin, or the page cannot be asked. */
+  | { kind: "elsewhere" }
+  /** The cache does not hold it. */
+  | { kind: "miss" }
+  /** The browser refused the page's request. */
+  | { kind: "refused" }
+  /** The page fell silent. */
+  | { kind: "stalled" }
+  | { kind: "status"; status: number; retryAfter: number | null }
+  | { kind: "failure"; failure: BrowserFileFailure };
 
 declare global {
   var MineBrowserFile: {
-    /** Limit of this path, the helper's own download limit (500 MiB). */
-    readonly MAX_BYTES: number;
-    /** Bytes of the file per message to the background. */
-    readonly CHUNK_BYTES: number;
-    /** Name of the port a transfer runs on, before its id. */
-    readonly PORT_PREFIX: string;
-    /**
-     * How the page shows `url`: the tab's document is the picture, a picture
-     * on the page was loaded from it, or neither.
-     */
-    shownAs(url: string, doc: Pick<Document, "URL" | "contentType" | "images">): "document" | "page" | null;
-    /** The bytes of `url` from the browser's cache, never from a new request to the site. */
-    read(
+    MAX_BYTES: number;
+    CHUNK_BYTES: number;
+    PORT_PREFIX: string;
+    retryAfterSeconds(value: string | null, now: number): number | null;
+    declaresWebPage(response: Pick<Response, "headers">): boolean;
+    open(
       url: string,
-      doc: Pick<Document, "URL" | "contentType" | "images">,
+      mode: "cache" | "request",
+      pageUrl: string,
       fetchFile: typeof fetch,
-    ): Promise<{ ok: true; blob: Blob } | BrowserFileRefusal>;
-    /** The name an upload of `url` carries, by the answered type, else the address. */
+      signal?: AbortSignal,
+    ): Promise<PageFileAnswer | { kind: "open"; response: Response }>;
     uploadName(url: string, contentType: string): string;
-    /** Page half of the transfer: read `url` and hand it to the background on the port of `transferId`. */
-    send(url: string, transferId: string): Promise<{ ok: true; size: number } | BrowserFileRefusal>;
+    deliver(
+      url: string,
+      transferId: string,
+      mode: "cache" | "request",
+      page: { pageUrl: string; fetchFile: typeof fetch; connect: typeof chrome.runtime.connect },
+    ): Promise<void>;
+    send(url: string, transferId: string, mode: "cache" | "request"): { started: true };
   };
 }
-
-export {};

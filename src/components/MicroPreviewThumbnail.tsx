@@ -6,7 +6,7 @@ import {
   type RefObject,
 } from "react";
 import { usePreviewFileRetry } from "@/hooks/usePreviewFileRetry";
-import { thumbnailLevelUrl } from "@/lib/assets";
+import { thumbnailLevelUrl, withQueryParam } from "@/lib/assets";
 import { parsePreviewManifest } from "@/lib/cardLayout";
 import { cn } from "@/lib/utils";
 import type { IndexedBlock, LightBlock, PreviewCard } from "@/types";
@@ -26,13 +26,13 @@ export function microPreviewFromIndexedBlock(
   block: Pick<IndexedBlock, "slug" | "thumb_format" | "thumb_mtime" | "preview_manifest">,
   thumbsRootPath: string,
 ): MicroPreviewModel {
-  const mtime = block.thumb_mtime > 0 ? `?m=${block.thumb_mtime}` : "";
+  const micro = thumbnailLevelUrl(thumbsRootPath, block.slug, "micro");
   const manifest = parsePreviewManifest(block);
   return {
     slug: block.slug,
     // The strip draws 32 logical pixels; the micro level is exactly that at
     // double density, where the full thumbnail is 640 on its long side.
-    url: `${thumbnailLevelUrl(thumbsRootPath, block.slug, "micro")}${mtime}`,
+    url: block.thumb_mtime > 0 ? withQueryParam(micro, "m", block.thumb_mtime) : micro,
     // Text-thumb detection drives dark:invert. preview_manifest is stable
     // across the indexing→thumb-generation window; thumb_format is briefly null
     // right after a fresh clip, which would mis-flag a text thumb as media.

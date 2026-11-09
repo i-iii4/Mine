@@ -16,6 +16,15 @@ export const MODAL_OVERLAY_CLASS =
 export const MODAL_SURFACE_CLASS =
   "bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-[calc(100%-32px)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-1 border border-border p-6 shadow-lg duration-200 outline-none"
 
+/** The dialogs' own entrance and exit, for a layer that plays them itself
+ *  over its own content (the card's window, SPEC_CARD_PEEK.md, О11; the image
+ *  preview, SPEC_MEDIA_ASSET_ACTIONS.md): the surface's as above, the scrim's
+ *  as `MODAL_OVERLAY_CLASS`'s. */
+export const MODAL_SURFACE_ENTER_CLASS = "animate-in fade-in-0 zoom-in-95 duration-200"
+export const MODAL_SURFACE_LEAVE_CLASS = "animate-out fade-out-0 zoom-out-95 duration-200 fill-mode-forwards"
+export const MODAL_SCRIM_ENTER_CLASS = "animate-in fade-in-0"
+export const MODAL_SCRIM_LEAVE_CLASS = "animate-out fade-out-0 fill-mode-forwards"
+
 /** What a window holds sets its width. A question (a title, a description,
  *  the buttons; no field, list or preview) is 384px; a window with content
  *  (a field, a list, a preview) is 512px, as the column of the full-screen

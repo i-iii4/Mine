@@ -3,6 +3,9 @@
 import "../../lib/youtubeSource.js";
 import type { SaveExecutor, SaveOutcome } from "../../../src/types/generated";
 
+import "../../lib/pageFiles.js";
+import type { BrowserFileEntry } from "../../lib/pageFiles.types";
+
 export interface NativeRequest {
   action: string;
   [key: string]: unknown;
@@ -509,16 +512,14 @@ export async function uploadFile(
   });
 }
 
-/** How long reading a picture from the page and uploading it (up to 500 MiB) may take in all. */
-const BROWSER_FILE_TIMEOUT_MS = 180_000;
-
 /**
- * Upload the picture at `url` from the bytes the browser already has, when the
- * page shows that very file (SPEC_CLIPPER.md, «Файл картинки из браузера,
- * отказ сайта и причина ошибки», Б1). The background reads and uploads it;
- * `tabId` names the page for the clipper window and is the sender's own tab
- * for an overlay. Resolves to the upload id, or null when nothing was
- * uploaded: the helper then downloads the file.
+ * Upload the picture at `url` from the bytes the browser's cache has, for a
+ * helper without `browser_files_v1` (SPEC_CLIPPER.md, «Один путь файла со
+ * страницы», Б12). The background reads and uploads it; `tabId` names the page
+ * for the clipper window and is the sender's own tab for an overlay. Resolves to
+ * the upload id, or null when nothing was uploaded: the helper then downloads
+ * the file. No deadline here, as at a Save (Б11): the background answers, and a
+ * stopped background answers through the transport error.
  */
 export async function uploadBrowserFile(input: {
   tabId: number | null;
@@ -528,11 +529,9 @@ export async function uploadBrowserFile(input: {
   vaultPath: string | null;
 }): Promise<string | null> {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(null), BROWSER_FILE_TIMEOUT_MS);
     chrome.runtime.sendMessage(
       { target: "background", action: "uploadBrowserFile", payload: input },
       (response) => {
-        clearTimeout(timer);
         if (chrome.runtime.lastError) {
           resolve(null);
           return;
@@ -542,6 +541,75 @@ export async function uploadBrowserFile(input: {
       },
     );
   });
+}
+
+/** The start of a collection of the clip's files (Б9). */
+export interface PageFilesStart {
+  documentUrl: string;
+  body: string | null;
+  imageUrl: string | null;
+  videoPosters: Array<{ video_url: string; poster_url: string }> | null;
+  /** The page, for the clipper window; an overlay's page is the sender's tab. */
+  tabId: number | null;
+  /** Where the helper takes the bytes. A browser folder keeps them itself (Б13). */
+  uploadPort: number | null;
+  uploadToken: string | null;
+  vaultPath: string | null;
+  /** `browser`: the Save goes into a browser folder, without a helper (Б13). */
+  executor?: "browser";
+}
+
+/** A collection the clipper keeps open until its operation is fixed. */
+export interface PageFilesCollection {
+  /** What the browser did about the files. A closed background gives none: the helper downloads them, or in a browser folder they stay links. */
+  files: Promise<BrowserFileEntry[]>;
+  /** The operation is fixed with these files: they outlive the port. */
+  keep(): void;
+  /** Close the port. Without `keep`, the background removes the uploads. */
+  close(): void;
+}
+
+/**
+ * Open the collection of the clip's files on a port: its messages keep the
+ * background alive, and its closing tells that the clipper is gone (Б9, Б11).
+ * Like a Save, it has no deadline of its own.
+ */
+export function openPageFiles(start: PageFilesStart): PageFilesCollection {
+  const port = chrome.runtime.connect({ name: `${globalThis.MinePageFiles.PORT_PREFIX}${crypto.randomUUID()}` });
+  let open = true;
+  const files = new Promise<BrowserFileEntry[]>((resolve) => {
+    port.onDisconnect.addListener(() => {
+      open = false;
+      resolve([]);
+    });
+    port.onMessage.addListener((message: { kind?: unknown; browser_files?: unknown }) => {
+      if (message?.kind === "done") resolve(Array.isArray(message.browser_files) ? message.browser_files as BrowserFileEntry[] : []);
+      // The answer is an event in the background: no helper keeps it alive here (Б13).
+      else if (message?.kind === "progress" && open) port.postMessage({ kind: "progress" });
+    });
+  });
+  port.postMessage({
+    kind: "start",
+    document_url: start.documentUrl,
+    body: start.body,
+    image_url: start.imageUrl,
+    video_posters: start.videoPosters,
+    tab_id: start.tabId,
+    upload_port: start.uploadPort,
+    upload_token: start.uploadToken,
+    vault_path: start.vaultPath,
+    ...(start.executor ? { executor: start.executor } : {}),
+  });
+  return {
+    files,
+    keep: () => {
+      if (open) port.postMessage({ kind: "keep" });
+    },
+    close: () => {
+      if (open) port.disconnect();
+      open = false;
+    },
+  };
 }
 
 export async function cacheScreenshotUpload(dataUrl: string): Promise<string | null> {

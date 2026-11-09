@@ -15,13 +15,14 @@ import {
   type CommandGesture,
 } from "./commandBinding";
 
-export type CommandContext = "global" | "feed" | "element" | "selection";
+export type CommandContext = "global" | "feed" | "element" | "selection" | "sidebar";
 
 export const COMMAND_CONTEXT_TITLES: Record<CommandContext, string> = {
   global: "Global",
   feed: "Feed",
   element: "Element",
   selection: "Selection",
+  sidebar: "Sidebar",
 };
 
 export interface CommandDefinition {
@@ -36,8 +37,9 @@ export interface CommandDefinition {
   ///
   /// - `structural`: arrows, Enter, Escape, Tab. These are the language of the
   ///   interface rather than shortcuts; rebinding them breaks the model.
-  /// - `system`: macOS owns the combo (⌘, on Settings, ⌘T and the other tab
-  ///   and window chords) and expects it there. Shown, never recorded.
+  /// - `system`: macOS owns the combo (⌘, on Settings, ⌘V on Paste, ⌘T and
+  ///   the other tab and window chords) and expects it there. Shown, never
+  ///   recorded.
   fixed?: "structural" | "system";
   /// More chords for the same fixed command: ⌃Tab beside ⇧⌘], ⌘2 to ⌘8
   /// beside ⌘1. Matched like the binding; a command that can be rebound has
@@ -124,11 +126,14 @@ export const DEFAULT_COMMANDS: readonly CommandDefinition[] = [
     binding: { key: "Tab" },
     fixed: "structural",
   },
+  // The Edit menu's stock Paste holds ⌘V and reaches the page as its `paste`
+  // event (SPEC_KEYBOARD.md, «Global»): a rebind would leave ⌘V pasting.
   {
     id: "paste",
     name: "Paste",
     context: "global",
     binding: { key: "v", meta: true },
+    fixed: "system",
   },
   // Dev button styles (src/lib/buttonStyle.ts): step the window's buttons
   // through macOS, Retro and Linear. Goes with the tool.
@@ -259,6 +264,16 @@ export const DEFAULT_COMMANDS: readonly CommandDefinition[] = [
     context: "element",
     binding: { key: "l", meta: true },
   },
+  // Out of the card and into the sidebar's rows, with the keyboard not in text
+  // (SPEC_KEYBOARD.md, М9). Not on the bottom bar.
+  // The graph's ArrowLeft is this key too (SPEC_KEYBOARD.md, М10).
+  {
+    id: "element-to-sidebar",
+    name: "Sidebar",
+    context: "element",
+    binding: { key: "ArrowLeft" },
+    fixed: "structural",
+  },
 
   // ── Selection ─────────────────────────────────────────────────────────
   {
@@ -286,6 +301,59 @@ export const DEFAULT_COMMANDS: readonly CommandDefinition[] = [
     name: "Delete selected",
     context: "selection",
     binding: { key: "Backspace" },
+    fixed: "structural",
+  },
+
+  // ── Sidebar (the keyboard's focus on the collections' rows) ───────────
+  // SPEC_KEYBOARD.md, «Sidebar». Excludes the feed: while a row holds the
+  // focus no card does. The bar names ↵ by the row's state (М6).
+  {
+    id: "sidebar-navigate",
+    name: "Navigate",
+    context: "sidebar",
+    gesture: "up-down-arrows",
+    fixed: "structural",
+  },
+  {
+    id: "sidebar-open",
+    name: "Open",
+    context: "sidebar",
+    binding: { key: "Enter" },
+    fixed: "structural",
+  },
+  {
+    id: "sidebar-menu",
+    name: "Command",
+    context: "sidebar",
+    binding: { key: "k", meta: true },
+  },
+  {
+    id: "sidebar-go",
+    name: "Back",
+    context: "sidebar",
+    binding: { key: "ArrowRight" },
+    fixed: "structural",
+  },
+  {
+    id: "sidebar-unfocus",
+    name: "Unfocus",
+    context: "sidebar",
+    binding: { key: "Escape" },
+    fixed: "structural",
+  },
+  // Not in the bottom bar (SPEC_KEYBOARD.md, М11): shown in Shortcuts.
+  {
+    id: "sidebar-move-up",
+    name: "Move up",
+    context: "sidebar",
+    binding: { key: "ArrowUp", meta: true, shift: true },
+    fixed: "structural",
+  },
+  {
+    id: "sidebar-move-down",
+    name: "Move down",
+    context: "sidebar",
+    binding: { key: "ArrowDown", meta: true, shift: true },
     fixed: "structural",
   },
 ];

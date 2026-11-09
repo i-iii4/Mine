@@ -19,6 +19,23 @@ export function reorderedPositions(
   return order.map((tag, index) => ({ tag, position: start + index }));
 }
 
+/// The collection a row takes the place of on one step of ⌘⇧↑↓ (SPEC_KEYBOARD.md,
+/// М11). Null when it does not move: Everything's row is not a collection, the ends of
+/// the list do not wrap, and where the order is not the manual one (`manualOrder`
+/// false) a step has no meaning.
+export function keyboardMoveTarget(
+  rowKey: string,
+  direction: 1 | -1,
+  order: readonly TagCount[],
+  manualOrder: boolean,
+): string | null {
+  if (!manualOrder || !rowKey.startsWith("tag:")) return null;
+  const tag = rowKey.slice(4);
+  const index = order.findIndex((entry) => entry.tag === tag);
+  if (index === -1) return null;
+  return order[index + direction]?.tag ?? null;
+}
+
 /// Applies the collection order a drop just produced on top of the order the
 /// vault currently reports.
 ///

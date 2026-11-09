@@ -311,6 +311,119 @@ pub fn prepare_pending_upload(
     Ok(FinalizedPendingUpload { filename })
 }
 
+/// An upload copied into a Save's staging. It belongs to no publication yet:
+/// [`record_upload_publication`] names the file once the plan knows its name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TakenUpload {
+    pub sha256: String,
+}
+
+/// Copy a file from the browser into operation-owned staging at `target`
+/// (SPEC_CLIPPER.md, «Один путь файла со страницы», Б9). An upload that already
+/// belongs to a publication, of another folder or without its bytes is refused,
+/// and the helper downloads the file instead.
+pub fn take_pending_upload(vault: &VaultLayout, upload_id: &str, target: &Path) -> Result<TakenUpload> {
+    let dir = pending_upload_dir(vault, upload_id)?;
+    let _lock = lock_upload(&dir)?;
+    let manifest = load_pending_upload(vault, upload_id)?;
+    if manifest.vault_binding.is_none() {
+        return Err(anyhow!("legacy pending upload binding is unknown; staging retained"));
+    }
+    if manifest.finalization.is_some() {
+        return Err(anyhow!("upload already belongs to a publication"));
+    }
+    let payload = dir.join(&manifest.payload_filename);
+    reject_symlink(&payload)?;
+    if !payload.is_file() || std::fs::metadata(&payload)?.len() != manifest.size {
+        return Err(anyhow!("pending upload payload is missing or changed"));
+    }
+    let sha256 = sha256_file(&payload)?;
+    copy_create_new(&payload, target)?;
+    if sha256_file(target)? != sha256 {
+        return Err(anyhow!("pending payload changed during staging; material retained"));
+    }
+    Ok(TakenUpload { sha256 })
+}
+
+/// Name the published file of an upload before the plan is prepared: renaming a
+/// file by its bytes or merging a repeat changes the name, and without the final
+/// one [`mark_pending_upload_committed`] never finds the file and the bytes stay
+/// for good (Б9).
+pub fn record_upload_publication(
+    vault: &VaultLayout,
+    upload_id: &str,
+    filename: &str,
+    sha256: &str,
+) -> Result<()> {
+    let dir = pending_upload_dir(vault, upload_id)?;
+    let _lock = lock_upload(&dir)?;
+    let mut manifest = load_pending_upload(vault, upload_id)?;
+    if manifest.finalization.as_ref().is_some_and(|entry| entry.published) {
+        return Err(anyhow!("upload is already published"));
+    }
+    manifest.finalization = Some(UploadFinalization {
+        filename: sanitize_payload_filename(filename)?,
+        sha256: sha256.to_string(),
+        published: false,
+    });
+    write_manifest(&dir, &manifest)
+}
+
+/// Remove an upload whose fate is known, under its lock. `true` when it went;
+/// an upload that is not there is already gone.
+fn remove_upload_if(
+    vault: &VaultLayout,
+    upload_id: &str,
+    removable: impl FnOnce(&PendingUploadManifest) -> bool,
+) -> Result<bool> {
+    let dir = pending_upload_dir(vault, upload_id)?;
+    if std::fs::symlink_metadata(&dir).is_err() {
+        return Ok(false);
+    }
+    let _lock = lock_upload(&dir)?;
+    let manifest = load_pending_upload(vault, upload_id)?;
+    if !removable(&manifest) {
+        return Ok(false);
+    }
+    std::fs::remove_dir_all(&dir)?;
+    files::sync_parent_directory(&dir)?;
+    Ok(true)
+}
+
+/// Remove an upload no Save has taken: the clipper closed before its Save, or
+/// the Save did not need it (Б9). An upload with a `finalization` stays.
+pub fn discard_pending_upload(vault: &VaultLayout, upload_id: &str) -> Result<bool> {
+    remove_upload_if(vault, upload_id, |manifest| manifest.finalization.is_none())
+}
+
+/// Remove an upload of a Save that was rejected: nothing was published from it,
+/// and a new Save goes the whole route again (Б9).
+pub fn discard_rejected_upload(vault: &VaultLayout, upload_id: &str) -> Result<bool> {
+    remove_upload_if(vault, upload_id, |manifest| {
+        !manifest.committed && manifest.finalization.as_ref().is_none_or(|entry| !entry.published)
+    })
+}
+
+/// After the commit of a Save: an upload it published gives up its bytes, one it
+/// did not need goes (Б9).
+pub fn release_committed_upload(vault: &VaultLayout, upload_id: &str) -> Result<()> {
+    let dir = pending_upload_dir(vault, upload_id)?;
+    if std::fs::symlink_metadata(&dir).is_err() {
+        return Ok(());
+    }
+    let unused = load_pending_upload(vault, upload_id)?.finalization.is_none();
+    if unused {
+        discard_pending_upload(vault, upload_id)?;
+        return Ok(());
+    }
+    mark_pending_upload_committed(vault, upload_id)
+}
+
+/// The type the browser answered with for this upload.
+pub fn upload_content_type(vault: &VaultLayout, upload_id: &str) -> Option<String> {
+    load_pending_upload(vault, upload_id).ok()?.content_type
+}
+
 /// Staging is retained on an early return or panic. Only a durable source
 /// receipt authorizes removing its redundant payload, never ordinary Drop.
 pub struct PendingUploadGuard<'a> {
@@ -783,6 +896,82 @@ mod tests {
             .unwrap()
             .join("shot.jpg")
             .exists());
+    }
+
+    /// Б9: an upload is copied into staging without belonging to a publication
+    /// until the plan names its file.
+    #[test]
+    fn a_taken_upload_belongs_to_no_publication_until_it_is_named() {
+        let dir = TempDir::new().unwrap();
+        let vault = vault_for(&dir);
+        let staging = dir.path().join("staging");
+        std::fs::create_dir(&staging).unwrap();
+        let upload = write_pending_upload(&vault, "a.jpg", Some("image/jpeg".into()), b"bytes").unwrap();
+
+        let taken = take_pending_upload(&vault, &upload.upload_id, &staging.join("one.jpg")).unwrap();
+        take_pending_upload(&vault, &upload.upload_id, &staging.join("two.jpg")).unwrap();
+
+        assert_eq!(std::fs::read(staging.join("one.jpg")).unwrap(), b"bytes");
+        assert!(load_pending_upload(&vault, &upload.upload_id).unwrap().finalization.is_none());
+        assert_eq!(upload_content_type(&vault, &upload.upload_id).as_deref(), Some("image/jpeg"));
+
+        record_upload_publication(&vault, &upload.upload_id, "Final (image 1).jpg", &taken.sha256).unwrap();
+        assert!(take_pending_upload(&vault, &upload.upload_id, &staging.join("three.jpg")).is_err());
+        std::fs::write(vault.new_media_path("Final (image 1).jpg"), b"bytes").unwrap();
+        release_committed_upload(&vault, &upload.upload_id).unwrap();
+        let manifest = load_pending_upload(&vault, &upload.upload_id).unwrap();
+        assert!(manifest.committed);
+        assert!(!pending_upload_dir(&vault, &upload.upload_id).unwrap().join("a.jpg").exists());
+    }
+
+    /// Б9: an upload of another folder is refused and stays with its folder.
+    #[test]
+    fn an_upload_of_another_folder_cannot_be_taken_or_discarded() {
+        let dir = TempDir::new().unwrap();
+        let vault = vault_for(&dir);
+        let copied = VaultLayout::with_derived_root(dir.path().join("copy"), vault.derived_root().to_path_buf());
+        std::fs::create_dir(copied.root()).unwrap();
+        let upload = write_pending_upload(&vault, "a.jpg", None, b"bytes").unwrap();
+        assert!(take_pending_upload(&copied, &upload.upload_id, &dir.path().join("t.jpg")).is_err());
+        assert!(discard_pending_upload(&copied, &upload.upload_id).is_err());
+        assert!(pending_upload_dir(&vault, &upload.upload_id).unwrap().exists());
+    }
+
+    /// Б9: only what no publication took is discarded; a rejected Save gives up
+    /// what it named, and a published or committed upload is never removed.
+    #[test]
+    fn a_discard_keeps_what_belongs_to_a_publication() {
+        let dir = TempDir::new().unwrap();
+        let vault = vault_for(&dir);
+        let free = write_pending_upload(&vault, "a.jpg", None, b"bytes").unwrap();
+        assert!(discard_pending_upload(&vault, &free.upload_id).unwrap());
+        assert!(!pending_upload_dir(&vault, &free.upload_id).unwrap().exists());
+        assert!(!discard_pending_upload(&vault, &free.upload_id).unwrap(), "an upload already gone");
+
+        let named = write_pending_upload(&vault, "b.jpg", None, b"bytes").unwrap();
+        record_upload_publication(&vault, &named.upload_id, "B.jpg", "hash").unwrap();
+        assert!(!discard_pending_upload(&vault, &named.upload_id).unwrap());
+        assert!(pending_upload_dir(&vault, &named.upload_id).unwrap().exists());
+        assert!(discard_rejected_upload(&vault, &named.upload_id).unwrap());
+        assert!(!pending_upload_dir(&vault, &named.upload_id).unwrap().exists());
+
+        let published = write_pending_upload(&vault, "c.jpg", None, b"bytes").unwrap();
+        finalize_pending_upload(&vault, &published.upload_id, "C").unwrap();
+        assert!(!discard_rejected_upload(&vault, &published.upload_id).unwrap());
+        assert!(pending_upload_dir(&vault, &published.upload_id).unwrap().exists());
+    }
+
+    /// Б9: an upload the Save did not need goes at the commit (a poster of a
+    /// video that was saved), and an invalid id is refused.
+    #[test]
+    fn an_unused_upload_goes_at_the_commit() {
+        let dir = TempDir::new().unwrap();
+        let vault = vault_for(&dir);
+        let unused = write_pending_upload(&vault, "p.jpg", None, b"bytes").unwrap();
+        release_committed_upload(&vault, &unused.upload_id).unwrap();
+        assert!(!pending_upload_dir(&vault, &unused.upload_id).unwrap().exists());
+        release_committed_upload(&vault, &unused.upload_id).unwrap();
+        assert!(discard_pending_upload(&vault, "../../etc").is_err());
     }
 
     #[test]

@@ -14,6 +14,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DeleteCollectionDialog, Sidebar, SidebarTagRowDragPreview } from "./Sidebar";
+import { SidebarOverlayWidthContext } from "./SidebarOverlay";
 import type { IndexedBlock, TagCount } from "@/types";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
@@ -49,6 +50,33 @@ async function settleSave() {
 }
 
 /** Fake timers that also drive the hover-intent clock (performance.now). */
+/**
+ * The pointer's own movement onto a thumbnail: two reports at different points,
+ * since the first one only says where the pointer is (С7.5).
+ */
+let thumbnailPointerX = 100;
+function movePointerOnto(target: Element, clientY = 110) {
+  thumbnailPointerX += 4;
+  fireEvent.pointerMove(target, { clientX: thumbnailPointerX, clientY });
+  fireEvent.pointerMove(target, { clientX: thumbnailPointerX + 1, clientY });
+}
+
+/** The browser's report at the pointer's last point: not its own movement. */
+function repeatPointerOn(target: Element, clientY = 110) {
+  fireEvent.pointerMove(target, { clientX: thumbnailPointerX + 1, clientY });
+}
+
+/** Runs `ms` and lets the preview read, measure and show its card. */
+async function settlePreview(ms = 0) {
+  await act(async () => {
+    vi.advanceTimersByTime(ms);
+    for (let flush = 0; flush < 8; flush += 1) await Promise.resolve();
+  });
+  await act(async () => {
+    for (let flush = 0; flush < 8; flush += 1) await Promise.resolve();
+  });
+}
+
 const INTENT_TIMERS = {
   toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance", "Date", "requestAnimationFrame", "cancelAnimationFrame"],
 } satisfies Parameters<typeof vi.useFakeTimers>[0];
@@ -406,6 +434,56 @@ describe("Sidebar", () => {
     expect(onRenameTag).toHaveBeenCalledWith("alpha", "Renamed");
   });
 
+  // Entering and leaving the edit moves nothing (user's decision of
+  // 05.11.2026): the field is laid out by the row's and the name's own boxes.
+  describe("the field stands where the name stands", () => {
+    it("takes the rest row's body and the name's cell, with the name's own inset", () => {
+      const { container } = renderSidebar({ ...defaultProps });
+      const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLElement;
+      const inset = (row.querySelector("[data-sidebar-name-cell]") as HTMLElement).style.paddingLeft;
+      expect(inset).toContain("--sidebar-name-lead");
+
+      fireEvent.doubleClick(screen.getByRole("link", { name: /alpha/ }));
+
+      const edited = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLElement;
+      const input = within(edited).getByRole("textbox", { name: "Переименовать alpha" });
+      const cell = input.closest<HTMLElement>("[data-sidebar-name-cell]");
+      expect(cell).not.toBeNull();
+      expect(cell!.style.paddingLeft).toBe(inset);
+      expect(cell!.style.marginLeft).toBe("var(--sidebar-name-left, 0px)");
+      expect(input.closest("[data-sidebar-row-body]")).not.toBeNull();
+      // No inset or shift of the field's own beside the cell's.
+      expect(input.closest("[data-sidebar-row-body]")!.className).not.toContain("pl-[");
+      expect(input.className).not.toContain("translate-x");
+      // Its line is the cell's, in each look's own height.
+      expect(input.className).toContain("h-[1lh]");
+      expect(input.className).toContain("leading-[inherit]");
+    });
+
+    it("keeps unseen copies of the name and the count, which give a Contents row its height", () => {
+      const { container } = renderSidebar({ ...defaultProps });
+      fireEvent.doubleClick(screen.getByRole("link", { name: /alpha/ }));
+      const edited = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLElement;
+      const ghosts = edited.querySelectorAll("[data-sidebar-editable-row-ghost]");
+      expect(ghosts).toHaveLength(2);
+      for (const ghost of ghosts) expect(ghost).toHaveAttribute("aria-hidden", "true");
+      expect(ghosts[0]!.querySelector("[data-sidebar-name-text]")).toHaveTextContent("alpha");
+      expect(ghosts[1]).toHaveAttribute("data-sidebar-meta-count");
+      // The list's own place for a row reads the field, not the copy.
+      const first = edited.querySelector("[data-sidebar-name-text], [data-sidebar-editable-row-body] input");
+      expect(first?.tagName).toBe("INPUT");
+    });
+
+    it("stands the New Collection field in the same cell", () => {
+      const { container } = renderSidebar({ ...defaultProps, isCreatingChannel: true });
+      const input = within(container.querySelector("[data-sidebar-new-channel-row]") as HTMLElement).getByRole("textbox");
+      const cell = input.closest<HTMLElement>("[data-sidebar-name-cell]");
+      expect(cell).not.toBeNull();
+      expect(cell!.style.marginLeft).toBe("var(--sidebar-name-left, 0px)");
+      expect(input.closest("[data-sidebar-row-body]")).not.toBeNull();
+    });
+  });
+
   // A collection's name is edited as the card's name in the path is
   // (05.10.2026): the reason under the field, a shake on a refused save.
   describe("a collection name refused", () => {
@@ -699,35 +777,6 @@ describe("Sidebar", () => {
     expect(betaRow).not.toHaveAttribute("data-sidebar-row-focused");
   });
 
-  it("keeps sidebar search keyboard focus persistent until App clears it", () => {
-    vi.useFakeTimers();
-    const props = defaultProps;
-    const { container, rerender } = renderSidebar({
-      ...props,
-      keyboardNavigationFocus: { rowKey: "tag:alpha", sequence: 1 },
-      keyboardNavigationFocusPersistent: true,
-    }, ["/"]);
-
-    const nav = container.querySelector("[data-sidebar-scroll]")!;
-    const alphaRow = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
-
-    expect(alphaRow).toHaveAttribute("id", "sidebar-row-tag%3Aalpha");
-    expect(alphaRow).toHaveAttribute("data-sidebar-row-focused", "true");
-
-    act(() => vi.advanceTimersByTime(2000));
-    expect(nav).toHaveAttribute("data-sidebar-row-focus-mode", "true");
-    expect(alphaRow).toHaveAttribute("data-sidebar-row-focused", "true");
-
-    rerender(sidebarTree({
-      ...props,
-      keyboardNavigationFocus: null,
-      keyboardNavigationFocusPersistent: false,
-    }, ["/"]));
-
-    expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
-    expect(alphaRow).not.toHaveAttribute("data-sidebar-row-focused");
-  });
-
   it("uses the normal row hover state for card drag-over targets", () => {
     dndContextState.over = { id: "tag:alpha" };
     const { container } = renderSidebar({ ...defaultProps, isDropDragging: true });
@@ -792,6 +841,33 @@ describe("Sidebar", () => {
     const { container } = renderSidebar({ ...defaultProps, collapsed: true });
     const aside = container.querySelector("aside");
     expect(aside).toHaveStyle({ width: "var(--sidebar-width)" });
+  });
+
+  // SPEC_CARD_PEEK.md, О11 (user's decision of 05.11.2026): a row of another
+  // place moves the feed, the row of the place it stands on only closes the
+  // open card.
+  it.each([
+    ["Everything", /Everything/, "/"],
+    ["a collection", /alpha/, "/channel/alpha"],
+  ])("tells a press on the row of the current place, %s, from a move over an open card", (_name, row, route) => {
+    const onNavClick = vi.fn();
+    const onCardClose = vi.fn();
+    const onScrollToTop = vi.fn();
+    renderSidebar({
+      ...defaultProps,
+      linkedBlockSlug: "open-block",
+      linkedTags: [],
+      onToggleLinkedTag: vi.fn(),
+      onNavClick,
+      onCardClose,
+      onScrollToTop,
+    }, [route]);
+
+    fireEvent.click(screen.getByRole("link", { name: row }));
+
+    expect(onCardClose).toHaveBeenCalledOnce();
+    expect(onNavClick).not.toHaveBeenCalled();
+    expect(onScrollToTop).not.toHaveBeenCalled();
   });
 
   it("renders link editor when a block is open", async () => {
@@ -1027,7 +1103,7 @@ describe("Sidebar", () => {
   });
 
   it("closes a frozen thumbnail hover preview when the card menu closes away from the thumbnail", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers(INTENT_TIMERS);
     vi.mocked(invoke).mockResolvedValue(previewBlock("alpha-a"));
     const previews = new Map([
       ["alpha", [{
@@ -1064,29 +1140,25 @@ describe("Sidebar", () => {
       }),
     });
 
-    fireEvent.pointerEnter(thumbnail, { clientX: 110, clientY: 110 });
-    await act(async () => {
-      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 1);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
+    movePointerOnto(thumbnail);
+    await settlePreview(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 1);
+    expect(document.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
 
     rerender(sidebarTree({ ...props, hoverPreviewFrozen: true }));
     fireEvent.pointerLeave(thumbnail, { clientX: 500, clientY: 500 });
     fireEvent.pointerMove(window, { clientX: 500, clientY: 500 });
-    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
+    expect(document.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
 
     await act(async () => {
       rerender(sidebarTree({ ...props, hoverPreviewFrozen: false }));
       await Promise.resolve();
     });
 
-    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
   });
 
   it("shows a non-interactive sidebar preview only while the thumbnail is hovered", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers(INTENT_TIMERS);
     const compositeManifest = JSON.stringify({
       kind: "composite",
       primary_preview_path: "alpha-a.jpg",
@@ -1166,20 +1238,13 @@ describe("Sidebar", () => {
     const secondThumbnail = thumbnails[1];
     expect(firstThumbnail).toHaveAttribute("data-sidebar-preview-thumbnail", "trigger");
 
-    fireEvent.pointerEnter(firstThumbnail!);
-    await act(async () => {
-      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS - 1);
-      await Promise.resolve();
-    });
-    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
+    movePointerOnto(firstThumbnail!);
+    await settlePreview(HOVER_PREVIEW_COLD_OPEN_DELAY_MS - 1);
+    expect(document.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
 
-    await act(async () => {
-      vi.advanceTimersByTime(1);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await settlePreview(1);
 
-    const hoverPreview = container.querySelector("[data-sidebar-thumbnail-hover-preview]");
+    const hoverPreview = document.querySelector("[data-sidebar-thumbnail-hover-preview]");
     expect(hoverPreview).toBeInTheDocument();
     expect(hoverPreview).toHaveClass("pointer-events-none");
     expect(hoverPreview!.querySelector("button")).toBeNull();
@@ -1197,7 +1262,6 @@ describe("Sidebar", () => {
     expect(hoverPreview).toHaveTextContent("Alpha preview text");
     expect(hoverPreview!.querySelector("[data-card-preview-collections]")).toHaveTextContent("alpha");
     expect(container.querySelector("[data-sidebar-thumbnail-hover-bridge]")).not.toBeInTheDocument();
-    fireEvent.pointerLeave(container.querySelector("[data-sidebar-scroll]")!);
     expect(container.querySelector("[data-sidebar-scroll]")).toHaveAttribute(
       "data-sidebar-row-focus-mode",
       "true",
@@ -1209,45 +1273,36 @@ describe("Sidebar", () => {
     expect(firstThumbnail).toHaveAttribute("data-sidebar-preview-active", "true");
     expect(invoke).toHaveBeenCalledWith("get_block", { slug: "alpha-a" });
 
+    // Leaving the list: the thumbnail lets go at once, the window fades in place.
     fireEvent.pointerLeave(firstThumbnail!);
-    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
     expect(firstThumbnail).not.toHaveAttribute("data-sidebar-preview-active");
+    expect(document.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
+    await settlePreview(HOVER_INTENT.fadeOutMs + 20);
+    expect(document.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
 
-    fireEvent.pointerEnter(secondThumbnail!);
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
+    // Back within the warm window: no delay beyond the pointer coming to rest.
+    movePointerOnto(secondThumbnail!);
+    await settlePreview(HOVER_INTENT.velocityWindowMs);
+    expect(document.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
     expect(secondThumbnail).toHaveAttribute("data-sidebar-preview-active", "true");
     expect(invoke).toHaveBeenCalledWith("get_block", { slug: "alpha-b" });
 
     fireEvent.pointerLeave(secondThumbnail!);
-    await act(async () => {
-      vi.advanceTimersByTime(HOVER_PREVIEW_WARM_WINDOW_MS + 1);
-      await Promise.resolve();
-    });
+    await settlePreview(HOVER_INTENT.fadeOutMs + 20 + HOVER_PREVIEW_WARM_WINDOW_MS + 1);
 
-    fireEvent.pointerEnter(firstThumbnail!);
-    await act(async () => {
-      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS - 1);
-      await Promise.resolve();
-    });
-    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
+    movePointerOnto(firstThumbnail!);
+    await settlePreview(HOVER_PREVIEW_COLD_OPEN_DELAY_MS - 1);
+    expect(document.querySelector("[data-sidebar-thumbnail-hover-preview]")).not.toBeInTheDocument();
 
-    await act(async () => {
-      vi.advanceTimersByTime(1);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(container.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
+    await settlePreview(1);
+    expect(document.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeInTheDocument();
     expect(firstThumbnail).toHaveAttribute("data-sidebar-preview-active", "true");
   });
 
   it("hands a preview read past the warm window to the next thumbnail at once", async () => {
     // The warm window runs from when the preview left the screen, not from
     // when it opened (SPEC_CARD_STATES.md, С7.10).
-    vi.useFakeTimers();
+    vi.useFakeTimers(INTENT_TIMERS);
     vi.mocked(invoke)
       .mockResolvedValueOnce(previewBlock("alpha-a"))
       .mockResolvedValueOnce(previewBlock("alpha-b"));
@@ -1266,32 +1321,71 @@ describe("Sidebar", () => {
       channelPreviews: previews,
     });
     const [firstThumbnail, secondThumbnail] = container.querySelectorAll('[data-sidebar-preview-thumbnail="trigger"]');
-    const preview = () => container.querySelector("[data-sidebar-thumbnail-hover-preview]");
+    const preview = () => document.querySelector("[data-sidebar-thumbnail-hover-preview]");
 
-    fireEvent.pointerEnter(firstThumbnail!);
-    await act(async () => {
-      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    movePointerOnto(firstThumbnail!);
+    await settlePreview(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
     expect(preview()).toBeInTheDocument();
 
     act(() => {
       vi.advanceTimersByTime(HOVER_PREVIEW_WARM_WINDOW_MS * 3);
     });
     fireEvent.pointerLeave(firstThumbnail!);
+    await settlePreview(HOVER_INTENT.fadeOutMs + 20);
     expect(preview()).not.toBeInTheDocument();
-    fireEvent.pointerEnter(secondThumbnail!);
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    movePointerOnto(secondThumbnail!);
+    await settlePreview(HOVER_INTENT.velocityWindowMs);
     expect(preview()).toBeInTheDocument();
     expect(secondThumbnail).toHaveAttribute("data-sidebar-preview-active", "true");
   });
 
+  it("changes the card in one window as the pointer goes on to the next thumbnail", async () => {
+    vi.useFakeTimers(INTENT_TIMERS);
+    vi.mocked(invoke).mockImplementation(async (_command, args) => previewBlock((args as { slug: string }).slug));
+    const previews = new Map([
+      ["alpha", ["alpha-a", "alpha-b"].map((slug) => ({
+        url: `asset://localhost/thumbs/${slug}.jpg`,
+        text: false,
+        hasThumb: true,
+        slug,
+      }))],
+    ]);
+    const { container } = renderSidebar({
+      ...defaultProps,
+      vaultPath: "/vault",
+      thumbsRootPath: "/vault/.mine/cache/thumbs",
+      channelPreviews: previews,
+    });
+    const [firstThumbnail, secondThumbnail] = container.querySelectorAll('[data-sidebar-preview-thumbnail="trigger"]');
+    const preview = () => document.querySelector("[data-sidebar-thumbnail-hover-preview]");
+
+    movePointerOnto(firstThumbnail!);
+    await settlePreview(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
+    const window = preview();
+    expect(window).toBeInTheDocument();
+    await settlePreview(HOVER_INTENT.velocityWindowMs);
+
+    movePointerOnto(secondThumbnail!);
+    await settlePreview(0);
+    expect(preview()).toBe(window);
+    expect(secondThumbnail).toHaveAttribute("data-sidebar-preview-active", "true");
+    expect(firstThumbnail).not.toHaveAttribute("data-sidebar-preview-active");
+    expect(invoke).toHaveBeenLastCalledWith("get_block", { slug: "alpha-b" });
+
+    // Off every thumbnail, a pointer in its attending mode lets it go after the
+    // grace, and the fade takes it.
+    const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
+    await settlePreview(HOVER_INTENT.velocityWindowMs);
+    repeatPointerOn(row);
+    fireEvent.pointerMove(row, { clientX: thumbnailPointerX + 2, clientY: 110 });
+    await settlePreview(HOVER_INTENT.leaveGraceMs - 1);
+    expect(preview()).toBe(window);
+    await settlePreview(1 + HOVER_INTENT.fadeOutMs + 20);
+    expect(preview()).not.toBeInTheDocument();
+  });
+
   it("does not open the sidebar hover preview while a drag is in flight", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers(INTENT_TIMERS);
     const previews = new Map([
       ["alpha", [{
         url: "asset://localhost/thumbs/alpha-a.jpg",
@@ -1313,22 +1407,18 @@ describe("Sidebar", () => {
     );
     expect(firstThumbnail).not.toBeNull();
 
-    fireEvent.pointerEnter(firstThumbnail!);
-    await act(async () => {
-      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 1);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    movePointerOnto(firstThumbnail!);
+    await settlePreview(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 1);
 
     expect(
-      container.querySelector("[data-sidebar-thumbnail-hover-preview]"),
+      document.querySelector("[data-sidebar-thumbnail-hover-preview]"),
     ).not.toBeInTheDocument();
     expect(firstThumbnail).not.toHaveAttribute("data-sidebar-preview-active");
     expect(invoke).not.toHaveBeenCalledWith("get_block", { slug: "alpha-a" });
   });
 
   it("closes an already-open sidebar hover preview when a drag begins", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers(INTENT_TIMERS);
     vi.mocked(invoke).mockResolvedValue(previewBlock("alpha-a"));
     const previews = new Map([
       ["alpha", [{
@@ -1350,14 +1440,10 @@ describe("Sidebar", () => {
     const firstThumbnail = container.querySelector(
       '[data-sidebar-preview-thumbnail="trigger"]',
     );
-    fireEvent.pointerEnter(firstThumbnail!);
-    await act(async () => {
-      vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 1);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    movePointerOnto(firstThumbnail!);
+    await settlePreview(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 1);
     expect(
-      container.querySelector("[data-sidebar-thumbnail-hover-preview]"),
+      document.querySelector("[data-sidebar-thumbnail-hover-preview]"),
     ).toBeInTheDocument();
 
     await act(async () => {
@@ -1366,7 +1452,7 @@ describe("Sidebar", () => {
     });
 
     expect(
-      container.querySelector("[data-sidebar-thumbnail-hover-preview]"),
+      document.querySelector("[data-sidebar-thumbnail-hover-preview]"),
     ).not.toBeInTheDocument();
   });
 
@@ -1393,27 +1479,17 @@ describe("Sidebar", () => {
 
     const preview = () => document.querySelector("[data-sidebar-thumbnail-hover-preview]");
     const thumbnails = () => document.querySelectorAll('[data-sidebar-preview-thumbnail="trigger"]');
-
-    async function settle() {
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-    }
+    const settle = () => settlePreview();
 
     /** Opens the preview of the strip's first thumbnail, alpha-a. */
     async function openFirstPreview(props: ComponentProps<typeof Sidebar> = stripProps) {
-      vi.useFakeTimers();
+      vi.useFakeTimers(INTENT_TIMERS);
       vi.mocked(invoke).mockImplementation(async (_command, args) => (
         previewBlock((args as { slug: string }).slug)
       ));
       const view = renderSidebar(props);
-      fireEvent.pointerEnter(thumbnails()[0]!);
-      await act(async () => {
-        vi.advanceTimersByTime(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 1);
-        await Promise.resolve();
-        await Promise.resolve();
-      });
+      movePointerOnto(thumbnails()[0]!);
+      await settlePreview(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 1);
       expect(preview()).toBeInTheDocument();
       return view;
     }
@@ -1458,7 +1534,7 @@ describe("Sidebar", () => {
       expect(thumbnails()[0]).toHaveAttribute("data-sidebar-preview-active", "true");
     });
 
-    it("lets the thumbnail now under the pointer open its own preview by the shared rule", async () => {
+    it("keeps the thumbnail now under a resting pointer silent until the pointer really moves", async () => {
       const { rerender } = await openFirstPreview();
       await act(async () => {
         rerender(sidebarTree({
@@ -1469,10 +1545,16 @@ describe("Sidebar", () => {
       await settle();
       expect(preview()).not.toBeInTheDocument();
 
-      // The closed preview left the screen just now: within the warm window
-      // the next thumbnail answers a resting pointer at once.
+      // What the browser reports when a thumbnail arrives under a resting
+      // pointer: an enter and the same point again (SPEC_CARD_STATES.md, С7.5).
       fireEvent.pointerEnter(thumbnails()[0]!);
-      await settle();
+      repeatPointerOn(thumbnails()[0]!);
+      await settlePreview(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
+      expect(preview()).not.toBeInTheDocument();
+
+      // Its own step answers on the same thumbnail, within the warm window.
+      fireEvent.pointerMove(thumbnails()[0]!, { clientX: thumbnailPointerX + 2, clientY: 110 });
+      await settlePreview(HOVER_INTENT.velocityWindowMs);
 
       expect(preview()).toBeInTheDocument();
       expect(thumbnails()[0]).toHaveAttribute("data-sidebar-preview-active", "true");
@@ -2049,6 +2131,46 @@ describe("sidebar thumbnail placeholders while previews load", () => {
   });
 });
 
+describe("the list's look while the width moves (user's decision of 01.11.2026)", () => {
+  const scrollport = (container: HTMLElement) => container.querySelector("[data-sidebar-scroll]")!;
+
+  it("names the open width on the list while the width moves beside the feed, and only then", () => {
+    const moving = renderSidebar({ ...defaultProps, widthAnimating: true, openWidth: 420 });
+    expect(scrollport(moving.container).getAttribute("data-sidebar-width-motion")).toBe("420");
+    moving.unmount();
+    const resting = renderSidebar({ ...defaultProps, widthAnimating: false, openWidth: 420 });
+    expect(scrollport(resting.container).hasAttribute("data-sidebar-width-motion")).toBe(false);
+  });
+
+  it("names none over the feed, where the width does not move", () => {
+    const { container } = render(
+      <SidebarOverlayWidthContext.Provider value="400px">
+        {sidebarTree({ ...defaultProps, widthAnimating: true, openWidth: 420 })}
+      </SidebarOverlayWidthContext.Provider>,
+    );
+    expect(scrollport(container).hasAttribute("data-sidebar-width-motion")).toBe(false);
+    expect((scrollport(container) as HTMLElement).style.minWidth).toBe("");
+  });
+
+  it("lays the list out at its open width for the whole motion, and lets go at rest (user's decision of 05.11.2026)", () => {
+    const moving = renderSidebar({ ...defaultProps, widthAnimating: true, openWidth: 420 });
+    const list = scrollport(moving.container) as HTMLElement;
+    expect(list.style.minWidth).toBe("max(var(--sidebar-nav-min-width), 419px)");
+    expect((list.parentElement as HTMLElement).style.minWidth).toBe("max(var(--sidebar-nav-min-width), 419px)");
+    moving.unmount();
+    const resting = renderSidebar({ ...defaultProps, widthAnimating: false, openWidth: 420 });
+    const still = scrollport(resting.container) as HTMLElement;
+    expect(still.style.minWidth).toBe("");
+    expect((still.parentElement as HTMLElement).style.minWidth).toBe("");
+  });
+
+  it("gives a name's cell the columns' width, not the sidebar's", () => {
+    const { container } = renderSidebar({ ...defaultProps, orderedTags: [{ tag: "Inbox", count: 1 }] });
+    const cell = container.querySelector<HTMLElement>("[data-sidebar-name-cell]")!;
+    expect(cell.style.getPropertyValue("--sidebar-width")).toBe("");
+  });
+});
+
 describe("sidebar compact rows (PLAN 50.36)", () => {
   const thumb = (slug: string) => ({
     slug,
@@ -2262,6 +2384,78 @@ describe("sidebar and the card under the pointer (SPEC_CARD_STATES.md)", () => {
       expect(isCardLitByCollection(7)).toBe(false);
       expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
     });
+  });
+});
+
+describe("the keyboard's focus on a row (SPEC_KEYBOARD.md, М5)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const row = (container: HTMLElement, key: string) =>
+    container.querySelector<HTMLElement>(`[data-sidebar-row-key="${key}"]`)!;
+
+  it("marks the row, and it lights no name and opens no stack", () => {
+    const { container } = renderSidebar({ ...defaultProps, keyboardFocusRowKey: "tag:alpha" });
+    const nav = container.querySelector("[data-sidebar-scroll]")!;
+    const alpha = row(container, "tag:alpha");
+    expect(alpha).toHaveAttribute("data-sidebar-row-keyboard-focus", "true");
+    expect(row(container, "tag:beta")).not.toHaveAttribute("data-sidebar-row-keyboard-focus");
+    // The rule that brightens a name (global.css) needs both of these.
+    expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
+    expect(alpha).not.toHaveAttribute("data-sidebar-row-focused");
+    // A compact item's stack opens for this (SidebarAnswerRowContext).
+    expect(alpha).not.toHaveAttribute("data-sidebar-row-answer");
+    expect(document.querySelector("[data-sidebar-thumbnail-hover-preview]")).toBeNull();
+  });
+
+  it("lays the state layer over the focused row only: the pointer and the open collection have none", () => {
+    vi.useFakeTimers(INTENT_TIMERS);
+    const { container } = renderSidebar({ ...defaultProps, keyboardFocusRowKey: "tag:beta" }, ["/channel/alpha"]);
+    expect(row(container, "tag:beta")).toHaveClass("state-active", "rounded-1");
+    // Decision of 22.10.2026: the open collection answers by its name's brightness.
+    expect(row(container, "tag:alpha")).not.toHaveClass("state-active");
+
+    pointerTo(row(container, "all"), 10);
+    rest();
+    expect(row(container, "all")).toHaveAttribute("data-sidebar-row-focused", "true");
+    expect(row(container, "all")).not.toHaveClass("state-active");
+  });
+
+  it("does not take the current collection's own mark from it", () => {
+    const { container } = renderSidebar({ ...defaultProps, keyboardFocusRowKey: "tag:beta" }, ["/channel/alpha"]);
+    expect(row(container, "tag:alpha")).toHaveAttribute("data-sidebar-row-active", "true");
+    expect(row(container, "tag:alpha")).not.toHaveAttribute("data-sidebar-row-keyboard-focus");
+    expect(row(container, "tag:beta")).not.toHaveAttribute("data-sidebar-row-active");
+  });
+
+  it("quiets the row under a resting pointer, until the pointer moves", () => {
+    vi.useFakeTimers(INTENT_TIMERS);
+    const view = render(sidebarTree(defaultProps));
+    const nav = view.container.querySelector("[data-sidebar-scroll]")!;
+    const beta = row(view.container, "tag:beta");
+    pointerTo(beta, 10);
+    rest();
+    expect(beta).toHaveAttribute("data-sidebar-row-focused", "true");
+    expect(beta).toHaveAttribute("data-sidebar-row-answer", "true");
+
+    view.rerender(sidebarTree({ ...defaultProps, keyboardFocusRowKey: "tag:alpha" }));
+    expect(nav).not.toHaveAttribute("data-sidebar-row-focus-mode");
+    expect(beta).not.toHaveAttribute("data-sidebar-row-focused");
+    expect(beta).not.toHaveAttribute("data-sidebar-row-answer");
+    expect(row(view.container, "tag:alpha")).toHaveAttribute("data-sidebar-row-keyboard-focus", "true");
+  });
+
+  it("gives way to a name being typed, and returns after it", async () => {
+    const view = render(sidebarTree({ ...defaultProps, keyboardFocusRowKey: "tag:alpha" }));
+    fireEvent.contextMenu(row(view.container, "tag:alpha"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const field = await screen.findByRole("textbox");
+    expect(row(view.container, "tag:alpha")).not.toHaveAttribute("data-sidebar-row-keyboard-focus");
+
+    fireEvent.keyDown(field, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("textbox")).toBeNull());
+    expect(row(view.container, "tag:alpha")).toHaveAttribute("data-sidebar-row-keyboard-focus", "true");
   });
 });
 

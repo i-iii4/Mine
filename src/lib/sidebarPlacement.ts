@@ -72,7 +72,7 @@ export function sidebarPlacement({
   if (sidebarOverlaid(windowWidth)) {
     return { kind: "overlay", feedWidth: windowWidth };
   }
-  const sidebarWidth = Math.min(wanted, windowWidth - APP_MAIN_MIN_WIDTH_PX);
+  const sidebarWidth = sidebarWidthPx(target, windowWidth);
   return {
     kind: "beside",
     sidebarWidth,
@@ -96,6 +96,11 @@ export function sidebarDragBounds(windowWidth: number): { min: number; max: numb
  *  window's resize squeezes the sidebar without a render. */
 export function sidebarWidthCss(target: number): string {
   return `min(${clampSidebarTarget(target)}px, 100vw - ${APP_MAIN_MIN_WIDTH_PX}px)`;
+}
+
+/** The width `sidebarWidthCss(target)` gives in a window `windowWidth` wide, px. */
+export function sidebarWidthPx(target: number, windowWidth: number): number {
+  return Math.min(clampSidebarTarget(target), windowWidth - APP_MAIN_MIN_WIDTH_PX);
 }
 
 /** The width of the sidebar over the feed in a window `windowWidth` wide:

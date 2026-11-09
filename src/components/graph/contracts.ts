@@ -14,14 +14,10 @@ export type GraphCanvasData = {
   links: GraphCanvasLink[];
 };
 
+/** A card's node as the preview window's trigger; its key is the node's id. */
 export type GraphPreviewTarget = {
-  nodeId: string;
+  key: string;
   slug: string;
-};
-
-export type GraphPreviewPosition = {
-  top: number;
-  left: number;
 };
 
 export type GraphCardMenuPoint = {
@@ -133,7 +129,12 @@ export const COLLECTION_LABEL_CLICK_SUPPRESS_MS = 400;
 export const COLLECTION_LABEL_COLLISION_ITERATIONS = 6;
 export const COLLECTION_COLLISION_RADIUS = 48;
 export const GRAPH_PREVIEW_WIDTH = 240;
-export const GRAPH_PREVIEW_FALLBACK_HEIGHT = 320;
+/**
+ * How late force-graph can tell the node under a pointer that has stopped: it
+ * reads a hidden canvas, redrawn at most this often while the graph moves
+ * (`HOVER_CANVAS_THROTTLE_DELAY` in force-graph.mjs, which does not export it).
+ */
+export const GRAPH_HIT_CANVAS_REFRESH_MS = 800;
 export const GRAPH_PREVIEW_GAP = 8;
 export const GRAPH_PREVIEW_VIEWPORT_MARGIN = 16;
 export const GRAPH_CENTER_MARGIN = 48;

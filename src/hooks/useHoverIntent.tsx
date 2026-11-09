@@ -16,6 +16,9 @@ export interface HoverIntentHandle {
   displace(): void;
   suspend(reason: HoverIntentSuspension, suspended: boolean): void;
   isSlow(): boolean;
+  /** С7.11: the hover preview window's attending mode. */
+  isAttending(): boolean;
+  setAttendingListener(listener: (() => void) | null): void;
   current(): HoverIntentState;
 }
 
@@ -59,6 +62,8 @@ export function useHoverIntent(onChange: (state: HoverIntentState) => void = ign
     displace: () => engine().displace(),
     suspend,
     isSlow: () => engine().isSlow(),
+    isAttending: () => engine().isAttending(),
+    setAttendingListener: (listener) => engine().setAttendingListener(listener),
     current: () => engine().state,
   }), [engine, suspend]);
 }

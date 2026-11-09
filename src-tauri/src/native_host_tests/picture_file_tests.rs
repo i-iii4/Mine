@@ -204,15 +204,6 @@ fn a_request_without_a_file_source_is_still_missing_media() {
     assert!(response["error"].as_str().unwrap().starts_with("MissingMedia:"), "{response}");
 }
 
-#[test]
-fn a_wait_is_said_in_seconds_minutes_or_hours() {
-    assert_eq!(wait_text(Duration::from_secs(45)), "45 s");
-    assert_eq!(wait_text(Duration::from_secs(600)), "10 min");
-    assert_eq!(wait_text(Duration::from_secs(601)), "11 min");
-    assert_eq!(wait_text(Duration::from_secs(3600)), "1 h");
-    assert_eq!(wait_text(Duration::from_secs(5400)), "1 h 30 min");
-}
-
 /// Б3: a `429` without `Retry-After` asks to try again later.
 #[test]
 fn a_refusal_without_retry_after_asks_for_later() {

@@ -438,8 +438,11 @@ async function verifyCardHoverOutline(page) {
   let probe;
   let after;
   try {
+    // The pointer's own step onto the card: a report at another point. A node
+    // with no step under the pointer answers nothing (SPEC_CARD_STATES.md, С7.5).
+    await page.mouse.move(box.x + target.x - 1, box.y + target.y);
     await page.mouse.move(box.x + target.x, box.y + target.y);
-    await page.waitForSelector("[data-graph-card-hover-preview]", { timeout: 800 });
+    await page.waitForSelector("[data-graph-card-hover-preview]", { timeout: 2000 });
     after = await canvasScreenshot(page);
   } finally {
     probe = await page.evaluate(() => window.__MINE_GRAPH_HOVER_PROBE__?.finish());

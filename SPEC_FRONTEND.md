@@ -704,6 +704,91 @@ must not expose a channel display-mode selector.
 ширины, минимум панели и двусторонний контракт CSS + JS описаны в
 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), раздел «Строка боковой панели: три зоны».
 
+**Переход между List и таблицей** (решение пользователя 01.11.2026; правило,
+времена и приёмка: [DESIGN_SYSTEM.md](</Users/i_iii/Проекты/Личные проекты/local-arena/DESIGN_SYSTEM.md>),
+«Переход между List и таблицей»). Когда список пересекает порог компактных
+строк (366,2 px), строки одним движением раздвигаются из шага List в шаг
+таблицы или сходятся обратно, названия едут со своими строками, части только
+таблицы проявляются во второй половине движения и гаснут в первой трети,
+части только List наоборот. `Sidebar` подключает к области прокрутки списка
+`observeSidebarListMorph` ([sidebarListMorph.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/src/lib/sidebarListMorph.ts>))
+рядом с `observeSidebarRowsMorph`: первый работает, пока ниже порога вид
+List, второй, пока там узкая таблица (отложена, `COMPACT_TABLE_POSTPONED`).
+Вид строк задаёт атрибут `data-sidebar-look` (`compact` или `table`) у
+области прокрутки и у поднятой копии строки
+([sidebarLook.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/src/lib/sidebarLook.ts>)),
+а не запрос контейнера (решение пользователя 01.11.2026): правила
+компактных строк в `global.css` вложены в
+`:where([data-sidebar-look="compact"]:not([data-sidebar-morph]))`. Вид
+области прокрутки ставит модуль: до первой отрисовки (`Sidebar` подключает
+его в `useLayoutEffect`) и по ширине в каждом кадре её изменения; копия
+следует своей ширине (`observeSidebarLook`). Пока ширина меню движется рядом
+с лентой (`widthAnimating` из `useSidebarResize`: свёртывание, открытие, уход
+из ряда с лентой и возвращение в него), `Sidebar` ставит на область прокрутки
+`data-sidebar-width-motion` с открытой шириной панели (`openWidth`, то же
+сжатие окном, что у `sidebarWidthCss`), и модуль с первого кадра движения до
+последнего держит вид этой ширины (`sidebarLookOfPanel`: ширина панели без её
+границы и без того, что область прокрутки берёт себе) и не двигает строки;
+движение строк, идущее в этот момент, сразу встаёт на конечное место; когда
+атрибут снят, вид сразу следует ширине (решение пользователя 01.11.2026;
+заменяет прежнее правило, по которому свёртывание и открытие шли с движением
+строк). На это же время `Sidebar` ставит области прокрутки и её обёртке
+наименьшую ширину по открытой ширине панели, а `useSidebarResize` не меняет
+ширину столбцов `--sidebar-columns-width`, от которой ячейки имени и левая
+направляющая считают столбец имени (`writeSidebarWidth(ширина, столбцы)`,
+[sidebarWidth.ts](</Users/i_iii/Проекты/Личные проекты/local-arena/src/lib/sidebarWidth.ts>)):
+список стоит неподвижно, край панели идёт поверх него, и `observeTextClip` не
+меняет `data-text-clipped` ни в одном кадре движения (решение пользователя
+05.11.2026). В меню поверх ленты ширина не движется, и атрибута нет. Во время движения вид остаётся
+таблицей в обе стороны. Если кадр, пересёкший порог, сдвинул ширину больше
+чем на `LIST_MORPH_STEP_LIMIT_PX` (плитка с зазором, 36 px, величина ЛМ5),
+вид меняется сразу, без движения (решение пользователя 01.11.2026). На
+время движения модуль ставит `data-sidebar-rows-fade` (вид, к которому идут
+строки: стили ставят части одного вида на начальную непрозрачность) и, где
+движок анимирует псевдоэлементы, `data-sidebar-list-marks`, который рисует
+метки List на таблице, в Contents и число List на его месте в List (цифры
+из `data-sidebar-count` тела строки, место и шрифт в свойствах тела
+строки); обратно после первой трети `data-sidebar-rows-bare` выводит части
+только таблицы из раскладки. К таблице места List читаются в кадре
+пересечения, где он ещё разложен; обратно места List берутся из кадра,
+который его разложил (Plain: от ширины не зависят; смена строк, проб или
+шрифта, замеченная `MutationObserver`, сбрасывает их), без них и в Contents
+List раскладывается только для чтения; кадры движения ничего не читают. В
+кадре пересечения каждая движущаяся часть получает неподвижный сдвиг на
+начальном месте: строка свойством `translate` (оно дешевле `transform` строки
+в этом кадре), плашка `transform` (её `translate` центрирует её по строке).
+Названия на строках, которые движение показывает, в Plain, в Contents и в
+пробе без миниатюр (решение пользователя 05.11.2026), если хотя бы один вид
+их обрезает при текущей ширине, получают `data-sidebar-name-slide`: на время
+движения ячейка
+имени шириной List (`--sidebar-name-list-inset` от ширины панели, отступ после
+неё возвращает столбцу таблицы его место), а маска ячейки обрезает текст у
+края, который едет от конца таблицы к концу List по зарегистрированному
+свойству `--sidebar-name-q` (концы видов `--sidebar-name-edge-table`,
+`--sidebar-name-edge-list`; где вид не обрезает название, конец стоит за текстом
+и его затуханием). В кадре пересечения свойство стоит на начальном значении,
+анимация создаётся в следующем кадре вместе с остальными; продолжающееся
+перетаскивание обновляет концы без чтения раскладки (решение пользователя
+01.11.2026). Без миниатюр конец таблицы берётся от ширины панели
+(`--sidebar-name-table-inset`). В Contents ячейка на время движения разложена
+как в List: `white-space: normal`, высота List (`--sidebar-name-list-h`), отступ
+снизу оставляет строке таблицы одну линию; первый слой маски ведёт конец первой
+строки, второй проявляет остальные строки на второй половине пути; заполнитель
+стоит на линии числа List. Продолжающееся перетаскивание в Contents читает
+высоту текста скользящих названий и, если число строк изменилось, обновляет
+высоту ячейки, место числа и цели строк ниже (`followLines`, `listRowAt`).
+Название, которое помещается при текущей ширине, но которое обрезала бы более
+узкая ширина, по пути к List получает `data-sidebar-name-whole` (без маски и
+обрезки, без анимации). В следующем кадре создаются анимации WAAPI: `transform`
+строк и частей обоих видов по выборкам пружины стопки (`morphSpring` из
+`sidebarRowsMorph.ts`, `moveCurve`), линейно между ними, и `opacity` частей
+одного вида равномерно. Разворот берёт текущее место и скорость пружины.
+Прокрутка списка человеком во время движения ставит конечный вид. При
+«Уменьшить движение» (`prefersReducedMotion`) модуль ничего не двигает, и
+вид следует ширине сразу; ширина 0 (список не разложен) не считается
+пересечением. Проверки: `sidebarListMorph.test.ts`,
+`test:sidebar-strip`.
+
 Обычный режим:
 1. Пункт `Everything` — навигация на `/`
 2. Список каналов (из `listTaxonomySnapshot()`) — навигация на `/channel/:tag`
@@ -742,7 +827,9 @@ opacity, ни layout. Вход/выход text-state анимируется
 нумеруются от самой малой позиции списка (`reorderedPositions` в
 `src/lib/collectionOrder.ts`), поэтому пишутся только сдвинутые страницы,
 и после создания коллекции с позицией ниже нуля тоже (SPEC_DEEP_AUDIT.md,
-Е6.2). Runtime использует `CollectionRef`
+Е6.2). Перетаскивание и ⌘⇧↑↓ (SPEC_KEYBOARD.md, М11) пишут порядок одной очередью:
+одна запись за раз, пока она в пути, новый порядок ждёт, и пишется только самый поздний;
+предварительный порядок снимается после последней записи и чтения снимка. Runtime использует `CollectionRef`
 из `Mine Collections` wikilinks. Изменение количества карточек в канале не
 должно менять порядок каналов в sidebar.
 Если локальный индекс был создан старой версией, `block_tags` может временно
@@ -869,14 +956,16 @@ thumbnail strip, ни preview cards не должны участвовать в 
 могут менять ширину, opacity или layout.
 Hover на thumbnail открывает только read-only card preview. Preview не
 интерактивен (`pointer-events: none`), не содержит `Source` / `Connect` /
-`More`, не имеет hover bridge и закрывается сразу, когда pointer уходит с
-thumbnail. Выделение строки и outline thumbnail остаются локальными состояниями
-trigger'а и не переносятся на popup. Время открытия задаёт общее правило
-превью карточки (SPEC_CARD_STATES.md, С7.10; `HoverPreviewOpener` в
-`src/lib/hoverPreviewTiming.ts`): cold open delay `500ms`, затем
-остановившийся указатель; в течение `800ms` warm window после того, как
-preview последний раз был на экране, следующий thumbnail открывает preview с
-`0ms` delay.
+`More` и не имеет hover bridge. Выделение строки и outline thumbnail остаются
+локальными состояниями trigger'а и не переносятся на popup. Это одно окно на весь
+список, общее с панелью открытой карточки и графом (SPEC_CARD_STATES.md, С7.11, решение
+пользователя 05.11.2026; `HoverPreviewWindow` в `src/lib/hoverPreviewWindow.ts`):
+оно стоит справа от бокового меню, его центр стоит на центре текущей миниатюры, а
+карточка и место меняются вместе только на новой миниатюре в режиме внимания. Время
+первого появления задаёт общее правило превью карточки (SPEC_CARD_STATES.md,
+С7.10; `HoverPreviewOpener` в `src/lib/hoverPreviewTiming.ts`): cold open delay
+`500ms`, затем остановившийся указатель; в течение `800ms` warm window после того,
+как preview последний раз был на экране, новое появление идёт с `0ms` delay.
 Right/context click на thumbnail открывает app-level карточное меню
 (`CardPointMenu`) для конкретного блока из preview strip. Thumbnail обязан
 `preventDefault()` и `stopPropagation()` для `contextmenu`, чтобы событие не
@@ -904,10 +993,11 @@ preview в sticky card.
   место в полосе. Новая версия картинки той же карточки и обновление другой
   строки превью не закрывают; карточка, сдвинутая на другое место, считается
   другой миниатюрой.
-- Миниатюра, оказавшаяся под указателем, открывает своё превью по общему
-  правилу (SPEC_CARD_STATES.md, С7.10), когда указатель на неё войдёт. Тёплое
-  окно 800 мс отсчитывается от закрытия прежнего превью, поэтому
-  остановившийся указатель получает новое превью сразу.
+- Миниатюра, оказавшаяся под неподвижным указателем, молчит, пока указатель не
+  сменит координаты (решение пользователя 05.11.2026, SPEC_CARD_STATES.md, С7.5).
+  До этого решения остановившийся указатель получал новое превью сразу, в тёплом
+  окне. После реального движения превью открывается по С7.11, и тёплое окно 800 мс
+  отсчитывается от закрытия прежнего превью.
 - Правило держит реестр миниатюр `Sidebar` (`setPreviewTriggerRef`): снятие
   миниатюры с открытым превью идёт тем же путём закрытия, что уход
   указателя. Своих таймеров нет, время открытия по-прежнему задаёт
@@ -1300,7 +1390,7 @@ text+media paragraphs remain block `<div>` wrappers to avoid invalid
   repeated request closes, including when focus is already inside the menu or
   its `Connect` submenu. Keyboard-opened card menus pin only top-right `…`;
   bottom hover actions remain hidden.
-- Открывает единый rename dialog для выбранного блока
+- `Rename…` открытой карточки переводит пользователя в имя файла в её шапке, если это поле на экране. В остальных случаях пункт открывает единый rename dialog для выбранного блока (решение пользователя 05.11.2026; раздел «RenameBlockDialog»).
 - Rename не делает silent auto-fix: занятое имя и invalid stem показываются как явные ошибки
 
 ### MediaAssetActionMenu
@@ -1363,7 +1453,11 @@ Image media expansion:
   left after 3 s without pointer movement);
 - the bottom floating control island contains zoom out, current zoom, zoom in,
   Copy Media, and `Collapse image preview` (`Minimize2`, inward arrows). There
-  is no top-right X close button.
+  is no top-right X close button;
+- переход от щелчка к просмотру и обратно идёт движением из рамки медиа по
+  пружине окна карточки (решение пользователя 05.11.2026;
+  [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md), «Движение
+  просмотра изображения»).
 
 ### CollectionPicker
 
@@ -1459,13 +1553,36 @@ Image media expansion:
 
 ### RenameBlockDialog
 
-- Один modal для всех entry points (`CardHoverMenu`, `Detail`)
+- Один modal для всех entry points (`CardHoverMenu`, `Detail`), когда поля имени этой карточки нет на экране
 - Поля:
   - текущее имя файла
   - input `Filename`
   - preview финального `<stem>.md`
 - При success закрывается и UI уже работает с `new_slug`
 - Ошибки `name_taken` / `invalid_filename` показываются inline
+
+`Rename…` открытой карточки (решение пользователя 05.11.2026). Пункт, который
+называет открытую карточку, переводит пользователя в имя файла в её шапке, а
+диалог не открывает.
+
+- Правило действует для каждого входа в пункт, пока карточка открыта: кнопка
+  `⋯` в окне карточки и на полной странице, `⌘K`, который открывает то же
+  меню, и меню этой же карточки из бокового меню или с графа.
+- Пункт закрывает меню, и имя становится полем точно так же, как от щелчка по
+  нему: курсор в конце имени, те же сохранение, отказ и Escape. Поле одно, путь
+  сохранения один: `handleRenameBlock`.
+- Поле открывается, когда поверхность закрывающегося меню исчезла
+  (`afterMenuCloses` в `src/lib/openMenus.ts`), и меню не возвращает фокус на
+  свою кнопку. Раньше открывать нельзя: закрывающаяся поверхность ещё принимает
+  указатель, Radix ставит фокус на пункт под указателем и на саму поверхность,
+  когда указатель уходит с пункта, и поле потеряло бы фокус и закрылось.
+- Диалог остаётся там, где поля этой карточки нет на экране или оно не может
+  принять фокус: меню карточки ленты, меню другой карточки (список связей в
+  открытой карточке, превью бокового меню), строка результатов поиска (поиск
+  модальный и держит фокус у себя), боковое меню поверх ленты в узком окне (всё
+  под ним `inert`), карточка, которая уже закрывается.
+- Пункт `Rename Media...` на медиа открытой карточки переименовывает файл медиа,
+  а не карточку, и этим правилом не затронут.
 
 Переименование на месте (решение пользователя 05.10.2026). Имя файла
 открытой карточки в пути и имя коллекции в боковом меню правятся прямо в
@@ -1642,18 +1759,17 @@ Image media expansion:
   (`mr-2`; `mr-1` in Compact Detail top menu), on one vertical with the `+`
   below it. Clicking it clears the query, restores the full channel list and
   returns focus to the input. `Escape` with a non-empty value clears the field;
-  `Escape` with an empty value blurs the input.
-- While Sidebar channel search is focused, unmodified `ArrowUp`/`ArrowDown`
-  navigate visible Sidebar rows through `aria-activedescendant`; DOM focus
-  stays in the input, so typing can continue without re-focusing the field.
-  `Enter` активирует активную строку. Строка создания коллекции в эту
-  навигацию не входит (`buildSidebarSearchNavigationRows`): это не результат
-  фильтра.
-- `Enter` без выбранной стрелками строки действует на набранное имя (trimmed;
+  `Escape` with an empty value blurs the input. Пришедшего со строки меню Escape
+  возвращает на эту строку (SPEC_KEYBOARD.md, «Ввод текста в меню»).
+- `ArrowDown` в поле фильтра переводит клавиатурный фокус на верхнюю строку списка,
+  `ArrowUp` в поле ничего не делает, а символ, набранный на строке меню, переводит
+  фокус в поле (SPEC_KEYBOARD.md, «Ввод текста в меню»). Строка создания коллекции в
+  ходьбу не входит (`buildSidebarSearchNavigationRows`): это не результат фильтра.
+- `Enter` действует на набранное имя (trimmed;
   пустое поле не обрабатывается). Коллекция с таким тегом или подписью без
-  учёта регистра открывается. Иначе `handleCreateChannel(name, drop)` создаёт
-  коллекцию, где `drop` равен открытой карточке, если её коллекции показаны в
-  режиме `Connected`, и `null` в остальных случаях; затем фильтр очищается.
+  учёта регистра открывается. Иначе создаётся пустая коллекция
+  (`createCollectionReporting(name, null)`): открытая карточка в неё не попадает,
+  её связи меняются на строке. Затем фильтр очищается.
 - All search inputs suppress native browser/WebKit typing suggestions through
   shared `SEARCH_INPUT_SUPPRESSION_PROPS`: `autoComplete="off"`,
   `autoCorrect="off"`, `autoCapitalize="none"`, `spellCheck={false}`. This
@@ -1924,34 +2040,34 @@ Image media expansion:
   `onToggleTag` и `onCreateAndAssign`, `Rename…` и `Delete` открывают
   диалоги App. Удаление заметки из строки не закрывает открытую карточку:
   App закрывает её, только если удалена она сама. Открытое меню держит свою
-  строку и её свет; уход указателя и колесо прячут команды. Закрытое меню
+  строку и её свет; уход указателя, прокрутка панели и смена карточки прячут
+  команды (SPEC_CARD_STATES.md, С7.5). Закрытое меню
   не возвращает фокус на скрытую кнопку, фокус остаётся у страницы, и
   клавиши открытой карточки работают. `⌘K` в открытой карточке открывает
   меню самой карточки, поэтому подсказка `More` в строке его не называет.
   Нажатие на строку вне команд открывает заметку. Ссылка на заметку, которой
   нет (или ещё не загруженная), показывает одно имя тусклым и не нажимается.
-  Hover can show a read-only feed-style card preview. The preview uses
-  `rounded-1`, is keyed by row identity rather than base slug so repeated
-  backlinks position independently and never leaves the open card's own area
-  (`[data-detail-root]`): beyond it the sidebar and the window chrome cover
-  it. It opens right of the row when the area has room there, else left,
-  and flips upward when it would overflow below. In the stacked view the row
-  spans the column and neither side has room: the preview then stands under
-  the row, or over it when there is no room below, its right edge on the
-  row's right edge (user's decision 08.10.2026; 07.10.2026 it moved off the
-  window's left edge, where it lay under the sidebar, 211 of its 240 px at a
-  1000 px window). It closes when
-  the pointer leaves the row. While a row's menu is open the preview stays
-  closed. It is non-interactive
+  Hover shows a read-only feed-style card preview in the one window the sidebar
+  and the graph share (SPEC_CARD_STATES.md, С7.11, user's decision 05.11.2026;
+  `HoverPreviewWindow` in `src/lib/hoverPreviewWindow.ts`). It lives while the
+  pointer goes over the rows, is keyed by row identity rather than base slug, and
+  stands left of the panel, its centre on the current row's centre, 8 px off the app
+  window's edges. The pointer's Y is no input: inside one row the window does not
+  move. Its card and its place change together, the place by one motion of the
+  spring, and only for a new row in the attending mode (one threshold, 500 px/s,
+  user's decision 05.11.2026). In the stacked view the row
+  spans the column and neither side has room: the window then stands under the
+  row, or over it when there is no room below, its right edge on the row's right
+  edge (user's decision 08.10.2026). It fades in place when the pointer leaves the
+  panel, or after `leaveGraceMs` over no row in the attending mode. While a row's
+  menu is open the window stays closed. It is non-interactive
   (`pointer-events: none`), has no hover bridge, and does not show
-  `Source` / `Connect` / `More`. Timing is the shared card preview rule, the
-  sidebar's big preview included (`HoverPreviewOpener` in
-  `src/lib/hoverPreviewTiming.ts`, SPEC_CARD_STATES.md, С7.10): `500ms`
-  cold open delay, then a resting pointer (`HOVER_INTENT.maxSpeed`), so a
-  pointer passing over the rows opens nothing; `0ms` warm delay inside an
-  `800ms` warm window counted from when a preview was last on screen, so the
-  next row's preview replaces the shown one at once (user's decision
-  08.10.2026). The association blocks' rows share this.
+  `Source` / `Connect` / `More`. Its first appearance takes the shared card preview
+  rule (`HoverPreviewOpener` in `src/lib/hoverPreviewTiming.ts`,
+  SPEC_CARD_STATES.md, С7.10): `500ms` cold open delay, then the attending mode, so
+  a pointer passing over the rows opens nothing; `0ms` warm delay inside an `800ms`
+  warm window counted from when a preview was last on screen. The association
+  blocks' rows share this.
 - Article inline image hover preview is a separate, not-yet-implemented feature.
   It must not be added by copying the related-notes implementation. The required
   contract is: image wrapper gets the same button-like hover/focus outline
@@ -2257,15 +2373,13 @@ Image media expansion:
   `data-card-graphic-surface::after` wash: в light theme `oklch(0 0 0 / 14%)`,
   в dark theme `oklch(1 0 0 / 18%)`. Состояние применяется только к реальным
   media/preview slots; текстовые карточки не меняются.
-- Focused GridItem показывает top-left shortcut badge `data-feed-grid-action-badge`
-  с текстом `⌘K`. Badge рендерится только в Grid keyboard focus mode, не от
-  pointer hover, не участвует в layout и не перехватывает pointer events.
-  Badge находится внутри `data-feed-grid-action-layer` (`absolute inset-px`),
-  чтобы компенсировать 1px Card frame и считать offsets из той же внутренней
-  плоскости карточки, что и Card Hover Menu. Сам badge использует
-  `absolute left-2 top-2` и interface radius `rounded-1` (3px): `top-2`
-  зеркалит верхние кнопки (`top-2 right-2`), `left-2` зеркалит нижний ряд
-  коллекций (`left-2 right-2 bottom-2`).
+- Карточка в клавиатурном фокусе показывает значок `data-feed-grid-action-badge`
+  с текстом `⌘K` последним в верхнем правом ряду `data-card-top-row` (`absolute
+  right-2 top-2`, `gap-1`), `Source` и `More` в клавиатурном режиме скрыты (решения
+  пользователя 05.11.2026; SPEC_CARD_STATES.md, С8.5, С8.8). Значок рендерится только в Grid keyboard
+  focus mode, не от pointer hover, не перехватывает pointer events и использует
+  interface radius `rounded-1` (3px). Меню `Cmd+K` выходит из него (`plateOf` у
+  `DropdownMenuContent`, `cardMenuBadgeOf`).
 - `Cmd+K` — scoped Grid shortcut: если Grid keyboard focus активен и focused
   committed-card видна в текущем viewport, Grid показывает/pin-ит top-right
   `…` action button и toggles overflow menu этой карточки: первое нажатие

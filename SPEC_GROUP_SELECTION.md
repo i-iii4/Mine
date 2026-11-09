@@ -21,10 +21,9 @@ commands row.
 In scope:
 
 - `Shift+click` toggles individual cards in the current Grid.
-- `Cmd+click` toggles a card only on a page that is not a tab. С 03.10.2026 в
-  странице вкладки `Cmd+click` открывает карточку в новой вкладке, а
-  `Cmd+Shift+click` в новом окне (SPEC_TABS.md, В82); выделение там остаётся
-  за `Shift+click` и рамкой.
+- `Cmd+click` toggles a card on every page (решение пользователя 06.11.2026). В
+  странице вкладки `Cmd+Shift+click` открывает карточку в новом окне
+  (SPEC_TABS.md, В82).
 - Empty-area pointer drag draws a marquee rectangle and selects every committed
   card that intersects it.
 - Selected cards get a strong monochrome selected frame.
@@ -77,8 +76,7 @@ cleared before Detail becomes interactive.
 
 ### Modified Click
 
-`Shift+click` (and `Cmd+click` on a page that is not a tab) on a committed
-card toggles only that card:
+`Shift+click` and `Cmd+click` on a committed card toggle only that card:
 
 - not selected -> add to `selectedSlugs`;
 - selected -> remove from `selectedSlugs`.
@@ -179,8 +177,9 @@ When Grid keyboard focus is active:
   `Delete element?` (раздел «Batch Delete», «Точки входа»); it never deletes
   without confirmation;
 - arrow keys continue to move Grid focus by `layout.positions`;
-- `Cmd+K` opens a contextual batch menu anchored to the focused card's
-  top-right overflow action.
+- `Cmd+K` opens a contextual batch menu that comes out of the focused card's
+  `⌘K` badge at the top right (решение пользователя 05.11.2026;
+  SPEC_CARD_STATES.md, С8.8).
 
 When group selection is active, `Enter` must stay inside selection mode even if
 the browser's DOM focus and Grid's interaction focus diverge:
@@ -300,7 +299,7 @@ Tokens:
 
 The selected frame layer must render above media wash and hover overlays. It may
 render above the `Cmd+K` badge because the ring sits on the card's edge and does
-not reach the badge at `left-2 top-2`. Contract — `src/lib/selectionRing.test.ts`.
+not reach the badge at `right-2 top-2`. Contract — `src/lib/selectionRing.test.ts`.
 
 ## Marquee Visual
 

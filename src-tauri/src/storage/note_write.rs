@@ -242,9 +242,11 @@ pub struct PublishedNote {
 }
 
 /// Publish `written_text` over `read`, the note at `path` as it was read,
-/// and index it as reconciliation does in the same step (Л3.3 steps 6 and 7).
-/// `written` is `written_text` read back. The write is marked as Mine's own
-/// for the watcher before it becomes visible (Л3.6).
+/// and index it as reconciliation does in the same step, the source stamp
+/// included (Л3.3 steps 6 and 7, Л3.7). `written` is `written_text` read
+/// back. The write is marked as Mine's own for the watcher before it becomes
+/// visible (Л3.6). The pictures made from the note are the caller's to make
+/// (`derived_preview::refresh_written_card`): no pass reads the note again.
 ///
 /// # Errors
 ///
@@ -260,8 +262,6 @@ pub fn publish_note(
     written: &ParsedMarkdownBlock,
     operation: &'static str,
 ) -> Result<PublishedNote, NoteWriteRefusal> {
-    let mut block = written.block.clone();
-    files::normalize_block_media_refs_for_index(&mut media_refs::MediaResolver::new(vault), &mut block);
     let refused = |error: SourceMutationError| mutation_refusal(&error, &note.path, &note.file_name);
     let bytes = written_text.into_bytes();
     let hash = content_hash(&bytes);
@@ -271,19 +271,19 @@ pub fn publish_note(
         bytes,
     )])
     .map_err(refused)?;
-    OWN_WRITES.record(vault.root(), &block.slug, hash, Instant::now());
-    let indexed = staged
+    OWN_WRITES.record(vault.root(), &written.block.slug, hash, Instant::now());
+    let (indexed, block) = staged
         .commit_with_index(conn, operation, |index_conn| {
-            index::upsert_block_with_diagnostics(
-                index_conn,
-                &block,
-                Some(vault.root()),
-                Some(written.origin.as_str()),
-                written.index_warning.as_deref(),
-            )?;
-            index::get_block(index_conn, &block.slug)?.ok_or_else(|| {
+            // The watcher drops this write as Mine's own (Л3.6), so the note
+            // is projected here as a pass over the space projects it: the
+            // row and the source stamp together. With the stamp left behind,
+            // only the next pass read the note again and made its pictures
+            // anew; until then the feed drew the old ones (Л3.7, 09.11.2026).
+            let block = reconcile::project_source_path(index_conn, vault, &note.path)?;
+            let indexed = index::get_block(index_conn, &block.slug)?.ok_or_else(|| {
                 anyhow::anyhow!("'{}' is missing from the index after it was written", block.slug)
-            })
+            })?;
+            Ok((indexed, block))
         })
         .map_err(refused)?;
     Ok(PublishedNote { indexed, block })

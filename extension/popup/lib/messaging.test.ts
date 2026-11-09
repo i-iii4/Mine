@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  CONTENT_SCRIPT_CONTEXT, extractMetadata, openingStamps, remoteMediaNotice, requestXSyndication, requestYoutubeChannel,
+  CONTENT_SCRIPT_CONTEXT, extractMetadata, openPageFiles, openingStamps, remoteMediaNotice, requestXSyndication, requestYoutubeChannel,
   sendToNative, waitForYoutubeChannel, YOUTUBE_CHANNEL_TIMEOUT_MS, type NativeResponse,
 } from "./messaging";
 
@@ -215,5 +215,81 @@ describe("syndication answer of an X post", () => {
     (globalThis as Record<string, unknown>).chrome = { runtime: { sendMessage: () => { throw new Error("Extension context invalidated."); } } };
     await expect(requestXSyndication("2001")).resolves.toBeNull();
     warn.mockRestore();
+  });
+});
+
+// SPEC_CLIPPER.md, «Один путь файла со страницы», Б9: the collection runs on a
+// port: one `start`, one `done`, a `keep` once the operation is fixed. A closed
+// background gives no files, and the helper downloads them.
+describe("the collection of a clip's files", () => {
+  function port() {
+    const messageListeners: Array<(message: unknown) => void> = [];
+    const closeListeners: Array<() => void> = [];
+    const posted: Array<Record<string, unknown>> = [];
+    const opened = {
+      onMessage: { addListener: (listener: (message: unknown) => void) => messageListeners.push(listener) },
+      onDisconnect: { addListener: (listener: () => void) => closeListeners.push(listener) },
+      postMessage: (message: Record<string, unknown>) => posted.push(message),
+      disconnect: vi.fn(),
+    };
+    const connect = vi.fn(() => opened);
+    (globalThis as unknown as { chrome: { runtime: Record<string, unknown> } }).chrome.runtime.connect = connect;
+    return {
+      connect, posted, disconnect: opened.disconnect,
+      answer: (message: unknown) => messageListeners.forEach((listener) => listener(message)),
+      close: () => closeListeners.forEach((listener) => listener()),
+    };
+  }
+
+  const START = {
+    documentUrl: "https://shop.example/p", body: "![a](https://cdn.example/a.jpg)", imageUrl: null, videoPosters: null,
+    tabId: 7, uploadPort: 1234, uploadToken: "token", vaultPath: "/v",
+  };
+
+  it("asks once on its own port and resolves with the answer", async () => {
+    const opened = port();
+    const collection = openPageFiles(START);
+    expect(opened.connect.mock.calls[0]).toEqual([{ name: expect.stringMatching(/^mine-page-files:/) }]);
+    expect(opened.posted).toEqual([{
+      kind: "start", document_url: START.documentUrl, body: START.body, image_url: null, video_posters: null,
+      tab_id: 7, upload_port: 1234, upload_token: "token", vault_path: "/v",
+    }]);
+    const entries = [{ url: "https://cdn.example/a.jpg", status: 404 }];
+    opened.answer({ kind: "done", browser_files: entries });
+    await expect(collection.files).resolves.toEqual(entries);
+  });
+
+  it("names a browser folder, and answers its progress", () => {
+    const opened = port();
+    const collection = openPageFiles({ ...START, uploadPort: null, uploadToken: null, vaultPath: null, executor: "browser" });
+    expect(opened.posted[0]).toMatchObject({ kind: "start", executor: "browser", upload_port: null, upload_token: null });
+    opened.answer({ kind: "progress" });
+    expect(opened.posted.at(-1)).toEqual({ kind: "progress" });
+    opened.close();
+    opened.answer({ kind: "progress" });
+    expect(opened.posted.filter((message) => (message as { kind?: unknown }).kind === "progress")).toHaveLength(1);
+    collection.close();
+  });
+
+  it("keeps the uploads once the operation is fixed, and closes", () => {
+    const opened = port();
+    const collection = openPageFiles(START);
+    collection.keep();
+    expect(opened.posted.at(-1)).toEqual({ kind: "keep" });
+    collection.close();
+    expect(opened.disconnect).toHaveBeenCalledOnce();
+    collection.close();
+    expect(opened.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("goes on without files when the background is gone", async () => {
+    const opened = port();
+    const collection = openPageFiles(START);
+    opened.close();
+    await expect(collection.files).resolves.toEqual([]);
+    collection.keep();
+    expect(opened.posted).toHaveLength(1);
+    collection.close();
+    expect(opened.disconnect).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,10 @@
 import type {
+  AddressRefusal,
+  CardFileRole,
   CoreCommand,
+  InlineMedia,
+  PageFilePlan,
+  PublicationEvidence,
   SaveAction,
   VaultWriteLayoutDto,
 } from "../../src/types/generated";
@@ -24,8 +29,15 @@ export interface CoreResults {
   collection_pages: null;
   advance: SaveAction;
   fingerprint: string;
-  /** `null` when neither the bytes nor the declared type name a kind it saves. */
+  /** `null` only without an address, when neither the bytes nor the declared type name a kind it saves. */
   media_extension: { extension: string | null };
+  media_evidence: { media: PublicationEvidence; action: SaveAction };
+  page_file_plan: PageFilePlan;
+  address_check: { allowed: true } | { allowed: false; refusal: AddressRefusal };
+  inline_media: InlineMedia[];
+  rewrite_body: { body: string };
+  media_failure: { reason: string };
+  card_file_role: CardFileRole;
 }
 
 declare global {

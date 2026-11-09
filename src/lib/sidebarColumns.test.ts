@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { sidebarLookAt } from "./sidebarLook";
 import { describe, expect, it } from "vitest";
 import {
   SIDEBAR_COLUMN_MIN_PX,
@@ -66,8 +67,14 @@ describe("sidebar zone contract", () => {
     );
   });
 
+  it("lets a compact row's field and label start where its name starts (user's decision of 05.11.2026)", () => {
+    expect(css).toContain("--sidebar-name-left: 0px;");
+    expect(css).toMatch(/\[data-sidebar-create-channel-row-body\] \{\s*padding-left: var\(--spacing-s3\);/);
+    expect(css).toMatch(/\[data-sidebar-editable-row-ghost\] \{\s*display: none;\s*visibility: hidden;/);
+  });
+
   it("splits every extra pixel of width evenly between name and previews", () => {
-    expect(css).toContain("(var(--sidebar-width) - var(--sidebar-equal-zones-width)) / 2");
+    expect(css).toContain("(var(--sidebar-columns-width, var(--sidebar-width)) - var(--sidebar-equal-zones-width)) / 2");
   });
 
   it("goes compact where the previews stop showing 2.8 thumbnails (PLAN 50.36, 22.10.2026)", () => {
@@ -81,7 +88,14 @@ describe("sidebar zone contract", () => {
     expect(sidebarPreviewCellPx(below - 1)).toBeLessThan(sidebarThreeThumbnailsCellPx());
     // Solved on the name's growing stretch, which the threshold lies on.
     expect(sidebarNameColumnPx(below)).toBeLessThan(SIDEBAR_NAME_MAX_PX);
-    expect(css).toContain(`@container sidebar-rows (width < ${below}px)`);
+    // The number lives here alone: the stylesheet keys the compact rows on
+    // the look the width gives (sidebarLook.ts), with no threshold of its own.
+    expect(sidebarLookAt(below - 0.1)).toBe("compact");
+    expect(sidebarLookAt(below)).toBe("table");
+    expect(css).toContain(':where([data-sidebar-look="compact"]:not([data-sidebar-morph]))');
+    const rules = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(rules).not.toMatch(/@container|container(-name|-type)?:/);
+    expect(rules).not.toContain(`${below}px`);
   });
 
   it("drags down to 280, always compact (PLAN 50.36, 25.10.2026)", () => {
