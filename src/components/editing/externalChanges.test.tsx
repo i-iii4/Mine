@@ -4,6 +4,7 @@ import type { ComponentProps } from "react";
 import type { ExtraProps } from "react-markdown";
 import { undo } from "@codemirror/commands";
 import { EditorView } from "@codemirror/view";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { beginNoteEdit, endNoteEdit, noteBodyState, reportNoteEdits, saveNoteBody } from "@/lib/commands";
 import { clearActionFailures, NOTE_NOT_SAVED_TITLE, NOTE_SAVE_FAILED_TITLE, useActionFailures } from "@/lib/actionFailures";
 import { followNoteRename, isNoteHeldForEditing, noteMissingFromIndex } from "@/lib/noteEditSessions";
@@ -61,10 +62,20 @@ function FailureProbe() {
  * A made-up file and the backend over it: a write is checked against its
  * base, the file can change from outside, and the sessions hear
  * `note-changed` as the backend sends it to the tabs that did not write.
+ * The hash is of the body, as the backend's is: a body the file held before
+ * hashes as it did then.
  */
 function fakeDisk(initial: string) {
   let body = initial;
-  let hashes = 0;
+  const hashOf = new Map<string, string>([[initial, "hash-0"]]);
+  const hashFor = (text: string) => {
+    let found = hashOf.get(text);
+    if (found === undefined) {
+      found = `hash-${hashOf.size}`;
+      hashOf.set(text, found);
+    }
+    return found;
+  };
   let hash = "hash-0";
   let gone = false;
   const writes: SaveNoteBodyParams[] = [];
@@ -78,8 +89,7 @@ function fakeDisk(initial: string) {
     }
     const unchanged = params.body === body;
     if (!unchanged) {
-      hashes += 1;
-      hash = `hash-${hashes}`;
+      hash = hashFor(params.body);
       body = params.body;
     }
     return { block: card(params.source_slug, body, hash), split_changed: false, unchanged };
@@ -146,10 +156,14 @@ function fakeDisk(initial: string) {
     },
     /** Obsidian, an agent or another tab writes the file. */
     writeFromOutside(next: string, slug = SLUG) {
-      hashes += 1;
-      hash = `hash-${hashes}`;
-      body = next;
+      this.writeUnheard(next);
       emitPage("note-changed", { slug, body_hash: hash });
+    },
+    /** The file changes, and its news reaches no session: it went out
+     *  before the session listened, or to a page that did not hear it. */
+    writeUnheard(next: string) {
+      hash = hashFor(next);
+      body = next;
     },
     delete() {
       gone = true;
@@ -308,6 +322,33 @@ describe("a conflict (Л4.3)", () => {
     disk.writeFromOutside("Body mine!");
     await settle();
     expect(failures).toEqual([]);
+    type(view, 10, "?");
+    await waitFor(() => expect(disk.body).toBe("Body mine!?"));
+  });
+  it("ends when the file holds the base again, and writes the edits held meanwhile", async () => {
+    const disk = fakeDisk("Body");
+    render(
+      <>
+        <FailureProbe />
+        <NoteEditor {...editorProps(SLUG, disk.body, disk.hash)} />
+      </>,
+    );
+    const view = await editorView();
+    disk.holdWrites();
+    type(view, 4, " mine");
+    disk.writeFromOutside("Body theirs");
+    await disk.release();
+    await settle();
+    type(view, 9, "!");
+    await settle();
+    expect(disk.body).toBe("Body theirs");
+    expect(failures).toEqual([{ kind: "note-save", title: NOTE_NOT_SAVED_TITLE, summary: NOTE_TEXT_KEPT, messages: [NOTE_CHANGED_ON_DISK] }]);
+    // The other side takes its change back: the file is the base the edits
+    // were made from, so writing them loses nothing of it.
+    disk.writeFromOutside("Body");
+    await waitFor(() => expect(disk.body).toBe("Body mine!"));
+    expect(failures).toEqual([]);
+    expect(view.state.doc.toString()).toBe("Body mine!");
     type(view, 10, "?");
     await waitFor(() => expect(disk.body).toBe("Body mine!?"));
   });
@@ -474,5 +515,83 @@ describe("iCloud and read-only during the session (Л4.5, Л4.6)", () => {
     });
     await waitFor(() => expect(disk.body).toBe("Body!"));
     expect(failures).toEqual([]);
+  });
+});
+
+describe("news the session could not hear (Л4.1)", () => {
+  /** The page's subscription to `event` takes hold only when the test
+   *  says, as a Tauri subscription takes hold once the backend has it:
+   *  what the backend sends before then reaches no handler. */
+  function holdSubscription(event: string) {
+    const listen = vi.mocked(getCurrentWebview().listen);
+    const subscribe = listen.getMockImplementation();
+    if (!subscribe) throw new Error("the test setup subscribes pages");
+    let open: () => void = () => undefined;
+    const opened = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let asked = false;
+    listen.mockImplementation(async (name, handler) => {
+      if (name !== event) return subscribe(name, handler);
+      asked = true;
+      await opened;
+      return subscribe(name, handler);
+    });
+    return {
+      get asked() {
+        return asked;
+      },
+      async open() {
+        open();
+        await settle();
+        listen.mockImplementation(subscribe);
+      },
+    };
+  }
+
+  function setVisibility(state: DocumentVisibilityState) {
+    Object.defineProperty(document, "visibilityState", { value: state, configurable: true });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+  }
+
+  it("takes an outside edit made after the session read the file and before it listened", async () => {
+    const disk = fakeDisk("Body A");
+    vi.mocked(beginNoteEdit).mockImplementation(async (slug) => {
+      const read = card(slug, disk.body, disk.hash);
+      // Obsidian writes right after the read: the backend has no session to
+      // tell yet, the page no handler.
+      disk.writeFromOutside("Body B");
+      return read;
+    });
+    render(<NoteEditor {...editorProps(SLUG, "Body A", "hash-0")} />);
+    const view = await editorView();
+    await waitFor(() => expect(view.state.doc.toString()).toBe("Body B"));
+    expect(disk.writes).toHaveLength(0);
+  });
+
+  it("takes an outside edit whose news came while the page's subscription was taking hold", async () => {
+    const disk = fakeDisk("Body");
+    const subscription = holdSubscription("note-changed");
+    render(<NoteEditor {...editorProps(SLUG, disk.body, disk.hash)} />);
+    const view = await editorView();
+    await waitFor(() => expect(subscription.asked).toBe(true));
+    disk.writeFromOutside("Body from Obsidian");
+    await subscription.open();
+    await waitFor(() => expect(view.state.doc.toString()).toBe("Body from Obsidian"));
+    expect(disk.writes).toHaveLength(0);
+  });
+
+  it("asks the file when the page is shown again, which gives the window no focus", async () => {
+    const disk = fakeDisk("Body");
+    render(<NoteEditor {...editorProps(SLUG, disk.body, disk.hash)} />);
+    const view = await editorView();
+    await settle();
+    setVisibility("hidden");
+    disk.writeUnheard("Body from Obsidian");
+    setVisibility("visible");
+    await waitFor(() => expect(view.state.doc.toString()).toBe("Body from Obsidian"));
+    expect(disk.writes).toHaveLength(0);
   });
 });

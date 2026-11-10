@@ -5,7 +5,7 @@ import { EditorView } from "@codemirror/view";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Detail } from "@/components/Detail";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { beginNoteEdit, getBlock, resolveNoteLink, saveNoteBody, toggleTaskItem } from "@/lib/commands";
+import { beginNoteEdit, getBlock, noteBodyState, resolveNoteLink, saveNoteBody, toggleTaskItem } from "@/lib/commands";
 import { revealField } from "@/lib/editing/reveal";
 import { observeNoteIntents, type NoteInteractionIntent, type NoteSurface } from "@/lib/reading/intents";
 import { indexedBlock } from "@/test/blocks";
@@ -106,12 +106,18 @@ beforeEach(() => {
   vi.mocked(resolveNoteLink).mockImplementation(async (_source, target) => (target.split("#")[0] === "Пример заметки" ? EMBED_SLUG : null));
   vi.mocked(getBlock).mockImplementation(async (slug) => (slug === EMBED_SLUG ? EMBEDDED : null));
   vi.mocked(toggleTaskItem).mockImplementation(async () => indexedBlock({ slug: SLUG, body: FIRST_PART, body_hash: "hash-0" }));
-  vi.mocked(beginNoteEdit).mockImplementation(async () => indexedBlock({ slug: SLUG, body: openedBody, body_hash: "hash-0" }));
-  vi.mocked(saveNoteBody).mockImplementation(async (params: SaveNoteBodyParams) => ({
-    block: indexedBlock({ slug: SLUG, body: params.body, body_hash: "hash-1" }),
-    split_changed: false,
-    unchanged: false,
-  }));
+  // The file holds the body the session opened on, then each write's;
+  // `note_body_state` reads it, as the backend reads the file.
+  let file = { body: openedBody, body_hash: "hash-0" };
+  vi.mocked(beginNoteEdit).mockImplementation(async () => {
+    file = { body: openedBody, body_hash: "hash-0" };
+    return indexedBlock({ slug: SLUG, ...file });
+  });
+  vi.mocked(saveNoteBody).mockImplementation(async (params: SaveNoteBodyParams) => {
+    file = { body: params.body, body_hash: "hash-1" };
+    return { block: indexedBlock({ slug: SLUG, ...file }), split_changed: false, unchanged: false };
+  });
+  vi.mocked(noteBodyState).mockImplementation(async () => file);
   vi.mocked(openUrl).mockClear();
 });
 

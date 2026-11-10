@@ -420,6 +420,57 @@ impl SessionFlush {
     }
 }
 
+/// Why a `note-changed` goes out: its log line says it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoteChangeCause {
+    /// The watcher saw a write that was not Mine's (Л3.6).
+    OutsideWrite,
+    /// Another tab saved the note (Л4.4).
+    OtherTabSave,
+    /// A command of Mine wrote notes of the space (Л4.7).
+    MineCommand,
+}
+
+impl NoteChangeCause {
+    fn describe(self) -> &'static str {
+        match self {
+            Self::OutsideWrite => "an outside write",
+            Self::OtherTabSave => "a save of another tab",
+            Self::MineCommand => "a command of Mine",
+        }
+    }
+}
+
+/// Hand each `note-changed` of `news` to `send`, with the pages it goes to,
+/// and log it at info: the note's slug, how many pages and why (Л4.1).
+/// Nothing of the body or of the path beyond the slug goes to the log. News
+/// without a page to go to is neither sent nor logged.
+fn send_note_changes(
+    news: Vec<(Vec<String>, NoteChangedPayload)>,
+    cause: NoteChangeCause,
+    mut send: impl FnMut(Vec<String>, NoteChangedPayload),
+) {
+    for (labels, payload) in news {
+        if labels.is_empty() {
+            continue;
+        }
+        log::info!(
+            "{NOTE_CHANGED_EVENT} for {} to {} page(s) after {}",
+            payload.slug,
+            labels.len(),
+            cause.describe()
+        );
+        send(labels, payload);
+    }
+}
+
+/// [`send_note_changes`] to the pages of the app.
+fn emit_note_changes(app: &AppHandle, news: Vec<(Vec<String>, NoteChangedPayload)>, cause: NoteChangeCause) {
+    send_note_changes(news, cause, |labels, payload| {
+        space_events::emit_to_labels(app, labels, NOTE_CHANGED_EVENT, payload);
+    });
+}
+
 /// Tell every session of `space` the body hash of its note on disk now.
 pub fn announce_space_notes(app: &AppHandle, space: &OpenSpace) {
     let Ok(layout) = space.layout() else {
@@ -427,9 +478,8 @@ pub fn announce_space_notes(app: &AppHandle, space: &OpenSpace) {
     };
     let sessions = &app.state::<AppState>().edit_sessions;
     let slugs = sessions.notes_of_space(space.vault_id());
-    for (labels, payload) in note_changes(sessions, space.vault_id(), &layout, slugs, None) {
-        space_events::emit_to_labels(app, labels, NOTE_CHANGED_EVENT, payload);
-    }
+    let news = note_changes(sessions, space.vault_id(), &layout, slugs, None);
+    emit_note_changes(app, news, NoteChangeCause::MineCommand);
 }
 
 /// Tell the sessions of the note `slug` of the space `vault_id`, but the
@@ -442,15 +492,11 @@ pub fn announce_note(app: &AppHandle, vault_id: &str, slug: &str, body_hash: &st
         .into_iter()
         .filter(|label| label != except)
         .collect();
-    space_events::emit_to_labels(
-        app,
-        labels,
-        NOTE_CHANGED_EVENT,
-        NoteChangedPayload {
-            slug: slug.to_string(),
-            body_hash: body_hash.to_string(),
-        },
-    );
+    let payload = NoteChangedPayload {
+        slug: slug.to_string(),
+        body_hash: body_hash.to_string(),
+    };
+    emit_note_changes(app, vec![(labels, payload)], NoteChangeCause::OtherTabSave);
 }
 
 /// The `note-changed` news for the notes `slugs` of the space `vault_id`
@@ -497,9 +543,8 @@ pub fn announce_outside_changes<'a>(
         .into_iter()
         .filter_map(|path| vault.slug_for_path(path).ok())
         .collect();
-    for (labels, payload) in note_changes(&state.edit_sessions, space.vault_id(), vault, slugs, None) {
-        space_events::emit_to_labels(app, labels, NOTE_CHANGED_EVENT, payload);
-    }
+    let news = note_changes(&state.edit_sessions, space.vault_id(), vault, slugs, None);
+    emit_note_changes(app, news, NoteChangeCause::OutsideWrite);
 }
 
 /// The calling page holds unsaved edits of `slug`, or no longer does
@@ -741,6 +786,61 @@ mod tests {
             vec![
                 crate::domain::block::compute_body_hash("first\n"),
                 crate::domain::block::compute_body_hash("second\n"),
+            ]
+        );
+    }
+
+    /// Л4.1: every `note-changed` that goes out is logged at info with its
+    /// note, the number of pages it goes to and why; nothing of the body or
+    /// of the path beyond the slug. News without a page goes nowhere and is
+    /// not logged.
+    #[test]
+    fn every_note_changed_sent_is_logged_with_its_pages() {
+        let space = space();
+        std::fs::create_dir_all(space.vault.root().join("Cards")).unwrap();
+        std::fs::write(space.vault.block_path("Cards/Note"), "private words\n").unwrap();
+        let sessions = EditSessions::default();
+        sessions.begin("tab-a", "space-x", "Cards/Note");
+        sessions.begin("tab-b", "space-x", "Cards/Note");
+        let mut news = note_changes(&sessions, "space-x", &space.vault, labels(&["Cards/Note"]), None);
+        news.push((
+            Vec::new(),
+            NoteChangedPayload {
+                slug: "Cards/Unwatched".into(),
+                body_hash: "hash".into(),
+            },
+        ));
+
+        let log = crate::test_log::capture();
+        let mut sent = Vec::new();
+        send_note_changes(news, NoteChangeCause::OutsideWrite, |labels, payload| {
+            sent.push((labels, payload.slug));
+        });
+
+        assert_eq!(sent, vec![(labels(&["tab-a", "tab-b"]), "Cards/Note".to_string())]);
+        let lines = log.lines();
+        assert_eq!(
+            lines,
+            vec![(
+                log::Level::Info,
+                "note-changed for Cards/Note to 2 page(s) after an outside write".to_string()
+            )]
+        );
+        let root = space.vault.root().to_string_lossy().into_owned();
+        assert!(lines.iter().all(|(_, line)| !line.contains("private") && !line.contains(&root)));
+
+        let log = crate::test_log::capture();
+        let other = NoteChangedPayload {
+            slug: "Cards/Note".into(),
+            body_hash: "hash".into(),
+        };
+        send_note_changes(vec![(labels(&["tab-b"]), other.clone())], NoteChangeCause::OtherTabSave, |_, _| {});
+        send_note_changes(vec![(labels(&["tab-a"]), other)], NoteChangeCause::MineCommand, |_, _| {});
+        assert_eq!(
+            log.lines(),
+            vec![
+                (log::Level::Info, "note-changed for Cards/Note to 1 page(s) after a save of another tab".to_string()),
+                (log::Level::Info, "note-changed for Cards/Note to 1 page(s) after a command of Mine".to_string()),
             ]
         );
     }

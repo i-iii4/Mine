@@ -3153,11 +3153,11 @@ fn refresh_written_pictures(conn: &rusqlite::Connection, vault: &VaultLayout, sl
     }
 }
 
+/// Every picture of a card a merge wrote: its plan, its thumbnail, the text
+/// placeholder of a merged note without pictures included, and all levels
+/// (SPEC_THUMBNAILS.md, «Свои записи Mine», «Уровни миниатюр»).
 fn reconcile_committed_preview(conn: &rusqlite::Connection, vault: &VaultLayout, slug: &str) {
-    if let Err(error) = derived_preview::reconcile_preview_for_slug(conn, vault, slug) {
-        log::warn!("failed to reconcile committed preview for {slug}: {error:#}");
-    }
-    let _ = index::sync_thumb_metadata(conn, slug, &vault.thumb_path(slug), Some(vault.root()));
+    refresh_written_pictures(conn, vault, slug);
 }
 
 fn validate_merge_slugs(ordered_slugs: Vec<String>) -> Result<Vec<String>, MergeBlocksError> {

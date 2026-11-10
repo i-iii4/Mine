@@ -23,7 +23,7 @@ import { NoteEmbedLookups } from "@/components/reading/NoteEmbed";
 import { taskInCloudLine, taskReadOnlyLine } from "@/components/reading/TaskCheckbox";
 import { indexedBlock } from "@/test/blocks";
 import { installCodeMirrorLayoutStubs } from "@/test/codemirror";
-import type { IndexedBlock, NoteSaveError, SavedNoteBody, SaveNoteBodyParams } from "@/types";
+import type { IndexedBlock, NoteBodyState, NoteSaveError, SavedNoteBody, SaveNoteBodyParams } from "@/types";
 import { NoteEditor } from "./NoteEditor";
 import {
   NOTE_CHANGED_ON_DISK,
@@ -66,6 +66,16 @@ function card(body: string, hash: string): IndexedBlock {
   return indexedBlock({ slug: SLUG, body, body_hash: hash });
 }
 
+/** What the note's file holds: the body the session opened on, then each
+ *  write's. `note_body_state` reads it, as the backend reads the file. */
+let file: NoteBodyState = { body: "", body_hash: "hash-0" };
+
+/** The session opens on `block`, which the file holds. */
+function opensOn(block: IndexedBlock) {
+  file = { body: block.body, body_hash: block.body_hash ?? "" };
+  return block;
+}
+
 /** A save that answers when the test says. */
 function pendingSaves() {
   const calls: Array<{ params: SaveNoteBodyParams; resolve(saved: SavedNoteBody): void; reject(error: NoteSaveError): void }> = [];
@@ -79,6 +89,7 @@ function pendingSaves() {
       const call = calls.splice(index, 1)[0];
       if (!call) throw new Error("no save under way");
       hashes += 1;
+      file = { body: call.params.body, body_hash: `hash-${hashes}` };
       await act(async () => {
         call.resolve({ block: card(call.params.body, `hash-${hashes}`), split_changed: false, unchanged: false });
       });
@@ -100,7 +111,7 @@ function FailureProbe() {
 }
 
 function renderEditor(body = "# Title\n\nFirst paragraph.\n", onSaved = vi.fn()) {
-  vi.mocked(beginNoteEdit).mockResolvedValue(card(body, "hash-0"));
+  vi.mocked(beginNoteEdit).mockResolvedValue(opensOn(card(body, "hash-0")));
   const result = render(
     <>
       <FailureProbe />
@@ -152,6 +163,7 @@ beforeEach(() => {
   vi.mocked(saveNoteBody).mockReset();
   vi.mocked(beginNoteEdit).mockReset();
   vi.mocked(noteBodyState).mockReset();
+  vi.mocked(noteBodyState).mockImplementation(async () => file);
   vi.mocked(reportNoteEdits).mockClear();
   vi.mocked(endNoteEdit).mockClear();
   vi.mocked(reportEditsFlushed).mockClear();
@@ -180,7 +192,7 @@ describe("NoteEditor (SPEC_EDITING.md, Л2.8, Л3)", () => {
     );
     expect(beginNoteEdit).toHaveBeenCalledWith(SLUG);
     expect(screen.getByTestId("reading")).toBeInTheDocument();
-    await act(async () => open(card("Text from disk", "hash-disk")));
+    await act(async () => open(opensOn(card("Text from disk", "hash-disk"))));
     const view = await editorView();
     expect(view.state.doc.toString()).toBe("Text from disk");
     expect(screen.queryByTestId("reading")).toBeNull();
@@ -380,7 +392,7 @@ describe("NoteEditor's accessibility (SPEC_EDITING.md, Л16)", () => {
   }
 
   it("is a multiline text box labelled by the note's file, and the label follows a rename", async () => {
-    vi.mocked(beginNoteEdit).mockResolvedValue(card("- [ ] Задача из списка\n\nАбзац.", "hash-0"));
+    vi.mocked(beginNoteEdit).mockResolvedValue(opensOn(card("- [ ] Задача из списка\n\nАбзац.", "hash-0")));
     const { rerender } = render(editorWith("Note.md"));
     const view = await editorView();
     expect(view.contentDOM).toHaveAttribute("role", "textbox");
@@ -391,7 +403,7 @@ describe("NoteEditor's accessibility (SPEC_EDITING.md, Л16)", () => {
   });
 
   it("labels a task's box by the task's text (Ч12.7)", async () => {
-    vi.mocked(beginNoteEdit).mockResolvedValue(card("- [ ] Задача из списка\n\nАбзац.", "hash-0"));
+    vi.mocked(beginNoteEdit).mockResolvedValue(opensOn(card("- [ ] Задача из списка\n\nАбзац.", "hash-0")));
     render(editorWith("Note.md"));
     await editorView();
     const box = await screen.findByRole("checkbox");
@@ -400,7 +412,7 @@ describe("NoteEditor's accessibility (SPEC_EDITING.md, Л16)", () => {
   });
 
   it("gives Tab to the text, and after an Escape with nothing to close lets Tab move the focus (CodeMirror's rule)", async () => {
-    vi.mocked(beginNoteEdit).mockResolvedValue(card("- [ ] Задача из списка\n\nАбзац.", "hash-0"));
+    vi.mocked(beginNoteEdit).mockResolvedValue(opensOn(card("- [ ] Задача из списка\n\nАбзац.", "hash-0")));
     pendingSaves();
     render(editorWith("Note.md"));
     const view = await editorView();

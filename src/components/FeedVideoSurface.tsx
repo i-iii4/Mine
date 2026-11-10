@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type SyntheticEvent } from "react";
 import { cardSlugOfPreviewPath, mediaUrl, previewAssetUrl } from "@/lib/assets";
+import { feedVideoBox, type FeedVideoSize } from "@/lib/feedVideoBox";
 import { useCardPicturesVersion } from "@/lib/pictureVersions";
 import type { NormalizedFeedPlaybackDescriptor } from "@/lib/feedPlayback";
 import { FeedVideoPoster } from "./FeedVideoPoster";
@@ -53,6 +54,59 @@ export function FeedVideoSurface({
   const directVideoRef = useRef<HTMLVideoElement | null>(null);
   const blobVideoRef = useRef<HTMLVideoElement | null>(null);
   const retriesRef = useRef(0);
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  // The slot's layout size (a transform never changes it) and the video's
+  // own pixels: together they give the whole-pixel box the video is drawn in
+  // (SPEC_CARD_MEDIA_GEOMETRY.md, «Коробка видео в целых пикселях»).
+  const [slotSize, setSlotSize] = useState<FeedVideoSize | null>(null);
+  const [naturalSize, setNaturalSize] = useState<FeedVideoSize | null>(null);
+
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[entries.length - 1]?.contentRect;
+      if (!rect) return;
+      setSlotSize((current) => (
+        current && current.width === rect.width && current.height === rect.height
+          ? current
+          : { width: rect.width, height: rect.height }
+      ));
+    });
+    observer.observe(surface);
+    return () => observer.disconnect();
+  }, []);
+
+  const readNaturalSize = useCallback((event: SyntheticEvent<HTMLVideoElement>) => {
+    const { videoWidth, videoHeight } = event.currentTarget;
+    if (videoWidth <= 0 || videoHeight <= 0) return;
+    setNaturalSize((current) => (
+      current && current.width === videoWidth && current.height === videoHeight
+        ? current
+        : { width: videoWidth, height: videoHeight }
+    ));
+  }, []);
+
+  const videoBox = useMemo(
+    () => (slotSize && naturalSize ? feedVideoBox(slotSize, naturalSize) : null),
+    [naturalSize, slotSize],
+  );
+  // Until the box is known the video keeps the caller's cover; it is still
+  // transparent then, since metadata arrives before the first frame plays.
+  const videoGeometryClassName = videoBox ? "absolute" : `${className ?? "h-full w-full object-cover"} absolute inset-0`;
+  const videoBoxStyle = useMemo<CSSProperties | undefined>(
+    () => (videoBox
+      ? {
+          left: videoBox.left,
+          top: videoBox.top,
+          width: videoBox.width,
+          height: videoBox.height,
+          maxWidth: "none",
+          objectFit: "fill",
+        }
+      : undefined),
+    [videoBox],
+  );
 
   const directSrc = useMemo(
     () => mediaUrl(vaultPath, playback.sourcePath),
@@ -83,6 +137,7 @@ export function FeedVideoSurface({
   useEffect(() => {
     setPhase(allowPlayback ? "loading_direct" : "poster");
     setBlobUrl(null);
+    setNaturalSize(null);
     retriesRef.current = 0;
   }, [allowPlayback, directSrc, posterSrc]);
 
@@ -242,6 +297,7 @@ export function FeedVideoSurface({
 
   return (
     <div
+      ref={surfaceRef}
       data-feed-video-surface="true"
       data-feed-video-phase={phase}
       className="relative h-full w-full"
@@ -259,9 +315,12 @@ export function FeedVideoSurface({
         <video
           ref={directVideoRef}
           src={directSrc}
-          className={`${className ?? "h-full w-full object-cover"} absolute inset-0 z-0 transition-opacity ${
+          className={`${videoGeometryClassName} z-0 transition-opacity ${
             directVideoVisible ? "opacity-100" : "opacity-0"
           }`}
+          style={videoBoxStyle}
+          onLoadedMetadata={readNaturalSize}
+          onResize={readNaturalSize}
           autoPlay
           loop
           muted
@@ -304,9 +363,12 @@ export function FeedVideoSurface({
         <video
           ref={blobVideoRef}
           src={blobUrl}
-          className={`${className ?? "h-full w-full object-cover"} absolute inset-0 z-0 transition-opacity ${
+          className={`${videoGeometryClassName} z-0 transition-opacity ${
             blobVideoVisible ? "opacity-100" : "opacity-0"
           }`}
+          style={videoBoxStyle}
+          onLoadedMetadata={readNaturalSize}
+          onResize={readNaturalSize}
           autoPlay
           loop
           muted

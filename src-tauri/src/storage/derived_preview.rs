@@ -428,10 +428,11 @@ pub fn refresh_written_card(
             thumbnails::remove_thumb_levels(vault, slug);
             changed = true;
         }
-    } else if !thumbnails::is_thumb_fresh(&thumb_path, &vault.block_path(slug), &block, vault)
-        && thumbnails::generate_for_block(&block, vault) != thumbnails::ThumbSource::None
-    {
-        changed = true;
+    } else if !thumbnails::is_thumb_fresh(&thumb_path, &vault.block_path(slug), &block, vault) {
+        changed |= thumbnails::generate_for_block(&block, vault) != thumbnails::ThumbSource::None;
+    } else {
+        // SPEC_THUMBNAILS.md, «Уровни миниатюр».
+        changed |= thumbnails::ensure_thumb_levels(vault, slug);
     }
     index::sync_thumb_metadata(conn, slug, &thumb_path, Some(vault.root()))?;
     Ok(Some(WrittenCardPictures {

@@ -4,7 +4,7 @@ import type { ComponentProps } from "react";
 import type { ExtraProps } from "react-markdown";
 import { EditorView, runScopeHandlers } from "@codemirror/view";
 import { writeHtml } from "@tauri-apps/plugin-clipboard-manager";
-import { beginNoteEdit, saveNoteBody } from "@/lib/commands";
+import { beginNoteEdit, noteBodyState, saveNoteBody } from "@/lib/commands";
 import { NoteEmbedLookups } from "@/components/reading/NoteEmbed";
 import { editorTableMenu } from "@/lib/editorTableMenu";
 import { activeTable } from "@/lib/editing/tableEditor";
@@ -61,6 +61,8 @@ function TestImage({ src, alt }: ComponentProps<"img"> & ExtraProps) {
 
 async function renderEditor(body = BODY) {
   vi.mocked(beginNoteEdit).mockResolvedValue(indexedBlock({ slug: SLUG, body, body_hash: "hash-0" }));
+  // The writes never answer: the file keeps the body the session read.
+  vi.mocked(noteBodyState).mockResolvedValue({ body, body_hash: "hash-0" });
   const result = render(
     <NoteEditor
       slug={SLUG}

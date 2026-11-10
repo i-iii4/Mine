@@ -9,7 +9,8 @@
 // `EDIT_SAVE_RETRY_MS`; the next success takes the notice away. A conflict
 // (the file is not the base) stops the queue: nothing is written over the
 // file until the session takes a side (Л4.3). A note that is gone stops it
-// too (Л4.9); the queue goes on when the note is back as the base it knew.
+// too (Л4.9). The queue goes on when the file holds the base it knew again:
+// the note is back, or the other side's change is gone from the file.
 // Every write started counts: an answer about the file asked before the last
 // write started tells nothing of the file now (Л4.2).
 //
@@ -197,10 +198,12 @@ export class SaveQueue<Answer extends SaveAnswer> {
     this.settle({ saved: false, status: "stopped", error: reason });
   }
 
-  /** The note is back as the base the queue knew (Л4.8, Л4.9): what the
-   *  document holds beyond it is written now. */
+  /** The file holds the base the queue knew again: the note is back (Л4.8,
+   *  Л4.9), or the change that made the conflict is gone from it (Л4.3).
+   *  Writing over the base loses nothing of the file, so what the document
+   *  holds beyond it is written now. */
   resume(): void {
-    if (this.status !== "stopped") return;
+    if (this.status !== "stopped" && this.status !== "conflict") return;
     this.recover();
     if (this.host.readBody() !== this.savedBody) this.pending = true;
     this.start();

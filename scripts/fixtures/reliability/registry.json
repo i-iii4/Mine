@@ -5000,6 +5000,20 @@
         "src/components/FeedVideoSurface.test.tsx"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/feedVideoBox.ts",
+        "src/lib/feedVideoBox.test.ts",
+        "src/components/FeedVideoSurface.tsx",
+        "src/components/FeedVideoSurface.test.tsx"
+      ],
+      "requirement": "SPEC_CARD_MEDIA_GEOMETRY.md### Коробка видео в целых пикселях",
+      "tests": [
+        "src/lib/feedVideoBox.test.ts",
+        "src/components/FeedVideoSurface.test.tsx"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

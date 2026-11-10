@@ -165,6 +165,19 @@ impl NoteEditError {
         }
     }
 
+    /// The kind of the refusal, as its `kind` tag says it to the page: a
+    /// reason for the log that holds no file name and no message.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::NoVault => "no_vault",
+            Self::InCloud { .. } => "in_cloud",
+            Self::ReadOnly { .. } => "read_only",
+            Self::SourceNotFound { .. } => "source_not_found",
+            Self::NotACard { .. } => "not_a_card",
+            Self::Internal { .. } => "internal",
+        }
+    }
+
     fn refused(refusal: NoteWriteRefusal, slug: &str) -> Self {
         match refusal {
             NoteWriteRefusal::SourceNotFound => Self::SourceNotFound {

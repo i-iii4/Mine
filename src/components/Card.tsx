@@ -153,6 +153,10 @@ interface GraphicSurfaceProps extends React.HTMLAttributes<HTMLDivElement> {
    *  that outline lies on the frame's own line. Media with text under it
    *  takes its outline from the text part instead (`FramedCardBody`). */
   liftOutline?: boolean;
+  /** The slot shows a video, playing or as its poster: the window and the
+   *  plane keep one compositing layer each for the card's whole life in the
+   *  feed, so a lift only moves them (SPEC_CARD_STATES.md, С8.4). */
+  videoLayer?: boolean;
 }
 
 const CardFrame = forwardRef<HTMLDivElement, CardFrameProps>(function CardFrame(
@@ -310,11 +314,13 @@ function GraphicSurface({
   windowClassName,
   contentInCloud,
   liftOutline,
+  videoLayer,
   ...props
 }: GraphicSurfaceProps) {
   return (
     <div
       data-card-graphic-surface=""
+      data-card-video-layer={videoLayer ? "" : undefined}
       // No fill of its own: the slot stays put on a lift while its window
       // rises, and a fill here would show behind the risen text as a panel
       // with the slot's corners (С8.3).
@@ -1179,6 +1185,8 @@ function CardMediaSlot({
       className={fills ? "h-full w-full" : "w-full"}
       contentClassName="flex items-center justify-center"
       liftOutline={fills}
+      // A measuring card paints no video and is never lifted.
+      videoLayer={media.paint.kind === "video" && !props.measurementMode}
       style={{ aspectRatio: `${media.aspectRatio ?? provisionalMediaAspect(media.declaredAspectRatio)}` }}
       data-card-preview-geometry={media.aspectRatio === null ? "pending" : undefined}
       contentInCloud={block.content_in_cloud}

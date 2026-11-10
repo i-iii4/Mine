@@ -499,6 +499,18 @@ select,
   transform: translateY(calc(var(--card-lift) - var(--card-lift-drift)));
 }
 
+/* A slot with a video, playing or as its poster, keeps the window and the
+   plane on one compositing layer each for the card's whole life in the feed
+   (SPEC_CARD_STATES.md, С8.4). Without it the engine built these layers when
+   the lift's transition began, rebuilt them when it ended and dropped them
+   when the card settled, and every rebuild moved the video's own layer under
+   new parents. With it a lift only changes the two layers' transforms. Only
+   video slots get it: a picture has no layer of its own to move. */
+[data-card-video-layer] [data-card-lift="window"],
+[data-card-video-layer] [data-card-lift="plane"] {
+  will-change: transform;
+}
+
 /* Every card rises for its row of collections: the card sets --card-lift
    inline from its own bottom space (Card.tsx, collectionsRowLiftStyle), a
    caption sets it to its own height. */

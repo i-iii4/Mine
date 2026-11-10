@@ -240,6 +240,19 @@ describe("SaveQueue when the note is gone and back, and after a conflict (SPEC_E
     expect(session.writes.map((write) => write.request)).toEqual([{ baseBodyHash: "hash-disk", body: "mine!" }]);
   });
 
+  it("leaves a conflict when the file holds its base again, and writes the edits over it", async () => {
+    const session = setup();
+    session.type("mine");
+    session.dispositions.set("stale", "conflict");
+    await session.refuse("stale");
+    session.type("mine!");
+    expect(session.writes).toHaveLength(0);
+    session.queue.resume();
+    expect(session.queue.state).toBe("saving");
+    expect(session.events).toEqual(["conflict", "recovered"]);
+    expect(session.writes.map((write) => write.request)).toEqual([{ baseBodyHash: "hash-0", body: "mine!" }]);
+  });
+
   it("enters a conflict from a stop: the note came back other than the session knew it", () => {
     const session = setup();
     session.queue.stop({ kind: "source_not_found" });

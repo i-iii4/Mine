@@ -295,6 +295,7 @@ fn spawn_thumb_jobs_worker(
                 let mut generated = 0;
                 let mut skipped = 0;
                 let mut metadata_updates = 0;
+                let mut levels_made = 0;
                 let mut cancelled = false;
                 let is_active_vault = || {
                     app.as_ref().map_or(true, |handle| {
@@ -328,6 +329,17 @@ fn spawn_thumb_jobs_worker(
                     let outdated = fresh && !epoch.wrote(&thumb_path);
                     if fresh && !outdated {
                         skipped += 1;
+                        // A fresh thumbnail with a level missing: the level is
+                        // made from it, and the surfaces that read levels hear
+                        // of it (SPEC_THUMBNAILS.md, «Уровни миниатюр»).
+                        if thumbnails::ensure_thumb_levels(&vault, &job.block.slug) {
+                            levels_made += 1;
+                            if is_active_vault() {
+                                if let Some(ref app) = app {
+                                    emit_levels_made(app, &vault, &job.block.slug, &thumb_path);
+                                }
+                            }
+                        }
                         if let Some(ref conn) = metadata_conn {
                             match index::sync_thumb_metadata(
                                 conn,
@@ -440,10 +452,10 @@ fn spawn_thumb_jobs_worker(
                     }
                 }
                 log::info!(
-                    "thumb-gen({label}): {} generated, {} skipped (fresh), {} metadata updates, {} total, cancelled={}",
-                    generated, skipped, metadata_updates, total, cancelled
+                    "thumb-gen({label}): {} generated, {} skipped (fresh), {} levels made, {} metadata updates, {} total, cancelled={}",
+                    generated, skipped, levels_made, metadata_updates, total, cancelled
                 );
-                (generated + metadata_updates, cancelled)
+                (generated + levels_made + metadata_updates, cancelled)
             }));
             match result {
                 Ok((changed, cancelled)) => {
@@ -528,6 +540,13 @@ pub fn index_md_file(
         let thumb_path = vault.thumb_path(&job.block.slug);
 
         if thumbnails::is_thumb_fresh(&thumb_path, &job.source_path, &job.block, vault) {
+            // A level missing beside it is made now (SPEC_THUMBNAILS.md,
+            // «Уровни миниатюр»).
+            if thumbnails::ensure_thumb_levels(vault, &job.block.slug) {
+                if let Some(app) = app {
+                    emit_levels_made(app, vault, &job.block.slug, &thumb_path);
+                }
+            }
             let _ =
                 index::sync_thumb_metadata(conn, &job.block.slug, &thumb_path, Some(vault.root()));
             // Only the text placeholder waits for the browser; a PNG may be a
@@ -748,6 +767,9 @@ mod preview_queue {
             log::warn!("thumbnail failed for {slug}: {error}");
             return;
         }
+        // The levels describe the new picture too (SPEC_THUMBNAILS.md,
+        // «Уровни миниатюр»).
+        thumbnails::generate_thumb_levels(vault, slug);
         if let Some(app) = app {
             let event_path = vault.root().to_string_lossy().into_owned();
             crate::commands::space_events::emit_to_space_path(
@@ -762,6 +784,23 @@ mod preview_queue {
             );
         }
     }
+}
+
+/// Tell the space that the levels of the thumbnail of `slug` were made: the
+/// sidebar and the graph read them, and ask for them again.
+fn emit_levels_made(app: &AppHandle, vault: &VaultLayout, slug: &str, thumb_path: &Path) {
+    let path = vault.root().to_string_lossy().into_owned();
+    crate::commands::space_events::emit_to_space_path(
+        app,
+        &path.clone(),
+        "thumb:updated",
+        ThumbUpdatedPayload {
+            path,
+            slug: slug.to_string(),
+            is_text: thumbnails::preview_origin(thumb_path)
+                == Some(thumbnails::PreviewOrigin::TextPlaceholder),
+        },
+    );
 }
 
 /// Emit `thumb:updated` and (when applicable) `thumb:upgrade-requested`
@@ -1912,6 +1951,47 @@ mod tests {
             !slugs.contains(&"gone".to_string()),
             "orphan should be removed"
         );
+    }
+
+    /// SPEC_THUMBNAILS.md, «Уровни миниатюр» (09.11.2026): a level missing
+    /// beside a fresh thumbnail is made again by the sweep, which says so to
+    /// the space. The sweep took such a card for fresh and left the sidebar
+    /// asking for a file that was not there.
+    #[test]
+    fn the_sweep_makes_a_missing_level_again() {
+        use crate::domain::vault::ThumbLevel;
+        let dir = tempfile::tempdir().unwrap();
+        let vault = VaultLayout::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
+        let conn = test_conn();
+        write_md_file(&vault, "Note", "article", &[]);
+        full_scan(&conn, &vault, None, None).unwrap();
+        let full = vault.thumb_path("Note");
+        let micro = vault.thumb_level_path("Note", ThumbLevel::Micro);
+        let made = std::time::Instant::now();
+        while !(full.is_file() && micro.is_file()) {
+            assert!(made.elapsed() < Duration::from_secs(10), "the scan made no thumbnail");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let full_before = std::fs::read(&full).unwrap();
+        std::fs::remove_file(&micro).unwrap();
+
+        let (done, heard) = std::sync::mpsc::channel();
+        thumb_sweep(
+            &conn,
+            &vault,
+            None,
+            Some(Box::new(move || {
+                let _ = done.send(());
+            })),
+        )
+        .unwrap();
+
+        heard
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the sweep reported no change");
+        assert!(micro.is_file(), "the sweep left the micro level missing");
+        assert_eq!(std::fs::read(&full).unwrap(), full_before, "the full thumbnail stays as it was");
     }
 
     #[test]

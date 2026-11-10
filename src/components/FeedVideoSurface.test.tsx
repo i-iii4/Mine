@@ -474,3 +474,89 @@ describe("FeedVideoSurface", () => {
     expect(container.querySelector("[data-feed-play-badge]")).toBeTruthy();
   });
 });
+
+describe("FeedVideoSurface: the video's box in whole pixels (SPEC_CARD_MEDIA_GEOMETRY.md, «Коробка видео в целых пикселях»)", () => {
+  /** A layout's resize observer: reports `slot` for the surface it observes. */
+  function installSlot(slot: { width: number; height: number }) {
+    class SlotResizeObserver implements ResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(target: Element): void {
+        const rect: DOMRect = {
+          x: 0, y: 0, top: 0, left: 0, width: slot.width, height: slot.height,
+          right: slot.width, bottom: slot.height, toJSON: () => ({}),
+        };
+        const size = [{ inlineSize: slot.width, blockSize: slot.height }];
+        this.callback([{ target, contentRect: rect, borderBoxSize: size, contentBoxSize: size, devicePixelContentBoxSize: size }], this);
+      }
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal("ResizeObserver", SlotResizeObserver);
+  }
+
+  /** The video's own pixels, as the engine reports them once metadata loads. */
+  function loadMetadata(video: HTMLVideoElement, width: number, height: number) {
+    Object.defineProperty(video, "videoWidth", { configurable: true, value: width });
+    Object.defineProperty(video, "videoHeight", { configurable: true, value: height });
+    fireEvent.loadedMetadata(video);
+  }
+
+  beforeEach(() => {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => Promise.resolve());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("draws a 16:9 video in a 225 by 127 slot at 226 by 127 whole pixels, unscaled inside its box", () => {
+    installSlot({ width: 225, height: 127 });
+    const { container } = render(
+      <FeedVideoSurface
+        playback={{ ...PLAYBACK, width: 1920, height: 1080 }}
+        allowPlayback
+        vaultPath="/tmp/vault"
+        thumbsRootPath="/tmp/thumbs"
+        className="absolute inset-0 h-full w-full object-cover"
+      />,
+    );
+    const video = container.querySelector("video")!;
+    act(() => loadMetadata(video, 1920, 1080));
+
+    expect(video.style.width).toBe("226px");
+    expect(video.style.height).toBe("127px");
+    expect(video.style.left).toBe("0px");
+    expect(video.style.top).toBe("0px");
+    // Drawn exactly at its box: the engine works out no cover size of its own.
+    expect(video.style.objectFit).toBe("fill");
+    expect(video.style.maxWidth).toBe("none");
+    expect(video).not.toHaveClass("object-cover", "inset-0", "h-full", "w-full");
+  });
+
+  it("centres a wide video's overflow on whole pixels", () => {
+    installSlot({ width: 225, height: 113 });
+    const { container } = render(
+      <FeedVideoSurface playback={PLAYBACK} allowPlayback vaultPath="/tmp/vault" thumbsRootPath="/tmp/thumbs" />,
+    );
+    const video = container.querySelector("video")!;
+    act(() => loadMetadata(video, 2400, 1000));
+    expect([video.style.left, video.style.top, video.style.width, video.style.height]).toEqual(["-23px", "0px", "271px", "113px"]);
+  });
+
+  it("keeps the caller's cover until the video's own pixels are known", () => {
+    installSlot({ width: 225, height: 127 });
+    const { container } = render(
+      <FeedVideoSurface
+        playback={PLAYBACK}
+        allowPlayback
+        vaultPath="/tmp/vault"
+        thumbsRootPath="/tmp/thumbs"
+        className="absolute inset-0 h-full w-full object-cover"
+      />,
+    );
+    const video = container.querySelector("video")!;
+    expect(video).toHaveClass("object-cover", "inset-0");
+    expect(video.style.width).toBe("");
+  });
+});

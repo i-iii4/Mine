@@ -16,7 +16,7 @@ use crate::domain::block::{
     derive_card_kind, derive_title_fields, serialize_block, strip_first_markdown_h1, Block,
     CardKind,
 };
-use crate::domain::vault::VaultLayout;
+use crate::domain::vault::{ThumbLevel, VaultLayout};
 use crate::storage::source_mutation::{SourceFileWrite, StagedSourceMutation};
 use crate::storage::{article_audio, index, media_refs, thumbnails};
 
@@ -1786,6 +1786,22 @@ pub fn rename_derived_artifacts(vault: &VaultLayout, old_slug: &str, new_slug: &
                 new_thumb.display()
             )
         })?;
+        // The levels go with it; one that cannot move is made again from the
+        // moved thumbnail (SPEC_THUMBNAILS.md, «Уровни миниатюр»). Until
+        // 09.11.2026 a renamed card kept its levels under its old name.
+        for level in ThumbLevel::ALL {
+            let old_level = vault.thumb_level_path(old_slug, level);
+            let new_level = vault.thumb_level_path(new_slug, level);
+            if old_level.is_file() && !new_level.exists() {
+                if let Err(error) = std::fs::rename(&old_level, &new_level) {
+                    log::warn!(
+                        "the {} level of {old_slug} did not move to {new_slug}: {error}",
+                        level.suffix()
+                    );
+                }
+            }
+        }
+        thumbnails::ensure_thumb_levels(vault, new_slug);
     }
 
     article_audio::rename_all_artifacts(vault, old_slug, new_slug)?;
@@ -1862,6 +1878,9 @@ pub fn persist_new_block(
             &thumb_dest,
         );
     }
+    // The levels before the thumbnail is indexed: the sidebar and the graph
+    // ask for them as soon as it is (SPEC_THUMBNAILS.md, «Уровни миниатюр»).
+    thumbnails::generate_thumb_levels(vault, &block.slug);
 
     let _ = index::sync_thumb_metadata(
         conn,
@@ -2667,6 +2686,62 @@ mod tests {
         assert!(!vault.block_path("Rejected").exists());
         assert!(!vault.media_path("Rejected", "png").exists());
         assert!(index::get_block(&conn, "Rejected").unwrap().is_none());
+    }
+
+    /// SPEC_THUMBNAILS.md, «Уровни миниатюр» (09.11.2026): a card created
+    /// from a file (paste, drop, the create command) has every level of its
+    /// thumbnail when the create returns. It had only the full one, the
+    /// sidebar asked for a `micro` that was not there, and no sweep made it.
+    #[test]
+    fn a_new_card_has_every_level_of_its_thumbnail() {
+        let dir = tempfile::tempdir().unwrap();
+        let derived = tempfile::tempdir().unwrap();
+        let vault =
+            VaultLayout::with_derived_root(dir.path().join("space"), derived.path().to_path_buf());
+        std::fs::create_dir_all(vault.root()).unwrap();
+        let conn = db::open_or_create(&vault.index_db_path()).unwrap();
+        let source = dir.path().join("pasted.png");
+        image::RgbImage::from_pixel(120, 80, image::Rgb([30, 120, 200])).save(&source).unwrap();
+        let mut picture = make_test_block("Pasted");
+        picture.frontmatter.file = Some("Pasted.png".to_string());
+        let mut note = make_test_block("Note");
+        note.frontmatter.block_type = BlockType::Article;
+        note.frontmatter.file = None;
+        note.body = "Some words to draw.".to_string();
+
+        persist_new_block(&conn, &vault, &picture, Some(&source)).unwrap();
+        persist_new_block(&conn, &vault, &note, None).unwrap();
+
+        for slug in ["Pasted", "Note"] {
+            assert!(vault.thumb_path(slug).is_file(), "{slug} has no thumbnail");
+            for level in ThumbLevel::ALL {
+                assert!(
+                    vault.thumb_level_path(slug, level).is_file(),
+                    "{slug} has no {} level",
+                    level.suffix(),
+                );
+            }
+        }
+    }
+
+    /// SPEC_THUMBNAILS.md, «Уровни миниатюр»: a renamed card takes the
+    /// levels of its thumbnail with it.
+    #[test]
+    fn a_renamed_card_keeps_every_level_of_its_thumbnail() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        let thumb = vault.thumb_path("Old");
+        std::fs::create_dir_all(thumb.parent().unwrap()).unwrap();
+        image::RgbImage::from_pixel(120, 80, image::Rgb([30, 120, 200])).save_with_format(&thumb, image::ImageFormat::Jpeg).unwrap();
+        thumbnails::generate_thumb_levels(&vault, "Old");
+
+        rename_derived_artifacts(&vault, "Old", "New").unwrap();
+
+        assert!(vault.thumb_path("New").is_file());
+        for level in ThumbLevel::ALL {
+            assert!(vault.thumb_level_path("New", level).is_file(), "no {} level", level.suffix());
+            assert!(!vault.thumb_level_path("Old", level).exists(), "the old {} level stays", level.suffix());
+        }
     }
 
     // ── delete_block_files ───────────────────────────────────────────────

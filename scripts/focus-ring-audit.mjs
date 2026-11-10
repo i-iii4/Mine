@@ -78,6 +78,8 @@ function tauriMock(noteBody) {
     list_pending_thumb_upgrades: [],
     search_grid_blocks: { generation: 1, search_generation: 1, blocks, has_more: false, next_cursor: null, cursor_reset: false },
     begin_note_edit: find,
+    // The open card checks the file once its listener is in place (SPEC_EDITING.md, Л4.1).
+    note_body_state: (args) => { const b = find(args); return { body_hash: b.body_hash, body: b.body }; },
     get_block: find,
     end_note_edit: null,
     list_card_associations: (args) => ({ generation: 1, slug: args?.slug, groups: [{ kind: "site", label: "example.com", blocks: blocks.slice(1, 4) }] }),

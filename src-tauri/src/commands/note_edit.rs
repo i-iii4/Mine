@@ -41,23 +41,37 @@ fn tab_vault(state: &AppState, webview: &Webview) -> Option<(String, VaultLayout
 }
 
 /// Check that the calling tab may edit the note `slug` and give its card
-/// (Л2.8); a success opens the tab's edit session of the note (Л3.9).
+/// (Л2.8); a success opens the tab's edit session of the note (Л3.9). A
+/// refusal is logged.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn begin_note_edit(
     webview: Webview,
     state: State<'_, AppState>,
     slug: String,
 ) -> Result<IndexedBlock, NoteEditError> {
-    let (vault_id, vault) = tab_vault(&state, &webview).ok_or(NoteEditError::NoVault)?;
-    let note = slug.clone();
-    let card = tauri::async_runtime::spawn_blocking(move || {
-        let conn = db::open_or_create(&vault.index_db_path()).map_err(NoteEditError::internal)?;
-        note_edit::begin_note_edit(&conn, &vault, &note)
-    })
-    .await
-    .map_err(|error| NoteEditError::internal(format!("the edit check failed: {error}")))??;
+    let checked = async {
+        let (vault_id, vault) = tab_vault(&state, &webview).ok_or(NoteEditError::NoVault)?;
+        let note = slug.clone();
+        let card = tauri::async_runtime::spawn_blocking(move || {
+            let conn = db::open_or_create(&vault.index_db_path()).map_err(NoteEditError::internal)?;
+            note_edit::begin_note_edit(&conn, &vault, &note)
+        })
+        .await
+        .map_err(|error| NoteEditError::internal(format!("the edit check failed: {error}")))??;
+        Ok((vault_id, card))
+    };
+    let (vault_id, card) = checked.await.map_err(|error| refused_edit(&slug, error))?;
     state.edit_sessions.begin(webview.label(), &vault_id, &slug);
     Ok(card)
+}
+
+/// Log a refusal of `begin_note_edit` at info with the note's slug and the
+/// kind of the refusal, and give it back: the log tells why an open card
+/// stayed in reading (Л2.8). Nothing of the note's text, of its file name or
+/// of an internal message goes to the log.
+fn refused_edit(slug: &str, error: NoteEditError) -> NoteEditError {
+    log::info!("begin_note_edit refused for {slug}: {}", error.kind());
+    error
 }
 
 /// The body of the note `slug` on disk and its hash (Л4.1).
@@ -297,6 +311,42 @@ mod tests {
 
     fn layout() -> VaultLayout {
         VaultLayout::new(std::path::PathBuf::from("/spaces/A"))
+    }
+
+    /// Л2.8: a refusal of `begin_note_edit` reaches the log at info with the
+    /// note and the kind of the refusal, and nothing else of it.
+    #[test]
+    fn a_refused_edit_is_logged_with_its_kind() {
+        let log = crate::test_log::capture();
+        let refusals = [
+            NoteEditError::NoVault,
+            NoteEditError::InCloud {
+                file_name: "Note.md".into(),
+            },
+            NoteEditError::ReadOnly {
+                file_name: "Note.md".into(),
+            },
+            NoteEditError::SourceNotFound {
+                source_slug: "Cards/Note".into(),
+            },
+            NoteEditError::NotACard {
+                source_slug: "Cards/Note".into(),
+            },
+            NoteEditError::internal("cannot open /Users/someone/space/.mine/index.db"),
+        ];
+        let mut kinds = Vec::new();
+        for refusal in refusals {
+            let tag = serde_json::to_value(&refusal).unwrap()["kind"].as_str().unwrap().to_string();
+            assert_eq!(refusal.kind(), tag);
+            kinds.push(refused_edit("Cards/Note", refusal).kind());
+        }
+        assert_eq!(
+            log.lines(),
+            kinds
+                .iter()
+                .map(|kind| (log::Level::Info, format!("begin_note_edit refused for Cards/Note: {kind}")))
+                .collect::<Vec<_>>()
+        );
     }
 
     /// Л3.3 step 8: each save puts the preview off by the idle time, the end

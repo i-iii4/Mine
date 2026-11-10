@@ -489,8 +489,11 @@ function EditorSession({
         return;
       }
       if (disk.bodyHash === queue.base) {
-        // The note is back as the session knew it: its edits go on.
-        if (wasGone) queue.resume();
+        // The file holds the base again: the note is back as the session
+        // knew it (Л4.9), or the change that made the conflict is gone from
+        // it (Л4.3). The edits were made from that base and lose nothing of
+        // the file: they are written now.
+        if (wasGone || queue.state === "conflict") queue.resume();
         return;
       }
       if (queue.dirty) {
@@ -542,10 +545,15 @@ function EditorSession({
       );
     }
 
+    /** Whether a file at the base still has news for the session: the
+     *  note was gone, or the queue waits in a conflict or a stop, which the
+     *  base back in the file ends (Л4.3, Л4.9). */
+    const waitsForTheFile = () => gone || queue.state === "conflict" || queue.state === "stopped";
+
     /** The open card shows a body of `bodyHash` (`vault-refreshed`, a
      *  write's answer): when it is not the base, the file says what holds. */
     const cardBody = (bodyHash: string) => {
-      if (bodyHash !== queue.base || gone) checkDisk();
+      if (bodyHash !== queue.base || waitsForTheFile()) checkDisk();
     };
 
     // The session holds its note (Л4.8, Л4.9): it follows a rename and is
@@ -727,18 +735,27 @@ function EditorSession({
     // The file changed outside the session (Л4.1).
     const changes = listenPage<NoteChangedPayload>("note-changed", (event) => {
       const { slug: changed, body_hash } = event.payload;
-      if (changed !== slugRef.current || (body_hash === queue.base && !gone)) return;
+      if (changed !== slugRef.current || (body_hash === queue.base && !waitsForTheFile())) return;
       checkDisk();
     });
+    // News sent between the session's first read and the moment the
+    // subscription took hold reached no handler: the file is asked once now.
+    // A subscription that failed hears nothing, so the file is asked then
+    // too; the end of the session logs the failure (Л4.1).
+    const askOnceListening = () => checkDisk();
+    void changes.then(askOnceListening, askOnceListening);
     // The window came back: a failed write is tried again, and the file is
     // asked whether it changed meanwhile (Л3.8, Л4.1).
     const onFocus = () => {
       queue.retry();
       checkDisk();
     };
-    // The page hides: its edits go to the file now (Л3.2).
+    // The page hides: its edits go to the file now (Л3.2). The page is shown
+    // again: news may have passed it while hidden, and showing a tab gives
+    // its window no focus, so the file is asked (Л4.1).
     const onVisibility = () => {
       if (document.visibilityState === "hidden") void queue.flush();
+      else if (document.visibilityState === "visible") checkDisk();
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);

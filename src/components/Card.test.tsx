@@ -2793,6 +2793,75 @@ describe("the card lift's motion in global.css (SPEC_CARD_STATES.md, С8.4; SPEC
   });
 });
 
+describe("a video slot keeps one compositing layer through the lift (SPEC_CARD_STATES.md, С8.4)", () => {
+  const VIDEO_MANIFEST = JSON.stringify({
+    kind: "video_poster",
+    primary_preview_path: "video-poster.jpg",
+    width: 1280,
+    height: 720,
+    preview_width: 640,
+    preview_height: 360,
+    tiles: [{ src: "demo.mp4", width: 1280, height: 720, is_video: true, is_video_poster: true }],
+    overflow_count: 0,
+  });
+  const PLAYBACK = JSON.stringify({
+    kind: "single_video",
+    source_path: "demo.mp4",
+    poster_preview_path: "video-poster.jpg",
+    width: 1280,
+    height: 720,
+    container: "mp4",
+    profile: "standard",
+  });
+  const videoBlock = (feedPlayback: string | null) => block({
+    block_type: "video",
+    media_file: "demo.mp4",
+    preview_manifest: VIDEO_MANIFEST,
+    feed_playback: feedPlayback,
+    collections: [],
+  });
+  const surfaceOf = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>("[data-card-graphic-surface]")!;
+
+  it("marks the slot of a playing video and of a video shown as its poster", () => {
+    const playing = render(<Card block={videoBlock(PLAYBACK)} vaultPath={VAULT} onClick={vi.fn()} />);
+    expect(playing.container.querySelector("video")).toBeInTheDocument();
+    expect(surfaceOf(playing.container)).toHaveAttribute("data-card-video-layer");
+    playing.unmount();
+
+    const poster = render(<Card block={videoBlock(PLAYBACK)} vaultPath={VAULT} allowPlayback={false} onClick={vi.fn()} />);
+    expect(poster.container.querySelector("video")).toBeNull();
+    expect(surfaceOf(poster.container)).toHaveAttribute("data-card-video-layer");
+    poster.unmount();
+
+    const posterOnly = render(<Card block={videoBlock(null)} vaultPath={VAULT} onClick={vi.fn()} />);
+    expect(surfaceOf(posterOnly.container)).toHaveAttribute("data-card-video-layer");
+  });
+
+  it("leaves a picture's slot without a layer of its own", () => {
+    const { container } = render(
+      <Card block={block({ block_type: "image", media_file: "photo.jpg", url: null })} vaultPath={VAULT} onClick={vi.fn()} />,
+    );
+    expect(surfaceOf(container)).not.toHaveAttribute("data-card-video-layer");
+  });
+
+  it("holds the window and the plane of a video slot on a layer at rest, not only while they move", () => {
+    const css = readFileSync("src/styles/global.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const rule = css.split("}").find((candidate) => (
+      candidate.includes('[data-card-video-layer] [data-card-lift="window"]')
+      && candidate.includes('[data-card-video-layer] [data-card-lift="plane"]')
+    ));
+    expect(rule).toBeDefined();
+    const selector = rule!.slice(0, rule!.indexOf("{"));
+    // At rest: no :hover and no pinned lift in the selector.
+    expect(selector).not.toMatch(/:hover|data-card-lift-pinned/);
+    expect(rule!.slice(rule!.indexOf("{") + 1)).toContain("will-change: transform");
+    // Every other card keeps no layer at rest.
+    const others = css.split("}").filter((candidate) => candidate.includes("will-change") && candidate.includes("data-card-lift"));
+    expect(others).toEqual([rule]);
+  });
+});
+
 describe("Card previews show the feed card in its final hover state (SPEC_CARD_STATES.md, С10)", () => {
   const menuProps = {
     tags: [],

@@ -3,7 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { useContext, type ComponentProps } from "react";
 import type { ExtraProps } from "react-markdown";
 import { EditorView } from "@codemirror/view";
-import { beginNoteEdit, saveNoteBody } from "@/lib/commands";
+import { beginNoteEdit, noteBodyState, saveNoteBody } from "@/lib/commands";
 import { ArticleMarkdown } from "@/components/reading/ArticleMarkdown";
 import { NoteEmbedLookups } from "@/components/reading/NoteEmbed";
 import type { TaskBoxes } from "@/components/reading/TaskCheckbox";
@@ -107,6 +107,8 @@ const SELECTORS: Record<keyof typeof BLOCKS, string> = {
 async function renderBoth(kinds: Array<keyof typeof BLOCKS>) {
   const BODY = bodyOf(kinds);
   vi.mocked(beginNoteEdit).mockResolvedValue(indexedBlock({ slug: SLUG, body: BODY, body_hash: "hash-0" }));
+  // The writes never answer: the file keeps the body the session read.
+  vi.mocked(noteBodyState).mockResolvedValue({ body: BODY, body_hash: "hash-0" });
   const lookups = new NoteEmbedLookups(SLUG);
   const reading = render(
     <ArticleMarkdown

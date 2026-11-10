@@ -730,6 +730,8 @@ pub(crate) fn promote_orphan_media_inner(
                         &thumb_path,
                         thumbnails::DEFAULT_MAX_SIZE,
                     );
+                    // SPEC_THUMBNAILS.md, «Уровни миниатюр».
+                    thumbnails::generate_thumb_levels(&vs.vault, &slug);
                     let _ = index::sync_thumb_metadata(
                         &vs.conn,
                         &slug,

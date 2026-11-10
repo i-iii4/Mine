@@ -1465,6 +1465,26 @@ pub fn generate_thumb_levels(vault: &VaultLayout, slug: &str) {
     }
 }
 
+/// Write the levels of the thumbnail of `slug` when one of them is missing
+/// beside the full thumbnail, from that thumbnail as it is: the picture is
+/// not made again. Returns whether levels were written.
+///
+/// A surface that reads a level asks for it as soon as the full thumbnail is
+/// indexed, so a level missing is a picture missing there
+/// (SPEC_THUMBNAILS.md, «Уровни миниатюр», 09.11.2026). A stat per level:
+/// cheap enough for the focus sweep.
+pub fn ensure_thumb_levels(vault: &VaultLayout, slug: &str) -> bool {
+    if !vault.thumb_path(slug).is_file()
+        || ThumbLevel::ALL
+            .iter()
+            .all(|level| vault.thumb_level_path(slug, *level).is_file())
+    {
+        return false;
+    }
+    generate_thumb_levels(vault, slug);
+    true
+}
+
 /// Write missing levels for thumbnails that predate them.
 ///
 /// Existing vaults hold full thumbnails and nothing else, and the surfaces that

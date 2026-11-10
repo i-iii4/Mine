@@ -276,6 +276,8 @@ fn import_single_block(
                 &thumb_path,
                 thumbnails::DEFAULT_MAX_SIZE,
             );
+            // SPEC_THUMBNAILS.md, «Уровни миниатюр».
+            thumbnails::generate_thumb_levels(vault, &slug);
         }
     }
 
