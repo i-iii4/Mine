@@ -21,6 +21,7 @@ use crate::domain::block::{
     compute_body_hash, derive_card_kind, derive_title_fields, iter_file_references,
     iter_inline_media_references, parse_markdown_document, suggest_slug, Block, BlockType,
     normalize_attachment_reference, CardKind, DateTime, FileReference, Frontmatter,
+    CARD_MERGE_SOURCE,
 };
 use crate::domain::collection::{normalize_collection_ref, validate_collection_ref};
 use crate::domain::markdown::{
@@ -2171,10 +2172,7 @@ pub(crate) fn delete_blocks_inner(
         })
         .map_err(CommandError::from)?;
     for slug in &slugs {
-        let thumb = vault.thumb_path(slug);
-        if thumb.exists() {
-            let _ = std::fs::remove_file(thumb);
-        }
+        thumbnails::remove_card_pictures(vault, slug);
         if let Err(error) = article_audio::delete_all_artifacts(vault, slug) {
             log::warn!("failed to clean deleted card audio for {slug}: {error:#}");
         }
@@ -2256,10 +2254,7 @@ pub(crate) fn delete_block_inner(
         })
         .map_err(CommandError::from)?;
 
-    let thumb_path = vault.thumb_path(slug);
-    if thumb_path.exists() {
-        let _ = std::fs::remove_file(&thumb_path);
-    }
+    thumbnails::remove_card_pictures(vault, slug);
     if let Err(e) = article_audio::delete_all_artifacts(vault, slug) {
         log::warn!("failed to delete article audio for {slug}: {e:#}");
     }
@@ -3107,10 +3102,7 @@ fn apply_merge_blocks(
         reconcile_committed_preview(conn, vault, &write.block.slug);
     }
     for source in sources {
-        let source_thumb_path = vault.thumb_path(&source.block.slug);
-        if source_thumb_path.exists() {
-            let _ = std::fs::remove_file(source_thumb_path);
-        }
+        thumbnails::remove_card_pictures(vault, &source.block.slug);
         if let Err(e) = article_audio::delete_all_artifacts(vault, &source.block.slug) {
             log::warn!(
                 "failed to delete article audio for merged source {}: {e:#}",
@@ -3323,7 +3315,7 @@ fn build_merged_block(
                 frontmatter.source_media.as_ref()
             }),
             saved_at,
-            source: Some("card-merge".to_string()),
+            source: Some(CARD_MERGE_SOURCE.to_string()),
             width: None,
             height: None,
             author: first_non_empty_frontmatter(sources, |frontmatter| frontmatter.author.as_ref()),
@@ -6667,6 +6659,95 @@ mod tests {
         for tile in &manifest.tiles {
             let preview = tile.preview_path.as_deref().unwrap();
             assert!(vault.thumbs_dir().join(preview).is_file());
+        }
+    }
+
+    /// A two-frame 32×24 H.264 clip (Constrained Baseline) the Rust decoder
+    /// reads, so the merged card's video tile is made here, not by a browser.
+    const TINY_H264_MP4: &[u8] = include_bytes!("../storage/fixtures/tiny-h264.mp4");
+
+    /// The merge of 10.11.2026: a picture card first, a post with a video
+    /// second. The merged card takes the first card's address, which is no
+    /// post. It must still show both media, its pictures must be made before
+    /// the command answers, the feed revision must move, and no picture of
+    /// the merged cards may stay in the cache (SPEC_CARD_MERGE.md, «Preview
+    /// Tiles», «Backend Algorithm» steps 9 to 11).
+    #[test]
+    fn a_merge_of_a_picture_and_a_video_post_draws_both_and_keeps_no_picture_of_its_cards() {
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let mut picture = image("Playground", "playground.png");
+        picture.frontmatter.url = Some("https://emmiwu.com/playground/".to_string());
+        let mut post = article("Post", "post\n\n![[clip (video 1).mp4]]");
+        post.frontmatter.url = Some("https://x.com/someone/status/1".to_string());
+        post.frontmatter.tags = Vec::new();
+        image::RgbImage::from_pixel(20, 10, image::Rgb([220, 32, 64]))
+            .save(vault.root().join("playground.png"))
+            .unwrap();
+        std::fs::write(vault.root().join("clip (video 1).mp4"), TINY_H264_MP4).unwrap();
+        for block in [&picture, &post] {
+            persist_block(&conn, &vault, block);
+            reconcile::project_source_path(&conn, &vault, &vault.block_path(&block.slug)).unwrap();
+            derived_preview::refresh_written_card(&conn, &vault, &block.slug).unwrap();
+        }
+        let source_pictures = |slug: &str| -> Vec<PathBuf> {
+            let mut paths = vec![vault.thumb_path(slug)];
+            paths.extend(
+                crate::domain::vault::ThumbLevel::ALL
+                    .into_iter()
+                    .map(|level| vault.thumb_level_path(slug, level)),
+            );
+            paths.push(vault.thumbs_dir().join(crate::storage::preview_plan::tile_preview_path(slug, 0)));
+            paths
+        };
+        for slug in ["Playground", "Post"] {
+            assert!(
+                source_pictures(slug).iter().all(|path| path.is_file()),
+                "{slug} had every picture before the merge"
+            );
+        }
+        let revision_before = projection::current_generation(&conn).unwrap();
+
+        let mutation = merge_blocks_inner(
+            Some(&state),
+            &conn,
+            &vault,
+            vec!["Playground".to_string(), "Post".to_string()],
+        )
+        .unwrap();
+
+        assert!(projection::current_generation(&conn).unwrap() > revision_before);
+        let grid = index::list_grid_blocks(&conn, None, 0, 20).unwrap().0;
+        let slugs: Vec<_> = grid.iter().map(|block| block.slug.as_str()).collect();
+        assert_eq!(slugs, [mutation.result.merged_slug.as_str()]);
+        let merged = &grid[0];
+        let preview_state: String = conn
+            .query_row(
+                "SELECT preview_state FROM blocks WHERE slug = ?1",
+                [&mutation.result.merged_slug],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(preview_state, "ready");
+        let manifest: index::FeedPreviewManifest =
+            serde_json::from_str(merged.preview_manifest.as_deref().unwrap()).unwrap();
+        assert_eq!(manifest.kind, index::FeedPreviewKind::Composite);
+        assert_eq!(
+            manifest
+                .tiles
+                .iter()
+                .map(|tile| (tile.source_path.as_str(), tile.is_video))
+                .collect::<Vec<_>>(),
+            [("playground.png", false), ("clip (video 1).mp4", true)]
+        );
+        for tile in &manifest.tiles {
+            let tile_path = vault.thumbs_dir().join(tile.preview_path.as_deref().unwrap());
+            assert!(tile_path.is_file(), "{} was made", tile_path.display());
+        }
+        assert!(vault.thumb_path(&mutation.result.merged_slug).is_file());
+        for slug in ["Playground", "Post"] {
+            let left: Vec<_> = source_pictures(slug).into_iter().filter(|path| path.exists()).collect();
+            assert!(left.is_empty(), "pictures of merged {slug} stayed: {left:?}");
         }
     }
 

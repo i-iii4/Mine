@@ -1565,6 +1565,32 @@ fn levels_dropped_alpha(full: &Path, micro: &Path) -> bool {
     files::image_type(micro) != Some(ImageType::Png)
 }
 
+/// Remove every derived picture of a card that left the space: its
+/// thumbnail, the thumbnail's levels and its feed tiles
+/// (`<slug>.preview-<n>.jpg`, at most `PREVIEW_TILE_LIMIT`). Every command
+/// that removes cards (delete, group delete, merge) comes here. Until
+/// 10.11.2026 each removed only the thumbnail: the tiles of a removed card
+/// stayed until a full preview pass, its levels for good.
+pub fn remove_card_pictures(vault: &VaultLayout, slug: &str) {
+    let thumb = vault.thumb_path(slug);
+    if let Err(error) = std::fs::remove_file(&thumb) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            log::warn!("the thumbnail of removed '{slug}' stays: {error}");
+        }
+    }
+    remove_thumb_levels(vault, slug);
+    for index in 0..crate::storage::preview_plan::PREVIEW_TILE_LIMIT {
+        let tile = vault
+            .thumbs_dir()
+            .join(crate::storage::preview_plan::tile_preview_path(slug, index));
+        if let Err(error) = std::fs::remove_file(&tile) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("a tile of removed '{slug}' stays: {error}");
+            }
+        }
+    }
+}
+
 /// Remove the reduced levels for a slug, for when its thumbnail is discarded.
 pub fn remove_thumb_levels(vault: &VaultLayout, slug: &str) {
     let Ok(_write) = crate::storage::source_mutation::begin_write() else {

@@ -231,6 +231,10 @@ const snapToCursor: Modifier = ({ activatorEvent, draggingNodeRect, transform })
 const POINT_OVERLAY_MODIFIERS: Modifier[] = [snapToCursor];
 
 const BATCH_TAG_REFRESH_DELAY_MS = 750;
+/// How long a refresh waits for more of a burst of outside writes (the
+/// watcher's per-file news, a sync pass) before it reads: one read for the
+/// burst instead of one per file. News of a committed change does not wait.
+const REFRESH_BURST_DEBOUNCE_MS = 2000;
 function fetchGridBlocks(
   place: TabLocation,
   offset: number,
@@ -1254,6 +1258,11 @@ export function AppWithVault({
   const lastRevalidatedRouteKeyRef = useRef<string | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
   const refreshInFlightRef = useRef(false);
+  // When the last queued read began, and when the pending one is due
+  // (`performance.now()`): queued reads begin at most once per burst
+  // debounce, and news of a change never waits past that (`followSpaceNews`).
+  const refreshStartedAtRef = useRef<number | null>(null);
+  const refreshDueAtRef = useRef<number | null>(null);
   const detailCloseTimerRef = useRef<number | null>(null);
   const pendingRefreshRef = useRef({
     grid: false,
@@ -2043,6 +2052,7 @@ export function AppWithVault({
       previews: false,
     };
     refreshInFlightRef.current = true;
+    refreshStartedAtRef.current = performance.now();
     try {
       await Promise.all([
         pending.grid
@@ -2055,10 +2065,15 @@ export function AppWithVault({
       refreshInFlightRef.current = false;
       const next = pendingRefreshRef.current;
       if ((next.grid || next.taxonomy || next.previews) && refreshTimerRef.current === null) {
+        // What came while this read was out: one more read, a debounce after
+        // this one began.
+        const delayMs = Math.max(0, REFRESH_BURST_DEBOUNCE_MS - (performance.now() - (refreshStartedAtRef.current ?? 0)));
+        refreshDueAtRef.current = performance.now() + delayMs;
         refreshTimerRef.current = window.setTimeout(() => {
           refreshTimerRef.current = null;
+          refreshDueAtRef.current = null;
           void flushRefreshQueue();
-        }, 2000);
+        }, delayMs);
       }
     }
   }, [loadPreviews, vaultReady]);
@@ -2069,7 +2084,7 @@ export function AppWithVault({
       taxonomy?: boolean;
       previews?: boolean;
     },
-    delayMs = 2000,
+    delayMs = REFRESH_BURST_DEBOUNCE_MS,
     options: { force?: boolean } = {},
   ) => {
     if (!vaultReady) {
@@ -2081,15 +2096,50 @@ export function AppWithVault({
     if (options.force && refreshTimerRef.current !== null) {
       window.clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = null;
+      refreshDueAtRef.current = null;
     }
     if (refreshInFlightRef.current || refreshTimerRef.current !== null) {
       return;
     }
+    refreshDueAtRef.current = performance.now() + delayMs;
     refreshTimerRef.current = window.setTimeout(() => {
       refreshTimerRef.current = null;
+      refreshDueAtRef.current = null;
       void flushRefreshQueue();
     }, delayMs);
   }, [flushRefreshQueue, vaultReady]);
+
+  /// News that the space changed (`vault-changed`: another tab's command, the
+  /// watcher, a sync pass) reaches the feed, the collections and the sidebar
+  /// here, and only here. The first news after a quiet spell is read at once;
+  /// news that keeps coming (the watcher sends it every 300 ms through a long
+  /// sync) is read once per `REFRESH_BURST_DEBOUNCE_MS`. Before 10.11.2026
+  /// every news waited the whole debounce, and a tab hidden meanwhile never
+  /// read it: a hidden page's timers wait (SPEC_TABS.md, В15, В19).
+  const followSpaceNews = useCallback(() => {
+    const now = performance.now();
+    const startedAt = refreshStartedAtRef.current;
+    const readAt = startedAt === null ? now : Math.max(now, startedAt + REFRESH_BURST_DEBOUNCE_MS);
+    const dueAt = refreshDueAtRef.current;
+    scheduleRefresh(
+      { grid: true, taxonomy: true, previews: true },
+      readAt - now,
+      // A read already due sooner stays; one due later (the per-file news
+      // of the same change set it) is brought forward.
+      { force: dueAt === null || readAt < dueAt },
+    );
+  }, [scheduleRefresh]);
+
+  /// Shown again: what the tab heard while hidden is read now, the committed
+  /// index and not the disk (SPEC_TABS.md, В42).
+  const readWhatWasHeardWhileHidden = useCallback(() => {
+    if (refreshTimerRef.current !== null) {
+      window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+      refreshDueAtRef.current = null;
+    }
+    void flushRefreshQueue();
+  }, [flushRefreshQueue]);
 
   const handleCardMenuOpenChange = useCallback((slug: string, open: boolean) => {
     let wasHeld = false;
@@ -2344,6 +2394,8 @@ export function AppWithVault({
       window.clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = null;
     }
+    refreshDueAtRef.current = null;
+    refreshStartedAtRef.current = null;
     const started = performance.now();
     console.info("[startup] openVault:start", { vaultPath });
     void openVault(vaultPath)
@@ -2944,11 +2996,11 @@ export function AppWithVault({
       // (SPEC_TABS.md, В15, В18).
       followSpaceChangeRef.current(event.payload.renames ?? []);
       invalidateRouteSnapshots();
-      scheduleRefresh({
-        grid: true,
-        taxonomy: true,
-        previews: true,
-      });
+      followSpaceNews();
+    }));
+
+    unlistenFns.push(listenPage<TabVisibility>(TAB_VISIBILITY_CHANGED_EVENT, (event) => {
+      if (event.payload.visible) readWhatWasHeardWhileHidden();
     }));
 
     unlistenFns.push(listenPage<VaultSyncStartedEvent>("vault-sync-started", (event) => {
@@ -3014,13 +3066,14 @@ export function AppWithVault({
         unlisten.then((fn) => fn());
       }
     };
-  }, [bumpThumbVersion, bumpFeedThumbVersion, invalidateRouteSnapshots, indexBuiltOnOpen, invalidateRoutesForTags, reloadAllSnapshots, scheduleRefresh, vaultReady]);
+  }, [bumpThumbVersion, bumpFeedThumbVersion, followSpaceNews, invalidateRouteSnapshots, indexBuiltOnOpen, invalidateRoutesForTags, readWhatWasHeardWhileHidden, reloadAllSnapshots, scheduleRefresh, vaultReady]);
 
   useEffect(() => {
     return () => {
       if (refreshTimerRef.current !== null) {
         window.clearTimeout(refreshTimerRef.current);
         refreshTimerRef.current = null;
+        refreshDueAtRef.current = null;
       }
       if (gridRetryTimerRef.current !== null) {
         window.clearTimeout(gridRetryTimerRef.current);

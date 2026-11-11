@@ -5014,6 +5014,33 @@
         "src/components/FeedVideoSurface.test.tsx"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/domain/block.rs",
+        "src-tauri/src/storage/index.rs",
+        "src-tauri/src/storage/thumbnails.rs",
+        "src-tauri/src/commands/blocks.rs"
+      ],
+      "requirement": "SPEC_CARD_MERGE.md#### Preview Tiles",
+      "tests": [
+        "src-tauri/src/commands/blocks.rs",
+        "src-tauri/src/storage/index.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/App.tsx",
+        "src/App.test.tsx",
+        "src/components/Grid.test.tsx"
+      ],
+      "requirement": "SPEC_TABS.md#### Вкладки одного пространства",
+      "tests": [
+        "src/App.test.tsx",
+        "src/components/Grid.test.tsx"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

@@ -341,6 +341,30 @@ Merged-карточка — это `article` с multi-section body, поэтом
 `PREVIEW_TILE_LIMIT = 4` действует глобально по всему body, порядок тайлов —
 порядок медиа в документе.
 
+Правило действует для любой слитой карточки, какой бы адрес ей ни дала первая
+из слитых (10.11.2026). Слитую карточку узнаёт `source: card-merge`
+(`plans_every_part`, `src-tauri/src/storage/index.rs`). До этого план по всем
+частям строился только для адреса поста X или Instagram. Слитая карточка с
+адресом обычной страницы брала одни картинки: видео второй части не
+становилось плиткой, и карточка рисовалась одной плиткой первой картинки,
+байт в байт как первая из слитых. Так было в слиянии 10.11.2026 картинки
+страницы и поста с видео.
+
+Видео, постер которого Rust не декодирует, остаётся плиткой: постер делает
+браузер (`save_tile_poster`, SPEC_THUMBNAILS.md, Phase 2), а пока его нет,
+превью карточки не готово. Уже слитые карточки получают новый план при
+открытии пространства: версия схемы превью 4 строит план заново только им,
+остальные карточки сохраняют готовые превью
+(`backfill_missing_preview_manifest`).
+
+Проверки: `a_merged_card_takes_a_tile_from_every_part_its_video_included`,
+`preview_recipe_four_plans_merged_cards_again_and_keeps_the_rest`
+(`storage/index.rs`) и
+`a_merge_of_a_picture_and_a_video_post_draws_both_and_keeps_no_picture_of_its_cards`
+(`commands/blocks.rs`, настоящий ролик H.264 из
+`src-tauri/src/storage/fixtures/tiny-h264.mp4`). Все три падали до
+исправления.
+
 ## Media Ownership
 
 Merge must never copy, rewrite, rename or delete media files.
@@ -499,7 +523,12 @@ Algorithm:
 7. Apply external relationship rewrites.
 8. Delete selected source `.md` files.
 9. Delete only source-card derived artifacts such as stale thumbnails/index
-   rows. Do not delete media binaries.
+   rows. Do not delete media binaries. Every derived picture of a source card
+   goes: its thumbnail, the thumbnail's levels and its feed tiles, through
+   the one function every removal of cards uses
+   (`thumbnails::remove_card_pictures`, SPEC_THUMBNAILS.md, «Свои записи
+   Mine»). Until 10.11.2026 only the thumbnail went, and the levels and
+   tiles of merged cards stayed in the cache.
 10. Project the new block and every rewritten file from their committed
     Markdown bytes, including `source_index_state`; remove the selected source
     rows and their source-state rows in the same SQLite transaction.

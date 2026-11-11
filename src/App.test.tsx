@@ -313,10 +313,12 @@ vi.mock("@/components/Grid", async () => {
     onCreateAndAssign,
     onCreateAndAssignBatch,
     onDeleteSelectedBlocks,
+    onMergeSelectedBlocks,
     onBatchSetTag,
     onToggleTag,
     onRequestRename,
   }: {
+    onMergeSelectedBlocks?: (orderedSlugs: string[]) => void | Promise<void>;
     onRequestRename?: (block: LightBlock) => void;
     onBatchSetTag?: (slugs: string[], tag: string, connected: boolean) => void | Promise<unknown>;
     onToggleTag?: (slug: string, tag: string, hasTag: boolean) => void | Promise<unknown>;
@@ -457,6 +459,16 @@ vi.mock("@/components/Grid", async () => {
           }}
         >
           Delete the selection with its media
+        </button>
+        {/* The merge window's `Merge` for the first two cards of the feed. */}
+        <button
+          type="button"
+          onClick={() => {
+            void Promise.resolve(onMergeSelectedBlocks?.(blocks.slice(0, 2).map((item) => item.slug)))
+              .catch(() => undefined);
+          }}
+        >
+          Merge the first two cards
         </button>
         {blocks.map((item) => (
           <div key={`${item.slug}-title`} data-testid={`grid-title-${item.slug}`}>
@@ -6541,6 +6553,37 @@ describe("AppWithVault", () => {
   // feed takes the card's new tile list from the index and a new version for
   // the tile addresses: the tiles are named by place, so the old address
   // would show the browser's copy of the dropped picture.
+  // SPEC_CARD_MERGE.md, «State Flow»: the tab that merged reads the feed as
+  // the merge left it, whatever order the merge's news and its answer arrive
+  // in: the merged card is in, its cards are out.
+  it("shows the merged card and not its cards once its merge is made", async () => {
+    const alpha = block(1, "alpha-block");
+    const beta = block(2, "beta-block");
+    const gamma = block(3, "gamma-block");
+    const merged = block(4, "alpha-block — merged");
+    let mergedYet = false;
+    commandMocks.listGridBlocks.mockImplementation(async () => (
+      mergedYet ? gridSnapshot([merged, gamma], 2, false, 9) : gridSnapshot([alpha, beta, gamma], 3, false, 5)
+    ));
+    commandMocks.mergeBlocks.mockImplementation(async () => {
+      mergedYet = true;
+      const send = (name: string, payload: unknown) => fireEvent(window, new CustomEvent(name, { detail: { payload } }));
+      send("block:added", { slug: merged.slug, tags: [], is_text: false });
+      send("thumb:updated", { slug: merged.slug, is_text: false });
+      send("block:removed", { slug: alpha.slug, tags: [] });
+      send("block:removed", { slug: beta.slug, tags: [] });
+      send("vault-changed", { path: "/vault", renames: [] });
+      return { block: indexedBlock(4, merged.slug), merged_slug: merged.slug, removed_slugs: [alpha.slug, beta.slug] };
+    });
+    render(<MemoryRouter><AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("grid-slugs")).toHaveTextContent(/^alpha-block,beta-block,gamma-block$/));
+
+    fireEvent.click(screen.getByRole("button", { name: "Merge the first two cards" }));
+
+    await waitFor(() => expect(commandMocks.mergeBlocks).toHaveBeenCalledWith(["alpha-block", "beta-block"]));
+    await waitFor(() => expect(screen.getByTestId("grid-slugs")).toHaveTextContent(/^alpha-block — merged,gamma-block$/));
+  });
+
   it("follows a card's new tile list when its pictures were rebuilt", async () => {
     const tiles = (...names: string[]) => JSON.stringify({
       kind: "composite",
@@ -6923,6 +6966,85 @@ describe("AppWithVault", () => {
       // The collections are read again at once when the index pass lands.
       send("vault-sync-finished", { path: "/vault", indexed: 2, errors: 0, error: null });
       await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:"));
+    });
+
+    // The news of a change another tab made is a committed change: the tab
+    // reads it at once, not after the debounce kept for bursts of outside
+    // writes (SPEC_TABS.md, В15). Before 10.11.2026 it waited 2 s, and a tab
+    // that was hidden then went on showing the merged cards: a hidden page
+    // runs no timers (В19).
+    describe("following a merge another tab made", () => {
+      const alpha = block(1, "alpha-block");
+      const beta = block(2, "beta-block");
+      const merged = block(4, "alpha-block — merged");
+      let mergedYet = false;
+      beforeEach(() => {
+        mergedYet = false;
+        commandMocks.listGridBlocks.mockImplementation(async () => (
+          mergedYet ? gridSnapshot([merged], 1, false, 9) : gridSnapshot([alpha, beta], 2, false, 5)
+        ));
+      });
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it("shows the merged card and not its cards at once", async () => {
+        renderTab();
+        await waitFor(() => expect(screen.getByTestId("grid-slugs")).toHaveTextContent(/^alpha-block,beta-block$/));
+        vi.useFakeTimers();
+
+        mergedYet = true;
+        await act(async () => {
+          send("vault-changed", { path: "/vault", renames: [] });
+          await vi.advanceTimersByTimeAsync(0);
+        });
+
+        expect(screen.getByTestId("grid-slugs")).toHaveTextContent(/^alpha-block — merged$/);
+      });
+
+      it("reads news that keeps coming once per burst debounce", async () => {
+        renderTab();
+        await waitFor(() => expect(screen.getByTestId("grid-slugs")).toHaveTextContent(/^alpha-block,beta-block$/));
+        vi.useFakeTimers();
+        const reads = () => commandMocks.listGridBlocks.mock.calls.length;
+
+        const before = reads();
+        await act(async () => {
+          send("vault-changed", { path: "/vault", renames: [] });
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(reads()).toBe(before + 1);
+
+        // The watcher's news through a long sync, every 300 ms.
+        for (let news = 0; news < 5; news += 1) {
+          await act(async () => {
+            send("vault-changed", { path: "/vault", renames: [] });
+            await vi.advanceTimersByTimeAsync(300);
+          });
+        }
+        expect(reads()).toBe(before + 1);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2000);
+        });
+        expect(reads()).toBe(before + 2);
+      });
+
+      it("shows it the moment the tab is shown when the merge came while it was hidden", async () => {
+        renderTab();
+        await waitFor(() => expect(screen.getByTestId("grid-slugs")).toHaveTextContent(/^alpha-block,beta-block$/));
+        vi.useFakeTimers();
+        send("tab-visibility-changed", { visible: false });
+        mergedYet = true;
+        // Hidden: the page's timers wait, so no time passes for it here.
+        send("vault-changed", { path: "/vault", renames: [] });
+
+        await act(async () => {
+          send("tab-visibility-changed", { visible: true });
+          for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
+        });
+
+        expect(screen.getByTestId("grid-slugs")).toHaveTextContent(/^alpha-block — merged$/);
+      });
     });
 
     it("steps back and forward through its places when the tab bar asks (В81)", async () => {

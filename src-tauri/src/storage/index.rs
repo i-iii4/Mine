@@ -15,7 +15,7 @@ use crate::domain::block::{
     build_preview_text, derive_block_type, derive_card_kind, derive_title_fields,
     extract_note_wikilinks, iter_inline_media_references, markdown_image_source,
     parse_markdown_document, strip_first_markdown_h1, Block, BlockType, CardKind, DateTime,
-    Frontmatter, FEED_PREVIEW_TEXT_BUFFER_CHARS, FOREIGN_MARKDOWN_ORIGIN,
+    Frontmatter, CARD_MERGE_SOURCE, FEED_PREVIEW_TEXT_BUFFER_CHARS, FOREIGN_MARKDOWN_ORIGIN,
     MALFORMED_FRONTMATTER_ORIGIN,
 };
 #[cfg(test)]
@@ -70,7 +70,9 @@ const HASH_IN_MEDIA_NAMES_VERSION: i64 = 6;
 /// of a card whose reading changed.
 const COMMONMARK_DESTINATIONS_VERSION: i64 = 8;
 const COLLECTION_INDEX_VERSION: i64 = 1;
-pub const PREVIEW_SCHEMA_VERSION: i64 = 3;
+/// Version 4: a merged card is planned from every part of its body, its
+/// videos included (`plans_every_part`).
+pub const PREVIEW_SCHEMA_VERSION: i64 = 4;
 
 /// A block as read from the database index.
 #[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
@@ -745,6 +747,17 @@ fn own_media_when_body_has_none(
     }
 }
 
+/// Whether `block`'s tiles come from every part of its body, its videos as
+/// posters, in document order: a post (one part per tweet) and a merged card
+/// (one part per card it was made of, SPEC_CARD_MERGE.md, «Preview Tiles»).
+/// A merged card takes the address of its first card, which is often no
+/// post: planned by the address alone, its videos were dropped whenever any
+/// part held a picture (10.11.2026).
+fn plans_every_part(block: &Block) -> bool {
+    is_social_url(block.frontmatter.url.as_deref())
+        || block.frontmatter.source.as_deref() == Some(CARD_MERGE_SOURCE)
+}
+
 fn serialize_feed_preview_manifest(
     block: &Block,
     width: Option<u32>,
@@ -760,7 +773,7 @@ fn serialize_feed_preview_manifest(
     // the image alone, but its gallery manifest is built the same way).
     let plan_from_body = || {
 
-            if is_social_url(block.frontmatter.url.as_deref()) {
+            if plans_every_part(block) {
                 let mut tiles = extract_social_preview_tiles(&block.body, &dims, media_urls);
                 if tiles.is_empty() {
                     tiles = local_media_items(media_urls, |_| true)
@@ -1045,43 +1058,49 @@ fn serialize_feed_preview_manifest(
     serde_json::to_string(&manifest).ok()
 }
 
-fn serialize_feed_preview_manifest_from_index_row(
-    slug: &str,
+/// The indexed fields a card's preview plan is made from, as the manifest
+/// backfill reads them from a row.
+struct IndexedPlanFields<'a> {
+    slug: &'a str,
     block_type: BlockType,
-    url: Option<&str>,
-    media_file: Option<&str>,
-    thumbnail: Option<&str>,
+    url: Option<&'a str>,
+    media_file: Option<&'a str>,
+    thumbnail: Option<&'a str>,
     width: Option<u32>,
     height: Option<u32>,
-    body: &str,
-    media_dimensions: Option<&str>,
-    media_urls: Option<&str>,
-) -> Option<String> {
+    body: &'a str,
+    media_dimensions: Option<&'a str>,
+    media_urls: Option<&'a str>,
+    /// A merged card is planned from every part (`plans_every_part`).
+    source: Option<&'a str>,
+}
+
+fn serialize_feed_preview_manifest_from_index_row(row: &IndexedPlanFields<'_>) -> Option<String> {
     let block = Block {
-        slug: slug.to_string(),
+        slug: row.slug.to_string(),
         frontmatter: Frontmatter {
-            block_type,
+            block_type: row.block_type,
             title: None,
             description: None,
-            url: url.map(str::to_string),
-            file: media_file.map(str::to_string),
-            thumbnail: thumbnail.map(str::to_string),
+            url: row.url.map(str::to_string),
+            file: row.media_file.map(str::to_string),
+            thumbnail: row.thumbnail.map(str::to_string),
             tags: Vec::new(),
             related_notes: Vec::new(),
             source_media: None,
             saved_at: DateTime::new("1970-01-01T00:00:00Z").ok()?,
-            source: None,
-            width,
-            height,
+            source: row.source.map(str::to_string),
+            width: row.width,
+            height: row.height,
             author: None,
             position: None,
             color: None,
             icon: None,
         },
-        body: body.to_string(),
+        body: row.body.to_string(),
     };
 
-    serialize_feed_preview_manifest(&block, width, height, media_dimensions, media_urls)
+    serialize_feed_preview_manifest(&block, row.width, row.height, row.media_dimensions, row.media_urls)
 }
 
 fn parse_feed_preview_manifest(raw: Option<&str>) -> Option<FeedPreviewManifest> {
@@ -2230,7 +2249,7 @@ pub fn backfill_collection_index(conn: &Connection, vault: &VaultLayout) -> Resu
 pub fn backfill_missing_preview_manifest(conn: &Connection) -> Result<usize> {
     let mut stmt = conn.prepare(
         "SELECT slug, block_type, url, media_file, thumbnail, width, height, body, media_dimensions, media_urls,
-                preview_schema_version, preview_manifest
+                preview_schema_version, preview_manifest, source
          FROM blocks
          WHERE slug != ''
            AND card_kind != 'channel'
@@ -2252,6 +2271,7 @@ pub fn backfill_missing_preview_manifest(conn: &Connection) -> Result<usize> {
                 row.get::<_, Option<String>>(9)?,
                 row.get::<_, i64>(10)?,
                 row.get::<_, Option<String>>(11)?,
+                row.get::<_, Option<String>>(12)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -2270,37 +2290,45 @@ pub fn backfill_missing_preview_manifest(conn: &Connection) -> Result<usize> {
         media_urls,
         previous_version,
         previous_manifest,
+        source,
     ) in rows
     {
-        // Recipe 3 only changes saved provider posters. Preserve unaffected
-        // ready artifacts and measured geometry instead of regenerating a vault.
+        // Each recipe since version 2 changes the plan of a few cards only:
+        // recipe 3 saved provider posters, recipe 4 merged cards
+        // (`plans_every_part`). Every other card keeps its ready artifacts
+        // and measured geometry instead of regenerating a vault.
         let provider_poster = url.as_deref()
             .and_then(mine_core::domain::video_source::parse_youtube_source)
             .is_some() && thumbnail.is_some();
-        if PREVIEW_SCHEMA_VERSION == 3 && previous_version == 2
-            && parse_feed_preview_manifest(previous_manifest.as_deref()).is_some() && !provider_poster
+        let merged_card = source.as_deref() == Some(CARD_MERGE_SOURCE);
+        let replanned = (previous_version < 3 && provider_poster)
+            || (previous_version < 4 && merged_card);
+        if previous_version >= 2
+            && parse_feed_preview_manifest(previous_manifest.as_deref()).is_some()
+            && !replanned
         {
             updated += conn.execute(
-                "UPDATE blocks SET preview_schema_version = ?2 WHERE slug = ?1 AND preview_schema_version = 2",
-                params![slug, PREVIEW_SCHEMA_VERSION],
+                "UPDATE blocks SET preview_schema_version = ?2 WHERE slug = ?1 AND preview_schema_version = ?3",
+                params![slug, PREVIEW_SCHEMA_VERSION, previous_version],
             )?;
             continue;
         }
         let block_type = BlockType::from_str(&raw_type).with_context(|| {
             format!("unknown block_type in preview manifest backfill: {raw_type}")
         })?;
-        let Some(preview_manifest) = serialize_feed_preview_manifest_from_index_row(
-            &slug,
+        let Some(preview_manifest) = serialize_feed_preview_manifest_from_index_row(&IndexedPlanFields {
+            slug: &slug,
             block_type,
-            url.as_deref(),
-            media_file.as_deref(),
-            thumbnail.as_deref(),
-            width.map(|value| value as u32),
-            height.map(|value| value as u32),
-            &body,
-            media_dimensions.as_deref(),
-            media_urls.as_deref(),
-        ) else {
+            url: url.as_deref(),
+            media_file: media_file.as_deref(),
+            thumbnail: thumbnail.as_deref(),
+            width: width.map(|value| value as u32),
+            height: height.map(|value| value as u32),
+            body: &body,
+            media_dimensions: media_dimensions.as_deref(),
+            media_urls: media_urls.as_deref(),
+            source: source.as_deref(),
+        }) else {
             continue;
         };
 
@@ -4741,6 +4769,97 @@ mod tests {
 
         let sources: Vec<_> = tiles.iter().map(|tile| tile.source_path.as_str()).collect();
         assert_eq!(sources, ["own.jpg", "quoted-two.jpg"]);
+    }
+
+    /// SPEC_CARD_MERGE.md, «Preview Tiles»: a merged card shows every
+    /// medium of its parts in document order, a video as its poster tile,
+    /// whatever address its first card gave it. An ordinary article with the
+    /// same body keeps its pictures-first plan.
+    #[test]
+    fn a_merged_card_takes_a_tile_from_every_part_its_video_included() {
+        let body = "![[Playground.jpg]]\n\nSource: [emmiwu.com](<https://emmiwu.com/playground/>)\n\n---\n\n\
+            post\n\n![[clip (video 1).mp4]]\n\nSource: [x.com](<https://x.com/someone/status/1>)";
+        let urls = serde_json::to_string(&["Playground.jpg", "clip (video 1).mp4"]).unwrap();
+        let mut block = make_block_full("Playground — merged", "article", None, "2026-11-10T16:11:22Z", &[], body);
+        block.frontmatter.url = Some("https://emmiwu.com/playground/".into());
+        let ordinary: FeedPreviewManifest = serde_json::from_str(
+            &serialize_feed_preview_manifest(&block, None, None, None, Some(&urls)).unwrap(),
+        )
+        .unwrap();
+        block.frontmatter.source = Some(CARD_MERGE_SOURCE.into());
+
+        let merged: FeedPreviewManifest = serde_json::from_str(
+            &serialize_feed_preview_manifest(&block, None, None, None, Some(&urls)).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(merged.kind, FeedPreviewKind::Composite);
+        let tiles: Vec<_> = merged
+            .tiles
+            .iter()
+            .map(|tile| (tile.source_path.as_str(), tile.is_video, tile.preview_path.as_deref()))
+            .collect();
+        assert_eq!(
+            tiles,
+            [
+                ("Playground.jpg", false, Some("Playground — merged.preview-1.jpg")),
+                ("clip (video 1).mp4", true, Some("Playground — merged.preview-2.jpg")),
+            ]
+        );
+        assert_eq!(ordinary.kind, FeedPreviewKind::Image);
+        assert_eq!(ordinary.tiles.len(), 1);
+    }
+
+    /// Recipe 4 plans merged cards again; every other card keeps its ready
+    /// artifacts and measured geometry.
+    #[test]
+    fn preview_recipe_four_plans_merged_cards_again_and_keeps_the_rest() {
+        let conn = test_conn();
+        let mut merged = make_block_full(
+            "Pair — merged",
+            "article",
+            None,
+            "2026-11-10T16:11:22Z",
+            &[],
+            "![](photo.jpg)\n\n---\n\npost\n\n![](clip.mp4)",
+        );
+        merged.frontmatter.url = Some("https://example.com/page".into());
+        merged.frontmatter.source = Some(CARD_MERGE_SOURCE.into());
+        let gallery = make_block_full("ordinary", "article", None, "2026-01-01T00:00:00Z", &[], "Article\n![](photo.jpg)\n![](clip.mp4)");
+        upsert_block(&conn, &merged, None).unwrap();
+        upsert_block(&conn, &gallery, None).unwrap();
+        // Both as recipe 3 left them: one picture tile, ready, stamped.
+        let one_tile = r#"{"kind":"image","primary_preview_path":"x.jpg","tiles":[{"source_path":"photo.jpg","preview_path":"x.preview-1.jpg","is_video":false,"is_video_poster":false}],"overflow_count":0}"#;
+        conn.execute(
+            "UPDATE blocks SET preview_schema_version = 3, preview_state = 'ready',
+                 preview_source_stamp = 'kept-stamp', preview_manifest = ?1",
+            [one_tile],
+        )
+        .unwrap();
+
+        assert_eq!(backfill_missing_preview_manifest(&conn).unwrap(), 2);
+        assert_eq!(backfill_missing_preview_manifest(&conn).unwrap(), 0);
+
+        let row = |slug: &str| -> (String, String, Option<String>, i64) {
+            conn.query_row(
+                "SELECT preview_manifest, preview_state, preview_source_stamp, preview_schema_version
+                 FROM blocks WHERE slug = ?1",
+                [slug],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap()
+        };
+        let (manifest, state, stamp, version) = row("Pair — merged");
+        let manifest: FeedPreviewManifest = serde_json::from_str(&manifest).unwrap();
+        assert_eq!(
+            manifest.tiles.iter().map(|tile| tile.source_path.as_str()).collect::<Vec<_>>(),
+            ["photo.jpg", "clip.mp4"]
+        );
+        assert_eq!((state.as_str(), stamp, version), ("stale", None, PREVIEW_SCHEMA_VERSION));
+        assert_eq!(
+            row("ordinary"),
+            (one_tile.to_string(), "ready".to_string(), Some("kept-stamp".to_string()), PREVIEW_SCHEMA_VERSION)
+        );
     }
 
     #[test]

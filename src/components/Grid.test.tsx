@@ -2103,6 +2103,59 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(document.querySelector("[data-feed-selection-action-bar]")).toBeNull();
   });
 
+  // SPEC_GROUP_SELECTION.md, SPEC_CARD_MERGE.md «State Flow»: the selection
+  // names cards, never places. After a merge it is empty, the next one
+  // names the cards it was made on, and a selection whose cards left the
+  // feed (merged in another tab) is gone with them.
+  it("keeps its selection on cards, not places, over a merge", async () => {
+    vi.useFakeTimers();
+    const before = [makeBlock(9601), makeBlock(9602), makeBlock(9603), makeBlock(9604), makeBlock(9605)];
+    for (const id of [9601, 9602, 9603, 9604, 9605, 9700]) setBlockHeight(id, 200);
+    const merged = makeBlock(9700, { slug: "merged", title: "Merged" });
+    const after = [merged, before[1]!, before[3]!, before[4]!];
+    let showBlocks: (blocks: LightBlock[]) => void = () => {};
+    const onMergeSelectedBlocks = vi.fn(async () => { showBlocks(after); });
+    const { rerender } = render(<Grid {...BASE_PROPS} blocks={before} onMergeSelectedBlocks={onMergeSelectedBlocks} />);
+    showBlocks = (blocks) => rerender(<Grid {...BASE_PROPS} blocks={blocks} onMergeSelectedBlocks={onMergeSelectedBlocks} />);
+    await flushAsync();
+    const shownSlugs = () => Array.from(document.querySelectorAll("[data-feed-grid-item]"))
+      .map((item) => item.getAttribute("data-feed-grid-item-slug"));
+    const selectedSlugs = () => Array.from(document.querySelectorAll('[data-feed-grid-item-selected="true"]'))
+      .map((item) => item.getAttribute("data-feed-grid-item-slug"));
+
+    fireEvent.click(document.querySelector('[data-block-slug="block-9601"]')!, { metaKey: true });
+    fireEvent.click(document.querySelector('[data-block-slug="block-9603"]')!, { metaKey: true });
+    await flushMicrotasks();
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Merge" }));
+    await flushAsync();
+    await flushAsync();
+
+    expect(onMergeSelectedBlocks).toHaveBeenCalledWith(["block-9601", "block-9603"]);
+    expect(shownSlugs()).toEqual(["merged", "block-9602", "block-9604", "block-9605"]);
+    expect(selectedSlugs()).toEqual([]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    fireEvent.click(document.querySelector('[data-block-slug="merged"]')!, { metaKey: true });
+    fireEvent.click(document.querySelector('[data-block-slug="block-9604"]')!, { metaKey: true });
+    await flushMicrotasks();
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    const rows = within(screen.getByRole("dialog"))
+      .getAllByRole("button", { name: /^Reorder / })
+      .map((handle) => handle.getAttribute("aria-label"));
+    expect(rows).toEqual(["Reorder Merged", "Reorder Block 9604"]);
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    await flushAsync();
+
+    // Another tab merged them: the feed's next list has neither.
+    await act(async () => {
+      showBlocks([before[1]!, before[4]!]);
+    });
+    await flushAsync();
+    expect(selectedSlugs()).toEqual([]);
+    expect(screen.queryByText(/selected$/)).toBeNull();
+  });
+
   it("toggles the pointer-hovered card with Enter while group selection is active", async () => {
     vi.useFakeTimers();
 
