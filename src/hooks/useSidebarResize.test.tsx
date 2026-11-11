@@ -328,6 +328,102 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
     }
   });
 
+  // What stands over the sidebar in the top row leaves with it and comes back
+  // with it (DESIGN_SYSTEM.md, «Одно название в ряду», «Движение верхних
+  // рядов»; user's decision of 11.11.2026).
+  describe("the top row's part over the sidebar (besideOpenShown)", () => {
+    const cssWidth = () => document.documentElement.style.getPropertyValue("--sidebar-width");
+
+    it("stays for the 200 ms of a collapse, its width going to none, and is gone collapsed", () => {
+      vi.useFakeTimers();
+      try {
+        const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
+        expect(result.current.besideOpenShown).toBe(true);
+
+        act(() => result.current.toggleCollapsed());
+        expect(result.current.collapsed).toBe(true);
+        expect(result.current.besideOpenShown).toBe(true);
+        expect(result.current.widthAnimating).toBe(true);
+        expect(cssWidth()).toBe("0px");
+        act(() => vi.advanceTimersByTime(SIDEBAR_WIDTH_MOTION_MS - 1));
+        expect(result.current.besideOpenShown).toBe(true);
+        act(() => vi.advanceTimersByTime(1));
+        expect(result.current.besideOpenShown).toBe(false);
+        expect(result.current.widthAnimating).toBe(false);
+
+        // Opening, it is there at once, its width moving in from none.
+        act(() => result.current.toggleCollapsed());
+        expect(result.current.besideOpenShown).toBe(true);
+        expect(result.current.widthAnimating).toBe(true);
+        expect(cssWidth()).toBe("min(480px, 100vw - 390px)");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("leaves with the window's collapse from another tab, the tab bar or the menu", () => {
+      vi.useFakeTimers();
+      try {
+        const { result, rerender } = renderHook(
+          ({ layout }: { layout: SidebarLayout }) => useSidebarResize(layout),
+          { initialProps: { layout: { width_px: 480, collapsed: false } } },
+        );
+        rerender({ layout: { width_px: 480, collapsed: true } });
+        expect(result.current.besideOpenShown).toBe(true);
+        act(() => vi.advanceTimersByTime(SIDEBAR_WIDTH_MOTION_MS));
+        expect(result.current.besideOpenShown).toBe(false);
+        rerender({ layout: { width_px: 480, collapsed: false } });
+        expect(result.current.besideOpenShown).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("is not there for a sidebar collapsed from the start", () => {
+      const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: true }));
+      expect(result.current.besideShown).toBe(true);
+      expect(result.current.besideOpenShown).toBe(false);
+    });
+
+    it("comes with the keyboard's visit and leaves with its end (SPEC_KEYBOARD.md, М8)", () => {
+      vi.useFakeTimers();
+      try {
+        const hidden: SidebarLayout = { width_px: 480, collapsed: true };
+        const { result, rerender } = renderHook(
+          ({ open }: { open: boolean }) => useSidebarResize(hidden, false, open),
+          { initialProps: { open: false } },
+        );
+        expect(result.current.besideOpenShown).toBe(false);
+        rerender({ open: true });
+        expect(result.current.besideOpenShown).toBe(true);
+        rerender({ open: false });
+        expect(result.current.besideOpenShown).toBe(true);
+        act(() => vi.advanceTimersByTime(SIDEBAR_WIDTH_MOTION_MS));
+        expect(result.current.besideOpenShown).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("leaves past the threshold with the sidebar beside the feed, and is not there over it (У7, У12)", () => {
+      vi.useFakeTimers();
+      try {
+        const { result, rerender } = renderHook(
+          ({ overlaid }: { overlaid: boolean }) => useSidebarResize({ width_px: 480, collapsed: false }, overlaid),
+          { initialProps: { overlaid: false } },
+        );
+        rerender({ overlaid: true });
+        expect(result.current.besideOpenShown).toBe(true);
+        act(() => vi.advanceTimersByTime(SIDEBAR_WIDTH_MOTION_MS));
+        expect(result.current.besideOpenShown).toBe(false);
+        rerender({ overlaid: false });
+        expect(result.current.besideOpenShown).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   it("does not animate the width with Reduce motion", () => {
     const matchMedia = window.matchMedia;
     window.matchMedia = vi.fn((query: string) => ({
@@ -345,6 +441,8 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
       act(() => result.current.toggleCollapsed());
       expect(result.current.collapsed).toBe(true);
       expect(result.current.widthAnimating).toBe(false);
+      // What stood over it in the top row goes at once too.
+      expect(result.current.besideOpenShown).toBe(false);
 
       // Nor across the threshold: the sidebar leaves the row at once.
       const crossing = renderHook(

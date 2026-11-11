@@ -1,33 +1,43 @@
-// What the path in the top row over the feed shows (DESIGN_SYSTEM.md,
-// «Верхние ряды»; SPEC_NARROW_WINDOW.md, У15). The path names the place (a
-// collection, Everything or an author) by its switcher, then an open card by
-// its name past a line. While a card is open, its name, menu and close button
-// stand in the row without the place's switcher wherever something else
-// shows the place: in a narrow window, where the sidebar lies over the feed
-// (У1), and while the sidebar stands beside the feed, open (user's decision
-// of 23.10.2026). With no card, or with the sidebar collapsed in a wider
-// window, the row is as it always was.
+// What the top row over the feed names (DESIGN_SYSTEM.md, «Верхние ряды»,
+// «Одно название в ряду»; SPEC_NARROW_WINDOW.md, У12, У15; SPEC_CARD_PEEK.md,
+// О5; user's decision of 11.11.2026). The row names one place, the one the
+// person is in. With the sidebar open beside the feed the sidebar names the
+// space and the place too, and the row reads as before: the space's segment
+// over the sidebar, then the place's name, or an open card's name full page.
+// With the sidebar hidden (collapsed, or a narrow window where it lies over
+// the feed, open or closed) the row has no segment: with no card open only
+// the place's name, with a card open full page only the card's name with its
+// menu and close button, and under the card's window neither name. The
+// place's name and a card's name never stand in the row together, so no
+// line parts them.
 
-/** Whether the place's switcher stands in the top row: always, except while
- *  an open card's name is in the row (`cardOpen`, through the name's exit) in
- *  a narrow window (`narrow`, `sidebarOverlaid`) or beside the open sidebar
- *  (`sidebarBeside`). */
+/** Where the sidebar stands for the top row: open beside the feed, or hidden
+ *  (collapsed, or in a narrow window, over the feed or closed). The sidebar
+ *  shown for the keyboard (SPEC_KEYBOARD.md, М8) stands beside the feed. */
+export type TopRowSidebar = "beside" | "hidden";
+
+/** How the open card stands: none open, full page (through its name's exit
+ *  from the row), or in its window over the right part (until the window
+ *  begins to close, SPEC_CARD_PEEK.md, О5). */
+export type TopRowCardView = "none" | "full" | "window";
+
+/** Whether the place's name stands in the top row: with no card open always;
+ *  under the card's window only beside the open sidebar; with a card full
+ *  page never, its name takes the place's room. */
 export function topRowShowsPlace({
-  narrow,
-  sidebarBeside,
-  cardOpen,
+  sidebar,
+  card,
 }: {
-  narrow: boolean;
-  sidebarBeside: boolean;
-  cardOpen: boolean;
+  sidebar: TopRowSidebar;
+  card: TopRowCardView;
 }): boolean {
-  return !(cardOpen && (narrow || sidebarBeside));
+  if (card === "none") return true;
+  return card === "window" && sidebar === "beside";
 }
 
 /** The open card the top row shows (SPEC_CARD_PEEK.md, О5): none while the
- *  card stands in its window over the right part, so the row is as with no
- *  card open, the place's switcher, the path, `Grid | Graph` and `Display`
- *  where they stand; full page, the card itself. */
+ *  card stands in its window over the right part, whose header names it;
+ *  full page, the card itself. */
 export function topRowCard<T>(card: T | null, cardView: "full" | "peek"): T | null {
   return cardView === "peek" ? null : card;
 }

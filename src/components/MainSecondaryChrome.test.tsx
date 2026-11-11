@@ -43,14 +43,12 @@ function bar(
   onRenameFile: (block: LightBlock | IndexedBlock, newStem: string) => Promise<void> = vi.fn(),
   onCheckFileName: (block: LightBlock | IndexedBlock, newStem: string) => Promise<RenameBlockError | null> =
     vi.fn(() => Promise.resolve(null)),
-  placeBefore = true,
   onDetailCollapse?: () => void,
 ) {
   return (
     <MainSecondaryTopBar
       detailBlock={detailBlock}
       detailEntered
-      placeBefore={placeBefore}
       viewMode={viewMode}
       onViewModeChange={vi.fn()}
       vaultPath="/vault"
@@ -81,46 +79,34 @@ describe("MainSecondaryTopBar", () => {
     expect(screen.getByTitle("nogal-house")).toHaveTextContent("nogal-house");
   });
 
-  // In the path the open card's name stands past the line the sidebar segment
-  // draws between space and collection (11.10.2026).
-  it("draws the path's line before an open card's name only", () => {
+  // The open card's name never stands with the place's name in the row, so
+  // no line stands before it, with a card or without (DESIGN_SYSTEM.md, «Одно
+  // название в ряду»; user's decision of 11.11.2026).
+  it("draws no line before an open card's name, which takes the half on the place's padding", () => {
     const { rerender } = renderBar(null);
     const segment = document.querySelector("[data-main-secondary-top-bar-content-segment]") as HTMLElement;
-    expect(segment).not.toHaveAttribute("data-path-card-line");
-    expect(segment).not.toHaveClass("border-l");
-    expect(segment).not.toHaveClass("ml-[var(--top-collection-pad-x)]");
+    const lineFree = () => {
+      expect(segment).not.toHaveAttribute("data-path-card-line");
+      expect(segment).not.toHaveClass("border-l");
+      expect(segment).not.toHaveClass("ml-[var(--top-collection-pad-x)]");
+      expect(document.querySelectorAll(".border-sidebar-border")).toHaveLength(0);
+    };
+    lineFree();
 
     rerender(bar(BLOCK));
-    expect(segment).toHaveAttribute("data-path-card-line", "");
-    expect(segment).toHaveClass("ml-[var(--top-collection-pad-x)]", "border-l", "border-sidebar-border");
+    lineFree();
+    // The name's layer spans the half, its pill on the outer padding the
+    // place's name keeps from the window's edge or the segment's line, the
+    // name ending in an ellipsis, ⋯ and × at the end.
     const layer = document.querySelector("[data-secondary-detail-top-menu]") as HTMLElement;
     expect(segment.contains(layer)).toBe(true);
-    expect(layer).toHaveClass("pl-[var(--top-collection-pad-x)]");
+    expect(layer).toHaveClass("absolute", "inset-0", "pl-[var(--top-collection-pad-x)]");
     expect(layer).not.toHaveClass("pl-0");
-    expect(screen.getByTitle("nogal-house")).toHaveClass("px-2");
-    // One line: the moving layer draws none of its own.
-    expect(document.querySelectorAll(".border-sidebar-border")).toHaveLength(1);
+    expect(screen.getByTitle("nogal-house")).toHaveClass("px-2", "truncate", "min-w-0");
+    expect(within(layer).getByRole("button", { name: "Close" })).toBeInTheDocument();
 
     rerender(bar(null));
-    expect(segment).not.toHaveAttribute("data-path-card-line");
-    expect(segment).not.toHaveClass("border-l");
-  });
-
-  // In a narrow window the open card's name starts the row: no place stands
-  // before it, so there is nothing to part (SPEC_NARROW_WINDOW.md, У15).
-  it("draws no path's line before an open card's name when nothing stands before the half", () => {
-    renderBar(BLOCK, "grid", undefined, undefined, false);
-    const segment = document.querySelector("[data-main-secondary-top-bar-content-segment]") as HTMLElement;
-    expect(segment).not.toHaveAttribute("data-path-card-line");
-    expect(segment).not.toHaveClass("border-l");
-    expect(segment).not.toHaveClass("ml-[var(--top-collection-pad-x)]");
-    expect(document.querySelectorAll(".border-sidebar-border")).toHaveLength(0);
-    // The name's layer spans the half, its pill on the outer padding from
-    // the window's edge, the name ending in an ellipsis, ⋯ and × at the end.
-    const layer = document.querySelector("[data-secondary-detail-top-menu]") as HTMLElement;
-    expect(layer).toHaveClass("absolute", "inset-0", "pl-[var(--top-collection-pad-x)]");
-    expect(screen.getByTitle("nogal-house")).toHaveClass("truncate", "min-w-0");
-    expect(within(layer).getByRole("button", { name: "Close" })).toBeInTheDocument();
+    lineFree();
   });
 
   it("renames the card's file in place: leaving the field saves, Escape keeps the name", async () => {
@@ -296,7 +282,7 @@ describe("MainSecondaryTopBar", () => {
   // SPEC_CARD_PEEK.md, О9, О16 (user's decision of 30.10.2026).
   it("holds the way back to the card's window between the menu and the close, only when offered", () => {
     const onDetailCollapse = vi.fn();
-    const { rerender } = renderBar(BLOCK, "grid", vi.fn(), vi.fn(() => Promise.resolve(null)), true, onDetailCollapse);
+    const { rerender } = renderBar(BLOCK, "grid", vi.fn(), vi.fn(() => Promise.resolve(null)), onDetailCollapse);
     const menu = document.querySelector<HTMLElement>("[data-secondary-detail-top-menu]")!;
     const group = menu.querySelector<HTMLElement>("[data-chrome-actions]")!;
     const buttons = within(group).getAllByRole("button");

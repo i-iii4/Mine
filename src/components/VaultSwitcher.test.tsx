@@ -89,13 +89,15 @@ describe("VaultSwitcher", () => {
     expect(pill).not.toHaveClass("group-focus-visible:bg-component-fill-hover");
   });
 
-  it("keeps its right outer padding toward the line before the collection with the sidebar collapsed", async () => {
+  // The switcher stands in the top row only beside the open sidebar: a
+  // collapsed sidebar has none there (DESIGN_SYSTEM.md, «Одно название в
+  // ряду»; user's decision of 11.11.2026), so it has one cap and one padding.
+  it("keeps one cap and its outer padding toward the search separator, the filter row narrowing its name", async () => {
     render(
       <VaultSwitcher
         currentPath="/Users/test/Mine"
         onVaultSelected={vi.fn()}
         surface="topChrome"
-        topChromeCollapsed
       />,
     );
     await act(async () => {
@@ -103,30 +105,12 @@ describe("VaultSwitcher", () => {
       await Promise.resolve();
     });
 
-    // A line parts space and collection in both sidebar modes (11.10.2026).
     const trigger = screen.getByRole("button", { name: /Switch space: Mine/ });
     expect(trigger).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-[var(--top-collection-pad-x)]");
     expect(trigger).not.toHaveClass("pr-0");
-  });
-
-  it("takes the collapsed segment's whole cap, with no traffic-light reserve beside it", async () => {
-    render(
-      <VaultSwitcher
-        currentPath="/Users/i_iii/Library/Mobile Documents/com~apple~CloudDocs/Mine"
-        onVaultSelected={vi.fn()}
-        surface="topChrome"
-        topChromeCollapsed
-      />,
-    );
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    const trigger = screen.getByRole("button", { name: /Switch space: Mine/ });
-    expect(trigger).toHaveClass("max-w-[200px]");
-    expect(trigger).not.toHaveClass("max-w-[min(50%,200px)]");
-    expect(trigger).toHaveTextContent("Mine");
+    expect(trigger).toHaveClass("max-w-[min(50%,200px)]");
+    expect(trigger).not.toHaveClass("max-w-[200px]");
+    expect(trigger).toHaveAttribute("data-row-fit-name", "");
   });
 
   it("lists a space whose folder is gone as unavailable instead of dropping it", async () => {

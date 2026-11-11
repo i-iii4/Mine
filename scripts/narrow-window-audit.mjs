@@ -37,7 +37,7 @@ const vite = await startAuditVite([{
       window.auditColumns={order:setSidebarColumnOrder,shown:setSidebarColumnShown};
       import {TooltipProvider} from "/src/components/ui/tooltip.tsx";
       import {useSidebarOverlay} from "/src/hooks/useSidebarOverlay.ts";
-      import {useSidebarResize} from "/src/hooks/useSidebarResize.ts";
+      import {SIDEBAR_WIDTH_TRANSITION, useSidebarResize} from "/src/hooks/useSidebarResize.ts";
       import {sidebarWidthHost, writeSidebarWidth} from "/src/lib/sidebarWidth.ts";
       window.auditWriteSidebarWidth=writeSidebarWidth;
       import {APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX} from "/src/lib/appLayout.ts";
@@ -77,8 +77,11 @@ const vite = await startAuditVite([{
           onNavClick:overlay.close,onScrollToTop:overlay.close});
         return h(ChromeShell,{topEdge:false,className:"relative",style:{minWidth:APP_MIN_WIDTH_PX},"data-audit-place":location.pathname},
           h(ChromeRow,{as:"header",separator:"bottom",className:"bg-chrome",inert:overlay.open},
-            !besideMounted?null:h("div",{ref:sidebarWidthHost,"data-app-top-sidebar-segment":"",className:"flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border"+(resize.widthAnimating?" transition-[width] duration-200 ease-out motion-reduce:transition-none":""),
-              style:resize.collapsed?undefined:{width:"var(--sidebar-width)"}},h(FilterRow)),
+            // As App.tsx has it: as wide as the sidebar, 0 collapsed; its
+            // row and line while the sidebar stands open or leaves.
+            !besideMounted?null:h("div",{ref:sidebarWidthHost,"data-app-top-sidebar-segment":"",className:"flex h-full shrink-0 items-center overflow-hidden"+(resize.besideOpenShown?" border-r border-sidebar-border":""),
+              style:{width:"var(--sidebar-width)",transition:resize.widthAnimating?SIDEBAR_WIDTH_TRANSITION:"none"},
+              inert:resize.collapsed||overlay.narrow},resize.besideOpenShown?h(FilterRow):null),
             h("div",{"data-audit-top-row":"",className:"flex h-full min-w-0 flex-1 items-center px-2"},"Inbox")),
           h("div",{className:"relative flex min-h-0 flex-1"},
             besideMounted?list:null,
@@ -340,6 +343,90 @@ try {
   await resize(669);
   assert.equal((await read()).overlay, null, "669: closed after narrowing");
   console.log("PASS 669 → 800 → 669: open over the feed becomes beside it, then over it closed");
+
+  // The sidebar's segment in the top row leaves with a collapse and comes
+  // back with an opening, its width by the panel's own motion over the same
+  // 200 ms; collapsed, the row has no segment and starts with the place
+  // (DESIGN_SYSTEM.md, «Одно название в ряду», «Движение верхних рядов»;
+  // user's decision of 11.11.2026).
+  const segmentNow = () => page.evaluate(() => {
+    const segment = document.querySelector("[data-app-top-sidebar-segment]");
+    const aside = [...document.querySelectorAll("aside")].find((element) => !element.closest("[data-sidebar-overlay]"));
+    if (!segment || !aside) return null;
+    const motion = (element) => {
+      const style = getComputedStyle(element);
+      return [style.transitionProperty, style.transitionDuration, style.transitionTimingFunction];
+    };
+    return {
+      width: segment.getBoundingClientRect().width,
+      asideWidth: aside.getBoundingClientRect().width,
+      motion: motion(segment),
+      asideMotion: motion(aside),
+      spaceName: segment.querySelector("[data-audit-space-name]") !== null,
+      line: getComputedStyle(segment).borderRightWidth,
+      inert: segment.inert,
+      rowLeft: document.querySelector("[data-audit-top-row]").getBoundingClientRect().left,
+    };
+  });
+  // Each frame of the motion: the segment's width and the panel's.
+  const segmentFrames = () => page.evaluate(() => new Promise((resolve) => {
+    const frames = [];
+    const sample = () => {
+      const segment = document.querySelector("[data-app-top-sidebar-segment]");
+      const aside = [...document.querySelectorAll("aside")].find((element) => !element.closest("[data-sidebar-overlay]"));
+      frames.push({ segment: segment.getBoundingClientRect().width, aside: aside.getBoundingClientRect().width });
+      if (frames.length < 8) requestAnimationFrame(sample); else resolve(frames);
+    };
+    requestAnimationFrame(sample);
+  }));
+  await resize(1200);
+  await read();
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await toggle();
+  await settle();
+  let segment = await segmentNow();
+  assert.deepEqual(segment.motion, segment.asideMotion, "1200 collapsing: the segment moves by the sidebar's own motion");
+  assert.deepEqual(segment.motion, ["width", "0.2s", "ease"], "1200 collapsing: its width over 200 ms");
+  assert.ok(segment.width < TARGET && segment.width > 1, `1200 collapsing: on its way to none (${segment.width})`);
+  assert.equal(segment.spaceName, true, "1200 collapsing: the space switcher leaves with it");
+  assert.equal(segment.line, "1px", "1200 collapsing: its line goes with it");
+  assert.equal(segment.inert, true, "1200 collapsing: what is left of it answers nothing");
+  assert.equal(segment.rowLeft, segment.width, "1200 collapsing: the row's start follows its edge");
+  for (const frame of await segmentFrames()) {
+    assert.ok(Math.abs(frame.segment - frame.aside) <= 0.5, `1200 collapsing: the segment's edge on the panel's (${frame.segment} and ${frame.aside})`);
+  }
+  await page.waitForFunction(() => document.querySelector("[data-app-top-sidebar-segment]")?.childElementCount === 0, null, { timeout: 2000 });
+  segment = await segmentNow();
+  assert.equal(segment.width, 0, "1200 collapsed: the segment takes none of the row");
+  assert.equal(segment.line, "0px", "1200 collapsed: no segment's line");
+  assert.equal(segment.spaceName, false, "1200 collapsed: no space switcher in the top row");
+  assert.equal(segment.rowLeft, 0, "1200 collapsed: the row starts at the window's edge");
+  assert.equal(segment.asideWidth, 1, "1200 collapsed: the sidebar's 1 px line");
+  await toggle();
+  await settle();
+  segment = await segmentNow();
+  assert.equal(segment.spaceName, true, "1200 opening: the space switcher back at once");
+  assert.equal(segment.inert, false, "1200 opening: it answers");
+  assert.deepEqual(segment.motion, segment.asideMotion, "1200 opening: by the sidebar's own motion");
+  assert.ok(segment.width < TARGET, `1200 opening: moving in from none (${segment.width})`);
+  for (const frame of await segmentFrames()) {
+    assert.ok(Math.abs(frame.segment - frame.aside) <= 0.5, `1200 opening: the segment's edge on the panel's (${frame.segment} and ${frame.aside})`);
+  }
+  await page.waitForFunction((target) => {
+    const element = document.querySelector("[data-app-top-sidebar-segment]");
+    return element && element.getBoundingClientRect().width === target && getComputedStyle(element).transitionDuration === "0s";
+  }, TARGET, { timeout: 2000 });
+  // Reduced motion: gone and back at once.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await toggle();
+  segment = await segmentNow();
+  assert.equal(segment.spaceName, false, "reduced motion, 1200 collapsed: the segment's row gone at once");
+  assert.equal(segment.width, 0, "reduced motion, 1200 collapsed: none of the row at once");
+  await toggle();
+  segment = await segmentNow();
+  assert.equal(segment.width, TARGET, "reduced motion, 1200 open: its width at once");
+  assert.equal(segment.spaceName, true, "reduced motion, 1200 open: the space switcher at once");
+  console.log("PASS 1200: the segment leaves with a collapse and comes back with an opening over 200 ms, on the panel's edge, at once with reduced motion; collapsed, none of the row");
 
   // A sidebar collapsed beside the feed stays collapsed across the narrow
   // window (У7).

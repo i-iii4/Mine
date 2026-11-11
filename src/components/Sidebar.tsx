@@ -86,7 +86,7 @@ import { hoverPreviewBesidePanel } from "@/lib/hoverPreviewWindow";
 import { RestingPointer } from "@/lib/restingPointer";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
-import { SIDEBAR_WIDTH_MOTION_MS } from "@/hooks/useSidebarResize";
+import { SIDEBAR_WIDTH_TRANSITION } from "@/hooks/useSidebarResize";
 import { HoverPreviewWindowLayer, useHoverPreviewWindow } from "./HoverPreviewWindow";
 import {
   MicroPreviewThumbnail,
@@ -133,7 +133,7 @@ function sidebarPanelStyle(widthAnimating: boolean): CSSProperties {
   // A custom property by construction; CSSProperties has no key for it.
   return {
     width: "var(--sidebar-width)",
-    transition: widthAnimating ? `width ${SIDEBAR_WIDTH_MOTION_MS}ms ease` : "none",
+    transition: widthAnimating ? SIDEBAR_WIDTH_TRANSITION : "none",
     "--sidebar-nav-min-width": `${sidebarBesideMinWidthPx() - 1}px`,
   } as CSSProperties;
 }

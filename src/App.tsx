@@ -95,7 +95,7 @@ import { MASONRY_MIN_COLUMN_COUNT } from "@/lib/masonryLayout";
 import { createPreviewRowQueue } from "@/lib/previewRowQueue";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { sidebarWidthHost } from "@/lib/sidebarWidth";
-import { topRowCard, topRowShowsPlace } from "@/lib/topRowPath";
+import { topRowCard, topRowShowsPlace, type TopRowCardView } from "@/lib/topRowPath";
 import { CARD_VIEW_STORAGE_KEY, PEEK_WIDTH_STORAGE_KEY, getCardView, offersPeekCollapse, openCardView, reloadCardView, reloadPeekWidth, setCardView, useCardView, type CardView } from "@/lib/cardView";
 import { lastPeekInput, peekAreaHoldsWindow, peekOpeningFrom, type CardPeekExit } from "@/lib/cardPeek";
 import { listenPeekInput } from "@/lib/cardPeekSource";
@@ -349,7 +349,7 @@ import {
   type MineTextSelectionDragPayload,
 } from "@/lib/textSelectionDrag";
 import { followNoteRename, isNoteHeldForEditing, noteMissingFromIndex } from "@/lib/noteEditSessions";
-import { useSidebarResize } from "@/hooks/useSidebarResize";
+import { SIDEBAR_WIDTH_TRANSITION, useSidebarResize } from "@/hooks/useSidebarResize";
 import { useSidebarOverlay } from "@/hooks/useSidebarOverlay";
 import { useSidebarKeyboardFocus, type FeedKeyboardFocus } from "@/hooks/useSidebarKeyboardFocus";
 import { sidebarEnterLabel } from "@/lib/sidebarKeyboardFocus";
@@ -1646,6 +1646,7 @@ export function AppWithVault({
     widthAnimating: sidebarWidthAnimating,
     openWidth: sidebarOpenWidth,
     besideShown: sidebarBesideShown,
+    besideOpenShown: sidebarBesideOpenShown,
     startResize,
     updateResize,
     endResize,
@@ -1673,19 +1674,20 @@ export function AppWithVault({
   // The sidebar is on screen: beside the feed unless collapsed, over the
   // feed when open.
   const sidebarShown = sidebarNarrow ? sidebarOverlay.open : !sidebarCollapsed;
-  // An open card's name stands in the top row without the place's switcher
-  // in a narrow window (SPEC_NARROW_WINDOW.md, У15) and while the sidebar
-  // beside the feed shows the place (user's decision of 23.10.2026), through
-  // the name's exit.
-  // The card in its window leaves the top row as with no card open
-  // (SPEC_CARD_PEEK.md, О5).
+  // The top row names one place (DESIGN_SYSTEM.md, «Одно название в ряду»;
+  // user's decision of 11.11.2026). Full page, an open card's name takes the
+  // place's room wherever the sidebar stands, through the name's exit
+  // (SPEC_NARROW_WINDOW.md, У15). The card's window leaves its name out of
+  // the row (SPEC_CARD_PEEK.md, О5), and the place's name with it while the
+  // sidebar is hidden: gone as the window opens, back as it begins to close.
   const topRowDetailBlock = topRowCard(renderedDetailBlock, detailView);
-  const topRowPlaceShown = topRowShowsPlace({
-    narrow: sidebarNarrow,
-    sidebarBeside: !sidebarNarrow && !sidebarCollapsed,
-    cardOpen: topRowDetailBlock !== null,
+  const topRowCardView: TopRowCardView = topRowDetailBlock !== null
+    ? "full"
+    : selectedBlock !== null && detailView === "peek" ? "window" : "none";
+  const placeReplaced = !topRowShowsPlace({
+    sidebar: !sidebarNarrow && !sidebarCollapsed ? "beside" : "hidden",
+    card: topRowCardView,
   });
-  const placeReplaced = !topRowPlaceShown;
   // The bottom bar's button and ⌃⌘S outside the app shell act on the
   // sidebar where it stands; in the app the backend routes them (У4).
   const toggleSidebar = sidebarNarrow ? sidebarOverlay.toggle : toggleBesideSidebar;
@@ -4912,17 +4914,14 @@ export function AppWithVault({
   // The sidebar's filter row: the space switcher, the collections' filter
   // and New Collection. It stands in the top row beside the feed and at the
   // top of the sidebar's panel over the feed (SPEC_NARROW_WINDOW.md, У12);
-  // one of the two is mounted at a time. `collapsedHere`: the sidebar beside
-  // the feed is collapsed and the row shows the space switcher alone.
-  const renderSidebarFilterRow = (collapsedHere: boolean) => (
+  // one of the two is mounted at a time. A collapsed sidebar has none in the
+  // top row (DESIGN_SYSTEM.md, «Одно название в ряду»).
+  const renderSidebarFilterRow = () => (
     <div
       ref={sidebarRowRef}
-      className={cn(
-        "flex h-full min-w-0",
-        collapsedHere ? "flex-none" : "flex-1",
-      )}
+      className="flex h-full min-w-0 flex-1"
       data-top-chrome-space-search-group=""
-      data-row-fit={collapsedHere ? undefined : sidebarRowFit}
+      data-row-fit={sidebarRowFit}
     >
       <VaultSwitcher
         currentPath={vaultPath}
@@ -4932,85 +4931,80 @@ export function AppWithVault({
         }}
         onOpenInNewTab={tabPage ? openSpaceInNewTab : undefined}
         surface="topChrome"
-        topChromeCollapsed={collapsedHere}
       />
-      {!collapsedHere && (
-        <>
-          <div
-            aria-hidden="true"
-            className="h-full w-px shrink-0 bg-border"
-            data-top-chrome-search-separator=""
-          />
-          <div
-            {...sidebarSearchChromeDragGesture}
-            className={[
-              // Empty, the field is chrome like the rest of the row; a
-              // query gives it the table's surface (05.10.2026).
-              "flex h-full min-w-0 flex-1 items-center",
-              sidebarSearchHasValue ? "bg-sidebar" : "bg-chrome",
-            ].filter(Boolean).join(" ")}
-            data-sidebar-top-search-surface=""
+      <div
+        aria-hidden="true"
+        className="h-full w-px shrink-0 bg-border"
+        data-top-chrome-search-separator=""
+      />
+      <div
+        {...sidebarSearchChromeDragGesture}
+        className={[
+          // Empty, the field is chrome like the rest of the row; a
+          // query gives it the table's surface (05.10.2026).
+          "flex h-full min-w-0 flex-1 items-center",
+          sidebarSearchHasValue ? "bg-sidebar" : "bg-chrome",
+        ].filter(Boolean).join(" ")}
+        data-sidebar-top-search-surface=""
+      >
+        <Input
+          ref={sidebarSearchInputRef}
+          {...SEARCH_INPUT_SUPPRESSION_PROPS}
+          aria-label="Find or create collection"
+          placeholder="Find or create..."
+          // Overflowing text at the field's right edge dissolves, it
+          // is not cut: a narrow panel used to slice the placeholder
+          // through the middle of a letter. The field alone takes the
+          // fade, so the clear button beside it stays whole. Same
+          // curve the sidebar rows use (DESIGN_SYSTEM.md, «Растворение
+          // кромок»).
+          style={SIDEBAR_SEARCH_MASK_STYLE}
+          variant="ghost"
+          value={sidebarSearchQuery}
+          onChange={(event) => handleSidebarSearchChange(event.target.value)}
+          onKeyDown={handleSidebarSearchKeyDown}
+          onFocus={sidebarKeyboardFocus.fieldFocused}
+          onBlur={sidebarKeyboardFocus.fieldBlurred}
+          className="h-full min-w-0 flex-1 rounded-0 bg-transparent px-3 py-0 font-mono text-sm text-muted-foreground placeholder:text-muted-foreground"
+          data-sidebar-top-search=""
+        />
+        {sidebarSearchHasValue && (
+          // A chrome icon button like its neighbours: the plate on
+          // hover (05.10.2026, instead of the glyph-only exception).
+          <Button
+            type="button"
+            variant="chrome"
+            size="chrome-icon"
+            aria-label="Clear collection search"
+            // The filter's actions follow it.
+            className="mr-1"
+            // The caret stays in the field through the press: leaving the
+            // field would forget the row it came from.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={handleClearSidebarSearch}
+            data-sidebar-top-search-clear=""
           >
-            <Input
-              ref={sidebarSearchInputRef}
-              {...SEARCH_INPUT_SUPPRESSION_PROPS}
-              aria-label="Find or create collection"
-              placeholder="Find or create..."
-              // Overflowing text at the field's right edge dissolves, it
-              // is not cut: a narrow panel used to slice the placeholder
-              // through the middle of a letter. The field alone takes the
-              // fade, so the clear button beside it stays whole. Same
-              // curve the sidebar rows use (DESIGN_SYSTEM.md, «Растворение
-              // кромок»).
-              style={SIDEBAR_SEARCH_MASK_STYLE}
-              variant="ghost"
-              value={sidebarSearchQuery}
-              onChange={(event) => handleSidebarSearchChange(event.target.value)}
-              onKeyDown={handleSidebarSearchKeyDown}
-              onFocus={sidebarKeyboardFocus.fieldFocused}
-              onBlur={sidebarKeyboardFocus.fieldBlurred}
-              className="h-full min-w-0 flex-1 rounded-0 bg-transparent px-3 py-0 font-mono text-sm text-muted-foreground placeholder:text-muted-foreground"
-              data-sidebar-top-search=""
-            />
-            {sidebarSearchHasValue && (
-              // A chrome icon button like its neighbours: the plate on
-              // hover (05.10.2026, instead of the glyph-only exception).
-              <Button
-                type="button"
-                variant="chrome"
-                size="chrome-icon"
-                aria-label="Clear collection search"
-                // The filter's actions follow it.
-                className="mr-1"
-                // The caret stays in the field through the press: leaving the
-                // field would forget the row it came from.
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={handleClearSidebarSearch}
-                data-sidebar-top-search-clear=""
-              >
-                <X aria-hidden="true" />
-              </Button>
-            )}
-            {/* The sidebar column has no third row (03.10.2026): what lived
-                over the table lives here, at the filter's right. Icon
-                buttons 4px apart, 8px from the column's line. */}
-            <div className="mr-2 flex shrink-0 items-center gap-1" data-sidebar-top-search-actions="">
-              <Button
-                type="button"
-                variant="chrome"
-                size="chrome-icon"
-                plate="raised"
-                aria-label="New Collection"
-                shortcut={commandById("new-collection").combo}
-                onClick={beginCreateCollection}
-                data-sidebar-new-collection=""
-              >
-                <Plus />
-              </Button>
-            </div>
-          </div>
-        </>
-      )}
+            <X aria-hidden="true" />
+          </Button>
+        )}
+        {/* The sidebar column has no third row (03.10.2026): what lived
+            over the table lives here, at the filter's right. Icon
+            buttons 4px apart, 8px from the column's line. */}
+        <div className="mr-2 flex shrink-0 items-center gap-1" data-sidebar-top-search-actions="">
+          <Button
+            type="button"
+            variant="chrome"
+            size="chrome-icon"
+            plate="raised"
+            aria-label="New Collection"
+            shortcut={commandById("new-collection").combo}
+            onClick={beginCreateCollection}
+            data-sidebar-new-collection=""
+          >
+            <Plus />
+          </Button>
+        </div>
+      </div>
     </div>
   );
 
@@ -5325,40 +5319,50 @@ export function AppWithVault({
         // Under the scrim while the sidebar lies over the feed (У6).
         inert={sidebarOverlay.open}
       >
-        {/* The sidebar's filter row stands here beside the feed; over the
-            feed it lives in the sidebar's panel alone, with the space
-            switcher (SPEC_NARROW_WINDOW.md, У12). */}
+        {/* The sidebar's filter row stands here while the sidebar stands open
+            beside the feed; over the feed it lives in the sidebar's panel
+            alone, with the space switcher (SPEC_NARROW_WINDOW.md, У12), and a
+            collapsed sidebar has none in the row (DESIGN_SYSTEM.md, «Одно
+            название в ряду»; user's decision of 11.11.2026). */}
         {sidebarBesideMounted && (
           <div
             // Laid out by the sidebar's width, which does not inherit
-            // (sidebarWidth.ts).
+            // (sidebarWidth.ts): as wide as the sidebar, 0 collapsed. The box
+            // stays while the sidebar beside the feed does, so a collapse and
+            // an opening move its width to none and back with the panel's.
             ref={sidebarWidthHost}
             data-tauri-drag-region
             data-app-top-sidebar-segment=""
             className={cn(
-              // Its line parts space and collection with the sidebar open or
-              // collapsed (11.10.2026). Collapsed, the space switcher alone sets
-              // the width and keeps its own cap: a cap here would take the
-              // line's pixel out of the switcher's padding.
-              "flex h-full shrink-0 items-center overflow-hidden border-r border-sidebar-border",
-              sidebarCollapsed && "w-auto",
-              // The width animates only for a collapse or an opening: a window's
-              // resize squeezes it at once (SPEC_NARROW_WINDOW.md, У1).
-              sidebarWidthAnimating && "transition-[width] duration-200 ease-out motion-reduce:transition-none",
+              "flex h-full shrink-0 items-center overflow-hidden",
+              // Its line parts space and place, and goes with the row it ends
+              // (11.10.2026): at rest collapsed the box is empty, 0 wide.
+              sidebarBesideOpenShown && "border-r border-sidebar-border",
             )}
-            style={sidebarCollapsed ? undefined : { width: "var(--sidebar-width)" }}
+            style={{
+              width: "var(--sidebar-width)",
+              // The width animates only for a collapse or an opening, by the
+              // panel's own motion: a window's resize squeezes it at once
+              // (SPEC_NARROW_WINDOW.md, У1), and so does reduced motion, whose
+              // near-zero transitions of every property would hold it a frame.
+              transition: sidebarWidthAnimating ? SIDEBAR_WIDTH_TRANSITION : "none",
+            }}
+            // Leaving with a collapse or past the threshold (У7), what is
+            // left of the row answers nothing.
+            inert={sidebarCollapsed || sidebarNarrow}
           >
             {/* The row starts with the space switcher: the traffic lights and
                 the sidebar button live in the window's tab bar above this page
                 (SPEC_TABS.md, В43, РП6). */}
-            {renderSidebarFilterRow(sidebarCollapsed)}
+            {sidebarBesideOpenShown && renderSidebarFilterRow()}
           </div>
         )}
         <div ref={topRowWrap.rowRef} data-tauri-drag-region className="relative flex h-full min-w-0 flex-1 items-center">
-          {/* An open card's name takes the place's room in a narrow window
-              (SPEC_NARROW_WINDOW.md, У15) and beside the open sidebar. */}
-          {/* While an open card's name has the place's room (23.10.2026), the
-              place's name fades out of the row's flow and back in. A
+          {/* The place's name: first in the row with the sidebar hidden,
+              after the sidebar's segment beside it. While the row names no
+              place (topRowPath.ts; user's decision of 11.11.2026), an open
+              card's name full page or the card's window with the sidebar
+              hidden, it fades out of the row's flow and back in. A
               collection's name renames it with a click, by the sidebar's
               rename and its check (user's decision of 31.10.2026). */}
           <TopCollectionSwitcher
@@ -5371,10 +5375,9 @@ export function AppWithVault({
             joinsNext
           />
           {/* No third row: what it held over the feed joins this row after
-              the collection switcher; a line parts each step of the path, the
-              sidebar open or collapsed (DESIGN_SYSTEM.md, «Верхние ряды»). */}
+              the place's name, or takes the row in its place
+              (DESIGN_SYSTEM.md, «Верхние ряды»). */}
           <MainSecondaryTopBar
-            placeBefore={topRowPlaceShown}
             detailBlock={topRowDetailBlock}
             detailEntered={detailChromeEntered}
             viewMode={feedViewMode}
@@ -5787,7 +5790,7 @@ export function AppWithVault({
             <ChromeRow separator="bottom" className={topChromeSurfaceClass}>
               {/* Over the feed the space switcher lives here alone (У12). */}
               <div className="flex h-full min-w-0 flex-1 items-center overflow-hidden border-r border-sidebar-border">
-                {renderSidebarFilterRow(false)}
+                {renderSidebarFilterRow()}
               </div>
             </ChromeRow>
           )}

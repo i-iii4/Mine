@@ -84,15 +84,10 @@ Sidebar search is a permanent top-chrome control inside the left
 one vertical `bg-border` separator, the `VaultSwitcher`/space selector, a
 second vertical `bg-border` separator, a no-icon `Input ghost` search field
 with the design-system `h-8 px-3` geometry, then the existing
-`border-r border-sidebar-border` Sidebar/Main divider. Collapsed sidebar does
-not collapse the top chrome safety zone to zero and does not reserve an empty
-search slot: the left segment uses CSS intrinsic sizing (`w-auto`) with an
-`80px` traffic-light reserve, a `1px` separator and a `VaultSwitcher` capped at
-`159px`, so the whole collapsed segment cannot exceed `240px`. It hides only
-the channel search input and lets the right collection switcher start
-immediately after that compact collapsed segment. There is no JS measurement or
-hidden probe in this path; short folder names must never be truncated by the
-collapsed container.
+`border-r border-sidebar-border` Sidebar/Main divider. При свёрнутом меню
+левого сегмента в ряду нет, ряд начинается с названия места или открытой
+карточки (решение пользователя 11.11.2026, DESIGN_SYSTEM.md, «Верхние ряды»).
+До 11.11.2026 свёрнутый сегмент оставался в ряду, сжатый по `VaultSwitcher`.
 
 The space selector shows the current folder name, truncates before the search
 field, and opens a searchable known-vault dropdown. It uses the same switch
@@ -140,8 +135,8 @@ right-side top-chrome spacing in expanded mode: transparent root `px-6` plus an
 inner `px-2` hover/open pill, placing text on a `32px` content axis from the
 segment edge. In compact/collapsed sidebar mode that wide right-side inset is
 removed: the collection trigger switches to `px-3`, matching the space selector
-root padding so the current collection starts immediately after the compact
-space segment without an extra 32px gap.
+root padding. С 11.11.2026 при свёрнутом меню сегмента пространства перед ним
+нет, и название места стоит от края окна (DESIGN_SYSTEM.md, «Верхние ряды»).
 
 The current collection is excluded from the dropdown result set entirely. It is
 not duplicated as a disabled row, not marked with a check/radio icon and not

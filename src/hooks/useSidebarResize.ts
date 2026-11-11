@@ -16,6 +16,12 @@ import { writeSidebarWidth } from "@/lib/sidebarWidth";
 /** How long the sidebar takes to collapse or open by its button. */
 export const SIDEBAR_WIDTH_MOTION_MS = 200;
 
+/** The motion of the sidebar's width while it animates (`widthAnimating`):
+ *  the panel beside the feed and its segment in the top row move by the same
+ *  one, so the segment's line follows the panel's (DESIGN_SYSTEM.md,
+ *  «Движение верхних рядов»). */
+export const SIDEBAR_WIDTH_TRANSITION = `width ${SIDEBAR_WIDTH_MOTION_MS}ms ease`;
+
 // ─── Ownership ──────────────────────────────────────────────────────────────
 //
 // Every tab has its own sidebar, kept by the backend between sessions in
@@ -79,6 +85,14 @@ export interface UseSidebarResizeReturn {
    *  holds it, and for the motion of its leaving when the window narrows past
    *  the threshold (SPEC_NARROW_WINDOW.md, У7). */
   besideShown: boolean;
+  /** The sidebar stands open beside the feed, or is leaving it: what stands
+   *  over it in the top row, the space switcher, the collections' filter and
+   *  `+`, is on the page while this holds. Open, and for the motion of a
+   *  collapse and of leaving the row past the threshold (У7), so it leaves
+   *  with the sidebar's width; not while collapsed at rest, nor at once with
+   *  reduced motion (DESIGN_SYSTEM.md, «Верхние ряды», «Одно название в
+   *  ряду»). The sidebar shown for the keyboard is open. */
+  besideOpenShown: boolean;
   /** Begin a resize drag from the width shown now (called by handle component) */
   startResize: (startX: number, startWidth: number) => void;
   /** Update width during drag (called on every pointermove) */
@@ -289,13 +303,18 @@ export function useSidebarResize(
     };
   }, []);
 
+  const besideShown = !overlaid || crossing === "leave";
+  const widthMoving = widthAnimating || crossing !== null;
   return {
     width,
     collapsed,
     isResizing,
-    widthAnimating: widthAnimating || crossing !== null,
+    widthAnimating: widthMoving,
     openWidth: sidebarWidthPx(storedWidth, window.innerWidth),
-    besideShown: !overlaid || crossing === "leave",
+    besideShown,
+    // A collapse keeps it for the width's motion to none; an opening shows it
+    // at once, its width moving in from none.
+    besideOpenShown: besideShown && (!collapsed || widthMoving),
     startResize,
     updateResize,
     endResize,

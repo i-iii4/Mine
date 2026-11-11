@@ -5,10 +5,15 @@
 // a second row: a window too narrow for them sends them right under the row
 // and the feed moves down by it; a wide one brings them back. The feed's
 // view, the graph's and an open card with a long name keep one row at any
-// width. In a narrow window (У15) an open card's name with its menu and close
-// button takes the whole row, the place's switcher out of it; with no card,
-// or wide, the switcher stands. A name's rename field is as wide as its text
-// up to what caps the name at rest (01.11.2026). Starts and stops its own Vite.
+// width. The row names one place (DESIGN_SYSTEM.md, «Одно название в ряду»;
+// user's decision of 11.11.2026): an open card's name with its menu and close
+// button takes the place's room full page, in a narrow window and wide, the
+// sidebar open or collapsed; with no card the place's name stands, first in
+// the row while the sidebar is hidden, which then has no segment; under the
+// card's window the row names the place beside the open sidebar and nothing
+// with it hidden. A name's rename field is as wide as its text up to what
+// caps the name at rest (01.11.2026), the sidebar open or collapsed. Starts
+// and stops its own Vite.
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 import { COLD_START_MS, startAuditVite } from "./audit-vite.mjs";
@@ -32,7 +37,7 @@ const vite = await startAuditVite([{
       import {useTopRowWrap} from "/src/hooks/useTopRowWrap.ts";
       import {sidebarWidthCss} from "/src/lib/sidebarPlacement.ts";
       import {sidebarWidthHost, writeSidebarWidth} from "/src/lib/sidebarWidth.ts";
-      import {topRowShowsPlace} from "/src/lib/topRowPath.ts";
+      import {topRowCard, topRowShowsPlace} from "/src/lib/topRowPath.ts";
       import "/src/styles/global.css";
       const h=React.createElement, noop=()=>{};
       function Fixture(){
@@ -40,32 +45,35 @@ const vite = await startAuditVite([{
         // A window too narrow for the sidebar beside the feed: the sidebar
         // and its segment leave the row, as App.tsx has them (У1, У12).
         const narrow=useSidebarOverlay({tab:false,onWidenWhileOpen:noop,onBesideIntent:noop}).narrow;
+        // Whether the sidebar beside the feed is collapsed: its width is none
+        // and its segment holds nothing (topRowPath.ts, 11.11.2026).
+        const [collapsed,setCollapsed]=React.useState(false);
         React.useLayoutEffect(()=>{
-          writeSidebarWidth(narrow?"0px":sidebarWidthCss(360));
-        },[narrow]);
+          writeSidebarWidth(narrow||collapsed?"0px":sidebarWidthCss(360));
+        },[narrow,collapsed]);
         const [host,setHost]=React.useState(null);
         const [count,setCount]=React.useState(0);
         const [card,setCard]=React.useState(null);
+        // How an open card stands: full page or in its window (SPEC_CARD_PEEK.md, О5).
+        const [cardView,setCardView]=React.useState("full");
         const [view,setView]=React.useState("grid");
-        // Whether the sidebar beside the feed is collapsed: only the path
-        // reads it here (topRowPath.ts, 23.10.2026).
-        const [collapsed,setCollapsed]=React.useState(false);
-        React.useEffect(()=>{ window.auditSelect=setCount; window.auditOpenCard=setCard; window.auditView=setView; window.auditCollapse=setCollapsed; },[]);
-        const detailBlock=card?{slug:card,title:card,tags:[]}:null;
-        const placeShown=topRowShowsPlace({narrow,sidebarBeside:!narrow&&!collapsed,cardOpen:Boolean(card)});
+        React.useEffect(()=>{ window.auditSelect=setCount; window.auditOpenCard=setCard; window.auditView=setView; window.auditCollapse=setCollapsed; window.auditCardView=setCardView; },[]);
+        const beside=!narrow&&!collapsed;
+        const detailBlock=topRowCard(card?{slug:card,title:card,tags:[]}:null,cardView);
+        const placeShown=topRowShowsPlace({sidebar:beside?"beside":"hidden",card:!card?"none":cardView==="peek"?"window":"full"});
         const blocks=Array.from({length:count},(_,index)=>({slug:"card-"+index}));
         const commands=h(GroupSelectionCommands,{selectedBlocks:blocks,tags:[],currentTag:"Inbox",
           onLoadBlockTags:async()=>new Map(),onBatchSetTag:async()=>true,onCreateAndAssignBatch:noop,
           onRequestDeleteSelection:noop,onMergeSelectedBlocks:noop,onClearSelection:()=>setCount(0)});
         return h(TooltipProvider,null,h(ChromeShell,{ref:wrap.hostRef,"data-top-row":wrap.fit},
           h(ChromeRow,{as:"header",separator:"bottom",className:"bg-chrome"},
-            narrow?null:h("div",{ref:sidebarWidthHost,"data-audit-sidebar-segment":"",className:"h-full shrink-0 border-r border-sidebar-border",style:{width:"var(--sidebar-width)"}}),
+            narrow?null:h("div",{ref:sidebarWidthHost,"data-audit-sidebar-segment":"",className:"h-full shrink-0 overflow-hidden"+(beside?" border-r border-sidebar-border":""),style:{width:"var(--sidebar-width)"}}),
             h("div",{ref:wrap.rowRef,className:"flex h-full min-w-0 flex-1 items-center"},
               // As App.tsx has it: away, the switcher stays in the page, out
               // of the row's flow, faded out and inert.
-              h(TopCollectionSwitcher,{shown:placeShown||!card,overlay:!placeShown,currentTag:"Inbox",onRename:async()=>undefined,
+              h(TopCollectionSwitcher,{shown:placeShown,overlay:!placeShown,currentTag:"Inbox",onRename:async()=>undefined,
                 joinsNext:true}),
-              h(MainSecondaryTopBar,{viewMode:view,detailBlock,detailEntered:Boolean(card),placeBefore:placeShown,onViewModeChange:noop,vaultPath:"",tags:[],onToggleTag:noop,
+              h(MainSecondaryTopBar,{viewMode:view,detailBlock,detailEntered:Boolean(detailBlock),onViewModeChange:noop,vaultPath:"",tags:[],onToggleTag:noop,
                 onCreateAndAssign:noop,onRequestRename:noop,onRenameFile:async()=>undefined,onCheckFileName:async()=>null,
                 onRequestDelete:noop,onDetailClose:noop,detailMenuOpenRequestSequence:0,selectionActive:count>0,
                 selectionHostRef:setHost}))),
@@ -92,15 +100,19 @@ function readPath() {
     const element = document.querySelector(selector);
     if (!element) return null;
     const r = element.getBoundingClientRect();
-    return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+    return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width };
   };
   const name = document.querySelector("[data-secondary-detail-card-name]");
   const layer = document.querySelector("[data-secondary-detail-top-menu]");
   const buttons = layer ? [...layer.querySelectorAll("button")].map((button) => button.getBoundingClientRect()) : [];
+  const segment = document.querySelector("[data-audit-sidebar-segment]");
   return {
     fit: document.querySelector("[data-chrome-shell]").getAttribute("data-top-row"),
     header: box("header"),
+    segment: segment ? { ...box("[data-audit-sidebar-segment]"), line: getComputedStyle(segment).borderRightWidth } : null,
     place: box("[data-top-collection-switcher-slot]:not([inert]) [data-top-collection-switcher]"),
+    placeName: box("[data-top-collection-switcher-slot]:not([inert]) [data-top-collection-name]"),
+    viewSwitch: box("[data-main-view-mode-switcher]"),
     bar: box("[data-top-row-bar]"),
     layer: box("[data-secondary-detail-top-menu]"),
     name: box("[data-secondary-detail-card-name]"),
@@ -182,6 +194,7 @@ try {
   // the graph's and an open card with a long name stay in one row at any
   // width, the name ending in an ellipsis.
   const LONG_NAME = "пытаюсь использовать топологический анализ данных для поиска структуры в эмбеддингах";
+  const SHORT_CARD = "Nogal";
   // 670 is the narrowest window with the sidebar beside the feed (280 + 390,
   // user's decisions of 22.10.2026 and 25.10.2026; it was 740, then 559,
   // then 630).
@@ -244,19 +257,45 @@ try {
   }
   // Wide with the sidebar open beside the feed, the sidebar shows the place:
   // the open card's name stands alone after the sidebar's segment (user's
-  // decision of 23.10.2026). With the sidebar collapsed the switcher stands
-  // before the name, past the path's line.
+  // decision of 23.10.2026). Collapsed, the row names one place: no segment,
+  // the place's name first with no card, the card's name alone with one
+  // (user's decision of 11.11.2026).
   await page.setViewportSize({ width: 1200, height: 700 });
   let widePath = await readPathSettled();
   assert.equal(widePath.place, null, "1200 open card beside the open sidebar: no place's switcher");
   assert.equal(widePath.pathLine, false, "1200 open card beside the open sidebar: no path's line");
+  assert.equal(widePath.layer.left, widePath.segment.right, "1200 open card beside the open sidebar: the name right after the segment's line");
   await page.evaluate(() => window.auditCollapse(true));
   widePath = await readPathSettled();
-  assert.notEqual(widePath.place, null, "1200 open card, sidebar collapsed: the place's switcher stands");
-  assert.equal(widePath.pathLine, true, "1200 open card, sidebar collapsed: the path's line before the name");
-  assert.ok(widePath.layer.left > widePath.place.right, "1200 open card, sidebar collapsed: the name past the place");
-  await page.evaluate(() => { window.auditCollapse(false); window.auditOpenCard(null); });
-  console.log("PASS 1200: an open card's name alone beside the open sidebar, past the place's switcher with it collapsed");
+  assert.equal(widePath.segment.width, 0, "1200 sidebar collapsed: the segment takes none of the row");
+  assert.equal(widePath.segment.line, "0px", "1200 sidebar collapsed: no segment's line");
+  assert.equal(widePath.place, null, "1200 open card, sidebar collapsed: no place's name");
+  assert.equal(widePath.pathLine, false, "1200 open card, sidebar collapsed: no path's line");
+  assert.equal(widePath.bar.left, 0, "1200 open card, sidebar collapsed: the half starts at the window's edge");
+  assert.equal(widePath.layer.left, 0, "1200 open card, sidebar collapsed: the name's layer from the window's edge");
+  assert.equal(widePath.name.left, 8, "1200 open card, sidebar collapsed: the name's pill on the 8 px padding");
+  assert.equal(widePath.buttons.length, 2, "1200 open card, sidebar collapsed: ⋯ and ×");
+  assert.ok(widePath.buttons[1].right >= 1200 - 16, "1200 open card, sidebar collapsed: × at the row's right end");
+  await page.evaluate(() => window.auditOpenCard(null));
+  widePath = await readPathSettled();
+  assert.notEqual(widePath.place, null, "1200 no card, sidebar collapsed: the place's name stands");
+  assert.equal(widePath.place.left, 0, "1200 no card, sidebar collapsed: the place's name starts the row");
+  assert.equal(widePath.placeName.left, 8, "1200 no card, sidebar collapsed: its name on the 8 px padding");
+  // The card's window: nothing names the place with the sidebar hidden, the
+  // feed's controls stay where they stand (SPEC_CARD_PEEK.md, О5).
+  const controlsAlone = widePath.viewSwitch;
+  await page.evaluate((name) => { window.auditCardView("peek"); window.auditOpenCard(name); }, SHORT_CARD);
+  widePath = await readPathSettled();
+  assert.equal(widePath.place, null, "1200 card's window, sidebar collapsed: no place's name");
+  assert.equal(widePath.layer, null, "1200 card's window, sidebar collapsed: no card's name in the row");
+  assert.deepEqual(widePath.viewSwitch, controlsAlone, "1200 card's window, sidebar collapsed: Grid / Graph and Display where they stood");
+  await page.evaluate(() => window.auditCollapse(false));
+  widePath = await readPathSettled();
+  assert.notEqual(widePath.place, null, "1200 card's window beside the open sidebar: the place's name stands");
+  assert.equal(widePath.place.left, widePath.segment.right, "1200 card's window beside the open sidebar: the place after the segment's line");
+  assert.equal(widePath.layer, null, "1200 card's window beside the open sidebar: no card's name in the row");
+  await page.evaluate(() => { window.auditOpenCard(null); window.auditCardView("full"); });
+  console.log("PASS 1200: an open card's name alone beside the open sidebar and with it collapsed, the place first with no card, nothing named under the card's window with the sidebar hidden");
 
   // A name's rename field is as wide as its text with the name's 8 px on both
   // sides, as at rest (field-sizing, user's decision of 01.11.2026), and what
@@ -267,11 +306,12 @@ try {
   const TYPED = " House on the hill";
   // Longer than the row at 1200 px.
   const OVERFLOW = " and the long road down to the river that runs past the old mill at dawn".repeat(3);
-  for (const { label, marker, limit, open } of [
+  for (const { label, marker, limit, open, collapsed } of [false, true].flatMap((collapsed) => [
     { label: "collection", marker: "top-collection-name", limit: "[data-top-collection-switcher-slot]", open: () => window.auditOpenCard(null) },
     { label: "open card", marker: "secondary-detail-card-name", limit: "[data-secondary-detail-top-menu] [data-chrome-actions]",
       open: (name) => window.auditOpenCard(name) },
-  ]) {
+  ].map((entry) => ({ ...entry, collapsed, label: `${entry.label}, sidebar ${collapsed ? "collapsed" : "open"}` })))) {
+    await page.evaluate((value) => window.auditCollapse(value), collapsed);
     await page.evaluate(open, SHORT_NAME);
     await settle();
     const rest = await page.locator(`[data-${marker}]`).boundingBox();
@@ -291,7 +331,7 @@ try {
     fits(field, "opened");
     assert.ok(Math.abs(field.width - rest.width) <= 2, `${label}: the field as wide as the name at rest`);
     assert.ok(Math.abs(field.left - rest.x) <= 0.5, `${label}: the field where the name stood`);
-    if (label === "collection") {
+    if (marker === "top-collection-name") {
       const slot = await page.locator("[data-top-collection-switcher-slot]").boundingBox();
       assert.ok(Math.abs(slot.width - slotAtRest.width) <= 2, "collection: the place keeps its width when the field opens");
     }
@@ -305,7 +345,7 @@ try {
     await page.keyboard.type(OVERFLOW);
     field = await readField();
     assert.equal(field.scrolls, true, `${label} at the cap: the text scrolls inside`);
-    if (label === "collection") {
+    if (marker === "top-collection-name") {
       const half = await page.evaluate(() => document.querySelector("[data-top-collection-switcher-slot]").parentElement.getBoundingClientRect().width);
       assert.ok(field.limit.width <= half / 2 + 0.5, "collection at the cap: the place keeps to half the row");
       assert.ok(field.right <= field.limit.right + 0.5, "collection at the cap: the field ends inside the place");
@@ -318,7 +358,7 @@ try {
     await page.keyboard.press("Escape");
     await page.locator(`[data-${marker}]`).waitFor();
   }
-  await page.evaluate(() => window.auditOpenCard(null));
+  await page.evaluate(() => { window.auditOpenCard(null); window.auditCollapse(false); });
 
   // Wide, with a selection: one row while the commands fit, the feed right
   // under it. A count that ends in an ellipsis alone keeps one row.

@@ -3,20 +3,24 @@ import { collectionRefLabel } from "@/lib/collections";
 import { cn } from "@/lib/utils";
 import { ChromeNameField } from "./ChromeNameField";
 
-// The place the feed shows, named first in the top row's path (DESIGN_SYSTEM.md,
-// «Верхние ряды»). Since 31.10.2026 (user's decision) it opens no menu and has
-// no chevron: the sidebar switches the place. A collection's name
-// is renamed right there with a click, as the open card's file name is
-// (`ChromeNameField`), by the sidebar's command and its checks. Everything
-// and an author's feed are named in plain text that answers nothing.
+// The place the feed shows, named in the top row (DESIGN_SYSTEM.md, «Верхние
+// ряды»): first in the row with the sidebar hidden, after the sidebar's
+// segment beside it (user's decision of 11.11.2026). Since 31.10.2026 (user's
+// decision) it opens no menu and has no chevron: the sidebar switches the
+// place. A collection's name is renamed right there with a click, as the open
+// card's file name is (`ChromeNameField`), by the sidebar's command and its
+// checks. Everything and an author's feed are named in plain text that
+// answers nothing.
 
 interface TopCollectionSwitcherProps {
-  /// False while an open card's name stands in its place (topRowPath.ts):
-  /// the name fades out where it stands and back in, and nothing of it
+  /// False while the row names no place (topRowPath.ts): an open card's
+  /// name stands in its room, or the card's window with the sidebar hidden.
+  /// The name fades out where it stands and back in, and nothing of it
   /// answers meanwhile (global.css, «The top rows' motion»).
   shown?: boolean;
   /// Out of the row's flow, at its start: the card's name has the place's
-  /// room while the name fades.
+  /// room while the name fades, and the card's window leaves the row's
+  /// controls where they stand.
   overlay?: boolean;
   currentTag?: string;
   /// The author whose cards the feed shows, as written on the card the
@@ -29,10 +33,9 @@ interface TopCollectionSwitcherProps {
   /// Why a name typed for the collection `oldTag` would be refused, or null;
   /// writes nothing (`check_collection_name`, SPEC_DEEP_AUDIT.md, Е6.2).
   onCheckName?: (oldTag: string, name: string) => Promise<string | null>;
-  /// The path goes on after it with no padding of its own: an open card's
-  /// name stands past a line the half over the feed draws, the feed's own
+  /// The row goes on after it with no padding of its own: the feed's own
   /// controls at the far right. Outer padding stands only toward a boundary,
-  /// a line or the end of the row; the line before it is always there.
+  /// the window's edge, the segment's line or the end of the row.
   joinsNext?: boolean;
 }
 
@@ -69,8 +72,9 @@ export function TopCollectionSwitcher({
         className={cn(
           "flex h-full min-w-0 max-w-full items-center",
           // Label text = this padding + 8px inner padding of the name: 16 px
-          // from the line before it, the sidebar open or collapsed
-          // (11.10.2026), like the space switcher's from the window edge.
+          // from the segment's line beside the open sidebar, and from the
+          // window's edge with it hidden, like the space switcher's
+          // (11.10.2026, 11.11.2026).
           "pl-[var(--top-collection-pad-x)]",
           joinsNext ? "pr-0" : "pr-[var(--top-collection-pad-x)]",
         )}

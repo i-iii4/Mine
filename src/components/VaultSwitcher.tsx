@@ -41,7 +41,6 @@ interface VaultSwitcherProps {
   onVaultSelected: (path: string) => void;
   hotkey?: string;
   surface?: "actionBar" | "topChrome";
-  topChromeCollapsed?: boolean;
   /// Open the space `vaultId` in a new tab of this window (SPEC_TABS.md,
   /// В52): ⌘-click on a space, or its Open in New Tab action. Absent on a
   /// page that is not a tab, which has no window of tabs to open it in.
@@ -101,7 +100,6 @@ export function VaultSwitcher({
   onVaultSelected,
   hotkey,
   surface = "actionBar",
-  topChromeCollapsed = false,
   onOpenInNewTab,
 }: VaultSwitcherProps) {
   const [knownVaults, setKnownVaults] = useState<string[]>([]);
@@ -362,7 +360,7 @@ export function VaultSwitcher({
           data-vault-switcher=""
           data-vault-switcher-surface={surface}
           // The filter row may narrow the name first (useSidebarRowFit.ts).
-          data-row-fit-name={isTopChrome && !topChromeCollapsed ? "" : undefined}
+          data-row-fit-name={isTopChrome ? "" : undefined}
           {...(isTopChrome ? topChromeTrigger.triggerProps : {})}
           className={cn(
             isTopChrome
@@ -372,14 +370,15 @@ export function VaultSwitcher({
                   // above (SPEC_TABS.md, В43). Its label lands on the chrome
                   // edge inset, like the collection switcher's.
                   // 8 px of row on both sides of the pill, as round the
-                  // collection switcher's: to the window edge and to the line
-                  // after it, the search separator or, collapsed, the
-                  // segment's line before the collection (11.10.2026).
+                  // place's name: to the window edge and to the search
+                  // separator after it (11.10.2026). A collapsed sidebar has
+                  // no switcher in the row (DESIGN_SYSTEM.md, «Одно название
+                  // в ряду»; user's decision of 11.11.2026).
                   "justify-start pl-[var(--top-collection-pad-x)] pr-[var(--top-collection-pad-x)]",
                   // Never wider than a tab, 200px (`TAB_MAX_WIDTH_PX`; user's
-                  // decision of 25.10.2026); open, also no more than half the
-                  // space and search zone.
-                  topChromeCollapsed ? "max-w-[200px]" : "max-w-[min(50%,200px)]",
+                  // decision of 25.10.2026), nor than half the space and
+                  // search zone.
+                  "max-w-[min(50%,200px)]",
                 )
               : undefined,
           )}

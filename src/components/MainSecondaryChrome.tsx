@@ -60,8 +60,9 @@ function MainSecondaryViewActions({
 }
 
 /// The half of the second row over the feed: since 03.10.2026 it has no row
-/// of its own and stands after the collection switcher (DESIGN_SYSTEM.md,
-/// «Верхние ряды»).
+/// of its own and stands after the place's name, or in its room while an open
+/// card's name stands here (DESIGN_SYSTEM.md, «Верхние ряды», «Одно название
+/// в ряду»).
 export function MainSecondaryTopBar({
   detailBlock,
   detailEntered,
@@ -83,7 +84,6 @@ export function MainSecondaryTopBar({
   detailMenuOpenRequestSequence,
   selectionActive = false,
   selectionHostRef,
-  placeBefore = true,
 }: {
   detailBlock?: LightBlock | IndexedBlock | null;
   detailEntered?: boolean;
@@ -116,12 +116,6 @@ export function MainSecondaryTopBar({
   selectionActive?: boolean;
   /// Where the feed portals the selection's commands into.
   selectionHostRef?: (element: HTMLDivElement | null) => void;
-  /// The place's switcher stands before this half in the row, and an open
-  /// card's name stands past the path's line. Without it (an open card in a
-  /// narrow window, SPEC_NARROW_WINDOW.md, У15; topRowPath.ts) the half
-  /// starts the row: no line, the name keeps only its outer padding from the
-  /// window's edge, as the switcher would.
-  placeBefore?: boolean;
 }) {
   const detailLayerEntered = Boolean(detailBlock && detailEntered);
   // The selection's commands belong over the feed they act on.
@@ -129,14 +123,10 @@ export function MainSecondaryTopBar({
   const closeChromeGesture = useChromeDragGesture({ disabled: !detailBlock });
   const collapseChromeGesture = useChromeDragGesture({ disabled: !detailBlock || !onDetailCollapse });
 
-  // In the path an open card's name stands past a line, the one the sidebar
-  // segment draws between space and collection (11.10.2026). The half itself
-  // draws it, 8 px past the collection's pill, so the collection switcher
-  // keeps its box when a card opens or closes. It lives as long as the name
-  // does, through the name's exit: the name fades where it stood, the line
-  // leaves with it. A structural line, it does not ride the layer's motion.
-  // With nothing before the half there is nothing to part (У15).
-  const pathCardLine = Boolean(detailBlock) && placeBefore;
+  // An open card's name never stands with the place's name in the row
+  // (topRowPath.ts; user's decision of 11.11.2026): it takes the place's room,
+  // from the window's edge or the line of the sidebar's segment, and no line
+  // stands before it.
   return (
     <div
       data-tauri-drag-region
@@ -150,11 +140,7 @@ export function MainSecondaryTopBar({
       // In the second row it stands from the sidebar's width, which does
       // not inherit (sidebarWidth.ts).
       ref={sidebarWidthHost}
-      data-path-card-line={pathCardLine ? "" : undefined}
-      className={cn(
-        "relative flex h-full min-w-0 flex-1 items-center overflow-hidden",
-        pathCardLine && "ml-[var(--top-collection-pad-x)] border-l border-sidebar-border",
-      )}
+      className="relative flex h-full min-w-0 flex-1 items-center overflow-hidden"
     >
       {/* The selection replaces this half's ordinary content, the view
           switch, not the whole row: its commands sit over the feed they act
@@ -184,8 +170,8 @@ export function MainSecondaryTopBar({
       </div>
       {detailBlock && (
         <div
-          // Past the path's line the name's pill keeps the 8 px a switcher
-          // keeps from a line.
+          // The name's pill keeps the 8 px the place's name keeps from the
+          // window's edge or the segment's line.
           className="main-secondary-bar-layer absolute inset-0 flex h-full min-w-0 flex-1 items-center gap-1 pl-[var(--top-collection-pad-x)]"
           data-entered={detailLayerEntered ? "true" : "false"}
           data-secondary-detail-top-menu=""

@@ -11,6 +11,7 @@ import { clearActionFailures } from "@/lib/actionFailures";
 import { isTabVisible, setTabVisible } from "@/lib/tabVisibility";
 import { TAB_VIEW_REPORT_DEBOUNCE_MS } from "@/lib/tabPage";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
+import { SIDEBAR_WIDTH_TRANSITION } from "@/hooks/useSidebarResize";
 import type { ReactNode } from "react";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act, render, screen, waitFor, fireEvent, within } from "@testing-library/react";
@@ -200,19 +201,24 @@ vi.mock("@/lib/articleAudioDesktopGateway", () => ({
   },
 }));
 
-vi.mock("@/hooks/useSidebarResize", () => ({
+vi.mock("@/hooks/useSidebarResize", async (importOriginal) => ({
+  // The motion's values are the hook's own.
+  ...await importOriginal<typeof import("@/hooks/useSidebarResize")>(),
   useSidebarResize: (
     windowSidebar: { width_px: number; collapsed: boolean } | null = null,
     overlaid = false,
     openForKeyboard = false,
   ) => {
     sidebarResizeState.windowSidebar = windowSidebar;
+    const collapsed = sidebarResizeState.collapsed && !openForKeyboard;
     return {
       width: sidebarResizeState.width,
-      collapsed: sidebarResizeState.collapsed && !openForKeyboard,
+      collapsed,
       isResizing: sidebarResizeState.isResizing,
       widthAnimating: sidebarResizeState.widthAnimating,
       besideShown: !overlaid,
+      // As the hook has it: open, or for the motion of a collapse.
+      besideOpenShown: !overlaid && (!collapsed || sidebarResizeState.widthAnimating),
       startResize: vi.fn(),
       updateResize: vi.fn(),
       endResize: vi.fn(),
@@ -241,12 +247,10 @@ vi.mock("@/components/VaultSwitcher", () => ({
   VaultSwitcher: ({
     currentPath,
     surface = "actionBar",
-    topChromeCollapsed = false,
     onOpenInNewTab,
   }: {
     currentPath: string;
     surface?: string;
-    topChromeCollapsed?: boolean;
     onOpenInNewTab?: (vaultId: string) => void;
   }) => (
     <>
@@ -254,7 +258,6 @@ vi.mock("@/components/VaultSwitcher", () => ({
         type="button"
         data-vault-switcher=""
         data-vault-switcher-surface={surface}
-        data-vault-switcher-top-chrome-collapsed={String(topChromeCollapsed)}
       >
         {currentPath.split("/").pop() ?? currentPath}
       </button>
@@ -3050,7 +3053,10 @@ describe("AppWithVault", () => {
     expect(document.querySelector("[data-main-search-top-bar]")).toBeNull();
   });
 
-  it("starts the tab page's row with the space switcher: the traffic lights and the sidebar button live in the tab bar (В43)", async () => {
+  // Beside the open sidebar the row starts with the space switcher; with the
+  // sidebar collapsed, with the place's name (SPEC_TABS.md, В43; user's
+  // decision of 11.11.2026).
+  it("starts the tab page's row with the space switcher or, the sidebar collapsed, the place: the traffic lights and the sidebar button live in the tab bar (В43)", async () => {
     for (const collapsed of [false, true]) {
       sidebarResizeState.collapsed = collapsed;
       const { unmount } = render(
@@ -3067,11 +3073,19 @@ describe("AppWithVault", () => {
       expect(header.querySelector("[data-top-chrome-sidebar-toggle]")).toBeNull();
       expect(header.querySelector("[data-top-chrome-space-separator]")).toBeNull();
       const segment = header.querySelector("[data-app-top-sidebar-segment]") as HTMLElement;
-      const switcher = segment.querySelector("[data-vault-switcher]") as HTMLElement;
-      expect(switcher).not.toBeNull();
       // Nothing of the window's own stands before it in the row.
-      expect(segment.firstElementChild?.contains(switcher)).toBe(true);
       expect(header.firstElementChild).toBe(segment);
+      if (collapsed) {
+        expect(segment).toBeEmptyDOMElement();
+        expect(header.querySelector("[data-vault-switcher]")).toBeNull();
+        expect(segment.nextElementSibling?.firstElementChild).toBe(
+          topPlace("Everything").closest("[data-top-collection-switcher-slot]"),
+        );
+      } else {
+        const switcher = segment.querySelector("[data-vault-switcher]") as HTMLElement;
+        expect(switcher).not.toBeNull();
+        expect(segment.firstElementChild?.contains(switcher)).toBe(true);
+      }
       unmount();
     }
     sidebarResizeState.collapsed = false;
@@ -4168,174 +4182,281 @@ describe("AppWithVault", () => {
       expect(within(header).getByRole("tablist", { name: "View mode" })).toBeInTheDocument();
     });
 
-    // The path's lines (11.10.2026): one line between space and collection
-    // and one between collection and an open card's name, the sidebar open or
-    // collapsed. The space switcher's own padding is VaultSwitcher.test.tsx's
-    // to check.
-    for (const collapsed of [false, true]) {
-      const mode = collapsed ? "collapsed" : "open";
-      const renderPath = async () => {
+    // One name in the row (DESIGN_SYSTEM.md, «Одно название в ряду»; user's
+    // decision of 11.11.2026). Beside the open sidebar the row reads as a path,
+    // the segment's line parting space and place; with the sidebar collapsed
+    // the row names one place and nothing stands before it. The space
+    // switcher's own padding is VaultSwitcher.test.tsx's to check.
+    describe("one name in the row (11.11.2026)", () => {
+      const header = () => document.querySelector("header.chrome-row") as HTMLElement;
+      const segment = () => document.querySelector<HTMLElement>("[data-app-top-sidebar-segment]");
+      const slot = () => document.querySelector<HTMLElement>("[data-top-collection-switcher-slot]");
+      const contentSegment = () =>
+        document.querySelector("[data-main-secondary-top-bar-content-segment]") as HTMLElement;
+      const detailLayer = () => document.querySelector<HTMLElement>("[data-secondary-detail-top-menu]");
+      const pathLines = () => header().querySelectorAll(".border-sidebar-border");
+      const renderAt = async (collapsed: boolean, path = "/", grid = "__all__:2") => {
         sidebarResizeState.width = collapsed ? 0 : 300;
         sidebarResizeState.collapsed = collapsed;
-        render(
-          <MemoryRouter initialEntries={["/"]}>
+        const view = render(
+          <MemoryRouter initialEntries={[path]}>
             <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
           </MemoryRouter>,
         );
-        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent(grid));
+        return view;
       };
-      const contentSegment = () =>
-        document.querySelector("[data-main-secondary-top-bar-content-segment]") as HTMLElement;
-      const pathLines = () =>
-        (document.querySelector("header.chrome-row") as HTMLElement).querySelectorAll(".border-sidebar-border");
+      /** The place's name stands in the row's flow, shown and answering. */
+      const expectPlaceShown = (name: string) => {
+        const place = topPlace(name);
+        const placeSlot = slot() as HTMLElement;
+        expect(placeSlot).toHaveAttribute("data-entered", "true");
+        expect(placeSlot).not.toHaveAttribute("inert");
+        expect(placeSlot).not.toHaveAttribute("aria-hidden");
+        expect(placeSlot).not.toHaveClass("absolute");
+        return place;
+      };
+      /** The place's name is away: faded out, out of the row's flow, inert. */
+      const expectPlaceAway = () => {
+        const placeSlot = slot() as HTMLElement;
+        expect(placeSlot).toHaveAttribute("data-entered", "false");
+        expect(placeSlot).toHaveAttribute("inert");
+        expect(placeSlot).toHaveAttribute("aria-hidden", "true");
+        expect(placeSlot).toHaveClass("absolute");
+      };
+      /** No space switcher, no collections' filter and no line in the row. */
+      const expectNoSegmentInRow = () => {
+        const box = segment() as HTMLElement;
+        // The box stays at the sidebar's width, 0 collapsed, so an opening
+        // moves it in from none; it holds nothing and draws no line.
+        expect(box).toBeEmptyDOMElement();
+        expect(box).not.toHaveClass("border-r");
+        expect(box).toHaveStyle({ width: "var(--sidebar-width)" });
+        expect(box).toHaveAttribute("inert");
+        expect(header().querySelector("[data-vault-switcher]")).toBeNull();
+        expect(screen.queryByRole("textbox", { name: "Find or create collection" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "New Collection" })).toBeNull();
+      };
 
-      it(`parts space and collection by the segment's line with the sidebar ${mode}`, async () => {
-        await renderPath();
+      afterEach(() => {
+        delete (HTMLElement.prototype as { animate?: unknown }).animate;
+        localStorage.removeItem(CARD_VIEW_STORAGE_KEY);
+        reloadCardView();
+      });
 
-        const segment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement;
-        expect(segment).toHaveClass("border-r", "border-sidebar-border");
+      it("beside the open sidebar: the space's segment, its line, then the place's name", async () => {
+        await renderAt(false);
+        const box = segment() as HTMLElement;
+        expect(box).toHaveClass("border-r", "border-sidebar-border");
+        expect(box).not.toHaveAttribute("inert");
+        expect(box).toHaveStyle({ width: "var(--sidebar-width)" });
+        expect(within(box).getByRole("button", { name: "vault" })).toHaveAttribute("data-vault-switcher-surface", "topChrome");
+        expect(within(box).getByRole("textbox", { name: "Find or create collection" })).toBeInTheDocument();
         // The segment's line is the only one: nothing after it draws another.
-        const pathRest = segment.nextElementSibling as HTMLElement;
-        const collection = topPlace("Everything");
-        expect(pathRest.firstElementChild).toBe(collection.closest("[data-top-collection-switcher-slot]"));
-        expect(pathRest).not.toHaveClass("border-l");
-        expect(collection).not.toHaveClass("border-l");
-        // 8 px from the line, the path going on after it.
-        expect(collection).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-0");
-        // No card open: no line after the collection.
-        expect(contentSegment().previousElementSibling).toBe(collection.closest("[data-top-collection-switcher-slot]"));
-        expect(contentSegment()).not.toHaveAttribute("data-path-card-line");
+        const place = expectPlaceShown("Everything");
+        const rowAfter = box.nextElementSibling as HTMLElement;
+        expect(rowAfter.firstElementChild).toBe(slot());
+        expect(rowAfter).not.toHaveClass("border-l");
+        // 8 px from the line, the row going on after it.
+        expect(place).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-0");
+        expect(contentSegment().previousElementSibling).toBe(slot());
         expect(contentSegment()).not.toHaveClass("border-l");
         expect(pathLines()).toHaveLength(1);
       });
 
-      it(`parts collection and the open card's name by the same line with the sidebar collapsed, the name alone with it open (${mode})`, async () => {
-        await renderPath();
+      it("with the sidebar collapsed: the place's name alone, first in the row, no space switcher and no line", async () => {
+        await renderAt(true);
+        expectNoSegmentInRow();
+        const place = expectPlaceShown("Everything");
+        // First in the row: the empty box takes no room before it.
+        expect((segment() as HTMLElement).nextElementSibling?.firstElementChild).toBe(slot());
+        // From the window's edge the one inset, as from the segment's line.
+        expect(place).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-0");
+        expect(place).not.toHaveClass("px-3");
+        expect(pathLines()).toHaveLength(0);
+        // Grid / Graph and Display stand at the right as before.
+        expect(within(header()).getByRole("tablist", { name: "View mode" })).toBeInTheDocument();
+        expect(within(header()).getByRole("button", { name: "Display options" })).toBeInTheDocument();
+      });
 
-        const collection = topPlace("Everything");
-        const collectionClass = collection.className;
+      for (const collapsed of [false, true]) {
+        const mode = collapsed ? "collapsed" : "open";
 
-        fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
-        await waitFor(() => {
-          expect(document.querySelector("[data-secondary-detail-top-menu]")).toHaveAttribute("data-entered", "true");
+        it(`names an author's feed by the author, the sidebar ${mode} (SPEC_CARD_ASSOCIATIONS.md)`, async () => {
+          await renderAt(collapsed, "/author/%40kotecinho", "author @kotecinho");
+          expect(expectPlaceShown("@kotecinho").querySelector("[data-top-place-plain]")).not.toBeNull();
+          if (collapsed) {
+            expectNoSegmentInRow();
+            expect(pathLines()).toHaveLength(0);
+          } else {
+            expect(within(segment() as HTMLElement).getByRole("button", { name: "vault" })).toBeInTheDocument();
+            expect(pathLines()).toHaveLength(1);
+          }
         });
-        if (!collapsed) {
-          // The open sidebar shows the place: the card's name stands alone
-          // after the segment's line (user's decision of 23.10.2026), and the
-          // place comes back once the name has left the row.
-          // The switcher has faded out where it stands, out of the row's flow, inert.
-          const slot = document.querySelector("[data-top-collection-switcher-slot]") as HTMLElement;
-          expect(slot).toHaveAttribute("aria-hidden", "true");
-          expect(slot).toHaveAttribute("inert");
-          expect(slot).toHaveClass("absolute");
+
+        it(`gives the full page's card name the place's room, no line before it, the sidebar ${mode}; the place back once the name has left`, async () => {
+          await renderAt(collapsed);
+          const placeClass = topPlace("Everything").className;
+
+          fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+          await waitFor(() => expect(detailLayer()).toHaveAttribute("data-entered", "true"));
+          expectPlaceAway();
+          const name = document.querySelector("[data-secondary-detail-card-name]") as HTMLElement;
+          expect(name).toHaveTextContent("alpha-block");
+          expect(contentSegment().contains(name)).toBe(true);
           expect(contentSegment()).not.toHaveAttribute("data-path-card-line");
-          expect(contentSegment()).not.toHaveClass("border-l");
-          expect(contentSegment()).toHaveTextContent("alpha-block");
-          expect(pathLines()).toHaveLength(1);
-          fireEvent.click(screen.getByRole("button", { name: "Close" }));
-          await waitFor(() => {
-            expect(document.querySelector("[data-secondary-detail-top-menu]")).toBeNull();
-          });
-          expect(topPlace("Everything").className).toBe(collectionClass);
-          expect(pathLines()).toHaveLength(1);
-          return;
-        }
-        // The column's line, 8 px past the collection's pill.
-        expect(contentSegment()).toHaveAttribute("data-path-card-line", "");
-        expect(contentSegment()).toHaveClass(
-          "ml-[var(--top-collection-pad-x)]",
-          "border-l",
-          "border-sidebar-border",
-        );
-        const name = document.querySelector("[data-secondary-detail-card-name]") as HTMLElement;
-        expect(name).toHaveTextContent("alpha-block");
-        expect(contentSegment().contains(name)).toBe(true);
-        // The name's pill keeps 8 px from the line, as a switcher does; the
-        // moving layer draws no line of its own.
-        const detailLayer = document.querySelector("[data-secondary-detail-top-menu]") as HTMLElement;
-        expect(detailLayer).toHaveClass("pl-[var(--top-collection-pad-x)]");
-        expect(detailLayer).not.toHaveClass("border-l");
-        // Space and collection keep their places: the segment's line is still
-        // the one between them, the switcher keeps its box.
-        const segment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement;
-        expect(segment).toHaveClass("border-r", "border-sidebar-border");
-        expect(collection.className).toBe(collectionClass);
-        expect(pathLines()).toHaveLength(2);
+          expect(contentSegment()).not.toHaveClass("border-l", "ml-[var(--top-collection-pad-x)]");
+          // The name's pill on the place's own padding from the window's edge
+          // or the segment's line.
+          expect(detailLayer()).toHaveClass("pl-[var(--top-collection-pad-x)]");
+          expect(detailLayer()).not.toHaveClass("border-l");
+          expect(within(detailLayer() as HTMLElement).getByRole("button", { name: "Close" })).toBeInTheDocument();
+          if (collapsed) expectNoSegmentInRow();
+          expect(pathLines()).toHaveLength(collapsed ? 0 : 1);
 
-        fireEvent.click(screen.getByRole("button", { name: "Close" }));
-        // The line leaves with the name, once its exit is over.
-        await waitFor(() => {
-          expect(document.querySelector("[data-secondary-detail-top-menu]")).toBeNull();
+          fireEvent.click(within(detailLayer() as HTMLElement).getByRole("button", { name: "Close" }));
+          await waitFor(() => expect(detailLayer()).toBeNull());
+          expect(expectPlaceShown("Everything").className).toBe(placeClass);
+          expect(pathLines()).toHaveLength(collapsed ? 0 : 1);
         });
-        expect(contentSegment()).not.toHaveAttribute("data-path-card-line");
-        expect(contentSegment()).not.toHaveClass("border-l");
-        expect(contentSegment()).not.toHaveClass("ml-[var(--top-collection-pad-x)]");
-        expect(collection.className).toBe(collectionClass);
-        expect(pathLines()).toHaveLength(1);
+
+        it(`under the card's window, the sidebar ${mode}: ${collapsed ? "neither name in the row, the place gone as the window opens and back as it begins to close" : "the row as with no card"} (SPEC_CARD_PEEK.md, О5)`, async () => {
+          Object.defineProperty(HTMLElement.prototype, "animate", {
+            configurable: true,
+            value: vi.fn(() => ({ onfinish: null, cancel: vi.fn() })),
+          });
+          setCardView("peek");
+          await renderAt(collapsed);
+          expectPlaceShown("Everything");
+
+          fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+          await waitFor(() => {
+            const shown = document.querySelector("[data-card-peek]");
+            expect(shown).not.toBeNull();
+            expect(shown).not.toHaveAttribute("data-card-peek-preparing");
+          });
+          // The card's name stands in the window's header, not in the row;
+          // Grid / Graph and Display stay where they stand.
+          expect(detailLayer()).toBeNull();
+          expect(within(header()).getByRole("tablist", { name: "View mode" })).toBeInTheDocument();
+          expect(within(header()).getByRole("button", { name: "Display options" })).toBeInTheDocument();
+          if (!collapsed) {
+            await act(async () => {
+              await new Promise((resolve) => requestAnimationFrame(resolve));
+            });
+            expectPlaceShown("Everything");
+            expect(pathLines()).toHaveLength(1);
+            return;
+          }
+          await waitFor(expectPlaceAway);
+          expectNoSegmentInRow();
+          expect(pathLines()).toHaveLength(0);
+
+          const surface = document.querySelector<HTMLElement>("[data-card-peek-surface]")!;
+          fireEvent.click(within(surface).getByRole("button", { name: "Close" }));
+          // Back with the start of the closing, the window still on its way out.
+          expect(document.querySelector("[data-card-peek-closing]")).not.toBeNull();
+          expectPlaceShown("Everything");
+        });
+      }
+
+      it("renames the collection with a click on its name first in the row, the sidebar collapsed", async () => {
+        await renderAt(true, "/channel/alpha", "alpha:1");
+        const name = expectPlaceShown("alpha").querySelector("[data-top-collection-name]") as HTMLElement;
+        expect(name).toHaveClass("cursor-text", "hover:text-foreground");
+        fireEvent.click(name);
+        const field = await screen.findByRole("textbox", { name: "Rename collection" });
+        expect(field).toHaveFocus();
+        expect(header()).toContainElement(field);
+        fireEvent.change(field, { target: { value: "Alpha two" } });
+        fireEvent.keyDown(field, { key: "Enter" });
+        await waitFor(() => expect(commandMocks.renameChannel).toHaveBeenCalledWith("alpha", "Alpha two"));
+        await waitFor(() => expect(screen.queryByRole("textbox", { name: "Rename collection" })).toBeNull());
       });
-    }
+
+      it("renames the open card with a click on its name taking the row, the sidebar collapsed", async () => {
+        commandMocks.renameBlockFile.mockResolvedValue({ old_slug: "alpha-block", new_slug: "gamma-block" });
+        await renderAt(true);
+        fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+        await waitFor(() => expect(detailLayer()).toHaveAttribute("data-entered", "true"));
+        fireEvent.click(document.querySelector("[data-secondary-detail-card-name]") as HTMLElement);
+        const field = await screen.findByRole("textbox", { name: "Rename file" });
+        expect(field).toHaveFocus();
+        expect(detailLayer()).toContainElement(field);
+        fireEvent.change(field, { target: { value: "gamma-block" } });
+        fireEvent.keyDown(field, { key: "Enter" });
+        await waitFor(() => expect(commandMocks.renameBlockFile).toHaveBeenCalledWith("alpha-block", "gamma-block"));
+      });
+    });
   });
 
-  it("animates the sidebar's segment and the second row only while the sidebar collapses or opens (SPEC_NARROW_WINDOW.md, У1, У10)", async () => {
-    sidebarResizeState.widthAnimating = true;
+  // The segment over the sidebar leaves and comes back with it, its width
+  // moving by the panel's own motion over the same 200 ms (DESIGN_SYSTEM.md,
+  // «Движение верхних рядов»; SPEC_NARROW_WINDOW.md, У1, У7, У10).
+  describe("the sidebar's segment in the top row while the sidebar's width moves", () => {
+    const segment = () => document.querySelector<HTMLElement>("[data-app-top-sidebar-segment]") as HTMLElement;
+    const renderFeed = async () => {
+      const view = render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      return view;
+    };
 
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-      </MemoryRouter>,
-    );
+    it("moves its width and the second row's edge only while the sidebar collapses or opens", async () => {
+      sidebarResizeState.widthAnimating = true;
+      const { rerender } = await renderFeed();
+      const shell = document.querySelector("[data-chrome-shell]");
+      expect(shell).toHaveAttribute("data-sidebar-width-animating", "");
+      // One row until the row is measured to cut something.
+      expect(shell).toHaveAttribute("data-top-row", "one");
+      expect(segment()).toHaveStyle({ transition: SIDEBAR_WIDTH_TRANSITION, width: "var(--sidebar-width)" });
+      expect(segment()).not.toHaveClass("ease-out");
+      // Opening: the row is there at once and answers.
+      expect(within(segment()).getByRole("button", { name: "vault" })).toBeInTheDocument();
+      expect(segment()).not.toHaveAttribute("inert");
+      expect(document.querySelector("main")).toHaveAttribute("data-below-top-row", "");
+      expect(shell?.querySelector("header [data-top-row-bar]")).not.toBeNull();
 
-    await waitFor(() => {
-      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+      // A window's resize squeezes it at once (SPEC_NARROW_WINDOW.md, У1).
+      sidebarResizeState.widthAnimating = false;
+      rerender(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      expect(segment()).toHaveStyle({ transition: "none" });
     });
-    const shell = document.querySelector("[data-chrome-shell]");
-    expect(shell).toHaveAttribute("data-sidebar-width-animating", "");
-    // One row until the row is measured to cut something.
-    expect(shell).toHaveAttribute("data-top-row", "one");
-    expect(document.querySelector("[data-app-top-sidebar-segment]")).toHaveClass("transition-[width]", "duration-200", "ease-out");
-    expect(document.querySelector("main")).toHaveAttribute("data-below-top-row", "");
-    expect(shell?.querySelector("header [data-top-row-bar]")).not.toBeNull();
-  });
 
-  it("keeps space and collection controls while hiding channel search when the sidebar is collapsed", async () => {
-    sidebarResizeState.width = 0;
-    sidebarResizeState.collapsed = true;
+    it("keeps the row over a collapsing sidebar for the motion, inert, its line going with it; then nothing", async () => {
+      sidebarResizeState.collapsed = true;
+      sidebarResizeState.width = 0;
+      sidebarResizeState.widthAnimating = true;
+      const { rerender } = await renderFeed();
+      expect(segment()).toHaveClass("border-r", "border-sidebar-border");
+      expect(segment()).toHaveAttribute("inert");
+      expect(segment()).toHaveStyle({ transition: SIDEBAR_WIDTH_TRANSITION, width: "var(--sidebar-width)" });
+      // The row as it was open, its width going to none: no collapsed form.
+      expect(within(segment()).getByRole("button", { name: "vault" })).toBeInTheDocument();
+      expect(within(segment()).getByRole("textbox", { name: "Find or create collection" })).toBeInTheDocument();
+      // The place's name starts the rest of the row, as it will once alone.
+      expect(segment().nextElementSibling?.firstElementChild).toBe(
+        document.querySelector("[data-top-collection-switcher-slot]"),
+      );
 
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+      sidebarResizeState.widthAnimating = false;
+      rerender(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      expect(segment()).toBeEmptyDOMElement();
+      expect(segment()).not.toHaveClass("border-r");
+      expect(document.querySelector("header [data-vault-switcher]")).toBeNull();
+      expect(topPlace("Everything")).toBeInTheDocument();
     });
-
-    const topSidebarSegment = document.querySelector("[data-app-top-sidebar-segment]") as HTMLElement | null;
-    // The space switcher keeps the cap; the segment adds only its line.
-    expect(topSidebarSegment).toHaveClass("w-auto", "border-r", "border-sidebar-border");
-    expect(topSidebarSegment).not.toHaveClass("max-w-[240px]");
-    expect(topSidebarSegment).not.toHaveStyle({ width: "var(--sidebar-width)" });
-    // Its width animates only while the sidebar collapses or opens: a
-    // window's resize squeezes it at once (SPEC_NARROW_WINDOW.md, У1).
-    expect(topSidebarSegment).not.toHaveClass("transition-[width]");
-    const spaceSwitcher = topSidebarSegment?.querySelector("[data-vault-switcher]") as HTMLElement | null;
-    expect(spaceSwitcher).toHaveAttribute("data-vault-switcher-surface", "topChrome");
-    expect(spaceSwitcher).toHaveAttribute("data-vault-switcher-top-chrome-collapsed", "true");
-    expect(spaceSwitcher).toHaveTextContent("vault");
-    // The collapsed segment holds the space switcher alone: no traffic-light
-    // reserve, no sidebar button and no separator before it (В43).
-    expect(topSidebarSegment?.querySelector("[data-traffic-light-reserve]")).toBeNull();
-    expect(topSidebarSegment?.querySelector("[data-top-chrome-space-separator]")).toBeNull();
-    expect(topSidebarSegment?.querySelector("[data-top-chrome-search-separator]")).not.toBeInTheDocument();
-    expect(document.querySelector("[data-top-chrome-space-measure]")).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Find or create collection" })).not.toBeInTheDocument();
-    const collectionSwitcher = topPlace("Everything");
-    // Collapsed, the segment's line still parts space and collection: the
-    // collection keeps its inset from it, none before the content that
-    // follows (11.10.2026).
-    expect(collectionSwitcher).toHaveClass("pl-[var(--top-collection-pad-x)]", "pr-0");
-    expect(collectionSwitcher).not.toHaveClass("px-3");
   });
 
   it("opens the search overlay from the bottom action without refetching the grid", async () => {
@@ -7482,6 +7603,16 @@ describe("AppWithVault", () => {
         expect(name).toHaveClass("truncate");
         expect(within(detailLayer() as HTMLElement).getByRole("button", { name: "Close" })).toBeInTheDocument();
 
+        // The sidebar open over the feed: the row under its panel is the one
+        // of the closed sidebar, the card's name alone (У12; 11.11.2026).
+        act(() => send("sidebar-overlay-command", { kind: "toggle" }));
+        expect(panel()).not.toBeNull();
+        expect(place()).toBeNull();
+        expect(detailLayer()).toHaveAttribute("data-entered", "true");
+        expect(document.querySelector("header [data-vault-switcher]")).toBeNull();
+        act(() => send("sidebar-overlay-command", { kind: "toggle" }));
+        await waitFor(() => expect(panel()).toBeNull());
+
         // A wide window with the sidebar open beside the feed: the sidebar
         // shows the place, the name keeps the row (23.10.2026).
         resizeWindow(1200);
@@ -7497,6 +7628,26 @@ describe("AppWithVault", () => {
         expect(place()).not.toBeNull();
         expect(contentSegment().previousElementSibling).toBe(place());
         expect(contentSegment()).not.toHaveAttribute("data-path-card-line");
+      });
+
+      it("names the place alone in the row, first, under the sidebar over the feed as with it closed (У12; 11.11.2026)", async () => {
+        renderTab({}, "/channel/alpha");
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("alpha:1"));
+        const header = () => document.querySelector("header.chrome-row") as HTMLElement;
+        const rowStart = () => header().firstElementChild?.firstElementChild;
+        // Closed: no segment at all, the place's name first in the row.
+        expect(document.querySelector("[data-app-top-sidebar-segment]")).toBeNull();
+        expect(rowStart()).toBe(topPlace("alpha").closest("[data-top-collection-switcher-slot]"));
+        expect(header().querySelector("[data-vault-switcher]")).toBeNull();
+        expect(header().querySelectorAll(".border-sidebar-border")).toHaveLength(0);
+
+        // Open over the feed: the switcher in the panel, the row under it the same.
+        act(() => send("sidebar-overlay-command", { kind: "toggle" }));
+        expect(within(panel() as HTMLElement).getByRole("button", { name: "vault" })).toBeInTheDocument();
+        expect(document.querySelector("[data-app-top-sidebar-segment]")).toBeNull();
+        expect(rowStart()).toBe(topPlace("alpha").closest("[data-top-collection-switcher-slot]"));
+        expect(header().querySelector("[data-vault-switcher]")).toBeNull();
+        expect(header()).toHaveAttribute("inert");
       });
 
       // Everything under the panel is inert: the open card's name cannot take

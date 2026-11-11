@@ -1,29 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { topRowCard, topRowShowsPlace } from "./topRowPath";
+import { topRowCard, topRowShowsPlace, type TopRowCardView, type TopRowSidebar } from "./topRowPath";
 
-describe("topRowShowsPlace (SPEC_NARROW_WINDOW.md, У15; 23.10.2026)", () => {
-  it.each([
-    // A narrow window with a card open: the card's name takes the row.
-    { narrow: true, sidebarBeside: false, cardOpen: true, shown: false },
-    // A narrow window with no card: the place stays.
-    { narrow: true, sidebarBeside: false, cardOpen: false, shown: true },
-    // The sidebar open beside the feed shows the place: a card's name
-    // stands alone; with no card the place stays.
-    { narrow: false, sidebarBeside: true, cardOpen: true, shown: false },
-    { narrow: false, sidebarBeside: true, cardOpen: false, shown: true },
-    // The sidebar collapsed: the place stays, with a card or without.
-    { narrow: false, sidebarBeside: false, cardOpen: true, shown: true },
-    { narrow: false, sidebarBeside: false, cardOpen: false, shown: true },
-  ])("narrow $narrow, sidebar beside $sidebarBeside, card open $cardOpen: the place shown $shown", ({ shown, ...state }) => {
+describe("topRowShowsPlace (DESIGN_SYSTEM.md, «Одно название в ряду»; 11.11.2026)", () => {
+  it.each<{ sidebar: TopRowSidebar; card: TopRowCardView; shown: boolean }>([
+    // No card: the place's name, the sidebar beside the feed or hidden.
+    { sidebar: "beside", card: "none", shown: true },
+    { sidebar: "hidden", card: "none", shown: true },
+    // Full page: the card's name takes the place's room wherever the sidebar
+    // stands (SPEC_NARROW_WINDOW.md, У15).
+    { sidebar: "beside", card: "full", shown: false },
+    { sidebar: "hidden", card: "full", shown: false },
+    // The card's window: the row under its scrim is as with no card beside
+    // the open sidebar, and names nothing with the sidebar hidden
+    // (SPEC_CARD_PEEK.md, О5).
+    { sidebar: "beside", card: "window", shown: true },
+    { sidebar: "hidden", card: "window", shown: false },
+  ])("sidebar $sidebar, card $card: the place shown $shown", ({ shown, ...state }) => {
     expect(topRowShowsPlace(state)).toBe(shown);
   });
 });
 
 describe("topRowCard (SPEC_CARD_PEEK.md, О5)", () => {
-  it("leaves the row as with no card while the card stands in its window", () => {
+  it("leaves the card's name out of the row while the card stands in its window", () => {
     expect(topRowCard("card", "peek")).toBeNull();
-    // With the row's card gone, the place stays in every window.
-    expect(topRowShowsPlace({ narrow: false, sidebarBeside: true, cardOpen: topRowCard("card", "peek") !== null })).toBe(true);
   });
 
   it("shows the card full page, and nothing with no card", () => {

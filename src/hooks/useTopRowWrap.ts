@@ -101,7 +101,7 @@ export function useTopRowWrap(): TopRowWrap {
       childList: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ["data-entered", "data-path-card-line"],
+      attributeFilter: ["data-entered"],
     });
     contentChanged();
     return () => {

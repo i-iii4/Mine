@@ -279,7 +279,6 @@ function SpacePage({ path, blocks, totalBlocks, previews, indexing, previewsPend
                     onVaultSelected={noop}
                     onOpenInNewTab={noop}
                     surface="topChrome"
-                    topChromeCollapsed={false}
                   />
                   <div aria-hidden="true" className="h-full w-px shrink-0 bg-border" />
                   <div className="flex h-full min-w-0 flex-1 items-center bg-chrome">

@@ -535,8 +535,9 @@ SPEC_NARROW_WINDOW.md, У4 по У8, У11, У12; PLAN 47.3b и 47.3c (15.10.2026
   `--sidebar-width` равна `0px` (`useSidebarResize(windowSidebar, overlaid)`),
   лента занимает всё окно. Переключатель пространства с названием живёт
   только в меню: в верхнем ряду его нет, открытое меню показывает его на
-  обычном месте над коллекциями (У12). Вне узкого окна ничего не меняется,
-  свёрнутое кнопкой меню оставляет переключатель наверху, как прежде.
+  обычном месте над коллекциями (У12). С 11.11.2026 так же при меню,
+  свёрнутом кнопкой вне узкого окна (DESIGN_SYSTEM.md, «Верхние ряды»,
+  «Одно название в ряду»).
 - **Открытость** принадлежит странице: `src/hooks/useSidebarOverlay.ts`.
   Она не сохраняется, закрыта при старте, при скрытии вкладки
   (`useTabVisible`) и при сужении окна через порог. Окно, расширенное через
@@ -1645,11 +1646,14 @@ Image media expansion:
   `setTheme("dark")`, and `System` calls `setTheme(null)` so AppKit follows the
   OS. This is the only allowed way to align traffic-light light/dark rendering
   with Mine's theme; arbitrary button colors remain unsupported and forbidden.
-  Top chrome делится той же границей `--sidebar-width`, что и body: слева
+  Пока меню открыто рядом с лентой, top chrome делится той же границей
+  `--sidebar-width`, что и body: слева
   space selector, sidebar channel search и
   `border-r border-sidebar-border`, справа название места и
   оставшийся drag region. Так разделитель Sidebar/Main продолжается до
-  верхнего края окна, а search не является overlay над Grid.
+  верхнего края окна, а search не является overlay над Grid. При скрытом
+  меню левой части нет, ряд называет одно место (решение пользователя
+  11.11.2026, DESIGN_SYSTEM.md, «Верхние ряды», «Одно название в ряду»).
 - В правой части bottom app bar есть `Search elements` action с shortcut label
   `⌘F`. Это command trigger, не selected/toggle visual state: кнопка не
   остаётся визуально нажатой при активном search state. Кнопка и повторное
@@ -1668,14 +1672,15 @@ Image media expansion:
   separator `w-px bg-border`, top-chrome `VaultSwitcher`/space selector,
   separator `w-px bg-border`, no-icon `Input ghost` (`h-8 px-3 py-0
   rounded-0`), затем штатный `border-r border-sidebar-border`.
-- При свернутом Sidebar левый top chrome segment не следует за
-  `--sidebar-width: 0px` и не держит пустой слот под скрытый search. Он
-  shrink-wrap'ится через CSS intrinsic sizing: `80px` traffic-light reserve +
-  `1px` separator + `VaultSwitcher` в collapsed mode; переключатель capped by `max-w-[200px]`, ширина вкладки `TAB_MAX_WIDTH_PX`
-  (решение пользователя 25.10.2026, было `240px`); у развёрнутого меню
-  `max-w-[min(50%,200px)]`. Space selector остаётся видимым, channel
-  search скрывается, а правая часть top chrome начинается сразу после compact
-  collapsed segment. Hidden measurement/probe и вычисление ширины по visible
+- При свёрнутом меню левого top chrome segment в ряду нет (решение
+  пользователя 11.11.2026, DESIGN_SYSTEM.md, «Верхние ряды»): его ширина
+  `--sidebar-width`, при свёртывании он уходит вместе с меню до `0px`, при
+  развёртывании возвращается с ним, и правая часть ряда начинается от края
+  окна. До 11.11.2026 свёрнутый сегмент сжимался до `VaultSwitcher` в
+  collapsed mode с пределом `max-w-[200px]`. У развёрнутого меню
+  переключатель не шире `max-w-[min(50%,200px)]`, `200px` это ширина
+  вкладки `TAB_MAX_WIDTH_PX` (решение пользователя 25.10.2026, было
+  `240px`). Hidden measurement/probe и вычисление ширины по visible
   `[data-vault-switcher]` запрещены. Короткие имена пространства не получают
   ellipsis; truncation допустим только для длинных имён, превышающих cap.
 - Space selector показывает текущую папку, открывает searchable dropdown
@@ -1728,8 +1733,8 @@ Image media expansion:
   восстанавливает focus на trigger после закрытия dropdown, чтобы click не
   оставлял sticky hover-colored state. Pointer drag не открывает dropdown:
   Radix pointer-open отложен до click, а click подавляется, если gesture
-  перешёл в window drag. В collapsed sidebar state selector использует
-  `max-w-full`, потому что search input скрыт. Search input занимает остаток и полагается на native
+  перешёл в window drag. При свёрнутом меню selector в ряду нет (выше).
+  Search input занимает остаток и полагается на native
   input scrolling, чтобы при вводе были видны последние символы.
 - Space dropdown renders a `Search spaces` input, only destination spaces and a
   pinned `Add space` action. The current space is omitted entirely, with no
@@ -1789,7 +1794,10 @@ Image media expansion:
   же проверкой, что переименование в боковом меню (`rename_channel` через
   `handleRenameTag` в `App.tsx`, `check_collection_name`), с теми же
   словами отказа (`collectionNameRefusal`). `Everything` и автор это простой
-  текст: щелчок ничего не делает, подсветки и текстового курсора нет.
+  текст: щелчок ничего не делает, подсветки и текстового курсора нет. При
+  скрытом меню название места стоит в ряду первым, а при открытой карточке
+  его нет ни в полном виде, ни в окне карточки (решение пользователя
+  11.11.2026, DESIGN_SYSTEM.md, «Верхние ряды», «Одно название в ряду»).
 - Top chrome controls must remain usable as window drag handles. Interactive
   chrome controls use the shared `4px` pointer threshold: movement below the
   threshold is handled as normal click/focus/editing, movement at or above it
