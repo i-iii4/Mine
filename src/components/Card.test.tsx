@@ -1,7 +1,8 @@
 import { CLOUD_BADGE_DELAY_MS, CLOUD_STATE_LABEL } from "@/lib/cloudContent";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within, cleanup } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Card, DragCardStackPreview, ReadOnlyCardPreview } from "./Card";
 import { CardColumnWidthContext, FeedShowContext, setFeedShow, type FeedShow } from "@/lib/feedDisplay";
@@ -3066,6 +3067,193 @@ describe("Card previews show the feed card in its final hover state (SPEC_CARD_S
     const rule = css.split("}").find((part) => part.includes("[data-card-preview] [data-card-lift],"));
     expect(rule).toContain("[data-card-preview] [data-card-lift-fade]");
     expect(rule).toContain("transition: none");
+  });
+});
+
+describe("Media Only: no lift, the top buttons alone answer the pointer (SPEC_FEED_DISPLAY.md, Д31)", () => {
+  const menuProps = {
+    tags: [],
+    onToggleTag: vi.fn(),
+    onCreateAndAssign: vi.fn(),
+    onRequestRename: vi.fn(),
+    onRequestDelete: vi.fn(),
+  };
+  const imageManifest = (path: string) => JSON.stringify({
+    kind: "image", primary_preview_path: path, width: 1280, height: 960,
+    preview_width: 640, preview_height: 480, tiles: [], overflow_count: 0,
+  });
+  const picture = () => block({
+    block_type: "image", url: "https://example.com/sunset", title: null, media_file: "Media/Sunset.jpg",
+    content_heading: "Sunset", display_title: "Sunset", fallback_label: "Sunset",
+    preview_text: "Evening over the bay", preview_manifest: imageManifest("sunset.jpg"), collections: ["Art"],
+  });
+  const textPost = () => block({
+    block_type: "article", card_kind: "article", title: "A post", url: null,
+    body: "Words of the post.", preview_text: "Words of the post.", author: "Author", collections: ["Art"],
+  });
+  const mediaPost = () => block({
+    block_type: "article", card_kind: "article", title: "A post with media", url: null,
+    body: "Words\n\n![](Media/one.jpg)", preview_text: "Words", collections: ["Web"],
+    preview_manifest: JSON.stringify({
+      kind: "image", primary_preview_path: "post.jpg", width: 800, height: 600,
+      preview_width: 800, preview_height: 600,
+      tiles: [{ source_path: "Media/one.jpg", preview_path: "post.preview-1.jpg",
+        width: 800, height: 600, preview_width: 800, preview_height: 600,
+        is_video: false, is_video_poster: false }],
+      overflow_count: 0,
+    }),
+  });
+  const pictureLink = () => block({
+    block_type: "link", title: "Linked page", url: "https://example.com/page",
+    preview_manifest: imageManifest("page.jpg"), collections: [],
+  });
+  const samples = [
+    ["a picture with words", picture],
+    ["a text post", textPost],
+    ["a post with media", mediaPost],
+    ["a link with its page picture", pictureLink],
+  ] as const;
+  const parse = (markup: string) => new DOMParser().parseFromString(markup, "text/html");
+  const frameIn = (root: ParentNode) => root.querySelector<HTMLElement>("[data-feed-card-frame]")!;
+  const feedMarkup = (value: LightBlock, show: FeedShow, withActions: boolean) => renderToStaticMarkup(
+    <FeedShowContext.Provider value={show}>
+      <Card block={value} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" onClick={vi.fn()} {...(withActions ? menuProps : {})} />
+    </FeedShowContext.Provider>,
+  );
+  const inMediaOnly = (value: LightBlock, props: Partial<ComponentProps<typeof Card>> = {}) => render(
+    <FeedShowContext.Provider value="media-only">
+      <Card block={value} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" onClick={vi.fn()} {...menuProps} {...props} />
+    </FeedShowContext.Provider>,
+  );
+
+  afterEach(() => {
+    setFeedShow("cards");
+    publishCollectionOrder([]);
+  });
+
+  it.each(samples)("draws %s at rest exactly as Text on Hover does", (_kind, make) => {
+    // Without hover actions nothing lifts in either: the cards are the same.
+    expect(feedMarkup(make(), "media-only", false)).toBe(feedMarkup(make(), "media", false));
+    // With them, the same content under the parts hover brings.
+    const content = (show: FeedShow) => {
+      const frame = frameIn(parse(feedMarkup(make(), show, true)));
+      frame.querySelectorAll("[data-card-hover-overlay], [data-card-top-row], [data-card-hover-bottom-actions], [data-card-caption]")
+        .forEach((node) => node.remove());
+      return frame.innerHTML;
+    };
+    expect(content("media-only")).toBe(content("media"));
+  });
+
+  it.each(samples)("does not lift %s under the pointer: no lift, no caption, no row; the top buttons answer", (_kind, make) => {
+    const value = make();
+    const { container } = inMediaOnly(value);
+    const frame = frameIn(container);
+    expect(frame).not.toHaveAttribute("data-card-lift-hover");
+    expect(frame).not.toHaveAttribute("data-card-lift-pinned");
+    expect(frame.style.getPropertyValue("--card-lift")).toBe("");
+    expect(frame).toHaveAttribute("data-card-buttons-hover");
+    expect(frame).toHaveClass("group");
+    expect(container.querySelector("[data-card-caption]")).toBeNull();
+    expect(container.querySelector("[data-card-lift='tray'], [data-card-hover-bottom-actions], [data-card-hover-connect]")).toBeNull();
+    const buttons = container.querySelector("[data-card-hover-more-action]")!;
+    expect(buttons).toHaveClass("group-hover:opacity-100", "opacity-0");
+    expect(within(buttons as HTMLElement).getByRole("button", { name: "Card actions", hidden: true })).toBeInTheDocument();
+    expect(within(buttons as HTMLElement).queryByRole("button", { name: "Source", hidden: true }) !== null).toBe(value.url !== null);
+  });
+
+  it("shows a card's text nowhere when it has media, and a text card's as ever", () => {
+    inMediaOnly(picture());
+    expect(screen.queryByText("Evening over the bay")).toBeNull();
+    cleanup();
+    inMediaOnly(textPost());
+    expect(screen.getByText("Words of the post.")).toBeInTheDocument();
+  });
+
+  it("answers no hover while hover is off or the pointer has not arrived (С8.6)", () => {
+    const off = inMediaOnly(picture(), { hoverEnabled: false });
+    expect(frameIn(off.container)).not.toHaveAttribute("data-card-buttons-hover");
+    off.unmount();
+    const unarmed = inMediaOnly(picture(), { hoverArmed: false });
+    expect(frameIn(unarmed.container)).not.toHaveAttribute("data-card-buttons-hover");
+    expect(frameIn(unarmed.container)).not.toHaveClass("group");
+  });
+
+  it("keeps the keyboard's card down: its chord in the top row, no row of collections", () => {
+    const { container } = inMediaOnly(picture(), { keyboardLift: true, hoverEnabled: false, menuBadge: "element-menu" });
+    const frame = frameIn(container);
+    expect(frame).not.toHaveAttribute("data-card-lift-pinned");
+    expect(frame).not.toHaveAttribute("data-card-buttons-pinned");
+    expect(frame).not.toHaveAttribute("data-card-buttons-hover");
+    expect(container.querySelector("[data-feed-grid-action-badge]")).toHaveTextContent("⌘K");
+    expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-0");
+    expect(container.querySelector("[data-card-hover-bottom-actions]")).toBeNull();
+  });
+
+  it("holds the top buttons while a menu the pointer opened is up, still without a lift", async () => {
+    const { container } = inMediaOnly(picture());
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Card actions", hidden: true }), { button: 0, ctrlKey: false, pointerType: "mouse" });
+    await waitFor(() => expect(frameIn(container)).toHaveAttribute("data-card-buttons-pinned"));
+    expect(frameIn(container)).not.toHaveAttribute("data-card-lift-pinned");
+    expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-100");
+    // Its collections change through the menu's Connect (Д31).
+    expect(await screen.findByText("Connect")).toBeInTheDocument();
+  });
+
+  it("fades the top buttons on the lift's clock, and moves nothing else on hover", () => {
+    const css = readFileSync("src/styles/global.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const rules = css.split("}");
+    const TOP_BUTTONS = ":is([data-card-hover-more-action], [data-card-hover-overlay])";
+    const bodyOf = (selector: string) => {
+      const rule = rules.find((candidate) => {
+        const opening = candidate.indexOf("{");
+        return opening !== -1 && candidate.slice(0, opening).split(/,\s*\n/).map((part) => part.trim()).includes(selector);
+      });
+      return rule ? rule.slice(rule.indexOf("{") + 1) : "";
+    };
+    for (const selector of [`[data-card-buttons-hover]:hover ${TOP_BUTTONS}`, `[data-card-buttons-pinned] ${TOP_BUTTONS}`]) {
+      expect(bodyOf(selector), selector).toContain("opacity var(--lift-up)");
+    }
+    expect(bodyOf(TOP_BUTTONS)).toContain("opacity var(--lift-down)");
+    // The attributes of a card that does not lift name the top buttons alone:
+    // no rule moves, washes or shows anything else for them.
+    const named = rules.filter((rule) => rule.includes("data-card-buttons-"));
+    expect(named).toHaveLength(1);
+    const selectors = named[0]!.slice(0, named[0]!.indexOf("{")).split(/,\s*\n/).map((part) => part.trim())
+      .filter((part) => part.includes("data-card-buttons-"));
+    for (const selector of selectors) expect(selector.endsWith(TOP_BUTTONS), selector).toBe(true);
+  });
+
+  it.each(samples)("shows %s as a preview at rest: no caption, no row, the feed card's height", (kind, make) => {
+    setFeedShow("media-only");
+    const value = make();
+    const { container } = render(
+      <ReadOnlyCardPreview block={value} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" width={288} />,
+    );
+    const frame = frameIn(container);
+    expect(frame).toHaveAttribute("data-card-preview");
+    expect(frame).not.toHaveAttribute("data-card-preview-unfolded");
+    expect(container.querySelector("[data-card-caption], [data-card-preview-collections], [data-card-preview-row-room], [data-card-preview-media-box]")).toBeNull();
+    // The preview is the feed card at this width, as at rest in the feed: both
+    // drawn as markup, so their styles read alike.
+    const loaded = (markup: string) => {
+      const drawn = frameIn(parse(markup));
+      drawn.querySelectorAll("[loading]").forEach((node) => node.removeAttribute("loading"));
+      return drawn;
+    };
+    const preview = loaded(renderToStaticMarkup(
+      <ReadOnlyCardPreview block={value} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" width={288} />,
+    ));
+    const feed = loaded(renderToStaticMarkup(
+      <FeedShowContext.Provider value="media-only">
+        <CardColumnWidthContext.Provider value={288}>
+          <Card block={value} vaultPath={VAULT} thumbsRootPath="/tmp/thumbs" onClick={vi.fn()} />
+        </CardColumnWidthContext.Provider>
+      </FeedShowContext.Provider>,
+    ));
+    expect(preview.innerHTML).toBe(feed.innerHTML);
+    // Media that fills the card takes the box the feed reserves for it; a text
+    // card takes its content's own height, as in the feed.
+    expect(preview.style.height).toBe(kind === "a text post" ? "" : `${computeCardHeight(value, 288, null, "media-only")}px`);
   });
 });
 

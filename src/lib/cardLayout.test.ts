@@ -663,6 +663,50 @@ describe("one card in both presentations (SPEC_CARD_UNIFIED.md, Е2, Е8, Е11)"
   });
 });
 
+describe("Media Only: the cards of Text on Hover with no text and no lift (SPEC_FEED_DISPLAY.md, Д31)", () => {
+  const imageManifest = readyImageManifest({ previewWidth: 640, previewHeight: 480 });
+  const withMedia = [
+    ["a post with a picture and text", () => makeBlock({
+      block_type: "article", title: "A post", body: "Some words\n\n![](photo.jpg)",
+      media_urls: "[\"photo.jpg\"]", preview_text: "Some words", author: "Ann", preview_manifest: imageManifest,
+    })],
+    ["a picture with its own heading and text", () => makeBlock({
+      block_type: "image", media_file: "Media/Sunset.jpg", fallback_label: "Sunset",
+      content_heading: "Evening light", preview_text: "Over the bay", preview_manifest: imageManifest,
+    })],
+    ["a picture without words", () => makeBlock({
+      block_type: "image", media_file: "Media/Sunset.jpg", fallback_label: "Sunset", preview_manifest: imageManifest,
+    })],
+    ["a link with its page picture", () => pageLink({ source: [1200, 630], artifact: [1200, 630] })],
+  ] as const;
+  const withoutMedia = [
+    ["a text post", () => makeBlock({ block_type: "article", title: "Only words", body: "Just text", preview_text: "Just text", author: "Ann" })],
+    ["a link without a picture", () => makeBlock({ block_type: "link", title: "Bare page", url: "https://example.com/bare" })],
+    ["a note with an empty body", () => makeBlock({ block_type: "article", card_kind: "article", body: "" })],
+  ] as const;
+
+  it.each(withMedia)("shows %s at rest as Text on Hover does, its text nowhere, and does not lift", (_card, make) => {
+    const still = deriveCardLayoutDescriptor(make(), "media-only");
+    expect(still).toEqual({ ...deriveCardLayoutDescriptor(make(), "media"), textShown: "never", lifts: false });
+    expect(still.textUnderMedia).toBe(false);
+  });
+
+  it.each(withoutMedia)("leaves %s as the other presentations show it, without a lift", (_card, make) => {
+    for (const show of ["cards", "media"] as const) {
+      expect(deriveCardLayoutDescriptor(make(), "media-only"))
+        .toEqual({ ...deriveCardLayoutDescriptor(make(), show), lifts: false });
+    }
+  });
+
+  it("lifts every card in Media and Text and in Text on Hover", () => {
+    for (const [, make] of [...withMedia, ...withoutMedia]) {
+      for (const show of ["cards", "media"] as const) {
+        expect(deriveCardLayoutDescriptor(make(), show).lifts).toBe(true);
+      }
+    }
+  });
+});
+
 describe("the media's outline over a text part (SPEC_FEED_DISPLAY.md, Д20)", () => {
   const imageManifest = readyImageManifest({ previewWidth: 640, previewHeight: 480 });
   const galleryManifest = JSON.stringify({

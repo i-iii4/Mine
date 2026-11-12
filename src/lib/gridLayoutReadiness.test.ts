@@ -118,10 +118,12 @@ describe("exact deterministic heights", () => {
   });
 
   it("a card waits for its text's metrics only where its text part is drawn", () => {
-    // SPEC_FEED_DISPLAY.md, Д15: the text a presentation draws decides it; in
-    // `Media` a card with media keeps its text for the lift's caption.
+    // SPEC_FEED_DISPLAY.md, Д15, Д31: the text a presentation draws decides
+    // it; in `media` a card with media keeps its text for the lift's caption,
+    // in `media-only` it shows it nowhere.
     const described = { ...picture(1), body: "Evening over the bay" };
     expect(blockHasExactDeterministicHeight(described, new Map(), "media")).toBe(true);
+    expect(blockHasExactDeterministicHeight(described, new Map(), "media-only")).toBe(true);
     expect(blockHasExactDeterministicHeight(described, new Map(), "cards")).toBe(false);
     expect(blockHasExactDeterministicHeight(described, new Map([[1, widths]]), "cards")).toBe(true);
   });

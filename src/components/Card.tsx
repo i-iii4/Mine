@@ -392,10 +392,16 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
     () => deriveCardLayoutDescriptor(block, show),
     [block, show],
   );
-  // Every card with hover actions lifts to bring its row of collections up
-  // from under the bottom edge (С8); bare media lifts its caption with it
-  // (С8.7).
-  const lifts = Boolean(tags && onToggleTag && onCreateAndAssign && onRequestRename && onRequestDelete);
+  // A card with hover actions shows its top buttons on hover (С8.8).
+  const hasHoverActions = Boolean(tags && onToggleTag && onCreateAndAssign && onRequestRename && onRequestDelete);
+  // It lifts to bring its row of collections up from under the bottom edge
+  // (С8), bare media its caption with it (С8.7), in every presentation but
+  // `media-only`: there hover brings up the top buttons alone and keyboard
+  // focus lifts nothing (SPEC_FEED_DISPLAY.md, Д31).
+  const lifts = hasHoverActions && descriptor.lifts;
+  const buttonsOnly = hasHoverActions && !descriptor.lifts;
+  // The pointer's hover answers on this card (С8.6).
+  const hoverAnswers = hoverEnabled && hoverArmed;
   const [actionsPinned, setActionsPinned] = useState(false);
 
   const handleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -421,10 +427,10 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
       {...attributes}
       {...listeners}
       role="button"
-      // The card's own name in every presentation: `Media` clears the title
-      // and text, pictures carry an empty alt, and the hover menu is always in
-      // the tree, so without it a screen reader names the card only by its
-      // actions (Г4.7).
+      // The card's own name in every presentation: `media` and `media-only`
+      // clear the title and text, pictures carry an empty alt, and the hover
+      // menu is always in the tree, so without it a screen reader names the
+      // card only by its actions (Г4.7).
       aria-label={getNavigationLabel(block)}
       tabIndex={0}
       onClick={handleClick}
@@ -432,8 +438,13 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
       // The lift follows the bottom action row exactly: pointer hover while
       // hover is enabled, a pointer-opened menu holding the row, or the
       // keyboard's focus (С8, С8.5).
-      data-card-lift-hover={lifts && hoverEnabled && hoverArmed ? "" : undefined}
+      data-card-lift-hover={lifts && hoverAnswers ? "" : undefined}
       data-card-lift-pinned={lifts && (actionsPinned || keyboardLift) ? "" : undefined}
+      // A card that does not lift answers the pointer's hover and a menu the
+      // pointer opened with its top buttons alone, on the lift's clock; the
+      // keyboard's focus brings up nothing (Д31).
+      data-card-buttons-hover={buttonsOnly && hoverAnswers ? "" : undefined}
+      data-card-buttons-pinned={buttonsOnly && actionsPinned ? "" : undefined}
       style={lifts ? cardLiftStyle(descriptor) : undefined}
       className={cn(
         // The card's keyboard focus is the feed's (`data-feed-grid-item-focused`,
@@ -463,6 +474,7 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
           // into layers of their own.
           videoUnderneath={allowPlayback && block.feed_playback !== null}
           menuBadge={menuBadge}
+          lifts={descriptor.lifts}
           keyboardLift={keyboardLift}
           hoverArmed={hoverArmed}
           onKeyboardMoreMenuOpenChange={onKeyboardMoreMenuOpenChange}
@@ -483,7 +495,7 @@ function hasTextPart(descriptor: CardLayoutDescriptor): boolean {
 }
 
 /// Whether the lift brings up a caption: the presentation keeps the card's
-/// text for it (`Media`), and the card has text (SPEC_CARD_UNIFIED.md, Е12).
+/// text for it (`media`), and the card has text (SPEC_CARD_UNIFIED.md, Е12).
 function hasLiftCaption(descriptor: CardLayoutDescriptor): boolean {
   return descriptor.textShown === "on-lift" && hasCardText(descriptor.text);
 }
@@ -589,9 +601,9 @@ function fitLiftCaption(text: CardLayoutText, capPx: number | null): LiftCaption
   return fitted;
 }
 
-/// `Media` shows a card's media alone. A lift reveals the card's own text
+/// `media` shows a card's media alone. A lift reveals the card's own text
 /// under it, rising with the action row: its title, text and author, clamped
-/// shorter than in `Cards` (title and author one line, text two) so the media
+/// shorter than in `cards` (title and author one line, text two) so the media
 /// keeps the card (SPEC_CARD_STATES.md, С8.7). Nothing is put in place of a
 /// text the card does not have (SPEC_CARD_UNIFIED.md, Е12). The lift is as
 /// tall as this caption, so its height is handed to the frame as
@@ -697,8 +709,9 @@ const CARD_SHADOW_CLASS: Record<CardShadow, string | null> = {
 /// content stays whole from its top, a bare media card's caption stands
 /// under the media, and the card is taller by the room its row of
 /// collections needs, the row at the bottom as text, with no Source, More
-/// or Connect. A dragged card stays at rest, as the feed card does under a
-/// drag (С8.5).
+/// or Connect. In `media-only` the lift brings up nothing, so an unfolded
+/// preview stands at rest as the feed card does (SPEC_FEED_DISPLAY.md, Д31).
+/// A dragged card stays at rest, as the feed card does under a drag (С8.5).
 function StaticCard({
   block,
   vaultPath,
@@ -718,6 +731,8 @@ function StaticCard({
 }) {
   const { show } = useFeedDisplay();
   const descriptor = useMemo(() => deriveCardLayoutDescriptor(block, show), [block, show]);
+  // What the feed card's lift brings up, shown without the lift (С10.2).
+  const unfolds = unfolded && descriptor.lifts;
   // Media that fills its card takes the box the feed reserves for it at this
   // width; any other card takes its content's own height, the one the feed
   // reserves for it (SPEC_FEED_DISPLAY.md, Д15).
@@ -740,16 +755,16 @@ function StaticCard({
       <CardColumnWidthContext.Provider value={width}>
       <CardFrame
         data-card-preview=""
-        data-card-preview-unfolded={unfolded ? "" : undefined}
+        data-card-preview-unfolded={unfolds ? "" : undefined}
         className={cn(
           "pointer-events-none",
           CARD_SHADOW_CLASS[shadow],
         )}
         // Unfolded, the frame takes its height from what it holds: the
         // media's reserved box, then the caption or the row's room.
-        style={{ width, height: unfolded ? undefined : reservedHeight }}
+        style={{ width, height: unfolds ? undefined : reservedHeight }}
       >
-        {unfolded ? (
+        {unfolds ? (
           <>
             {reservedHeight === undefined
               ? content
@@ -1524,7 +1539,7 @@ function textGapsFor(lines: readonly CardTextLine[]) {
 }
 
 /// The body of every framed card that may stack text under media: posts,
-/// articles, X and Instagram posts, pictures `Cards` frames as posts, and
+/// articles, X and Instagram posts, pictures `cards` frames as posts, and
 /// links. Its media, when it has one, comes first; its text part follows and
 /// rises with the lift (SPEC_CARD_STATES.md, С8.2, С8.3). When the card's
 /// descriptor stands text under the media (`textUnderMedia`), the text part
@@ -1566,7 +1581,7 @@ function FramedCardBody({
 }
 
 /// The body of a framed card with its media on top and its text under it:
-/// posts, articles, X and Instagram posts, and pictures `Cards` frames as
+/// posts, articles, X and Instagram posts, and pictures `cards` frames as
 /// posts. The media spans the frame's inner width from its top edge; the
 /// frame's line gives it its top corners and the media's outline, which opens
 /// the text part, gives it the same corners at the bottom (Д20). The text is padded 8px at its sides,

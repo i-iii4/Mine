@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -57,11 +58,11 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     )).toEqual(["Sort", "Show", "Spacing"]);
     expect(groups.map((group) => group.textContent)).toEqual([
       "Newest firstOldest first",
-      "CardsMedia",
+      "Media and TextText on HoverMedia Only",
       "322416",
     ]);
     expect(checkedIn("Sort")).toEqual(["Newest first"]);
-    expect(checkedIn("Show")).toEqual(["Cards"]);
+    expect(checkedIn("Show")).toEqual(["Media and Text"]);
     expect(checkedIn("Spacing")).toEqual(["32"]);
     // Two between the feed's groups, one before each of the three trial
     // sections and one inside the compact sidebar's while its table choices
@@ -71,11 +72,30 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     expect(screen.getByRole("menu").lastElementChild).toHaveAttribute("data-card-view-menu");
   });
 
-  it("marks the stored presentation when it opens (Д18)", async () => {
-    window.localStorage.setItem("mine.feed.show", "media");
+  it.each([
+    ["cards", "Media and Text"],
+    ["media", "Text on Hover"],
+    ["media-only", "Media Only"],
+  ])("marks the stored presentation %s by its label when it opens (Д10, Д18)", async (stored, label) => {
+    window.localStorage.setItem("mine.feed.show", stored);
     reloadFeedDisplay();
     await openMenu();
-    expect(checkedIn("Show")).toEqual(["Media"]);
+    expect(checkedIn("Show")).toEqual([label]);
+  });
+
+  it("stores Media Only under its own value (Д31)", async () => {
+    const user = await openMenu();
+    await user.click(screen.getByRole("menuitemradio", { name: "Media Only" }));
+    expect(getFeedDisplay().show).toBe("media-only");
+    expect(window.localStorage.getItem("mine.feed.show")).toBe("media-only");
+    expect(checkedIn("Show")).toEqual(["Media Only"]);
+  });
+
+  it("writes the presentations' labels in one place, the menu's list (Д10)", () => {
+    const source = readFileSync("src/components/FeedDisplayMenu.tsx", "utf8");
+    for (const label of ["Media and Text", "Text on Hover", "Media Only"]) {
+      expect(source.split(`"${label}"`)).toHaveLength(2);
+    }
   });
 
   it("keeps every row on the menu's text column, the check in the leading icon slot", async () => {
@@ -94,7 +114,7 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
   it("applies each choice at once and stays open", async () => {
     const user = await openMenu();
     await user.click(screen.getByRole("menuitemradio", { name: "Oldest first" }));
-    await user.click(screen.getByRole("menuitemradio", { name: "Media" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Text on Hover" }));
     await user.click(screen.getByRole("menuitemradio", { name: "24" }));
 
     expect(getFeedDisplay()).toEqual({ sort: "oldest", show: "media" });
@@ -103,7 +123,7 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     expect(window.localStorage.getItem("mine.spacing")).toBe("24");
     expect(screen.getByRole("menu")).toBeInTheDocument();
     expect(checkedIn("Sort")).toEqual(["Oldest first"]);
-    expect(checkedIn("Show")).toEqual(["Media"]);
+    expect(checkedIn("Show")).toEqual(["Text on Hover"]);
     expect(checkedIn("Spacing")).toEqual(["24"]);
   });
 
@@ -136,7 +156,7 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     vi.mocked(emit).mockClear();
 
     await user.click(screen.getByRole("menuitemradio", { name: "Oldest first" }));
-    await user.click(screen.getByRole("menuitemradio", { name: "Media" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Text on Hover" }));
 
     expect(emit).toHaveBeenCalledWith("settings-changed", { key: "mine.feed.sort", value: "oldest" });
     expect(emit).toHaveBeenCalledWith("settings-changed", { key: "mine.feed.show", value: "media" });

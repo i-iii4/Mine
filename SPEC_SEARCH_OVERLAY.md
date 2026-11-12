@@ -349,7 +349,7 @@ selection невозможен — модальность забирает кл�
   галочки `CollectionPicker` и строка `Collections` метаданных меняются
   сразу, членство меняет обработчик App (`onToggleTag`,
   `onCreateAndAssign`). `Source` открывает адрес в браузере. `More` даёт
-  меню карточки: Connect, Source, Reveal in Finder, Copy Path, Rename…,
+  меню карточки: Connect, Source, Copy Link, Reveal in Finder, Copy Path, Rename…,
   Disconnect, Delete; `Rename…` и `Delete` открывают диалоги App
   (`onRequestRename`, `onRequestDelete`), те же, что у ленты.
 - Открытое меню держит свою строку: указатель по пути через другие строки не

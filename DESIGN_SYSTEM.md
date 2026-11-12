@@ -1435,6 +1435,17 @@ hover/focus перекрашивает seam текущей и предыдуще
 | Подложка (`--scrim-color`, `.modal-scrim`): окна, поиск, просмотр изображения, меню поверх ленты | холст `--background` с непрозрачностью 32 %, размытие 20px, `saturate(150%)` | то же по холсту тёмной темы |
 | Shadow overlay | 0 4px 24px rgba(0,0,0,0.12) | 0 4px 24px rgba(0,0,0,0.4) |
 
+## Уровни движения
+
+Решения пользователя 11.11.2026
+([SPEC_MOTION_LEVELS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MOTION_LEVELS.md>)). Значения движения в этом
+документе описывают уровень `Full`. `Minimal` берёт токены `--motion-enter` (150 мс),
+`--motion-exit` (100 мс), `--motion-ease` (`cubic-bezier(0.22, 1, 0.36, 1)`),
+`--motion-shift` (6,67 px) и `--motion-scale` (95 %). Ветка «Уменьшить движение» или
+`prefers-reduced-motion` в этом документе описывает уровень `Off`, если
+SPEC_MOTION_LEVELS.md не задаёт другого. Системная настройка сама по себе выбирает
+`Minimal`. С клавиатуры всё мгновенно на всех уровнях.
+
 ## Интерактивные состояния
 
 Состояние элемента меняется одним свойством за раз. Без transition. Мгновенно.
@@ -3065,7 +3076,9 @@ mode карточка получает `hoverEnabled=false`: `group-hover:opacit
 - Source: `openUrl(url)` в браузере. Без безопасного `block.url` кнопки нет
 - Connect: `DropdownMenu` со списком каналов (`CollectionPicker`)
 - More / right-click menu: `DropdownMenu` / `ContextMenu` — Connect
-  (подменю), Source, Reveal in Finder, Copy Path, Rename…, Disconnect from
+  (подменю), Source, Copy Link (только у карточки со ссылкой, сразу после
+  Source; решение пользователя 11.11.2026), Reveal in Finder, Copy Path,
+  Rename…, Disconnect from
   current collection, Delete. Иконки используются у `Connect` (`Plus`),
   `Source` (`ExternalLink`), `Disconnect` (`Unlink` — разрыв цепи) и `Delete`
   (`Trash2` — корзина); остальные строки получают пустой leading-slot той же
@@ -3242,12 +3255,13 @@ feed surface.
 
 - Вид: у превью нет следующего наведения, поэтому оно показывает всё, что
   приносит подъём ленты, не поднимая и не обрезая содержимое: текст с первой
-  строки без затухания сверху, в `Media` подпись карточки с текстом под
+  строки без затухания сверху, в `Text on Hover` подпись карточки с текстом под
   медиа, внизу ряд коллекций (`font-mono text-sm text-muted-foreground`, без
   коллекций `No collections` цветом `--tertiary-foreground`) в ручном порядке
   бокового меню. Карточка выше ленточной на место ряда, то есть на высоту
   подъёма С8.1 (26 px у карточки с текстом, 32 px у медиа во всю карточку),
-  или на подпись.
+  или на подпись. В `Media Only` подъёма нет, поэтому превью стоит в покое,
+  без подписи и ряда коллекций (SPEC_FEED_DISPLAY.md, Д31).
 - Ничего не нажимается: нет `Source`, `More` и плюса `Connect`, имена
   коллекций не отвечают на наведение, превью `pointer-events-none`.
 - Без движения: внутри `[data-card-preview]` у слоёв подъёма нет переходов,

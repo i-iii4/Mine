@@ -171,9 +171,15 @@ Settings и `Cmd+,` сохраняются. Прежняя условная те
 | Настройка | Контрол | Ключ |
 |---|---|---|
 | Theme: System / Light / Dark | пилюля `Tabs` (size `panel`) | `theme` |
+| Motion: Full / Minimal / Off, без подписи | пилюля `Tabs` (size `panel`) | `mine.motion` |
 | Card corners: Square / 4 | пилюля `Tabs` (size `panel`) | `mine.cardRadius` |
 | Fade content under the chrome | `Checkbox` + подпись | `mine.scrollEdgeFade` |
 | Hide bottom menu | `Checkbox` + подпись | `mine.bottomActionBarHidden` |
+
+Строка `Motion` (решение пользователя 11.11.2026) показывает действующий уровень
+движения, в том числе выбранный системной настройкой, пока пользователь не выбрал
+уровень. Хранение, рассылку и поведение уровней задаёт
+[SPEC_MOTION_LEVELS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MOTION_LEVELS.md>), НС1 по НС5.
 
 `Spacing` (`mine.spacing`) с 30.09.2026 живёт в панели `Display` ленты
 ([SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md), Д17).

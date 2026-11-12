@@ -77,14 +77,22 @@ export interface CardLayoutDescriptor {
   media: CardLayoutMedia | null;
   /// The card's text, whether the text part or the lift caption shows it.
   text: CardLayoutText;
-  /// `always`: in the text part under the media (`Cards`, and every card
-  /// without media). `on-lift`: only as the caption a lift brings up (`Media`
-  /// with media, Е12).
-  textShown: "always" | "on-lift";
+  /// `always`: in the text part under the media (`cards`, and every card
+  /// without media). `on-lift`: only as the caption a lift brings up (`media`
+  /// with media, Е12). `never`: nowhere (`media-only` with media,
+  /// SPEC_FEED_DISPLAY.md, Д31).
+  textShown: CardTextShown;
   /// The text part stands under the shown media (Д20): the media then closes
   /// with its outline, the frame's ring mirrored under it.
   textUnderMedia: boolean;
+  /// The card rises on hover and under keyboard focus, bringing up its row of
+  /// collections (SPEC_CARD_STATES.md, С8). In `media-only` no card does:
+  /// hover brings up its top buttons alone (SPEC_FEED_DISPLAY.md, Д31).
+  lifts: boolean;
 }
+
+/// Where a card shows its text (`CardLayoutDescriptor.textShown`).
+export type CardTextShown = "always" | "on-lift" | "never";
 
 export type CardLayoutBlock = Omit<LightBlock, "search_match" | "collections"> & {
   search_match?: LightBlock["search_match"];
@@ -530,16 +538,32 @@ export function hasCardText(text: CardLayoutText): boolean {
   return Boolean(text.title || text.text || text.author);
 }
 
+/// Where a card with media shows its text in each presentation; a card without
+/// media shows it in its text part in every one (Е11).
+function textShownWithMedia(show: FeedShow): CardTextShown {
+  switch (show) {
+    case "cards":
+      return "always";
+    case "media":
+      return "on-lift";
+    case "media-only":
+      return "never";
+  }
+  const _never: never = show;
+  return _never;
+}
+
 /// The card in the feed's presentation (Е2, Е11). Every card follows the same
-/// rules: what it has, it shows. `Media` shows a card's media alone and keeps
-/// its text for the lift's caption; a card without media shows its text as in
-/// `Cards`.
+/// rules: what it has, it shows. `media` shows a card's media alone and keeps
+/// its text for the lift's caption; `media-only` shows the same at rest, keeps
+/// the text for nothing and lifts no card (SPEC_FEED_DISPLAY.md, Д31); a card
+/// without media shows its text as in `cards`.
 export function deriveCardLayoutDescriptor(
   block: CardLayoutBlock,
   show: FeedShow = "cards",
 ): CardLayoutDescriptor {
   const { media, text } = deriveCardContent(block);
-  const textShown = show === "media" && media !== null ? "on-lift" : "always";
+  const textShown = media !== null ? textShownWithMedia(show) : "always";
   const textPartShown = textShown === "always" && hasCardText(text);
   return {
     mode: media !== null || hasCardText(text) ? "content" : "empty",
@@ -547,5 +571,6 @@ export function deriveCardLayoutDescriptor(
     text,
     textShown,
     textUnderMedia: media !== null && textPartShown,
+    lifts: show !== "media-only",
   };
 }

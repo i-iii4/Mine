@@ -7,10 +7,22 @@
 import { createContext, useSyncExternalStore } from "react";
 import type { FeedOrder } from "@/types";
 
-/// `cards`: every card shows all its content; `media`: a card with media shows
-/// only its media, a card without stays as in `cards`. Both act on every card
-/// alike (SPEC_CARD_UNIFIED.md, Е11).
-export type FeedShow = "cards" | "media";
+/// The feed's presentation, as code and storage name it; the menu's labels
+/// live in one place, `SHOW_CHOICES` in FeedDisplayMenu.tsx
+/// (SPEC_FEED_DISPLAY.md, Д10). `cards`: every card shows all its content.
+/// `media`: a card with media shows only its media and keeps its text for the
+/// lift's caption. `media-only`: the same cards at rest, its text shown
+/// nowhere, and no card lifts: hover brings up the top buttons alone (Д31).
+/// A card without media stays as in `cards` in every one; each acts on every
+/// card alike (SPEC_CARD_UNIFIED.md, Е11).
+export type FeedShow = "cards" | "media" | "media-only";
+
+/// Every presentation, for reading a stored one.
+const FEED_SHOWS: readonly FeedShow[] = ["cards", "media", "media-only"];
+
+function isFeedShow(value: string | null): value is FeedShow {
+  return FEED_SHOWS.some((show) => show === value);
+}
 
 export interface FeedDisplay {
   sort: FeedOrder;
@@ -37,10 +49,12 @@ function writeKey(key: string, value: string) {
 }
 
 /// An unknown or damaged stored value reads as the default (Д18), and so does
-/// the retired `mixed` (SPEC_CARD_UNIFIED.md, Е11).
+/// the retired `mixed` (SPEC_CARD_UNIFIED.md, Е11). The renaming of 11.11.2026
+/// kept the stored values, so a choice made before it reads as it was.
 export function readStoredFeedDisplay(): FeedDisplay {
   const sort = readKey(FEED_SORT_STORAGE_KEY) === "oldest" ? "oldest" : "newest";
-  const show: FeedShow = readKey(FEED_SHOW_STORAGE_KEY) === "media" ? "media" : "cards";
+  const storedShow = readKey(FEED_SHOW_STORAGE_KEY);
+  const show: FeedShow = isFeedShow(storedShow) ? storedShow : "cards";
   return { sort, show };
 }
 

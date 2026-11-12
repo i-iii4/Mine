@@ -37,9 +37,13 @@ const SORT_CHOICES: DisplayChoice<FeedOrder>[] = [
   { value: "oldest", label: "Oldest first" },
 ];
 
+/// The presentations' labels, the only place they are written
+/// (SPEC_FEED_DISPLAY.md, Д10): a new name is one line here. The values stay
+/// what storage holds (Д18).
 const SHOW_CHOICES: DisplayChoice<FeedShow>[] = [
-  { value: "cards", label: "Cards" },
-  { value: "media", label: "Media" },
+  { value: "cards", label: "Media and Text" },
+  { value: "media", label: "Text on Hover" },
+  { value: "media-only", label: "Media Only" },
 ];
 
 const SPACING_CHOICES: DisplayChoice<string>[] = DENSITY_STEPS.map((step) => ({

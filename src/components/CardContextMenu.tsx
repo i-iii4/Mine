@@ -15,7 +15,7 @@ import {
   COLLECTION_PICKER_CONTENT_CLASS,
   CollectionPicker,
 } from "./CollectionPicker";
-import { COPY_PATH_FAILED_TITLE, copyTextToClipboard } from "@/lib/clipboard";
+import { COPY_LINK_FAILED_TITLE, COPY_PATH_FAILED_TITLE, copyTextToClipboard } from "@/lib/clipboard";
 import { openLinkInBrowser, revealInFinder } from "@/lib/systemActions";
 import { useCardMembership } from "@/hooks/useCardMembership";
 
@@ -79,6 +79,15 @@ export function CardTagMenu({
             <ExternalLink className="size-[13px]" />
           </MenuIconSlot>
           Source
+        </ContextMenuItem>
+      )}
+
+      {/* The card's link, beside the item that opens it (user's decision of
+          11.11.2026). */}
+      {hasUrl && (
+        <ContextMenuItem onSelect={() => copyTextToClipboard(block.url!, COPY_LINK_FAILED_TITLE)}>
+          <MenuIconSlot />
+          Copy Link
         </ContextMenuItem>
       )}
 

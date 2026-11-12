@@ -733,6 +733,46 @@ describe("card presentation heights (SPEC_FEED_DISPLAY.md, Д15)", () => {
   });
 });
 
+describe("Media Only heights (SPEC_FEED_DISPLAY.md, Д15, Д31)", () => {
+  const videoPost = () => makeBlock({
+    block_type: "article", title: "Clip", body: "words\n\n![](clip.mp4)", media_urls: "[\"clip.mp4\"]",
+    preview_manifest: JSON.stringify({
+      kind: "video_poster", primary_preview_path: "test.jpg", width: 1080, height: 1080,
+      preview_width: 640, preview_height: 640,
+      tiles: [{
+        source_path: "clip.mp4", preview_path: "test.preview-1.jpg", width: 1080, height: 1080,
+        preview_width: 640, preview_height: 640, is_video: true, is_video_poster: true,
+      }],
+      overflow_count: 0,
+    }),
+  });
+  const cards = [
+    makeBlock({ block_type: "image", media_file: "photo.jpg", content_heading: "Sunset", preview_text: "Evening", preview_manifest: artifactManifest(640, 480) }),
+    makeBlock({ block_type: "article", title: "A post", body: "Words\n\n![](photo.jpg)", media_urls: "[\"photo.jpg\"]", author: "@someone", preview_manifest: artifactManifest(640, 480) }),
+    pageLink({ source: [1200, 630], artifact: [600, 900] }),
+    pageLink({ source: [1200, 630], artifact: null }),
+    videoPost(),
+    makeBlock({ block_type: "article", title: "Only words", body: "Just text", preview_text: "Just text" }),
+    makeBlock({ block_type: "link", url: "https://example.com/bare" }),
+  ];
+
+  it("reserves every card exactly the height Text on Hover reserves, with or without word metrics", () => {
+    for (const card of cards) {
+      for (const column of [200, 320, 500]) {
+        for (const widths of [null, ONE_LINE]) {
+          expect(computeCardHeight(card, column, widths, "media-only"))
+            .toBe(computeCardHeight(card, column, widths, "media"));
+        }
+      }
+    }
+  });
+
+  it("plays a post's single video over the whole card, as Text on Hover does", () => {
+    expect(computeFeedPlaybackSurfaceEnvelope(videoPost(), 320, "media-only"))
+      .toEqual(computeFeedPlaybackSurfaceEnvelope(videoPost(), 320, "media"));
+  });
+});
+
 describe("post card geometry (SPEC_FEED_DISPLAY.md, Д20, Д25)", () => {
   const COLUMN = 320;
   const INNER = COLUMN - CARD_BORDER;

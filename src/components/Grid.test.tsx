@@ -27,6 +27,7 @@ import {
   type MasonryLayout,
 } from "@/lib/masonryLayout";
 import { computeCardHeight } from "@/lib/cardHeight";
+import { setFeedShow } from "@/lib/feedDisplay";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { cardMenuBadgeOf } from "./CardHoverMenu";
 import { commandById, setCommandOverrides } from "@/lib/commandRegistry";
@@ -1734,6 +1735,30 @@ describe("Grid — no collapse after add / revisit", () => {
         expect(rowOf("block-9451")).toHaveClass("opacity-0");
       });
 
+      describe("in Media Only (SPEC_FEED_DISPLAY.md, Д31)", () => {
+        beforeEach(() => setFeedShow("media-only"));
+        afterEach(() => setFeedShow("cards"));
+
+        it("lifts neither the pointer's card nor the keyboard's: the top buttons and the chord alone answer", async () => {
+          await feed();
+          const card = gridItemForSlug("block-9451")!;
+          step(card, 0, 10);
+          step(card, 1, 100);
+          // The pointer has arrived: its top buttons answer, and nothing rises.
+          expect(frameOf("block-9451")).toHaveAttribute("data-card-buttons-hover");
+          expect(frameOf("block-9451")).not.toHaveAttribute("data-card-lift-hover");
+          expect(rowOf("block-9451")).toBeNull();
+          expect(card.querySelector("[data-card-hover-more-action]")).toHaveClass("group-hover:opacity-100");
+
+          await focusOn("block-9452");
+          expect(frameOf("block-9452")).not.toHaveAttribute("data-card-lift-pinned");
+          expect(frameOf("block-9452")).not.toHaveAttribute("data-card-buttons-pinned");
+          expect(rowOf("block-9452")).toBeNull();
+          expect(gridItemForSlug("block-9452")?.querySelector("[data-feed-grid-action-badge]")).toHaveTextContent("⌘K");
+          expect(gridItemForSlug("block-9452")?.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-0");
+        });
+      });
+
       it("leaves the pointer's row as ever, with its names and plus, stopping before the edge", async () => {
         await feed();
         const card = gridItemForSlug("block-9451")!;
@@ -2840,7 +2865,7 @@ describe("Grid — no collapse after add / revisit", () => {
 
     // Commands that address a single file or URL have no group meaning, so the
     // selection menu does not offer them at all.
-    for (const label of ["Reveal in Finder", "Copy Path", "Rename…", "Source"]) {
+    for (const label of ["Reveal in Finder", "Copy Path", "Rename…", "Source", "Copy Link"]) {
       expect(within(menu).queryByText(label)).toBeNull();
     }
     expect(within(menu).getByText("Connect")).toBeInTheDocument();

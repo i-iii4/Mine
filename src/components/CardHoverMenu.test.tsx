@@ -136,6 +136,7 @@ describe("CardHoverMenu", () => {
     ["Source", "Could not open the link"],
     ["Reveal in Finder", "Could not reveal in Finder"],
     ["Copy Path", "Could not copy the path"],
+    ["Copy Link", "Could not copy the link"],
   ])("logs when %s failed and shows nothing", async (item, title) => {
     vi.mocked(invoke).mockClear();
     vi.mocked(openUrl).mockRejectedValueOnce(new Error("no browser"));
@@ -258,6 +259,28 @@ describe("CardHoverMenu", () => {
       expect(container.querySelector(selector), selector).not.toHaveClass("transform-gpu");
     }
     expect(container.querySelector(BOTTOM_ROW)).not.toHaveAttribute("data-card-lift-gpu");
+  });
+
+  it("has no row of collections on a card that does not lift, its top buttons as ever (SPEC_FEED_DISPLAY.md, Д31)", () => {
+    const { container } = render(
+      <CardHoverMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        lifts={false}
+        keyboardLift
+      />,
+    );
+
+    expect(container.querySelector(BOTTOM_ROW)).toBeNull();
+    expect(container.querySelector("[data-card-lift]")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
+    expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("group-hover:opacity-100");
+    expect(screen.getByRole("button", { name: "Card actions" })).toBeInTheDocument();
   });
 
   it("reports when a pointer menu holds the bottom row, the card lift's pin", async () => {
@@ -385,6 +408,44 @@ describe("CardHoverMenu", () => {
       expect(writeText).toHaveBeenCalledWith("/vault/alpha-block.md");
     });
     expect(webClipboard).not.toHaveBeenCalled();
+  });
+
+  it("copies the card's link right after Source, and has no Copy Link without one", async () => {
+    const { unmount } = render(
+      <CardHoverMenu
+        block={makeBlock()}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        openMoreMenuRequestSequence={1}
+      />,
+    );
+
+    const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent?.trim());
+    expect(items.indexOf("Copy Link")).toBe(items.indexOf("Source") + 1);
+    fireEvent.click(screen.getByText("Copy Link"));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("https://example.com");
+    });
+    unmount();
+
+    render(
+      <CardHoverMenu
+        block={{ ...makeBlock(), url: null }}
+        vaultPath="/vault"
+        tags={[]}
+        onToggleTag={vi.fn()}
+        onCreateAndAssign={vi.fn()}
+        onRequestRename={vi.fn()}
+        onRequestDelete={vi.fn()}
+        openMoreMenuRequestSequence={1}
+      />,
+    );
+    expect(await screen.findByText("Copy Path")).toBeInTheDocument();
+    expect(screen.queryByText("Copy Link")).toBeNull();
   });
 
   it("shows Rename in the overflow menu", async () => {

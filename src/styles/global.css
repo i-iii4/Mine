@@ -431,8 +431,10 @@ select,
    window rise together and the window keeps its corners; the picture plane
    inside drifts back all but --card-lift-drift, so the picture itself only
    hints at the motion (8px). Bare media (a picture or a video without a
-   frame, or a card `Media` shows as media alone) brings up its caption too,
-   and the caption sets --card-lift to its own height on the frame. The frame
+   frame, or a card `media` shows as media alone) brings up its caption too,
+   and the caption sets --card-lift to its own height on the frame. In
+   `media-only` no card lifts (SPEC_FEED_DISPLAY.md, Д31): its frame carries
+   none of the lift's attributes, only those of its top buttons below. The frame
    clips everything; its outer box never moves. Every part runs on one clock
    per direction, opacity included (С8.4, user's decision of 06.11.2026):
    raising 200ms, settling 150ms. The two lift curves live here alone; each is
@@ -586,12 +588,15 @@ select,
     opacity var(--lift-up);
 }
 
-/* The top buttons fade on the lift's clock. */
+/* The top buttons fade on the lift's clock, on a card that lifts and on one
+   that only shows them (`media-only`, SPEC_FEED_DISPLAY.md, Д31). */
 :is([data-card-hover-more-action], [data-card-hover-overlay]) {
   transition: opacity var(--lift-down);
 }
 [data-card-lift-hover]:hover :is([data-card-hover-more-action], [data-card-hover-overlay]),
-[data-card-lift-pinned] :is([data-card-hover-more-action], [data-card-hover-overlay]) {
+[data-card-lift-pinned] :is([data-card-hover-more-action], [data-card-hover-overlay]),
+[data-card-buttons-hover]:hover :is([data-card-hover-more-action], [data-card-hover-overlay]),
+[data-card-buttons-pinned] :is([data-card-hover-more-action], [data-card-hover-overlay]) {
   transition: opacity var(--lift-up);
 }
 

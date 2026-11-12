@@ -35,7 +35,7 @@ import {
   COLLECTION_PICKER_CONTENT_CLASS,
   CollectionPicker,
 } from "./CollectionPicker";
-import { COPY_PATH_FAILED_TITLE, copyTextToClipboard } from "@/lib/clipboard";
+import { COPY_LINK_FAILED_TITLE, COPY_PATH_FAILED_TITLE, copyTextToClipboard } from "@/lib/clipboard";
 import { openLinkInBrowser, revealInFinder } from "@/lib/systemActions";
 import { useCardMembership } from "@/hooks/useCardMembership";
 import { CardCollectionsContext } from "@/lib/cardCollections";
@@ -94,6 +94,10 @@ type CardHoverMenuPropsWithState = CardHoverMenuProps & {
   videoUnderneath?: boolean;
   /// The keyboard's card shows the chord of its menu at the end of the top row.
   menuBadge?: CardMenuBadgeCommand | null;
+  /// The card lifts (SPEC_CARD_STATES.md, С8): only then does a row of its
+  /// collections rise with it. In `media-only` no card lifts, and hover
+  /// brings up the top buttons alone (SPEC_FEED_DISPLAY.md, Д31).
+  lifts?: boolean;
   /// The keyboard's card lifts as on hover and shows its collections' names,
   /// with no buttons (SPEC_CARD_STATES.md, С8.5).
   keyboardLift?: boolean;
@@ -396,6 +400,15 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
         </DropdownMenuItem>
       )}
 
+      {/* The card's link, beside the item that opens it (user's decision of
+          11.11.2026). */}
+      {hasUrl && (
+        <DropdownMenuItem onSelect={() => copyTextToClipboard(block.url!, COPY_LINK_FAILED_TITLE)}>
+          <MenuIconSlot />
+          Copy Link
+        </DropdownMenuItem>
+      )}
+
       <DropdownMenuSeparator />
 
       <DropdownMenuItem onSelect={() => revealInFinder(filePath)}>
@@ -517,6 +530,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
   hoverEnabled = true,
   videoUnderneath = false,
   menuBadge = null,
+  lifts = true,
   keyboardLift = false,
   hoverArmed = false,
   onKeyboardMoreMenuOpenChange,
@@ -654,46 +668,50 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           It shows only where the card lifts: under the pointer, held by a menu
           the pointer opened, or on the keyboard's card, there as names alone,
           running to the card's right edge, where the row's own fade ends: there
-          is no plus to stop at (С8.5, С8.9). */}
-      <div
-        className={cn(
-          "pointer-events-none absolute bottom-2 left-2 z-[5] flex items-center gap-1",
-          // As tall as with the plus, so the letters stand where the pointer's do.
-          keyboardRow ? "right-0 h-6" : "right-2",
-          hoverEnabled && "group-hover:pointer-events-auto group-hover:opacity-100",
-          hoverActionsPinned ? "pointer-events-auto opacity-100" : keyboardLift ? "opacity-100" : "opacity-0",
-        )}
-        data-card-lift="tray"
-        data-card-lift-gpu={videoUnderneath ? "" : undefined}
-        data-card-hover-bottom-actions=""
-        data-card-hover-enabled={hoverEnabled ? "true" : undefined}
-        data-card-keyboard-row={keyboardRow ? "" : undefined}
-        onClick={stopProp}
-        onPointerDown={stopProp}
-        onTransitionEnd={(event) => {
-          if (keyboardRow && !keyboardLift && event.target === event.currentTarget && event.propertyName === "opacity") {
-            setKeyboardRow(false);
-          }
-        }}
-      >
-        <CardCollectionsRow collections={block.collections} order={tags} readOnly={keyboardRow} />
-        {!keyboardRow && (
-          <CardConnectMenu
-            block={block}
-            tags={tags}
-            currentTag={currentTag}
-            onToggleTag={onToggleTag}
-            onCreateAndAssign={onCreateAndAssign}
-            className="ml-auto"
-            onCloseAutoFocus={noFocusBackAfterPress}
-            onOpenChange={(open) => {
-              if (open) onInteractionStart?.();
-              else if (pointerIsOnMenu()) setHeldPastClose(true);
-              setChannelOpen(open);
-            }}
-          />
-        )}
-      </div>
+          is no plus to stop at (С8.5, С8.9). A card that does not lift has no
+          row: its collections change through More → Connect
+          (SPEC_FEED_DISPLAY.md, Д31). */}
+      {lifts && (
+        <div
+          className={cn(
+            "pointer-events-none absolute bottom-2 left-2 z-[5] flex items-center gap-1",
+            // As tall as with the plus, so the letters stand where the pointer's do.
+            keyboardRow ? "right-0 h-6" : "right-2",
+            hoverEnabled && "group-hover:pointer-events-auto group-hover:opacity-100",
+            hoverActionsPinned ? "pointer-events-auto opacity-100" : keyboardLift ? "opacity-100" : "opacity-0",
+          )}
+          data-card-lift="tray"
+          data-card-lift-gpu={videoUnderneath ? "" : undefined}
+          data-card-hover-bottom-actions=""
+          data-card-hover-enabled={hoverEnabled ? "true" : undefined}
+          data-card-keyboard-row={keyboardRow ? "" : undefined}
+          onClick={stopProp}
+          onPointerDown={stopProp}
+          onTransitionEnd={(event) => {
+            if (keyboardRow && !keyboardLift && event.target === event.currentTarget && event.propertyName === "opacity") {
+              setKeyboardRow(false);
+            }
+          }}
+        >
+          <CardCollectionsRow collections={block.collections} order={tags} readOnly={keyboardRow} />
+          {!keyboardRow && (
+            <CardConnectMenu
+              block={block}
+              tags={tags}
+              currentTag={currentTag}
+              onToggleTag={onToggleTag}
+              onCreateAndAssign={onCreateAndAssign}
+              className="ml-auto"
+              onCloseAutoFocus={noFocusBackAfterPress}
+              onOpenChange={(open) => {
+                if (open) onInteractionStart?.();
+                else if (pointerIsOnMenu()) setHeldPastClose(true);
+                setChannelOpen(open);
+              }}
+            />
+          )}
+        </div>
+      )}
     </>
   );
 });

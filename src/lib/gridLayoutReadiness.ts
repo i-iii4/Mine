@@ -71,12 +71,12 @@ export function blockHasExactDeterministicHeight(
 ): boolean {
   if (wordWidthsMap.has(block.id)) return true;
   // Wrapped lines exist only where the card draws its title or text in the
-  // text part: a card with media in `Media` draws none, and its caption on a
-  // lift takes no room in the layout (SPEC_FEED_DISPLAY.md, Д15;
-  // SPEC_CARD_UNIFIED.md, Е11, Е12). The author is one line and needs no
-  // metrics.
+  // text part: a card with media in `media` and `media-only` draws none, and
+  // its caption on a lift takes no room in the layout (SPEC_FEED_DISPLAY.md,
+  // Д15, Д31; SPEC_CARD_UNIFIED.md, Е11, Е12). The author is one line and
+  // needs no metrics.
   const descriptor = deriveCardLayoutDescriptor(block, show);
-  return descriptor.textShown === "on-lift"
+  return descriptor.textShown !== "always"
     || !hasCardText({ ...descriptor.text, author: "" });
 }
 
