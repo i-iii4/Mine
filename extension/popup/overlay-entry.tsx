@@ -5,6 +5,7 @@ import { clearOpenClip, parseOpenClip, type OpenClip } from "./lib/openClip";
 import { DEFAULT_OVERLAY_BOUNDS, OVERLAY_BOUNDS_KEY, parseOverlayBounds, type OverlayBounds } from "./lib/overlayBounds";
 import { rewriteRootForShadow } from "./lib/shadowRootCss";
 import { SYSTEM_SANS_STACK } from "@/lib/fontChoice";
+import { followSystemMotion } from "@/lib/motion";
 
 // Overlay entry — injected into the active tab's content-script isolated
 // world via chrome.scripting.executeScript. Mounts <PopupApp /> inside a
@@ -250,7 +251,15 @@ async function mount(generation: number, returnFocus: Element | null, restored: 
   shadow.appendChild(root);
 
   document.body.appendChild(host);
-  const release = keepInDocument(host);
+  const keep = keepInDocument(host);
+  // The level on the shadow's top element: `:root` selects nothing in a
+  // shadow root, and the level's rules read an ancestor's attribute
+  // (SPEC_MOTION_LEVELS.md, НС7, Р8). The system's flag alone (УД10).
+  const stopMotion = followSystemMotion(root);
+  const release = () => {
+    keep();
+    stopMotion();
+  };
 
   // The page under the overlay keeps working: a click outside the panel goes
   // to the page and never closes the clipper; only its close button and Save

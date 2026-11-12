@@ -11,6 +11,13 @@
    tokens below switch by the same rule; Tailwind's own `dark:` read macOS
    alone, so shadcn's dark-only colours (outline, checkbox, switch, badge)
    stayed light under a chosen Dark. */
+/* `motion-safe` means "the level is not Off", `motion-reduce` "the level is
+   Off" (SPEC_MOTION_LEVELS.md, НС6): the level is the page's own setting,
+   not the system's flag. Under an ancestor's attribute, so the clipper's
+   window in Shadow DOM reads it too (НС7). */
+@custom-variant motion-safe (&:not(:where([data-motion="off"] *)));
+@custom-variant motion-reduce (&:where([data-motion="off"] *));
+
 @custom-variant dark {
   &:where([data-theme="dark"], [data-theme="dark"] *) {
     @slot;
@@ -135,25 +142,41 @@ select,
   display: none;
 }
 
+/* The motion levels' tokens (SPEC_MOTION_LEVELS.md, «Величины»): Minimal's
+   appearance and leaving, its curve, the card window's rise and the close
+   hint's step, the scale a window starts from and ends at. motion.ts holds
+   the same times and curve, cardPeek.ts the same step and scale; a test keeps
+   them equal. The level in force is the attribute `data-motion` on the page's
+   root (motion.ts); its rules below are written by an ancestor's attribute,
+   not by `:root`, because the clipper's window over a page lives in Shadow
+   DOM, where `:root` selects nothing (НС7). */
+:root {
+  --motion-enter: 150ms;
+  --motion-exit: 100ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-shift: calc(40px / 6);
+  --motion-scale: 0.95;
+}
+
 /* Answers to the pointer fade in over one duration and out over a shorter
    one (SPEC_CARD_STATES.md, С7.6): a row's pill and count, its button and
    labels, a card's border. Leaving then reads as a response, not a lag. The
    engine holds the same values as HOVER_INTENT.fadeInMs and fadeOutMs; a test
    keeps them equal. A row's name brightens a little faster, it is the click
-   target. Reduced motion swaps at once; the dwell and the speed gate still
-   apply. */
+   target. Minimal keeps them: they are no longer than its set. Off swaps at
+   once; the dwell and the speed gate still apply (SPEC_MOTION_LEVELS.md,
+   С6, УД5). These rules come after the `:root` declarations they override,
+   which have the same specificity. */
 :root {
   --hover-intent-fade-in: 150ms;
   --hover-intent-fade-out: 100ms;
   --hover-intent-name-fade: 120ms;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  :root {
-    --hover-intent-fade-in: 0ms;
-    --hover-intent-fade-out: 0ms;
-    --hover-intent-name-fade: 0ms;
-  }
+[data-motion="off"] {
+  --hover-intent-fade-in: 0ms;
+  --hover-intent-fade-out: 0ms;
+  --hover-intent-name-fade: 0ms;
 }
 
 [data-sidebar-row-text] {
@@ -407,9 +430,21 @@ select,
 [data-grid-scroll] [data-feed-grid-item-selected="true"] [data-card-media-clip] > [data-card-lift="window"]::after {
   opacity: 1;
 }
+/* Minimal washes in on the enter time and out on the exit time, on the
+   wash's own E (SPEC_MOTION_LEVELS.md, Л3); the keyboard's wash lands at
+   once at every level (below, «At once»). */
+[data-motion="minimal"] [data-card-media-clip] > [data-card-lift="window"]::after {
+  transition-duration: var(--motion-exit);
+}
+[data-motion="minimal"] [data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-card-media-clip] > [data-card-lift="window"]::after,
+[data-motion="minimal"] [data-grid-scroll] [data-feed-grid-item-selected="true"] [data-card-media-clip] > [data-card-lift="window"]::after {
+  transition-duration: var(--motion-enter);
+}
 
 /* A refused name shakes once, side to side, before the old name returns
-   (05.10.2026). Reduced motion lands it at once through the global rule. */
+   (05.10.2026). Only Full shakes: in Minimal and Off useNameEdit.ts never
+   sets the attribute, and the reason under the name says it alone
+   (SPEC_MOTION_LEVELS.md, В3). */
 @keyframes name-refused {
   0%, 100% { transform: translateX(0); }
   20% { transform: translateX(-4px); }
@@ -448,6 +483,14 @@ select,
   --card-lift-curve-down: cubic-bezier(0.61, 0, 0.39, 1);
   --lift-up: 200ms var(--card-lift-curve-up);
   --lift-down: 150ms var(--card-lift-curve-down);
+}
+/* Minimal lifts on the set's times and keeps the lift's own curves: on E an
+   interrupted lift came back with a first step of 5.3 and 5.7 px and its
+   parts parted (SPEC_MOTION_LEVELS.md, УД2, Л1). The top buttons of
+   `media-only` read the same values. */
+[data-motion="minimal"] {
+  --lift-up: var(--motion-enter) var(--card-lift-curve-up);
+  --lift-down: var(--motion-exit) var(--card-lift-curve-down);
 }
 [data-feed-card-frame] {
   --card-lift-drift: 8px;
@@ -589,14 +632,15 @@ select,
 }
 
 /* The top buttons fade on the lift's clock, on a card that lifts and on one
-   that only shows them (`media-only`, SPEC_FEED_DISPLAY.md, Д31). */
-:is([data-card-hover-more-action], [data-card-hover-overlay]) {
+   that only shows them (`media-only`, SPEC_FEED_DISPLAY.md, Д31), and so does
+   the plus such a card shows at its bottom right. */
+:is([data-card-hover-more-action], [data-card-hover-connect-action], [data-card-hover-overlay]) {
   transition: opacity var(--lift-down);
 }
-[data-card-lift-hover]:hover :is([data-card-hover-more-action], [data-card-hover-overlay]),
-[data-card-lift-pinned] :is([data-card-hover-more-action], [data-card-hover-overlay]),
-[data-card-buttons-hover]:hover :is([data-card-hover-more-action], [data-card-hover-overlay]),
-[data-card-buttons-pinned] :is([data-card-hover-more-action], [data-card-hover-overlay]) {
+[data-card-lift-hover]:hover :is([data-card-hover-more-action], [data-card-hover-connect-action], [data-card-hover-overlay]),
+[data-card-lift-pinned] :is([data-card-hover-more-action], [data-card-hover-connect-action], [data-card-hover-overlay]),
+[data-card-buttons-hover]:hover :is([data-card-hover-more-action], [data-card-hover-connect-action], [data-card-hover-overlay]),
+[data-card-buttons-pinned] :is([data-card-hover-more-action], [data-card-hover-connect-action], [data-card-hover-overlay]) {
   transition: opacity var(--lift-up);
 }
 
@@ -915,43 +959,132 @@ body {
   animation: mine-progress-indeterminate 1.4s ease-in-out infinite;
 }
 
-/* One setting for all motion (SPEC_AUDIT_FIXES.md, Ф12): with the system's
-   "Reduce motion", menus, dialogs, the secondary bar, the sidebar width and
-   every other transition or animation land at once, the sidebar and its top
-   segment together. A spinner and the indeterminate progress keep moving:
-   they say work goes on, in place. Code that animates itself reads the same
-   setting through src/lib/motion.ts. */
-@media (prefers-reduced-motion: reduce) {
-  *:not(.mine-progress-indeterminate):not(.animate-spin),
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    animation-delay: 0s !important;
-    transition-duration: 0.01ms !important;
-    transition-delay: 0s !important;
-    scroll-behavior: auto !important;
-  }
+/* Menus, tooltips and windows at Minimal (SPEC_MOTION_LEVELS.md, М1, М2,
+   М3, М5): the same fade, 95 % and 8 px as Full, in over 150 ms and out
+   over 100 ms on E, the scrim with its window. tw-animate-css times them on
+   the surfaces themselves (`animate-in`, `animate-out`, `duration-200` in
+   modal-window.ts), in Tailwind's utilities layer; these rules stand outside
+   any layer and beat them (НС6). Off and a key's motion land at once by the
+   rule below, which is !important. */
+[data-motion="minimal"] :is(
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="tooltip-content"],
+  [data-slot="dialog-overlay"],
+  [data-slot="dialog-content"],
+  [data-slot="alert-dialog-overlay"],
+  [data-slot="alert-dialog-content"]
+) {
+  animation-duration: var(--motion-enter);
+  animation-timing-function: var(--motion-ease);
+}
+[data-motion="minimal"] :is(
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="tooltip-content"],
+  [data-slot="dialog-overlay"],
+  [data-slot="dialog-content"],
+  [data-slot="alert-dialog-overlay"],
+  [data-slot="alert-dialog-content"]
+)[data-state="closed"] {
+  animation-duration: var(--motion-exit);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  /* No travel: the segment fills the track and breathes in place. */
-  .mine-progress-indeterminate {
-    width: 100%;
-    transform: none;
-    animation: mine-progress-breathe 2s ease-in-out infinite;
-  }
+/* A menu's chevron turns in 150 ms both ways on E at Minimal (М4); the
+   pill's button slides and its labels change colour in 150 ms on E (М7).
+   Only where they already move: the indicator placed without a slide has no
+   `data-animate`, and a duration alone would start one. */
+[data-motion="minimal"] [data-menu-chevron],
+[data-motion="minimal"] [data-tabs-indicator][data-animate],
+[data-motion="minimal"] [data-slot="tabs-list"][data-variant="chrome"] > [data-slot="tabs-trigger"] {
+  transition-duration: var(--motion-enter);
+  transition-timing-function: var(--motion-ease);
+}
 
-  .detail-top-bar-enter,
-  .detail-top-bar-line-enter {
-    opacity: 1;
-    transform: none;
-    transition: none;
-  }
+/* At once (SPEC_MOTION_LEVELS.md, УД4, УД7): every transition and animation
+   at the level Off, and whatever a key started at every level. Menus,
+   dialogs, the top rows, the sidebar's width and its top segment land in the
+   frame of the event. 0.01ms, not none: code waits for the end events (Р1).
+   `transition-delay` stays: the sidebar handle's 300 ms is an intent delay
+   (УД5, Р9). A spinner and the indeterminate progress keep moving: they say
+   work goes on, in place. Code that animates itself reads the same level
+   through src/lib/motion.ts.
 
-  [data-card-media-clip] > [data-card-lift="window"]::after {
-    transition: none;
-  }
+   A key's motion: the feed's keyboard mode (`data-feed-grid-interaction-mode`,
+   Grid.tsx) lands the lift and everything that goes with it (Л1), the
+   frame's colour (Л2) and the wash (Л3) at once at every level; a mouse move
+   that ends the mode lowers the card by the level. A menu, a window or the
+   search a key opened carries `data-motion-key` on its surface and its scrim
+   while it is on the page (src/lib/motionInput.ts).
+
+   At Minimal the search stands at once from the bottom bar's button too (М6),
+   and a tooltip after the first one, which Radix opens `instant-open` (М3):
+   the surface and the scrim alone, so a menu opened in the search goes by the
+   level.
+
+   Inside a surface a key opened, a menu or a tooltip the pointer opened there
+   (the search's menus render inside it) keeps the level, and so does the
+   shake of a name that cannot be saved, a refusal rather than a move
+   (УД4, п. 3, п. 7). */
+[data-motion="off"] *:not(.mine-progress-indeterminate):not(.animate-spin),
+[data-motion="off"] *::before,
+[data-motion="off"] *::after,
+[data-grid-scroll][data-feed-grid-interaction-mode="keyboard"] :is(
+  [data-card-lift],
+  [data-card-lift-fade],
+  [data-card-media-outline],
+  [data-card-hover-more-action],
+  [data-card-hover-connect-action],
+  [data-card-hover-overlay]
+),
+[data-grid-scroll][data-feed-grid-interaction-mode="keyboard"] [data-feed-card-frame]::after,
+[data-grid-scroll][data-feed-grid-interaction-mode="keyboard"] [data-card-media-clip] > [data-card-lift="window"]::after,
+[data-motion="minimal"] :is([data-search-overlay], [data-search-overlay-scrim]),
+[data-motion="minimal"] [data-slot="tooltip-content"][data-state="instant-open"],
+[data-motion-key],
+[data-motion-key]::before,
+[data-motion-key]::after,
+[data-motion-key] *:not(
+  .mine-progress-indeterminate,
+  .animate-spin,
+  [data-name-refused],
+  :is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key]),
+  :is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key]) *
+),
+[data-motion-key] *:not(
+  :is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key]),
+  :is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key]) *
+)::before,
+[data-motion-key] *:not(
+  :is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key]),
+  :is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key]) *
+)::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  animation-delay: 0s !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* No travel at Off: the segment fills the track and breathes in place (З1). */
+[data-motion="off"] .mine-progress-indeterminate {
+  width: 100%;
+  transform: none;
+  animation: mine-progress-breathe 2s ease-in-out infinite;
+}
+
+[data-motion="off"] :is(.detail-top-bar-enter, .detail-top-bar-line-enter) {
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+
+[data-motion="off"] [data-card-media-clip] > [data-card-lift="window"]::after {
+  transition: none;
 }
 
 @theme inline {
@@ -1966,10 +2099,16 @@ body {
 [data-sidebar-scroll] [data-sidebar-row-answer="true"] [data-channel-icon-card] {
   transform: var(--channel-icon-hover);
 }
-@media (prefers-reduced-motion: reduce) {
-  [data-sidebar-scroll] [data-sidebar-row-answer="true"] [data-channel-icon-card] {
-    transform: var(--channel-icon-rest);
-  }
+/* Minimal opens the stack in 150 ms and closes it in 100 ms on E; Off keeps
+   it at rest, unopened (SPEC_MOTION_LEVELS.md, С5). */
+[data-motion="minimal"] [data-channel-icon-card] {
+  transition: transform var(--motion-exit) var(--motion-ease);
+}
+[data-motion="minimal"] [data-sidebar-scroll] [data-sidebar-row-answer="true"] [data-channel-icon-card] {
+  transition-duration: var(--motion-enter);
+}
+[data-motion="off"] [data-sidebar-scroll] [data-sidebar-row-answer="true"] [data-channel-icon-card] {
+  transform: var(--channel-icon-rest);
 }
 
 /* Rows morph (src/lib/sidebarRowsMorph.ts, user's decisions of 23.10.2026):
@@ -2030,10 +2169,19 @@ body {
   from { rotate: 45deg; }
   to { rotate: 0deg; }
 }
-@media (prefers-reduced-motion: reduce) {
-  [data-sidebar-link-icon] {
-    animation: none !important;
-  }
+/* Minimal turns the mark in 150 ms on E; Off does not turn it
+   (SPEC_MOTION_LEVELS.md, С7). No code waits for the turn's end. */
+[data-motion="minimal"] [data-sidebar-link-icon] {
+  animation-duration: var(--motion-enter) !important;
+  animation-timing-function: var(--motion-ease) !important;
+}
+[data-motion="off"] [data-sidebar-link-icon] {
+  animation: none !important;
+}
+/* A turn a key made, Enter on the row (Sidebar.tsx, `data-sidebar-link-turn`),
+   stands at once on every level (SPEC_MOTION_LEVELS.md, С7, УД4). */
+[data-sidebar-link-icon][data-sidebar-link-turn="key"] {
+  animation-duration: 0.01ms !important;
 }
 /* The hover mark of Connect and Connected, used by the Contents list only. */
 [data-sidebar-link-icon] {
@@ -2533,11 +2681,17 @@ body {
 [data-sidebar-overlay][data-state="open"] .sidebar-overlay-panel {
   transform: none;
 }
-@media (prefers-reduced-motion: reduce) {
-  .sidebar-overlay-scrim,
-  .sidebar-overlay-panel {
-    transition: none;
-  }
+/* Minimal: in 150 ms, out 100 ms on E; Off and a key at once
+   (SPEC_MOTION_LEVELS.md, С2). SidebarOverlay.tsx keeps its timer on the
+   same values (motionMs). */
+[data-motion="minimal"] :is(.sidebar-overlay-scrim, .sidebar-overlay-panel) {
+  transition-duration: var(--motion-exit);
+}
+[data-motion="minimal"] [data-sidebar-overlay][data-state="open"] :is(.sidebar-overlay-scrim, .sidebar-overlay-panel) {
+  transition-duration: var(--motion-enter);
+}
+[data-motion="off"] :is(.sidebar-overlay-scrim, .sidebar-overlay-panel) {
+  transition: none;
 }
 
 /* The selection's commands in a second row (SPEC_NARROW_WINDOW.md, У10;
@@ -2568,9 +2722,17 @@ body {
   margin-top: var(--top-second-row-height);
 }
 /* The second row's left edge follows the sidebar's as it collapses or
-   opens, with the sidebar's own motion (useSidebarResize.ts). */
+   opens, with the sidebar's own motion (useSidebarResize.ts): Full 200 ms
+   `ease`; Minimal an opening 150 ms and a collapse 100 ms on E, the panel's
+   values (SPEC_MOTION_LEVELS.md, С1). Off and a key never animate. */
 [data-sidebar-width-animating] [data-top-row-bar] {
   transition: left 200ms ease;
+}
+[data-motion="minimal"] [data-sidebar-width-animating] [data-top-row-bar] {
+  transition: left var(--motion-exit) var(--motion-ease);
+}
+[data-motion="minimal"] [data-sidebar-width-animating="enter"] [data-top-row-bar] {
+  transition-duration: var(--motion-enter);
 }
 .chrome-control {
   height: var(--chrome-row-content-height);
@@ -2720,8 +2882,9 @@ button:active:not(:disabled) > .button-depth,
 }
 
 /* The create row parts the sidebar list as it appears: its height runs from
-   nothing to its own, fast, on the project's ease-out. Leaving, it goes at
-   once. Reduced motion lands at once through the global rule (Ф12). */
+   nothing to its own, fast, on the project's ease-out, in Full and Minimal
+   alike. Leaving, it goes at once. Off and ⇧⌘N (`data-motion-key`) land at
+   once through the general rule (SPEC_MOTION_LEVELS.md, С8). */
 @keyframes sidebar-row-part {
   from {
     grid-template-rows: 0fr;

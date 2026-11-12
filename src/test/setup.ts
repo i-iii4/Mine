@@ -152,4 +152,8 @@ beforeAll(async () => {
 afterEach(async () => {
   const { forgetCardPictureVersions } = await import("@/lib/pictureVersions");
   forgetCardPictureVersions();
+  // Every case starts at Full (SPEC_MOTION_LEVELS.md, «Тесты»). Loaded late
+  // for the same reason: a file that mocks the motion module gets its mock.
+  const { resetMotionLevel } = await import("./motionLevel");
+  resetMotionLevel();
 });

@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ImagePreviewOverlay, visibleImagePreviewTransform, type ImagePreviewRequest } from "./ImagePreviewOverlay";
 import { copyMediaAssetToClipboard } from "@/lib/commands";
+import { peekPoseAt, peekPoseKeyframes, PEEK_POSE_REST, PEEK_POSE_RISE_FROM, PEEK_POSE_SUNK } from "@/lib/cardPeek";
+import { MOTION_EASE } from "@/lib/motion";
+import { setMotionLevel } from "@/test/motionLevel";
 
 vi.mock("@/lib/commands", () => ({
   copyMediaAssetToClipboard: vi.fn(),
@@ -260,6 +263,31 @@ describe("ImagePreviewOverlay", () => {
     expect(image.style.transition).toBe("none");
   });
 
+  it.each([["full", "160ms"], ["minimal", "150ms"]] as const)(
+    "glides a zoom button's press at %s over %s, and zooms at once when a key presses it (SPEC_MOTION_LEVELS.md, К3)",
+    (level, duration) => {
+      setMotionLevel(level);
+      const { container } = render(
+        <ImagePreviewOverlay preview={{ src: "asset://localhost/photo.jpg", mediaRef: "photo.jpg" }} onClose={vi.fn()} />,
+      );
+      const image = container.querySelector<HTMLElement>("[data-image-preview-image]")!;
+      fireEvent.click(screen.getByLabelText("Zoom in"), { detail: 1 });
+      expect(image.style.transition).toBe(`transform ${duration} cubic-bezier(0.22, 1, 0.36, 1)`);
+      fireEvent.click(screen.getByLabelText("Zoom in"), { detail: 0 });
+      expect(image.style.transition).toBe("none");
+    },
+  );
+
+  it("zooms at once at Off (К3)", () => {
+    setMotionLevel("off");
+    const { container } = render(
+      <ImagePreviewOverlay preview={{ src: "asset://localhost/photo.jpg", mediaRef: "photo.jpg" }} onClose={vi.fn()} />,
+    );
+    const image = container.querySelector<HTMLElement>("[data-image-preview-image]")!;
+    fireEvent.click(screen.getByLabelText("Zoom in"), { detail: 1 });
+    expect(image.style.transition).toBe("none");
+  });
+
   it("times the zoom animation from its first frame, not from the command (Б5.5)", () => {
     let now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => now);
@@ -408,7 +436,6 @@ describe("ImagePreviewOverlay motion", () => {
   let now = 0;
   let pending = new Map<number, FrameRequestCallback>();
   let nextFrame = 1;
-  let reducedMotion = false;
 
   /** Runs one display frame: everything asked for before it. */
   function frame(count = 1) {
@@ -496,7 +523,6 @@ describe("ImagePreviewOverlay motion", () => {
     now = 0;
     pending = new Map();
     nextFrame = 1;
-    reducedMotion = false;
     vi.spyOn(performance, "now").mockImplementation(() => now);
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       const id = nextFrame++;
@@ -506,11 +532,6 @@ describe("ImagePreviewOverlay motion", () => {
     vi.stubGlobal("cancelAnimationFrame", (id: number) => {
       pending.delete(id);
     });
-    vi.stubGlobal("matchMedia", (query: string) => ({
-      matches: query.includes("prefers-reduced-motion") && reducedMotion,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
-    }));
     vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(800);
     vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(600);
   });
@@ -724,31 +745,113 @@ describe("ImagePreviewOverlay motion", () => {
     expect(pending.size).toBe(0);
   });
 
-  it("with Reduce motion only fades in place and out, by the same spring", () => {
-    reducedMotion = true;
+  it("opens and closes at once at Off, with no wait for the original and no way to the source (ОУ9)", () => {
+    setMotionLevel("off");
     const { element } = sourceFrame();
-    const { image, scrim, controls, onClose } = open({ source: element });
-    expect(scrim.style.opacity).toBe("0");
-    frame();
-    expect(image.style.opacity).toBe("0");
-    frame(6);
-    const share = Number(image.style.opacity);
-    expect(share).toBeGreaterThan(0);
-    expect(share).toBeLessThan(1);
-    expect(Number(scrim.style.opacity)).toBeCloseTo(share, 6);
-    expect(Number(controls.style.opacity)).toBeCloseTo(share, 6);
-    expect(image.style.clipPath).toBe("");
-    expect(image.style.transform).not.toContain("translate");
+    const { image, scrim, controls, stage, onClose } = open({ source: element });
+    // In the frame of the press: nothing waits, nothing is hidden.
+    for (const part of [scrim, controls, stage]) expect(part.style.opacity).toBe("");
+    expect(image.style.visibility).toBe("");
     expect(element.style.visibility).toBe("");
-    frame(WHOLE_MOTION_FRAMES);
-    expect(image.style.opacity).toBe("");
-
     fireEvent.click(screen.getByLabelText("Collapse image preview"));
-    frame(5);
-    expect(Number(image.style.opacity)).toBeLessThan(1);
-    expect(image.style.transform).not.toContain("translate");
-    frame(WHOLE_MOTION_FRAMES);
     expect(onClose).toHaveBeenCalledTimes(1);
+    expect(element.style.visibility).toBe("");
+  });
+
+  describe("in Minimal (SPEC_MOTION_LEVELS.md, ОУ9)", () => {
+    interface Heard {
+      element: Element;
+      keyframes: Keyframe[];
+      timing: KeyframeAnimationOptions;
+      animation: { currentTime: number; startTime: number | null; onfinish: (() => void) | null; cancel: ReturnType<typeof vi.fn> };
+    }
+    let heard: Heard[] = [];
+    const timing = (duration: number) => ({ duration, easing: MOTION_EASE, fill: "forwards" });
+
+    beforeEach(() => {
+      setMotionLevel("minimal");
+      heard = [];
+      Object.defineProperty(HTMLElement.prototype, "animate", {
+        configurable: true,
+        value(this: HTMLElement, keyframes: Keyframe[], options: KeyframeAnimationOptions) {
+          const animation = { currentTime: 0, startTime: null, onfinish: null as (() => void) | null, cancel: vi.fn() };
+          heard.push({ element: this, keyframes, timing: options, animation });
+          return animation;
+        },
+      });
+    });
+
+    afterEach(() => {
+      delete (HTMLElement.prototype as { animate?: unknown }).animate;
+    });
+
+    const finish = (motion: Heard) => act(() => {
+      motion.animation.currentTime = Number(motion.timing.duration);
+      motion.animation.onfinish?.();
+    });
+
+    it("rises the stage and the buttons, each about its own centre, with the scrim, the source left on the page", () => {
+      const { element } = sourceFrame();
+      const { stage, controls, scrim } = open({ source: element });
+      // Unseen while the original decodes, 100 ms at most.
+      expect(stage.style.opacity).toBe("0");
+      frame(7);
+      expect(heard.map(({ element: part, keyframes, timing: heardTiming }) => ({ part, keyframes, heardTiming }))).toEqual([
+        { part: stage, keyframes: [peekPoseKeyframes(PEEK_POSE_RISE_FROM).window, peekPoseKeyframes(PEEK_POSE_REST).window], heardTiming: timing(150) },
+        { part: controls, keyframes: [peekPoseKeyframes(PEEK_POSE_RISE_FROM).window, peekPoseKeyframes(PEEK_POSE_REST).window], heardTiming: timing(150) },
+        { part: scrim, keyframes: [{ opacity: 0 }, { opacity: 1 }], heardTiming: timing(150) },
+      ]);
+      for (const part of [scrim, controls, stage]) expect(part.style.opacity).toBe("");
+      // Nothing flies: the source stays where it stands.
+      expect(element.style.visibility).toBe("");
+      finish(heard[0]!);
+      expect(heard[0]!.animation.cancel).toHaveBeenCalled();
+    });
+
+    it("sinks the stage from where it stands on the button in 100 ms, the zoomed picture with its zoom, and goes the frame after", () => {
+      const { element } = sourceFrame();
+      const { image, onClose } = open({ source: element });
+      frame(7);
+      heard[0]!.animation.currentTime = 50;
+      const midway = peekPoseAt({ from: PEEK_POSE_RISE_FROM, to: PEEK_POSE_REST, duration: 150 }, 50);
+      fireEvent.click(screen.getByLabelText("Collapse image preview"));
+      const [stageLeaving, , scrimLeaving] = heard.slice(3);
+      expect(stageLeaving!.keyframes).toEqual([peekPoseKeyframes(midway).window, peekPoseKeyframes(PEEK_POSE_SUNK).window]);
+      expect(stageLeaving!.timing).toEqual(timing(100));
+      expect(scrimLeaving!.keyframes).toEqual([{ opacity: midway.opacity }, { opacity: 0 }]);
+      expect(image.style.clipPath).toBe("");
+      finish(stageLeaving!);
+      expect(onClose).not.toHaveBeenCalled();
+      frame();
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("turns the leaving back in 150 ms when zoom takes it over, and the viewer stays", () => {
+      const { element } = sourceFrame();
+      const { overlay, onClose } = open({ source: element });
+      frame(7);
+      finish(heard[0]!);
+      fireEvent.click(screen.getByLabelText("Collapse image preview"));
+      heard[3]!.animation.currentTime = 40;
+      const midway = peekPoseAt({ from: PEEK_POSE_REST, to: PEEK_POSE_SUNK, duration: 100 }, 40);
+      fireEvent.wheel(overlay, { deltaY: -40, clientX: 600, clientY: 400 });
+      expect(overlay).not.toHaveClass("pointer-events-none");
+      const back = heard.at(-3)!;
+      expect(back.keyframes).toEqual([peekPoseKeyframes(midway).window, peekPoseKeyframes(PEEK_POSE_REST).window]);
+      expect(back.timing).toEqual(timing(150));
+      finish(back);
+      frame(3);
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it("opens at once by a key and closes at once by Escape", () => {
+      const { element } = sourceFrame();
+      const { stage, onClose } = open({ source: element, openedBy: "keyboard" });
+      expect(stage.style.opacity).toBe("");
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(heard).toHaveLength(0);
+    });
   });
 
   it("opens and leaves as a dialog without a source", () => {

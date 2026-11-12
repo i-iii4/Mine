@@ -1,3 +1,15 @@
+## 12.11.2026: уровни движения Full, Minimal и Off (50.86), плюс в Media Only, группы меню карточки, подсказка после меню
+
+**Уровни движения (50.86).** Реализована [SPEC_MOTION_LEVELS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MOTION_LEVELS.md>): строка `Motion` в `Appearance`, ключ `mine.motion`, атрибут `data-motion` на корне каждой страницы до первого кадра, системная «Уменьшить движение» выбирает `Minimal`, пока уровень не выбран. Единственный читатель настройки `src/lib/motion.ts`, все 25 мест, читавших системный флаг, перешли на него; блоков `@media (prefers-reduced-motion)` не осталось. С клавиатуры всё сразу на всех уровнях (`src/lib/motionInput.ts`, признак `data-motion-key`). Окно карточки и просмотр изображения в `Minimal` появляются подъёмом с 6,67 px и ростом от 95 % за 150 мс и уходят вниз на 40 px до 95 % за 100 мс; подсказка над подложкой лежит на прямой ухода, щелчок продолжает её с текущего места (`src/lib/poseMotion.ts`, покадровая проверка `test:card-peek-motion`). Граф и клиппер к настройке не подключены. Пять мест, ждущих согласия пользователя, сделаны по рекомендации и меняются каждое в одном месте (спецификация, «Что требует согласия пользователя»). Пункт View → Hide Sidebar шлёт странице событие `sidebar-key-command`.
+
+**Media Only.** При наведении кроме `Source` и `More` проявляется плюс `Connect` в правом нижнем углу (решение пользователя 12.11.2026).
+
+**Меню карточки.** Черта делит пункты на группы по предмету: коллекции, ссылка (`Source`, `Copy Link`), файл, сама карточка; у карточки без ссылки группы ссылки и её черты нет.
+
+**Подсказка после меню.** Меню `More` в шапке окна карточки и в верхнем ряду полного вида, открытое мышью, больше не возвращает фокус на кнопку, поэтому её подсказка не всплывает без указателя (`noFocusBackAfterPress`).
+
+Проверки: `bun run verify:core` с кодом 0 (5053 теста фронтенда в 389 файлах, 2168 тестов Rust), `reliability-registry-check`, `test:card-peek-motion`, `test:focus-ring`, `test:narrow-window`, `test:sidebar-reorder`, `test:graph`, `test:cold-space`, `test:edge-states`, `test:reading-mode`, `test:editing`, `test:paste-feed`, `test:swipe-scroller`, `test:top-row`, `test:sidebar-actions`. Падают так же, как на `1bf80cee`: `test:feed-scroll`, `test:sidebar-strip`, `test:image-preview`, `test:editing-perf`, `test:selection-menu`, `test:chrome` (фикстура ссылается на удалённый `actionButtonStyle.ts`).
+
 ## 12.11.2026: третий вид ленты Media Only, Copy Link, спецификация уровней движения (50.86, 50.87)
 
 **Вид ленты (50.87).** Решение пользователя 11.11.2026 ([SPEC_FEED_DISPLAY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_FEED_DISPLAY.md>), Д10, Д31): в меню `Show` три вида с новыми названиями: `Media and Text` (прежний `Cards`), `Text on Hover` (прежний `Media`) и новый `Media Only`. Сохранённый выбор не сбрасывается: значения `cards` и `media` прежние. В `Media Only` раскладка как у `Text on Hover`, но карточка не поднимается ни при наведении, ни под клавиатурным фокусом, подписи и ряда коллекций нет; при наведении проявляются только `Source` и `More`.

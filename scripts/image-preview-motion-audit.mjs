@@ -30,7 +30,10 @@ const STAND_PAGE = `
   import {Detail} from '/src/components/Detail.tsx';
   import {DndContext,PointerSensor,useSensor,useSensors} from '@dnd-kit/core';
   import {TooltipProvider} from '/src/components/ui/tooltip.tsx';
+  import {installMotionLevel} from '/src/lib/motion.ts';
   import '/src/styles/global.css';
+  // The level as an app page takes it: the stored one, else the system's.
+  installMotionLevel();
   const h=React.createElement;
   const media=name=>location.origin+'/audit-media/'+name;
   window.__TAURI_INTERNALS__={convertFileSrc:path=>media(path.split('/').pop().split('?')[0]),invoke:async command=>{if(command==='get_block')return null;throw Error(command);}};
@@ -261,9 +264,14 @@ const passed = (message) => console.log(`PASS: ${message}`);
 try {
   browser = await webkit.launch({ headless: true });
 
-  /** A fresh page. `slow` holds the slow original back until it is released. */
-  const fresh = async ({ page: pageName = "stand", reducedMotion = "no-preference" } = {}) => {
+  /** A fresh page at the motion level `level` (SPEC_MOTION_LEVELS.md; null:
+   *  none stored). `slow` holds the slow original back until it is released. */
+  const fresh = async ({ page: pageName = "stand", reducedMotion = "no-preference", level = "full" } = {}) => {
     const page = await browser.newPage({ viewport: VIEWPORT, reducedMotion });
+    await page.addInitScript((stored) => {
+      if (stored === null) window.localStorage.removeItem("mine.motion");
+      else window.localStorage.setItem("mine.motion", stored);
+    }, level);
     page.setDefaultTimeout(10_000);
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -532,34 +540,62 @@ try {
     await page.close();
   }
 
-  // ── Reduce motion: only opacity ──
+  // ── Off: at once, with no wait for the original (SPEC_MOTION_LEVELS.md, ОУ9) ──
   {
-    const { page } = await fresh({ reducedMotion: "reduce" });
+    const { page } = await fresh({ level: "off" });
     await hold(page);
     await clickSource(page, "#contain");
-    let last = await untilStarted(page);
-    const rest = last.rect;
-    assert.equal(last.clipPath, "", "no flight with Reduce motion");
-    let rose = 0;
-    for (let index = 0; index < 8; index += 1) {
-      const now = await step(page);
-      nearRect(now.rect, rest, "the picture stays at its place");
-      near(now.opacity, now.scrim, "picture and blur together", 0.02);
-      assert(now.opacity >= last.opacity, "it fades in");
-      if (now.opacity > 0 && now.opacity < 1) rose += 1;
-      last = now;
-    }
-    assert(rose > 3, "it fades over several frames");
-    for (let index = 0; index < 20; index += 1) await step(page);
+    const opened = await state(page);
+    assert(opened, "Off: open in the press's frame");
+    assert.equal(opened.clipPath, "", "Off: no flight");
+    assert.equal(opened.visibility, "", "Off: the picture shown at once");
+    near(opened.scrim, 1, "Off: the whole blur at once", 1e-3);
+    near(opened.toolbar, 1, "Off: the toolbar at once", 1e-3);
+    assert.equal(await page.evaluate(() => document.querySelector("#contain").style.visibility), "", "Off: the source stays");
     await clickBackground(page);
-    for (let index = 0; index < 5; index += 1) {
-      const now = await step(page);
-      nearRect(now.rect, rest, "the picture stays at its place on leaving");
-      assert(now.opacity < 1, "it fades out");
-    }
-    for (let index = 0; index < 30; index += 1) await step(page);
-    assert.equal(await state(page), null, "it left");
-    passed("with Reduce motion it only fades in place and out");
+    assert.equal(await state(page), null, "Off: gone in the press's frame");
+    passed("at Off the preview opens and leaves at once, with no wait and no flight");
+    await page.close();
+  }
+
+  // ── The system's flag with no stored level: Minimal's rise (НС3, ОУ9) ──
+  {
+    const { page } = await fresh({ level: null, reducedMotion: "reduce" });
+    assert.equal(await page.evaluate(() => document.documentElement.getAttribute("data-motion")), "minimal", "Reduce motion chooses Minimal");
+    await clickSource(page, "#contain");
+    // The stage and the island rise on the compositor, the picture with no
+    // flight of its own and the source left on the page.
+    await page.waitForFunction(() => document.querySelector("[data-image-preview-stage]")?.getAnimations().length > 0);
+    const rise = await page.evaluate(() => {
+      const [animation] = document.querySelector("[data-image-preview-stage]").getAnimations();
+      const frames = animation.effect.getKeyframes();
+      return {
+        duration: animation.effect.getTiming().duration,
+        from: frames[0].transform,
+        to: frames.at(-1).transform,
+        controls: document.querySelector("[data-image-preview-controls]").getAnimations().length,
+        source: document.querySelector("#contain").style.visibility,
+        clip: document.querySelector("[data-image-preview-image]").style.clipPath,
+      };
+    });
+    assert.equal(rise.duration, 150, "Minimal: the rise lasts 150 ms");
+    assert.equal(rise.from, "translateY(6.667px) scale(0.95)", "Minimal: the rise starts 6.67 px low at 95 %");
+    assert.equal(rise.to, "translateY(0px) scale(1)", "Minimal: the rise ends at its place");
+    assert.equal(rise.controls, 1, "Minimal: the island rises with the stage");
+    assert.equal(rise.source, "", "Minimal: the source stays on the page");
+    assert.equal(rise.clip, "", "Minimal: no flight");
+    await page.waitForTimeout(300);
+    await clickBackground(page);
+    const sink = await page.evaluate(() => {
+      const [animation] = document.querySelector("[data-image-preview-stage]").getAnimations();
+      const frames = animation.effect.getKeyframes();
+      return { duration: animation.effect.getTiming().duration, to: frames.at(-1).transform, opacity: frames.at(-1).opacity };
+    });
+    assert.equal(sink.duration, 100, "Minimal: the leaving lasts 100 ms");
+    assert.equal(sink.to, "translateY(40px) scale(0.95)", "Minimal: the leaving ends 40 px down at 95 %");
+    assert.equal(Number(sink.opacity), 0, "Minimal: the leaving fades out");
+    await page.waitForFunction(() => !document.querySelector("[data-image-preview-overlay]"));
+    passed("with Reduce motion and no stored level the preview rises in 150 ms and sinks in 100 ms (Minimal)");
     await page.close();
   }
 

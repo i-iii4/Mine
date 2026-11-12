@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useContext } from "react";
+import { useContext, useState } from "react";
+import { MOTION_ENTER_MS, MOTION_EXIT_MS, MOTION_LEVELS } from "@/lib/motion";
+import { setMotionLevel } from "@/test/motionLevel";
 import { SIDEBAR_OVERLAY_LABEL, SIDEBAR_OVERLAY_MOTION_MS, SidebarOverlay, SidebarOverlayWidthContext } from "./SidebarOverlay";
 
 /** What a part of the list in the panel lays itself out by. */
@@ -8,18 +10,13 @@ function ListWidth() {
   return <output data-testid="list-width">{useContext(SidebarOverlayWidthContext)}</output>;
 }
 
-const motion = vi.hoisted(() => ({ reduced: false }));
-
-vi.mock("@/lib/motion", () => ({
-  motionDuration: (ms: number) => (motion.reduced ? 0 : ms),
-}));
-
-function Overlay({ open, onClose }: { open: boolean; onClose: () => void }) {
+function Overlay({ open, onClose, byKey = false }: { open: boolean; onClose: () => void; byKey?: boolean }) {
   return (
     <>
       <button type="button">Under the scrim</button>
       <SidebarOverlay
         open={open}
+        byKey={byKey}
         onClose={onClose}
         header={<input aria-label="Find or create collection" />}
       >
@@ -33,7 +30,6 @@ function Overlay({ open, onClose }: { open: boolean; onClose: () => void }) {
 describe("SidebarOverlay: the sidebar over the feed (SPEC_NARROW_WINDOW.md, У4 по У6)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    motion.reduced = false;
   });
 
   afterEach(() => {
@@ -120,21 +116,59 @@ describe("SidebarOverlay: the sidebar over the feed (SPEC_NARROW_WINDOW.md, У4 
     expect(screen.getByRole("textbox", { name: "Filter" })).toHaveFocus();
   });
 
-  it("moves out over 200 ms, at once with reduced motion", () => {
+  const layer = () => document.querySelector("[data-sidebar-overlay]");
+
+  /** Opens and closes by the pointer; the layer is gone after `exitMs`. */
+  function expectPointerClosing(exitMs: number) {
     const { rerender } = render(<Overlay open onClose={vi.fn()} />);
     act(() => vi.advanceTimersToNextFrame());
-    expect(document.querySelector("[data-sidebar-overlay]")).toHaveAttribute("data-state", "open");
+    expect(layer()).toHaveAttribute("data-state", "open");
+    expect(layer()).not.toHaveAttribute("data-motion-key");
 
     rerender(<Overlay open={false} onClose={vi.fn()} />);
-    expect(document.querySelector("[data-sidebar-overlay]")).toHaveAttribute("data-state", "closed");
-    act(() => vi.advanceTimersByTime(SIDEBAR_OVERLAY_MOTION_MS - 1));
-    expect(document.querySelector("[data-sidebar-overlay]")).not.toBeNull();
+    expect(layer()).toHaveAttribute("data-state", "closed");
+    act(() => vi.advanceTimersByTime(exitMs - 1));
+    expect(layer()).not.toBeNull();
     act(() => vi.advanceTimersByTime(1));
-    expect(document.querySelector("[data-sidebar-overlay]")).toBeNull();
+    expect(layer()).toBeNull();
+  }
 
-    motion.reduced = true;
-    rerender(<Overlay open onClose={vi.fn()} />);
+  it("moves out over 200 ms in Full (SPEC_MOTION_LEVELS.md, С2)", () => {
+    expectPointerClosing(SIDEBAR_OVERLAY_MOTION_MS);
+  });
+
+  it("moves out over 100 ms in Minimal, the time of its CSS (Р3)", () => {
+    setMotionLevel("minimal");
+    expect(MOTION_EXIT_MS).toBeLessThan(MOTION_ENTER_MS);
+    expectPointerClosing(MOTION_EXIT_MS);
+  });
+
+  it("comes and goes at once in Off: open in the frame it opens, gone in the frame it closes", () => {
+    setMotionLevel("off");
+    const { rerender } = render(<Overlay open onClose={vi.fn()} />);
+    expect(layer()).toHaveAttribute("data-state", "open");
     rerender(<Overlay open={false} onClose={vi.fn()} />);
-    expect(document.querySelector("[data-sidebar-overlay]")).toBeNull();
+    expect(layer()).toBeNull();
+  });
+
+  it.each(MOTION_LEVELS)("comes and goes at once by a key in %s, marked for the stylesheet (УД4)", (level) => {
+    setMotionLevel(level);
+    const { rerender } = render(<Overlay open byKey onClose={vi.fn()} />);
+    expect(layer()).toHaveAttribute("data-state", "open");
+    expect(layer()).toHaveAttribute("data-motion-key", "");
+    rerender(<Overlay open={false} byKey onClose={vi.fn()} />);
+    expect(layer()).toBeNull();
+  });
+
+  it.each(MOTION_LEVELS)("goes at once on its own Escape in %s, opened by the pointer", (level) => {
+    setMotionLevel(level);
+    function Closing() {
+      const [open, setOpen] = useState(true);
+      return <Overlay open={open} onClose={() => setOpen(false)} />;
+    }
+    render(<Closing />);
+    act(() => vi.advanceTimersToNextFrame());
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(layer()).toBeNull();
   });
 });

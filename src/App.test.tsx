@@ -1,6 +1,7 @@
 import { commandById, setCommandOverrides } from "@/lib/commandRegistry";
 import { getFeedDisplay, reloadFeedDisplay, setFeedSort } from "@/lib/feedDisplay";
 import { CARD_VIEW_STORAGE_KEY, getCardView, reloadCardView, setCardView } from "@/lib/cardView";
+import { recordPeekInput } from "@/lib/cardPeek";
 import {
   GRAPH_PREFERENCES_STORAGE_KEY,
   reloadGraphPreferences,
@@ -15,6 +16,9 @@ import { SIDEBAR_WIDTH_TRANSITION } from "@/hooks/useSidebarResize";
 import type { ReactNode } from "react";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act, render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import { MOTION_EXIT_MS } from "@/lib/motion";
+import { installMotionInput } from "@/lib/motionInput";
+import { setMotionLevel } from "@/test/motionLevel";
 import { MemoryRouter } from "react-router";
 import { isTauri } from "@tauri-apps/api/core";
 
@@ -108,9 +112,13 @@ const sidebarResizeState = vi.hoisted(() => ({
   collapsed: false,
   isResizing: false,
   widthAnimating: false,
+  // The way of the width's run while it animates (SPEC_MOTION_LEVELS.md, С1).
+  widthPhase: "enter" as "enter" | "exit",
   toggleCollapsed: vi.fn(),
   // The window's sidebar the app handed the hook last (SPEC_TABS.md, В56).
   windowSidebar: undefined as { width_px: number; collapsed: boolean } | null | undefined,
+  // Whether the app says that layout came from the View menu (SPEC_MOTION_LEVELS.md, УД4, п. 1).
+  windowChangeByKey: (() => false) as () => boolean,
 }));
 
 const clipboardWriteText = vi.hoisted(() => vi.fn<(text: string) => Promise<void>>());
@@ -201,21 +209,27 @@ vi.mock("@/lib/articleAudioDesktopGateway", () => ({
   },
 }));
 
-vi.mock("@/hooks/useSidebarResize", async (importOriginal) => ({
+vi.mock("@/hooks/useSidebarResize", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useSidebarResize")>();
+  return {
   // The motion's values are the hook's own.
-  ...await importOriginal<typeof import("@/hooks/useSidebarResize")>(),
+  ...actual,
   useSidebarResize: (
     windowSidebar: { width_px: number; collapsed: boolean } | null = null,
     overlaid = false,
     openForKeyboard = false,
+    windowChangeByKey: () => boolean = () => false,
   ) => {
     sidebarResizeState.windowSidebar = windowSidebar;
+    sidebarResizeState.windowChangeByKey = windowChangeByKey;
     const collapsed = sidebarResizeState.collapsed && !openForKeyboard;
     return {
       width: sidebarResizeState.width,
       collapsed,
       isResizing: sidebarResizeState.isResizing,
       widthAnimating: sidebarResizeState.widthAnimating,
+      widthTransition: sidebarResizeState.widthAnimating ? actual.SIDEBAR_WIDTH_TRANSITION : "none",
+      widthPhase: sidebarResizeState.widthAnimating ? sidebarResizeState.widthPhase : null,
       besideShown: !overlaid,
       // As the hook has it: open, or for the motion of a collapse.
       besideOpenShown: !overlaid && (!collapsed || sidebarResizeState.widthAnimating),
@@ -225,7 +239,8 @@ vi.mock("@/hooks/useSidebarResize", async (importOriginal) => ({
       toggleCollapsed: sidebarResizeState.toggleCollapsed,
     };
   },
-}));
+  };
+});
 
 vi.mock("@/hooks/useThumbnailUpgrade", () => ({
   useThumbnailUpgrade: vi.fn(),
@@ -514,7 +529,7 @@ vi.mock("@/components/Detail", () => ({
   }: {
     block: LightBlock | IndexedBlock;
     topChromeMode?: "classic" | "external";
-    onClose: () => void;
+    onClose: (options?: { byKey?: boolean }) => void;
     onRequestRename: (block: LightBlock | IndexedBlock) => void;
     onRequestDelete: (slug: string) => void;
     onOpenAuthorFeed?: (author: string) => void;
@@ -527,10 +542,14 @@ vi.mock("@/components/Detail", () => ({
     >
       <div data-testid="detail-title">{block.title ?? block.slug}</div>
       {topChromeMode !== "external" && (
-        <button type="button" onClick={onClose}>
+        <button type="button" onClick={() => onClose()}>
           Close
         </button>
       )}
+      {/* Detail's own Escape, which closes by a key (SPEC_MOTION_LEVELS.md, В1). */}
+      <button type="button" onClick={() => onClose({ byKey: true })}>
+        Escape detail
+      </button>
       <button type="button" onClick={() => onRequestDelete(block.slug)}>
         Delete detail
       </button>
@@ -796,6 +815,7 @@ describe("AppWithVault", () => {
     sidebarResizeState.collapsed = false;
     sidebarResizeState.isResizing = false;
     sidebarResizeState.widthAnimating = false;
+    sidebarResizeState.widthPhase = "enter";
     sidebarResizeState.windowSidebar = undefined;
     clipboardWriteText.mockResolvedValue(undefined);
     webClipboardWriteText.mockResolvedValue(undefined);
@@ -3663,6 +3683,26 @@ describe("AppWithVault", () => {
     expect(commandMocks.openSettingsWindow).toHaveBeenCalledTimes(1);
   });
 
+  it("takes the motion level Settings sends, with the value it carries (SPEC_MOTION_LEVELS.md, НС4)", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2");
+    });
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("settings-changed", {
+          detail: { payload: { key: "mine.motion", value: "minimal" } },
+        }),
+      );
+    });
+    expect(localStorage.getItem("mine.motion")).toBe("minimal");
+    expect(document.documentElement.getAttribute("data-motion")).toBe("minimal");
+  });
+
   it("hides the bottom action bar via settings-changed without losing Settings access", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
@@ -3757,6 +3797,88 @@ describe("AppWithVault", () => {
     expect(within(secondaryContentSegment!).getByRole("tablist", { name: "View mode" })).toBeInTheDocument();
   });
 
+  // SPEC_MOTION_LEVELS.md, В1, Р3: the top rows fade by the level, and the
+  // closed full page is held for the fade's time: Full 190 ms, Minimal 100 ms,
+  // Off and a key not at all; a key's open and close land the rows at once.
+  describe("the top rows of the full page by the motion level", () => {
+    const detailMenu = () => document.querySelector("[data-secondary-detail-top-menu]");
+    /** The row that holds the place's name and the open card's menu. */
+    const topRow = () => {
+      let row = detailMenu()?.parentElement ?? null;
+      while (row && !row.querySelector("[data-top-row-fade]")) row = row.parentElement;
+      return row;
+    };
+    async function openCard() {
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+        </MemoryRouter>,
+      );
+      await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+      fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+      await waitFor(() => expect(detailMenu()).toHaveAttribute("data-entered", "true"));
+    }
+    const wait = (ms: number) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
+
+    it("holds the closed page for 190 ms in Full", async () => {
+      await openCard();
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      expect(detailMenu()).toHaveAttribute("data-entered", "false");
+      await wait(MOTION_EXIT_MS + 20);
+      expect(detailMenu()).not.toBeNull();
+      await waitFor(() => expect(detailMenu()).toBeNull());
+    });
+
+    it("holds the closed page for 100 ms in Minimal", async () => {
+      setMotionLevel("minimal");
+      await openCard();
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      expect(detailMenu()).toHaveAttribute("data-entered", "false");
+      await wait(MOTION_EXIT_MS + 20);
+      expect(detailMenu()).toBeNull();
+    });
+
+    it("holds nothing in Off", async () => {
+      setMotionLevel("off");
+      await openCard();
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      expect(detailMenu()).toBeNull();
+    });
+
+    it.each(["full", "minimal", "off"] as const)("closes by Escape at once at %s, the rows marked as a key's", async (level) => {
+      setMotionLevel(level);
+      await openCard();
+      const row = topRow();
+      expect(row).not.toBeNull();
+      expect(row).not.toHaveAttribute("data-motion-key");
+      fireEvent.click(screen.getByRole("button", { name: "Escape detail" }));
+      expect(detailMenu()).toBeNull();
+      expect(row).toHaveAttribute("data-motion-key");
+      // The mark goes once the rows stand: the pointer's motions there keep
+      // the level.
+      await waitFor(() => expect(row).not.toHaveAttribute("data-motion-key"));
+    });
+
+    it("brings the rows at once when a key opened the card", async () => {
+      const removeInput = installMotionInput();
+      try {
+        render(
+          <MemoryRouter initialEntries={["/"]}>
+            <AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} />
+          </MemoryRouter>,
+        );
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        fireEvent.keyDown(window, { key: "Enter" });
+        fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+        await waitFor(() => expect(detailMenu()).toHaveAttribute("data-entered", "true"));
+        expect(topRow()).toHaveAttribute("data-motion-key");
+        await waitFor(() => expect(topRow()).not.toHaveAttribute("data-motion-key"));
+      } finally {
+        removeInput();
+      }
+    });
+  });
+
   // SPEC_CARD_PEEK.md, О5, О11 (user's decision of 05.11.2026): what changes
   // the collection or the view under the card's window makes it fade down
   // over the new place, and only that.
@@ -3793,26 +3915,34 @@ describe("AppWithVault", () => {
       delete (HTMLElement.prototype as { animate?: unknown }).animate;
       localStorage.removeItem(CARD_VIEW_STORAGE_KEY);
       reloadCardView();
+      // The page's last input is a module's: a key of one case is no key of
+      // the next (SPEC_MOTION_LEVELS.md, ОУ1).
+      recordPeekInput({ kind: "pointer", at: Number.NEGATIVE_INFINITY, feedCardSlug: null, onGraph: false });
     });
 
     it("fades down when a sidebar row takes the feed to another collection", async () => {
       openWindow();
       await openCard();
-      fireEvent.click(screen.getByRole("link", { name: "alpha" }));
+      // A press of the pointer: the page hears it before the click.
+      const row = screen.getByRole("link", { name: "alpha" });
+      fireEvent.pointerDown(row);
+      fireEvent.click(row);
       await waitFor(() => {
         expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith("alpha", 0, 200, "newest");
       });
       await waitFor(() => expect(isSwitching()).toBe(true));
     });
 
-    it("fades down on the collections' shortcut", async () => {
-      openWindow();
+    it("goes with no fade on the collections' shortcut, once the new place stands (SPEC_MOTION_LEVELS.md, ОУ1)", async () => {
+      const animate = openWindow();
       await openCard();
+      animate.mockClear();
       fireEvent.keyDown(window, { key: "ArrowDown", metaKey: true, altKey: true });
       await waitFor(() => {
         expect(commandMocks.listGridBlocks).toHaveBeenLastCalledWith("alpha", 0, 200, "newest");
       });
-      await waitFor(() => expect(isSwitching()).toBe(true));
+      await waitFor(() => expect(document.querySelector("[data-card-peek]")).toBeNull());
+      expect(animate).not.toHaveBeenCalled();
     });
 
     it("fades down when the view changes in the top row during a closing by its ×", async () => {
@@ -4409,7 +4539,7 @@ describe("AppWithVault", () => {
       sidebarResizeState.widthAnimating = true;
       const { rerender } = await renderFeed();
       const shell = document.querySelector("[data-chrome-shell]");
-      expect(shell).toHaveAttribute("data-sidebar-width-animating", "");
+      expect(shell).toHaveAttribute("data-sidebar-width-animating", "enter");
       // One row until the row is measured to cut something.
       expect(shell).toHaveAttribute("data-top-row", "one");
       expect(segment()).toHaveStyle({ transition: SIDEBAR_WIDTH_TRANSITION, width: "var(--sidebar-width)" });
@@ -4434,7 +4564,9 @@ describe("AppWithVault", () => {
       sidebarResizeState.collapsed = true;
       sidebarResizeState.width = 0;
       sidebarResizeState.widthAnimating = true;
+      sidebarResizeState.widthPhase = "exit";
       const { rerender } = await renderFeed();
+      expect(document.querySelector("[data-chrome-shell]")).toHaveAttribute("data-sidebar-width-animating", "exit");
       expect(segment()).toHaveClass("border-r", "border-sidebar-border");
       expect(segment()).toHaveAttribute("inert");
       expect(segment()).toHaveStyle({ transition: SIDEBAR_WIDTH_TRANSITION, width: "var(--sidebar-width)" });
@@ -7664,6 +7796,25 @@ describe("AppWithVault", () => {
         expect(screen.queryByRole("textbox", { name: "Rename file" })).toBeNull();
       });
 
+      it("comes over the feed at once on the View menu's toggle, and by the level on the tab bar's (SPEC_MOTION_LEVELS.md, С2, УД4)", async () => {
+        // The page's shell takes the backend's word (`sidebar-key-command`).
+        let keyCommand = false;
+        const takeSidebarKeyCommand = () => {
+          const taken = keyCommand;
+          keyCommand = false;
+          return taken;
+        };
+        renderTab({ takeSidebarKeyCommand });
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        keyCommand = true;
+        act(() => send("sidebar-overlay-command", { kind: "toggle" }));
+        expect(document.querySelector("[data-sidebar-overlay]")).toHaveAttribute("data-motion-key", "");
+        act(() => send("sidebar-overlay-command", { kind: "toggle" }));
+        // The tab bar's button, the word taken by the toggle before.
+        act(() => send("sidebar-overlay-command", { kind: "toggle" }));
+        expect(document.querySelector("[data-sidebar-overlay]")).not.toHaveAttribute("data-motion-key");
+      });
+
       it("leaves a collapsed sidebar collapsed when the window widens with it closed (У7)", async () => {
         sidebarResizeState.collapsed = true;
         renderTab();
@@ -7690,6 +7841,23 @@ describe("AppWithVault", () => {
           expect(sidebarResizeState.windowSidebar).toEqual({ width_px: 500, collapsed: false });
         });
         expect(commandMocks.setWindowSidebar).not.toHaveBeenCalled();
+      });
+
+      it("tells the sidebar a layout the View menu made, which stands at once (SPEC_MOTION_LEVELS.md, С1, УД4, п. 1)", async () => {
+        commandMocks.getTabBootstrap.mockResolvedValue(bootstrap({ sidebar: { width_px: 420, collapsed: false } }));
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        expect(sidebarResizeState.windowChangeByKey()).toBe(false);
+
+        send("sidebar-key-command");
+        send("window-sidebar-changed", { width_px: 420, collapsed: true });
+        await waitFor(() => expect(sidebarResizeState.windowSidebar).toEqual({ width_px: 420, collapsed: true }));
+        expect(sidebarResizeState.windowChangeByKey()).toBe(true);
+
+        // The tab bar's button: no word before it.
+        send("window-sidebar-changed", { width_px: 420, collapsed: false });
+        await waitFor(() => expect(sidebarResizeState.windowSidebar).toEqual({ width_px: 420, collapsed: false }));
+        expect(sidebarResizeState.windowChangeByKey()).toBe(false);
       });
 
       it("reports its first frame, pauses its media when hidden and reports a frame when shown again (В5, В41)", async () => {

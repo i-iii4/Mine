@@ -280,10 +280,10 @@ export function detailPeekDrawable(
 
 /** Hears every press and key of the page, before anything takes it, and
  *  remembers the last one for the next opening (О10): a press on a feed card
- *  or on the graph grows the window out of that card, a key with the focus
- *  in the right part (`rightPart`) or nowhere fades it in place. Returns
- *  the function that stops. */
-export function listenPeekInput(rightPart: () => HTMLElement | null): () => void {
+ *  or on the graph grows the window out of that card, a key anywhere stands
+ *  it at once (SPEC_MOTION_LEVELS.md, ОУ1). Returns the function that
+ *  stops. */
+export function listenPeekInput(): () => void {
   const elementOf = (target: EventTarget | null) => (target instanceof Element ? target : null);
   const handlePointer = (event: PointerEvent) => {
     const target = elementOf(event.target);
@@ -294,18 +294,10 @@ export function listenPeekInput(rightPart: () => HTMLElement | null): () => void
         ?.closest(`${FEED_ROOT_SELECTOR} [data-feed-card-frame][data-block-slug]`)
         ?.getAttribute("data-block-slug") ?? null,
       onGraph: target?.closest("[data-graph-view]") != null,
-      inRightPart: false,
     });
   };
-  const handleKey = (event: KeyboardEvent) => {
-    const target = elementOf(event.target);
-    recordPeekInput({
-      kind: "key",
-      at: performance.now(),
-      feedCardSlug: null,
-      onGraph: false,
-      inRightPart: target === null || target === document.body || (rightPart()?.contains(target) ?? false),
-    });
+  const handleKey = () => {
+    recordPeekInput({ kind: "key", at: performance.now(), feedCardSlug: null, onGraph: false });
   };
   window.addEventListener("pointerdown", handlePointer, true);
   window.addEventListener("keydown", handleKey, true);

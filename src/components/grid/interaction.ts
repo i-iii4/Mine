@@ -355,6 +355,8 @@ export function isPositionVisibleInViewport(
   return itemBottom >= viewportTop && itemTop <= viewportBottom;
 }
 
+/** Brings the card the keyboard focused into view. Only the arrow keys move
+ *  that focus, so the scroll lands at once at every level (УД4, Л9). */
 export function scrollPositionIntoView(
   scrollElement: HTMLElement,
   position: MasonryPosition,
@@ -374,7 +376,7 @@ export function scrollPositionIntoView(
   }
 
   if (nextTop !== null) {
-    scrollElement.scrollTo({ top: nextTop, behavior: scrollBehavior() });
+    scrollElement.scrollTo({ top: nextTop, behavior: scrollBehavior({ byKey: true }) });
   }
 }
 

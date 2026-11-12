@@ -1,7 +1,14 @@
 import { useState } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { MOTION_LEVELS } from "@/lib/motion";
+import { installMotionInput, MOTION_KEY_ATTRIBUTE } from "@/lib/motionInput";
+import { setMotionLevel } from "@/test/motionLevel";
 import { Tabs, TabsList, TabsTrigger } from "./tabs";
+
+const css = readFileSync(path.join(process.cwd(), "src/styles/global.css"), "utf8");
 
 // The pill (DESIGN_SYSTEM.md, «Пилюля»): every segmented switch of the app is
 // shadcn's Tabs in Mine's `chrome` variant (user's decision of 07.10.2026).
@@ -196,5 +203,70 @@ describe("the pill's choice", () => {
     onValueChange.mockClear();
     fireEvent.mouseDown(graph, { button: 0 });
     expect(onValueChange).toHaveBeenLastCalledWith("graph");
+  });
+});
+
+/// SPEC_MOTION_LEVELS.md, М7: by the pointer the button slides in 200ms on
+/// the sine ease-in-out in Full, 150ms on E at Minimal (global.css), at once
+/// at Off (`motion-safe` is "the level is not Off"); a choice by a key stands
+/// at once at every level.
+describe("the pill by the level", () => {
+  let restore: () => void;
+  let removeInput: () => void;
+  beforeEach(() => {
+    restore = mockTriggerBoxes();
+    removeInput = installMotionInput();
+  });
+  afterEach(() => {
+    removeInput();
+    restore();
+  });
+
+  for (const level of MOTION_LEVELS) {
+    it(`${level}: slides on a press, stands at once on a key`, async () => {
+      setMotionLevel(level);
+      render(<Pill />);
+      const { list, button, grid, graph } = parts();
+
+      fireEvent.pointerDown(graph);
+      act(() => {
+        fireEvent.mouseDown(graph, { button: 0 });
+      });
+      await waitFor(() => expect(button.style.transform).toBe("translateX(40px)"));
+      expect(button).toHaveAttribute("data-animate");
+      expect(list).not.toHaveAttribute(MOTION_KEY_ATTRIBUTE);
+
+      act(() => grid.focus());
+      fireEvent.keyDown(grid, { key: "Enter" });
+      await waitFor(() => expect(button.style.transform).toBe("translateX(0px)"));
+      expect(button).not.toHaveAttribute("data-animate");
+      // The labels' colour lands with it: the mark covers what the pill holds.
+      expect(list).toHaveAttribute(MOTION_KEY_ATTRIBUTE);
+
+      // The pointer's next move gives the pill back to the level.
+      fireEvent.pointerMove(graph, { movementX: 2 });
+      expect(list).not.toHaveAttribute(MOTION_KEY_ATTRIBUTE);
+    });
+  }
+
+  it("keeps the slide behind motion-safe: at Off it stands at once", () => {
+    const variant = css.match(/@custom-variant motion-safe \(([^)]*\)*)\);/)?.[1];
+    expect(variant).toBe('&:not(:where([data-motion="off"] *))');
+  });
+
+  it("slides in 150ms on E at Minimal, the button and the labels alike", () => {
+    expect(css).toMatch(
+      /\[data-motion="minimal"\] \[data-menu-chevron\],\n\[data-motion="minimal"\] \[data-tabs-indicator\]\[data-animate\],\n\[data-motion="minimal"\] \[data-slot="tabs-list"\]\[data-variant="chrome"\] > \[data-slot="tabs-trigger"\] \{\n {2}transition-duration: var\(--motion-enter\);\n {2}transition-timing-function: var\(--motion-ease\);\n\}/,
+    );
+  });
+
+  it("keeps the key's mark off a page that did not install the rule (the clipper)", () => {
+    removeInput();
+    render(<Pill />);
+    const { list, grid } = parts();
+    act(() => grid.focus());
+    fireEvent.keyDown(grid, { key: "Enter" });
+    expect(list).not.toHaveAttribute(MOTION_KEY_ATTRIBUTE);
+    removeInput = installMotionInput();
   });
 });

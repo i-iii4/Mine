@@ -930,6 +930,40 @@ describe("Sidebar", () => {
     expect(onToggleLinkedTag).toHaveBeenCalledWith("open-block", "beta", false);
   });
 
+  it("turns the mark at once when a key pressed the button, by the level when the pointer did (SPEC_MOTION_LEVELS.md, С7)", () => {
+    const linked = (tags: string[]) => ({
+      ...defaultProps,
+      linkedBlockSlug: "open-block",
+      linkedTags: tags,
+      onToggleLinkedTag: vi.fn(),
+    });
+    const { rerender } = renderSidebar(linked([]));
+    const mark = () => document.querySelector('[data-sidebar-row-key="tag:beta"] [data-sidebar-link-icon]');
+    const button = () => screen.getByRole("button", { name: /(Connect|Disconnect) beta/ });
+
+    // Enter on the row: a click with no count of presses.
+    fireEvent.click(button(), { detail: 0 });
+    expect(mark()).not.toHaveAttribute("data-sidebar-link-turn");
+    rerender(sidebarTree(linked(["beta"])));
+    expect(mark()).toHaveAttribute("data-sidebar-link-turn", "key");
+
+    // The pointer: its turn, the next, by the level.
+    fireEvent.click(button(), { detail: 1 });
+    expect(mark()).toHaveAttribute("data-sidebar-link-turn", "key");
+    rerender(sidebarTree(linked([])));
+    expect(mark()).not.toHaveAttribute("data-sidebar-link-turn");
+    rerender(sidebarTree(linked(["beta"])));
+    expect(mark()).not.toHaveAttribute("data-sidebar-link-turn");
+  });
+
+  it("parts the list for the create row at once after ⇧⌘N, by the level after `+` (SPEC_MOTION_LEVELS.md, С8)", () => {
+    const part = () => document.querySelector("[data-sidebar-row-part]");
+    const { rerender } = renderSidebar({ ...defaultProps, isCreatingChannel: true, isCreatingChannelByKey: true });
+    expect(part()).toHaveAttribute("data-motion-key", "");
+    rerender(sidebarTree({ ...defaultProps, isCreatingChannel: true }));
+    expect(part()).not.toHaveAttribute("data-motion-key");
+  });
+
   it("removes link editor row actions immediately while detail chrome is closing", () => {
     renderSidebar({
       ...defaultProps,

@@ -1,5 +1,6 @@
 import * as React from "react";
 import { ChevronRight } from "lucide-react";
+import { lastInputIsKey } from "@/lib/motionInput";
 import { cn } from "@/lib/utils";
 import { ChromeControl, ChromePlate } from "./ui/chrome-control";
 
@@ -39,6 +40,16 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
     // from the edge as the name is from the left one (DESIGN_SYSTEM.md,
     // «Иконка рядом с текстом»).
     const chevronPadding = showChevron ? "gap-0 pl-2 pr-1" : "gap-1 px-2";
+    // The chevron turns at once when a key opened its menu, and when a key
+    // closes it (SPEC_MOTION_LEVELS.md, М4, УД4): read in the render that
+    // turns it, so the mark stands before the turn starts. A menu a key
+    // opened keeps it whatever closes the menu.
+    const [chevronByKey, setChevronByKey] = React.useState(false);
+    const [turnedFor, setTurnedFor] = React.useState(menuState);
+    if (menuState !== turnedFor) {
+      setTurnedFor(menuState);
+      setChevronByKey(menuState === "open" ? lastInputIsKey() : chevronByKey || lastInputIsKey());
+    }
 
     return (
       <ChromeControl enabled={surface === "topChrome"}>
@@ -100,6 +111,7 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
               {showChevron && surface === "topChrome" ? (
                 <ChevronRight
                   data-menu-chevron=""
+                  data-motion-key={chevronByKey ? "" : undefined}
                   className="size-[13px] shrink-0 transition-transform duration-150 group-data-[state=open]:rotate-90 motion-reduce:transition-none"
                 />
               ) : null}

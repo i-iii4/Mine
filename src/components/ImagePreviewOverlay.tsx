@@ -23,6 +23,9 @@ import {
 import {
   CARD_PEEK_FRAME_STEP_MS,
   CARD_PEEK_PREPARE_MAX_MS,
+  PEEK_POSE_REST,
+  PEEK_POSE_RISE_FROM,
+  PEEK_POSE_SUNK,
   clampUnit,
   peekContentOpacity,
   peekSpringSettled,
@@ -44,7 +47,8 @@ import {
   type ImagePreviewTransform,
 } from "@/lib/imagePreviewMotion";
 import { cn } from "@/lib/utils";
-import { prefersReducedMotion } from "@/lib/motion";
+import { MOTION_ENTER_MS, MOTION_EXIT_MS, motionLevel, motionMs, type MotionLevel } from "@/lib/motion";
+import { createPoseRunner, type PoseTargets } from "@/lib/poseMotion";
 
 export type ImagePreviewRequest = {
   src: string;
@@ -106,6 +110,11 @@ const IMAGE_PREVIEW_TOGGLE_SCALE = 1.5;
 const IMAGE_PREVIEW_DRAG_THRESHOLD_PX = 3;
 const IMAGE_PREVIEW_MIN_VISIBLE_EDGE_PX = 48;
 const IMAGE_PREVIEW_ANIMATION_MS = 160;
+
+/** What a motion of the viewer in Minimal is for (SPEC_MOTION_LEVELS.md,
+ *  ОУ9): the opening's rise, the leaving, the way back a gesture turns a
+ *  leaving round to. */
+type ImagePreviewPosePurpose = "rise" | "sink" | "back";
 
 /**
  * The transform the image shows right now, read from its computed style
@@ -242,6 +251,15 @@ export function ImagePreviewOverlay({
   const [closing, setClosing] = useState(false);
   /// The dialogs' own entrance or exit plays (`MODAL_SURFACE_*_CLASS`).
   const [dialogMotion, setDialogMotion] = useState<"in" | "out" | null>(null);
+  /// Minimal (SPEC_MOTION_LEVELS.md, ОУ9): the stage with the picture and the
+  /// island of buttons rise and sink each about its own centre, as the card's
+  /// window does, the scrim fading with them. The level moves the stage, not
+  /// the picture: a zoomed picture leaves with its zoom.
+  const [poseRunner] = useState(() => createPoseRunner<ImagePreviewPosePurpose>());
+  const poseTargets = useCallback((): PoseTargets => ({
+    parts: [stageRef.current, controlsRef.current],
+    scrim: scrimRef.current,
+  }), []);
 
   const gallery = useMemo<ImagePreviewShown[]>(() => {
     if (!preview) return [];
@@ -299,16 +317,17 @@ export function ImagePreviewOverlay({
       stageRef.current,
       imageRef.current,
     );
-    // Reduced motion places the image at once (SPEC_AUDIT_FIXES.md, Ф12), and
-    // during a motion the next frame takes the new place from here: the
-    // picture has no second animation of its own.
-    const animate = animated && !prefersReducedMotion() && motionRef.current === null;
+    // Off places the image at once, Minimal in 150 ms (SPEC_MOTION_LEVELS.md,
+    // К3), and during a motion the next frame takes the new place from here:
+    // the picture has no second animation of its own.
+    const duration = motionMs(IMAGE_PREVIEW_ANIMATION_MS, "enter");
+    const animate = animated && duration > 0 && motionRef.current === null;
     animationPendingRef.current = animate;
     if (!animate) animationEndRef.current = 0;
     const image = imageRef.current;
     if (image) {
       image.style.transition = animate
-        ? `transform ${IMAGE_PREVIEW_ANIMATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`
+        ? `transform ${duration}ms cubic-bezier(0.22, 1, 0.36, 1)`
         : "none";
     }
     if (frameRef.current !== null) {
@@ -318,7 +337,7 @@ export function ImagePreviewOverlay({
       frameRef.current = null;
       if (animationPendingRef.current) {
         animationPendingRef.current = false;
-        animationEndRef.current = performance.now() + IMAGE_PREVIEW_ANIMATION_MS;
+        animationEndRef.current = performance.now() + motionMs(IMAGE_PREVIEW_ANIMATION_MS, "enter");
       }
       const { scale, x, y } = transformRef.current;
       const currentImage = imageRef.current;
@@ -438,7 +457,7 @@ export function ImagePreviewOverlay({
 
   /** Everything the motion wrote comes off: the viewer stands at rest. */
   const clearMotionStyles = useCallback(() => {
-    for (const element of [scrimRef.current, controlsRef.current]) {
+    for (const element of [scrimRef.current, controlsRef.current, stageRef.current]) {
       if (element) element.style.opacity = "";
     }
     const image = imageRef.current;
@@ -472,6 +491,7 @@ export function ImagePreviewOverlay({
   /** Gone in this frame (Escape; a request that replaces this one). */
   const stopAll = useCallback(() => {
     cancelFrames();
+    poseRunner.stop(true);
     hideSource(null);
     clearMotionStyles();
     const image = imageRef.current;
@@ -482,7 +502,7 @@ export function ImagePreviewOverlay({
     closingRef.current = false;
     setClosing(false);
     setDialogMotion(null);
-  }, [cancelFrames, clearMotionStyles, hideSource]);
+  }, [cancelFrames, clearMotionStyles, hideSource, poseRunner]);
 
   const step = useCallback((direction: -1 | 1) => {
     if (gallery.length < 2 || !shown) return;
@@ -608,15 +628,41 @@ export function ImagePreviewOverlay({
     setClosing(target === 0);
   }, []);
 
-  /** A gesture on the picture while it leaves: it stays (Ф12). */
+  /** The viewer at its place again in Minimal: its motions' styles go. */
+  const settlePose = useCallback(() => {
+    poseRunner.stop(true);
+    settleImageAtRest();
+  }, [poseRunner, settleImageAtRest]);
+
+  /** A gesture on the picture while it leaves: it stays (Ф12). In Minimal
+   *  the stage goes back to its place in 150 ms on E (ОУ9). */
   const takeOver = useCallback(() => {
+    if (poseRunner.motion()?.purpose === "sink") {
+      closingRef.current = false;
+      setClosing(false);
+      poseRunner.move("back", null, PEEK_POSE_REST, MOTION_ENTER_MS, poseTargets(), settlePose);
+      return;
+    }
     const motion = motionRef.current;
     if (motion && !motion.landing && motion.spring.target === 0) turn(motion, 1);
-  }, [turn]);
+  }, [poseRunner, poseTargets, settlePose, turn]);
+
+  /** Minimal's opening (ОУ2, ОУ9): from faded, 6.67 px low and 95 % to its
+   *  place in 150 ms on E; the source stays on the page. */
+  const beginRise = useCallback(() => {
+    for (const element of [stageRef.current, controlsRef.current, scrimRef.current]) {
+      if (element) element.style.opacity = "";
+    }
+    poseRunner.move("rise", PEEK_POSE_RISE_FROM, PEEK_POSE_REST, MOTION_ENTER_MS, poseTargets(), settlePose);
+  }, [poseRunner, poseTargets, settlePose]);
 
   /** The opening's first frame, once the original is decoded or the wait is
    *  over: measured here, once. */
   const beginOpening = useCallback((kind: ImagePreviewOpening, source: HTMLElement | null) => {
+    if (kind === "rise") {
+      beginRise();
+      return;
+    }
     const image = imageRef.current;
     if (kind === "flight" && image && source) {
       const laid = measureLaidImage(image, source);
@@ -635,7 +681,7 @@ export function ImagePreviewOverlay({
     }
     if (image) image.style.opacity = "0";
     runMotion({ position: 0, velocity: 0, target: 1 }, null, 0);
-  }, [clearMotionStyles, runMotion]);
+  }, [beginRise, clearMotionStyles, runMotion]);
 
   // A new request: whatever ran is gone in this frame, and the new opening
   // writes its unseen first state before anything is painted.
@@ -645,7 +691,7 @@ export function ImagePreviewOverlay({
     const source = preview.source ?? null;
     const kind = imagePreviewOpeningKind({
       keyboard: preview.openedBy === "keyboard",
-      reducedMotion: prefersReducedMotion(),
+      level: motionLevel(),
       hasSource: source !== null,
     });
     openedAsRef.current = kind;
@@ -657,7 +703,13 @@ export function ImagePreviewOverlay({
     const image = imageRef.current;
     if (scrimRef.current) scrimRef.current.style.opacity = "0";
     if (controlsRef.current) controlsRef.current.style.opacity = "0";
-    if (image) image.style.visibility = "hidden";
+    // Minimal's stage waits unseen as a whole; Full's picture alone, its
+    // source standing for it until it flies.
+    if (kind === "rise") {
+      if (stageRef.current) stageRef.current.style.opacity = "0";
+    } else if (image) {
+      image.style.visibility = "hidden";
+    }
     decodedRef.current = false;
     let ready = false;
     // An original the source draws already is decoded, and `decode()` is not
@@ -714,16 +766,36 @@ export function ImagePreviewOverlay({
     // A motion that only takes its styles off lands now, in this frame.
     if (motion) landNow();
     settleRunningAnimation();
+    // A motion under way keeps the level it started at (УД11).
+    const level: MotionLevel = poseRunner.active() ? "minimal" : motionLevel();
     const image = imageRef.current;
-    const laid = image && shownSource ? measureLaidImage(image, shownSource) : null;
+    const measures = level === "full" && image && shownSource;
+    const laid = measures ? measureLaidImage(image, shownSource) : null;
     const place = laid && shownSource ? readImagePreviewPlace(shownSource, laid.width, laid.height) : null;
     const kind = imagePreviewClosingKind({
       openedAs: openedAsRef.current,
-      reducedMotion: prefersReducedMotion(),
+      level,
       sourceOnScreen: place !== null,
     });
+    if (kind === "instant") {
+      vanish();
+      return;
+    }
     closingRef.current = true;
     setClosing(true);
+    if (kind === "sink") {
+      // From where the stage stands, a rise under way included; its last
+      // frame stays, faded out, and the viewer goes the frame after (ОУ3, ОУ4).
+      setDialogMotion(null);
+      poseRunner.move("sink", null, PEEK_POSE_SUNK, MOTION_EXIT_MS, poseTargets(), () => {
+        const ended = poseRunner.generation();
+        requestAnimationFrame(() => {
+          if (poseRunner.generation() !== ended) return;
+          onCloseRef.current();
+        });
+      });
+      return;
+    }
     if (kind === "flight" && laid && place) {
       setDialogMotion(null);
       hideSource(shownSource);
@@ -737,7 +809,7 @@ export function ImagePreviewOverlay({
     }
     hideSource(null);
     setDialogMotion("out");
-  }, [hideSource, landNow, runMotion, settleRunningAnimation, shownSource, turn, vanish]);
+  }, [hideSource, landNow, poseRunner, poseTargets, runMotion, settleRunningAnimation, shownSource, turn, vanish]);
 
   // The second press of a double click is not a press of its own: the one
   // that closed the viewer is done, and it reaches neither the picture nor
@@ -801,11 +873,13 @@ export function ImagePreviewOverlay({
     return () => window.removeEventListener("keydown", handler, true);
   }, [gallery.length, preview, step, vanish]);
 
-  const stepScale = useCallback((direction: -1 | 1) => {
+  /** A zoom button: a press glides, a key pressing it zooms at once on every
+   *  level (SPEC_MOTION_LEVELS.md, К3, УД4). */
+  const stepScale = useCallback((direction: -1 | 1, byKey: boolean) => {
     takeOver();
     applyScaleAtStageCenter(
       transformRef.current.scale + direction * IMAGE_PREVIEW_BUTTON_SCALE_STEP,
-      true,
+      !byKey,
     );
   }, [applyScaleAtStageCenter, takeOver]);
 
@@ -1015,7 +1089,8 @@ export function ImagePreviewOverlay({
           size="icon"
           aria-label="Zoom out"
           data-image-preview-zoom-out
-          onClick={() => stepScale(-1)}
+          // A key's press is a click with no count of presses.
+          onClick={(event) => stepScale(-1, event.detail === 0)}
           className="text-muted-foreground hover:text-foreground"
         >
           <Minus className="size-[13px]" />
@@ -1032,7 +1107,7 @@ export function ImagePreviewOverlay({
           size="icon"
           aria-label="Zoom in"
           data-image-preview-zoom-in
-          onClick={() => stepScale(1)}
+          onClick={(event) => stepScale(1, event.detail === 0)}
           className="text-muted-foreground hover:text-foreground"
         >
           <Plus className="size-[13px]" />

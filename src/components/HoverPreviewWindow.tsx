@@ -59,8 +59,9 @@ export function useHoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard>
 }
 
 /** A piece of the frame: moved by the frames' writes, drawn in the window's own
- *  layer, no transition, the 0.01 ms one "Reduce motion" gives every element
- *  included (global.css), which would show each frame's value a frame late. */
+ *  layer, no transition, the 0.01 ms one Off and a key give every element
+ *  included (global.css), which would show each frame's value a frame late.
+ *  The level reaches the window through its engine (hoverPreviewWindow.ts). */
 const FRAME_PIECE_CLASS = "pointer-events-none absolute origin-top-left transition-none";
 
 function FrameUnder({ cut, radius }: { cut: PeekFrameCut; radius: number }) {

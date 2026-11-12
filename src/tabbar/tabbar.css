@@ -62,9 +62,10 @@ html[data-tab-bar-page] {
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  [data-tab-label],
-  [data-tab-close] {
-    transition: none;
-  }
+/* At once at the level Off, and for the keyboard's focus in the bar at every
+   level (SPEC_MOTION_LEVELS.md, Т1, Т2, УД4). Minimal keeps the pointer's
+   100 ms: no longer than its set. */
+[data-motion="off"] :is([data-tab-label], [data-tab-close]),
+[role="tablist"]:has([role="tab"]:focus-visible) :is([data-tab-label], [data-tab-close]) {
+  transition: none;
 }

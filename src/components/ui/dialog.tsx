@@ -2,6 +2,7 @@ import * as React from "react"
 import { Dialog as DialogPrimitive } from "radix-ui"
 
 import { ChromeCloseButton } from "@/components/ChromeCloseButton"
+import { useMotionKeyRef } from "@/lib/motionInput"
 import { isMenuDismissPress } from "@/lib/openMenus"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -50,12 +51,17 @@ function DialogClose({
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
 }
 
+// The scrim of a window a key opened lands at once with it
+// (SPEC_MOTION_LEVELS.md, М5, УД4).
 function DialogOverlay({
   className,
+  ref,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
+  const keyRef = useMotionKeyRef(ref)
   return (
     <DialogPrimitive.Overlay
+      ref={keyRef}
       data-slot="dialog-overlay"
       className={cn(MODAL_OVERLAY_CLASS, className)}
       {...props}
@@ -67,26 +73,35 @@ function DialogOverlay({
 // holds a field, a list or a choice. The close button stands only in a
 // window without Cancel: Cancel and Escape close the rest, as a macOS sheet.
 // `showCloseButton={false}` is the search panel's alone, which is no window.
+// A window a key opened lands at once, and so does its closing by a key
+// (SPEC_MOTION_LEVELS.md, М5, УД4).
 function DialogContent({
   className,
   children,
   widthRole = "content",
   showCloseButton = true,
   overlayClassName,
+  overlayProps,
   onPointerDownOutside,
+  ref,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   widthRole?: ModalWidth
   showCloseButton?: boolean
   overlayClassName?: string
+  /** The scrim's own data attributes, for a layer that names its scrim (the
+   *  search, `data-search-overlay-scrim`). */
+  overlayProps?: { [attribute: `data-${string}`]: string }
 }) {
   const [hasCancel, setHasCancel] = React.useState(false)
   const showsClose = showCloseButton && !hasCancel
   const slot = React.useMemo(() => ({ showsClose, setHasCancel }), [showsClose])
+  const keyRef = useMotionKeyRef(ref)
   return (
     <DialogPortal data-slot="dialog-portal">
-      <DialogOverlay className={overlayClassName} />
+      <DialogOverlay {...overlayProps} className={overlayClassName} />
       <DialogPrimitive.Content
+        ref={keyRef}
         data-slot="dialog-content"
         data-modal-width={widthRole}
         onPointerDownOutside={(event) => {

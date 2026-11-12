@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+// The collection rows' reorder gesture at the motion level Full, the level
+// with no stored choice, and its motion again at Minimal, stored before the
+// page loads (SPEC_MOTION_LEVELS.md, С9): the neighbours part over 250 ms on
+// `ease` and the copy lands over 200 ms on E in Full, both over 150 ms on E
+// in Minimal.
 import { chromium } from "playwright";
 
 const DEFAULT_AUDIT_URL = "http://127.0.0.1:1420/__sidebar-reorder-audit";
@@ -47,6 +52,68 @@ function waitForAnimationFrames(page, count) {
     };
     requestAnimationFrame(tick);
   }), count);
+}
+
+/** The motion of each level (tagRowDragOverlay.ts). */
+const E = "cubic-bezier(0.22, 1, 0.36, 1)";
+const LEVEL_MOTION = {
+  full: { sort: `transform 250ms ease`, dropMs: 200, dropEasing: E },
+  minimal: { sort: `transform 150ms ${E}`, dropMs: 150, dropEasing: E },
+};
+
+/** One short drag at `level`: the neighbour's transition while the copy
+ *  passes it, and the landing's Web Animation. */
+async function motionPass(browser, level) {
+  const page = await browser.newPage({ viewport: VIEWPORT });
+  page.on("pageerror", (error) => {
+    failures.push(`pageerror (${level}): ${error.message}`);
+    console.error("PAGEERROR", error);
+  });
+  if (level !== "full") {
+    await page.addInitScript((stored) => window.localStorage.setItem("mine.motion", stored), level);
+  }
+  await page.goto(AUDIT_URL);
+  await page.waitForSelector(ROW_SELECTOR);
+  await waitForAnimationFrames(page, 4);
+  const shown = await page.evaluate(() => document.documentElement.getAttribute("data-motion"));
+  check(`${level}: the level in force`, shown === level, `data-motion=${shown}`);
+
+  const order = await readRowOrder(page);
+  const source = await readRowState(page, order[1]);
+  const x = source.rect.x + Math.min(80, source.rect.width / 3);
+  const y = source.rect.y + source.rect.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y + 12, { steps: 3 });
+  await page.mouse.move(x, y + source.rect.height * 1.5, { steps: 6 });
+  await waitForAnimationFrames(page, 2);
+  const sort = await page.evaluate((key) => document.querySelector(`[data-sidebar-row-key="${key}"]`)?.style.transition ?? null, order[2]);
+  const expected = LEVEL_MOTION[level];
+  // WebKit leaves out a timing function that is the initial `ease`.
+  const sortShown = sort?.replace(/ ease$/, "") ?? null;
+  check(`${level}: the neighbours part by the level`, sortShown === expected.sort.replace(/ ease$/, ""), `transition=${sort}`);
+
+  // The landing: dnd-kit's Web Animation on the copy, read as it starts.
+  await page.evaluate(() => {
+    window.__MINE_DROP_TIMINGS__ = [];
+    const original = Element.prototype.animate;
+    Element.prototype.animate = function animate(keyframes, options) {
+      const animation = original.call(this, keyframes, options);
+      if (this.closest("[data-sidebar-tag-drag-preview]") || this.querySelector?.("[data-sidebar-tag-drag-preview]")) {
+        const timing = animation.effect.getTiming();
+        window.__MINE_DROP_TIMINGS__.push({ duration: timing.duration, easing: timing.easing });
+      }
+      return animation;
+    };
+  });
+  await page.mouse.up();
+  await page.waitForSelector(OVERLAY_SELECTOR, { state: "detached", timeout: 800 }).catch(() => undefined);
+  const drops = await page.evaluate(() => window.__MINE_DROP_TIMINGS__);
+  const drop = drops[0] ?? null;
+  check(`${level}: the copy lands by the level`,
+    drop !== null && drop.duration === expected.dropMs && drop.easing === expected.dropEasing,
+    drop ? `${drop.duration}ms ${drop.easing}` : "no landing played");
+  await page.close();
 }
 
 function readRowOrder(page) {
@@ -282,6 +349,10 @@ async function main() {
   check("Escape cancels the gesture without reordering",
     overlayDuringCancel !== null
       && JSON.stringify(orderAfterCancel) === JSON.stringify(orderAfterScrub));
+
+  await page.close();
+  await motionPass(browser, "full");
+  await motionPass(browser, "minimal");
 
   for (const note of notes) console.log(`INFO ${note}`);
 

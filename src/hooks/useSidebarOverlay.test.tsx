@@ -98,13 +98,58 @@ describe("useSidebarOverlay: the sidebar over the feed (SPEC_NARROW_WINDOW.md, ะ
     expect(result.current.open).toBe(false);
   });
 
+  describe("by a key (SPEC_MOTION_LEVELS.md, ะฃะ”4, ะก2)", () => {
+    it("says a key opened it, and keeps that through any closing", () => {
+      const { result } = renderOverlay();
+      act(() => result.current.openOverlay(true));
+      expect(result.current.byKey).toBe(true);
+      act(() => result.current.close());
+      expect(result.current.open).toBe(false);
+      expect(result.current.byKey).toBe(true);
+      act(() => result.current.openOverlay());
+      expect(result.current.byKey).toBe(false);
+    });
+
+    it("says a key closes what the pointer opened", () => {
+      const { result } = renderOverlay();
+      act(() => result.current.toggle());
+      expect(result.current.byKey).toBe(false);
+      act(() => result.current.toggle(true));
+      expect(result.current.open).toBe(false);
+      expect(result.current.byKey).toBe(true);
+    });
+
+    it("takes the View menu's word for a command the backend routes here, and hands it on beside the feed", () => {
+      let keyCommand = true;
+      const takeKeyCommand = vi.fn(() => {
+        const taken = keyCommand;
+        keyCommand = false;
+        return taken;
+      });
+      const { result } = renderOverlay({ takeKeyCommand });
+      command({ kind: "toggle" });
+      expect(result.current.open).toBe(true);
+      expect(result.current.byKey).toBe(true);
+      // The tab bar's button: the word was taken.
+      command({ kind: "toggle" });
+      command({ kind: "toggle" });
+      expect(result.current.byKey).toBe(false);
+
+      window.innerWidth = 1200;
+      keyCommand = true;
+      const beside = renderOverlay({ takeKeyCommand });
+      command({ kind: "toggle" });
+      expect(beside.options.onBesideIntent).toHaveBeenCalledWith({ kind: "toggle" }, true);
+    });
+  });
+
   it("leaves to the sidebar beside the feed a command that came after the window widened", () => {
     window.innerWidth = 1200;
     const { result, options } = renderOverlay();
     expect(result.current.narrow).toBe(false);
     expect(commands.reportSidebarOverlay).toHaveBeenLastCalledWith("beside");
     command({ kind: "swipe", open: false });
-    expect(options.onBesideIntent).toHaveBeenCalledWith({ kind: "swipe", open: false });
+    expect(options.onBesideIntent).toHaveBeenCalledWith({ kind: "swipe", open: false }, false);
     // Opening does nothing beside the feed.
     act(() => result.current.openOverlay());
     expect(result.current.open).toBe(false);
@@ -192,7 +237,7 @@ describe("useSidebarOverlay: the sidebar over the feed (SPEC_NARROW_WINDOW.md, ะ
       const { rerender } = visit(base);
       rerender({ openedForKeyboard: true });
       command({ kind: "toggle" });
-      expect(base.onBesideIntent).toHaveBeenCalledWith({ kind: "toggle" });
+      expect(base.onBesideIntent).toHaveBeenCalledWith({ kind: "toggle" }, false);
     });
 
     it("says what the window has while its tab is hidden, and open again as it returns", () => {

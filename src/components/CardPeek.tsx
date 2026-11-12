@@ -66,6 +66,10 @@ import {
   CARD_PEEK_TOP_INSET_PX,
   PEEK_FRAME_CORNERS,
   PEEK_FRAME_PIECES,
+  PEEK_POSE_NUDGED,
+  PEEK_POSE_REST,
+  PEEK_POSE_RISE_FROM,
+  PEEK_POSE_SUNK,
   carriedPeekMediaPlace,
   carriedPeekImage,
   carriedPeekRect,
@@ -84,6 +88,7 @@ import {
   peekFrameCut,
   peekFramePieceStyle,
   peekFrameTransforms,
+  peekInputByKey,
   peekLaidMediaTransforms,
   peekMediaTransforms,
   peekNudgeTransform,
@@ -92,10 +97,12 @@ import {
   peekSpringSettled,
   peekSurfaceTransforms,
   peekSwitchExitKeyframes,
+  peekSwitchExitKind,
   peekTileEdgeRects,
   peekWindowLayout,
   lerp,
   relativePeekRect,
+  lastPeekInput,
   setPeekHiddenSlug,
   stepPeekSpring,
   type CardPeekExit,
@@ -108,6 +115,7 @@ import {
   type PeekRect,
   type PeekSource,
   type PeekSpring,
+  type PeekSwitchExitKind,
   type PeekTileEdge,
 } from "@/lib/cardPeek";
 import {
@@ -122,10 +130,13 @@ import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { commandById } from "@/lib/commandRegistry";
 import { usePeekWidth, type PeekWidth } from "@/lib/cardView";
 import type { DetailLayoutMode } from "@/lib/detailLayout";
-import { prefersReducedMotion } from "@/lib/motion";
+import { MOTION_ENTER_MS, MOTION_EXIT_MS, motionLevel, type MotionLevel, type MotionOptions } from "@/lib/motion";
+import { lastInputIsKey } from "@/lib/motionInput";
+import { createPoseRunner, type PoseTargets } from "@/lib/poseMotion";
 import { cn } from "@/lib/utils";
 import type { IndexedBlock, LightBlock, RenameBlockError, TagCount } from "@/types";
 import { CardMoreMenu } from "./CardHoverMenu";
+import { noFocusBackAfterPress } from "@/lib/openMenus";
 import { ChromeActions } from "./ChromeRow";
 import { Separator } from "./ui/separator";
 import { ChromeCloseButton } from "./ChromeCloseButton";
@@ -160,18 +171,32 @@ export interface CardPeekProps {
   placeReady?: boolean;
   /** The right part the window stands over. */
   areaRef: RefObject<HTMLElement | null>;
-  /** The scrim was pressed, or Escape came while the window grew. */
-  onClose: () => void;
+  /** The scrim was pressed, or Escape came while the window grew; Escape
+   *  says it is a key's, so the top rows go at once (SPEC_MOTION_LEVELS.md,
+   *  В1). */
+  onClose: (options?: MotionOptions) => void;
   /** The closing window was pressed: open its card again (О11). */
   onReopen: (block: PeekBlock) => void;
   /** The window's content: the open card and its plate. */
   children: (block: PeekBlock) => ReactNode;
 }
 
-/** The window's movements: its opening and closing, and `resize`, the
- *  window at its place narrowing to its content or widening for the panel
- *  beside it (О3, О8). */
-type MovingKind = Exclude<PeekMotionKind, "instant"> | "resize";
+/** The window's movements on the spring (Full): its opening and closing,
+ *  and `resize`, the window at its place narrowing to its content or
+ *  widening for the panel beside it (О3, О8). Minimal's rise and sink run on
+ *  the compositor instead (`createPoseRunner`, poseMotion.ts). */
+type MovingKind = Exclude<PeekMotionKind, "instant" | "rise" | "sink"> | "resize";
+
+/** What a motion of the window in Minimal is for (SPEC_MOTION_LEVELS.md,
+ *  ОУ2–ОУ7): the opening's rise; the hint's step and its way back; the
+ *  leaving; the fade into the full page; the way back to the place from a
+ *  leaving the same card's opening turned round. */
+type PeekPosePurpose = "rise" | "nudge" | "sink" | "fade" | "back";
+
+/** Whether a kind goes by the spring (Full's opening and closing). */
+function springKind(kind: PeekMotionKind): kind is Exclude<MovingKind, "resize"> {
+  return kind === "card" || kind === "center" || kind === "fade";
+}
 
 /** A movement under way. Its numbers live here, not in React state: every
  *  frame writes the page directly. */
@@ -704,10 +729,17 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
   // window closes; it leaves as a dialog does.
   const [leavingAsDialog, setLeavingAsDialog] = useState(false);
   // О11: the collection or the view changed under the window; it fades down
-  // over the new place, which answers from the start. Its two animations, and
-  // the movement it cut short, whose hidden frames stay hidden until it ends.
+  // over the new place, which answers from the start. How it leaves (by the
+  // level and whether a key changed the place, SPEC_MOTION_LEVELS.md, ОУ1),
+  // whether its leaving began, Full's two animations, and the movement it
+  // cut short, whose hidden frames stay hidden until it ends.
   const [switching, setSwitching] = useState(false);
-  const switchExitRef = useRef<{ animations: Animation[]; cut: PeekMotion | null } | null>(null);
+  const switchExitRef = useRef<{
+    kind: PeekSwitchExitKind;
+    started: boolean;
+    animations: Animation[];
+    cut: PeekMotion | null;
+  } | null>(null);
 
   // The gate the card's own work goes through (detailMotionGate.ts): open
   // while the window prepares and rests, holding while it moves.
@@ -818,6 +850,18 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     nudge.spring = { position: 0, velocity: 0, target: 0 };
     writeNudge();
   }, [writeNudge]);
+
+  // Minimal (SPEC_MOTION_LEVELS.md, ОУ2–ОУ5): the window rises into place,
+  // steps back for the hint and sinks away as one value of one element, the
+  // wrapper the spring's step moves in Full, its scrim at the window's
+  // opacity. Every motion starts from where the window stands, so a press in
+  // the step goes on down the same straight line with no jump and no stop
+  // (ОУ4).
+  const [poseRunner] = useState(() => createPoseRunner<PeekPosePurpose>());
+  // The card whose window leaves by its × or a press on the scrim: only its
+  // own opening turns the leaving round (ОУ5).
+  const leavingSlugRef = useRef<string | null>(null);
+  const poseTargets = (): PoseTargets => ({ parts: [nudgeRef.current], scrim: scrimRef.current });
 
   /** Back to the plain surface: no transform, no layer. */
   const clearInline = useCallback(() => {
@@ -1497,8 +1541,12 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     const motion = motionRef.current;
     if (motion && motion.kind !== "resize") return;
     if (!motion && handoverRef.current !== null) return;
+    const posing = poseRunner.motion();
+    if (posing && posing.purpose !== "nudge") return;
     const unseen = preparationRef.current !== null;
-    applyFrame({ layout, contentWidth: content.width, width }, applied !== null && !unseen && !prefersReducedMotion());
+    // Only Full carries the width; Minimal and Off stand at the new one at
+    // once (SPEC_MOTION_LEVELS.md, ОУ6).
+    applyFrame({ layout, contentWidth: content.width, width }, applied !== null && !unseen && motionLevel() === "full");
   };
   evaluateFrameRef.current = evaluateFrame;
 
@@ -1511,7 +1559,9 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
       return;
     }
     const motion = motionRef.current;
-    const resting = preparationRef.current === null && (motion === null || motion.kind === "resize");
+    const posing = poseRunner.motion();
+    const resting = preparationRef.current === null && (motion === null || motion.kind === "resize")
+      && (posing === null || posing.purpose === "nudge");
     const allowed = pointerOnScrimRef.current && !menuOpenRef.current && resting && heldRef.current !== null;
     // A pointer that attends to the band and does not head to the window
     // turns the step on; from then on only leaving the band, a menu or a
@@ -1519,10 +1569,46 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     const on = allowed && (steppedRef.current || (attendedRef.current && !towardWindowRef.current));
     steppedRef.current = on;
     setHintShown(on);
-    // With reduced motion the hint alone (О13).
-    aimNudge(on && !prefersReducedMotion() ? 1 : 0);
+    // Full steps on the spring, Minimal along the leaving's line, Off shows
+    // the hint alone (SPEC_MOTION_LEVELS.md, ОУ4, ОУ8).
+    const level = motionLevel();
+    aimNudge(on && level === "full" ? 1 : 0);
+    aimPoseNudge(on && level === "minimal");
   };
   updateNudgeRef.current = updateNudge;
+
+  /** The window at its place again in Minimal: its motions' styles go, the
+   *  card's late work lands, and what the place decided while it moved, and
+   *  the pointer resting on the band steps it back (О15). */
+  const settlePose = () => {
+    poseRunner.stop(true);
+    releaseGate();
+    setLive(true);
+    evaluateFrameRef.current();
+    updateNudgeRef.current();
+  };
+
+  /** The hint's step in Minimal (ОУ4): along the leaving's line to a sixth
+   *  of it in 150 ms on E and back in 100 ms, from where the window stands. */
+  const aimPoseNudge = (on: boolean) => {
+    const target = on ? PEEK_POSE_NUDGED : PEEK_POSE_REST;
+    if (poseRunner.target() === target) return;
+    poseRunner.move("nudge", null, target, on ? MOTION_ENTER_MS : MOTION_EXIT_MS, poseTargets(), on ? () => undefined : settlePose);
+  };
+
+  /** Minimal's opening (ОУ2): from faded, 6.67 px low and 95 % to its place
+   *  in 150 ms on E, its scrim with it, the content shown from the first
+   *  frame and the card in the feed left in view. */
+  const beginRise = () => {
+    if (anchorRef.current) anchorRef.current.style.opacity = "";
+    if (scrimRef.current) scrimRef.current.style.opacity = "";
+    holdGate();
+    flushSync(() => {
+      setPreparing(false);
+      setLive(false);
+    });
+    poseRunner.move("rise", PEEK_POSE_RISE_FROM, PEEK_POSE_REST, MOTION_ENTER_MS, poseTargets(), settlePose);
+  };
 
   /** Lays the card out unseen and waits for it, `CARD_PEEK_PREPARE_MAX_MS`
    *  at most, before `begin` starts the movement in a frame: until the card's
@@ -1737,6 +1823,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     stopLoop(motion);
     restoreHiddenFrame(motion);
     motionRef.current = null;
+    poseRunner.stop(true);
     clearInline();
     resetNudge();
     hideCard(null);
@@ -1771,12 +1858,45 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     setLeavingAsDialog(true);
   };
 
+  /** Minimal's leaving (ОУ3, ОУ7): down the line to 40 px and 95 % with the
+   *  scrim fading, or toward the full page a fade where the window stands,
+   *  both in 100 ms on E from where it stands now. Its last frame stays on
+   *  the page, faded out, and it is gone the frame after (ОУ4, rule 4),
+   *  unless the same card opened again meanwhile. */
+  const sinkPose = (purpose: "sink" | "fade") => {
+    const from = poseRunner.current();
+    const to = purpose === "sink" ? PEEK_POSE_SUNK : { ...from, opacity: 0 };
+    poseRunner.move(purpose, from, to, MOTION_EXIT_MS, poseTargets(), () => {
+      const ended = poseRunner.generation();
+      requestAnimationFrame(() => {
+        if (poseRunner.generation() !== ended) return;
+        flushSync(() => vanish());
+      });
+    });
+  };
+
+  /** The level a closing goes by: a movement under way keeps the level it
+   *  started at (SPEC_MOTION_LEVELS.md, УД11). */
+  const closingLevel = (): MotionLevel => {
+    const motion = motionRef.current;
+    if (motion && motion.kind !== "resize") return "full";
+    if (poseRunner.active()) return "minimal";
+    return motionLevel();
+  };
+
   /** The collection or the view changed under the window (О11; user's
    *  decision of 05.11.2026): it lands nowhere, even where the same card
    *  stands in the new feed. It stops where it stands; the card it hid shows
-   *  at once and the page under it answers at once. */
+   *  at once and the page under it answers at once. Minimal's motion goes
+   *  on until the leaving takes it over from where it is. */
   const leaveForSwitch = () => {
     if (switchExitRef.current) return;
+    // A key changed the place, ⌥⌘↑↓ or another, or a native menu item, which
+    // counts as one (УД4, п. 1; motionInput.ts).
+    const kind = peekSwitchExitKind({
+      level: closingLevel(),
+      byKey: peekInputByKey(lastPeekInput(), performance.now()) || lastInputIsKey(),
+    });
     const motion = motionRef.current;
     stopLoop(motion);
     motionRef.current = null;
@@ -1790,27 +1910,37 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     releaseGate();
     setHintShown(false);
     setClosing(true);
-    switchExitRef.current = { animations: [], cut: motion };
+    switchExitRef.current = { kind, started: false, animations: [], cut: motion };
     setSwitching(true);
   };
 
-  // That leaving fades once the new place's feed stands under the window, in
+  // That leaving starts once the new place's feed stands under the window, in
   // the commit that lays it out, and `CARD_PEEK_PREPARE_MAX_MS` at most after
-  // the change. The window and its scrim fade together and the window moves
-  // down as one piece. They run on the compositor, so the work on the page
-  // under them does not hold them up, and "Reduce motion" keeps their time
-  // (О13).
+  // the change. In Full the window and its scrim fade together and the
+  // window moves down as one piece; in Minimal it sinks away (ОУ3); at Off
+  // and after a key it is gone in that frame (ОУ1, ОУ8). They run on the
+  // compositor, so the work on the page under them does not hold them up.
   useLayoutEffect(() => {
     const exiting = switchExitRef.current;
-    if (!switching || !exiting || exiting.animations.length > 0) return undefined;
+    if (!switching || !exiting || exiting.started) return undefined;
     const fade = () => {
+      exiting.started = true;
+      if (exiting.kind === "instant") {
+        // Before this frame paints: the new place shows with no window.
+        vanish();
+        return;
+      }
+      if (exiting.kind === "sink") {
+        sinkPose("sink");
+        return;
+      }
       const anchor = anchorRef.current;
       const scrim = scrimRef.current;
       if (!anchor || !scrim || typeof anchor.animate !== "function") {
         vanish();
         return;
       }
-      const ends = peekSwitchExitKeyframes(prefersReducedMotion());
+      const ends = peekSwitchExitKeyframes();
       const timing: KeyframeAnimationOptions = {
         duration: CARD_PEEK_SWITCH_EXIT_MS,
         easing: CARD_PEEK_SWITCH_EXIT_EASING,
@@ -1838,6 +1968,18 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     const area = areaRef.current;
     const motion = motionRef.current;
     if (block && previousSlug === null) {
+      // In Minimal the same card opened again while its window leaves, by
+      // its × or a press on the scrim: back to its place from where it is,
+      // in 150 ms on E (SPEC_MOTION_LEVELS.md, ОУ5).
+      const posing = poseRunner.motion();
+      if (
+        posing && (posing.purpose === "sink" || posing.purpose === "fade")
+        && !switchExitRef.current && leavingSlugRef.current === block.slug
+      ) {
+        setClosing(false);
+        poseRunner.move("back", null, PEEK_POSE_REST, MOTION_ENTER_MS, poseTargets(), settlePose);
+        return;
+      }
       // The same card opened again while its window leaves: back from where
       // it is (О11).
       if (motion && motion.spring.target === 0 && motion.slug === block.slug) {
@@ -1873,6 +2015,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
         restoreHiddenFrame(motion);
         motionRef.current = null;
       }
+      poseRunner.stop(true);
       clearInline();
       hideCard(null);
       releaseGate();
@@ -1891,7 +2034,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
       let kind = peekOpeningKind({
         from,
         restored: opening?.slug === block.slug && opening.restored,
-        reducedMotion: prefersReducedMotion(),
+        level: motionLevel(),
       });
       if (kind === "card" && !(area && findPeekSource(area, block.slug))) kind = "center";
       // A window a key or the full page stood at once still fades in place
@@ -1906,6 +2049,12 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
       if (scrimRef.current) scrimRef.current.style.opacity = "0";
       if (anchorRef.current) anchorRef.current.style.opacity = "0";
       setPreparing(true);
+      // Minimal waits for the card as Full does, then rises with no pieces
+      // and no picture of its own (ОУ2).
+      if (kind === "rise") {
+        prepare(() => beginRise(), () => new Map(), true);
+        return;
+      }
       viewIdRef.current += 1;
       const preparedSource = kind === "card" && area ? findPeekSource(area, block.slug) : null;
       setView({ ...viewFor(kind, preparedSource, readWindowRadius()), id: viewIdRef.current });
@@ -1963,19 +2112,33 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
         motionRef.current = null;
       }
       const moving = motionRef.current;
-      const reducedMotion = prefersReducedMotion();
-      const source = openedAsRef.current === "card" && area ? findPeekSource(area, held.slug) : null;
+      const level = closingLevel();
+      const source = level === "full" && openedAsRef.current === "card" && area ? findPeekSource(area, held.slug) : null;
       const kind = peekClosingKind({
         openedAs: openedAsRef.current,
         exit: exitRef.current,
-        reducedMotion,
+        level,
         cardOnScreen: source !== null,
       });
-      if (escapedRef.current) {
+      if (escapedRef.current || kind === "instant") {
         escapedRef.current = false;
         vanish();
         return;
       }
+      // Minimal: the leaving from where the window stands, in the frame the
+      // closing comes, a step or a rise under way carried on (ОУ3, ОУ4).
+      if (level === "minimal") {
+        // A window Full grew out of its card before the level changed gives
+        // the card back now: Minimal hides none (ОУ2, п. 4).
+        hideCard(null);
+        holdGate();
+        setLive(false);
+        setClosing(true);
+        leavingSlugRef.current = held.slug;
+        sinkPose(kind === "fade" ? "fade" : "sink");
+        return;
+      }
+      if (!springKind(kind)) return;
       const slug = held.slug;
       // The card has no place on screen to shrink into: it leaves as a
       // dialog does (О11).
@@ -2024,11 +2187,12 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
           // Where the card stands as the closing starts, the feed or the
           // graph after a change of place included (О11).
           const place = openedAs === "card" && area ? findPeekSource(area, slug) : null;
-          const kindNow = peekClosingKind({ openedAs, exit: exitRef.current, reducedMotion, cardOnScreen: place !== null });
+          const kindNow = peekClosingKind({ openedAs, exit: exitRef.current, level: "full", cardOnScreen: place !== null });
           if (kindNow === "center" && openedAs === "card") {
             leaveAsDialog();
             return;
           }
+          if (!springKind(kindNow)) return;
           start(kindNow, slug, { position: 1, velocity: 0, target: 0 }, 1, kindNow === "card" ? place : null, kindNow === "card" ? pictures : new Map(), now, restWidth);
         },
         () => {
@@ -2054,8 +2218,8 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     }
     // The collection or the view changed under a window already closing: it
     // leaves from where it stands (О5, О11). One leaving as a dialog ends as
-    // it began.
-    if (!block && held && closing && !leavingAsDialog && exit === "switch") leaveForSwitch();
+    // it began, and so does Minimal's leaving (SPEC_MOTION_LEVELS.md, ОУ5).
+    if (!block && held && closing && !leavingAsDialog && exit === "switch" && poseRunner.motion() === null) leaveForSwitch();
   // Heard on `block` and `exit`: `held`, `closing`, `flyer` and
   // `leavingAsDialog` are what stood before this change, `opening` comes with
   // `block`, and `exit` comes with it or, over a closing, on its own.
@@ -2089,10 +2253,11 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
         return;
       }
       const motion = motionRef.current;
-      if (!motion || motion.kind === "resize" || motion.spring.target !== 1) return;
+      const rising = poseRunner.motion()?.purpose === "rise";
+      if (!rising && (!motion || motion.kind === "resize" || motion.spring.target !== 1)) return;
       event.preventDefault();
       event.stopPropagation();
-      onCloseRef.current();
+      onCloseRef.current({ byKey: true });
     };
     const up = (event: KeyboardEvent) => {
       if (event.key === "Escape") escapedRef.current = false;
@@ -2134,12 +2299,13 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     stopLoop(motion);
     restoreHiddenFrame(motion);
     cancelSwitchExit();
+    poseRunner.stop(true);
     cancelPreparation();
     cancelHandover();
     hiddenCardRef.current?.removeAttribute(HIDDEN_CARD_ATTRIBUTE);
     setPeekHiddenSlug(null);
     releaseGate();
-  }, [releaseGate]);
+  }, [poseRunner, releaseGate]);
 
   if (!held) return null;
   const cut = view && view.kind !== "fade" ? peekFrameCut(view.cardRadius, view.windowRadius) : null;
@@ -2353,6 +2519,10 @@ export function CardPeekPlate({
             triggerVariant="chrome"
             triggerShortcut={commandById("element-menu-open").combo}
             openRequestSequence={menuOpenRequestSequence - menuBaselineRef.current}
+            // A menu a press opened gives the focus back to nothing: on the
+            // trigger it would bring up its tooltip with no pointer over it
+            // (user's report of 12.11.2026). A menu ⌘K opened gives it back.
+            onCloseAutoFocus={noFocusBackAfterPress}
           />
           <Button
             type="button"

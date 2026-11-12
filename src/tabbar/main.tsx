@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { installControlCharGuard } from "@/lib/controlCharGuard";
+import { installMotionInput } from "@/lib/motionInput";
 import { applyStoredAppearance } from "./appearance";
 import { TabBarApp } from "./TabBarApp";
 import "@/styles/global.css";
@@ -9,6 +10,8 @@ import "./tabbar.css";
 // The bar is its own page: it applies the stored look itself before the first
 // render, as the settings window does.
 applyStoredAppearance();
+// What a key opened lands at once (SPEC_MOTION_LEVELS.md, УД4).
+installMotionInput();
 // Arrow keys in a child page can type stray control characters (В80).
 installControlCharGuard();
 

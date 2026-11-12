@@ -54,21 +54,28 @@ function expectRect(actual: PeekRect, expected: PeekRect) {
 }
 
 describe("how the preview opens and closes", () => {
-  it("opens at once by a key, in place with Reduce motion, out of a source by a press, as a dialog with none", () => {
-    expect(imagePreviewOpeningKind({ keyboard: true, reducedMotion: true, hasSource: true })).toBe("instant");
-    expect(imagePreviewOpeningKind({ keyboard: true, reducedMotion: false, hasSource: false })).toBe("instant");
-    expect(imagePreviewOpeningKind({ keyboard: false, reducedMotion: true, hasSource: true })).toBe("fade");
-    expect(imagePreviewOpeningKind({ keyboard: false, reducedMotion: true, hasSource: false })).toBe("fade");
-    expect(imagePreviewOpeningKind({ keyboard: false, reducedMotion: false, hasSource: true })).toBe("flight");
-    expect(imagePreviewOpeningKind({ keyboard: false, reducedMotion: false, hasSource: false })).toBe("dialog");
+  it("opens at once by a key on every level and at Off, rising in Minimal, out of a source in Full, as a dialog with none (ОУ9)", () => {
+    for (const level of ["full", "minimal", "off"] as const) {
+      expect(imagePreviewOpeningKind({ keyboard: true, level, hasSource: true })).toBe("instant");
+      expect(imagePreviewOpeningKind({ keyboard: true, level, hasSource: false })).toBe("instant");
+    }
+    expect(imagePreviewOpeningKind({ keyboard: false, level: "off", hasSource: true })).toBe("instant");
+    expect(imagePreviewOpeningKind({ keyboard: false, level: "minimal", hasSource: true })).toBe("rise");
+    expect(imagePreviewOpeningKind({ keyboard: false, level: "minimal", hasSource: false })).toBe("rise");
+    expect(imagePreviewOpeningKind({ keyboard: false, level: "full", hasSource: true })).toBe("flight");
+    expect(imagePreviewOpeningKind({ keyboard: false, level: "full", hasSource: false })).toBe("dialog");
   });
 
-  it("closes into a source on screen, as a dialog without one, in place after a key or with Reduce motion", () => {
-    expect(imagePreviewClosingKind({ openedAs: "flight", reducedMotion: false, sourceOnScreen: true })).toBe("flight");
-    expect(imagePreviewClosingKind({ openedAs: "flight", reducedMotion: false, sourceOnScreen: false })).toBe("dialog");
-    expect(imagePreviewClosingKind({ openedAs: "dialog", reducedMotion: false, sourceOnScreen: false })).toBe("dialog");
-    expect(imagePreviewClosingKind({ openedAs: "instant", reducedMotion: false, sourceOnScreen: true })).toBe("fade");
-    expect(imagePreviewClosingKind({ openedAs: "flight", reducedMotion: true, sourceOnScreen: true })).toBe("fade");
+  it("closes in Full into a source on screen, as a dialog without one, in place after a key; sinks in Minimal; at once at Off", () => {
+    expect(imagePreviewClosingKind({ openedAs: "flight", level: "full", sourceOnScreen: true })).toBe("flight");
+    expect(imagePreviewClosingKind({ openedAs: "flight", level: "full", sourceOnScreen: false })).toBe("dialog");
+    expect(imagePreviewClosingKind({ openedAs: "dialog", level: "full", sourceOnScreen: false })).toBe("dialog");
+    expect(imagePreviewClosingKind({ openedAs: "instant", level: "full", sourceOnScreen: true })).toBe("fade");
+    for (const openedAs of ["flight", "dialog", "rise", "instant"] as const) {
+      expect(imagePreviewClosingKind({ openedAs, level: "minimal", sourceOnScreen: true })).toBe("sink");
+      expect(imagePreviewClosingKind({ openedAs, level: "minimal", sourceOnScreen: false })).toBe("sink");
+      expect(imagePreviewClosingKind({ openedAs, level: "off", sourceOnScreen: true })).toBe("instant");
+    }
   });
 });
 

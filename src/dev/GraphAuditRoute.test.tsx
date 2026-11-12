@@ -2,6 +2,13 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GraphAuditRoute } from "./GraphAuditRoute";
 
+// The graph keeps to the system's "Reduce motion" alone (SPEC_MOTION_LEVELS.md,
+// УД9): the audit runs it with the flag off, whatever the jsdom media say.
+vi.mock("@/lib/motion", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/motion")>();
+  return { ...actual, systemReducesMotion: () => false };
+});
+
 /// The graph audit (scripts/graph-view-audit.mjs) turns the extra links off
 /// and on through this route and checks the layout stays where it is
 /// (SPEC_GRAPH_VIEW.md, «Панель графа», ГП4): the switch must reach the

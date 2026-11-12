@@ -33,6 +33,16 @@ export function walkedRow(
   return next === undefined ? null : { rowKey: next, index };
 }
 
+/** The router state of a move to a collection a key made (⌥⌘↑↓, Enter in
+ *  the filter): the list scrolls to the open collection's row at once on
+ *  every level (SPEC_MOTION_LEVELS.md, С10, УД4). */
+export const MOVED_BY_KEY_STATE = { movedByKey: true } as const;
+
+/** Whether the router state `state` says a key made the move. */
+export function movedByKey(state: unknown): boolean {
+  return typeof state === "object" && state !== null && "movedByKey" in state && state.movedByKey === true;
+}
+
 /**
  * Scrolls the list just enough to show a row, under the list's top and bottom
  * insets. Nothing moves if the row is already in view.

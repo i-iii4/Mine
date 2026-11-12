@@ -3,6 +3,8 @@ import ReactDOM from "react-dom/client";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { hydrateCommandOverrides, watchCommandOverrides } from "@/lib/shortcutOverrides";
 import { applyTheme, getStoredTheme } from "@/lib/themeMode";
+import { installMotionLevel } from "@/lib/motion";
+import { installMotionInput } from "@/lib/motionInput";
 import { applyCardRadius, getStoredCardRadius } from "@/lib/cardRadius";
 import { applyDensity, getStoredDensity } from "@/lib/density";
 import { followWindowButtonStyle } from "@/lib/buttonStyle";
@@ -41,6 +43,12 @@ answerSwipeQuestion();
 // Apply the stored theme before first paint (the settings window owns the
 // controls; this window re-applies on "settings-changed").
 applyTheme(getStoredTheme());
+// The motion level on the root before the first frame, the system followed
+// while no level is chosen (SPEC_MOTION_LEVELS.md, НС5).
+installMotionLevel();
+// The last input, a key or the pointer: what a key opened lands at once
+// (SPEC_MOTION_LEVELS.md, УД4).
+installMotionInput();
 applyCardRadius(getStoredCardRadius());
 applyDensity(getStoredDensity());
 applyInterfaceFont(getStoredInterfaceFont());

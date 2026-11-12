@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SIDEBAR_PREVIEW_TILE_GAP_PX, SIDEBAR_PREVIEW_TILE_PX, sidebarCompactRowsBelowPx } from "./appLayout";
 import { CHANNEL_ICON_SPRING_EASING, CHANNEL_ICON_SPRING_MS, SPRING_SAMPLES } from "./channelIcon";
 import { setListStyle } from "./compactStack";
+import { setMotionLevel } from "@/test/motionLevel";
 import {
   LIST_MORPH_FADE_IN_FROM_MS,
   LIST_MORPH_FADE_OUT_MS,
@@ -349,7 +350,6 @@ interface Played {
 describe("the scrollport", () => {
   let played: Played[];
   let report: (width: number) => void;
-  let reduced: boolean;
   /** The frames asked for, run by `nextFrame`. */
   let frames: FrameRequestCallback[];
   const nextFrame = () => {
@@ -361,7 +361,6 @@ describe("the scrollport", () => {
   beforeEach(() => {
     played = [];
     frames = [];
-    reduced = false;
     vi.stubGlobal("ResizeObserver", class {
       constructor(callback: ResizeObserverCallback) {
         report = (width) => callback([{ contentBoxSize: [{ inlineSize: width, blockSize: PORT }] } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver);
@@ -370,7 +369,6 @@ describe("the scrollport", () => {
       unobserve() {}
       disconnect() {}
     });
-    vi.stubGlobal("matchMedia", (query: string) => ({ matches: reduced && query.includes("reduce") }));
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       frames.push(callback);
       return frames.length;
@@ -855,8 +853,8 @@ describe("the scrollport", () => {
     setListStyle("plain");
   });
 
-  it("moves nothing with Reduce motion: the look follows the width at once", () => {
-    reduced = true;
+  it.each(["minimal", "off"] as const)("moves nothing in %s: the look follows the width at once (SPEC_MOTION_LEVELS.md, С3)", (level) => {
+    setMotionLevel(level);
     const { nav, state, threshold } = mountList();
     const stop = observeSidebarListMorph(nav);
     report(state.width);

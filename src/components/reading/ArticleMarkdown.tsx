@@ -341,7 +341,9 @@ function Link({ node: _node, href, children, ...props }: ElementProps<"a">) {
       },
       jumpToAnchor: (fragment) => {
         const target = root ? inArticleTarget(root, fragment) : null;
-        target?.scrollIntoView?.({ block: "center", behavior: scrollBehavior() });
+        // A link the pointer clicked scrolls by the level; one ↵ followed
+        // (a click with no press count) lands at once (В5, УД4).
+        target?.scrollIntoView?.({ block: "center", behavior: scrollBehavior({ byKey: event.detail === 0 }) });
       },
     });
     if (handled) event.preventDefault();

@@ -529,7 +529,7 @@ fn on_menu_event(app: &tauri::AppHandle, id: &str) {
         }
         MENU_ID_TOGGLE_SIDEBAR => {
             if let Some(window) = menu_window(app) {
-                tabs::toggle_sidebar(app, &window);
+                tabs::toggle_sidebar_by_key(app, &window);
             }
         }
         MENU_ID_SETTINGS => {

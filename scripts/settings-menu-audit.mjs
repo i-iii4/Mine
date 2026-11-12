@@ -24,7 +24,11 @@ const server = await createServer({
         import { MainSecondaryTopBar } from "/src/components/MainSecondaryChrome.tsx";
         import { ActionButton } from "/src/components/ActionButton.tsx";
         import { ChromeRow, ChromeShell } from "/src/components/ChromeRow.tsx";
+        import { installMotionLevel } from "/src/lib/motion.ts";
         import "/src/styles/global.css";
+        // The level the page stored before it loaded: Off, so the menus land
+        // at once for the geometry (SPEC_MOTION_LEVELS.md, «Тесты»).
+        installMotionLevel();
         const noop = () => {};
         // Menu focus/drag hooks emit application events; no native shell exists
         // in this isolated geometry fixture. Menu content also reads its card.
@@ -92,11 +96,14 @@ try {
   const colors = new Map();
   for (const deviceScaleFactor of [1, 2]) {
   const page = await browser.newPage({ deviceScaleFactor });
+  // The menus land at once at Off, the level the person can choose, rather
+  // than by a style of the audit's own (SPEC_MOTION_LEVELS.md, «Тесты»).
+  await page.addInitScript(() => window.localStorage.setItem("mine.motion", "off"));
   page.on("pageerror", error => errors.push(error.message));
   for (const width of [904, 1200]) {
     await page.setViewportSize({ width, height: 600 });
     await page.goto(url, { waitUntil: "networkidle" });
-    await page.addStyleTag({ content: '[data-slot="dropdown-menu-content"] { animation: none !important; }' });
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.motion), "off");
     const trigger = page.getByRole("button", { name: "Mine settings" });
     await trigger.waitFor();
     for (const theme of ["light", "dark"]) {

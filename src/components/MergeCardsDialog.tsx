@@ -29,6 +29,7 @@ import {
 import { MODAL_ERROR_CLASS } from "@/components/ui/modal-window";
 import { thumbnailUrl } from "@/lib/assets";
 import { getNavigationLabel } from "@/lib/displayTitle";
+import { useSortableMove } from "@/lib/sortableMotion";
 import { cn } from "@/lib/utils";
 import type { LightBlock } from "@/types";
 import { CardReferenceRow } from "./CardReferenceRow";
@@ -151,6 +152,8 @@ function MergeCardsDialogRow({
   block: LightBlock;
   thumbsRootPath?: string;
 }) {
+  // The rows make room by the level (SPEC_MOTION_LEVELS.md, М8).
+  const move = useSortableMove();
   const {
     attributes,
     listeners,
@@ -159,7 +162,7 @@ function MergeCardsDialogRow({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: block.slug });
+  } = useSortable({ id: block.slug, transition: move });
   const style = {
     transform: transform
       ? `translate3d(${transform.x}px, ${transform.y}px, 0) scaleX(${transform.scaleX}) scaleY(${transform.scaleY})`

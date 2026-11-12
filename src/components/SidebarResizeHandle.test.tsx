@@ -1,5 +1,6 @@
 import { act, fireEvent, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { setMotionLevel } from "@/test/motionLevel";
 import { SidebarResizeHandle } from "./SidebarResizeHandle";
 
 /// The divider is the handle, built as shadcn's `SidebarRail` is (user's
@@ -75,6 +76,50 @@ describe("SidebarResizeHandle", () => {
     rerender(<SidebarResizeHandle {...props()} isResizing />);
     expect(body).toHaveClass("after:bg-sidebar-border-hover");
     expect(body).not.toHaveClass("after:delay-300");
+  });
+
+  // The light's fade by the level, after the same 300 ms wait on every level
+  // (SPEC_MOTION_LEVELS.md, С11, Р9).
+  describe("the light's fade by the level (С11)", () => {
+    const hoverAndLeave = () => {
+      const { container } = render(<SidebarResizeHandle {...props()} />);
+      const { top, body } = parts(container);
+      fireEvent.pointerEnter(top);
+      const lit = [top, body].map((element) => element.className);
+      fireEvent.pointerLeave(top);
+      const out = [top, body].map((element) => element.className);
+      return { lit, out };
+    };
+    const has = (classNames: string[], name: string) => classNames.every((className) => className.split(" ").includes(name));
+
+    it("fades in and out over 180 ms on E in Full, after 300 ms", () => {
+      const { lit, out } = hoverAndLeave();
+      expect(has(lit, "after:duration-[180ms]")).toBe(true);
+      expect(has(lit, "after:delay-300")).toBe(true);
+      expect(has(out, "after:duration-[180ms]")).toBe(true);
+      expect(has(lit, "after:ease-[cubic-bezier(0.22,1,0.36,1)]")).toBe(true);
+    });
+
+    it("fades in over 150 ms and out over 100 ms in Minimal, after the same 300 ms", () => {
+      setMotionLevel("minimal");
+      const { lit, out } = hoverAndLeave();
+      expect(has(lit, "after:duration-[var(--motion-enter)]")).toBe(true);
+      expect(has(lit, "after:delay-300")).toBe(true);
+      expect(has(out, "after:duration-[var(--motion-exit)]")).toBe(true);
+    });
+
+    it("lights at once in Off, still after 300 ms", () => {
+      setMotionLevel("off");
+      const { lit, out } = hoverAndLeave();
+      expect(has(lit, "after:duration-0")).toBe(true);
+      expect(has(lit, "after:delay-300")).toBe(true);
+      expect(has(out, "after:duration-0")).toBe(true);
+    });
+
+    it("lights at once under a keyboard focus on every level (УД4)", () => {
+      const { container } = render(<SidebarResizeHandle {...props()} />);
+      expect(parts(container).body).toHaveClass("focus-visible:after:duration-0", "focus-visible:after:delay-0");
+    });
   });
 
   it("points the cursor back at a bound", () => {

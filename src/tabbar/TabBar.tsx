@@ -43,7 +43,7 @@ import {
   stepTabHistory,
   toggleWindowSidebar,
 } from "@/lib/commands";
-import { motionDuration } from "@/lib/motion";
+import { motionMs } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import type { DropHover, TabBarState, TabBarTab, TabId } from "@/types";
 import { DROP_MARKER_WIDTH_PX, TAB_REORDER_EASING, TAB_REORDER_MOTION_MS, TRAFFIC_LIGHT_RESERVE_PX } from "./constants";
@@ -538,9 +538,10 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
     ? null
     : reorderTarget({ fromIndex: reorder.fromIndex, offset: reorder.offset, width, count });
   // Neighbours glide aside only while a tab is dragged: after a drop the
-  // new order is laid out in place, with nothing to animate.
+  // new order is laid out in place, with nothing to animate. Minimal keeps
+  // the 150 ms, Off moves them at once (SPEC_MOTION_LEVELS.md, Т3).
   const shiftTransition = reorder !== null
-    ? `transform ${motionDuration(TAB_REORDER_MOTION_MS)}ms ${TAB_REORDER_EASING}`
+    ? `transform ${motionMs(TAB_REORDER_MOTION_MS, "enter")}ms ${TAB_REORDER_EASING}`
     : undefined;
 
   function tabShift(index: number, tabId: TabId): { offset: number; follows: boolean } {

@@ -2,7 +2,9 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SidebarLayout } from "@/types";
 import { APP_MAIN_MIN_WIDTH_PX, SIDEBAR_MAX_WIDTH_PX, SIDEBAR_MIN_WIDTH_PX, sidebarBesideMinWidthPx } from "@/lib/appLayout";
-import { SIDEBAR_WIDTH_MOTION_MS, useSidebarResize } from "./useSidebarResize";
+import { MOTION_EASE, MOTION_ENTER_MS, MOTION_EXIT_MS, MOTION_LEVELS } from "@/lib/motion";
+import { setMotionLevel } from "@/test/motionLevel";
+import { SIDEBAR_WIDTH_MOTION_MS, SIDEBAR_WIDTH_TRANSITION, useSidebarResize } from "./useSidebarResize";
 
 const commands = vi.hoisted(() => ({
   setWindowSidebar: vi.fn(async (_sidebar: { width_px: number; collapsed: boolean }) => {}),
@@ -72,7 +74,8 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
       { initialProps: { open: false, sidebar: layout } },
     );
 
-    it("shows a collapsed sidebar with the motion of an opening, and stores nothing", () => {
+    it.each(MOTION_LEVELS)("shows a collapsed sidebar at once and takes it away at once in %s, and stores nothing (SPEC_MOTION_LEVELS.md, УД4)", (level) => {
+      setMotionLevel(level);
       const root = document.documentElement.style;
       const { result, rerender } = visit();
       expect(result.current.collapsed).toBe(true);
@@ -81,12 +84,14 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
       rerender({ open: true, sidebar: hidden });
       expect(result.current.collapsed).toBe(false);
       expect(result.current.width).toBe(480);
-      expect(result.current.widthAnimating).toBe(true);
+      expect(result.current.widthAnimating).toBe(false);
+      expect(result.current.widthTransition).toBe("none");
       expect(root.getPropertyValue("--sidebar-width")).toContain("480px");
 
       rerender({ open: false, sidebar: hidden });
       expect(result.current.collapsed).toBe(true);
-      expect(result.current.widthAnimating).toBe(true);
+      expect(result.current.widthAnimating).toBe(false);
+      expect(result.current.besideOpenShown).toBe(false);
       expect(root.getPropertyValue("--sidebar-width")).toBe("0px");
       expect(commands.setWindowSidebar).not.toHaveBeenCalled();
     });
@@ -385,24 +390,17 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
       expect(result.current.besideOpenShown).toBe(false);
     });
 
-    it("comes with the keyboard's visit and leaves with its end (SPEC_KEYBOARD.md, М8)", () => {
-      vi.useFakeTimers();
-      try {
-        const hidden: SidebarLayout = { width_px: 480, collapsed: true };
-        const { result, rerender } = renderHook(
-          ({ open }: { open: boolean }) => useSidebarResize(hidden, false, open),
-          { initialProps: { open: false } },
-        );
-        expect(result.current.besideOpenShown).toBe(false);
-        rerender({ open: true });
-        expect(result.current.besideOpenShown).toBe(true);
-        rerender({ open: false });
-        expect(result.current.besideOpenShown).toBe(true);
-        act(() => vi.advanceTimersByTime(SIDEBAR_WIDTH_MOTION_MS));
-        expect(result.current.besideOpenShown).toBe(false);
-      } finally {
-        vi.useRealTimers();
-      }
+    it("comes with the keyboard's visit and leaves at once with its end (SPEC_KEYBOARD.md, М8; SPEC_MOTION_LEVELS.md, УД4)", () => {
+      const hidden: SidebarLayout = { width_px: 480, collapsed: true };
+      const { result, rerender } = renderHook(
+        ({ open }: { open: boolean }) => useSidebarResize(hidden, false, open),
+        { initialProps: { open: false } },
+      );
+      expect(result.current.besideOpenShown).toBe(false);
+      rerender({ open: true });
+      expect(result.current.besideOpenShown).toBe(true);
+      rerender({ open: false });
+      expect(result.current.besideOpenShown).toBe(false);
     });
 
     it("leaves past the threshold with the sidebar beside the feed, and is not there over it (У7, У12)", () => {
@@ -424,37 +422,147 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
     });
   });
 
-  it("does not animate the width with Reduce motion", () => {
-    const matchMedia = window.matchMedia;
-    window.matchMedia = vi.fn((query: string) => ({
-      matches: query === "(prefers-reduced-motion: reduce)",
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(() => false),
-    }));
-    try {
-      const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
-      act(() => result.current.toggleCollapsed());
+  it("does not animate the width in Off (SPEC_MOTION_LEVELS.md, С1)", () => {
+    setMotionLevel("off");
+    const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
+    act(() => result.current.toggleCollapsed());
+    expect(result.current.collapsed).toBe(true);
+    expect(result.current.widthAnimating).toBe(false);
+    expect(result.current.widthTransition).toBe("none");
+    expect(result.current.widthPhase).toBeNull();
+    // What stood over it in the top row goes at once too.
+    expect(result.current.besideOpenShown).toBe(false);
+
+    // Nor across the threshold: the sidebar leaves the row at once.
+    const crossing = renderHook(
+      ({ overlaid }: { overlaid: boolean }) => useSidebarResize({ width_px: 480, collapsed: false }, overlaid),
+      { initialProps: { overlaid: false } },
+    );
+    crossing.rerender({ overlaid: true });
+    expect(crossing.result.current.besideShown).toBe(false);
+    expect(crossing.result.current.widthAnimating).toBe(false);
+  });
+
+  describe("the width's motion by level (SPEC_MOTION_LEVELS.md, С1)", () => {
+    const minimalCollapse = `width ${MOTION_EXIT_MS}ms ${MOTION_EASE}`;
+    const minimalOpening = `width ${MOTION_ENTER_MS}ms ${MOTION_EASE}`;
+
+    it("moves by the button in Full for 200 ms on ease, both ways, one value for the panel and its segment", () => {
+      vi.useFakeTimers();
+      try {
+        const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
+        expect(result.current.widthTransition).toBe("none");
+        act(() => result.current.toggleCollapsed());
+        expect(result.current.widthTransition).toBe(SIDEBAR_WIDTH_TRANSITION);
+        expect(result.current.widthPhase).toBe("exit");
+        act(() => vi.advanceTimersByTime(SIDEBAR_WIDTH_MOTION_MS));
+        expect(result.current.widthTransition).toBe("none");
+        act(() => result.current.toggleCollapsed());
+        expect(result.current.widthTransition).toBe(SIDEBAR_WIDTH_TRANSITION);
+        expect(result.current.widthPhase).toBe("enter");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("collapses in Minimal for 100 ms and opens for 150 ms on E, its timer the same time", () => {
+      vi.useFakeTimers();
+      try {
+        setMotionLevel("minimal");
+        const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
+        act(() => result.current.toggleCollapsed());
+        expect(result.current.widthTransition).toBe(minimalCollapse);
+        expect(result.current.widthPhase).toBe("exit");
+        expect(result.current.besideOpenShown).toBe(true);
+        act(() => vi.advanceTimersByTime(MOTION_EXIT_MS - 1));
+        expect(result.current.widthAnimating).toBe(true);
+        act(() => vi.advanceTimersByTime(1));
+        expect(result.current.widthAnimating).toBe(false);
+        expect(result.current.besideOpenShown).toBe(false);
+
+        act(() => result.current.toggleCollapsed());
+        expect(result.current.widthTransition).toBe(minimalOpening);
+        expect(result.current.widthPhase).toBe("enter");
+        act(() => vi.advanceTimersByTime(MOTION_ENTER_MS - 1));
+        expect(result.current.widthAnimating).toBe(true);
+        act(() => vi.advanceTimersByTime(1));
+        expect(result.current.widthTransition).toBe("none");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it.each(MOTION_LEVELS)("stands at once by a key in %s: ⌃⌘S heard by the page and the View menu", (level) => {
+      setMotionLevel(level);
+      let byKey = false;
+      const { result, rerender } = renderHook(
+        ({ layout }: { layout: SidebarLayout }) => useSidebarResize(layout, false, false, () => byKey),
+        { initialProps: { layout: { width_px: 480, collapsed: false } } },
+      );
+      act(() => result.current.toggleCollapsed(true));
       expect(result.current.collapsed).toBe(true);
       expect(result.current.widthAnimating).toBe(false);
-      // What stood over it in the top row goes at once too.
       expect(result.current.besideOpenShown).toBe(false);
+      // The echo of that toggle, then the View menu opening it.
+      rerender({ layout: { width_px: 480, collapsed: true } });
+      byKey = true;
+      rerender({ layout: { width_px: 480, collapsed: false } });
+      expect(result.current.collapsed).toBe(false);
+      expect(result.current.widthAnimating).toBe(false);
+      expect(result.current.widthTransition).toBe("none");
+    });
 
-      // Nor across the threshold: the sidebar leaves the row at once.
-      const crossing = renderHook(
-        ({ overlaid }: { overlaid: boolean }) => useSidebarResize({ width_px: 480, collapsed: false }, overlaid),
-        { initialProps: { overlaid: false } },
+    it("lets a key stop a pointer's run under way: the width stands at once", () => {
+      vi.useFakeTimers();
+      try {
+        const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));
+        act(() => result.current.toggleCollapsed());
+        expect(result.current.widthAnimating).toBe(true);
+        act(() => result.current.toggleCollapsed(true));
+        expect(result.current.widthAnimating).toBe(false);
+        expect(result.current.widthTransition).toBe("none");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("moves a change of the window from the tab bar's button by the level", () => {
+      setMotionLevel("minimal");
+      const { result, rerender } = renderHook(
+        ({ layout }: { layout: SidebarLayout }) => useSidebarResize(layout, false, false, () => false),
+        { initialProps: { layout: { width_px: 480, collapsed: false } } },
       );
-      crossing.rerender({ overlaid: true });
-      expect(crossing.result.current.besideShown).toBe(false);
-      expect(crossing.result.current.widthAnimating).toBe(false);
-    } finally {
-      window.matchMedia = matchMedia;
-    }
+      rerender({ layout: { width_px: 480, collapsed: true } });
+      expect(result.current.widthTransition).toBe(minimalCollapse);
+    });
+
+    it("times the crossing of the threshold by the level in Minimal: leaving 100 ms, coming back 150 ms (Р3)", () => {
+      vi.useFakeTimers();
+      try {
+        setMotionLevel("minimal");
+        const { result, rerender } = renderHook(
+          ({ overlaid }: { overlaid: boolean }) => useSidebarResize({ width_px: 480, collapsed: false }, overlaid),
+          { initialProps: { overlaid: false } },
+        );
+        rerender({ overlaid: true });
+        expect(result.current.widthTransition).toBe(minimalCollapse);
+        expect(result.current.widthPhase).toBe("exit");
+        act(() => vi.advanceTimersByTime(MOTION_EXIT_MS - 1));
+        expect(result.current.besideShown).toBe(true);
+        act(() => vi.advanceTimersByTime(1));
+        expect(result.current.besideShown).toBe(false);
+
+        rerender({ overlaid: false });
+        expect(result.current.widthTransition).toBe(minimalOpening);
+        expect(result.current.widthPhase).toBe("enter");
+        act(() => vi.advanceTimersByTime(MOTION_ENTER_MS - 1));
+        expect(result.current.widthAnimating).toBe(true);
+        act(() => vi.advanceTimersByTime(1));
+        expect(result.current.widthAnimating).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it("takes none of the row while the sidebar lies over the feed, and keeps its target (47.3c)", async () => {

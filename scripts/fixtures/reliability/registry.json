@@ -5041,6 +5041,109 @@
         "src/components/Grid.test.tsx"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/motion.ts",
+        "src/lib/motion.test.ts",
+        "src/lib/motionReader.test.ts",
+        "extension/popup/main.tsx",
+        "src/test/motionLevel.ts"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md### Настройка",
+      "tests": [
+        "src/lib/motion.test.ts",
+        "src/lib/motionReader.test.ts",
+        "src/tabbar/TabBar.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/poseMotion.ts",
+        "src/lib/poseMotion.test.ts",
+        "src/lib/cubicBezier.ts",
+        "src/lib/cubicBezier.test.ts"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md### Окно карточки и просмотр изображения",
+      "tests": [
+        "src/lib/poseMotion.test.ts",
+        "src/lib/cubicBezier.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/card-peek-motion-audit.mjs"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md### Тесты",
+      "tests": [
+        "scripts/card-peek-motion-audit.mjs"
+      ],
+      "command": "test:card-peek-motion"
+    },
+    {
+      "paths": [
+        "scripts/sidebar-reorder-audit.mjs"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md#### Боковое меню",
+      "tests": [
+        "scripts/sidebar-reorder-audit.mjs"
+      ],
+      "command": "test:sidebar-reorder"
+    },
+    {
+      "paths": [
+        "src/lib/motionInput.ts",
+        "src/lib/motionInput.test.ts",
+        "src/components/ui/motionSurfaces.test.tsx",
+        "src/lib/sortableMotion.ts",
+        "src/lib/sortableMotion.test.ts"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md#### Меню, подсказки, окна",
+      "tests": [
+        "src/lib/motionInput.test.ts",
+        "src/components/ui/motionSurfaces.test.tsx",
+        "src/lib/sortableMotion.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/motionClasses.ts",
+        "src/lib/motionClasses.test.ts",
+        "src/components/TopFadeScrim.tsx",
+        "src/components/CardRowActions.tsx",
+        "src/components/CardRowActions.test.tsx"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md#### Лента",
+      "tests": [
+        "src/lib/motionClasses.test.ts",
+        "src/lib/edgeFade.test.ts",
+        "src/components/CardRowActions.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/hooks/useNameEdit.test.ts"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md#### Верхние ряды и полный вид карточки",
+      "tests": [
+        "src/hooks/useNameEdit.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/components/ui/progress.tsx",
+        "src/components/ui/progress.test.tsx"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md#### Загрузка и клиппер",
+      "tests": [
+        "src/components/ui/progress.test.tsx"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

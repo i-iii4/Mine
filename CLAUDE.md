@@ -116,7 +116,9 @@
 | Defuddle | Извлечение статей + Markdown-конвертация + YouTube-транскрипты (content script) |
 | src/lib/masonryLayout.ts | Кастомный virtualized masonry layout engine |
 | src/lib/cardAspect.ts | Политика кадрирования: кламп пропорции карточки `1:2 … 2:1` |
-| src/lib/motion.ts | Единая настройка уменьшения движения для программных анимаций и прокрутки |
+| src/lib/motion.ts | Единственный читатель уровня движения `Full`/`Minimal`/`Off` (`mine.motion`) и системной настройки «Уменьшить движение»: уровень на корне страницы (`data-motion`), время, кривая и прокрутка для кода (SPEC_MOTION_LEVELS.md) |
+| src/lib/poseMotion.ts + src/lib/cubicBezier.ts | Подъём и уход окна карточки и просмотра изображения в `Minimal` анимациями WAAPI с текущего места; кривая CSS в коде |
+| src/lib/motionInput.ts + motionClasses.ts + sortableMotion.ts | Клавиша или указатель начали движение (`data-motion-key`, пункт нативного меню как клавиша); классы `Minimal` для переходов по состоянию; время перестановки списков dnd-kit по уровню |
 | src/lib/feedDisplay.ts | Параметры ленты: порядок и вид карточек (`cards`, `media`, `media-only`), хранение между запусками |
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
 | Vitest + Testing Library | Frontend-тесты (`bun run test:frontend`) |
@@ -529,7 +531,8 @@ bun run test:reading-mode      # Режим чтения статьи: фикс�
 bun run test:browser           # Сам поднимает Vite и запускает все browser gates
 bun run test:focus-ring        # WebKit: ни одной рамки фокуса браузера в главном окне (свой Vite)
 bun run test:paste-feed        # WebKit: настоящий ⌘V над лентой вставляет один раз в каждом её состоянии, в поле, меню, оверлее и при открытой карточке не вставляет (свой Vite)
-bun run test:image-preview     # WebKit: движение просмотра изображения покадрово: первый и последний кадр на источнике, разворот, клавиатура, «Уменьшить движение», ввод во время движения, оригинал ещё в загрузке; с IMAGE_PREVIEW_STRIP_DIR пишет полосы кадров (свой Vite)
+bun run test:image-preview     # WebKit: движение просмотра изображения покадрово: первый и последний кадр на источнике, разворот, клавиатура, Off и Minimal (`mine.motion`, системная настройка без ключа), ввод во время движения, оригинал ещё в загрузке; с IMAGE_PREVIEW_STRIP_DIR пишет полосы кадров (свой Vite)
+bun run test:card-peek-motion  # WebKit: окно карточки на трёх уровнях движения покадрово: подъём и уход Minimal, подсказка закрытия на прямой ухода (ОУ4), Off сразу, Full из карточки и обратно, уровень на корне до первого рендера (свой Vite)
 bun run test:swipe-scroller    # WebKit: жест над элементом с горизонтальной прокруткой: ответ страницы и настоящее колесо над таблицей статьи и блоком кода, в том числе на краю (свой Vite)
 bun run test:native-shell      # Packaged macOS WKWebView + real Tauri invoke smoke
 bun run test:clipper-worker    # Собранное расширение/CSP/WASM и цепочка X (x-thread-smoke) в отдельном headless Chromium

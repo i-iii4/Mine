@@ -133,7 +133,7 @@ const entryPlugin = {
         const previews=useChannelPreviewsEvents({thumbsRootPath:"${THUMBS}"});
         React.useEffect(()=>{ window.auditRefresh=previews.refresh; },[previews.refresh]);
         return h("div",{className:"relative flex h-screen w-screen overflow-hidden bg-background text-foreground"},
-          h(Sidebar,{collapsed:resize.collapsed,widthAnimating:resize.widthAnimating,orderedTags:tags,
+          h(Sidebar,{collapsed:resize.collapsed,widthAnimating:resize.widthAnimating,widthTransition:resize.widthTransition,orderedTags:tags,
             channelPreviews:previews.channelPreviews,totalBlocks:set.cards,isDropDragging:false,isCreatingChannel:false,
             onSetCreatingChannel:noop,onDeleteTag:noop,onRenameTag:noop,onCreateChannel:noop}),
           h(SidebarResizeHandle,{isResizing:resize.isResizing,topRowHost:null,width:resize.width,disabled:false,

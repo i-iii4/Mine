@@ -14,15 +14,16 @@
 // the blur and the shadow are chosen live with the user (PLAN 47.3d).
 //
 // Openness belongs to the page (`useSidebarOverlay`); this component only
-// shows it. It moves in and out over 200 ms on the project's ease-out, at
-// once with reduced motion (src/lib/motion.ts). While open the panel is a
+// shows it. It moves in and out over 200 ms on the project's ease-out in
+// Full, 150 and 100 ms in Minimal, at once in Off and whenever a key opened
+// or closes it (SPEC_MOTION_LEVELS.md, С2, УД4). While open the panel is a
 // dialog: the page marks what lies under the scrim `inert`, the panel takes
 // the focus unless something in it already has it, and the focus goes back
 // where it was when the panel closes.
 
 import { createContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { isEditableKeyboardTarget } from "@/lib/keyboardTargets";
-import { motionDuration } from "@/lib/motion";
+import { motionMs } from "@/lib/motion";
 import { sidebarOverlayWidthCss } from "@/lib/sidebarPlacement";
 
 /** The width, as CSS, that lays out the sidebar's list standing in this
@@ -31,7 +32,7 @@ import { sidebarOverlayWidthCss } from "@/lib/sidebarPlacement";
  *  by it take it from here. */
 export const SidebarOverlayWidthContext = createContext<string | null>(null);
 
-/** How long the sidebar takes to come over the feed or leave it. */
+/** How long the sidebar takes to come over the feed or leave it in Full. */
 export const SIDEBAR_OVERLAY_MOTION_MS = 200;
 
 /** Layers whose Escape is their own: menus, listboxes, the image preview. */
@@ -44,7 +45,10 @@ export const SIDEBAR_OVERLAY_LABEL = "Sidebar";
 export interface SidebarOverlayProps {
   /** The sidebar lies over the feed. */
   open: boolean;
-  /** Close it: the scrim or the strip was pressed. */
+  /** A key opened it, or closes it (`useSidebarOverlay`): it comes and goes
+   *  at once on every level. Not by default. */
+  byKey?: boolean;
+  /** Close it: the scrim or the strip was pressed, or Escape. */
   onClose: () => void;
   /** The panel's filter row, in the top row's place. */
   header: ReactNode;
@@ -62,12 +66,19 @@ function escapeBelongsElsewhere(target: EventTarget | null): boolean {
 }
 
 /** The sidebar over the feed: scrim, strip and panel. */
-export function SidebarOverlay({ open, onClose, header, children }: SidebarOverlayProps) {
+export function SidebarOverlay({ open, byKey = false, onClose, header, children }: SidebarOverlayProps) {
   // Mounted from the opening to the end of the closing's motion.
   const [mounted, setMounted] = useState(open);
   if (open && !mounted) setMounted(true);
   // In its open place: one frame after mounting, so the motion runs.
   const [entered, setEntered] = useState(false);
+  // Its own Escape closes it by a key, before the page hears of the closing.
+  const [escaped, setEscaped] = useState(false);
+  if (open && escaped) setEscaped(false);
+  const atOnceByKey = byKey || escaped;
+  // The closing reads how it closes from the render that closed it.
+  const atOnceByKeyRef = useRef(atOnceByKey);
+  atOnceByKeyRef.current = atOnceByKey;
   const panelRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
 
@@ -77,7 +88,8 @@ export function SidebarOverlay({ open, onClose, header, children }: SidebarOverl
       return () => cancelAnimationFrame(frame);
     }
     setEntered(false);
-    const duration = motionDuration(SIDEBAR_OVERLAY_MOTION_MS);
+    // The closing's time at the level, as global.css times its transitions (Р3).
+    const duration = motionMs(SIDEBAR_OVERLAY_MOTION_MS, "exit", { byKey: atOnceByKeyRef.current });
     if (duration === 0) {
       setMounted(false);
       return undefined;
@@ -116,6 +128,7 @@ export function SidebarOverlay({ open, onClose, header, children }: SidebarOverl
       if (event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return;
       if (escapeBelongsElsewhere(event.target)) return;
       event.preventDefault();
+      setEscaped(true);
       onClose();
     };
     window.addEventListener("keydown", handler, true);
@@ -126,19 +139,24 @@ export function SidebarOverlay({ open, onClose, header, children }: SidebarOverl
 
   const width = sidebarOverlayWidthCss();
   const panelStyle: CSSProperties = { width };
-  const state = open && entered ? "open" : "closed";
+  // Off and a key stand it open in the frame it opens: no frame waits for a
+  // motion that does not run.
+  const opensAtOnce = motionMs(SIDEBAR_OVERLAY_MOTION_MS, "enter", { byKey: atOnceByKey }) === 0;
+  const state = open && (entered || opensAtOnce) ? "open" : "closed";
 
   return (
     <div
       className="absolute inset-0 z-30"
       data-sidebar-overlay=""
       data-state={state}
+      // global.css stands what a key opened or closes at once (УД4).
+      data-motion-key={atOnceByKey ? "" : undefined}
     >
       <div
         aria-hidden="true"
         className="modal-scrim sidebar-overlay-scrim absolute inset-0"
         data-sidebar-overlay-scrim=""
-        onClick={onClose}
+        onClick={() => onClose()}
       />
       <div
         ref={panelRef}

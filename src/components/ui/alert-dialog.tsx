@@ -1,6 +1,7 @@
 import * as React from "react"
 import { AlertDialog as AlertDialogPrimitive } from "radix-ui"
 
+import { useMotionKeyRef } from "@/lib/motionInput"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
@@ -40,12 +41,17 @@ function AlertDialogPortal({
   )
 }
 
+// As Dialog's: a window a key opened and its scrim land at once, and so does
+// their closing by a key (SPEC_MOTION_LEVELS.md, М5, УД4).
 function AlertDialogOverlay({
   className,
+  ref,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Overlay>) {
+  const keyRef = useMotionKeyRef(ref)
   return (
     <AlertDialogPrimitive.Overlay
+      ref={keyRef}
       data-slot="alert-dialog-overlay"
       className={cn(MODAL_OVERLAY_CLASS, className)}
       {...props}
@@ -56,14 +62,17 @@ function AlertDialogOverlay({
 function AlertDialogContent({
   className,
   widthRole = "question",
+  ref,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
   widthRole?: ModalWidth
 }) {
+  const keyRef = useMotionKeyRef(ref)
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />
       <AlertDialogPrimitive.Content
+        ref={keyRef}
         data-slot="alert-dialog-content"
         data-modal-width={widthRole}
         className={cn(MODAL_SURFACE_CLASS, MODAL_WIDTH_CLASS[widthRole], className)}

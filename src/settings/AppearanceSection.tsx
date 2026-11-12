@@ -25,6 +25,13 @@ import {
 import {
   broadcastSettingsChange,
 } from "@/lib/settingsChanged";
+import {
+  chooseMotionLevel,
+  MOTION_LEVEL_STORAGE_KEY,
+  MOTION_LEVELS,
+  useMotionLevel,
+  type MotionLevel,
+} from "@/lib/motion";
 import { SettingRow } from "./SettingRow";
 
 const THEME_OPTIONS = [
@@ -32,6 +39,13 @@ const THEME_OPTIONS = [
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
 ] as const;
+
+// What the Motion pill calls each level (SPEC_MOTION_LEVELS.md, НС1).
+const MOTION_LABELS: Record<MotionLevel, string> = {
+  full: "Full",
+  minimal: "Minimal",
+  off: "Off",
+};
 
 // The pill is keyed by strings; the radius stays numeric everywhere else.
 const CARD_RADIUS_CONTROL_OPTIONS = CARD_RADIUS_OPTIONS.map((value) => ({
@@ -46,6 +60,9 @@ export function AppearanceSection() {
   );
   const [scrollEdgeFade, setScrollEdgeFade] = useState(getStoredScrollEdgeFade);
   const [cardRadius, setCardRadius] = useState<CardRadius>(getStoredCardRadius);
+  // The level in force, the system's choice included, heard as it changes
+  // (НС1, НС3).
+  const motion = useMotionLevel();
 
   const handleThemeChange = (next: string) => {
     const mode = THEME_OPTIONS.find((option) => option.value === next)?.value;
@@ -53,6 +70,15 @@ export function AppearanceSection() {
     setTheme(mode);
     applyTheme(mode);
     broadcastSettingsChange(THEME_STORAGE_KEY);
+  };
+
+  // A pick is always stored, the system's own level too (НС2), and reaches
+  // every page (НС4).
+  const handleMotionChange = (next: string) => {
+    const level = MOTION_LEVELS.find((candidate) => candidate === next);
+    if (!level) return;
+    chooseMotionLevel(level);
+    broadcastSettingsChange(MOTION_LEVEL_STORAGE_KEY);
   };
 
   const handleBottomChange = (checked: boolean) => {
@@ -83,6 +109,16 @@ export function AppearanceSection() {
           <TabsList variant="chrome" size="panel" aria-label="Theme">
             {THEME_OPTIONS.map((option) => (
               <TabsTrigger key={option.value} value={option.value}>{option.label}</TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </SettingRow>
+
+      <SettingRow label="Motion">
+        <Tabs value={motion} onValueChange={handleMotionChange} className="gap-0">
+          <TabsList variant="chrome" size="panel" aria-label="Motion">
+            {MOTION_LEVELS.map((level) => (
+              <TabsTrigger key={level} value={level}>{MOTION_LABELS[level]}</TabsTrigger>
             ))}
           </TabsList>
         </Tabs>

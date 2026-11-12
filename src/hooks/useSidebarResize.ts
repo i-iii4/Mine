@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, startTransition } from "react";
 import { setWindowSidebar } from "@/lib/commands";
 import { SIDEBAR_MIN_WIDTH_PX } from "@/lib/appLayout";
-import { motionDuration } from "@/lib/motion";
+import { motionEasing, motionMs } from "@/lib/motion";
 import {
   clampSidebarTarget,
   sidebarDragBounds,
@@ -13,14 +13,43 @@ import { writeSidebarWidth } from "@/lib/sidebarWidth";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-/** How long the sidebar takes to collapse or open by its button. */
+/** How long the sidebar takes to collapse or open by its button in Full. */
 export const SIDEBAR_WIDTH_MOTION_MS = 200;
 
-/** The motion of the sidebar's width while it animates (`widthAnimating`):
- *  the panel beside the feed and its segment in the top row move by the same
- *  one, so the segment's line follows the panel's (DESIGN_SYSTEM.md,
- *  «Движение верхних рядов»). */
-export const SIDEBAR_WIDTH_TRANSITION = `width ${SIDEBAR_WIDTH_MOTION_MS}ms ease`;
+/** The curve of that motion in Full. */
+export const SIDEBAR_WIDTH_EASING = "ease";
+
+/** The motion of the sidebar's width in Full (`widthTransition`): the panel
+ *  beside the feed and its segment in the top row move by the same one, so
+ *  the segment's line follows the panel's (DESIGN_SYSTEM.md, «Движение
+ *  верхних рядов»). */
+export const SIDEBAR_WIDTH_TRANSITION = `width ${SIDEBAR_WIDTH_MOTION_MS}ms ${SIDEBAR_WIDTH_EASING}`;
+
+/** Which way the width moves: an opening to the open width, a collapse and
+ *  leaving the row to none. Minimal times them 150 and 100 ms
+ *  (SPEC_MOTION_LEVELS.md, С1). */
+export type SidebarWidthPhase = "enter" | "exit";
+
+/** One run of the width's motion: its way and its time, read from the level
+ *  as it starts, so a level chosen meanwhile waits for the next run (УД11). */
+interface WidthMotion {
+  phase: SidebarWidthPhase;
+  ms: number;
+}
+
+/** The width's motion for `phase` at the level in force; none at once (Off,
+ *  a key). */
+function widthMotionFor(phase: SidebarWidthPhase, byKey: boolean): WidthMotion | null {
+  const ms = motionMs(SIDEBAR_WIDTH_MOTION_MS, phase, { byKey });
+  return ms === 0 ? null : { phase, ms };
+}
+
+/** The CSS transition of a run of the width's motion: one value for the
+ *  panel and its segment; global.css gives the second row's left edge the
+ *  same by the phase (`data-sidebar-width-animating`). */
+function widthTransitionOf(motion: WidthMotion): string {
+  return `width ${motion.ms}ms ${motionEasing(SIDEBAR_WIDTH_MOTION_MS, motion.phase, SIDEBAR_WIDTH_EASING)}`;
+}
 
 // ─── Ownership ──────────────────────────────────────────────────────────────
 //
@@ -50,9 +79,13 @@ function initialLayout(windowSidebar: SidebarLayout | null): { width: number; co
 }
 
 /** The sidebar beside the feed leaving the row or coming back into it as the
- *  window crosses the threshold of the sidebar over the feed; or opening for
- *  the keyboard and closing after it. */
-type SidebarCrossing = "leave" | "enter" | "keyboard";
+ *  window crosses the threshold of the sidebar over the feed, with its
+ *  motion. The keyboard's visit has none: it shows and goes at once on every
+ *  level (SPEC_MOTION_LEVELS.md, УД4). */
+interface SidebarCrossing {
+  kind: "leave" | "enter";
+  motion: WidthMotion;
+}
 
 /** The width a drag or a key may give the sidebar in the window as it is now. */
 function clampToWindow(width: number): number {
@@ -76,6 +109,12 @@ export interface UseSidebarResizeReturn {
    *  sidebar over the feed: the only times it animates. A window's resize or
    *  a drag moves it at once. */
   widthAnimating: boolean;
+  /** The CSS transition of the panel's width and its segment's in the top
+   *  row: the level's for the run under way, "none" at rest (С1). */
+  widthTransition: string;
+  /** The way the width moves while it animates, null at rest: the shell
+   *  names it for the second row's left edge (global.css). */
+  widthPhase: SidebarWidthPhase | null;
   /** The sidebar's width beside the feed when open, px, as its CSS gives it
    *  in the window now (`sidebarWidthCss`): the width a collapse leaves and
    *  an opening reaches. The list keeps this width's look while the width
@@ -89,9 +128,10 @@ export interface UseSidebarResizeReturn {
    *  over it in the top row, the space switcher, the collections' filter and
    *  `+`, is on the page while this holds. Open, and for the motion of a
    *  collapse and of leaving the row past the threshold (У7), so it leaves
-   *  with the sidebar's width; not while collapsed at rest, nor at once with
-   *  reduced motion (DESIGN_SYSTEM.md, «Верхние ряды», «Одно название в
-   *  ряду»). The sidebar shown for the keyboard is open. */
+   *  with the sidebar's width; not while collapsed at rest, nor where the
+   *  width stands at once, in Off and by a key (DESIGN_SYSTEM.md, «Верхние
+   *  ряды», «Одно название в ряду»). The sidebar shown for the keyboard is
+   *  open. */
   besideOpenShown: boolean;
   /** Begin a resize drag from the width shown now (called by handle component) */
   startResize: (startX: number, startWidth: number) => void;
@@ -101,8 +141,9 @@ export interface UseSidebarResizeReturn {
   endResize: () => void;
   /** Set the width at once (the handle's keyboard), within the window's bounds */
   resizeTo: (width: number) => void;
-  /** Toggle collapsed/expanded */
-  toggleCollapsed: () => void;
+  /** Toggle collapsed/expanded; `byKey`, a key did it, and the width
+   *  stands at once on every level (SPEC_MOTION_LEVELS.md, УД4). */
+  toggleCollapsed: (byKey?: boolean) => void;
 }
 
 /**
@@ -115,11 +156,15 @@ export interface UseSidebarResizeReturn {
  * `openForKeyboard`: a collapsed sidebar shows for the keyboard's visit
  * (SPEC_KEYBOARD.md, М8). It is not the person's setting: `collapsed` below and
  * what the backend keeps stay as they are, so a reload comes back collapsed.
+ * It shows and goes at once (SPEC_MOTION_LEVELS.md, УД4). `windowChangeByKey`
+ * says whether the window's last layout came from a key, the View menu
+ * (УД4, п. 1): its collapse or opening stands at once.
  */
 export function useSidebarResize(
   windowSidebar: SidebarLayout | null = null,
   overlaid = false,
   openForKeyboard = false,
+  windowChangeByKey: () => boolean = () => false,
 ): UseSidebarResizeReturn {
   const [storedWidth, setStoredWidth] = useState(() => initialLayout(windowSidebar).width);
   const [storedCollapsed, setCollapsed] = useState(() => initialLayout(windowSidebar).collapsed);
@@ -129,7 +174,7 @@ export function useSidebarResize(
     const { width, collapsed: c } = initialLayout(windowSidebar);
     return c ? 0 : width;
   });
-  const [widthAnimating, setWidthAnimating] = useState(false);
+  const [widthMotion, setWidthMotion] = useState<WidthMotion | null>(null);
 
   // The window owns the layout: a change made here goes to the backend, which
   // tells every tab of the window and its tab bar.
@@ -144,17 +189,22 @@ export function useSidebarResize(
 
   // A collapse or an opening animates the width; the transition is on only
   // for its run, so a window's resize does not trail the sidebar behind the
-  // window. Reduced motion keeps it off.
+  // window. Off and a key keep it off, and a key stops a run under way: the
+  // width stands at once (SPEC_MOTION_LEVELS.md, С1). The run's timer is its
+  // time at the level (Р3).
   const animationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const animateWidth = useCallback(() => {
-    const duration = motionDuration(SIDEBAR_WIDTH_MOTION_MS);
-    if (duration === 0) return;
-    if (animationTimerRef.current !== null) clearTimeout(animationTimerRef.current);
-    setWidthAnimating(true);
+  const animateWidth = useCallback((phase: SidebarWidthPhase, byKey: boolean) => {
+    if (animationTimerRef.current !== null) {
+      clearTimeout(animationTimerRef.current);
+      animationTimerRef.current = null;
+    }
+    const motion = widthMotionFor(phase, byKey);
+    setWidthMotion(motion);
+    if (motion === null) return;
     animationTimerRef.current = setTimeout(() => {
       animationTimerRef.current = null;
-      setWidthAnimating(false);
-    }, duration);
+      setWidthMotion(null);
+    }, motion.ms);
   }, []);
 
   const startRef = useRef({ startX: 0, startWidth: 0 });
@@ -179,18 +229,13 @@ export function useSidebarResize(
   const [lastOverlaid, setLastOverlaid] = useState(overlaid);
   if (overlaid !== lastOverlaid) {
     setLastOverlaid(overlaid);
-    const moves = !collapsed && motionDuration(SIDEBAR_WIDTH_MOTION_MS) > 0;
-    setCrossing(moves ? (overlaid ? "leave" : "enter") : null);
-  }
-  // The keyboard's visit moves as a collapse and an opening do.
-  const [lastOpenForKeyboard, setLastOpenForKeyboard] = useState(openForKeyboard);
-  if (openForKeyboard !== lastOpenForKeyboard) {
-    setLastOpenForKeyboard(openForKeyboard);
-    if (storedCollapsed && !overlaid && motionDuration(SIDEBAR_WIDTH_MOTION_MS) > 0) setCrossing("keyboard");
+    // A change of the window is the pointer's: it moves by the level.
+    const motion = collapsed ? null : widthMotionFor(overlaid ? "exit" : "enter", false);
+    setCrossing(motion === null ? null : { kind: overlaid ? "leave" : "enter", motion });
   }
   useEffect(() => {
     if (crossing === null) return undefined;
-    const timer = setTimeout(() => setCrossing(null), SIDEBAR_WIDTH_MOTION_MS);
+    const timer = setTimeout(() => setCrossing(null), crossing.motion.ms);
     return () => clearTimeout(timer);
   }, [crossing]);
 
@@ -204,7 +249,7 @@ export function useSidebarResize(
     if (isResizing) return undefined;
     const open = sidebarWidthCss(storedWidth);
     const target = collapsed || overlaid ? "0px" : open;
-    if (crossing === "enter") {
+    if (crossing?.kind === "enter") {
       writeSidebarWidth("0px", open);
       const frame = requestAnimationFrame(() => writeSidebarWidth(target, open));
       return () => cancelAnimationFrame(frame);
@@ -220,12 +265,14 @@ export function useSidebarResize(
   isResizingRef.current = isResizing;
   const windowWidth = windowSidebar?.width_px;
   const windowCollapsed = windowSidebar?.collapsed;
+  const windowChangeByKeyRef = useRef(windowChangeByKey);
+  windowChangeByKeyRef.current = windowChangeByKey;
   useEffect(() => {
     if (windowWidth === undefined || windowCollapsed === undefined || isResizingRef.current) return;
     setStoredWidth(clampSidebarTarget(windowWidth));
     if (windowCollapsed !== collapsedRef.current) {
       collapsedRef.current = windowCollapsed;
-      animateWidth();
+      animateWidth(windowCollapsed ? "exit" : "enter", windowChangeByKeyRef.current());
     }
     setCollapsed(windowCollapsed);
   }, [animateWidth, windowCollapsed, windowWidth]);
@@ -283,10 +330,10 @@ export function useSidebarResize(
 
   const storedWidthRef = useRef(storedWidth);
   storedWidthRef.current = storedWidth;
-  const toggleCollapsed = useCallback(() => {
+  const toggleCollapsed = useCallback((byKey = false) => {
     const next = !collapsedRef.current;
     collapsedRef.current = next;
-    animateWidth();
+    animateWidth(next ? "exit" : "enter", byKey);
     setCollapsed(next);
     commit(storedWidthRef.current, next);
   }, [animateWidth, commit]);
@@ -303,13 +350,16 @@ export function useSidebarResize(
     };
   }, []);
 
-  const besideShown = !overlaid || crossing === "leave";
-  const widthMoving = widthAnimating || crossing !== null;
+  const besideShown = !overlaid || crossing?.kind === "leave";
+  const runningMotion = crossing?.motion ?? widthMotion;
+  const widthMoving = runningMotion !== null;
   return {
     width,
     collapsed,
     isResizing,
     widthAnimating: widthMoving,
+    widthTransition: runningMotion === null ? "none" : widthTransitionOf(runningMotion),
+    widthPhase: runningMotion?.phase ?? null,
     openWidth: sidebarWidthPx(storedWidth, window.innerWidth),
     besideShown,
     // A collapse keeps it for the width's motion to none; an opening shows it

@@ -22,6 +22,10 @@ export const TAB_GO_EVERYTHING_EVENT = "tab-go-everything";
 export const TAB_HISTORY_GO_EVENT = "tab-history-go";
 /** The sidebar of this tab's window changed (В56). */
 export const WINDOW_SIDEBAR_CHANGED_EVENT = "window-sidebar-changed";
+/** The next change of this tab's sidebar, stored or handed over, comes from
+ *  the View menu, which counts as a key: it stands at once
+ *  (SPEC_MOTION_LEVELS.md, УД4, п. 1; tabs/mod.rs `SIDEBAR_KEY_COMMAND_EVENT`). */
+export const SIDEBAR_KEY_COMMAND_EVENT = "sidebar-key-command";
 
 /** Whether two memories of a tab say the same thing. */
 export function sameTabView(left: TabView, right: TabView): boolean {

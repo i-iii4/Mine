@@ -117,6 +117,11 @@ pub const SURFACE_SEARCH_EVENT: &str = "surface-search-shortcut";
 /// whether it is open.
 pub const SIDEBAR_OVERLAY_COMMAND_EVENT: &str = "sidebar-overlay-command";
 
+/// The event that tells a tab page the next change of its sidebar, stored
+/// or handed over, comes from a key: the View menu (SPEC_MOTION_LEVELS.md,
+/// УД4, п. 1).
+pub const SIDEBAR_KEY_COMMAND_EVENT: &str = "sidebar-key-command";
+
 /// What one window's tab bar shows (`tabbar-state`).
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct TabBarState {
@@ -1764,6 +1769,18 @@ pub fn set_sidebar_of_label(app: &AppHandle, label: &str, sidebar: SidebarLayout
 /// the View menu and ⌃⌘S (В56).
 pub fn toggle_sidebar(app: &AppHandle, window_id: &WindowId) {
     sidebar_intent(app, window_id, SidebarIntent::Toggle);
+}
+
+/// The View menu's Hide or Show Sidebar, by its ⌃⌘S or by the pointer: a
+/// menu command counts as a key, so the page moves its sidebar at once
+/// (SPEC_MOTION_LEVELS.md, УД4, п. 1). The page hears that first, then the
+/// toggle, which always changes the sidebar and so always reaches it.
+pub fn toggle_sidebar_by_key(app: &AppHandle, window_id: &WindowId) {
+    let Some(window) = shell(app).snapshot().window(window_id).cloned() else {
+        return;
+    };
+    space_events::emit_to_labels(app, [window.active_tab.label()], SIDEBAR_KEY_COMMAND_EVENT, ());
+    toggle_sidebar(app, window_id);
 }
 
 /// Store the chrome colour and paint every window with it (В25).

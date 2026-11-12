@@ -27,6 +27,7 @@ import {
   topFadeStopCount,
 } from "@/lib/edgeFade";
 import { useThemeAppearance } from "@/hooks/useThemeAppearance";
+import { minimalFadeClass } from "@/lib/motionClasses";
 
 /// Build the band's background: the surface colour at full strength against the
 /// edge, fading to fully transparent over `height`.
@@ -73,7 +74,8 @@ export function TopFadeScrim({ scrolled, surface, color }: TopFadeScrimProps) {
       aria-hidden="true"
       data-top-fade-scrim={surface}
       data-top-fade-visible={scrolled ? "true" : "false"}
-      className="pointer-events-none absolute inset-x-0 top-0 z-10 transition-opacity duration-150"
+      // Minimal fades the band in on the enter time and out on the exit time (Л8).
+      className={`pointer-events-none absolute inset-x-0 top-0 z-10 transition-opacity duration-150 ${minimalFadeClass(scrolled)}`}
       style={{
         height: TOP_FADE_HEIGHT,
         opacity: scrolled ? 1 : 0,

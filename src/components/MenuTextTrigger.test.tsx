@@ -1,5 +1,6 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { installMotionInput, MOTION_KEY_ATTRIBUTE } from "@/lib/motionInput";
 import { MenuTextTrigger } from "./MenuTextTrigger";
 
 function renderChevronTrigger(menuState: "open" | "closed", surface: "topChrome" | "clipperHeader" = "topChrome") {
@@ -101,5 +102,47 @@ describe("MenuTextTrigger in the top chrome with its menu open", () => {
       "group-hover:state-active",
       "group-data-[state=open]:state-active",
     );
+  });
+});
+
+/// SPEC_MOTION_LEVELS.md, М4: the chevron turns in 150ms under the pointer
+/// (at Minimal on E, global.css), at once from a key at every level.
+describe("MenuTextTrigger's chevron by the input", () => {
+  let removeInput: () => void;
+  beforeEach(() => {
+    removeInput = installMotionInput();
+  });
+  afterEach(() => removeInput());
+
+  const chevron = (trigger: HTMLElement) => trigger.querySelector("[data-menu-chevron]");
+
+  it("turns by the level when the pointer opened the menu", () => {
+    const { trigger, setState } = renderChevronTrigger("closed");
+    fireEvent.pointerDown(trigger);
+    setState("open");
+    expect(chevron(trigger)).not.toHaveAttribute(MOTION_KEY_ATTRIBUTE);
+    expect(chevron(trigger)).toHaveClass("transition-transform", "duration-150", "motion-reduce:transition-none");
+  });
+
+  it("turns at once when a key opened the menu, and back at once whatever closes it", () => {
+    const { trigger, setState } = renderChevronTrigger("closed");
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    setState("open");
+    expect(chevron(trigger)).toHaveAttribute(MOTION_KEY_ATTRIBUTE);
+    fireEvent.pointerDown(document.body);
+    setState("closed");
+    expect(chevron(trigger)).toHaveAttribute(MOTION_KEY_ATTRIBUTE);
+  });
+
+  it("turns back at once when a key closes a menu the pointer opened", () => {
+    const { trigger, setState } = renderChevronTrigger("closed");
+    fireEvent.pointerDown(trigger);
+    setState("open");
+    fireEvent.keyDown(trigger, { key: "Escape" });
+    setState("closed");
+    expect(chevron(trigger)).toHaveAttribute(MOTION_KEY_ATTRIBUTE);
+    fireEvent.pointerDown(trigger);
+    setState("open");
+    expect(chevron(trigger)).not.toHaveAttribute(MOTION_KEY_ATTRIBUTE);
   });
 });

@@ -25,6 +25,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
 import { DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { broadcastSettingsChange } from "@/lib/settingsChanged";
+import { useSortableMove } from "@/lib/sortableMotion";
 import {
   SIDEBAR_COLUMN_LABELS,
   SIDEBAR_COLUMNS_STORAGE_KEY,
@@ -56,7 +57,9 @@ function ColumnItem({
   shown: boolean;
   lastShown: boolean;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: column });
+  // The rows make room by the level (SPEC_MOTION_LEVELS.md, М8).
+  const move = useSortableMove();
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: column, transition: move });
   const label = SIDEBAR_COLUMN_LABELS[column];
   return (
     <div

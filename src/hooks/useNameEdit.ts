@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { motionDuration } from "@/lib/motion";
+import { motionLevel } from "@/lib/motion";
 
 /// How long the reason stays under the name after a refused name returned to
 /// the old one.
@@ -8,6 +8,9 @@ export const NAME_REFUSAL_NOTICE_MS = 2500;
 /// The shake of a refused name (`name-refused` in global.css), set inline as
 /// the animation's length. What follows the shake runs by a timer rather than
 /// `animationend`, so a shake that never runs cannot leave the field locked.
+/// Only Full shakes, after Enter too: it is a refusal, not a move through the
+/// interface. Minimal and Off keep the reason under the name alone
+/// (SPEC_MOTION_LEVELS.md, В3, УД4 п. 7).
 export const NAME_REFUSED_SHAKE_MS = 320;
 
 export interface NameEditOptions {
@@ -46,7 +49,7 @@ export interface NameEdit {
 /// A name edited in place, the way the open card's name in the path is
 /// (user's decisions of 05.10.2026), for every name the user types in place.
 /// While the typed name would be refused, the reason stands under it. A
-/// refused save shakes the field once: after Enter the field stays as it was;
+/// refused save shakes the field once in Full: after Enter the field stays as it was;
 /// after leaving the field the old name returns and the reason stays
 /// `NAME_REFUSAL_NOTICE_MS`.
 export function useNameEdit({ current, check, save, reasonOf, end }: NameEditOptions): NameEdit {
@@ -166,12 +169,13 @@ export function useNameEdit({ current, check, save, reasonOf, end }: NameEditOpt
       }
       if (via === "leave") left.current = true;
       setNotice(reason);
-      setRefused(true);
       clearShakeTimer();
-      shakeTimer.current = window.setTimeout(
-        () => endShake(reason),
-        motionDuration(NAME_REFUSED_SHAKE_MS),
-      );
+      if (motionLevel() !== "full") {
+        endShake(reason);
+        return;
+      }
+      setRefused(true);
+      shakeTimer.current = window.setTimeout(() => endShake(reason), NAME_REFUSED_SHAKE_MS);
       return;
     }
     if (!ended.current) finish();

@@ -76,7 +76,7 @@ import {
 } from "./graph/interaction";
 import { graphNodeScreenSize, graphZoomBounds } from "./graph/nodeSize";
 import { animateCamera, type CameraTarget } from "./graph/cameraAnimation";
-import { motionDuration } from "@/lib/motion";
+import { systemReducesMotion } from "@/lib/motion";
 import { coverPeekRect, registerPeekGraphSource, usePeekHiddenSlug } from "@/lib/cardPeek";
 import { graphLinkCurvature, graphLinkLineDash } from "./graph/linkStyle";
 import {
@@ -473,13 +473,15 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
 
   // A layout effect, so the frame after the hover already starts the fade.
   // Dimming arrives at the hover's fade-in speed and leaves at its fade-out
-  // speed (SPEC_CARD_STATES.md, С7.6); reduced motion swaps at once.
+  // speed (SPEC_CARD_STATES.md, С7.6); the system's "Reduce motion" swaps at
+  // once. The graph keeps to the system and not to the Motion setting
+  // (SPEC_MOTION_LEVELS.md, УД9).
   useLayoutEffect(() => {
     const current = dimTransitionRef.current;
     if (current.to === hoverHighlight) return;
-    const durationMs = motionDuration(
-      hoverHighlight ? HOVER_INTENT.fadeInMs : HOVER_INTENT.fadeOutMs,
-    );
+    const durationMs = systemReducesMotion()
+      ? 0
+      : hoverHighlight ? HOVER_INTENT.fadeInMs : HOVER_INTENT.fadeOutMs;
     dimTransitionRef.current = beginDimTransition(
       current,
       hoverHighlight,
@@ -503,12 +505,13 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
   const graphViewportReady = size.width > 0 && size.height > 0;
 
   /// A programmatic camera movement: ours, frame by frame, so a gesture can
-  /// stop it where it is; instant when motion is reduced (Ф12, А5.2).
+  /// stop it where it is; instant under the system's "Reduce motion" (Ф12,
+  /// А5.2), whatever the Motion setting (SPEC_MOTION_LEVELS.md, УД9).
   const glideCamera = useCallback((target: CameraTarget, durationMs: number) => {
     const graph = graphRef.current;
     if (!graph) return;
     stopGlideRef.current?.();
-    stopGlideRef.current = animateCamera(graph, target, motionDuration(durationMs));
+    stopGlideRef.current = animateCamera(graph, target, systemReducesMotion() ? 0 : durationMs);
   }, []);
 
   /// The person takes the camera: the glide stops, and the planned one for

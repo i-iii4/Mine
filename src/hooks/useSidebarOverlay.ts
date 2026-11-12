@@ -27,12 +27,17 @@ export interface SidebarOverlayControls {
   narrow: boolean;
   /** The sidebar lies over the feed. Never true outside `narrow`. */
   open: boolean;
-  /** Open the sidebar over the feed. Outside `narrow` it does nothing. */
-  openOverlay: () => void;
-  /** Close it. */
-  close: () => void;
-  /** Open it when closed, close it when open. */
-  toggle: () => void;
+  /** A key opened it, or closes it: it comes and goes at once on every level
+   *  (SPEC_MOTION_LEVELS.md, УД4, С2). Opened by a key, it closes at once
+   *  whatever closes it (УД4, п. 3). */
+  byKey: boolean;
+  /** Open the sidebar over the feed; `byKey`, a key did it. Outside `narrow`
+   *  it does nothing. */
+  openOverlay: (byKey?: boolean) => void;
+  /** Close it; `byKey`, a key did it. */
+  close: (byKey?: boolean) => void;
+  /** Open it when closed, close it when open; `byKey`, a key did it. */
+  toggle: (byKey?: boolean) => void;
 }
 
 export interface UseSidebarOverlayOptions {
@@ -44,8 +49,13 @@ export interface UseSidebarOverlayOptions {
   onWidenWhileOpen: () => void;
   /** A command that came while the window was no longer narrow: the mirror
    *  lagged the page, or the sidebar beside the feed is shown for the keyboard
-   *  and the mirror says so. The intent is the sidebar's beside the feed. */
-  onBesideIntent: (intent: SidebarIntent) => void;
+   *  and the mirror says so. The intent is the sidebar's beside the feed;
+   *  `byKey`, the View menu sent it (SPEC_MOTION_LEVELS.md, УД4, п. 1). */
+  onBesideIntent: (intent: SidebarIntent, byKey: boolean) => void;
+  /** Whether the backend's command that just came was a key's, the View
+   *  menu's, and forget it: the backend says so just before the command
+   *  (`sidebar-key-command`). */
+  takeKeyCommand?: () => boolean;
   /** The sidebar is on screen only because the keyboard opened it
    *  (SPEC_KEYBOARD.md, М8). */
   openedForKeyboard?: boolean;
@@ -71,10 +81,17 @@ export function useSidebarOverlay({
   tab,
   onWidenWhileOpen,
   onBesideIntent,
+  takeKeyCommand,
   openedForKeyboard = false,
 }: UseSidebarOverlayOptions): SidebarOverlayControls {
   const [narrow, setNarrow] = useState(narrowNow);
-  const [requestedOpen, setRequestedOpen] = useState(false);
+  const [requestedOpen, setRequestedOpenState] = useState(false);
+  const [byKey, setByKey] = useState(false);
+  // An opening says how it came; a closing keeps a key's opening (УД4, п. 3).
+  const setRequestedOpen = useCallback((next: boolean, nextByKey = false) => {
+    setRequestedOpenState(next);
+    setByKey((previous) => (next ? nextByKey : previous || nextByKey));
+  }, []);
   const visible = useTabVisible();
   const open = narrow && requestedOpen && visible;
 
@@ -86,6 +103,8 @@ export function useSidebarOverlay({
   onWidenRef.current = onWidenWhileOpen;
   const onBesideRef = useRef(onBesideIntent);
   onBesideRef.current = onBesideIntent;
+  const takeKeyCommandRef = useRef(takeKeyCommand);
+  takeKeyCommandRef.current = takeKeyCommand;
 
   // The window crosses the threshold: narrowing, the sidebar comes over the
   // feed closed; widening with it open, it stands beside the feed, shown (У7).
@@ -101,20 +120,20 @@ export function useSidebarOverlay({
     follow();
     window.addEventListener("resize", follow);
     return () => window.removeEventListener("resize", follow);
-  }, []);
+  }, [setRequestedOpen]);
 
   // A hidden tab shows its sidebar over the feed closed when it comes back (У8).
   useEffect(() => {
     if (!visible) setRequestedOpen(false);
-  }, [visible]);
+  }, [setRequestedOpen, visible]);
 
-  const openOverlay = useCallback(() => {
-    if (narrowRef.current) setRequestedOpen(true);
-  }, []);
-  const close = useCallback(() => setRequestedOpen(false), []);
-  const toggle = useCallback(() => {
-    if (narrowRef.current) setRequestedOpen(!openRef.current);
-  }, []);
+  const openOverlay = useCallback((opensByKey = false) => {
+    if (narrowRef.current) setRequestedOpen(true, opensByKey);
+  }, [setRequestedOpen]);
+  const close = useCallback((closesByKey = false) => setRequestedOpen(false, closesByKey), [setRequestedOpen]);
+  const toggle = useCallback((togglesByKey = false) => {
+    if (narrowRef.current) setRequestedOpen(!openRef.current, togglesByKey);
+  }, [setRequestedOpen]);
 
   // The bar's button, the View menu, ⌃⌘S and the swipe, routed here by the
   // backend while the sidebar lies over the feed (У4, У6, У11).
@@ -123,11 +142,12 @@ export function useSidebarOverlay({
     let disposed = false;
     const unlisten = listenPage<SidebarIntent>(SIDEBAR_OVERLAY_COMMAND_EVENT, ({ payload }) => {
       if (disposed) return;
+      const commandByKey = takeKeyCommandRef.current?.() ?? false;
       if (!narrowRef.current) {
-        onBesideRef.current(payload);
+        onBesideRef.current(payload, commandByKey);
         return;
       }
-      setRequestedOpen(payload.kind === "toggle" ? !openRef.current : payload.open);
+      setRequestedOpen(payload.kind === "toggle" ? !openRef.current : payload.open, commandByKey);
     });
     unlisten.catch((error: unknown) => {
       console.error("Could not listen to the sidebar's commands:", error);
@@ -138,7 +158,7 @@ export function useSidebarOverlay({
       // logged above.
       void unlisten.then((stop) => stop(), () => undefined);
     };
-  }, [tab]);
+  }, [setRequestedOpen, tab]);
 
   // The mirror for the bar's button and the View menu (У4).
   // A hidden tab hears no toggle, and the backend closes its mirror when it hides
@@ -161,5 +181,5 @@ export function useSidebarOverlay({
     };
   }, [tab]);
 
-  return { narrow, open, openOverlay, close, toggle };
+  return { narrow, open, byKey, openOverlay, close, toggle };
 }

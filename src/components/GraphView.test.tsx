@@ -18,6 +18,8 @@ import { GRAPH_CONTEXT_OPACITY } from "@/lib/colorLaw";
 import { GRAPH_HIT_CANVAS_REFRESH_MS, GRAPH_PREVIEW_GAP } from "./graph/contracts";
 import { graphNodeScreenSize } from "./graph/nodeSize";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
+import { MOTION_LEVELS } from "@/lib/motion";
+import { setMotionLevel } from "@/test/motionLevel";
 import { HOVER_PREVIEW_COLD_OPEN_DELAY_MS, HOVER_PREVIEW_WARM_WINDOW_MS } from "@/lib/hoverPreviewTiming";
 import { HOVER_PREVIEW_WINDOW_SETTLE_MS } from "@/lib/hoverPreviewWindow";
 import { indexedBlock, lightBlock } from "@/test/blocks";
@@ -90,11 +92,37 @@ const graphMethodMocks = vi.hoisted(() => ({
 }));
 
 // Camera glides are instant here unless a test asks for real motion: the
-// assertions read where the camera ended, not every frame on the way.
+// assertions read where the camera ended, not every frame on the way. The
+// graph keeps to the system's "Reduce motion" alone (SPEC_MOTION_LEVELS.md,
+// УД9), so that flag is what the tests turn.
 const motionMocks = vi.hoisted(() => ({ glide: false }));
 vi.mock("@/lib/motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/motion")>();
-  return { ...actual, motionDuration: (ms: number) => (motionMocks.glide ? ms : 0) };
+  return { ...actual, systemReducesMotion: () => !motionMocks.glide };
+});
+
+// The lengths the graph hands its camera glide and its dimming, the motions
+// themselves left as they are.
+const motionSpies = vi.hoisted(() => ({ cameraMs: [] as number[], dimMs: [] as number[] }));
+vi.mock("./graph/cameraAnimation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./graph/cameraAnimation")>();
+  return {
+    ...actual,
+    animateCamera: (...args: Parameters<typeof actual.animateCamera>) => {
+      motionSpies.cameraMs.push(args[2]);
+      return actual.animateCamera(...args);
+    },
+  };
+});
+vi.mock("./graph/hoverDim", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./graph/hoverDim")>();
+  return {
+    ...actual,
+    beginDimTransition: (...args: Parameters<typeof actual.beginDimTransition>) => {
+      motionSpies.dimMs.push(args[3]);
+      return actual.beginDimTransition(...args);
+    },
+  };
 });
 
 // The nodes the canvas was last handed. Positions live on these objects, so a
@@ -2256,6 +2284,115 @@ describe("GraphView", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     expect(graphMethodMocks.centerAt).not.toHaveBeenCalledWith(3_000, 100, 0);
+  });
+
+  // SPEC_MOTION_LEVELS.md, УД9, Г1, Г3: the Motion setting does not reach the
+  // graph. Its camera and its dimming take the same time at every level, and
+  // the system's "Reduce motion" lands both at once, as before the setting.
+  describe("the Motion setting", () => {
+    const dimCollection = (name: string): GraphNode => ({
+      id: `collection:${name}`,
+      kind: "collection",
+      label: name,
+      slug: null,
+      collection_ref: name,
+      card_kind: null,
+      block_type: null,
+      thumbnail: null,
+      preview_manifest: null,
+      degree: 1,
+    });
+
+    /** The lengths of the glide back to the card as its full page closes. */
+    async function cameraGlideMs(): Promise<number[]> {
+      commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshot(
+        graphCardNode("alpha-card", "Alpha card", { x: 2_000, y: 100 }),
+      ));
+      const { rerenderGraph, unmount } = renderGraph({ selectedSlug: "alpha-card", detailOpen: true });
+      await screen.findByRole("button", { name: "Alpha card" });
+      motionSpies.cameraMs.length = 0;
+      rerenderGraph({ selectedSlug: "alpha-card", detailOpen: false });
+      await waitFor(() => expect(motionSpies.cameraMs.length).toBeGreaterThan(0));
+      const lengths = [...motionSpies.cameraMs];
+      unmount();
+      return lengths;
+    }
+
+    /** The lengths of the dimming in and out over a hovered collection. */
+    async function dimMs(): Promise<number[]> {
+      const links: GraphLink[] = [{
+        id: "membership:Design:a",
+        kind: "collection_membership",
+        source: "collection:Design",
+        target: "card:a",
+        directed: false,
+        count: 1,
+        target_ref: null,
+      }];
+      commandMocks.listGraphSnapshot.mockResolvedValue(makeSnapshotFromNodes(
+        [graphCardNode("a", "Card A"), graphCardNode("b", "Card B"), dimCollection("Design")],
+        { links, visible_links: links.length, total_links: links.length },
+      ));
+      commandMocks.getBlock.mockResolvedValue(null);
+      const { unmount } = await renderGraphOnFakeClock();
+      motionSpies.dimMs.length = 0;
+      const canvas = screen.getByTestId("force-graph");
+      const design = screen.getByRole("button", { name: "Design" });
+      // A pointer that crossed the canvas and rests on Design, as the dimming
+      // test above brings it there.
+      for (let x = 40; x <= 200; x += 40) {
+        await settle(16);
+        fireEvent.pointerMove(canvas, { clientX: x, clientY: 10 });
+      }
+      await settle(HOVER_INTENT.warmMs * 2);
+      fireEvent.pointerMove(canvas, { clientX: 201, clientY: 10 });
+      fireEvent.mouseEnter(design);
+      await settle(HOVER_INTENT.dwellMs + 20);
+      fireEvent.mouseLeave(design, { relatedTarget: canvas });
+      await settle(HOVER_INTENT.leaveGraceMs + 20);
+      const lengths = [...motionSpies.dimMs];
+      unmount();
+      vi.useRealTimers();
+      return lengths;
+    }
+
+    it("glides the camera for the same time at every level, and at once under the system's flag", async () => {
+      motionMocks.glide = true;
+      try {
+        const byLevel = [];
+        for (const level of MOTION_LEVELS) {
+          setMotionLevel(level);
+          byLevel.push(await cameraGlideMs());
+        }
+        expect(byLevel[0]!.some((ms) => ms > 0)).toBe(true);
+        expect(byLevel[1]).toEqual(byLevel[0]);
+        expect(byLevel[2]).toEqual(byLevel[0]);
+      } finally {
+        motionMocks.glide = false;
+      }
+      for (const level of MOTION_LEVELS) {
+        setMotionLevel(level);
+        const lengths = await cameraGlideMs();
+        expect(lengths.length).toBeGreaterThan(0);
+        expect(lengths.every((ms) => ms === 0)).toBe(true);
+      }
+    });
+
+    it("dims over the hover's fades at every level, and at once under the system's flag", async () => {
+      motionMocks.glide = true;
+      try {
+        for (const level of MOTION_LEVELS) {
+          setMotionLevel(level);
+          expect(await dimMs()).toEqual([HOVER_INTENT.fadeInMs, HOVER_INTENT.fadeOutMs]);
+        }
+      } finally {
+        motionMocks.glide = false;
+      }
+      for (const level of MOTION_LEVELS) {
+        setMotionLevel(level);
+        expect(await dimMs()).toEqual([0, 0]);
+      }
+    });
   });
 
   it("lets a gesture stop a camera glide where it is (А5.2)", async () => {

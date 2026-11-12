@@ -3,6 +3,7 @@
 // variant any more (SPEC_DEEP_AUDIT.md, Е8.1): the bar writes none.
 import { act, renderHook } from "@testing-library/react";
 import { INTERFACE_FONT_STORAGE_KEY } from "@/lib/fontChoice";
+import { MOTION_LEVEL_STORAGE_KEY, motionLevel } from "@/lib/motion";
 import { SETTINGS_CHANGED_EVENT } from "@/lib/settingsChanged";
 import { THEME_STORAGE_KEY } from "@/lib/themeMode";
 import { applyStoredAppearance, useAppearanceSync } from "./appearance";
@@ -57,5 +58,20 @@ describe("tab bar appearance", () => {
       }));
     });
     expect(root.getAttribute("data-theme")).toBe("light");
+  });
+
+  it("puts the stored motion level on its root before the first render, and follows the one Settings sends (SPEC_MOTION_LEVELS.md, НС4, НС5)", () => {
+    localStorage.setItem(MOTION_LEVEL_STORAGE_KEY, "minimal");
+    applyStoredAppearance();
+    expect(root.getAttribute("data-motion")).toBe("minimal");
+    const { unmount } = renderHook(() => useAppearanceSync());
+    act(() => {
+      window.dispatchEvent(new CustomEvent(SETTINGS_CHANGED_EVENT, {
+        detail: { payload: { key: MOTION_LEVEL_STORAGE_KEY, value: "off" } },
+      }));
+    });
+    expect(motionLevel()).toBe("off");
+    expect(root.getAttribute("data-motion")).toBe("off");
+    unmount();
   });
 });

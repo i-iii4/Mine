@@ -17,6 +17,8 @@
 import { useSyncExternalStore, type CSSProperties } from "react";
 import { APP_MAIN_MIN_WIDTH_PX } from "./appLayout";
 import { SPRING_SETTLE, springSettleMs } from "./channelIcon";
+import { cubicBezier, parseCubicBezier } from "./cubicBezier";
+import { MOTION_EASE, type MotionLevel } from "./motion";
 import {
   DETAIL_CONTENT_MAX_WIDTH_PX,
   DETAIL_RAIL_LINE_PX,
@@ -117,17 +119,101 @@ export const CARD_PEEK_SWITCH_EXIT_MS = 200;
 /** The curve of that leaving: the dialogs' own, `animate-out`'s `ease`. */
 export const CARD_PEEK_SWITCH_EXIT_EASING = "ease";
 
-/** Where that leaving ends for the window and for its scrim; each starts from
- *  where it stands. The window goes down by the close hint's step, as one
- *  piece, with no scale; with "Reduce motion" it only fades (О13). */
-export function peekSwitchExitKeyframes(reducedMotion: boolean): { window: Keyframe; scrim: Keyframe } {
+/** Where that leaving ends in Full for the window and for its scrim; each
+ *  starts from where it stands. The window goes down by the close hint's
+ *  step, as one piece, with no scale (О11). Minimal leaves by its sink
+ *  (SPEC_MOTION_LEVELS.md, ОУ3), Off at once (ОУ8). */
+export function peekSwitchExitKeyframes(): { window: Keyframe; scrim: Keyframe } {
   const faded: Keyframe = { opacity: 0 };
   return {
-    window: reducedMotion
-      ? faded
-      : { ...faded, transform: `translateY(${Math.round(CARD_PEEK_NUDGE_OFFSET_PX * 1e3) / 1e3}px)` },
+    window: { ...faded, transform: `translateY(${Math.round(CARD_PEEK_NUDGE_OFFSET_PX * 1e3) / 1e3}px)` },
     scrim: faded,
   };
+}
+
+// ─── Minimal: the rise, the sink and the hint's step on one line ────────
+
+/** Where the window stands in Minimal (SPEC_MOTION_LEVELS.md, ОУ2–ОУ5):
+ *  moved down `y` px and scaled `scale` about its centre, both axes alike, at
+ *  `opacity`; its scrim at the same opacity. The window moves whole: one
+ *  transform and one opacity (УД6). */
+export interface PeekPose {
+  y: number;
+  scale: number;
+  opacity: number;
+}
+
+/** The window at its place. */
+export const PEEK_POSE_REST: PeekPose = { y: 0, scale: 1, opacity: 1 };
+
+/** Where the rise starts (ОУ2): faded out, `--motion-shift` below its place,
+ *  at `--motion-scale` of its size; the leaving's mirror. */
+export const PEEK_POSE_RISE_FROM: PeekPose = {
+  y: CARD_PEEK_NUDGE_OFFSET_PX,
+  scale: CARD_PEEK_CENTER_SCALE,
+  opacity: 0,
+};
+
+/** The point `share` of the way along the leaving's line (ОУ4): down
+ *  `M × s` and smaller by `(1 − 95 %) × s`, so the hint's step (s = 1/6) and
+ *  the end of the leaving (s = 1, 40 px, 95 %) lie on one straight line. */
+export function peekLinePose(share: number, opacity = 1): PeekPose {
+  return {
+    y: CARD_PEEK_MARGIN_PX * share,
+    scale: 1 - (1 - CARD_PEEK_CENTER_SCALE) * share,
+    opacity,
+  };
+}
+
+/** The hint's step (О15) on that line: a sixth of the leaving, by its
+ *  offset and its scale alike. */
+export const PEEK_LINE_NUDGE_SHARE = CARD_PEEK_NUDGE_OFFSET_PX / CARD_PEEK_MARGIN_PX;
+
+/** The window in the hint's step: `CARD_PEEK_NUDGE_OFFSET_PX` down at
+ *  `CARD_PEEK_NUDGE_SCALE`, a point of the line. */
+export const PEEK_POSE_NUDGED: PeekPose = peekLinePose(PEEK_LINE_NUDGE_SHARE);
+
+/** Where the leaving ends: the line's end, faded out. */
+export const PEEK_POSE_SUNK: PeekPose = peekLinePose(1, 0);
+
+/** The pose `t` of the way from `a` to `b`, each value alike: the pose a CSS
+ *  interpolation of `peekPoseTransform(a)` to `peekPoseTransform(b)` shows at
+ *  the same progress. Between two points of the line it stays on the line. */
+export function lerpPeekPose(a: PeekPose, b: PeekPose, t: number): PeekPose {
+  return { y: lerp(a.y, b.y, t), scale: lerp(a.scale, b.scale, t), opacity: lerp(a.opacity, b.opacity, t) };
+}
+
+/** The pose as a transform about the window's centre: both functions always,
+ *  so two poses interpolate function by function. */
+export function peekPoseTransform(pose: PeekPose): string {
+  return `translateY(${Math.round(pose.y * 1e3) / 1e3}px) scale(${Math.round(pose.scale * 1e6) / 1e6})`;
+}
+
+/** The pose's keyframes for the window and for its scrim. */
+export function peekPoseKeyframes(pose: PeekPose): { window: Keyframe; scrim: Keyframe } {
+  return {
+    window: { transform: peekPoseTransform(pose), opacity: pose.opacity },
+    scrim: { opacity: pose.opacity },
+  };
+}
+
+/** A motion of the window in Minimal: from `from` to `to` over `duration`
+ *  ms on E. */
+export interface PeekPoseMove {
+  from: PeekPose;
+  to: PeekPose;
+  duration: number;
+}
+
+const MOTION_EASE_POINTS = parseCubicBezier(MOTION_EASE);
+/** E, `--motion-ease`, as a function of the time's share. */
+export const peekMotionEase: (t: number) => number = MOTION_EASE_POINTS ? cubicBezier(MOTION_EASE_POINTS) : (t) => t;
+
+/** Where a move stands `elapsedMs` after its start: so the next move starts
+ *  from there, with no jump (УД8). */
+export function peekPoseAt(move: PeekPoseMove, elapsedMs: number): PeekPose {
+  if (move.duration <= 0) return move.to;
+  return lerpPeekPose(move.from, move.to, peekMotionEase(clampUnit(elapsedMs / move.duration)));
 }
 
 /** The window's spring (SPEC_CARD_PEEK.md, «Величины»): critically damped,
@@ -651,8 +737,9 @@ export function peekRideOpacity(direction: "in" | "out", elapsedMs: number, star
 
 /** How the window moves: out of a card and back (`card`), out of the right
  *  part's centre at 95 % and back (`center`), in place by opacity alone
- *  (`fade`), or not at all (`instant`). */
-export type PeekMotionKind = "card" | "center" | "fade" | "instant";
+ *  (`fade`), or not at all (`instant`); in Minimal it rises into place
+ *  (`rise`) and sinks away (`sink`) (SPEC_MOTION_LEVELS.md, ОУ2, ОУ3). */
+export type PeekMotionKind = "card" | "center" | "fade" | "instant" | "rise" | "sink";
 
 /** What opened the card: a click on its card in the feed or on the graph, a
  *  key in the feed, something else (search, the sidebar, a step back), or
@@ -668,38 +755,47 @@ export interface PeekInput {
   feedCardSlug: string | null;
   /** The pointer was on the graph's canvas. */
   onGraph: boolean;
-  /** The key was pressed with the focus in the right part or nowhere. */
-  inRightPart: boolean;
 }
 
-/** Where an opening of the card `slug` at `now` came from. */
+/** Whether the input heard last at `now` is a key's, still recent enough to
+ *  count as the cause of what happens now: an opening, a change of place. */
+export function peekInputByKey(input: PeekInput | null, now: number): boolean {
+  return input !== null && input.kind === "key" && now - input.at <= CARD_PEEK_INPUT_WINDOW_MS;
+}
+
+/** Where an opening of the card `slug` at `now` came from. A key opens by
+ *  the keyboard wherever the focus is: Enter in the feed and Enter in the
+ *  search alike (SPEC_MOTION_LEVELS.md, ОУ1). */
 export function peekOpeningFrom(input: PeekInput | null, slug: string, now: number): PeekOpeningFrom {
   if (!input || now - input.at > CARD_PEEK_INPUT_WINDOW_MS) return "elsewhere";
   if (input.kind === "pointer") return input.feedCardSlug === slug || input.onGraph ? "card" : "elsewhere";
-  return input.inRightPart ? "keyboard" : "elsewhere";
+  return "keyboard";
 }
 
-/** How an opening goes (О9, О10, О13): a card opened with the tab, by a
- *  key or from its full page stands in place at once; with "Reduce motion"
- *  every other window fades in place; a click on its card grows it out of
- *  the card; anything else brings it out of the centre. */
+/** How an opening goes (О9, О10; SPEC_MOTION_LEVELS.md, «Окно карточки и
+ *  просмотр изображения»): a card opened with the tab, by a key or from its
+ *  full page stands in place at once on every level, and so does every
+ *  window at Off; in Minimal every other window rises into place; in Full a
+ *  click on its card grows it out of the card, anything else brings it out
+ *  of the centre. */
 export function peekOpeningKind({
   from,
   restored,
-  reducedMotion,
+  level,
 }: {
   from: PeekOpeningFrom;
   restored: boolean;
-  reducedMotion: boolean;
-}): PeekMotionKind {
+  level: MotionLevel;
+}): Exclude<PeekMotionKind, "sink"> {
   if (restored) return "instant";
   // A key opens at once, in the frame it is pressed in, as Escape closes
-  // (user's decision of 26.10.2026).
+  // (user's decision of 26.10.2026), at every level (ОУ1).
   if (from === "keyboard") return "instant";
   // The full page gives the card back to its window where it stands, at
   // once (О9).
   if (from === "full") return "instant";
-  if (reducedMotion) return "fade";
+  if (level === "off") return "instant";
+  if (level === "minimal") return "rise";
   if (from === "card") return "card";
   return "center";
 }
@@ -710,24 +806,41 @@ export function peekOpeningKind({
  *  card goes full page, by its button or the right part's width, О9, О16). */
 export type CardPeekExit = "return" | "switch" | "fade";
 
-/** How a closing that keeps to the spring goes (О11, О13): the way the window
- *  came, into the card where it stands when that card is on screen, else to
- *  the centre. A `switch` has no spring: the window leaves by
- *  `peekSwitchExitKeyframes` before this is asked. */
+/** How a closing other than by Escape goes (О11; SPEC_MOTION_LEVELS.md,
+ *  ОУ3, ОУ7, ОУ8). Off: at once. Minimal: the window sinks away, whatever
+ *  opened it, and fades in place toward the full page (`fade`, 100 ms). Full
+ *  keeps to the spring: the way the window came, into the card where it
+ *  stands when that card is on screen, else to the centre; a window a key or
+ *  the full page stood fades in place. A `switch` is asked of
+ *  `peekSwitchExitKind` instead. */
 export function peekClosingKind({
   openedAs,
   exit,
-  reducedMotion,
+  level,
   cardOnScreen,
 }: {
   openedAs: PeekMotionKind;
   exit: CardPeekExit;
-  reducedMotion: boolean;
+  level: MotionLevel;
   cardOnScreen: boolean;
-}): Exclude<PeekMotionKind, "instant"> {
-  if (reducedMotion || exit === "fade" || openedAs === "fade") return "fade";
+}): Exclude<PeekMotionKind, "rise"> {
+  if (level === "off") return "instant";
+  if (level === "minimal") return exit === "fade" ? "fade" : "sink";
+  if (exit === "fade" || openedAs === "fade") return "fade";
   if (openedAs !== "card") return "center";
   return cardOnScreen ? "card" : "center";
+}
+
+/** How the window leaves when the collection or the view changes under it
+ *  (О11; SPEC_MOTION_LEVELS.md, ОУ1, ОУ3, ОУ8): in Full it fades down by
+ *  `peekSwitchExitKeyframes` (`switch`), in Minimal it sinks away (`sink`);
+ *  at Off, and when a key changed the place (⌥⌘↑↓) at every level, it is
+ *  gone in the frame its leaving would start (`instant`). */
+export type PeekSwitchExitKind = "switch" | "sink" | "instant";
+
+export function peekSwitchExitKind({ level, byKey }: { level: MotionLevel; byKey: boolean }): PeekSwitchExitKind {
+  if (byKey || level === "off") return "instant";
+  return level === "minimal" ? "sink" : "switch";
 }
 
 // ─── The wheel under the window ──────────────────────────────────────────

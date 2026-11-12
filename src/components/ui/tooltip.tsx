@@ -4,6 +4,7 @@ import * as React from "react"
 import { Tooltip as TooltipPrimitive } from "radix-ui"
 
 import { FLOATING_LAYER_EDGE_PX } from "@/lib/floatingLayer"
+import { useMotionKeyRef } from "@/lib/motionInput"
 import { cn } from "@/lib/utils"
 
 /** Whether a provider stands above: a tooltip without one brings its own,
@@ -43,18 +44,24 @@ function TooltipTrigger({
 // On the interface's own surface, as a menu is: the card fill, its border
 // and shadow, the 3px radius; no arrow (decision of 03.10.2026). Below its
 // control, as macOS shows tooltips (decision of 04.10.2026); Radix flips it
-// up where there is no room below.
+// up where there is no room below. On the keyboard's focus it stands at once
+// at every level (SPEC_MOTION_LEVELS.md, М3); at Minimal the first one fades
+// in 150 ms and out in 100 ms on E, and the next ones, which Radix opens
+// `instant-open`, stand at once (global.css).
 function TooltipContent({
   className,
   side = "bottom",
   sideOffset = 4,
   collisionPadding = FLOATING_LAYER_EDGE_PX,
   children,
+  ref,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Content>) {
+  const keyRef = useMotionKeyRef(ref)
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Content
+        ref={keyRef}
         data-slot="tooltip-content"
         side={side}
         sideOffset={sideOffset}

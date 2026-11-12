@@ -1,6 +1,12 @@
 // The one anatomy of a modal window (DESIGN_SYSTEM.md, «Окна»), shared by
 // `Dialog` and `AlertDialog` so the two cannot drift apart again: one
 // dimming, one surface, two widths by role, one header, one footer.
+//
+// The classes below are Full's motion: the window in 200 ms, its scrim in
+// 150 ms, `ease`, a fade and 95 %. Minimal (150 ms in, 100 ms out, E, the
+// same fade and 95 %), Off and a key's at once are global.css's, which beat
+// these utilities (SPEC_MOTION_LEVELS.md, М5, НС6). The layers that play
+// the entrance and exit themselves follow their own specs.
 
 /** The scrim under a window: the one scrim every layer over the page shares
  *  (global.css, `.modal-scrim`; SPEC_COLOR_RULES.md, 3.9.1; user's decisions

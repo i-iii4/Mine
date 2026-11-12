@@ -42,6 +42,8 @@ import type { ComponentProps } from "react";
 import type { FeedKeyboardFocus } from "@/hooks/useSidebarKeyboardFocus";
 import type { DeleteBlockMedia, DeleteBlocksPlan, LightBlock } from "@/types";
 import { lightBlock } from "@/test/blocks";
+import { MOTION_EASE, MOTION_ENTER_MS } from "@/lib/motion";
+import { setMotionLevel } from "@/test/motionLevel";
 
 // These constants must match the ones in Grid.tsx. If Grid.tsx changes
 // them, this test must be updated in lockstep — but since the test's
@@ -1320,6 +1322,56 @@ describe("Grid — no collapse after add / revisit", () => {
     });
     await flushAsync();
     expect(moved).toEqual([]);
+    delete (HTMLElement.prototype as { animate?: unknown }).animate;
+  });
+
+  // SPEC_MOTION_LEVELS.md, Л4, Л5: the cards' move and the insets' change
+  // follow the level, whoever changed the data (УД4, п. 6).
+  it.each([
+    ["full", { duration: 200, easing: "cubic-bezier(0.37, 0, 0.63, 1)" }, "200ms ease"],
+    ["minimal", { duration: MOTION_ENTER_MS, easing: MOTION_EASE }, `${MOTION_ENTER_MS}ms ${MOTION_EASE}`],
+    ["off", null, "0ms ease"],
+  ] as const)("moves the shifted cards and the insets at the level %s by its time", async (level, move, inset) => {
+    setMotionLevel(level);
+    vi.useFakeTimers();
+    const options: unknown[] = [];
+    const animate = vi.fn((_keyframes: Keyframe[], timing: KeyframeAnimationOptions) => {
+      options.push(timing);
+      return {} as Animation;
+    });
+    Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
+    const picture = (id: number, [width, height]: [number, number]) => makeBlock(id, {
+      block_type: "image",
+      card_kind: "media",
+      title: null,
+      body: "",
+      media_file: `p${id}.jpg`,
+      width,
+      height,
+    });
+    const sizes: Array<[number, number]> = [[1000, 500], [800, 600], [900, 900], [600, 800], [1000, 700], [700, 700]];
+    const blocks = sizes.map((size, index) => picture(9850 + index, size));
+    const { container, rerender } = render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="level" />);
+    act(() => {
+      triggerResize(900, 4000);
+    });
+    await flushAsync();
+    rerender(
+      <Grid
+        {...BASE_PROPS}
+        blocks={blocks.map((block, index) => (index === 0 ? picture(9850, [500, 1000]) : block))}
+        currentTag="level"
+      />,
+    );
+    await flushAsync();
+    if (move === null) {
+      expect(animate).not.toHaveBeenCalled();
+    } else {
+      expect(options.length).toBeGreaterThan(0);
+      for (const timing of options) expect(timing).toEqual(move);
+    }
+    const scroll = container.querySelector<HTMLElement>("[data-grid-scroll]")!;
+    expect(scroll.style.transition).toBe(`padding-left ${inset}, padding-right ${inset}`);
     delete (HTMLElement.prototype as { animate?: unknown }).animate;
   });
 

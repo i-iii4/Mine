@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SPRING_RESPONSE_S, springSettleMs } from "./channelIcon";
 import { FLOATING_LAYER_EDGE_PX } from "./floatingLayer";
 import { HOVER_INTENT } from "./hoverIntent";
+import { setMotionLevel } from "@/test/motionLevel";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
   HOVER_PREVIEW_WARM_WINDOW_MS,
@@ -523,9 +524,30 @@ describe("one window over the list (SPEC_CARD_STATES.md, С7.11)", () => {
     context.preview.dispose();
   });
 
-  describe("with reduced motion", () => {
+  // SPEC_MOTION_LEVELS.md, Н1, Н2: Minimal keeps Full's fades and drops the
+  // spring; Off shows and takes everything at once, after the same rest.
+  describe("at the level Minimal", () => {
     beforeEach(() => {
-      vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("reduce") }));
+      setMotionLevel("minimal");
+    });
+
+    it("appears and leaves on the same fades as Full", async () => {
+      const context = setup();
+      context.preview.pointer(context.target("a", 400));
+      await context.advance(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
+      expect(context.last().opacity).toBe(0);
+      await context.advance(HOVER_INTENT.fadeInMs / 2);
+      expect(context.last().opacity).toBeGreaterThan(0);
+      expect(context.last().opacity).toBeLessThan(1);
+      await context.advance(HOVER_INTENT.fadeInMs / 2 + FRAME_MS);
+      expect(context.last().opacity).toBe(1);
+      context.preview.leave();
+      await context.advance(FRAME_MS * 2);
+      expect(context.last().opacity).toBeLessThan(1);
+      expect(context.preview.getView()).not.toBeNull();
+      await context.advance(HOVER_INTENT.fadeOutMs);
+      expect(context.preview.getView()).toBeNull();
+      context.preview.dispose();
     });
 
     it("stands at the new trigger at once, and changes the content only by fading", async () => {
@@ -543,6 +565,40 @@ describe("one window over the list (SPEC_CARD_STATES.md, С7.11)", () => {
       expect(opacityOf(oldId)).toBe(0);
       expect(opacityOf(newId)).toBeGreaterThan(0);
       expect(context.shownTop()).toBe(450 - 200);
+      context.preview.dispose();
+    });
+  });
+
+  describe("at the level Off", () => {
+    beforeEach(() => {
+      setMotionLevel("off");
+    });
+
+    it("appears whole after the same rest, and goes in the frame it is let go", async () => {
+      const context = setup();
+      context.preview.pointer(context.target("a", 400));
+      await context.advance(HOVER_PREVIEW_COLD_OPEN_DELAY_MS - 1);
+      expect(context.preview.getView()).toBeNull();
+      await context.advance(1);
+      expect(context.current()).toEqual(["a"]);
+      expect(context.last().opacity).toBe(1);
+      context.preview.leave();
+      expect(context.preview.getView()).toBeNull();
+      expect(context.shown).toEqual(["a", null]);
+      context.preview.dispose();
+    });
+
+    it("stands at the new trigger with the new card at once", async () => {
+      const context = setup({ heights: { a: 200, b: 400 } });
+      await openAt(context, "a", 300);
+      context.preview.pointer(context.target("b", 450));
+      await context.flush();
+      expect(context.last().height).toBe(400);
+      expect(context.shownTop()).toBe(450 - 200);
+      const [oldId, newId] = context.preview.getView()!.layers.map((layer) => layer.id);
+      const opacityOf = (id: number | undefined) => context.last().layers.find((layer) => layer.id === id)?.opacity;
+      expect(opacityOf(oldId)).toBe(0);
+      expect(opacityOf(newId)).toBe(1);
       context.preview.dispose();
     });
   });

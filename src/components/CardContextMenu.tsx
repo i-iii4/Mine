@@ -73,22 +73,25 @@ export function CardTagMenu({
         </ContextMenuSubContent>
       </ContextMenuSub>
 
+      {/* Groups by what they act on: the card's collections, its link, its
+          file, the card itself (user's decision of 12.11.2026). A card
+          without a link has no link group and no line of its own for it. */}
       {hasUrl && (
-        <ContextMenuItem onSelect={() => openLinkInBrowser(block.url!)}>
-          <MenuIconSlot>
-            <ExternalLink className="size-[13px]" />
-          </MenuIconSlot>
-          Source
-        </ContextMenuItem>
-      )}
-
-      {/* The card's link, beside the item that opens it (user's decision of
-          11.11.2026). */}
-      {hasUrl && (
-        <ContextMenuItem onSelect={() => copyTextToClipboard(block.url!, COPY_LINK_FAILED_TITLE)}>
-          <MenuIconSlot />
-          Copy Link
-        </ContextMenuItem>
+        <>
+          <ContextMenuSeparator />
+          <ContextMenuItem onSelect={() => openLinkInBrowser(block.url!)}>
+            <MenuIconSlot>
+              <ExternalLink className="size-[13px]" />
+            </MenuIconSlot>
+            Source
+          </ContextMenuItem>
+          {/* The card's link, beside the item that opens it (user's decision
+              of 11.11.2026). */}
+          <ContextMenuItem onSelect={() => copyTextToClipboard(block.url!, COPY_LINK_FAILED_TITLE)}>
+            <MenuIconSlot />
+            Copy Link
+          </ContextMenuItem>
+        </>
       )}
 
       <ContextMenuSeparator />

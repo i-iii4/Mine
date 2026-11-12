@@ -10,6 +10,7 @@
 // in any frame, and the crop opens with no switch.
 
 import { coverPeekRect, intersectPeekRect, lerp, lerpPeekRect, type PeekRect } from "./cardPeek";
+import type { MotionLevel } from "./motion";
 
 /** The user's zoom and pan: a scale about the picture's centre, then an
  *  offset, px. */
@@ -27,13 +28,14 @@ export interface ImagePreviewPlace {
   radius: number;
 }
 
-/** How the preview opens: out of its source, in place by opacity alone, as a
- *  dialog does, or not at all. */
-export type ImagePreviewOpening = "flight" | "fade" | "dialog" | "instant";
+/** How the preview opens: out of its source, as a dialog does, rising into
+ *  place (Minimal, SPEC_MOTION_LEVELS.md, ОУ9), or not at all. */
+export type ImagePreviewOpening = "flight" | "dialog" | "rise" | "instant";
 
-/** How the preview closes: into its source, in place by opacity alone, or as
- *  a dialog does. Escape is no motion, so it is no kind. */
-export type ImagePreviewClosing = "flight" | "fade" | "dialog";
+/** How the preview closes: into its source, in place by opacity alone, as a
+ *  dialog does, sinking away (Minimal, ОУ9), or at once (Off). Escape is no
+ *  motion, so it is no kind. */
+export type ImagePreviewClosing = "flight" | "fade" | "dialog" | "sink" | "instant";
 
 /** The smallest side a moving box is given, so the clip's values stay finite. */
 const MIN_SIDE_PX = 0.01;
@@ -44,36 +46,40 @@ function round(value: number): number {
   return Math.round(value * 1e6) / 1e6;
 }
 
-/** How an opening goes: a key stands it at once, "Reduce motion" fades it in
- *  place, a source gives it its way, and with no source it opens as a dialog. */
+/** How an opening goes (SPEC_MOTION_LEVELS.md, ОУ9): a key stands it at
+ *  once on every level, and so does Off; Minimal rises it into place, with a
+ *  source or without; in Full a source gives it its way, and with no source
+ *  it opens as a dialog. */
 export function imagePreviewOpeningKind({
   keyboard,
-  reducedMotion,
+  level,
   hasSource,
 }: {
   keyboard: boolean;
-  reducedMotion: boolean;
+  level: MotionLevel;
   hasSource: boolean;
 }): ImagePreviewOpening {
-  if (keyboard) return "instant";
-  if (reducedMotion) return "fade";
+  if (keyboard || level === "off") return "instant";
+  if (level === "minimal") return "rise";
   return hasSource ? "flight" : "dialog";
 }
 
-/** How a closing by the button or the background goes: a preview that stood
- *  at once and "Reduce motion" fade in place (SPEC_CARD_PEEK.md, О10, О13),
- *  a source on screen takes the picture back, and with none it leaves as a
- *  dialog. */
+/** How a closing by the button or the background goes (ОУ9): Off at once,
+ *  Minimal sinks away whatever opened it; in Full a preview that stood at
+ *  once fades in place (SPEC_CARD_PEEK.md, О10), a source on screen takes
+ *  the picture back, and with none it leaves as a dialog. */
 export function imagePreviewClosingKind({
   openedAs,
-  reducedMotion,
+  level,
   sourceOnScreen,
 }: {
   openedAs: ImagePreviewOpening;
-  reducedMotion: boolean;
+  level: MotionLevel;
   sourceOnScreen: boolean;
 }): ImagePreviewClosing {
-  if (reducedMotion || openedAs === "instant") return "fade";
+  if (level === "off") return "instant";
+  if (level === "minimal") return "sink";
+  if (openedAs === "instant") return "fade";
   return sourceOnScreen ? "flight" : "dialog";
 }
 

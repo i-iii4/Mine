@@ -1,4 +1,5 @@
 import { scrollBehavior } from "@/lib/motion";
+import { tagRowSortTransition } from "@/lib/tagRowDragOverlay";
 import {
   createContext,
   useContext,
@@ -79,14 +80,13 @@ import {
 } from "@/lib/collectionHover";
 import { scheduleAfterOptimisticUiUpdate } from "@/lib/groupSelection";
 import { publishCollectionOrder } from "@/lib/cardCollections";
-import { scrollSidebarRowIntoView } from "@/lib/sidebarKeyboardFocus";
+import { movedByKey, scrollSidebarRowIntoView } from "@/lib/sidebarKeyboardFocus";
 import { SIDEBAR_THUMBNAIL_DRAG_ID_PREFIX, type BlockDragData } from "@/lib/blockDrag";
 import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
 import { hoverPreviewBesidePanel } from "@/lib/hoverPreviewWindow";
 import { RestingPointer } from "@/lib/restingPointer";
 import { TopFadeScrim } from "./TopFadeScrim";
 import { useTopFadeMask } from "@/hooks/useTopFadeMask";
-import { SIDEBAR_WIDTH_TRANSITION } from "@/hooks/useSidebarResize";
 import { HoverPreviewWindowLayer, useHoverPreviewWindow } from "./HoverPreviewWindow";
 import {
   MicroPreviewThumbnail,
@@ -129,11 +129,11 @@ function useSidebarWidthSource(): SidebarWidthSource {
 /// width (PLAN 50.36). Any wider panel holds the nav without the floor
 /// (`S_beside` is 280 since 25.10.2026), so the floor is a constant and no
 /// frame of a drag changes a value the rows inherit.
-function sidebarPanelStyle(widthAnimating: boolean): CSSProperties {
+function sidebarPanelStyle(widthTransition: string): CSSProperties {
   // A custom property by construction; CSSProperties has no key for it.
   return {
     width: "var(--sidebar-width)",
-    transition: widthAnimating ? SIDEBAR_WIDTH_TRANSITION : "none",
+    transition: widthTransition,
     "--sidebar-nav-min-width": `${sidebarBesideMinWidthPx() - 1}px`,
   } as CSSProperties;
 }
@@ -291,6 +291,10 @@ interface SidebarProps {
   /** The width is moving to a collapse or an opening: the only time it
    *  animates (useSidebarResize.ts). */
   widthAnimating: boolean;
+  /** The panel's width transition, the level's for the run under way
+   *  (useSidebarResize.ts, SPEC_MOTION_LEVELS.md, С1); none by default, for
+   *  a sidebar whose width never moves. */
+  widthTransition?: string;
   /** Its width beside the feed when open, px (useSidebarResize.ts): while
    *  the width moves the list keeps this width's look. */
   openWidth?: number;
@@ -317,6 +321,9 @@ interface SidebarProps {
   /// rows through hit-testing, a sort must make them inert.
   isTagDragging?: boolean;
   isCreatingChannel: boolean;
+  /** ⇧⌘N opened the create row: it parts the list at once on every level
+   *  (SPEC_MOTION_LEVELS.md, С8). */
+  isCreatingChannelByKey?: boolean;
   onSetCreatingChannel: (v: boolean) => void;
   onDeleteTag: (tag: string) => void;
   /** Renames a collection; a refused name rejects, and the field stays with
@@ -404,6 +411,7 @@ export function Sidebar(props: SidebarProps) {
 const SidebarCore = memo(function SidebarCore({
   dropOverId,
   widthAnimating,
+  widthTransition = "none",
   openWidth,
   vaultPath,
   thumbsRootPath,
@@ -414,6 +422,7 @@ const SidebarCore = memo(function SidebarCore({
   isDropDragging,
   isTagDragging = false,
   isCreatingChannel,
+  isCreatingChannelByKey = false,
   onSetCreatingChannel,
   onDeleteTag,
   onRenameTag,
@@ -560,13 +569,18 @@ const SidebarCore = memo(function SidebarCore({
     };
   }, []);
 
-  // Auto-scroll sidebar to the active channel (e.g. after Opt+Cmd+Arrow)
+  // Auto-scroll sidebar to the active channel (e.g. after Opt+Cmd+Arrow).
+  // The move's own state is read as the path changes.
+  const locationStateRef = useRef<unknown>(location.state);
+  locationStateRef.current = location.state;
   useEffect(() => {
     const nav = navRef.current;
     if (!nav) return;
     const active = nav.querySelector<HTMLElement>('[aria-current="page"]');
     if (active) {
-      scrollSidebarRowIntoView(nav, active, scrollBehavior());
+      // Smooth only after a pointer's move in Full; a key's move, ⌥⌘↑↓ or
+      // Enter in the filter, at once (SPEC_MOTION_LEVELS.md, С10).
+      scrollSidebarRowIntoView(nav, active, scrollBehavior({ byKey: movedByKey(locationStateRef.current) }));
     }
   }, [location.pathname]);
 
@@ -994,7 +1008,7 @@ const SidebarCore = memo(function SidebarCore({
         // hover inside the panel lifts from the sidebar surface, not the page.
         "relative flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar",
       )}
-      style={{ ...sidebarPanelStyle(widthAnimating), ...widthSource.style }}
+      style={{ ...sidebarPanelStyle(widthTransition), ...widthSource.style }}
       data-sidebar-panel=""
     >
       {/* Navigation. The wrapper exists so the fade band can be a sibling of
@@ -1086,7 +1100,11 @@ const SidebarCore = memo(function SidebarCore({
               Everything, and takes the first place there. The list parts to
               make room for the row, quickly (global.css, data-sidebar-row-part). */}
           {showCreateRow && (
-            <div data-sidebar-row-part=""><div>
+            <div
+              data-sidebar-row-part=""
+              // ⇧⌘N's row stands at once (global.css, data-motion-key).
+              data-motion-key={isCreatingChannel && isCreatingChannelByKey ? "" : undefined}
+            ><div>
             <NewChannelRow
               isEditing={isCreatingChannel}
               // A filter typed before the plus becomes the new name's start.
@@ -1428,6 +1446,20 @@ function SidebarRowBody({
   // The button stays shown when the collection holds the card, or some of the
   // selected cards; otherwise it appears on hover over the count.
   const linkButtonPinned = !!linkEditor && (linkEditor.checked || linkEditor.partial !== undefined);
+  // The state a key's turn of the mark lands on: Enter on the row presses the
+  // button (sidebarKeyboardFocus.ts), a click with no pointer behind it. That
+  // turn stands at once on every level (SPEC_MOTION_LEVELS.md, С7, УД4). The
+  // word holds while the state is the one it landed on and goes with the
+  // next turn, in the render that starts it: a finished turn timed anew would
+  // run again.
+  const linkChecked = linkEditor?.checked ?? false;
+  const [keyTurnTo, setKeyTurnTo] = useState<boolean | null>(null);
+  const [turnedTo, setTurnedTo] = useState(linkChecked);
+  if (linkChecked !== turnedTo) {
+    setTurnedTo(linkChecked);
+    if (keyTurnTo !== null && keyTurnTo !== linkChecked) setKeyTurnTo(null);
+  }
+  const linkTurnByKey = keyTurnTo === linkChecked;
   // A reference `Connected` replaces the count: always for Everything in an
   // expanded card (С5), and in the feed for the collections of the card under
   // the pointer (С4). The link editor's own buttons keep that place otherwise.
@@ -1565,6 +1597,8 @@ function SidebarRowBody({
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
+            // A click a key made carries no count of presses.
+            if (event.detail === 0) setKeyTurnTo(!linkChecked);
             linkEditor.onToggle();
           }}
           onPointerDown={(event) => {
@@ -1611,7 +1645,12 @@ function SidebarRowBody({
           </span>
           {/* The Contents list's hover mark (global.css): a plus that turns
               into a cross once the collection can be disconnected. */}
-          <Plus aria-hidden="true" data-sidebar-link-icon="" style={LINK_ICON_SPRING_STYLE} />
+          <Plus
+            aria-hidden="true"
+            data-sidebar-link-icon=""
+            data-sidebar-link-turn={linkTurnByKey ? "key" : undefined}
+            style={LINK_ICON_SPRING_STYLE}
+          />
         </button>
       )}
     </>
@@ -1895,6 +1934,7 @@ const TagNavItem = memo(function TagNavItem({
   const deleteTag = useCallback(() => onDelete(tag), [onDelete, tag]);
   const isCurrentRoute = location.pathname === to || location.pathname.startsWith(`${to}/`);
 
+  // The neighbours part by the level (SPEC_MOTION_LEVELS.md, С9).
   const {
     setNodeRef,
     attributes,
@@ -1902,7 +1942,7 @@ const TagNavItem = memo(function TagNavItem({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: `tag:${tag}` });
+  } = useSortable({ id: `tag:${tag}`, transition: tagRowSortTransition() });
 
   // No `content-visibility` here. Drag-and-drop needs every row's real
   // geometry, and skipped content reports the intrinsic placeholder instead —

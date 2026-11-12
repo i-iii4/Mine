@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -261,7 +261,7 @@ describe("CardHoverMenu", () => {
     expect(container.querySelector(BOTTOM_ROW)).not.toHaveAttribute("data-card-lift-gpu");
   });
 
-  it("has no row of collections on a card that does not lift, its top buttons as ever (SPEC_FEED_DISPLAY.md, Д31)", () => {
+  it("has no row of collections on a card that does not lift: its plus alone at the bottom right (SPEC_FEED_DISPLAY.md, Д31)", () => {
     const { container } = render(
       <CardHoverMenu
         block={makeBlock()}
@@ -278,7 +278,11 @@ describe("CardHoverMenu", () => {
 
     expect(container.querySelector(BOTTOM_ROW)).toBeNull();
     expect(container.querySelector("[data-card-lift]")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
+    // Connect stands alone at the bottom right, hidden from the keyboard's
+    // card like the top buttons (user's decision of 12.11.2026).
+    const plus = container.querySelector("[data-card-hover-connect-action]");
+    expect(plus).toHaveClass("bottom-2", "right-2", "group-hover:opacity-100", "opacity-0");
+    expect(within(plus as HTMLElement).getByRole("button", { name: "Connect" })).toBeInTheDocument();
     expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("group-hover:opacity-100");
     expect(screen.getByRole("button", { name: "Card actions" })).toBeInTheDocument();
   });
@@ -426,6 +430,11 @@ describe("CardHoverMenu", () => {
 
     const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent?.trim());
     expect(items.indexOf("Copy Link")).toBe(items.indexOf("Source") + 1);
+    // A line of its own between the collections and the link, and between
+    // the link and the file (user's decision of 12.11.2026).
+    const sequence = () => Array.from(screen.getByRole("menu").querySelectorAll("[role='menuitem'], [role='separator']"))
+      .map((node) => (node.getAttribute("role") === "separator" ? "—" : node.textContent?.trim()));
+    expect(sequence().slice(0, 7)).toEqual(["Connect", "—", "Source", "Copy Link", "—", "Reveal in Finder", "Copy Path"]);
     fireEvent.click(screen.getByText("Copy Link"));
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith("https://example.com");
@@ -446,6 +455,8 @@ describe("CardHoverMenu", () => {
     );
     expect(await screen.findByText("Copy Path")).toBeInTheDocument();
     expect(screen.queryByText("Copy Link")).toBeNull();
+    // No link group, and no second line where it would stand.
+    expect(sequence().slice(0, 4)).toEqual(["Connect", "—", "Reveal in Finder", "Copy Path"]);
   });
 
   it("shows Rename in the overflow menu", async () => {

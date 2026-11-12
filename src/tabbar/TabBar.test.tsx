@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { setMotionLevel } from "@/test/motionLevel";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import type { DropHover, TabBarState, TabBarTab } from "@/types";
 import { TAB_BAR_HEIGHT_PX, TAB_DETACH_THRESHOLD_PX, TAB_MAX_WIDTH_PX, TAB_MIN_WIDTH_PX } from "./constants";
@@ -696,17 +697,15 @@ describe("reorder (В60)", () => {
     expect(commands.moveTab).not.toHaveBeenCalled();
   });
 
-  it("moves at once under reduced motion", () => {
-    const matchMedia = vi.fn((query: string) => ({ matches: query.includes("reduce") }));
-    vi.stubGlobal("matchMedia", matchMedia);
-    try {
+  it.each([["full", 150], ["minimal", 150], ["off", 0]] as const)(
+    "moves the neighbours at %s in %s ms (SPEC_MOTION_LEVELS.md, Т3)",
+    (level, duration) => {
+      setMotionLevel(level);
       renderBar(barState([tab("a"), tab("b")]));
       press(tabById("a"), 100).move(300);
-      expect(tabById("b").style.transition).toContain("transform 0ms");
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
+      expect(tabById("b").style.transition).toContain(`transform ${duration}ms`);
+    },
+  );
 });
 
 describe("tear off (В61, В62)", () => {

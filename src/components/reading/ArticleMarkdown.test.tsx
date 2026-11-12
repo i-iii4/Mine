@@ -7,6 +7,7 @@ import { NoteEmbedLookups } from "./NoteEmbed";
 import { markdownSourceByteOffset, preprocessWikilinks } from "@/lib/markdownWikilinks";
 import { getBlock, resolveNoteLink } from "@/lib/commands";
 import { findArticleAnchor, parseArticleAnchor } from "@/lib/reading/anchors";
+import { setMotionLevel } from "@/test/motionLevel";
 
 vi.mock("@/lib/commands", () => ({
   getBlock: vi.fn(),
@@ -161,6 +162,21 @@ describe("ArticleMarkdown footnotes", () => {
     fireEvent.click(root.querySelector<HTMLAnchorElement>("[data-footnote-backref]")!);
     expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts.at(-1)).toBe(root.querySelector("#user-content-fnref-1"));
     expect(window.location.href).toBe(address);
+  });
+
+  // SPEC_MOTION_LEVELS.md, В5: a link the pointer clicked scrolls smoothly
+  // only in Full; one ↵ followed (a click with no press count) and the other
+  // levels land at once.
+  it.each([
+    ["full", 1, "smooth"],
+    ["full", 0, "auto"],
+    ["minimal", 1, "auto"],
+    ["off", 1, "auto"],
+  ] as const)("at %s, a click with %s presses scrolls %s", (level, detail, behavior) => {
+    setMotionLevel(level);
+    const { root } = renderArticle(body);
+    fireEvent.click(root.querySelector<HTMLAnchorElement>("[data-footnote-ref]")!, { detail });
+    expect(vi.mocked(Element.prototype.scrollIntoView).mock.calls.at(-1)?.[0]).toEqual({ block: "center", behavior });
   });
 
   it("does nothing for a place the article does not hold", () => {

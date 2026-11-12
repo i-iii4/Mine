@@ -28,6 +28,7 @@ import { listenPage } from "@/lib/pageEvents";
 import { noteSpaceShown } from "@/lib/pictureVersions";
 import { getNavigationLabel } from "@/lib/displayTitle";
 import {
+  SIDEBAR_KEY_COMMAND_EVENT,
   SPACE_LEAD_CHANGED_EVENT,
   TAB_GO_EVERYTHING_EVENT,
   TAB_HISTORY_GO_EVENT,
@@ -99,6 +100,7 @@ import { topRowCard, topRowShowsPlace, type TopRowCardView } from "@/lib/topRowP
 import { CARD_VIEW_STORAGE_KEY, PEEK_WIDTH_STORAGE_KEY, getCardView, offersPeekCollapse, openCardView, reloadCardView, reloadPeekWidth, setCardView, useCardView, type CardView } from "@/lib/cardView";
 import { lastPeekInput, peekAreaHoldsWindow, peekOpeningFrom, type CardPeekExit } from "@/lib/cardPeek";
 import { listenPeekInput } from "@/lib/cardPeekSource";
+import { nativeMenuCommandIsKey, noteNativeMenuCommand } from "@/lib/motionInput";
 import { cn } from "@/lib/utils";
 import { commandById } from "@/lib/commandRegistry";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
@@ -349,10 +351,10 @@ import {
   type MineTextSelectionDragPayload,
 } from "@/lib/textSelectionDrag";
 import { followNoteRename, isNoteHeldForEditing, noteMissingFromIndex } from "@/lib/noteEditSessions";
-import { SIDEBAR_WIDTH_TRANSITION, useSidebarResize } from "@/hooks/useSidebarResize";
+import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useSidebarOverlay } from "@/hooks/useSidebarOverlay";
 import { useSidebarKeyboardFocus, type FeedKeyboardFocus } from "@/hooks/useSidebarKeyboardFocus";
-import { sidebarEnterLabel } from "@/lib/sidebarKeyboardFocus";
+import { MOVED_BY_KEY_STATE, sidebarEnterLabel } from "@/lib/sidebarKeyboardFocus";
 import { SIDEBAR_COLUMNS_STORAGE_KEY, reloadSidebarColumnLayout } from "@/lib/sidebarColumnLayout";
 import {
   COMPACT_STACK_EDGE_STORAGE_KEY,
@@ -414,6 +416,8 @@ import { GraphView } from "@/components/GraphView";
 import { DragCardStackPreview } from "@/components/Card";
 import { ActionButton } from "@/components/ActionButton";
 import { applyTheme, getStoredTheme, THEME_STORAGE_KEY } from "@/lib/themeMode";
+import { MOTION_LEVEL_STORAGE_KEY, motionMs, reloadMotionLevel, type MotionOptions } from "@/lib/motion";
+import { lastInputIsKey } from "@/lib/motionInput";
 import { flipWindowButtonStyleHere } from "@/lib/buttonStyle";
 import { ButtonStyleNotice } from "@/components/ButtonStyleNotice";
 import {
@@ -455,6 +459,9 @@ const GRID_PAGE_SIZE = 200;
 /// entries bounds the retries: a store that keeps failing leaves its error on
 /// screen instead of being polled forever (SPEC_AUDIT_FIXES.md, Г4.1, Д1.4).
 const FEED_READ_RETRY_DELAYS_MS = [1_000, 4_000, 15_000] as const;
+/// How long the closed full page stays drawn under the top rows' fade out in
+/// Full; the level shortens it with the fade (Minimal 100 ms, Off and a key
+/// none: SPEC_MOTION_LEVELS.md, В1, Р3).
 const DETAIL_SECONDARY_CHROME_EXIT_MS = 190;
 /// How many further feed pages a restored tab reads to find the card it was
 /// scrolled to before it starts at the top instead (SPEC_TABS.md, В40):
@@ -619,6 +626,19 @@ export function App() {
   // The sidebar belongs to the window (В56): the bootstrap's, then every
   // `window-sidebar-changed`.
   const [windowSidebar, setWindowSidebarLayout] = useState<SidebarLayout | null>(null);
+  // The View menu counts as a key (SPEC_MOTION_LEVELS.md, УД4, п. 1): the
+  // backend says so just before the change it makes, which always reaches
+  // this page as one of two commands, a new layout or one for the sidebar
+  // over the feed. Whichever comes takes the word; the layout keeps it for
+  // its motion.
+  const sidebarKeyCommandRef = useRef(false);
+  const takeSidebarKeyCommand = useCallback(() => {
+    const byKey = sidebarKeyCommandRef.current;
+    sidebarKeyCommandRef.current = false;
+    return byKey;
+  }, []);
+  const windowSidebarByKeyRef = useRef(false);
+  const windowSidebarChangedByKey = useCallback(() => windowSidebarByKeyRef.current, []);
   const [tabRestore, setTabRestore] = useState<TabRestore | null>(null);
   // The first screen of this page is on the page: the backend waits for its
   // frame before it shows the tab (В5).
@@ -709,7 +729,15 @@ export function App() {
         }
       }),
       listenPage<SpaceLead>(SPACE_LEAD_CHANGED_EVENT, (event) => setLead(event.payload.lead)),
-      listenPage<SidebarLayout>(WINDOW_SIDEBAR_CHANGED_EVENT, (event) => setWindowSidebarLayout(event.payload)),
+      listenPage(SIDEBAR_KEY_COMMAND_EVENT, () => {
+        // The View menu's item counts as the rule for native menu items
+        // says, in its one place (motionInput.ts, NATIVE_MENU_INPUT).
+        sidebarKeyCommandRef.current = nativeMenuCommandIsKey();
+      }),
+      listenPage<SidebarLayout>(WINDOW_SIDEBAR_CHANGED_EVENT, (event) => {
+        windowSidebarByKeyRef.current = takeSidebarKeyCommand();
+        setWindowSidebarLayout(event.payload);
+      }),
       listenPage(TAB_SPACE_FORGOTTEN_EVENT, () => {
         setCreatingNewSpace(false);
         setUnavailablePath(null);
@@ -721,7 +749,7 @@ export function App() {
       cancelPaint?.();
       for (const subscription of subscriptions) void subscription.then((stop) => stop());
     };
-  }, [isTab]);
+  }, [isTab, takeSidebarKeyCommand]);
 
   // ⌃Tab and ⌃⇧Tab show the next and the previous tab of the window from any
   // screen of the page, fields and dialogs included (В55, В57). ⇧⌘] and ⇧⌘[
@@ -855,6 +883,8 @@ export function App() {
         tabPage={isTab}
         lead={lead}
         windowSidebar={windowSidebar}
+        windowSidebarChangedByKey={windowSidebarChangedByKey}
+        takeSidebarKeyCommand={takeSidebarKeyCommand}
         restore={tabRestore && (tabRestore.path === null || tabRestore.path === vaultPath) ? tabRestore : null}
         onRestored={() => setTabRestore(null)}
         onFirstScreen={handleFirstScreen}
@@ -875,12 +905,18 @@ export function App() {
 
 // ─── Main app (vault selected) ─────────────────────────────────────────────
 
+/** A page that hears no backend command: nothing of its sidebar comes from
+ *  the View menu. */
+const neverByKey = (): boolean => false;
+
 export function AppWithVault({
   vaultPath,
   onVaultSelected,
   tabPage = false,
   lead = true,
   windowSidebar = null,
+  windowSidebarChangedByKey = neverByKey,
+  takeSidebarKeyCommand = neverByKey,
   restore = null,
   onRestored,
   onFirstScreen,
@@ -893,6 +929,12 @@ export function AppWithVault({
   lead?: boolean;
   /// The sidebar of this tab's window (В56); null for a page that is not a tab.
   windowSidebar?: SidebarLayout | null;
+  /// Whether the window's last layout came from the View menu, which counts
+  /// as a key (SPEC_MOTION_LEVELS.md, УД4, п. 1).
+  windowSidebarChangedByKey?: () => boolean;
+  /// Whether the backend's sidebar command that just came was the View
+  /// menu's, and forget it (`sidebar-key-command`).
+  takeSidebarKeyCommand?: () => boolean;
   /// What this tab returns to, read once when it mounts (В40).
   restore?: TabRestore | null;
   onRestored?: () => void;
@@ -1005,6 +1047,8 @@ export function AppWithVault({
   const feedViewMode: MainViewMode = onAuthorPlace ? "grid" : mainViewMode;
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
+  // The create row was opened by ⇧⌘N (SPEC_MOTION_LEVELS.md, С8).
+  const [createRowByKey, setCreateRowByKey] = useState(false);
   const [isNamingCollection, setIsNamingCollection] = useState(false);
   // Whether the active view holds a focus that Enter would open. The bottom bar
   // shows a command only while it can be used, and Focus has nothing to act on
@@ -1236,6 +1280,10 @@ export function AppWithVault({
   const sidebarSearchChromeDragGesture = useChromeDragGesture();
   const [detailMenuOpenRequestSequence, setDetailMenuOpenRequestSequence] = useState(0);
   const [detailChromeEntered, setDetailChromeEntered] = useState(false);
+  // A key opened or closed the open card: its top rows land at once at every
+  // level (SPEC_MOTION_LEVELS.md, УД4, В1). Held until they stand, then
+  // dropped, so the pointer's own motions in the rows keep the level.
+  const [topRowsByKey, setTopRowsByKey] = useState(false);
   const gridColumnCountRef = useRef(MASONRY_MIN_COLUMN_COUNT);
   const suppressRedirectRef = useRef(false);
   const vaultPathRef = useRef(vaultPath);
@@ -1359,6 +1407,8 @@ export function AppWithVault({
     // replaces an open card keeps the open card's view (SPEC_CARD_PEEK.md,
     // О1, О2). What opened it decides how its window comes (О10).
     if (selectedBlockRef.current === null) {
+      // ↵ in the feed or in the search: the top rows come at once (В1).
+      setTopRowsByKey(lastInputIsKey());
       const view = getCardView();
       setDetailCardView(view);
       setDetailAreaHolds(peekAreaHoldsRef.current);
@@ -1550,6 +1600,20 @@ export function AppWithVault({
     return () => window.cancelAnimationFrame(frame);
   }, [detailChromeClosing, renderedDetailBlock]);
 
+  // The key's mark leaves the top rows a frame after they stood in their new
+  // state: they changed with it on, and nothing moves as it goes (В1).
+  useEffect(() => {
+    if (!topRowsByKey) return;
+    let second: number | null = null;
+    const first = window.requestAnimationFrame(() => {
+      second = window.requestAnimationFrame(() => setTopRowsByKey(false));
+    });
+    return () => {
+      window.cancelAnimationFrame(first);
+      if (second !== null) window.cancelAnimationFrame(second);
+    };
+  }, [detailChromeEntered, renderedDetailBlock, topRowsByKey]);
+
   useEffect(() => {
     setImagePreview(null);
   }, [selectedBlock?.slug]);
@@ -1594,7 +1658,7 @@ export function AppWithVault({
   // answers the two callbacks: it is shown when the window widens with the
   // sidebar open over the feed (У7), and takes an intent that reached the
   // page after the window widened.
-  const besideSidebarRef = useRef<{ collapsed: boolean; toggle: () => void } | null>(null);
+  const besideSidebarRef = useRef<{ collapsed: boolean; toggle: (byKey?: boolean) => void } | null>(null);
   // The sidebar was opened for the keyboard (SPEC_KEYBOARD.md, М8). Declared here
   // because the sidebar's own hooks read it; the keyboard's focus owner below,
   // `useSidebarKeyboardFocus`, sets it. Never stored.
@@ -1606,11 +1670,12 @@ export function AppWithVault({
       const beside = besideSidebarRef.current;
       if (beside?.collapsed) beside.toggle();
     },
-    onBesideIntent: (intent) => {
+    onBesideIntent: (intent, byKey) => {
       const beside = besideSidebarRef.current;
       if (!beside) return;
-      if (intent.kind === "toggle" || beside.collapsed === intent.open) beside.toggle();
+      if (intent.kind === "toggle" || beside.collapsed === intent.open) beside.toggle(byKey);
     },
+    takeKeyCommand: takeSidebarKeyCommand,
   });
   const sidebarNarrow = sidebarOverlay.narrow;
   const closeSidebarOverlay = sidebarOverlay.close;
@@ -1644,6 +1709,8 @@ export function AppWithVault({
     collapsed: sidebarCollapsed,
     isResizing: sidebarResizing,
     widthAnimating: sidebarWidthAnimating,
+    widthTransition: sidebarWidthTransition,
+    widthPhase: sidebarWidthPhase,
     openWidth: sidebarOpenWidth,
     besideShown: sidebarBesideShown,
     besideOpenShown: sidebarBesideOpenShown,
@@ -1652,7 +1719,7 @@ export function AppWithVault({
     endResize,
     resizeTo: resizeSidebarTo,
     toggleCollapsed,
-  } = useSidebarResize(windowSidebar, sidebarNarrow, sidebarOpenedForKeyboard);
+  } = useSidebarResize(windowSidebar, sidebarNarrow, sidebarOpenedForKeyboard, windowSidebarChangedByKey);
   // The toggle during the keyboard's visit, from the bottom bar or forwarded by the
   // backend (`onBesideIntent` above): the sidebar on screen goes, and what is stored
   // already says hidden, so nothing is written.
@@ -1690,7 +1757,9 @@ export function AppWithVault({
   });
   // The bottom bar's button and ⌃⌘S outside the app shell act on the
   // sidebar where it stands; in the app the backend routes them (У4).
-  const toggleSidebar = sidebarNarrow ? sidebarOverlay.toggle : toggleBesideSidebar;
+  // `byKey`: ⌃⌘S heard by the page, which moves the sidebar at once
+  // (SPEC_MOTION_LEVELS.md, УД4); the bottom bar's button moves it by the level.
+  const toggleSidebar: (byKey?: boolean) => void = sidebarNarrow ? sidebarOverlay.toggle : toggleBesideSidebar;
 
   // The filter row over the sidebar's table narrows the space name so the
   // field keeps its minimum (useSidebarRowFit.ts).
@@ -3122,9 +3191,11 @@ export function AppWithVault({
   const openSidebarOverlay = sidebarOverlay.openOverlay;
   const focusSidebarSearch = useCallback(() => {
     if (sidebarNarrow) {
-      openSidebarOverlay();
+      // A key's, the shortcut's or the View menu's: the sidebar stands at
+      // once (SPEC_MOTION_LEVELS.md, УД4).
+      openSidebarOverlay(true);
     } else if (sidebarCollapsed) {
-      toggleCollapsed();
+      toggleCollapsed(true);
     }
     setSidebarSearchFocusSequence((sequence) => sequence + 1);
   }, [openSidebarOverlay, sidebarCollapsed, sidebarNarrow, toggleCollapsed]);
@@ -3171,6 +3242,9 @@ export function AppWithVault({
       "surface-search-shortcut",
       (event) => {
         if (cancelled) return;
+        // Find Elements and Find Collections of the native menu: a key, so
+        // the search opens and closes at once (SPEC_MOTION_LEVELS.md, М6).
+        noteNativeMenuCommand();
         handleSurfaceSearchShortcut(event.payload);
       },
     );
@@ -3252,6 +3326,9 @@ export function AppWithVault({
       const { key } = event.payload;
       if (key === THEME_STORAGE_KEY) {
         applyTheme(getStoredTheme());
+      } else if (key === MOTION_LEVEL_STORAGE_KEY) {
+        // The motion level chosen in Settings (SPEC_MOTION_LEVELS.md, НС4).
+        reloadMotionLevel();
       } else if (key === BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY) {
         setBottomActionBarHidden(getStoredBottomActionBarHidden());
       } else if (key === GRAPH_PREFERENCES_STORAGE_KEY) {
@@ -3317,7 +3394,7 @@ export function AppWithVault({
         // WKWebView handle the same keydown would toggle the sidebar twice.
         if (isTauri()) return;
         e.preventDefault();
-        toggleSidebar();
+        toggleSidebar(true);
         return;
       }
       const searchSurface = commandPressed("find-collections", e)
@@ -3358,7 +3435,7 @@ export function AppWithVault({
         handleSwitchVault();
       } else if (commandPressed("new-collection", e)) {
         e.preventDefault();
-        beginCreateCollection();
+        beginCreateCollection(true);
       }
       // Cmd+, is owned by the native "Settings…" menu item (NSMenu key
       // equivalent) — it never reaches the webview keydown handler.
@@ -3381,11 +3458,21 @@ export function AppWithVault({
     openDetailBlock(block);
   }, [openDetailBlock]);
 
-  const handleDetailClose = useCallback(() => {
+  const handleDetailClose = useCallback((options?: MotionOptions) => {
     if (!selectedBlock || detailChromeClosing) return;
+    // A handler may hand its event in: only an explicit `byKey` counts.
+    const byKey = options?.byKey === true;
+    const holdMs = motionMs(DETAIL_SECONDARY_CHROME_EXIT_MS, "exit", { byKey });
     requestGridFocusRestore(selectedBlock.slug);
     setSelectedBlockAnchor(null);
     setDetailChromeEntered(false);
+    setTopRowsByKey(byKey);
+    if (holdMs === 0) {
+      // Nothing fades: the closed page is not held (В1).
+      setSelectedBlock(null);
+      cancelPendingDetailClose();
+      return;
+    }
     setClosingDetailBlock(selectedBlock);
     setClosingDetailTags(selectedBlockTags);
     setDetailChromeClosing(true);
@@ -3396,7 +3483,7 @@ export function AppWithVault({
     detailCloseTimerRef.current = window.setTimeout(() => {
       detailCloseTimerRef.current = null;
       cancelPendingDetailClose();
-    }, DETAIL_SECONDARY_CHROME_EXIT_MS);
+    }, holdMs);
   }, [
     selectedBlock,
     selectedBlockTags,
@@ -3472,13 +3559,21 @@ export function AppWithVault({
 
   // TRIAL (SPEC_CARD_PEEK.md, О10): the input that opened a card decides how
   // its window comes.
-  useEffect(() => listenPeekInput(() => mainRef.current), []);
+  useEffect(() => listenPeekInput(), []);
 
   const handleScrollToTop = useCallback(() => {
     if (selectedBlock) {
       if (detailChromeClosing) return;
+      const holdMs = motionMs(DETAIL_SECONDARY_CHROME_EXIT_MS, "exit");
       setSelectedBlockAnchor(null);
       setDetailChromeEntered(false);
+      setTopRowsByKey(false);
+      if (holdMs === 0) {
+        setSelectedBlock(null);
+        setScrollToTopSignal((n) => n + 1);
+        cancelPendingDetailClose();
+        return;
+      }
       setClosingDetailBlock(selectedBlock);
       setClosingDetailTags(selectedBlockTags);
       setDetailChromeClosing(true);
@@ -3490,7 +3585,7 @@ export function AppWithVault({
       detailCloseTimerRef.current = window.setTimeout(() => {
         detailCloseTimerRef.current = null;
         cancelPendingDetailClose();
-      }, DETAIL_SECONDARY_CHROME_EXIT_MS);
+      }, holdMs);
       return;
     }
     setScrollToTopSignal((n) => n + 1);
@@ -3716,8 +3811,9 @@ export function AppWithVault({
   // when it is opened (SPEC_NARROW_WINDOW.md, У4), which is never stored either.
   const setSidebarKeyboardVisit = useCallback((open: boolean) => {
     setSidebarOpenedForKeyboard(open);
-    if (open) openSidebarOverlay();
-    else closeSidebarOverlay();
+    // At once both ways (SPEC_MOTION_LEVELS.md, УД4).
+    if (open) openSidebarOverlay(true);
+    else closeSidebarOverlay(true);
   }, [closeSidebarOverlay, openSidebarOverlay]);
 
   // Where the keyboard's focus is: a sidebar row or the page (SPEC_KEYBOARD.md,
@@ -3892,14 +3988,15 @@ export function AppWithVault({
       if (!targetPath || !targetRowKey) return;
       // The card's window closes as the route lands, the new feed under it
       // (SPEC_CARD_PEEK.md, О11).
-      if (selectedBlock && detailViewRef.current !== "peek") handleDetailClose();
+      if (selectedBlock && detailViewRef.current !== "peek") handleDetailClose({ byKey: true });
       if (!moveSidebarKeyboardFocus(targetRowKey)) {
         setSidebarKeyboardNavigationFocus((current) => ({
           rowKey: targetRowKey,
           sequence: (current?.sequence ?? 0) + 1,
         }));
       }
-      navigate(targetPath);
+      // The list scrolls to the row at once (SPEC_MOTION_LEVELS.md, С10).
+      navigate(targetPath, { state: MOVED_BY_KEY_STATE });
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -4070,6 +4167,7 @@ export function AppWithVault({
 
   const handleSetCreatingChannel = useCallback((creating: boolean) => {
     setPendingCreateChannelDrop(null);
+    if (creating) setCreateRowByKey(false);
     setIsCreatingChannel(creating);
   }, []);
 
@@ -4077,12 +4175,15 @@ export function AppWithVault({
   /// visible. Open sidebar: in the list, in the row it will occupy. Closed: in
   /// a dialog, because that row has nowhere to appear and the command used to
   /// do nothing at all.
-  const beginCreateCollection = useCallback(() => {
+  /// `byKey`: ⇧⌘N, whose row parts the list at once (SPEC_MOTION_LEVELS.md,
+  /// С8); `+` parts it by the level.
+  const beginCreateCollection = useCallback((byKey = false) => {
     setPendingCreateChannelDrop(null);
     if (!sidebarShown) {
       setIsNamingCollection(true);
       return;
     }
+    setCreateRowByKey(byKey);
     setIsCreatingChannel(true);
   }, [sidebarShown]);
 
@@ -4090,11 +4191,13 @@ export function AppWithVault({
     if (!rowKey) return;
     const route = sidebarRowKeyToRoute(rowKey);
     if (!route) return;
-    navigate(route);
+    // A key's move: the list's scroll and the closing stand at once
+    // (SPEC_MOTION_LEVELS.md, С2, С10).
+    navigate(route, { state: MOVED_BY_KEY_STATE });
     // Enter in the filter goes to the collection like a click on its row:
     // the sidebar over the feed closes after the move (У6, У11). Shown for the
     // keyboard, it goes only as the focus leaves it (SPEC_KEYBOARD.md, М8).
-    if (!sidebarOpenedForKeyboard) closeSidebarOverlay();
+    if (!sidebarOpenedForKeyboard) closeSidebarOverlay(true);
   }, [closeSidebarOverlay, navigate, sidebarOpenedForKeyboard]);
 
   // A row or a card opened from the sidebar over the feed closes it after
@@ -4195,6 +4298,7 @@ export function AppWithVault({
 
   const beginCreateChannelFromDrop = useCallback((pendingDrop: PendingCreateChannelDrop) => {
     setPendingCreateChannelDrop(pendingDrop);
+    setCreateRowByKey(false);
     setIsCreatingChannel(true);
   }, []);
 
@@ -4998,7 +5102,7 @@ export function AppWithVault({
             plate="raised"
             aria-label="New Collection"
             shortcut={commandById("new-collection").combo}
-            onClick={beginCreateCollection}
+            onClick={() => beginCreateCollection()}
             data-sidebar-new-collection=""
           >
             <Plus />
@@ -5016,6 +5120,7 @@ export function AppWithVault({
       previewsPending={previewsPending}
       collapsed={sidebarCollapsed}
       widthAnimating={sidebarWidthAnimating}
+      widthTransition={sidebarWidthTransition}
       openWidth={sidebarOpenWidth}
       vaultPath={vaultPath}
       thumbsRootPath={thumbsRootPath ?? undefined}
@@ -5031,6 +5136,7 @@ export function AppWithVault({
       }
       isTagDragging={activeDragTag !== null}
       isCreatingChannel={isCreatingChannel}
+      isCreatingChannelByKey={createRowByKey}
       onSetCreatingChannel={handleSetCreatingChannel}
       onDeleteTag={handleDeleteTagFromAll}
       onRenameTag={handleRenameTag}
@@ -5087,7 +5193,7 @@ export function AppWithVault({
         className="inline-flex shrink-0 items-center"
         style={hiddenBarEntries.has("toggle-sidebar") ? { display: "none" } : undefined}
       >
-        <ActionButton chrome hotkey={commandById("toggle-sidebar").combo} onClick={toggleSidebar}>
+        <ActionButton chrome hotkey={commandById("toggle-sidebar").combo} onClick={() => toggleSidebar()}>
           {sidebarShown ? "Hide Sidebar" : "Show Sidebar"}
         </ActionButton>
       </span>
@@ -5099,7 +5205,7 @@ export function AppWithVault({
           className="inline-flex shrink-0 items-center"
           style={hiddenBarEntries.has("new-collection") ? { display: "none" } : undefined}
         >
-          <ActionButton chrome hotkey={commandById("new-collection").combo} onClick={beginCreateCollection}>
+          <ActionButton chrome hotkey={commandById("new-collection").combo} onClick={() => beginCreateCollection()}>
             {commandById("new-collection").name}
           </ActionButton>
         </span>
@@ -5180,7 +5286,7 @@ export function AppWithVault({
           <ActionButton
             chrome
             hotkey={commandById("close-element").combo}
-            onClick={handleDetailClose}
+            onClick={() => handleDetailClose()}
           >
             {commandById("close-element").name}
           </ActionButton>
@@ -5306,7 +5412,8 @@ export function AppWithVault({
       style={{ minWidth: APP_MIN_WIDTH_PX }}
       ref={topRowWrap.hostRef}
       data-top-row={topRowWrap.fit}
-      data-sidebar-width-animating={sidebarWidthAnimating ? "" : undefined}
+      // The width's way, for the second row's left edge (global.css, С1).
+      data-sidebar-width-animating={sidebarWidthPhase ?? undefined}
       // The sidebar over the feed lies over the whole page, from the top row
       // to the window's bottom (SPEC_NARROW_WINDOW.md, У4).
       className="relative"
@@ -5342,10 +5449,11 @@ export function AppWithVault({
             style={{
               width: "var(--sidebar-width)",
               // The width animates only for a collapse or an opening, by the
-              // panel's own motion: a window's resize squeezes it at once
-              // (SPEC_NARROW_WINDOW.md, У1), and so does reduced motion, whose
-              // near-zero transitions of every property would hold it a frame.
-              transition: sidebarWidthAnimating ? SIDEBAR_WIDTH_TRANSITION : "none",
+              // panel's own motion at the level (SPEC_MOTION_LEVELS.md, С1): a
+              // window's resize squeezes it at once (SPEC_NARROW_WINDOW.md,
+              // У1), and so do Off and a key, whose near-zero transitions of
+              // every property would hold it a frame.
+              transition: sidebarWidthTransition,
             }}
             // Leaving with a collapse or past the threshold (У7), what is
             // left of the row answers nothing.
@@ -5357,7 +5465,12 @@ export function AppWithVault({
             {sidebarBesideOpenShown && renderSidebarFilterRow()}
           </div>
         )}
-        <div ref={topRowWrap.rowRef} data-tauri-drag-region className="relative flex h-full min-w-0 flex-1 items-center">
+        <div
+          ref={topRowWrap.rowRef}
+          data-tauri-drag-region
+          data-motion-key={topRowsByKey ? "" : undefined}
+          className="relative flex h-full min-w-0 flex-1 items-center"
+        >
           {/* The place's name: first in the row with the sidebar hidden,
               after the sidebar's segment beside it. While the row names no
               place (topRowPath.ts; user's decision of 11.11.2026), an open
@@ -5783,6 +5896,7 @@ export function AppWithVault({
       {sidebarNarrow && (
         <SidebarOverlay
           open={sidebarOverlay.open}
+          byKey={sidebarOverlay.byKey}
           // Escape under the keyboard's focus is the focus's own (М8); the panel
           // hears it first.
           onClose={sidebarKeyboardFocus.rowKey !== null ? sidebarKeyboardFocus.unfocus : closeSidebarOverlay}

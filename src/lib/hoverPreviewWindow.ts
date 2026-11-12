@@ -17,7 +17,7 @@ import { CARD_PEEK_FRAME_STEP_MS, clampUnit, lerp } from "./cardPeek";
 import { FLOATING_LAYER_EDGE_PX } from "./floatingLayer";
 import { HOVER_INTENT } from "./hoverIntent";
 import type { HoverPreviewOpener } from "./hoverPreviewTiming";
-import { prefersReducedMotion } from "./motion";
+import { motionLevel, motionMs } from "./motion";
 
 /** The window's width: С10.4, the sidebar's and the related notes' card. */
 export const HOVER_PREVIEW_WINDOW_WIDTH_PX = 240;
@@ -136,8 +136,22 @@ function roundedPx(value: number): number {
   return Math.round(value * 1e3) / 1e3;
 }
 
+/** A fade of no length stands at its end from the start: at Off the window
+ *  and its content show and go in the frame of the change (Н1, Н2). */
 function fadeTo(from: number, to: number, ms: number): Fade {
-  return { value: from, from, to, ms, elapsed: 0 };
+  return { value: ms <= 0 ? to : from, from, to, ms, elapsed: 0 };
+}
+
+/** The window's and its content's fade in and fade out at the level in force
+ *  (SPEC_MOTION_LEVELS.md, Н1, Н2): Full and Minimal 150/100, Off at once. The
+ *  values themselves stay `HOVER_INTENT`'s, which the graph reads as they are
+ *  (УД9). */
+function fadeInMs(): number {
+  return motionMs(HOVER_INTENT.fadeInMs, "enter");
+}
+
+function fadeOutMs(): number {
+  return motionMs(HOVER_INTENT.fadeOutMs, "exit");
 }
 
 function stepFade(fade: Fade, dtMs: number): void {
@@ -470,7 +484,7 @@ export class HoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard> {
 
   private want(target: TTarget): void {
     if (this.phase === "leaving" && this.fadingKey === target.key) {
-      this.windowFade = fadeTo(this.windowFade.value, 1, HOVER_INTENT.fadeInMs);
+      this.windowFade = fadeTo(this.windowFade.value, 1, fadeInMs());
       this.phase = "open";
       // A tracked trigger went on moving during the fade: the way back to it.
       const place = this.options.tracksTarget ? this.options.place(target, this.height.target, "change") : null;
@@ -538,7 +552,7 @@ export class HoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard> {
     this.sinceRetargetMs = HOVER_PREVIEW_WINDOW_SETTLE_MS;
     this.laidHeight = measure.height;
     this.layOutAt(this.clampedLeft(place.left), clampedTop(place.top, measure.height, this.viewportHeight));
-    this.windowFade = fadeTo(0, 1, HOVER_INTENT.fadeInMs);
+    this.windowFade = fadeTo(0, 1, fadeInMs());
     this.phase = "open";
     this.frameMoving = false;
     this.settleOn(pending.target);
@@ -555,14 +569,14 @@ export class HoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard> {
     }
     if (this.phase === "leaving") {
       // Brought round on its way out, from where the fade had got to.
-      this.windowFade = fadeTo(this.windowFade.value, 1, HOVER_INTENT.fadeInMs);
+      this.windowFade = fadeTo(this.windowFade.value, 1, fadeInMs());
       this.phase = "open";
     }
     const current = this.layers[this.layers.length - 1];
-    if (current) current.fade = fadeTo(current.fade.value, 0, HOVER_INTENT.fadeOutMs);
+    if (current) current.fade = fadeTo(current.fade.value, 0, fadeOutMs());
     this.layers = [
       ...(current ? [current] : []),
-      this.layerOf(pending, measure, fadeTo(0, 1, HOVER_INTENT.fadeInMs)),
+      this.layerOf(pending, measure, fadeTo(0, 1, fadeInMs())),
     ];
     this.pending = null;
     this.radius = measure.radius;
@@ -571,7 +585,9 @@ export class HoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard> {
     this.laidHeight = Math.max(shownHeight, measure.height);
     this.height = { ...this.height, target: measure.height };
     this.goTo(place);
-    if (prefersReducedMotion()) {
+    // Only Full springs to the new trigger; Minimal and Off stand there at
+    // once, the content changing by its fade (Н2).
+    if (motionLevel() !== "full") {
       this.height = springAt(measure.height);
       this.x = springAt(0);
       this.y = springAt(0);
@@ -629,8 +645,14 @@ export class HoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard> {
     this.wantedKey = null;
     this.dropPending();
     if (this.phase !== "open") return;
+    const outMs = fadeOutMs();
+    // At Off nothing fades: the window goes in this frame (Н1).
+    if (outMs <= 0) {
+      this.close();
+      return;
+    }
     this.phase = "leaving";
-    this.windowFade = fadeTo(this.windowFade.value, 0, HOVER_INTENT.fadeOutMs);
+    this.windowFade = fadeTo(this.windowFade.value, 0, outMs);
     // In place: the springs stop where they are.
     this.x = springAt(this.x.position);
     this.y = springAt(this.y.position);

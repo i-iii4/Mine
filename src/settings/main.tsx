@@ -2,6 +2,8 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { applyTheme, getStoredTheme } from "@/lib/themeMode";
+import { installMotionLevel } from "@/lib/motion";
+import { installMotionInput } from "@/lib/motionInput";
 import { applyCardRadius, getStoredCardRadius } from "@/lib/cardRadius";
 import { applyDensity, getStoredDensity } from "@/lib/density";
 import {
@@ -18,6 +20,10 @@ import { answerSwipeQuestion } from "@/lib/horizontalScroller";
 // The settings window applies the stored theme itself — it cannot rely on the
 // main window having done so for this webview.
 applyTheme(getStoredTheme());
+// The motion level before the first frame (SPEC_MOTION_LEVELS.md, НС5).
+installMotionLevel();
+// What a key opened lands at once (SPEC_MOTION_LEVELS.md, УД4).
+installMotionInput();
 applyCardRadius(getStoredCardRadius());
 applyDensity(getStoredDensity());
 applyInterfaceFont(getStoredInterfaceFont());

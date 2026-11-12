@@ -1,4 +1,5 @@
-import { scrollBehavior } from "@/lib/motion";
+import { scrollBehavior, type MotionOptions } from "@/lib/motion";
+import { lastInputIsKey } from "@/lib/motionInput";
 import { commandById } from "@/lib/commandRegistry";
 import {
   createContext,
@@ -156,6 +157,7 @@ import { VideoFromBlob } from "./VideoFromBlob";
 import { ArticleAudioControls } from "./ArticleAudioControls";
 import { ARTICLE_AUDIO_ENABLED } from "@/lib/featureFlags";
 import { CardMoreMenu } from "./CardHoverMenu";
+import { noFocusBackAfterPress } from "@/lib/openMenus";
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
 import {
   CARD_REFERENCE_ROW_ESTIMATED_HEIGHT_PX,
@@ -237,7 +239,9 @@ interface DetailProps {
   thumbsRootPath?: string;
   isClosing?: boolean;
   topChromeMode?: "classic" | "external";
-  onClose: () => void;
+  /** Closes the card; `byKey` when Escape closed it, so the top rows land at
+   *  once at every level (SPEC_MOTION_LEVELS.md, УД4, В1). */
+  onClose: (options?: MotionOptions) => void;
   onNavigate: (direction: "prev" | "next" | "up" | "down") => void;
   tags: TagCount[];
   currentTag?: string;
@@ -655,7 +659,7 @@ export function Detail({
       if (shouldIgnoreDetailEscape(e)) return;
       if (e.metaKey || e.altKey || e.ctrlKey) return;
       if (e.key === "Escape") {
-        onClose();
+        onClose({ byKey: true });
       }
     };
     document.addEventListener("keydown", handler, true);
@@ -754,8 +758,11 @@ export function Detail({
             triggerVariant="chrome"
             openRequestSequence={topMenuRequestSequence}
             onOpenChange={setTopMenuOpen}
+            // As in the card's window: no tooltip brought up by a focus the
+            // closing menu gives back after a press (12.11.2026).
+            onCloseAutoFocus={noFocusBackAfterPress}
           />
-          <ChromeCloseButton label="Close" onClick={onClose} />
+          <ChromeCloseButton label="Close" onClick={() => onClose()} />
           </ChromeActions>
         </ChromeRow>
       )}
@@ -3842,6 +3849,10 @@ function ArticleBody({
     const jump = `${sourceSlug ?? ""}\u0000${scrollAnchor ?? ""}`;
     if (!anchor || !articleRef.current || jumpedAnchorRef.current === jump) return;
     const root = articleRef.current;
+    // ↵ in the search opened the card at its place: the jump lands at once
+    // at every level; a click on a result scrolls by the level (В5). Read
+    // now: a later input changes what the page heard last.
+    const byKey = lastInputIsKey();
     let frame: number | null = null;
     let current = true;
     // The embeds' first answers move what stands under them, and WebKit
@@ -3854,7 +3865,7 @@ function ArticleBody({
         const element = findArticleAnchor(root, body, anchor);
         if (!element) return;
         jumpedAnchorRef.current = jump;
-        element.scrollIntoView?.({ block: "center", behavior: scrollBehavior() });
+        element.scrollIntoView?.({ block: "center", behavior: scrollBehavior({ byKey }) });
         element.setAttribute("data-scroll-anchor-hit", "true");
         window.setTimeout(() => {
           element.removeAttribute("data-scroll-anchor-hit");

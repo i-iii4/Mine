@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { APP_MAIN_MIN_WIDTH_PX } from "./appLayout";
 import { CHANNEL_ICON_SPRING_MS, springSettleMs } from "./channelIcon";
 import { MODAL_SURFACE_CLASS } from "@/components/ui/modal-window";
+import type { MotionLevel } from "./motion";
 import {
   CARD_PEEK_MARGIN_PX,
   CARD_PEEK_MIN_AREA_WIDTH_PX,
@@ -30,7 +31,19 @@ import {
   lerpPeekRect,
   peekBoxTransform,
   peekClosingKind,
+  peekInputByKey,
+  peekLinePose,
+  peekMotionEase,
+  peekPoseAt,
+  peekPoseKeyframes,
+  peekPoseTransform,
   peekSwitchExitKeyframes,
+  peekSwitchExitKind,
+  PEEK_LINE_NUDGE_SHARE,
+  PEEK_POSE_NUDGED,
+  PEEK_POSE_REST,
+  PEEK_POSE_RISE_FROM,
+  PEEK_POSE_SUNK,
   peekContentOpacity,
   peekFrameCut,
   peekFramePieceBoxes,
@@ -50,6 +63,7 @@ import {
   peekWindowLayout,
   stepPeekSpring,
   type PeekInput,
+  type PeekOpeningFrom,
   type PeekRect,
   type PeekSpring,
 } from "./cardPeek";
@@ -409,37 +423,50 @@ describe("card peek picture (О10, п. 3)", () => {
   });
 });
 
-describe("card peek opening and closing (О10, О11, О13)", () => {
+describe("card peek opening and closing (О10, О11; SPEC_MOTION_LEVELS.md)", () => {
   const input = (overrides: Partial<PeekInput>): PeekInput => ({
     kind: "pointer",
     at: 1000,
     feedCardSlug: null,
     onGraph: false,
-    inRightPart: false,
     ...overrides,
   });
 
-  it("reads what opened the card from the last input", () => {
+  it("reads what opened the card from the last input, a key wherever the focus was (ОУ1)", () => {
     expect(peekOpeningFrom(input({ feedCardSlug: "a" }), "a", 1010)).toBe("card");
     expect(peekOpeningFrom(input({ onGraph: true }), "a", 1010)).toBe("card");
     expect(peekOpeningFrom(input({ feedCardSlug: "b" }), "a", 1010)).toBe("elsewhere");
-    expect(peekOpeningFrom(input({ kind: "key", inRightPart: true }), "a", 1010)).toBe("keyboard");
-    expect(peekOpeningFrom(input({ kind: "key", inRightPart: false }), "a", 1010)).toBe("elsewhere");
+    // Enter in the feed and Enter in the search alike.
+    expect(peekOpeningFrom(input({ kind: "key" }), "a", 1010)).toBe("keyboard");
     expect(peekOpeningFrom(input({ feedCardSlug: "a" }), "a", 1000 + CARD_PEEK_INPUT_WINDOW_MS + 1)).toBe("elsewhere");
+    expect(peekOpeningFrom(input({ kind: "key" }), "a", 1000 + CARD_PEEK_INPUT_WINDOW_MS + 1)).toBe("elsewhere");
     expect(peekOpeningFrom(null, "a", 0)).toBe("elsewhere");
   });
 
-  it("grows out of a clicked card, fades for a key, comes out of the centre otherwise", () => {
-    expect(peekOpeningKind({ from: "card", restored: false, reducedMotion: false })).toBe("card");
-    expect(peekOpeningKind({ from: "keyboard", restored: false, reducedMotion: false })).toBe("instant");
-    expect(peekOpeningKind({ from: "keyboard", restored: false, reducedMotion: true })).toBe("instant");
-    expect(peekOpeningKind({ from: "elsewhere", restored: false, reducedMotion: false })).toBe("center");
-    expect(peekOpeningKind({ from: "card", restored: false, reducedMotion: true })).toBe("fade");
-    expect(peekOpeningKind({ from: "card", restored: true, reducedMotion: false })).toBe("instant");
-    // The full page gives the card back to its window at once, with
-    // "Reduce motion" too (О9, О16).
-    expect(peekOpeningKind({ from: "full", restored: false, reducedMotion: false })).toBe("instant");
-    expect(peekOpeningKind({ from: "full", restored: false, reducedMotion: true })).toBe("instant");
+  it("counts a change of place as a key's while the key is recent (ОУ1)", () => {
+    expect(peekInputByKey(input({ kind: "key" }), 1010)).toBe(true);
+    expect(peekInputByKey(input({ kind: "key" }), 1000 + CARD_PEEK_INPUT_WINDOW_MS)).toBe(true);
+    expect(peekInputByKey(input({ kind: "key" }), 1000 + CARD_PEEK_INPUT_WINDOW_MS + 1)).toBe(false);
+    expect(peekInputByKey(input({ kind: "pointer" }), 1010)).toBe(false);
+    expect(peekInputByKey(null, 1010)).toBe(false);
+  });
+
+  it("opens by the table of events on each level: a key, the tab and the full page at once everywhere", () => {
+    const open = (from: PeekOpeningFrom, level: MotionLevel, restored = false) => peekOpeningKind({ from, restored, level });
+    // Full: out of the card or the centre (О10).
+    expect(open("card", "full")).toBe("card");
+    expect(open("elsewhere", "full")).toBe("center");
+    // Minimal: the rise from wherever the pointer opened it (ОУ2).
+    expect(open("card", "minimal")).toBe("rise");
+    expect(open("elsewhere", "minimal")).toBe("rise");
+    // Off: at once (ОУ8).
+    expect(open("card", "off")).toBe("instant");
+    expect(open("elsewhere", "off")).toBe("instant");
+    for (const level of ["full", "minimal", "off"] as const) {
+      expect(open("keyboard", level)).toBe("instant");
+      expect(open("full", level)).toBe("instant");
+      expect(open("card", level, true)).toBe("instant");
+    }
   });
 
   // О16 (user's decision of 30.10.2026): the window's place, the right part
@@ -453,11 +480,11 @@ describe("card peek opening and closing (О10, О11, О13)", () => {
     expect(peekAreaHoldsWindow(471)).toBe(true);
   });
 
-  it("closes the way it came, to the centre when its card is gone", () => {
+  it("closes in Full the way it came, to the centre when its card is gone", () => {
     const close = (overrides: Partial<Parameters<typeof peekClosingKind>[0]>) => peekClosingKind({
       openedAs: "card",
       exit: "return",
-      reducedMotion: false,
+      level: "full",
       cardOnScreen: true,
       ...overrides,
     });
@@ -466,22 +493,98 @@ describe("card peek opening and closing (О10, О11, О13)", () => {
     expect(close({ openedAs: "center" })).toBe("center");
     expect(close({ openedAs: "fade" })).toBe("fade");
     expect(close({ exit: "fade" })).toBe("fade");
-    expect(close({ reducedMotion: true })).toBe("fade");
+  });
+
+  it("sinks away in Minimal however it opened, fades toward the full page, and closes at once at Off (ОУ3, ОУ7, ОУ8)", () => {
+    for (const openedAs of ["card", "center", "fade", "instant", "rise"] as const) {
+      for (const cardOnScreen of [true, false]) {
+        expect(peekClosingKind({ openedAs, exit: "return", level: "minimal", cardOnScreen })).toBe("sink");
+        expect(peekClosingKind({ openedAs, exit: "fade", level: "minimal", cardOnScreen })).toBe("fade");
+        expect(peekClosingKind({ openedAs, exit: "return", level: "off", cardOnScreen })).toBe("instant");
+        expect(peekClosingKind({ openedAs, exit: "fade", level: "off", cardOnScreen })).toBe("instant");
+      }
+    }
   });
 
   // О11 (user's decision of 05.11.2026): a change of collection or view.
-  it("leaves a change of collection or view in the dialogs' time, down by the close hint's step, with no scale", () => {
+  it("leaves a change of collection or view in Full in the dialogs' time, down by the close hint's step, with no scale", () => {
     expect(CARD_PEEK_SWITCH_EXIT_MS).toBe(200);
     expect(MODAL_SURFACE_CLASS).toContain(`duration-${CARD_PEEK_SWITCH_EXIT_MS}`);
     expect(CARD_PEEK_NUDGE_OFFSET_PX).toBeCloseTo(6.667, 3);
-    expect(peekSwitchExitKeyframes(false)).toEqual({
+    expect(peekSwitchExitKeyframes()).toEqual({
       window: { opacity: 0, transform: "translateY(6.667px)" },
       scrim: { opacity: 0 },
     });
   });
 
-  it("only fades on a change of collection or view with reduced motion (О13)", () => {
-    expect(peekSwitchExitKeyframes(true)).toEqual({ window: { opacity: 0 }, scrim: { opacity: 0 } });
+  it("leaves a change of place by the level: Full fades down, Minimal sinks, Off and a key at once (ОУ1, ОУ3, ОУ8)", () => {
+    expect(peekSwitchExitKind({ level: "full", byKey: false })).toBe("switch");
+    expect(peekSwitchExitKind({ level: "minimal", byKey: false })).toBe("sink");
+    expect(peekSwitchExitKind({ level: "off", byKey: false })).toBe("instant");
+    for (const level of ["full", "minimal", "off"] as const) {
+      expect(peekSwitchExitKind({ level, byKey: true })).toBe("instant");
+    }
+  });
+});
+
+describe("Minimal's rise, sink and hint step (SPEC_MOTION_LEVELS.md, ОУ2–ОУ4)", () => {
+  it("rises from faded, the motion shift low and the motion scale, to its place", () => {
+    expect(PEEK_POSE_RISE_FROM).toEqual({ y: CARD_PEEK_NUDGE_OFFSET_PX, scale: CARD_PEEK_CENTER_SCALE, opacity: 0 });
+    expect(PEEK_POSE_REST).toEqual({ y: 0, scale: 1, opacity: 1 });
+    expect(peekPoseTransform(PEEK_POSE_RISE_FROM)).toBe("translateY(6.667px) scale(0.95)");
+    expect(peekPoseTransform(PEEK_POSE_REST)).toBe("translateY(0px) scale(1)");
+  });
+
+  it("puts the hint's step and the end of the leaving on one line: a sixth of it, then 40 px and 95 %", () => {
+    expect(PEEK_LINE_NUDGE_SHARE).toBeCloseTo(1 / 6, 12);
+    expect(PEEK_POSE_NUDGED.y).toBeCloseTo(CARD_PEEK_NUDGE_OFFSET_PX, 12);
+    expect(PEEK_POSE_NUDGED.scale).toBeCloseTo(CARD_PEEK_NUDGE_SCALE, 12);
+    expect(PEEK_POSE_NUDGED.opacity).toBe(1);
+    expect(PEEK_POSE_SUNK).toEqual({ y: CARD_PEEK_MARGIN_PX, scale: CARD_PEEK_CENTER_SCALE, opacity: 0 });
+    for (const share of [0, 0.1, 1 / 6, 0.5, 1]) {
+      const pose = peekLinePose(share);
+      expect(Math.abs(pose.y / CARD_PEEK_MARGIN_PX - (1 - pose.scale) / (1 - CARD_PEEK_CENTER_SCALE))).toBeLessThan(1e-12);
+    }
+  });
+
+  it("stays on the line on its way from any point of it to the end: no jump, no second transform (ОУ4)", () => {
+    for (const start of [0, 0.05, 1 / 6]) {
+      const move = { from: peekLinePose(start), to: PEEK_POSE_SUNK, duration: 100 };
+      let previous = start;
+      for (let elapsed = 0; elapsed <= 100; elapsed += 100 / 6) {
+        const pose = peekPoseAt(move, elapsed);
+        const share = pose.y / CARD_PEEK_MARGIN_PX;
+        expect(Math.abs(share - (1 - pose.scale) / (1 - CARD_PEEK_CENTER_SCALE))).toBeLessThan(0.002);
+        expect(share).toBeGreaterThanOrEqual(previous - 1e-12);
+        previous = share;
+      }
+      expect(peekPoseAt(move, 0).y).toBeCloseTo(start * CARD_PEEK_MARGIN_PX, 9);
+      expect(peekPoseAt(move, 100)).toEqual(PEEK_POSE_SUNK);
+    }
+  });
+
+  it("goes on E, the leaving faster at its start than the step anywhere on its way (ОУ4, rule 3)", () => {
+    expect(peekMotionEase(0)).toBe(0);
+    expect(peekMotionEase(1)).toBe(1);
+    // cubic-bezier(0.22, 1, 0.36, 1) at half its time.
+    expect(peekMotionEase(0.5)).toBeGreaterThan(0.9);
+    const slope = (move: { from: ReturnType<typeof peekLinePose>; to: ReturnType<typeof peekLinePose>; duration: number }, at: number) => (
+      (peekPoseAt(move, at + 0.01).y - peekPoseAt(move, at).y) / 0.01
+    );
+    const step = { from: PEEK_POSE_REST, to: PEEK_POSE_NUDGED, duration: 150 };
+    let fastestStep = 0;
+    for (let at = 0; at < 150; at += 1) fastestStep = Math.max(fastestStep, slope(step, at));
+    for (const start of [0, 0.05, 1 / 6]) {
+      const leaving = { from: peekLinePose(start), to: PEEK_POSE_SUNK, duration: 100 };
+      expect(slope(leaving, 0)).toBeGreaterThan(fastestStep);
+    }
+  });
+
+  it("gives the window and its scrim one opacity, the window one transform (УД6)", () => {
+    expect(peekPoseKeyframes(peekLinePose(0.5, 0.25))).toEqual({
+      window: { transform: "translateY(20px) scale(0.975)", opacity: 0.25 },
+      scrim: { opacity: 0.25 },
+    });
   });
 });
 

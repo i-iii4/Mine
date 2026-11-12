@@ -4,6 +4,7 @@ import { ContextMenu as ContextMenuPrimitive } from "radix-ui"
 
 import { MenuIconSlot } from "@/components/ui/menu-icon-slot"
 import { FLOATING_LAYER_EDGE_PX, type FloatingMenuWidth } from "@/lib/floatingLayer"
+import { useMotionKeyRef } from "@/lib/motionInput"
 import { useContextMenuPresence, useMenuSurface } from "@/lib/openMenus"
 import { cn } from "@/lib/utils"
 
@@ -100,16 +101,21 @@ function ContextMenuSubTrigger({
   )
 }
 
+// As DropdownMenuSubContent: a submenu the arrow opened lands at once
+// (SPEC_MOTION_LEVELS.md, М2).
 function ContextMenuSubContent({
   className,
   collisionPadding = FLOATING_LAYER_EDGE_PX,
   widthRole = "action",
+  ref,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.SubContent> & {
   widthRole?: FloatingMenuWidth
 }) {
+  const keyRef = useMotionKeyRef(ref)
   return (
     <ContextMenuPrimitive.SubContent
+      ref={keyRef}
       data-slot="context-menu-sub-content"
       data-floating-menu={widthRole}
       collisionPadding={collisionPadding}
@@ -134,7 +140,10 @@ function ContextMenuContent({
 }: React.ComponentProps<typeof ContextMenuPrimitive.Content> & {
   widthRole?: FloatingMenuWidth
 }) {
-  const surface = useMenuSurface("context", ref, { onPointerDownOutside, onCloseAutoFocus })
+  // A menu a key opened lands at once, and so does its closing by a key
+  // (SPEC_MOTION_LEVELS.md, М2, УД4).
+  const keyRef = useMotionKeyRef(ref)
+  const surface = useMenuSurface("context", keyRef, { onPointerDownOutside, onCloseAutoFocus })
   return (
     <ContextMenuPrimitive.Portal>
       <ContextMenuPrimitive.Content

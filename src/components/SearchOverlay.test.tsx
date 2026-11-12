@@ -10,6 +10,7 @@ import {
   SEARCH_OVERLAY_RESULT_LIMIT,
 } from "./SearchOverlay";
 import { lightBlock } from "@/test/blocks";
+import { installMotionInput, MOTION_KEY_ATTRIBUTE, noteNativeMenuCommand } from "@/lib/motionInput";
 
 const listGridBlocksMock = vi.fn<(
   tag?: string,
@@ -1371,5 +1372,45 @@ describe("SearchOverlay preview column", () => {
     resizeBody(THRESHOLD);
     expect(previewColumn()).not.toBeNull();
     expect(screen.getByTestId("overlay-preview")).toHaveTextContent("beta");
+  });
+});
+
+/// SPEC_MOTION_LEVELS.md, М6: ⌘F and Find Elements (a native menu item,
+/// a key by УД4, п. 1) open the search at once at every level; the bottom
+/// bar's button opens it as the window does in Full, at once at Minimal and
+/// Off (global.css).
+describe("SearchOverlay by the input", () => {
+  let removeInput: () => void;
+  beforeEach(() => {
+    removeInput = installMotionInput();
+  });
+  afterEach(() => removeInput());
+
+  const parts = () => ({
+    surface: document.querySelector<HTMLElement>("[data-search-overlay]"),
+    scrim: document.querySelector<HTMLElement>("[data-search-overlay-scrim]"),
+  });
+
+  it("names its scrim for the rule that stands it at once at Minimal", () => {
+    renderOverlay();
+    const { surface, scrim } = parts();
+    expect(surface).toHaveAttribute("data-slot", "dialog-content");
+    expect(scrim).toHaveAttribute("data-slot", "dialog-overlay");
+  });
+
+  it("opened by the native menu's Find Elements carries the key's mark on the panel and the scrim", () => {
+    noteNativeMenuCommand();
+    renderOverlay();
+    const { surface, scrim } = parts();
+    expect(surface).toHaveAttribute(MOTION_KEY_ATTRIBUTE);
+    expect(scrim).toHaveAttribute(MOTION_KEY_ATTRIBUTE);
+  });
+
+  it("opened by the bottom bar's button carries none", () => {
+    fireEvent.pointerDown(document.body);
+    renderOverlay();
+    const { surface, scrim } = parts();
+    expect(surface).not.toHaveAttribute(MOTION_KEY_ATTRIBUTE);
+    expect(scrim).not.toHaveAttribute(MOTION_KEY_ATTRIBUTE);
   });
 });

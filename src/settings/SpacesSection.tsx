@@ -37,6 +37,7 @@ import {
 import { formatBytes } from "@/lib/formatBytes";
 import { errorMessage } from "@/lib/errorMessage";
 import { RemoveSpaceDialog } from "@/components/RemoveSpaceDialog";
+import { useSortableMove } from "@/lib/sortableMotion";
 import { cn } from "@/lib/utils";
 import type { SpaceEntry, SpaceMovedPayload, SpaceStats } from "@/types";
 import { basename } from "./useOpenSpaces";
@@ -81,8 +82,10 @@ interface SpaceRowProps {
 
 function SpaceRow({ path, isOpen, stats, available, onOpen, onRemove }: SpaceRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  // The rows make room by the level (SPEC_MOTION_LEVELS.md, М8).
+  const move = useSortableMove();
   const { setNodeRef, attributes, listeners, transform, transition, isDragging } =
-    useSortable({ id: path });
+    useSortable({ id: path, transition: move });
 
   return (
     <li

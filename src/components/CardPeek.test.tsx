@@ -10,8 +10,17 @@ import {
   FRAME_LINE_PX,
   getPeekHiddenSlug,
   peekNudgeTransform,
+  peekPoseAt,
+  peekPoseKeyframes,
+  recordPeekInput,
   registerPeekGraphSource,
+  PEEK_POSE_NUDGED,
+  PEEK_POSE_REST,
+  PEEK_POSE_RISE_FROM,
+  PEEK_POSE_SUNK,
 } from "@/lib/cardPeek";
+import { MOTION_EASE, type MotionLevel } from "@/lib/motion";
+import { setMotionLevel } from "@/test/motionLevel";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { setPeekWidth } from "@/lib/cardView";
 import { CardPeek, CardPeekArea, CardPeekPlate, type CardPeekOpening, type CardPeekProps } from "./CardPeek";
@@ -98,6 +107,43 @@ function grownFromCard() {
   return { view, run, unregister, hideCard: () => { shown = false; } };
 }
 
+/** One animation the page started, heard: jsdom has none of its own. Its
+ *  clock is set by hand; `finish` runs it to its end. */
+interface HeardMotion {
+  element: Element;
+  keyframes: Keyframe[];
+  timing: KeyframeAnimationOptions;
+  animation: { currentTime: number; startTime: number | null; onfinish: (() => void) | null; cancel: ReturnType<typeof vi.fn> };
+  finish: () => void;
+}
+
+/** The page's animations from now on, with a clock each. */
+function hearMotions(): HeardMotion[] {
+  const heard: HeardMotion[] = [];
+  Object.defineProperty(HTMLElement.prototype, "animate", {
+    configurable: true,
+    value(this: HTMLElement, keyframes: Keyframe[], timing: KeyframeAnimationOptions) {
+      const animation = { currentTime: 0, startTime: null, onfinish: null as (() => void) | null, cancel: vi.fn() };
+      heard.push({
+        element: this,
+        keyframes,
+        timing,
+        animation,
+        finish: () => {
+          animation.currentTime = Number(timing.duration);
+          animation.onfinish?.();
+        },
+      });
+      return animation;
+    },
+  });
+  return heard;
+}
+
+function forgetMotions() {
+  delete (HTMLElement.prototype as { animate?: unknown }).animate;
+}
+
 /// TRIAL (SPEC_CARD_PEEK.md): the open card's window.
 describe("CardPeek", () => {
   it("draws nothing with no card", () => {
@@ -172,14 +218,14 @@ describe("CardPeek", () => {
     }
   });
 
-  it("stands at once from the full page with reduced motion too (О13, О16)", () => {
-    vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true }) as unknown as MediaQueryList));
-    try {
-      const view = peek({ block, opening: { sequence: 1, slug: block.slug, from: "full", restored: false } });
+  it.each(["full", "minimal", "off"] as const)("stands at once from the full page and by a key at %s (О16; SPEC_MOTION_LEVELS.md, ОУ1)", (level) => {
+    setMotionLevel(level);
+    for (const from of ["full", "keyboard"] as const) {
+      const view = peek({ block, opening: { sequence: 1, slug: block.slug, from, restored: false } });
       expect(view.container.querySelector("[data-card-peek-preparing]")).toBeNull();
       expect(view.container.querySelector<HTMLElement>("[data-card-peek-window]")!.style.opacity).toBe("");
-    } finally {
-      vi.unstubAllGlobals();
+      expect(getPeekHiddenSlug()).toBeNull();
+      view.unmount();
     }
   });
 
@@ -406,8 +452,8 @@ describe("CardPeek", () => {
       }
     });
 
-    it("shows the hint alone with reduced motion (О13)", () => {
-      vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true }) as unknown as MediaQueryList));
+    it("shows the hint alone at Off, no step (SPEC_MOTION_LEVELS.md, ОУ8)", () => {
+      setMotionLevel("off");
       try {
         const { scrim, nudge, hint, settle } = steppedPeek();
         restAt(500, 20, scrim);
@@ -417,6 +463,93 @@ describe("CardPeek", () => {
       } finally {
         cleanUp();
       }
+    });
+
+    describe("in Minimal, along the leaving's line (SPEC_MOTION_LEVELS.md, ОУ4)", () => {
+      afterEach(forgetMotions);
+
+      /** Where a heard motion of the window stands at its clock's time. */
+      const poseOf = (motion: HeardMotion) => {
+        const [from, to] = motion.keyframes;
+        const read = (frame: Keyframe | undefined) => {
+          const match = /translateY\((-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(String(frame?.transform));
+          return { y: Number(match?.[1]), scale: Number(match?.[2]), opacity: Number(frame?.opacity) };
+        };
+        return peekPoseAt({ from: read(from), to: read(to), duration: Number(motion.timing.duration) }, motion.animation.currentTime);
+      };
+      const onLine = (pose: { y: number; scale: number }) => Math.abs(pose.y / CARD_PEEK_MARGIN_PX - (1 - pose.scale) / 0.05);
+
+      it("steps a sixth of the leaving in 150 ms on E and back in 100 ms, from where it stands", () => {
+        setMotionLevel("minimal");
+        const heard = hearMotions();
+        try {
+          const { scrim, surface, nudge, hint, settle } = steppedPeek();
+          restAt(500, 20, scrim);
+          expect(hint).toHaveAttribute("data-shown");
+          const timing = (duration: number) => ({ duration, easing: MOTION_EASE, fill: "forwards" });
+          expect(heard.map(({ element, keyframes, timing: heardTiming }) => ({ element, keyframes, timing: heardTiming }))).toEqual([
+            { element: nudge, keyframes: [peekPoseKeyframes(PEEK_POSE_REST).window, peekPoseKeyframes(PEEK_POSE_NUDGED).window], timing: timing(150) },
+            { element: scrim, keyframes: [{ opacity: 1 }, { opacity: 1 }], timing: timing(150) },
+          ]);
+          // The spring of Full stays still.
+          settle();
+          expect(nudge.style.transform).toBe("");
+          // Off the band halfway through the step: back from there in 100 ms.
+          heard[0]!.animation.currentTime = 60;
+          const halfway = peekPoseAt({ from: PEEK_POSE_REST, to: PEEK_POSE_NUDGED, duration: 150 }, 60);
+          pointerAt(500, 400, surface);
+          expect(heard[0]!.animation.cancel).toHaveBeenCalled();
+          expect(heard[2]!.keyframes).toEqual([peekPoseKeyframes(halfway).window, peekPoseKeyframes(PEEK_POSE_REST).window]);
+          expect(heard[2]!.timing).toEqual(timing(100));
+          // At its place once it is back: no motion's style left.
+          act(() => heard[2]!.finish());
+          expect(heard[2]!.animation.cancel).toHaveBeenCalled();
+        } finally {
+          cleanUp();
+        }
+      });
+
+      it.each([
+        ["at rest", null],
+        ["in the step", 150],
+        ["midway through the step", 40],
+      ] as const)("goes on down the same line from a press on the band %s, with no jump (ОУ4, rules 1, 2, 5)", (_name, stepTime) => {
+        setMotionLevel("minimal");
+        const heard = hearMotions();
+        try {
+          const { view, scrim, nudge, settle } = steppedPeek();
+          if (stepTime !== null) {
+            restAt(500, 20, scrim);
+            heard[0]!.animation.currentTime = stepTime;
+          }
+          const before = stepTime === null
+            ? PEEK_POSE_REST
+            : peekPoseAt({ from: PEEK_POSE_REST, to: PEEK_POSE_NUDGED, duration: 150 }, stepTime);
+          fireEvent.click(scrim, { clientX: 500, clientY: 20 });
+          expect(view.onClose).toHaveBeenCalledTimes(1);
+          view.rerenderWith({ block: null, opening: null });
+          const leaving = heard.filter((motion) => motion.element === nudge).at(-1)!;
+          expect(leaving.keyframes).toEqual([peekPoseKeyframes(before).window, peekPoseKeyframes(PEEK_POSE_SUNK).window]);
+          expect(leaving.timing.duration).toBe(100);
+          // Each of its frames on the line, moving down all the way.
+          let share = before.y / CARD_PEEK_MARGIN_PX;
+          for (let time = 0; time <= 100; time += 1000 / 60) {
+            leaving.animation.currentTime = time;
+            const pose = poseOf(leaving);
+            expect(onLine(pose)).toBeLessThan(0.002);
+            // Keyframes hold the place to a thousandth of a pixel.
+            expect(pose.y / CARD_PEEK_MARGIN_PX).toBeGreaterThanOrEqual(share - 1e-4);
+            share = pose.y / CARD_PEEK_MARGIN_PX;
+          }
+          // Its last frame stays, faded out; the frame after, nothing.
+          act(() => leaving.finish());
+          expect(view.container.querySelector("[data-card-peek]")).not.toBeNull();
+          settle();
+          expect(view.container.querySelector("[data-card-peek]")).toBeNull();
+        } finally {
+          cleanUp();
+        }
+      });
     });
 
     it("stands the hint in the free band over the stepped window, across the right part", () => {
@@ -702,15 +835,30 @@ describe("CardPeek", () => {
       }
     });
 
-    it("only fades with reduced motion, in the same time (О13)", () => {
-      vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true }) as unknown as MediaQueryList));
+    it("goes at Off in the frame the new place stands under it, with no animation (SPEC_MOTION_LEVELS.md, ОУ8)", () => {
+      setMotionLevel("off");
       const heard = hearAnimations();
       const view = peek({ block, opening: restored });
-      view.rerenderWith(switched);
-      expect(heard[0]!.element).toBe(windowOf(view));
-      expect(heard[0]!.ends).toEqual([{ opacity: 0 }]);
-      expect(heard[0]!.timing.duration).toBe(200);
-      expect(heard[1]!.ends).toEqual([{ opacity: 0 }]);
+      view.rerenderWith({ ...switched, placeReady: false });
+      expect(view.container.querySelector("[data-card-peek]")).not.toBeNull();
+      view.rerenderWith({ ...switched, placeReady: true });
+      expect(heard).toHaveLength(0);
+      expect(view.container.querySelector("[data-card-peek]")).toBeNull();
+    });
+
+    it.each(["full", "minimal", "off"] as const)("goes at %s with no animation when a key changed the place (ОУ1)", (level) => {
+      setMotionLevel(level);
+      const heard = hearAnimations();
+      const view = peek({ block, opening: restored });
+      recordPeekInput({ kind: "key", at: performance.now(), feedCardSlug: null, onGraph: false });
+      view.rerenderWith({ ...switched, placeReady: false });
+      // The old place never shows through a window that is gone.
+      expect(view.container.querySelector("[data-card-peek]")).not.toBeNull();
+      view.rerenderWith({ ...switched, placeReady: true });
+      expect(heard).toHaveLength(0);
+      expect(view.container.querySelector("[data-card-peek]")).toBeNull();
+      // The page's last input is a module's: the next case starts with none recent.
+      recordPeekInput({ kind: "pointer", at: Number.NEGATIVE_INFINITY, feedCardSlug: null, onGraph: false });
     });
 
     it("lets the page under it answer from the start: the press, the wheel, the second press of a double click", () => {
@@ -1028,6 +1176,8 @@ describe("CardPeek", () => {
         expect(growing).toBe(true);
         key("keydown");
         expect(view.onClose).toHaveBeenCalledTimes(1);
+        // A key's closing: the top rows go at once (SPEC_MOTION_LEVELS.md, В1).
+        expect(view.onClose).toHaveBeenCalledWith({ byKey: true });
         view.rerenderWith({ block: null, opening: { ...restored, restored: false } });
         expect(view.container.querySelector("[data-card-peek]")).toBeNull();
         key("keyup");
@@ -1212,18 +1362,251 @@ describe("CardPeek", () => {
       }
     });
 
-    it("stands at the new width at once with reduced motion (О13)", async () => {
-      const matchMedia = vi.fn(() => ({ matches: true }) as unknown as MediaQueryList);
-      vi.stubGlobal("matchMedia", matchMedia);
+    it.each(["minimal", "off"] as const)("stands at the new width at once at %s (SPEC_MOTION_LEVELS.md, ОУ6)", async (level) => {
+      setMotionLevel(level);
+      // The window's laid-out width, as CSS gives it with a 32 px inset.
+      vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+        if (!this.hasAttribute("data-card-peek-window")) return 0;
+        return this.style.maxWidth.startsWith("calc(402px") ? 466 : 1131;
+      });
       try {
         const view = framedPeek(1440);
         await view.resize(1440);
         await view.resize(900);
         expect(view.getByTestId("layout")).toHaveTextContent("stacked");
         expect(view.container.querySelector("[data-peek-piece]")).toBeNull();
+        expect(view.container.querySelector("[data-card-peek-surface]")).not.toHaveAttribute("data-moving");
       } finally {
         vi.unstubAllGlobals();
         vi.restoreAllMocks();
+      }
+    });
+  });
+
+  describe("Minimal and Off (SPEC_MOTION_LEVELS.md, ОУ2–ОУ8)", () => {
+    afterEach(() => {
+      forgetMotions();
+      vi.restoreAllMocks();
+    });
+
+    const of = (view: ReturnType<typeof peek>, selector: string) => view.container.querySelector<HTMLElement>(selector);
+    const timing = (duration: number) => ({ duration, easing: MOTION_EASE, fill: "forwards" });
+    const opening = (sequence: number, slug = block.slug) => ({ sequence, slug, from: "card", restored: false }) as const;
+
+    /** A click on its card in the feed opened the window at `level`; the
+     *  card is never ready, so the window waits its longest. */
+    function clicked(level: MotionLevel) {
+      setMotionLevel(level);
+      const heard = hearMotions();
+      const opened = grownFromCard();
+      return { heard, ...opened };
+    }
+
+    it("rises into place in 150 ms on E from faded, 6.67 px low and 95 %, the card left in view, after waiting for the card (ОУ2)", () => {
+      const { heard, view, run, unregister } = clicked("minimal");
+      try {
+        // Unseen while it waits, the card in the feed in view all along.
+        expect(of(view, "[data-card-peek-preparing]")).not.toBeNull();
+        expect(getPeekHiddenSlug()).toBeNull();
+        run(2);
+        expect(heard).toHaveLength(0);
+        run(6);
+        expect(of(view, "[data-card-peek-preparing]")).toBeNull();
+        expect(heard.map(({ element, keyframes, timing: heardTiming }) => ({ element, keyframes, timing: heardTiming }))).toEqual([
+          {
+            element: of(view, "[data-card-peek-nudge]"),
+            keyframes: [peekPoseKeyframes(PEEK_POSE_RISE_FROM).window, peekPoseKeyframes(PEEK_POSE_REST).window],
+            timing: timing(150),
+          },
+          { element: of(view, "[data-card-peek-scrim]"), keyframes: [{ opacity: 0 }, { opacity: 1 }], timing: timing(150) },
+        ]);
+        // One transform and one opacity: no pieces, no flight, the content
+        // and the window's own line and shadow shown from the first frame.
+        expect(view.container.querySelector("[data-peek-piece]")).toBeNull();
+        expect(view.container.querySelector("[data-peek-media-clip]")).toBeNull();
+        expect(of(view, "[data-card-peek-window]")!.style.opacity).toBe("");
+        expect(of(view, "[data-card-peek-scrim]")!.style.opacity).toBe("");
+        expect(of(view, "[data-card-peek-content]")!.style.opacity).toBe("");
+        expect(of(view, "[data-card-peek-surface]")).not.toHaveAttribute("data-moving");
+        expect(getPeekHiddenSlug()).toBeNull();
+        // At its place once it ends, with no motion's style left.
+        act(() => heard[0]!.finish());
+        expect(heard[0]!.animation.cancel).toHaveBeenCalled();
+        expect(of(view, "[data-card-peek]")).not.toBeNull();
+      } finally {
+        unregister();
+      }
+    });
+
+    it("sinks away on its × in 100 ms on E to 40 px and 95 %, its scrim fading, and leaves the frame after (ОУ3)", () => {
+      const { heard, view, run, unregister } = clicked("minimal");
+      try {
+        run(8);
+        act(() => heard[0]!.finish());
+        view.rerenderWith({ block: null, opening: null });
+        const [leaving, scrim] = heard.slice(2);
+        expect(leaving!.element).toBe(of(view, "[data-card-peek-nudge]"));
+        expect(leaving!.keyframes).toEqual([peekPoseKeyframes(PEEK_POSE_REST).window, peekPoseKeyframes(PEEK_POSE_SUNK).window]);
+        expect(leaving!.timing).toEqual(timing(100));
+        expect(scrim!.keyframes).toEqual([{ opacity: 1 }, { opacity: 0 }]);
+        expect(of(view, "[data-card-peek-closing]")).not.toBeNull();
+        // The page under it answers from the start of the leaving.
+        expect(of(view, "[data-card-peek-scrim]")).toHaveClass("pointer-events-none");
+        act(() => leaving!.finish());
+        expect(of(view, "[data-card-peek]")).not.toBeNull();
+        run(1);
+        expect(of(view, "[data-card-peek]")).toBeNull();
+      } finally {
+        unregister();
+      }
+    });
+
+    it("leaves from where its rise stands, with no jump (ОУ3, п. 2; ОУ5)", () => {
+      const { heard, view, run, unregister } = clicked("minimal");
+      try {
+        run(8);
+        heard[0]!.animation.currentTime = 75;
+        view.rerenderWith({ block: null, opening: null });
+        expect(heard[0]!.animation.cancel).toHaveBeenCalled();
+        const midway = peekPoseAt({ from: PEEK_POSE_RISE_FROM, to: PEEK_POSE_REST, duration: 150 }, 75);
+        expect(heard[2]!.keyframes).toEqual([peekPoseKeyframes(midway).window, peekPoseKeyframes(PEEK_POSE_SUNK).window]);
+        expect(heard[3]!.keyframes).toEqual([{ opacity: midway.opacity }, { opacity: 0 }]);
+      } finally {
+        unregister();
+      }
+    });
+
+    it("turns back to its place in 150 ms when the same card opens again during the leaving (ОУ5)", () => {
+      const { heard, view, run, unregister } = clicked("minimal");
+      try {
+        run(8);
+        act(() => heard[0]!.finish());
+        view.rerenderWith({ block: null, opening: null });
+        heard[2]!.animation.currentTime = 50;
+        const midway = peekPoseAt({ from: PEEK_POSE_REST, to: PEEK_POSE_SUNK, duration: 100 }, 50);
+        view.rerenderWith({ block, opening: opening(2) });
+        expect(heard[2]!.animation.cancel).toHaveBeenCalled();
+        expect(heard[4]!.keyframes).toEqual([peekPoseKeyframes(midway).window, peekPoseKeyframes(PEEK_POSE_REST).window]);
+        expect(heard[4]!.timing).toEqual(timing(150));
+        expect(of(view, "[data-card-peek-closing]")).toBeNull();
+        act(() => heard[4]!.finish());
+        run(3);
+        expect(of(view, "[data-card-peek]")).not.toBeNull();
+      } finally {
+        unregister();
+      }
+    });
+
+    it("drops the leaving window at once for another card, which rises anew: one window, one blur (ОУ5)", () => {
+      const { heard, view, run, unregister } = clicked("minimal");
+      try {
+        run(8);
+        act(() => heard[0]!.finish());
+        view.rerenderWith({ block: null, opening: null });
+        const other = { slug: "Cards/Two", id: 2 } as unknown as LightBlock;
+        view.rerenderWith({ block: other, opening: opening(2, other.slug) });
+        expect(heard[2]!.animation.cancel).toHaveBeenCalled();
+        expect(view.container.querySelectorAll("[data-card-peek-scrim]")).toHaveLength(1);
+        expect(view.getByTestId("content")).toHaveTextContent(other.slug);
+        expect(of(view, "[data-card-peek-preparing]")).not.toBeNull();
+        run(8);
+        expect(heard.at(-2)!.keyframes).toEqual([peekPoseKeyframes(PEEK_POSE_RISE_FROM).window, peekPoseKeyframes(PEEK_POSE_REST).window]);
+      } finally {
+        unregister();
+      }
+    });
+
+    it("sinks once the new place stands under it when the collection or the view changes (ОУ3, п. 4)", () => {
+      setMotionLevel("minimal");
+      const heard = hearMotions();
+      const frames = handFrames();
+      const view = peek({ block, opening: restored });
+      const switched = { block: null, opening: null, exit: "switch", placeReady: false } as const;
+      view.rerenderWith(switched);
+      expect(heard).toHaveLength(0);
+      view.rerenderWith({ ...switched, placeReady: true });
+      expect(heard[0]!.keyframes).toEqual([peekPoseKeyframes(PEEK_POSE_REST).window, peekPoseKeyframes(PEEK_POSE_SUNK).window]);
+      expect(heard[0]!.timing).toEqual(timing(100));
+      // No guard on the wheel: the feed under it scrolls from the start.
+      expect(of(view, "[data-card-peek-switching]")).not.toBeNull();
+      act(() => heard[0]!.finish());
+      frames.run(() => null);
+      expect(of(view, "[data-card-peek]")).toBeNull();
+    });
+
+    it("keeps the leaving by its × going when the collection changes during it (ОУ5)", () => {
+      setMotionLevel("minimal");
+      const heard = hearMotions();
+      const view = peek({ block, opening: restored });
+      view.rerenderWith({ block: null, opening: null });
+      expect(heard).toHaveLength(2);
+      view.rerenderWith({ block: null, opening: null, exit: "switch" });
+      expect(heard).toHaveLength(2);
+      expect(heard[0]!.animation.cancel).not.toHaveBeenCalled();
+    });
+
+    it("fades in place in 100 ms toward the full page, with no move and no scale (ОУ7)", () => {
+      setMotionLevel("minimal");
+      const heard = hearMotions();
+      const view = peek({ block, opening: restored });
+      view.rerenderWith({ block: null, opening: null, exit: "fade" });
+      expect(heard[0]!.keyframes).toEqual([
+        peekPoseKeyframes(PEEK_POSE_REST).window,
+        peekPoseKeyframes({ ...PEEK_POSE_REST, opacity: 0 }).window,
+      ]);
+      expect(heard[0]!.timing).toEqual(timing(100));
+    });
+
+    it("closes at once on Escape during the rise and during the leaving (ОУ5)", () => {
+      const { heard, view, run, unregister } = clicked("minimal");
+      try {
+        run(8);
+        act(() => {
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+        });
+        expect(view.onClose).toHaveBeenCalledTimes(1);
+        view.rerenderWith({ block: null, opening: null });
+        expect(of(view, "[data-card-peek]")).toBeNull();
+        expect(heard).toHaveLength(2);
+        act(() => {
+          window.dispatchEvent(new KeyboardEvent("keyup", { key: "Escape" }));
+        });
+        // Leaving by its ×, the key takes it off at once.
+        view.rerenderWith({ block, opening: restored });
+        view.rerenderWith({ block: null, opening: null });
+        expect(of(view, "[data-card-peek-closing]")).not.toBeNull();
+        act(() => {
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+        });
+        expect(of(view, "[data-card-peek]")).toBeNull();
+      } finally {
+        unregister();
+      }
+    });
+
+    it("stands at once at Off on a click on its card and goes at once on its ×, the card in view (ОУ8)", () => {
+      const { heard, view, unregister } = clicked("off");
+      try {
+        expect(of(view, "[data-card-peek-preparing]")).toBeNull();
+        expect(of(view, "[data-card-peek-window]")!.style.opacity).toBe("");
+        expect(view.container.querySelector("[data-peek-piece]")).toBeNull();
+        expect(getPeekHiddenSlug()).toBeNull();
+        view.rerenderWith({ block: null, opening: null });
+        expect(of(view, "[data-card-peek]")).toBeNull();
+        expect(heard).toHaveLength(0);
+      } finally {
+        unregister();
+      }
+    });
+
+    it("keeps a growth out of its card in Full: the card hidden while the window stands for it (О14)", () => {
+      const { view, run, unregister } = clicked("full");
+      try {
+        run(8);
+        expect(getPeekHiddenSlug()).toBe(block.slug);
+        expect(view.container.querySelector("[data-peek-piece]")).not.toBeNull();
+      } finally {
+        unregister();
       }
     });
   });
@@ -1337,6 +1720,17 @@ describe("CardPeekPlate", () => {
     expect(onExpand).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives the focus back to nothing after a menu a press opened, so no tooltip comes up unasked (12.11.2026)", async () => {
+    render(plate(0));
+    const trigger = screen.getByRole("button", { name: "Card actions" });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: "mouse" });
+    const menu = await screen.findByRole("menu");
+    fireEvent.keyDown(menu, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(document.activeElement).not.toBe(trigger);
+    expect(screen.queryByRole("tooltip")).toBeNull();
   });
 
   it("opens its menu on ⌘K pressed while the window is open, not on one pressed before", async () => {

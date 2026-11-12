@@ -21,6 +21,8 @@ import {
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
 import { lightBlock } from "@/test/blocks";
+import { MOTION_ENTER_MS, MOTION_EXIT_MS, MOTION_LEVELS, type MotionLevel } from "@/lib/motion";
+import { setMotionLevel } from "@/test/motionLevel";
 
 vi.mock("@/lib/commands", () => ({
   getBlock: vi.fn(async () => ({ tags: [] })),
@@ -2716,7 +2718,7 @@ describe("the card lift's motion in global.css (SPEC_CARD_STATES.md, С8.4; SPEC
     });
     return rule ? rule.slice(rule.indexOf("{") + 1) : "";
   };
-  const TOP_BUTTONS = ":is([data-card-hover-more-action], [data-card-hover-overlay])";
+  const TOP_BUTTONS = ":is([data-card-hover-more-action], [data-card-hover-connect-action], [data-card-hover-overlay])";
   const TRAVELLING = ["[data-card-lift]", '[data-card-media-outline="on-lift"]', "[data-card-lift-fade]", '[data-card-lift="tray"]', '[data-card-lift="caption"]', TOP_BUTTONS];
   const hovered = (part: string) => `[data-card-lift-hover]:hover ${part}`;
   const pinned = (part: string) => `[data-card-lift-pinned] ${part}`;
@@ -2791,6 +2793,83 @@ describe("the card lift's motion in global.css (SPEC_CARD_STATES.md, С8.4; SPEC
     }
     // Later than the lift's own rules of the same weight, so it outranks them.
     expect(css.indexOf("[data-card-preview] [data-card-lift],")).toBeGreaterThan(css.lastIndexOf('[data-card-lift-pinned] [data-card-lift="caption"]'));
+  });
+});
+
+/** global.css without its comments, as selector lists and bodies. jsdom
+ *  applies no stylesheet, so the level's rules are read where they are
+ *  written, as the lift's own tests above read theirs. */
+const levelCss = readFileSync("src/styles/global.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+const levelRules = levelCss.split("}").flatMap((chunk) => {
+  const opening = chunk.indexOf("{");
+  return opening === -1 ? [] : [{ selector: chunk.slice(0, opening).trim(), body: chunk.slice(opening + 1) }];
+});
+/** The milliseconds a token of `:root` holds. */
+const tokenMs = (name: string) => Number(new RegExp(`${name}:\\s*(\\d+)ms`).exec(levelCss)?.[1]);
+/** The rule that lands everything at once: Off, the feed's keyboard mode and
+ *  what a key opened (SPEC_MOTION_LEVELS.md, УД4, УД7). */
+const atOnceRule = () => levelRules.find((rule) => rule.body.includes("transition-duration: 0.01ms !important"))!;
+/** The lift's two times at a level, in ms; at Off, the 0.01 ms of the rule
+ *  above. */
+const liftTimes = (level: MotionLevel): { up: number; down: number } => {
+  if (level === "off") return { up: 0.01, down: 0.01 };
+  const selector = level === "minimal" ? '[data-motion="minimal"]' : ":root";
+  const body = levelRules.find((rule) => rule.selector === selector && rule.body.includes("--lift-up:"))!.body;
+  const timeOf = (name: string) => {
+    const value = new RegExp(`${name}:\\s*([^;]+);`).exec(body)![1]!;
+    const own = /^(\d+)ms/.exec(value);
+    if (own) return Number(own[1]);
+    return tokenMs(/var\((--motion-[a-z]+)\)/.exec(value)![1]!);
+  };
+  return { up: timeOf("--lift-up"), down: timeOf("--lift-down") };
+};
+
+describe("the card lift by the motion level (SPEC_MOTION_LEVELS.md, Л1–Л3, «Тесты» п. 8)", () => {
+  it("lifts in Minimal on the set's 150 and 100 ms, on the lift's own curves", () => {
+    const minimal = levelRules.find((rule) => rule.selector === '[data-motion="minimal"]' && rule.body.includes("--lift-up:"))!;
+    expect(minimal.body).toContain("--lift-up: var(--motion-enter) var(--card-lift-curve-up)");
+    expect(minimal.body).toContain("--lift-down: var(--motion-exit) var(--card-lift-curve-down)");
+    expect(tokenMs("--motion-enter")).toBe(MOTION_ENTER_MS);
+    expect(tokenMs("--motion-exit")).toBe(MOTION_EXIT_MS);
+    expect(liftTimes("full")).toEqual({ up: 200, down: 150 });
+    expect(liftTimes("minimal")).toEqual({ up: 150, down: 100 });
+    // Same weight as the root's clock: written after it, so it wins.
+    expect(levelCss.indexOf(minimal.selector + " {\n  --lift-up")).toBeGreaterThan(levelCss.indexOf("--lift-up: 200ms"));
+  });
+
+  it("lands the keyboard's lift, frame and wash at once at every level", () => {
+    const { selector, body } = atOnceRule();
+    const keyboard = '[data-grid-scroll][data-feed-grid-interaction-mode="keyboard"]';
+    const lifted = selector.slice(selector.indexOf(`${keyboard} :is(`), selector.indexOf(")", selector.indexOf(`${keyboard} :is(`)));
+    for (const part of ["[data-card-lift]", "[data-card-lift-fade]", "[data-card-media-outline]", "[data-card-hover-more-action]", "[data-card-hover-connect-action]", "[data-card-hover-overlay]"]) {
+      expect(lifted, part).toContain(part);
+    }
+    expect(selector).toContain(`${keyboard} [data-feed-card-frame]::after`);
+    expect(selector).toContain(`${keyboard} [data-card-media-clip] > [data-card-lift="window"]::after`);
+    // No level in the keyboard's selectors: Full, Minimal and Off alike, and
+    // !important outranks the level's own times.
+    for (const part of selector.split(/,\s*\n/).filter((line) => line.includes(keyboard))) {
+      expect(part).not.toContain("data-motion");
+    }
+    expect(body).toMatch(/transition-duration: 0\.01ms !important/);
+  });
+
+  it("lands everything at once in Off at 0.01 ms, keeping the delays of intent", () => {
+    const { selector, body } = atOnceRule();
+    expect(selector).toContain('[data-motion="off"] *:not(.mine-progress-indeterminate):not(.animate-spin)');
+    expect(selector).toContain('[data-motion="off"] *::before');
+    expect(selector).toContain('[data-motion="off"] *::after');
+    expect(body).toContain("animation-duration: 0.01ms !important");
+    expect(body).not.toContain("transition-delay");
+    expect(body).not.toMatch(/transition:\s*none|animation:\s*none/);
+  });
+
+  it("washes a pointer's selection in Minimal on 150 in and 100 out, the wash's own E kept", () => {
+    const wash = '[data-card-media-clip] > [data-card-lift="window"]::after';
+    const minimalBody = (selector: string) => levelRules.find((rule) => rule.selector.split(/,\s*\n/).map((part) => part.trim()).includes(selector))?.body ?? "";
+    expect(minimalBody(`[data-motion="minimal"] ${wash}`)).toContain("transition-duration: var(--motion-exit)");
+    expect(minimalBody(`[data-motion="minimal"] [data-grid-scroll] [data-feed-grid-item-selected="true"] ${wash}`)).toContain("transition-duration: var(--motion-enter)");
+    expect(minimalBody(wash)).toContain("cubic-bezier(0.22, 1, 0.36, 1)");
   });
 });
 
@@ -3070,7 +3149,7 @@ describe("Card previews show the feed card in its final hover state (SPEC_CARD_S
   });
 });
 
-describe("Media Only: no lift, the top buttons alone answer the pointer (SPEC_FEED_DISPLAY.md, Д31)", () => {
+describe("Media Only: no lift, the buttons alone answer the pointer (SPEC_FEED_DISPLAY.md, Д31)", () => {
   const menuProps = {
     tags: [],
     onToggleTag: vi.fn(),
@@ -3137,14 +3216,14 @@ describe("Media Only: no lift, the top buttons alone answer the pointer (SPEC_FE
     // With them, the same content under the parts hover brings.
     const content = (show: FeedShow) => {
       const frame = frameIn(parse(feedMarkup(make(), show, true)));
-      frame.querySelectorAll("[data-card-hover-overlay], [data-card-top-row], [data-card-hover-bottom-actions], [data-card-caption]")
+      frame.querySelectorAll("[data-card-hover-overlay], [data-card-top-row], [data-card-hover-bottom-actions], [data-card-hover-connect-action], [data-card-caption]")
         .forEach((node) => node.remove());
       return frame.innerHTML;
     };
     expect(content("media-only")).toBe(content("media"));
   });
 
-  it.each(samples)("does not lift %s under the pointer: no lift, no caption, no row; the top buttons answer", (_kind, make) => {
+  it.each(samples)("does not lift %s under the pointer: no lift, no caption, no row; the buttons answer", (_kind, make) => {
     const value = make();
     const { container } = inMediaOnly(value);
     const frame = frameIn(container);
@@ -3154,11 +3233,16 @@ describe("Media Only: no lift, the top buttons alone answer the pointer (SPEC_FE
     expect(frame).toHaveAttribute("data-card-buttons-hover");
     expect(frame).toHaveClass("group");
     expect(container.querySelector("[data-card-caption]")).toBeNull();
-    expect(container.querySelector("[data-card-lift='tray'], [data-card-hover-bottom-actions], [data-card-hover-connect]")).toBeNull();
+    expect(container.querySelector("[data-card-lift='tray'], [data-card-hover-bottom-actions]")).toBeNull();
     const buttons = container.querySelector("[data-card-hover-more-action]")!;
     expect(buttons).toHaveClass("group-hover:opacity-100", "opacity-0");
     expect(within(buttons as HTMLElement).getByRole("button", { name: "Card actions", hidden: true })).toBeInTheDocument();
     expect(within(buttons as HTMLElement).queryByRole("button", { name: "Source", hidden: true }) !== null).toBe(value.url !== null);
+    // Connect as a plus at the bottom right, on hover with the top buttons
+    // (user's decision of 12.11.2026).
+    const plus = container.querySelector("[data-card-hover-connect-action]")!;
+    expect(plus).toHaveClass("absolute", "bottom-2", "right-2", "group-hover:opacity-100", "opacity-0");
+    expect(within(plus as HTMLElement).getByRole("button", { name: "Connect", hidden: true })).toBeInTheDocument();
   });
 
   it("shows a card's text nowhere when it has media, and a text card's as ever", () => {
@@ -3178,6 +3262,28 @@ describe("Media Only: no lift, the top buttons alone answer the pointer (SPEC_FE
     expect(frameIn(unarmed.container)).not.toHaveClass("group");
   });
 
+  // SPEC_MOTION_LEVELS.md, «Тесты» п. 8; Д31: nothing lifts at any level,
+  // and the top buttons fade on the lift's times, which the level sets.
+  it.each(MOTION_LEVELS)("lifts nothing at the level %s, under the pointer or the keyboard", (level) => {
+    setMotionLevel(level);
+    const pointer = inMediaOnly(picture());
+    expect(frameIn(pointer.container)).not.toHaveAttribute("data-card-lift-hover");
+    expect(frameIn(pointer.container)).not.toHaveAttribute("data-card-lift-pinned");
+    expect(frameIn(pointer.container).style.getPropertyValue("--card-lift")).toBe("");
+    pointer.unmount();
+    const keyboard = inMediaOnly(picture(), { keyboardLift: true, hoverEnabled: false, menuBadge: "element-menu" });
+    expect(frameIn(keyboard.container)).not.toHaveAttribute("data-card-lift-pinned");
+    expect(keyboard.container.querySelector("[data-card-lift='tray'], [data-card-caption]")).toBeNull();
+  });
+
+  it("fades the top buttons in 200 and 150 ms in Full, 150 and 100 in Minimal, at once in Off", () => {
+    expect(liftTimes("full")).toEqual({ up: 200, down: 150 });
+    expect(liftTimes("minimal")).toEqual({ up: 150, down: 100 });
+    expect(liftTimes("off")).toEqual({ up: 0.01, down: 0.01 });
+    // The buttons are under the page's root: Off's rule reaches them.
+    expect(atOnceRule().selector).toContain('[data-motion="off"] *:not(');
+  });
+
   it("keeps the keyboard's card down: its chord in the top row, no row of collections", () => {
     const { container } = inMediaOnly(picture(), { keyboardLift: true, hoverEnabled: false, menuBadge: "element-menu" });
     const frame = frameIn(container);
@@ -3186,6 +3292,7 @@ describe("Media Only: no lift, the top buttons alone answer the pointer (SPEC_FE
     expect(frame).not.toHaveAttribute("data-card-buttons-hover");
     expect(container.querySelector("[data-feed-grid-action-badge]")).toHaveTextContent("⌘K");
     expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-0");
+    expect(container.querySelector("[data-card-hover-connect-action]")).toHaveClass("opacity-0");
     expect(container.querySelector("[data-card-hover-bottom-actions]")).toBeNull();
   });
 
@@ -3195,14 +3302,25 @@ describe("Media Only: no lift, the top buttons alone answer the pointer (SPEC_FE
     await waitFor(() => expect(frameIn(container)).toHaveAttribute("data-card-buttons-pinned"));
     expect(frameIn(container)).not.toHaveAttribute("data-card-lift-pinned");
     expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-100");
-    // Its collections change through the menu's Connect (Д31).
+    expect(container.querySelector("[data-card-hover-connect-action]")).toHaveClass("opacity-100");
     expect(await screen.findByText("Connect")).toBeInTheDocument();
+  });
+
+  it("opens the collection picker from the plus, holding the buttons, still without a lift", async () => {
+    const { container } = inMediaOnly(picture());
+    const plus = within(container.querySelector<HTMLElement>("[data-card-hover-connect-action]")!)
+      .getByRole("button", { name: "Connect", hidden: true });
+    fireEvent.pointerDown(plus, { button: 0, ctrlKey: false, pointerType: "mouse" });
+    await waitFor(() => expect(frameIn(container)).toHaveAttribute("data-card-buttons-pinned"));
+    expect(frameIn(container)).not.toHaveAttribute("data-card-lift-pinned");
+    expect(container.querySelector("[data-card-hover-more-action]")).toHaveClass("opacity-100");
+    expect(container.querySelector("[data-card-hover-connect-action]")).toHaveClass("opacity-100");
   });
 
   it("fades the top buttons on the lift's clock, and moves nothing else on hover", () => {
     const css = readFileSync("src/styles/global.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
     const rules = css.split("}");
-    const TOP_BUTTONS = ":is([data-card-hover-more-action], [data-card-hover-overlay])";
+    const TOP_BUTTONS = ":is([data-card-hover-more-action], [data-card-hover-connect-action], [data-card-hover-overlay])";
     const bodyOf = (selector: string) => {
       const rule = rules.find((candidate) => {
         const opening = candidate.indexOf("{");

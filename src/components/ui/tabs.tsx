@@ -1,5 +1,6 @@
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
+import { lastInputIsKey, MOTION_KEY_ATTRIBUTE } from "@/lib/motionInput"
 import { cn } from "@/lib/utils"
 import { Tabs as TabsPrimitive } from "radix-ui"
 
@@ -93,7 +94,12 @@ function useChosenSegment(list: HTMLElement | null, indicator: HTMLElement | nul
       // of the track's far edge.
       const segment = chosen.getBoundingClientRect()
       const x = segment.left - list.getBoundingClientRect().left
-      indicator.toggleAttribute("data-animate", animate)
+      // A choice by a key, on the pill or elsewhere, slides nowhere: the
+      // button stands on the new segment at once (SPEC_MOTION_LEVELS.md, М7).
+      indicator.toggleAttribute(
+        "data-animate",
+        animate && !list.hasAttribute(MOTION_KEY_ATTRIBUTE) && !lastInputIsKey()
+      )
       indicator.style.width = `${segment.width}px`
       indicator.style.transform = `translateX(${x}px)`
     }
@@ -107,6 +113,34 @@ function useChosenSegment(list: HTMLElement | null, indicator: HTMLElement | nul
       size?.disconnect()
     }
   }, [list, indicator])
+}
+
+/**
+ * A key on the pill marks it `data-motion-key` until the pointer presses or
+ * moves on it: a choice by a key lands at once at every level, the button and
+ * the labels' colour alike (SPEC_MOTION_LEVELS.md, М7, УД4). Set as the key
+ * goes down, before the choice it makes, so the colour change starts at
+ * once; the pointer's next move clears it before its hover answers.
+ */
+function useKeyChoice(list: HTMLElement | null): void {
+  React.useEffect(() => {
+    if (!list) return
+    const markKey = () => {
+      if (lastInputIsKey()) list.setAttribute(MOTION_KEY_ATTRIBUTE, "")
+    }
+    const clearKey = () => {
+      if (!lastInputIsKey()) list.removeAttribute(MOTION_KEY_ATTRIBUTE)
+    }
+    list.addEventListener("keydown", markKey, true)
+    list.addEventListener("pointerdown", clearKey, true)
+    list.addEventListener("pointermove", clearKey, true)
+    return () => {
+      list.removeEventListener("keydown", markKey, true)
+      list.removeEventListener("pointerdown", clearKey, true)
+      list.removeEventListener("pointermove", clearKey, true)
+      list.removeAttribute(MOTION_KEY_ATTRIBUTE)
+    }
+  }, [list])
 }
 
 function TabsList({
@@ -133,6 +167,7 @@ function TabsList({
   )
   const [indicator, setIndicator] = React.useState<HTMLSpanElement | null>(null)
   useChosenSegment(resolved === "chrome" ? list : null, indicator)
+  useKeyChoice(resolved === "chrome" ? list : null)
   return (
     <TabsListVariantContext.Provider value={resolved}>
       <TabsPrimitive.List
@@ -162,8 +197,10 @@ function TabsList({
                 a new choice calmly, in 200ms on the sine ease-in-out:
                 no fling at the start, no hard stop, so its
                 two edges travel together and the button does not stretch
-                and spring back. With reduced motion it moves at once. Its
-                place and width are set by useChosenSegment, not here. */}
+                and spring back. At Minimal it slides in 150ms on E, at Off
+                and from a key it stands at once (SPEC_MOTION_LEVELS.md, М7;
+                global.css). Its place and width are set by
+                useChosenSegment, not here. */}
             <span
               ref={setIndicator}
               aria-hidden="true"

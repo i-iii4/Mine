@@ -41,7 +41,7 @@ import {
   type DeleteSelectionAction,
   type DeleteSelectionRequest,
 } from "./DeleteSelectedCardsDialog";
-import { prefersReducedMotion } from "@/lib/motion";
+import { motionEasing, motionMs, useMotionLevel } from "@/lib/motion";
 import { MergeCardsDialog } from "./MergeCardsDialog";
 import {
   computeMasonryLayout,
@@ -416,6 +416,9 @@ interface ColumnMemory {
  *  segmented control's calm curve, DESIGN_SYSTEM.md. */
 const CARD_MOVE_MS = 200;
 const CARD_MOVE_EASING = "cubic-bezier(0.37, 0, 0.63, 1)";
+/** How the feed's side insets follow a new Spacing (Л5) in Full. */
+const FEED_INSET_MOVE_MS = 200;
+const FEED_INSET_MOVE_EASING = "ease";
 /** At most this many cards move smoothly at once; past it they jump. */
 const CARD_MOVE_LIMIT = 120;
 
@@ -625,6 +628,10 @@ export function Grid({
   const { show } = useFeedDisplay();
   const gridXInset = spacing;
   const gridTopInset = spacing;
+  // A new Spacing moves the side insets on the level's time and curve (Л5);
+  // Off lands them through global.css's rule.
+  useMotionLevel();
+  const insetMove = `${motionMs(FEED_INSET_MOVE_MS, "enter")}ms ${motionEasing(FEED_INSET_MOVE_MS, "enter", FEED_INSET_MOVE_EASING)}`;
   const parentRef = useRef<HTMLDivElement>(null);
   // Same signal path as every other surface. The feed does track its own
   // scrollTop for windowing, but reusing it here would give this surface a
@@ -1132,6 +1139,10 @@ export function Grid({
     const column = new Map<string, number>();
     const top = new Map<string, number>();
     const scrollElement = parentRef.current;
+    // A move follows the level whoever changed the data, a key included: the
+    // same move comes of an outside edit, which has no key (УД4, п. 6).
+    const moveMs = motionMs(CARD_MOVE_MS, "enter");
+    const moveEasing = motionEasing(CARD_MOVE_MS, "enter", CARD_MOVE_EASING);
     let moving = 0;
     for (const position of layout.positions) {
       const slug = blocks[position.index]?.slug;
@@ -1145,7 +1156,7 @@ export function Grid({
         || was === position.top
         || scrollElement === null
         || moving >= CARD_MOVE_LIMIT
-        || prefersReducedMotion()
+        || moveMs === 0
       ) {
         continue;
       }
@@ -1159,7 +1170,7 @@ export function Grid({
           { transform: `translate3d(${position.left}px, ${was}px, 0)` },
           { transform: `translate3d(${position.left}px, ${position.top}px, 0)` },
         ],
-        { duration: CARD_MOVE_MS, easing: CARD_MOVE_EASING },
+        { duration: moveMs, easing: moveEasing },
       );
     }
     columnMemoryRef.current = {
@@ -2639,7 +2650,7 @@ export function Grid({
             paddingLeft: gridXInset,
             paddingRight: gridXInset,
             scrollbarGutter: "stable",
-            transition: "padding-left 200ms ease, padding-right 200ms ease",
+            transition: `padding-left ${insetMove}, padding-right ${insetMove}`,
           }}
           data-grid-scroll
           data-grid-top-fade={topFade.scrolled ? "true" : undefined}

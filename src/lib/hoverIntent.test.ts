@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { HOVER_INTENT, HoverIntent, type HoverIntentClock, type HoverIntentState } from "./hoverIntent";
+import { MOTION_ENTER_MS, MOTION_EXIT_MS, MOTION_LEVELS } from "./motion";
+import { setMotionLevel } from "@/test/motionLevel";
 
 /** A clock that only moves when the test says so. */
 function fakeClock() {
@@ -347,6 +349,22 @@ describe("hover intent (SPEC_CARD_STATES.md, С7)", () => {
     expect(css).toContain(`--hover-intent-fade-in: ${HOVER_INTENT.fadeInMs}ms`);
     expect(css).toContain(`--hover-intent-fade-out: ${HOVER_INTENT.fadeOutMs}ms`);
     expect(HOVER_INTENT.fadeOutMs).toBeLessThan(HOVER_INTENT.fadeInMs);
+  });
+
+  // SPEC_MOTION_LEVELS.md, Р4, УД9: the level never changes the values, which
+  // the graph reads as they are; the preview window takes them through
+  // `motionMs`, and CSS lands the answers at once at Off alone.
+  it("keeps its fades at every level, and CSS sets the answers' fades to nothing only at Off", () => {
+    for (const level of MOTION_LEVELS) {
+      setMotionLevel(level);
+      expect(HOVER_INTENT.fadeInMs).toBe(MOTION_ENTER_MS);
+      expect(HOVER_INTENT.fadeOutMs).toBe(MOTION_EXIT_MS);
+    }
+    const css = readFileSync("src/styles/global.css", "utf8");
+    const off = /\[data-motion="off"\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(off).toMatch(/--hover-intent-fade-in:\s*0ms/);
+    expect(off).toMatch(/--hover-intent-fade-out:\s*0ms/);
+    expect(css).not.toMatch(/\[data-motion="minimal"\][^{]*\{[^}]*--hover-intent-fade/);
   });
 });
 

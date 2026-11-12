@@ -11,8 +11,9 @@
 // at the speed it had.
 //
 // This module owns the scrollport's look (sidebarLook.ts): the attribute the
-// stylesheet keys the compact rows on. At rest it follows the width; with
-// "Reduce motion", under the narrow table (postponed) and when a frame moves
+// stylesheet keys the compact rows on. At rest it follows the width; in the
+// motion levels Minimal and Off (SPEC_MOTION_LEVELS.md, С3), under the narrow
+// table (postponed) and when a frame moves
 // the width across the threshold by more than a tile and its gap (the most
 // one frame of ЛМ5 adds a tile for, user's decision of 01.11.2026) it
 // changes at once. Otherwise the table is laid out for the whole move:
@@ -47,7 +48,7 @@
 import { SIDEBAR_PREVIEW_TILE_GAP_PX, SIDEBAR_PREVIEW_TILE_PX, sidebarBesideMinWidthPx, sidebarCompactRowsBelowPx, sidebarNameColumnPx, sidebarPanelWidthPx, sidebarRowsWidthPx } from "./appLayout";
 import { CHANNEL_ICON_SPRING_MS, SPRING_SAMPLES } from "./channelIcon";
 import { getListStyle, getSidebarStyle } from "./compactStack";
-import { prefersReducedMotion } from "./motion";
+import { motionLevel } from "./motion";
 import { SIDEBAR_LOOK_ATTRIBUTE, SIDEBAR_WIDTH_MOTION_ATTRIBUTE, setSidebarLook, sidebarContentWidth, sidebarLookAt, sidebarLookOfPanel } from "./sidebarLook";
 import { animatesPseudoElements, morphSpring, type MorphSpring } from "./sidebarRowsMorph";
 
@@ -215,8 +216,9 @@ export function listRowAt(model: ListRowModel, nameHeight: number): { height: nu
  *  01.11.2026). */
 export const LIST_MORPH_STEP_LIMIT_PX = SIDEBAR_PREVIEW_TILE_PX + SIDEBAR_PREVIEW_TILE_GAP_PX;
 
-/** What a width of the list does. `idle`: the move does not apply (Reduce
- *  motion, the narrow table below the threshold, a list not laid out); a
+/** What a width of the list does. `idle`: the move does not apply (the
+ *  levels Minimal and Off, the narrow table below the threshold, a list not
+ *  laid out); a
  *  move lands and the look follows the width at once. `rest`: no crossing;
  *  the look follows the width. `instant`: the width crossed the threshold
  *  by more than `LIST_MORPH_STEP_LIMIT_PX` in one frame; a move lands and
@@ -226,7 +228,7 @@ export const LIST_MORPH_STEP_LIMIT_PX = SIDEBAR_PREVIEW_TILE_PX + SIDEBAR_PREVIE
 export type WidthStep = "idle" | "rest" | "instant" | "start" | "turn" | "go-on";
 
 export function widthStep(input: {
-  /** List below the threshold, motion not reduced. */
+  /** List below the threshold, at the level Full. */
   active: boolean;
   threshold: number;
   width: number;
@@ -414,7 +416,7 @@ function ownOpacity(element: Element): number {
  *  its rows between the List and the table as the list crosses the compact
  *  threshold. Puts it in its look at once, before it is first painted.
  *  Returns the teardown. Where ResizeObserver is missing nothing is kept;
- *  where WAAPI is, with "Reduce motion", while the narrow table is the look
+ *  where WAAPI is, in Minimal and Off, while the narrow table is the look
  *  below the threshold (sidebarRowsMorph.ts) and for a step larger than
  *  `LIST_MORPH_STEP_LIMIT_PX` the look changes at once. While the sidebar's
  *  width moves (`SIDEBAR_WIDTH_MOTION_ATTRIBUTE`: a collapse, an opening,
@@ -991,7 +993,9 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
     // The width's motion passes widths that are not the sidebar's.
     if (held) return;
     const step = widthStep({
-      active: canMove && getSidebarStyle() === "list" && !prefersReducedMotion(),
+      // WAAPI, which no CSS rule of the level reaches: Minimal and Off
+      // change the look at once (С3, Р2).
+      active: canMove && getSidebarStyle() === "list" && motionLevel() === "full",
       threshold,
       width,
       previous,

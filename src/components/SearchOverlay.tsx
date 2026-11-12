@@ -597,6 +597,12 @@ export function SearchOverlay({
         // Search is a panel, not a window, on the one scrim every layer over
         // the page shares (global.css, `.modal-scrim`; 16.10.2026).
         aria-describedby={undefined}
+        // ⌘F and Find Elements open it at once at every level, the bottom
+        // bar's button as the window does in Full; at Minimal and Off it
+        // stands at once from the button too, as a command palette has no
+        // motion (SPEC_MOTION_LEVELS.md, М6; global.css). Its scrim is named
+        // for that rule.
+        overlayProps={{ "data-search-overlay-scrim": "" }}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           inputRef.current?.focus();

@@ -391,22 +391,25 @@ function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
         </DropdownMenuSub>
       )}
 
+      {/* Groups by what they act on: the card's collections, its link, its
+          file, the card itself (user's decision of 12.11.2026). A card
+          without a link has no link group and no line of its own for it. */}
       {hasUrl && (
-        <DropdownMenuItem onSelect={() => openLinkInBrowser(block.url!)}>
-          <MenuIconSlot>
-            <ExternalLink className="size-[13px]" />
-          </MenuIconSlot>
-          Source
-        </DropdownMenuItem>
-      )}
-
-      {/* The card's link, beside the item that opens it (user's decision of
-          11.11.2026). */}
-      {hasUrl && (
-        <DropdownMenuItem onSelect={() => copyTextToClipboard(block.url!, COPY_LINK_FAILED_TITLE)}>
-          <MenuIconSlot />
-          Copy Link
-        </DropdownMenuItem>
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => openLinkInBrowser(block.url!)}>
+            <MenuIconSlot>
+              <ExternalLink className="size-[13px]" />
+            </MenuIconSlot>
+            Source
+          </DropdownMenuItem>
+          {/* The card's link, beside the item that opens it (user's decision
+              of 11.11.2026). */}
+          <DropdownMenuItem onSelect={() => copyTextToClipboard(block.url!, COPY_LINK_FAILED_TITLE)}>
+            <MenuIconSlot />
+            Copy Link
+          </DropdownMenuItem>
+        </>
       )}
 
       <DropdownMenuSeparator />
@@ -669,8 +672,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
           the pointer opened, or on the keyboard's card, there as names alone,
           running to the card's right edge, where the row's own fade ends: there
           is no plus to stop at (С8.5, С8.9). A card that does not lift has no
-          row: its collections change through More → Connect
-          (SPEC_FEED_DISPLAY.md, Д31). */}
+          row: its plus stands alone below (SPEC_FEED_DISPLAY.md, Д31). */}
       {lifts && (
         <div
           className={cn(
@@ -710,6 +712,40 @@ export const CardHoverMenu = memo(function CardHoverMenu({
               }}
             />
           )}
+        </div>
+      )}
+
+      {/* A card that does not lift (`media-only`) shows Connect as a plus at
+          its bottom right, with the top buttons and as they do: on hover and
+          while a menu the pointer opened is up, never for the keyboard; no
+          row, no names (SPEC_FEED_DISPLAY.md, Д31; user's decision of
+          12.11.2026). */}
+      {!lifts && (
+        <div
+          className={cn(
+            "pointer-events-none absolute bottom-2 right-2 z-[5] flex items-center",
+            videoUnderneath && "transform-gpu",
+            hoverEnabled && "group-hover:pointer-events-auto group-hover:opacity-100",
+            (anyMenuOpen && !effectiveKeyboardMenuOpen) || heldPastClose ? "pointer-events-auto opacity-100" : "opacity-0",
+          )}
+          data-card-hover-connect-action=""
+          data-card-hover-enabled={hoverEnabled ? "true" : undefined}
+          onClick={stopProp}
+          onPointerDown={stopProp}
+        >
+          <CardConnectMenu
+            block={block}
+            tags={tags}
+            currentTag={currentTag}
+            onToggleTag={onToggleTag}
+            onCreateAndAssign={onCreateAndAssign}
+            onCloseAutoFocus={noFocusBackAfterPress}
+            onOpenChange={(open) => {
+              if (open) onInteractionStart?.();
+              else if (pointerIsOnMenu()) setHeldPastClose(true);
+              setChannelOpen(open);
+            }}
+          />
         </div>
       )}
     </>

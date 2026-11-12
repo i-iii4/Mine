@@ -15,6 +15,7 @@ import {
   type MenuPlateOffsets,
   type MenuSide,
 } from "@/lib/floatingLayer"
+import { useMotionKeyRef } from "@/lib/motionInput"
 import { menuTriggerOf, useMenuSurface } from "@/lib/openMenus"
 import { cn } from "@/lib/utils"
 
@@ -156,13 +157,15 @@ function DropdownMenuContent({
   plateOf?: (trigger: HTMLElement) => HTMLElement | null
 }) {
   const [surfaceNode, setSurfaceNode] = React.useState<HTMLDivElement | null>(null)
+  // A menu a key opened lands at once, and so does its closing by a key
+  // (SPEC_MOTION_LEVELS.md, М1, УД4).
+  const keyRef = useMotionKeyRef(ref)
   const ownRef = React.useCallback(
     (node: HTMLDivElement | null) => {
       setSurfaceNode(node)
-      if (typeof ref === "function") ref(node)
-      else if (ref) ref.current = node
+      keyRef(node)
     },
-    [ref]
+    [keyRef]
   )
   const surface = useMenuSurface("dropdown", ownRef, { onPointerDownOutside, onCloseAutoFocus })
   const offsets = useMenuPlateOffsets(surfaceNode, side, align, plateOf)
@@ -366,16 +369,21 @@ function DropdownMenuSubTrigger({
   )
 }
 
+// A submenu the arrow opened lands at once (SPEC_MOTION_LEVELS.md, М1); one
+// inside a menu a key opened does with its menu.
 function DropdownMenuSubContent({
   className,
   collisionPadding = FLOATING_LAYER_EDGE_PX,
   widthRole = "action",
+  ref,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent> & {
   widthRole?: FloatingMenuWidth
 }) {
+  const keyRef = useMotionKeyRef(ref)
   return (
     <DropdownMenuPrimitive.SubContent
+      ref={keyRef}
       data-slot="dropdown-menu-sub-content"
       data-floating-menu={widthRole}
       collisionPadding={collisionPadding}

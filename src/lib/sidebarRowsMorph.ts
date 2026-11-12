@@ -24,7 +24,7 @@ import { sidebarCompactRowsBelowPx } from "./appLayout";
 import { SPRING_RESPONSE_S, SPRING_SAMPLES, SPRING_SETTLE } from "./channelIcon";
 import { getSidebarStyle } from "./compactStack";
 import { setSidebarLook, sidebarLookOf } from "./sidebarLook";
-import { prefersReducedMotion } from "./motion";
+import { motionLevel } from "./motion";
 
 // ─── The spring ─────────────────────────────────────────────────────────
 
@@ -311,8 +311,8 @@ interface Morph {
 
 /** Watches the list's scrollport `nav` and moves its rows across the
  *  compact threshold. Returns the teardown. Does nothing where WAAPI or
- *  ResizeObserver is missing, with "Reduce motion" (the layout switches at
- *  once) and in the List look on trial, which is not the narrow table. */
+ *  ResizeObserver is missing, in the motion levels Minimal and Off (the
+ *  layout switches at once, SPEC_MOTION_LEVELS.md, С4) and in the List look on trial, which is not the narrow table. */
 export function observeSidebarRowsMorph(nav: HTMLElement): () => void {
   if (typeof ResizeObserver === "undefined" || typeof nav.animate !== "function" || typeof KeyframeEffect === "undefined") {
     return () => {};
@@ -523,7 +523,8 @@ export function observeSidebarRowsMorph(nav: HTMLElement): () => void {
     const narrow = width < threshold;
     const crossed = lastNarrow !== null && narrow !== lastNarrow;
     lastNarrow = narrow;
-    if (prefersReducedMotion() || getSidebarStyle() === "list") {
+    // WAAPI, which no CSS rule of the level reaches (Р2).
+    if (motionLevel() !== "full" || getSidebarStyle() === "list") {
       release();
       return;
     }
