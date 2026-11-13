@@ -23,10 +23,8 @@ import type {
 } from "@/types";
 import { placeKey } from "@/lib/tabPage";
 import { useTabVisible } from "@/lib/tabVisibility";
-import { TopFadeScrim } from "./TopFadeScrim";
 import { useDensity } from "@/lib/density";
 import { CardColumnWidthContext, FeedShowContext, useFeedDisplay, type FeedShow } from "@/lib/feedDisplay";
-import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { Card, CardSkeleton } from "./Card";
 import { EmptySpaceOnboarding } from "./EmptySpaceOnboarding";
 import { MeasureCard } from "./MeasureCard";
@@ -41,7 +39,7 @@ import {
   type DeleteSelectionAction,
   type DeleteSelectionRequest,
 } from "./DeleteSelectedCardsDialog";
-import { motionEasing, motionMs, useMotionLevel } from "@/lib/motion";
+import { roleEasing, roleMs } from "@/lib/motion";
 import { MergeCardsDialog } from "./MergeCardsDialog";
 import {
   computeMasonryLayout,
@@ -286,8 +284,6 @@ interface GridProps {
   hasMoreBlocks?: boolean;
   loadingMoreBlocks?: boolean;
   onLoadMoreBlocks?: () => void;
-  /** Dissolve cards into transparency as they scroll up under the chrome. */
-  scrollEdgeFade?: boolean;
   /**
    * The feed scrolled or reflowed. `read` tells where it stands now: the
    * first card whose top edge is at or below the feed's top edge and that
@@ -412,13 +408,10 @@ interface ColumnMemory {
   exact: boolean;
 }
 
-/** How a card moves to its new place within the same view (К3): the
- *  segmented control's calm curve, DESIGN_SYSTEM.md. */
-const CARD_MOVE_MS = 200;
-const CARD_MOVE_EASING = "cubic-bezier(0.37, 0, 0.63, 1)";
-/** How the feed's side insets follow a new Spacing (Л5) in Full. */
-const FEED_INSET_MOVE_MS = 200;
-const FEED_INSET_MOVE_EASING = "ease";
+/** The feed's side insets follow a new Spacing as Перемещение (Л5;
+ *  SPEC_MOTION_LEVELS.md, РД1): the role's tokens, Off at once by them. */
+const FEED_INSET_TRANSITION =
+  "padding-left var(--motion-move) var(--motion-move-ease), padding-right var(--motion-move) var(--motion-move-ease)";
 /** At most this many cards move smoothly at once; past it they jump. */
 const CARD_MOVE_LIMIT = 120;
 
@@ -609,7 +602,6 @@ export function Grid({
   hasMoreBlocks = false,
   loadingMoreBlocks = false,
   onLoadMoreBlocks,
-  scrollEdgeFade = false,
   onScrollPositionChange,
   restoreScrollAnchor = null,
   onScrollAnchorRestored,
@@ -628,16 +620,7 @@ export function Grid({
   const { show } = useFeedDisplay();
   const gridXInset = spacing;
   const gridTopInset = spacing;
-  // A new Spacing moves the side insets on the level's time and curve (Л5);
-  // Off lands them through global.css's rule.
-  useMotionLevel();
-  const insetMove = `${motionMs(FEED_INSET_MOVE_MS, "enter")}ms ${motionEasing(FEED_INSET_MOVE_MS, "enter", FEED_INSET_MOVE_EASING)}`;
   const parentRef = useRef<HTMLDivElement>(null);
-  // Same signal path as every other surface. The feed does track its own
-  // scrollTop for windowing, but reusing it here would give this surface a
-  // different latency from the rest — that value is RAF-coalesced, so the band
-  // would lag a frame behind the sidebar's.
-  const topFade = useTopFadeMask(parentRef, scrollEdgeFade);
   const [parentWidth, setParentWidth] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
@@ -1139,10 +1122,11 @@ export function Grid({
     const column = new Map<string, number>();
     const top = new Map<string, number>();
     const scrollElement = parentRef.current;
-    // A move follows the level whoever changed the data, a key included: the
-    // same move comes of an outside edit, which has no key (УД4, п. 6).
-    const moveMs = motionMs(CARD_MOVE_MS, "enter");
-    const moveEasing = motionEasing(CARD_MOVE_MS, "enter", CARD_MOVE_EASING);
+    // A card moves to its new place as Перемещение (К3, Л4), by the level
+    // whoever changed the data, a key included: the same move comes of an
+    // outside edit, which has no key (УД4, п. 6).
+    const moveMs = roleMs("move", "enter");
+    const moveEasing = roleEasing("move");
     let moving = 0;
     for (const position of layout.positions) {
       const slug = blocks[position.index]?.slug;
@@ -2619,8 +2603,6 @@ export function Grid({
   }), [currentTag, onNavigateCollection]);
 
   return (
-    // The band is a sibling of the scrollport, not a child: inside it, it would
-    // inherit the scrollport's padding and add layout work to the scrolled tree.
     <FeedShowContext.Provider value={show}>
     <CardColumnWidthContext.Provider value={columnWidth}>
     <CardCollectionsContext.Provider value={cardCollections}>
@@ -2632,7 +2614,7 @@ export function Grid({
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
-          ref={topFade.ref}
+          ref={parentRef}
           onContextMenu={handleContextMenu}
           onPointerDown={handleGridPointerDown}
           onPointerMove={(event) => {
@@ -2650,10 +2632,9 @@ export function Grid({
             paddingLeft: gridXInset,
             paddingRight: gridXInset,
             scrollbarGutter: "stable",
-            transition: `padding-left ${insetMove}, padding-right ${insetMove}`,
+            transition: FEED_INSET_TRANSITION,
           }}
           data-grid-scroll
-          data-grid-top-fade={topFade.scrolled ? "true" : undefined}
           data-feed-grid-interaction-mode={feedInteractionMode}
           data-feed-grid-focus-mode={visualFocusActive ? "true" : undefined}
         >
@@ -2768,7 +2749,6 @@ export function Grid({
         />
       ) : null}
     </ContextMenu>
-      <TopFadeScrim scrolled={topFade.scrolled} surface="feed" color="var(--background)" />
     </div>
     </CardCollectionsContext.Provider>
     </CardColumnWidthContext.Provider>

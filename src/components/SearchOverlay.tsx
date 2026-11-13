@@ -41,8 +41,6 @@ import { CardRow } from "@/components/CardRow";
 import type { MembershipAnswer } from "@/components/CollectionPicker";
 import { CardRowActions, cardRowActionsReservePx } from "@/components/CardRowActions";
 import { cn } from "@/lib/utils";
-import { useTopFadeMask } from "@/hooks/useTopFadeMask";
-import { TopFadeScrim } from "./TopFadeScrim";
 import type { LightBlock, TagCount } from "@/types";
 
 /** One request, top results only — refining the query beats paging (SPEC). */
@@ -96,8 +94,6 @@ interface SearchOverlayProps {
   onCreateAndAssign?: (tag: string, blockSlug: string) => void | Promise<unknown>;
   onRequestRename?: (block: LightBlock) => void;
   onRequestDelete?: (slug: string) => void;
-  /** Dissolve results into transparency as they scroll up under the query row. */
-  scrollEdgeFade?: boolean;
 }
 
 export function SearchOverlay({
@@ -115,7 +111,6 @@ export function SearchOverlay({
   onCreateAndAssign,
   onRequestRename,
   onRequestDelete,
-  scrollEdgeFade = false,
 }: SearchOverlayProps) {
   const [results, setResults] = useState<LightBlock[] | null>(null);
   const [resultHasMore, setResultHasMore] = useState(false);
@@ -129,7 +124,6 @@ export function SearchOverlay({
   const [tagsBySlug, setTagsBySlug] = useState<Map<string, string[]>>(new Map());
 
   const inputRef = useRef<HTMLInputElement>(null);
-  const resultsTopFade = useTopFadeMask(undefined, scrollEdgeFade);
   const requestSequenceRef = useRef(0);
   /// The query Enter was pressed for before its results arrived: the first
   /// result of exactly that query opens once it settles (А6.11).
@@ -657,14 +651,11 @@ export function SearchOverlay({
         </div>
 
         <div ref={bodyRef} className="flex min-h-0 flex-1" data-search-overlay-body="">
-          <div className="relative flex min-w-0 flex-1 flex-col">
           <div
-            ref={resultsTopFade.ref}
             id="search-overlay-listbox"
             role="listbox"
             aria-label="Search results"
             className="min-w-0 flex-1 overflow-y-auto p-surface"
-            data-search-results-top-fade={resultsTopFade.scrolled ? "true" : undefined}
             // Rows that slide under a resting pointer, and a pointer gone
             // from the list, show no commands (SPEC_CARD_STATES.md, С7.5).
             onPointerLeave={releasePointerRow}
@@ -704,12 +695,6 @@ export function SearchOverlay({
                   </div>
                 ))
               : rows.map((entry, index) => renderResultRow(entry, index))}
-          </div>
-          <TopFadeScrim
-            scrolled={resultsTopFade.scrolled}
-            surface="search"
-            color="var(--card)"
-          />
           </div>
 
           {/* Two zones: the card, the feed's own card in its final hover

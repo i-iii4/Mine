@@ -544,7 +544,7 @@ export function ArticleAudioControls({
             </div>
             <div className="h-1 overflow-hidden rounded-full bg-accent">
               <div
-                className="h-full rounded-full bg-foreground transition-[width] duration-150"
+                className="h-full rounded-full bg-foreground transition-[width] duration-(--motion-move) ease-(--motion-move-ease)"
                 style={{ width: `${percentComplete}%` }}
               />
             </div>

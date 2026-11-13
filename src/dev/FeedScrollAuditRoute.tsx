@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { Grid } from "@/components/Grid";
-import { getStoredScrollEdgeFade } from "@/lib/scrollEdgeFade";
 import type { LightBlock } from "@/types";
 
 declare global {
@@ -304,13 +303,10 @@ export function FeedScrollAuditRoute() {
     };
   }, [blocks.length]);
 
-  const [scrollEdgeFade] = useState(getStoredScrollEdgeFade);
-
   return (
     <main
       className="h-screen w-screen overflow-hidden bg-background text-foreground"
       data-feed-scroll-audit-route=""
-      data-feed-scroll-audit-edge-fade={scrollEdgeFade ? "true" : "false"}
     >
       <Grid
         blocks={blocks}
@@ -321,9 +317,6 @@ export function FeedScrollAuditRoute() {
         scrollToTop={0}
         keyboardNavigationDisabled
         heightDriftAuditMode
-        // Read the real preference so the scroll performance gate can measure
-        // the feed with the top fade mask active, not only with it off.
-        scrollEdgeFade={scrollEdgeFade}
         onBlockClick={noop}
         onToggleTag={noop}
         onCreateAndAssign={noop}

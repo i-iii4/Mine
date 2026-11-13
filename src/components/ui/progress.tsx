@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Progress as ProgressPrimitive } from "radix-ui"
 
-import { MINIMAL_ENTER_CLASS } from "@/lib/motionClasses"
+import { MOVE_CLASS } from "@/lib/motionClasses"
 import { cn } from "@/lib/utils"
 
 /**
@@ -10,8 +10,8 @@ import { cn } from "@/lib/utils"
  * determinate; with `null` it shows work whose length is unknown: a segment
  * slides across the track (`mine-progress-indeterminate` in global.css), and
  * at the level Off it stays in place and breathes instead. The fill moves to
- * a new value on the level's time: Minimal's enter time on E, at once in Off
- * (SPEC_MOTION_LEVELS.md, З1, З2).
+ * a new value as Перемещение: 200 ms in Full, 150 ms in Minimal, on the move
+ * curve, at once in Off (SPEC_MOTION_LEVELS.md, З1, З2, РД1).
  */
 function Progress({
   className,
@@ -46,8 +46,8 @@ function Progress({
         <ProgressPrimitive.Indicator
           data-slot="progress-indicator"
           className={cn(
-            "bg-primary h-full w-full transition-transform duration-300 ease-out",
-            MINIMAL_ENTER_CLASS,
+            "bg-primary h-full w-full transition-transform",
+            MOVE_CLASS,
             indicatorClassName
           )}
           style={{ transform: `translateX(-${100 - Math.min(100, Math.max(0, value))}%)` }}

@@ -46,7 +46,7 @@ import {
 } from "@/lib/blockDrag";
 import { cn } from "@/lib/utils";
 import { CardCollectionsRow, CardHoverMenu, type CardMenuBadgeCommand } from "./CardHoverMenu";
-import { EDGE_FADE_WIDTH, createTopFadeMaskStyle } from "@/lib/edgeFade";
+import { EDGE_FADE_WIDTH, createLiftFadeMaskStyle } from "@/lib/edgeFade";
 import { useCollectionOrder } from "@/lib/cardCollections";
 import { FeedVideoSurface } from "./FeedVideoSurface";
 import { FeedVideoPoster } from "./FeedVideoPoster";
@@ -1525,7 +1525,7 @@ function GalleryTiles({
 
 /// The top-edge fade a rising text post dissolves into (global.css slides it
 /// into place with the lift).
-const TOP_LIFT_FADE_MASK_STYLE = createTopFadeMaskStyle(EDGE_FADE_WIDTH);
+const TOP_LIFT_FADE_MASK_STYLE = createLiftFadeMaskStyle(EDGE_FADE_WIDTH);
 
 /// The box gap above each line of a text stack: none above the first line,
 /// the typography's gap between neighbours otherwise. `computeCardHeight`

@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, startTransition } from "react";
 import { setWindowSidebar } from "@/lib/commands";
 import { SIDEBAR_MIN_WIDTH_PX } from "@/lib/appLayout";
-import { motionEasing, motionMs } from "@/lib/motion";
+import { roleEasing, roleMs } from "@/lib/motion";
 import {
   clampSidebarTarget,
   sidebarDragBounds,
@@ -11,23 +11,11 @@ import {
 import type { SidebarLayout } from "@/types";
 import { writeSidebarWidth } from "@/lib/sidebarWidth";
 
-// ─── Constants ──────────────────────────────────────────────────────────────
-
-/** How long the sidebar takes to collapse or open by its button in Full. */
-export const SIDEBAR_WIDTH_MOTION_MS = 200;
-
-/** The curve of that motion in Full. */
-export const SIDEBAR_WIDTH_EASING = "ease";
-
-/** The motion of the sidebar's width in Full (`widthTransition`): the panel
- *  beside the feed and its segment in the top row move by the same one, so
- *  the segment's line follows the panel's (DESIGN_SYSTEM.md, «Движение
- *  верхних рядов»). */
-export const SIDEBAR_WIDTH_TRANSITION = `width ${SIDEBAR_WIDTH_MOTION_MS}ms ${SIDEBAR_WIDTH_EASING}`;
+// ─── Motion ─────────────────────────────────────────────────────────────────
 
 /** Which way the width moves: an opening to the open width, a collapse and
- *  leaving the row to none. Minimal times them 150 and 100 ms
- *  (SPEC_MOTION_LEVELS.md, С1). */
+ *  leaving the row to none. The width is Поверхность (SPEC_MOTION_LEVELS.md,
+ *  С1, РД1): Full 200 ms both ways, Minimal 150 and 100 ms, the role's curve. */
 export type SidebarWidthPhase = "enter" | "exit";
 
 /** One run of the width's motion: its way and its time, read from the level
@@ -40,15 +28,17 @@ interface WidthMotion {
 /** The width's motion for `phase` at the level in force; none at once (Off,
  *  a key). */
 function widthMotionFor(phase: SidebarWidthPhase, byKey: boolean): WidthMotion | null {
-  const ms = motionMs(SIDEBAR_WIDTH_MOTION_MS, phase, { byKey });
+  const ms = roleMs("surface", phase, { byKey });
   return ms === 0 ? null : { phase, ms };
 }
 
 /** The CSS transition of a run of the width's motion: one value for the
- *  panel and its segment; global.css gives the second row's left edge the
- *  same by the phase (`data-sidebar-width-animating`). */
-function widthTransitionOf(motion: WidthMotion): string {
-  return `width ${motion.ms}ms ${motionEasing(SIDEBAR_WIDTH_MOTION_MS, motion.phase, SIDEBAR_WIDTH_EASING)}`;
+ *  panel beside the feed and its segment in the top row, so the segment's
+ *  line follows the panel's (DESIGN_SYSTEM.md, «Движение верхних рядов»);
+ *  global.css gives the second row's left edge the same role by the phase
+ *  (`data-sidebar-width-animating`). */
+export function sidebarWidthTransition(motion: { ms: number }): string {
+  return `width ${motion.ms}ms ${roleEasing("surface")}`;
 }
 
 // ─── Ownership ──────────────────────────────────────────────────────────────
@@ -358,7 +348,7 @@ export function useSidebarResize(
     collapsed,
     isResizing,
     widthAnimating: widthMoving,
-    widthTransition: runningMotion === null ? "none" : widthTransitionOf(runningMotion),
+    widthTransition: runningMotion === null ? "none" : sidebarWidthTransition(runningMotion),
     widthPhase: runningMotion?.phase ?? null,
     openWidth: sidebarWidthPx(storedWidth, window.innerWidth),
     besideShown,

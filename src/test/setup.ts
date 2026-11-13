@@ -148,6 +148,12 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 beforeAll(async () => {
   const { startCardPictureVersions } = await import("@/lib/pictureVersions");
   void startCardPictureVersions();
+  // A chosen menu item blinks for 150 ms before its command runs
+  // (menuBlink.ts). Tests that are not about the blink choose at once; the
+  // blink's own tests put its length back (menuBlink.test.tsx). Loaded late,
+  // as the motion module it reads may be a file's mock.
+  const { setMenuBlinkMsForTests } = await import("@/lib/menuBlink");
+  setMenuBlinkMsForTests(0);
 });
 afterEach(async () => {
   const { forgetCardPictureVersions } = await import("@/lib/pictureVersions");
@@ -156,4 +162,6 @@ afterEach(async () => {
   // for the same reason: a file that mocks the motion module gets its mock.
   const { resetMotionLevel } = await import("./motionLevel");
   resetMotionLevel();
+  const { setMenuBlinkMsForTests } = await import("@/lib/menuBlink");
+  setMenuBlinkMsForTests(0);
 });

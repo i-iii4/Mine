@@ -1,4 +1,5 @@
-import { scrollBehavior } from "@/lib/motion";
+import { scrollBehavior, springMotion, useMotionLevel } from "@/lib/motion";
+import { lastInputIsKey } from "@/lib/motionInput";
 import { tagRowSortTransition } from "@/lib/tagRowDragOverlay";
 import {
   createContext,
@@ -85,8 +86,6 @@ import { SIDEBAR_THUMBNAIL_DRAG_ID_PREFIX, type BlockDragData } from "@/lib/bloc
 import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
 import { hoverPreviewBesidePanel } from "@/lib/hoverPreviewWindow";
 import { RestingPointer } from "@/lib/restingPointer";
-import { TopFadeScrim } from "./TopFadeScrim";
-import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { HoverPreviewWindowLayer, useHoverPreviewWindow } from "./HoverPreviewWindow";
 import {
   MicroPreviewThumbnail,
@@ -179,34 +178,31 @@ const SIDEBAR_ROW_CONNECTED_PILL_CLASS = cn(
   "pointer-events-none h-6 font-mono font-normal",
 );
 /**
- * A row's answering parts cross-fade: in over `--hover-intent-fade-in` when the
- * answer appears, out over the shorter `--hover-intent-fade-out` when it goes
- * (С7.6). Both parts of a swap share the timing, so no gap opens between them.
+ * A row's answering parts cross-fade as Отклик: in over `--motion-enter` when
+ * the answer appears, out over the shorter `--motion-exit` when it goes
+ * (С7.6; SPEC_MOTION_LEVELS.md, С6). Both parts of a swap share the timing, so
+ * no gap opens between them.
  */
-const ROW_INTENT_FADE = "transition-opacity ease-[cubic-bezier(0.22,1,0.36,1)]";
-const ANSWER_ON = "duration-[var(--hover-intent-fade-in)]";
-const ANSWER_OFF = "duration-[var(--hover-intent-fade-out)]";
+const ROW_INTENT_FADE = "transition-opacity duration-(--motion-exit) ease-(--motion-ease)";
+const ANSWER_ON = "duration-(--motion-enter)";
+const ANSWER_OFF = "duration-(--motion-exit)";
 /** Shown until a slow pointer or the keyboard reaches the row. */
 const ROW_INTENT_HIDES = cn(
   "opacity-100",
   ANSWER_OFF,
-  "group-data-[sidebar-row-intent=true]:opacity-0 group-data-[sidebar-row-intent=true]:duration-[var(--hover-intent-fade-in)]",
-  "group-focus-within:opacity-0 group-focus-within:duration-[var(--hover-intent-fade-in)]",
+  "group-data-[sidebar-row-intent=true]:opacity-0 group-data-[sidebar-row-intent=true]:duration-(--motion-enter)",
+  "group-focus-within:opacity-0 group-focus-within:duration-(--motion-enter)",
 );
 /** Shown once a slow pointer or the keyboard reaches the row. */
 const ROW_INTENT_SHOWS = cn(
   "opacity-0",
   ANSWER_OFF,
-  "group-data-[sidebar-row-intent=true]:opacity-100 group-data-[sidebar-row-intent=true]:duration-[var(--hover-intent-fade-in)]",
-  "group-focus-within:opacity-100 group-focus-within:duration-[var(--hover-intent-fade-in)]",
+  "group-data-[sidebar-row-intent=true]:opacity-100 group-data-[sidebar-row-intent=true]:duration-(--motion-enter)",
+  "group-focus-within:opacity-100 group-focus-within:duration-(--motion-enter)",
 );
 /** Two labels stacked in one cell, so swapping them never moves the button's text. */
 const ROW_INTENT_LABEL_STACK = "grid place-items-center [&>*]:[grid-area:1/1]";
 const SIDEBAR_ROW_ACTION_BUTTON_CLASS = CONNECT_ACTION_BUTTON_CLASS;
-/// The Contents list's plus turns into a cross on the stack's spring
-/// (DESIGN_SYSTEM.md, компактный пункт): the hover's 150 ms ease-out put
-/// most of the turn into the first frames, too quick to be seen.
-const LINK_ICON_SPRING_STYLE = channelIconSpringStyle();
 /// The names' optical shift: a name stands a pixel further in than the row's
 /// inset (DESIGN_SYSTEM.md, «оптический сдвиг»), as the bottom bar's first
 /// plate under it expects.
@@ -361,8 +357,6 @@ interface SidebarProps {
   /** Connects or disconnects every selected feed card (SPEC_CARD_STATES.md, С6). */
   onBatchSetTag?: (slugs: string[], tag: string, connected: boolean) => MembershipAnswer;
   detailChromeClosing?: boolean;
-  /** Dissolve rows into transparency as they scroll up under the chrome. */
-  scrollEdgeFade?: boolean;
 }
 
 /// Thin shell around the sidebar whose only job is the dnd-context
@@ -442,7 +436,6 @@ const SidebarCore = memo(function SidebarCore({
   onToggleLinkedTag,
   onBatchSetTag,
   detailChromeClosing = false,
-  scrollEdgeFade = false,
 }: SidebarProps & { dropOverId: string | null }) {
   const widthSource = useSidebarWidthSource();
   // While the width moves beside the feed (a collapse, an opening, leaving
@@ -461,7 +454,6 @@ const SidebarCore = memo(function SidebarCore({
     : { minWidth: `max(var(--sidebar-nav-min-width), ${sidebarRowsWidthPx(heldWidth)}px)` };
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const navRef = useRef<HTMLElement>(null);
-  const topFade = useTopFadeMask(navRef, scrollEdgeFade);
   const previewTriggerRefs = useRef(new Map<string, HTMLElement>());
   const lastPointerPointRef = useRef<CardMenuPoint | null>(null);
   const previousHoverPreviewFrozenRef = useRef(hoverPreviewFrozen);
@@ -1011,15 +1003,8 @@ const SidebarCore = memo(function SidebarCore({
       style={{ ...sidebarPanelStyle(widthTransition), ...widthSource.style }}
       data-sidebar-panel=""
     >
-      {/* Navigation. The wrapper exists so the fade band can be a sibling of
-          the scrollport: inside the nav it would inherit its padding and settle
-          below the real top edge. */}
-      {/* Matches the nav's frozen min-width: the band is sized by this wrapper,
-          and a narrower wrapper would leave the right edge of the rows
-          uncovered as the panel is resized down. */}
-      <div className="relative flex min-h-0 min-w-[var(--sidebar-nav-min-width)] flex-1 flex-col" style={heldListStyle}>
       <nav
-        ref={topFade.ref}
+        ref={navRef}
         style={heldListStyle}
         className={cn(
           // min-width freezes the menu (`--sidebar-nav-min-width`): below it the
@@ -1033,7 +1018,6 @@ const SidebarCore = memo(function SidebarCore({
         data-sidebar-scroll
         data-sidebar-width-motion={widthMotion}
         data-sidebar-tag-dragging={isTagDragging ? "true" : undefined}
-        data-sidebar-top-fade={topFade.scrolled ? "true" : undefined}
         data-sidebar-link-editor-mode={isLinkEditorActive ? "true" : undefined}
         data-sidebar-row-focus-mode={hasSidebarRowFocusMode ? "true" : undefined}
         data-sidebar-keyboard-walk={keyboardHoldsRow || keyboardWalked ? "true" : undefined}
@@ -1169,8 +1153,6 @@ const SidebarCore = memo(function SidebarCore({
 
 
       </nav>
-      <TopFadeScrim scrolled={topFade.scrolled} surface="sidebar" color="var(--sidebar)" />
-      </div>
 
       {vaultPath && (
         <HoverPreviewWindowLayer
@@ -1449,9 +1431,11 @@ function SidebarRowBody({
   // The state a key's turn of the mark lands on: Enter on the row presses the
   // button (sidebarKeyboardFocus.ts), a click with no pointer behind it. That
   // turn stands at once on every level (SPEC_MOTION_LEVELS.md, С7, УД4). The
-  // word holds while the state is the one it landed on and goes with the
-  // next turn, in the render that starts it: a finished turn timed anew would
-  // run again.
+  // bottom bar's Connect presses it the same way, but pressed by the pointer
+  // it goes by the level: only a key marks the turn (УД4, п. 2; user's
+  // decision of 12.11.2026). The word holds while the state is the one it
+  // landed on and goes with the next turn, in the render that starts it: a
+  // finished turn timed anew would run again.
   const linkChecked = linkEditor?.checked ?? false;
   const [keyTurnTo, setKeyTurnTo] = useState<boolean | null>(null);
   const [turnedTo, setTurnedTo] = useState(linkChecked);
@@ -1460,6 +1444,11 @@ function SidebarRowBody({
     if (keyTurnTo !== null && keyTurnTo !== linkChecked) setKeyTurnTo(null);
   }
   const linkTurnByKey = keyTurnTo === linkChecked;
+  // The mark turns on the stack's spring in Full, as Перемещение in Minimal
+  // (С7, РД4): the hover's 150 ms ease-out put most of the turn into the
+  // first frames, too quick to be seen (DESIGN_SYSTEM.md, компактный пункт).
+  useMotionLevel();
+  const linkIconSpringStyle = channelIconSpringStyle(springMotion());
   // A reference `Connected` replaces the count: always for Everything in an
   // expanded card (С5), and in the feed for the collections of the card under
   // the pointer (С4). The link editor's own buttons keep that place otherwise.
@@ -1597,8 +1586,9 @@ function SidebarRowBody({
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            // A click a key made carries no count of presses.
-            if (event.detail === 0) setKeyTurnTo(!linkChecked);
+            // A click a key made carries no count of presses, and the page's
+            // last input was that key.
+            if (event.detail === 0 && lastInputIsKey()) setKeyTurnTo(!linkChecked);
             linkEditor.onToggle();
           }}
           onPointerDown={(event) => {
@@ -1649,7 +1639,7 @@ function SidebarRowBody({
             aria-hidden="true"
             data-sidebar-link-icon=""
             data-sidebar-link-turn={linkTurnByKey ? "key" : undefined}
-            style={LINK_ICON_SPRING_STYLE}
+            style={linkIconSpringStyle}
           />
         </button>
       )}

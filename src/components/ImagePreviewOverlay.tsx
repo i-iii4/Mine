@@ -47,7 +47,7 @@ import {
   type ImagePreviewTransform,
 } from "@/lib/imagePreviewMotion";
 import { cn } from "@/lib/utils";
-import { MOTION_ENTER_MS, MOTION_EXIT_MS, motionLevel, motionMs, type MotionLevel } from "@/lib/motion";
+import { MOTION_ENTER_MS, MOTION_EXIT_MS, motionLevel, roleEasing, roleMs, type MotionLevel } from "@/lib/motion";
 import { createPoseRunner, type PoseTargets } from "@/lib/poseMotion";
 
 export type ImagePreviewRequest = {
@@ -109,7 +109,6 @@ const IMAGE_PREVIEW_BUTTON_SCALE_STEP = 0.2;
 const IMAGE_PREVIEW_TOGGLE_SCALE = 1.5;
 const IMAGE_PREVIEW_DRAG_THRESHOLD_PX = 3;
 const IMAGE_PREVIEW_MIN_VISIBLE_EDGE_PX = 48;
-const IMAGE_PREVIEW_ANIMATION_MS = 160;
 
 /** What a motion of the viewer in Minimal is for (SPEC_MOTION_LEVELS.md,
  *  ОУ9): the opening's rise, the leaving, the way back a gesture turns a
@@ -317,17 +316,17 @@ export function ImagePreviewOverlay({
       stageRef.current,
       imageRef.current,
     );
-    // Off places the image at once, Minimal in 150 ms (SPEC_MOTION_LEVELS.md,
-    // К3), and during a motion the next frame takes the new place from here:
-    // the picture has no second animation of its own.
-    const duration = motionMs(IMAGE_PREVIEW_ANIMATION_MS, "enter");
+    // The zoom by a button is Отклик: 150 ms on its curve, Off at once
+    // (SPEC_MOTION_LEVELS.md, К3), and during a motion the next frame takes
+    // the new place from here: the picture has no second animation of its own.
+    const duration = roleMs("response", "enter");
     const animate = animated && duration > 0 && motionRef.current === null;
     animationPendingRef.current = animate;
     if (!animate) animationEndRef.current = 0;
     const image = imageRef.current;
     if (image) {
       image.style.transition = animate
-        ? `transform ${duration}ms cubic-bezier(0.22, 1, 0.36, 1)`
+        ? `transform ${duration}ms ${roleEasing("response")}`
         : "none";
     }
     if (frameRef.current !== null) {
@@ -337,7 +336,7 @@ export function ImagePreviewOverlay({
       frameRef.current = null;
       if (animationPendingRef.current) {
         animationPendingRef.current = false;
-        animationEndRef.current = performance.now() + motionMs(IMAGE_PREVIEW_ANIMATION_MS, "enter");
+        animationEndRef.current = performance.now() + roleMs("response", "enter");
       }
       const { scale, x, y } = transformRef.current;
       const currentImage = imageRef.current;

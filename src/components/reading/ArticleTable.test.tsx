@@ -131,7 +131,7 @@ function fading(left: boolean, right: boolean) {
 const WIDE = 1200;
 const WIDE_TABLE = "| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |";
 
-// SPEC_READING_MODE.md, Ч5.3; SPEC_SCROLL_EDGE_FADE.md, «Полоса вкладок».
+// SPEC_READING_MODE.md, Ч5.3; DESIGN_SYSTEM.md, «Растворение кромок».
 describe("ArticleTable: the edges that hide columns dissolve", () => {
   it("has no mask while the table fits", () => {
     const { container } = renderTable(WIDE_TABLE);

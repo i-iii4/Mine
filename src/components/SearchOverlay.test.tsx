@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { GridSnapshot, LightBlock, SearchMatch, TabLocation } from "@/types";
-import { TOP_FADE_HEIGHT } from "@/lib/edgeFade";
 import {
   SearchOverlay,
   SEARCH_OVERLAY_MIN_QUERY_CHARS,
@@ -138,52 +137,6 @@ beforeEach(() => {
 });
 
 describe("SearchOverlay", () => {
-  it("does not mask the results list while it is at rest", () => {
-    // The band is a dark-theme treatment; jsdom resolves to light by default.
-    document.documentElement.setAttribute("data-theme", "dark");
-    renderOverlay({ scrollEdgeFade: true });
-
-    const list = document.getElementById("search-overlay-listbox") as HTMLElement;
-    expect(list).toBeTruthy();
-    expect(list.dataset.searchResultsTopFade).toBeUndefined();
-    const resting = document.querySelector('[data-top-fade-scrim="search"]') as HTMLElement;
-    expect(resting.style.opacity).toBe("0");
-  });
-
-  it("dissolves the results list once it is scrolled", () => {
-    // The band is a dark-theme treatment; jsdom resolves to light by default.
-    document.documentElement.setAttribute("data-theme", "dark");
-    // The list lives inside a Radix Dialog and is mounted only after the dialog
-    // opens, so the fade must attach to a node that appeared after mount.
-    renderOverlay({ scrollEdgeFade: true });
-
-    const list = document.getElementById("search-overlay-listbox") as HTMLElement;
-    Object.defineProperty(list, "scrollTop", { value: 240, configurable: true });
-    fireEvent.scroll(list);
-
-    expect(list.dataset.searchResultsTopFade).toBe("true");
-    const scrim = document.querySelector('[data-top-fade-scrim="search"]') as HTMLElement;
-    expect(scrim).toBeTruthy();
-    expect(scrim.style.opacity).toBe("1");
-    // Search results are a dense list, so they use the shorter band.
-    expect(scrim.style.height).toBe(`${TOP_FADE_HEIGHT}px`);
-    expect(list.contains(scrim)).toBe(false);
-  });
-
-  it("leaves the results list alone when the preference is off", () => {
-    // The band is a dark-theme treatment; jsdom resolves to light by default.
-    document.documentElement.setAttribute("data-theme", "dark");
-    renderOverlay();
-
-    const list = document.getElementById("search-overlay-listbox") as HTMLElement;
-    Object.defineProperty(list, "scrollTop", { value: 240, configurable: true });
-    fireEvent.scroll(list);
-
-    expect(list.dataset.searchResultsTopFade).toBeUndefined();
-    const off = document.querySelector('[data-top-fade-scrim="search"]') as HTMLElement;
-    expect(off.style.opacity).toBe("0");
-  });
-
   it("renders the focused input and selects the previous query on open", () => {
     renderOverlay({ query: "previous query" });
     const input = screen.getByRole("combobox") as HTMLInputElement;
@@ -1027,7 +980,7 @@ describe("SearchOverlay result row commands", () => {
     expect(rowCommands(0)).toEqual(["Card actions", "Source", "Connect"]);
     const actions = rowOf(0).querySelector("[data-card-row-actions]") as HTMLElement;
     expect(actions).toHaveAttribute("data-visible", "true");
-    expect(actions).toHaveClass("gap-1", "transition-opacity", "duration-[var(--hover-intent-fade-in)]");
+    expect(actions).toHaveClass("gap-1", "transition-opacity", "duration-(--motion-enter)");
     for (const button of within(actions).getAllByRole("button")) {
       expect(button).toHaveAttribute("data-variant", "raised");
       expect(button).toHaveAttribute("data-size", "icon-xs");
@@ -1067,7 +1020,7 @@ describe("SearchOverlay result row commands", () => {
     hover(1);
     fireEvent.pointerLeave(listbox);
     expect(rowCommands(1)).toEqual([]);
-    expect(rowOf(1).querySelector("[data-card-row-actions]")).toHaveClass("duration-[var(--hover-intent-fade-out)]");
+    expect(rowOf(1).querySelector("[data-card-row-actions]")).toHaveClass("duration-(--motion-exit)");
   });
 
   it("stops a name alone short of the commands", async () => {

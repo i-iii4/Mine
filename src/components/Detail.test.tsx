@@ -1055,11 +1055,9 @@ describe("Detail", () => {
     expect(panelGrid).toHaveClass("h-full", "grid-rows-[minmax(0,1fr)]");
   });
 
-  it("scrolls the panel beside the content on its own, with the content's band and bottom space (Р8)", async () => {
-    // The band is a dark-theme treatment; jsdom resolves to light by default.
-    document.documentElement.setAttribute("data-theme", "dark");
+  it("scrolls the panel beside the content on its own, with the content's bottom space (Р8)", () => {
     setViewportWidth(1400);
-    const { container, unmount } = render(
+    const { container } = render(
       <Detail
         block={block({ body: "Article body" })}
         vaultPath="/tmp/test-vault"
@@ -1073,33 +1071,19 @@ describe("Detail", () => {
         onRequestRename={vi.fn()}
         onRequestDelete={vi.fn()}
         onOpenRelatedNote={vi.fn()}
-        scrollEdgeFade
       />,
     );
-    try {
-      const rail = container.querySelector("[data-metadata-scroll]") as HTMLElement;
-      // The same insets as the content's scroll, inside it.
-      expect(rail.firstElementChild).toHaveClass("pt-[var(--card-content-pad)]", "pb-20");
-      // Above the content's band: each band fades only its own surface.
-      expect(container.querySelector("[data-detail-fixed-metadata-layer]")).toHaveClass("z-10");
-      const scrim = container.querySelector('[data-top-fade-scrim="detail-panel"]') as HTMLElement;
-      // A sibling of the panel's scroll, never inside it.
-      expect(scrim.parentElement).toBe(rail.parentElement);
-      expect(rail.contains(scrim)).toBe(false);
-      expect(scrim.dataset.topFadeVisible).toBe("false");
+    const rail = container.querySelector("[data-metadata-scroll]") as HTMLElement;
+    const content = container.querySelector("[data-detail-scroll]") as HTMLElement;
+    // The same insets as the content's scroll, inside it.
+    expect(rail.firstElementChild).toHaveClass("pt-[var(--card-content-pad)]", "pb-20");
+    expect(container.querySelector("[data-detail-fixed-metadata-layer]")).toHaveClass("z-10");
 
-      rail.scrollTop = 120;
-      fireEvent.scroll(rail);
+    rail.scrollTop = 120;
+    fireEvent.scroll(rail);
 
-      await waitFor(() => expect(scrim.dataset.topFadeVisible).toBe("true"));
-      expect(rail).toHaveAttribute("data-detail-panel-top-fade", "true");
-      // The content did not move: its band stays at rest.
-      expect(container.querySelector('[data-top-fade-scrim="detail"]')).toHaveAttribute("data-top-fade-visible", "false");
-    } finally {
-      // Unmounted first, so the theme's change reaches no mounted surface.
-      unmount();
-      document.documentElement.removeAttribute("data-theme");
-    }
+    // The content did not move with the panel.
+    expect(content.scrollTop).toBe(0);
   });
 
   it("stacks at once when the full-width content, the panel, its line and four insets do not fit", async () => {

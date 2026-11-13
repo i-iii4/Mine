@@ -194,13 +194,12 @@ function TabsList({
                 whose face is the pill's own step (from the surface under
                 the pill, 1¼ s in light and 1¾ s in dark, no state layer),
                 so the button style's edges follow that face. It slides to
-                a new choice calmly, in 200ms on the sine ease-in-out:
-                no fling at the start, no hard stop, so its
-                two edges travel together and the button does not stretch
-                and spring back. At Minimal it slides in 150ms on E, at Off
-                and from a key it stands at once (SPEC_MOTION_LEVELS.md, М7;
-                global.css). Its place and width are set by
-                useChosenSegment, not here. */}
+                a new choice calmly, as Перемещение: on the move curve, the
+                sine ease-in-out, no fling at the start, no hard stop, so
+                its two edges travel together and the button does not
+                stretch and spring back; 200ms in Full, 150ms in Minimal, at
+                Off and from a key at once (SPEC_MOTION_LEVELS.md, М7, РД1).
+                Its place and width are set by useChosenSegment, not here. */}
             <span
               ref={setIndicator}
               aria-hidden="true"
@@ -208,7 +207,7 @@ function TabsList({
               className={cn(
                 "pointer-events-none absolute left-0 h-[var(--tabs-pill-height)] rounded-1 bg-component-fill-inner",
                 "[--button-face-step:var(--pill-chosen-elevation)] [--button-face-layer:none] [--button-face-share:0%]",
-                "motion-safe:data-[animate]:transition-[transform,width] motion-safe:data-[animate]:duration-200 motion-safe:data-[animate]:ease-[cubic-bezier(0.37,0,0.63,1)]",
+                "motion-safe:data-[animate]:transition-[transform,width] motion-safe:data-[animate]:duration-(--motion-move) motion-safe:data-[animate]:ease-(--motion-move-ease)",
               )}
             />
           </>
@@ -220,19 +219,20 @@ function TabsList({
 }
 
 const registryTriggerClasses = cn(
-  "relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-sm font-normal whitespace-nowrap text-foreground/60 transition-all group-data-[orientation=vertical]/tabs:w-full group-data-[orientation=vertical]/tabs:justify-start hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 group-data-[variant=default]/tabs-list:data-[state=active]:shadow-sm group-data-[variant=line]/tabs-list:data-[state=active]:shadow-none dark:text-muted-foreground dark:hover:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-sm font-normal whitespace-nowrap text-foreground/60 transition-all duration-(--motion-enter) ease-(--motion-ease) group-data-[orientation=vertical]/tabs:w-full group-data-[orientation=vertical]/tabs:justify-start hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 group-data-[variant=default]/tabs-list:data-[state=active]:shadow-sm group-data-[variant=line]/tabs-list:data-[state=active]:shadow-none dark:text-muted-foreground dark:hover:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   "group-data-[variant=line]/tabs-list:bg-transparent group-data-[variant=line]/tabs-list:data-[state=active]:bg-transparent dark:group-data-[variant=line]/tabs-list:data-[state=active]:border-transparent dark:group-data-[variant=line]/tabs-list:data-[state=active]:bg-transparent",
   "data-[state=active]:bg-background data-[state=active]:text-foreground dark:data-[state=active]:border-input dark:data-[state=active]:bg-input/30 dark:data-[state=active]:text-foreground",
-  "after:absolute after:bg-foreground after:opacity-0 after:transition-opacity group-data-[orientation=horizontal]/tabs:after:inset-x-0 group-data-[orientation=horizontal]/tabs:after:bottom-[-5px] group-data-[orientation=horizontal]/tabs:after:h-0.5 group-data-[orientation=vertical]/tabs:after:inset-y-0 group-data-[orientation=vertical]/tabs:after:-right-1 group-data-[orientation=vertical]/tabs:after:w-0.5 group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-100"
+  "after:absolute after:bg-foreground after:opacity-0 after:transition-opacity after:duration-(--motion-enter) after:ease-(--motion-ease) group-data-[orientation=horizontal]/tabs:after:inset-x-0 group-data-[orientation=horizontal]/tabs:after:bottom-[-5px] group-data-[orientation=horizontal]/tabs:after:h-0.5 group-data-[orientation=vertical]/tabs:after:inset-y-0 group-data-[orientation=vertical]/tabs:after:-right-1 group-data-[orientation=vertical]/tabs:after:w-0.5 group-data-[variant=line]/tabs-list:data-[state=active]:after:opacity-100"
 )
 
 // A segment of the pill: as tall as the pill, 1ch of padding round a label,
 // square round a 13px icon. The chosen segment's button is drawn by the list
 // under it; a segment shows only its text: the secondary step, the primary
-// when chosen or under the pointer. The colour changes over the same 200ms
-// and curve as the button's slide, so a label lights as the button arrives.
+// when chosen or under the pointer. The colour changes over the same time
+// and curve as the button's slide, Перемещение, so a label lights as the
+// button arrives.
 const chromeTriggerClasses =
-  "relative inline-flex h-[var(--tabs-pill-height)] min-w-[var(--tabs-pill-height)] shrink-0 items-center justify-center gap-1 rounded-1 px-[1ch] leading-none whitespace-nowrap text-muted-foreground outline-none motion-safe:transition-colors motion-safe:duration-200 motion-safe:ease-[cubic-bezier(0.37,0,0.63,1)] hover:text-foreground focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:pointer-events-none disabled:text-tertiary-foreground data-[state=active]:text-foreground has-[>svg:only-child]:px-0 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg.lucide]:size-[13px]"
+  "relative inline-flex h-[var(--tabs-pill-height)] min-w-[var(--tabs-pill-height)] shrink-0 items-center justify-center gap-1 rounded-1 px-[1ch] leading-none whitespace-nowrap text-muted-foreground outline-none motion-safe:transition-colors motion-safe:duration-(--motion-move) motion-safe:ease-(--motion-move-ease) hover:text-foreground focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:pointer-events-none disabled:text-tertiary-foreground data-[state=active]:text-foreground has-[>svg:only-child]:px-0 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg.lucide]:size-[13px]"
 
 function TabsTrigger({
   className,

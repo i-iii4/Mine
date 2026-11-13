@@ -345,16 +345,18 @@ describe("hover intent (SPEC_CARD_STATES.md, С7)", () => {
   });
 
   it("С7.6: the fades in CSS match the engine's, and leaving is the faster one", () => {
+    // Отклик's tokens are the answers' fades (SPEC_MOTION_LEVELS.md, РД2).
     const css = readFileSync("src/styles/global.css", "utf8");
-    expect(css).toContain(`--hover-intent-fade-in: ${HOVER_INTENT.fadeInMs}ms`);
-    expect(css).toContain(`--hover-intent-fade-out: ${HOVER_INTENT.fadeOutMs}ms`);
+    expect(css).toContain(`--motion-enter: ${HOVER_INTENT.fadeInMs}ms`);
+    expect(css).toContain(`--motion-exit: ${HOVER_INTENT.fadeOutMs}ms`);
+    expect(css).not.toMatch(/--hover-intent-fade/);
     expect(HOVER_INTENT.fadeOutMs).toBeLessThan(HOVER_INTENT.fadeInMs);
   });
 
   // SPEC_MOTION_LEVELS.md, Р4, УД9: the level never changes the values, which
-  // the graph reads as they are; the preview window takes them through
-  // `motionMs`, and CSS lands the answers at once at Off alone.
-  it("keeps its fades at every level, and CSS sets the answers' fades to nothing only at Off", () => {
+  // the graph reads as they are; the preview window takes Отклик's time
+  // through `roleMs`, and CSS lands the answers at once at Off alone.
+  it("keeps its fades at every level, and CSS sets Отклик's times to nothing only at Off", () => {
     for (const level of MOTION_LEVELS) {
       setMotionLevel(level);
       expect(HOVER_INTENT.fadeInMs).toBe(MOTION_ENTER_MS);
@@ -362,9 +364,10 @@ describe("hover intent (SPEC_CARD_STATES.md, С7)", () => {
     }
     const css = readFileSync("src/styles/global.css", "utf8");
     const off = /\[data-motion="off"\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
-    expect(off).toMatch(/--hover-intent-fade-in:\s*0ms/);
-    expect(off).toMatch(/--hover-intent-fade-out:\s*0ms/);
-    expect(css).not.toMatch(/\[data-motion="minimal"\][^{]*\{[^}]*--hover-intent-fade/);
+    expect(off).toMatch(/--motion-enter:\s*0\.01ms/);
+    expect(off).toMatch(/--motion-exit:\s*0\.01ms/);
+    const minimal = /\[data-motion="minimal"\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(minimal).not.toMatch(/--motion-enter|--motion-exit/);
   });
 });
 

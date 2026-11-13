@@ -1,6 +1,6 @@
 // Which edges of a block that scrolls sideways hide content past them, kept
 // current while it scrolls, while it or what it holds changes size, and while
-// its content changes (SPEC_SCROLL_EDGE_FADE.md, «Полоса вкладок»). The
+// its content changes (DESIGN_SYSTEM.md, «Растворение кромок»). The
 // narrow window's bottom bar (`FadeScrollRow`, SPEC_NARROW_WINDOW.md, У13) and
 // an article table wider than its block (`ArticleTable`, SPEC_READING_MODE.md,
 // Ч5.3) dissolve those edges with `stripFadeMaskStyle`. The tab bar's strip

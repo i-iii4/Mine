@@ -1,9 +1,9 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useContext, useState } from "react";
-import { MOTION_ENTER_MS, MOTION_EXIT_MS, MOTION_LEVELS } from "@/lib/motion";
+import { MOTION_ENTER_MS, MOTION_EXIT_MS, MOTION_LEVELS, MOTION_SURFACE_MS } from "@/lib/motion";
 import { setMotionLevel } from "@/test/motionLevel";
-import { SIDEBAR_OVERLAY_LABEL, SIDEBAR_OVERLAY_MOTION_MS, SidebarOverlay, SidebarOverlayWidthContext } from "./SidebarOverlay";
+import { SIDEBAR_OVERLAY_LABEL, SidebarOverlay, SidebarOverlayWidthContext } from "./SidebarOverlay";
 
 /** What a part of the list in the panel lays itself out by. */
 function ListWidth() {
@@ -133,8 +133,8 @@ describe("SidebarOverlay: the sidebar over the feed (SPEC_NARROW_WINDOW.md, У4 
     expect(layer()).toBeNull();
   }
 
-  it("moves out over 200 ms in Full (SPEC_MOTION_LEVELS.md, С2)", () => {
-    expectPointerClosing(SIDEBAR_OVERLAY_MOTION_MS);
+  it("moves out over Поверхность's 200 ms in Full (SPEC_MOTION_LEVELS.md, С2, РД1)", () => {
+    expectPointerClosing(MOTION_SURFACE_MS);
   });
 
   it("moves out over 100 ms in Minimal, the time of its CSS (Р3)", () => {

@@ -21,13 +21,37 @@ export const MOTION_LEVEL_STORAGE_KEY = "mine.motion";
  *  clipper's top element inside its Shadow DOM (НС5, НС7). */
 export const MOTION_LEVEL_ATTRIBUTE = "data-motion";
 
+/** The roles of motion (РД1). Пружина is asked of `springMotion`: in Full it
+ *  keeps its own spring, in Minimal it moves as Перемещение. */
+export type MotionRole = "response" | "surface" | "move";
+
+/** A motion's phase: an appearance or a move to a new state, or a leaving. */
+export type MotionPhase = "enter" | "exit";
+
 /** The tokens' values for code; global.css holds the same, a test keeps them
- *  equal («Величины»). An appearance and a move to a new state. */
+ *  equal (РД2, РД8). Отклик on every level but Off: an appearance and a move
+ *  to a new state. */
 export const MOTION_ENTER_MS = 150;
-/** A leaving and a fade out. */
+/** Отклик: a leaving and a fade out. */
 export const MOTION_EXIT_MS = 100;
-/** Minimal's curve, E: the hover answers' and the top rows' curve. */
+/** The curve of Отклик and Поверхность, E. */
 export const MOTION_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+/** Поверхность in Full, both ways; Minimal gives it MOTION_ENTER_MS and
+ *  MOTION_EXIT_MS (РД2). */
+export const MOTION_SURFACE_MS = 200;
+/** Перемещение in Full, both ways; Minimal gives it MOTION_ENTER_MS, and so
+ *  to Пружина (РД2, РД4). */
+export const MOTION_MOVE_MS = 200;
+/** The curve of Перемещение, and of Пружина in Minimal. */
+export const MOTION_MOVE_EASE = "cubic-bezier(0.37, 0, 0.63, 1)";
+/** The blink of a chosen menu item: its highlight goes out for the first
+ *  half and comes back for the second, then the menu closes and the item's
+ *  command runs, as in the menus of macOS. A sign that the choice was taken,
+ *  as the shake of a refused name is a refusal: no motion, outside the roles,
+ *  the same on every level and from the keyboard (user's decision of
+ *  13.11.2026; SPEC_MOTION_LEVELS.md, РД5). global.css holds the same as
+ *  `--motion-menu-blink`. */
+export const MOTION_MENU_BLINK_MS = 150;
 
 /** The system's "Reduce motion". */
 const REDUCE_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
@@ -170,21 +194,34 @@ export interface MotionOptions {
   byKey?: boolean;
 }
 
-/** How long a motion lasts at the level in force: Full `fullMs`, Minimal the
- *  lesser of it and the set's phase, Off 0; `byKey` gives 0 at every level
- *  (УД2, УД4). */
-export function motionMs(fullMs: number, phase: "enter" | "exit", options: MotionOptions = {}): number {
+/** How long a motion of `role` lasts at the level in force (РД2): Off 0, and
+ *  0 at every level by a key (УД4). Перемещение has one time for both
+ *  phases. */
+export function roleMs(role: MotionRole, phase: MotionPhase, options: MotionOptions = {}): number {
   if (options.byKey) return 0;
   const level = motionLevel();
   if (level === "off") return 0;
-  if (level === "full") return fullMs;
-  return Math.min(fullMs, phase === "enter" ? MOTION_ENTER_MS : MOTION_EXIT_MS);
+  if (role === "response") return phase === "enter" ? MOTION_ENTER_MS : MOTION_EXIT_MS;
+  if (level === "full") return role === "surface" ? MOTION_SURFACE_MS : MOTION_MOVE_MS;
+  if (role === "move") return MOTION_ENTER_MS;
+  return phase === "enter" ? MOTION_ENTER_MS : MOTION_EXIT_MS;
 }
 
-/** The curve of a motion whose time `motionMs` gave: its own in Full and
- *  where Minimal keeps its time, E where Minimal shortens it (УД2). */
-export function motionEasing(fullMs: number, phase: "enter" | "exit", fullEasing: string): string {
-  return motionLevel() === "minimal" && motionMs(fullMs, phase) !== fullMs ? MOTION_EASE : fullEasing;
+/** The role's curve, the same on every level (РД2). */
+export function roleEasing(role: MotionRole): string {
+  return role === "move" ? MOTION_MOVE_EASE : MOTION_EASE;
+}
+
+/** How a member of Пружина moves: its own spring, Перемещение, or at once. */
+export type SpringMotion = "spring" | "move" | "instant";
+
+/** How a member of Пружина moves (РД4): its spring in Full, Перемещение in
+ *  Minimal, at once at Off and by a key. */
+export function springMotion(options: MotionOptions = {}): SpringMotion {
+  if (options.byKey) return "instant";
+  const level = motionLevel();
+  if (level === "full") return "spring";
+  return level === "minimal" ? "move" : "instant";
 }
 
 /** A programmatic scroll: smooth only in Full and not by a key (УД4,

@@ -14,6 +14,11 @@ export interface DetailFrame {
   layout: DetailLayoutMode | null;
   /** The card's drawn content's full width (Р1) and its inset, px. */
   report(contentWidth: number, padPx: number): void;
+  /** The window stands for the full page on its way to it (SPEC_CARD_PEEK.md,
+   *  О17, п. 5): the card lays itself out as the full page does, by its own
+   *  width and the app window's height, so the window's last frame is the
+   *  full page's first. */
+  fullPage?: boolean;
 }
 
 export const DetailFrameContext = createContext<DetailFrame | null>(null);

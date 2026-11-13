@@ -97,14 +97,14 @@ export function CardRowActions<TBlock extends LightBlock | IndexedBlock>({
     <div
       className={cn(
         // Over the row's right end, at the plate's inset, where the text
-        // stops short of it. The card's answer to the pointer: in
-        // over the fade-in token, out over the shorter fade-out token, the
-        // same in Minimal and both at once at Off (SPEC_CARD_STATES.md, С7.6,
-        // С8.4; SPEC_MOTION_LEVELS.md, Л7); no lift, nothing moves.
-        "absolute inset-y-0 right-plate flex items-center gap-1 transition-opacity",
+        // stops short of it. The card's answer to the pointer, Отклик: in
+        // on the enter time, out on the shorter exit time, at once at Off
+        // (SPEC_CARD_STATES.md, С7.6, С8.4; SPEC_MOTION_LEVELS.md, Л7); no
+        // lift, nothing moves.
+        "absolute inset-y-0 right-plate flex items-center gap-1 transition-opacity ease-(--motion-ease)",
         shown
-          ? "opacity-100 duration-[var(--hover-intent-fade-in)] starting:opacity-0"
-          : "pointer-events-none opacity-0 duration-[var(--hover-intent-fade-out)]",
+          ? "opacity-100 duration-(--motion-enter) starting:opacity-0"
+          : "pointer-events-none opacity-0 duration-(--motion-exit)",
       )}
       data-card-row-actions=""
       data-visible={shown ? "true" : "false"}

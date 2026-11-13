@@ -107,11 +107,12 @@ describe("the pill", () => {
     const transitions = button.className.split(/\s+/).filter((name) => name.includes("transition") || name.includes("duration") || name.includes("ease-"));
     expect(transitions.length).toBeGreaterThan(0);
     for (const name of transitions) expect(name.startsWith("motion-safe:")).toBe(true);
-    // Calm, not flung: 200ms on the sine ease-in-out (07.10.2026), and the
-    // labels change colour over the same time and curve.
-    expect(button.className).toContain("motion-safe:data-[animate]:duration-200");
-    expect(button.className).toContain("motion-safe:data-[animate]:ease-[cubic-bezier(0.37,0,0.63,1)]");
-    expect(graph).toHaveClass("motion-safe:duration-200", "motion-safe:ease-[cubic-bezier(0.37,0,0.63,1)]");
+    // Calm, not flung: Перемещение, the sine ease-in-out (07.10.2026; 200ms
+    // in Full, SPEC_MOTION_LEVELS.md, М7, РД1), and the labels change colour
+    // over the same time and curve.
+    expect(button.className).toContain("motion-safe:data-[animate]:duration-(--motion-move)");
+    expect(button.className).toContain("motion-safe:data-[animate]:ease-(--motion-move-ease)");
+    expect(graph).toHaveClass("motion-safe:duration-(--motion-move)", "motion-safe:ease-(--motion-move-ease)");
   });
 
   it("places the button on its first frame without a slide", () => {
@@ -254,10 +255,9 @@ describe("the pill by the level", () => {
     expect(variant).toBe('&:not(:where([data-motion="off"] *))');
   });
 
-  it("slides in 150ms on E at Minimal, the button and the labels alike", () => {
-    expect(css).toMatch(
-      /\[data-motion="minimal"\] \[data-menu-chevron\],\n\[data-motion="minimal"\] \[data-tabs-indicator\]\[data-animate\],\n\[data-motion="minimal"\] \[data-slot="tabs-list"\]\[data-variant="chrome"\] > \[data-slot="tabs-trigger"\] \{\n {2}transition-duration: var\(--motion-enter\);\n {2}transition-timing-function: var\(--motion-ease\);\n\}/,
-    );
+  it("slides at Minimal by the level's token alone, with no rule of its own (РД6)", () => {
+    expect(css).not.toMatch(/\[data-motion="minimal"\] \[data-tabs-indicator\]/);
+    expect(css).toMatch(/\[data-motion="minimal"\] \{[^}]*--motion-move: 150ms;/);
   });
 
   it("keeps the key's mark off a page that did not install the rule (the clipper)", () => {

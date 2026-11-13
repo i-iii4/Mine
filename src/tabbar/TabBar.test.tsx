@@ -152,6 +152,10 @@ afterEach(() => {
   for (const spy of spies) spy.mockRestore();
 });
 
+
+/** How neighbours make room for a dragged tab: Перемещение's tokens. */
+const TAB_SHIFT = "transform var(--motion-move) var(--motion-move-ease)";
+
 describe("a tab that could not open (Е2.9)", () => {
   // Decision of 14.10.2026: no text and no mark; selecting the tab makes its
   // page again, and why it failed is in the log.
@@ -625,7 +629,7 @@ describe("reorder (В60)", () => {
     expect(transformOf(tabById("a"))).toBe("translateX(130px)");
     expect(tabById("a").style.transition).toBe("");
     expect(transformOf(tabById("b"))).toBe(`translateX(-${TAB_MAX_WIDTH_PX}px)`);
-    expect(tabById("b").style.transition).toContain("transform 150ms");
+    expect(tabById("b").style.transition).toBe(TAB_SHIFT);
     expect(transformOf(tabById("c"))).toBe("");
 
     gesture.release(230);
@@ -697,15 +701,15 @@ describe("reorder (В60)", () => {
     expect(commands.moveTab).not.toHaveBeenCalled();
   });
 
-  it.each([["full", 150], ["minimal", 150], ["off", 0]] as const)(
-    "moves the neighbours at %s in %s ms (SPEC_MOTION_LEVELS.md, Т3)",
-    (level, duration) => {
-      setMotionLevel(level);
-      renderBar(barState([tab("a"), tab("b")]));
-      press(tabById("a"), 100).move(300);
-      expect(tabById("b").style.transition).toContain(`transform ${duration}ms`);
-    },
-  );
+  // Перемещение (SPEC_MOTION_LEVELS.md, Т3, РД1): the role's tokens, 200 ms
+  // in Full (was 150 ms on E, РД7), 150 ms in Minimal, at once at Off, by
+  // the level's block of global.css.
+  it.each(["full", "minimal", "off"] as const)("moves the neighbours at %s on Перемещение's tokens", (level) => {
+    setMotionLevel(level);
+    renderBar(barState([tab("a"), tab("b")]));
+    press(tabById("a"), 100).move(300);
+    expect(tabById("b").style.transition).toBe(TAB_SHIFT);
+  });
 });
 
 describe("tear off (В61, В62)", () => {

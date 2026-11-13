@@ -27,10 +27,10 @@ function row(visible: boolean) {
 }
 
 describe("a row's buttons on the motion levels (Л7)", () => {
-  it("fade in on the hover answers' fade-in token and out on the fade-out token", () => {
+  it("fade in on Отклик's enter time and out on its exit time, the response curve", () => {
     const shown = row(true).container.querySelector("[data-card-row-actions]");
-    expect(shown).toHaveClass("transition-opacity", "duration-[var(--hover-intent-fade-in)]");
+    expect(shown).toHaveClass("transition-opacity", "duration-(--motion-enter)", "ease-(--motion-ease)");
     const hidden = row(false).container.querySelector("[data-card-row-actions]");
-    expect(hidden).toHaveClass("transition-opacity", "duration-[var(--hover-intent-fade-out)]");
+    expect(hidden).toHaveClass("transition-opacity", "duration-(--motion-exit)", "ease-(--motion-ease)");
   });
 });

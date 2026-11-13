@@ -224,17 +224,27 @@ describe("buttons.css", () => {
     expect(entries(hover?.selector ?? "")).toEqual(expect.arrayContaining([".button-depth.state-active", ".bg-component-fill-inner.state-active"]));
   });
 
-  it("flashes a pressed macOS button half a state layer instead of moving it", () => {
-    // Retro and Linear keep the 1px press of global.css.
+  it("flashes every pressed button half a state layer, and moves none in the macOS style", () => {
+    // User's decision of 12.11.2026 (DESIGN_SYSTEM.md, «Нажатие»): the flash
+    // in every style, for a button with depth and one without; Retro and
+    // Linear also keep the 1px press of global.css.
     const press = rules.filter(({ selector }) => selector.includes(":active"));
-    expect(press).toHaveLength(1);
-    const rule = press[0]!;
-    expect(rule.selector).toContain(":not([data-buttons])");
+    expect(press).toHaveLength(3);
+    const depth = press.find(({ selector }) => !selector.includes(":not([data-buttons])") && selector.includes(".button-depth:active"));
+    expect(depth).toBeDefined();
     for (const carrier of [".button-depth:active:not(:disabled)", "button:active:not(:disabled) > .button-depth", "[data-action-button]:active > .button-depth"]) {
-      expect(rule.selector).toContain(carrier);
+      expect(depth?.selector).toContain(carrier);
     }
-    expect(rule.body).toContain("transform: none;");
-    expect(rule.body).toContain("linear-gradient(var(--press), var(--press)), linear-gradient(var(--active), var(--active)), var(--button-face-layer)");
-    expect(rule.body).toContain("var(--foreground) calc(var(--active-alpha) / 2)");
+    expect(depth?.body).toContain("linear-gradient(var(--press), var(--press)), linear-gradient(var(--active), var(--active)), var(--button-face-layer)");
+    expect(depth?.body).not.toContain("transform");
+    const flat = press.find(({ selector }) => selector.includes('[data-slot="button"]:active'));
+    expect(flat?.selector).toContain('[data-variant="reference"]');
+    expect(flat?.selector).toContain(":disabled");
+    expect(flat?.selector).toContain(".button-depth");
+    expect(flat?.body).toContain("background-image: linear-gradient(var(--press), var(--press));");
+    expect(flat?.body).not.toMatch(/transform|border-radius|width|height/);
+    const macos = press.find(({ selector }) => selector.includes(":not([data-buttons])"));
+    expect(macos?.body).toContain("transform: none;");
+    expect(macos?.body).toContain("var(--foreground) calc(var(--active-alpha) / 2)");
   });
 });

@@ -30,19 +30,6 @@ import { MODAL_OVERLAY_CLASS, MODAL_SURFACE_CLASS } from "./modal-window";
 
 const css = readFileSync(path.join(process.cwd(), "src/styles/global.css"), "utf8");
 
-/** The surfaces whose motion tw-animate-css sets on themselves. */
-const SURFACE_SLOTS = [
-  "dropdown-menu-content",
-  "dropdown-menu-sub-content",
-  "context-menu-content",
-  "context-menu-sub-content",
-  "tooltip-content",
-  "dialog-overlay",
-  "dialog-content",
-  "alert-dialog-overlay",
-  "alert-dialog-content",
-] as const;
-
 /** How the rule of a key's motion ends: its last selector, the pseudo-element
  *  after everything a key's surface holds but a menu or a tooltip the pointer
  *  opened inside it. */
@@ -229,29 +216,28 @@ describe("a window and its scrim (М5)", () => {
     });
   }
 
-  it("keeps Full's classes: the window 200 ms, the scrim tw-animate-css's 150 ms, a fade and 95 %", () => {
-    expect(MODAL_SURFACE_CLASS).toContain("duration-200");
+  // Поверхность (SPEC_MOTION_LEVELS.md, М5, РД1): the window and its scrim
+  // on the same tokens, 200 ms in Full (the scrim was 150 ms, решение 8),
+  // 150 and 100 ms in Minimal, a fade and 95 %.
+  it("times the window and its scrim alike, on Поверхность's tokens", () => {
+    for (const classes of [MODAL_SURFACE_CLASS, MODAL_OVERLAY_CLASS]) {
+      expect(classes).toContain("data-[state=open]:duration-(--motion-surface-enter)");
+      expect(classes).toContain("data-[state=closed]:duration-(--motion-surface-exit)");
+      expect(classes).toContain("ease-(--motion-ease)");
+      expect(classes).not.toMatch(/duration-\d/);
+    }
     expect(MODAL_SURFACE_CLASS).toContain("data-[state=open]:zoom-in-95");
     expect(MODAL_SURFACE_CLASS).toContain("data-[state=closed]:zoom-out-95");
-    expect(MODAL_OVERLAY_CLASS).not.toMatch(/duration-/);
     expect(MODAL_OVERLAY_CLASS).toContain("data-[state=open]:fade-in-0");
   });
 });
 
 describe("the surfaces' rules in global.css", () => {
-  it("at Minimal time every surface 150 ms in and 100 ms out on E, outside any layer", () => {
-    const enter = topLevelRule(`[data-slot="alert-dialog-content"]\n)`);
-    expect(enter).not.toBeNull();
-    expect(enter?.depth).toBe(0);
-    expect(enter?.selector.startsWith('[data-motion="minimal"] :is(')).toBe(true);
-    for (const slot of SURFACE_SLOTS) expect(enter?.selector).toContain(`[data-slot="${slot}"]`);
-    expect(enter?.body).toMatch(/animation-duration: var\(--motion-enter\);/);
-    expect(enter?.body).toMatch(/animation-timing-function: var\(--motion-ease\);/);
-
-    const leave = topLevelRule(`[data-slot="alert-dialog-content"]\n)[data-state="closed"]`);
-    expect(leave?.depth).toBe(0);
-    for (const slot of SURFACE_SLOTS) expect(leave?.selector).toContain(`[data-slot="${slot}"]`);
-    expect(leave?.body).toMatch(/animation-duration: var\(--motion-exit\);/);
+  it("has no rule of the level for the surfaces: their classes read the roles' tokens (РД6)", () => {
+    // The one place the level may stand outside the token block is checked
+    // whole by motionRoles.test.ts; here, the surfaces' old Minimal rule.
+    expect(css).not.toContain('[data-motion="minimal"] :is(\n  [data-slot="dropdown-menu-content"]');
+    expect(css).not.toMatch(/animation-duration: var\(--motion-enter\);/);
   });
 
   it("lands a key's surface at once at every level, its scrim and what it holds", () => {
@@ -270,7 +256,7 @@ describe("the surfaces' rules in global.css", () => {
 
   it("keeps Off's at once for every surface", () => {
     const atOnce = topLevelRule(KEY_RULE_END);
-    expect(atOnce?.selector).toContain('[data-motion="off"] *:not(.mine-progress-indeterminate):not(.animate-spin),');
+    expect(atOnce?.selector).toContain('[data-motion="off"] *:not(.mine-progress-indeterminate, .animate-spin, [data-name-refused]),');
   });
 
   it("names the surfaces by the slots the rules read", async () => {

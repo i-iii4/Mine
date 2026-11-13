@@ -136,7 +136,7 @@ function near(actual, expected, message) {
 
 /** The edges the wide table's block dissolves, its mask as Chromium
  *  computes it, and the shared strip mask for its right and its left edge
- *  alone (SPEC_SCROLL_EDGE_FADE.md, «Полоса вкладок»). */
+ *  alone (DESIGN_SYSTEM.md, «Растворение кромок»). */
 async function readWideTableFade(page) {
   return page.evaluate(() => {
     const block = window.__audit.wideTableBlock();

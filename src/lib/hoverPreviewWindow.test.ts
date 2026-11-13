@@ -4,6 +4,7 @@ import { SPRING_RESPONSE_S, springSettleMs } from "./channelIcon";
 import { FLOATING_LAYER_EDGE_PX } from "./floatingLayer";
 import { HOVER_INTENT } from "./hoverIntent";
 import { setMotionLevel } from "@/test/motionLevel";
+import { MOTION_ENTER_MS } from "./motion";
 import {
   HOVER_PREVIEW_COLD_OPEN_DELAY_MS,
   HOVER_PREVIEW_WARM_WINDOW_MS,
@@ -524,8 +525,9 @@ describe("one window over the list (SPEC_CARD_STATES.md, С7.11)", () => {
     context.preview.dispose();
   });
 
-  // SPEC_MOTION_LEVELS.md, Н1, Н2: Minimal keeps Full's fades and drops the
-  // spring; Off shows and takes everything at once, after the same rest.
+  // SPEC_MOTION_LEVELS.md, Н1, Н2: Minimal keeps Full's fades and moves in
+  // place of the spring as Перемещение (user's decision of 12.11.2026); Off
+  // shows and takes everything at once, after the same rest.
   describe("at the level Minimal", () => {
     beforeEach(() => {
       setMotionLevel("minimal");
@@ -550,21 +552,44 @@ describe("one window over the list (SPEC_CARD_STATES.md, С7.11)", () => {
       context.preview.dispose();
     });
 
-    it("stands at the new trigger at once, and changes the content only by fading", async () => {
+    it("moves to the new trigger over Перемещение's 150 ms on the move curve, the content changing by its fade (Н2)", async () => {
       const context = setup({ heights: { a: 200, b: 400 } });
       await openAt(context, "a", 300);
       context.preview.pointer(context.target("b", 450));
       await context.flush();
-      expect(context.last().height).toBe(400);
-      expect(context.shownTop()).toBe(450 - 200);
+      // It starts from where it stood: a's place and height.
+      const from = 300 - 100;
+      const to = 450 - 200;
+      expect(context.shownTop()).toBe(from);
+      expect(context.last().height).toBe(200);
       const [oldId, newId] = context.preview.getView()!.layers.map((layer) => layer.id);
       const opacityOf = (id: number | undefined) => context.last().layers.find((layer) => layer.id === id)?.opacity;
       expect(opacityOf(oldId)).toBe(1);
       expect(opacityOf(newId)).toBe(0);
-      await context.advance(HOVER_INTENT.fadeOutMs + FRAME_MS);
-      expect(opacityOf(oldId)).toBe(0);
-      expect(opacityOf(newId)).toBeGreaterThan(0);
-      expect(context.shownTop()).toBe(450 - 200);
+      const tops = [context.shownTop()];
+      let elapsed = 0;
+      while (elapsed < MOTION_ENTER_MS) {
+        await context.advance(FRAME_MS);
+        elapsed += FRAME_MS;
+        tops.push(context.shownTop());
+      }
+      // One move: never back, never past the place; slow at both ends, as
+      // the move curve is (the sine's ease-in-out), never a spring's jump.
+      for (let index = 1; index < tops.length; index += 1) {
+        expect(tops[index]!).toBeGreaterThanOrEqual(tops[index - 1]!);
+        expect(tops[index]!).toBeLessThanOrEqual(to);
+      }
+      const halfway = tops[Math.round(tops.length / 2)]!;
+      expect(halfway).toBeGreaterThan(from + (to - from) * 0.3);
+      expect(halfway).toBeLessThan(from + (to - from) * 0.7);
+      expect(tops[1]! - tops[0]!).toBeLessThan((to - from) * 0.1);
+      await context.advance(FRAME_MS);
+      expect(context.shownTop()).toBe(to);
+      expect(context.last().height).toBe(400);
+      // At rest the new card alone stays, whole.
+      expect(context.current()).toEqual(["b"]);
+      expect(opacityOf(oldId)).toBeUndefined();
+      expect(opacityOf(newId)).toBe(1);
       context.preview.dispose();
     });
   });
@@ -801,9 +826,9 @@ describe("one source for all the surfaces (SPEC_CARD_STATES.md, С7.11)", () => 
     expect(sidebar).not.toContain("onPreviewEnter");
   });
 
-  it("keeps its fade times equal to the hover tokens of С7.6", () => {
+  it("keeps its fade times equal to Отклик's tokens (С7.6; SPEC_MOTION_LEVELS.md, РД8)", () => {
     const css = readFileSync("src/styles/global.css", "utf8");
-    expect(css).toContain(`--hover-intent-fade-in: ${HOVER_INTENT.fadeInMs}ms`);
-    expect(css).toContain(`--hover-intent-fade-out: ${HOVER_INTENT.fadeOutMs}ms`);
+    expect(css).toContain(`--motion-enter: ${HOVER_INTENT.fadeInMs}ms`);
+    expect(css).toContain(`--motion-exit: ${HOVER_INTENT.fadeOutMs}ms`);
   });
 });

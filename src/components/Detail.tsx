@@ -1,4 +1,4 @@
-import { scrollBehavior, type MotionOptions } from "@/lib/motion";
+import { roleMs, scrollBehavior, type MotionOptions } from "@/lib/motion";
 import { lastInputIsKey } from "@/lib/motionInput";
 import { commandById } from "@/lib/commandRegistry";
 import {
@@ -111,11 +111,9 @@ import {
   CLOUD_OFFLINE_LABEL,
 } from "@/lib/cloudContent";
 import { cn } from "@/lib/utils";
-import { useTopFadeMask } from "@/hooks/useTopFadeMask";
 import { usePreviewFileRetry } from "@/hooks/usePreviewFileRetry";
 import { mediaAssetErrorMessage } from "@/lib/mediaAssetErrors";
 import { MissingAwareImage } from "./MissingAwareImage";
-import { TopFadeScrim } from "./TopFadeScrim";
 import { getDisplayTitle, getFallbackLabel, getNavigationLabel } from "@/lib/displayTitle";
 import { copyMediaAssetToClipboard, getBlock, icloudDownloadProgress, prepareDeleteMediaAsset } from "@/lib/commands";
 import { collectionRefLabel } from "@/lib/collections";
@@ -267,8 +265,6 @@ interface DetailProps {
     tag: string,
   ) => Promise<void>;
   onTextSelectionDelete?: (payload: MineTextSelectionDragPayload) => void | Promise<void>;
-  /** Dissolve content into transparency as it scrolls up under the top menu. */
-  scrollEdgeFade?: boolean;
   /** What the sizes the layout takes from the window read (Р1, Р3, Р7): the
    *  app window (`window`, full page) or the open card's own frame
    *  (`frame`, the card's window over the right part, SPEC_CARD_PEEK.md, О8). */
@@ -486,7 +482,6 @@ export function Detail({
   onTextSelectionDrop,
   onCreateChannelAndTextSelectionCard = noopTextSelectionCreate,
   onTextSelectionDelete,
-  scrollEdgeFade = false,
   sizedBy = "window",
 }: DetailProps) {
   const [fullBlock, setFullBlock] = useState<IndexedBlock | null>(
@@ -502,11 +497,17 @@ export function Detail({
   const [topMenuOpen, setTopMenuOpen] = useState(false);
   const displayBlock = fullBlock ?? block;
   const currentBlockSlugRef = useRef(block.slug);
+  // In the card's window the window's place decides the layout and the
+  // window narrows to the content it is told of (SPEC_CARD_PEEK.md, О3,
+  // О8); full page the card's own width decides. On its way to the full page
+  // the window holds the card as the full page will (О17, п. 5).
+  const detailFrame = useDetailFrame();
+  const framedAsFullPage = sizedBy === "frame" && detailFrame?.fullPage === true;
   const {
     containerRef: detailLayoutRef,
     padProbeRef: detailPadProbeRef,
     metrics: detailLayoutMetrics,
-  } = useDetailLayoutMetrics(sizedBy);
+  } = useDetailLayoutMetrics(framedAsFullPage ? "window" : sizedBy);
   const viewportHeight = detailLayoutMetrics?.viewportHeight ?? window.innerHeight;
   // A lone picture whose record has a wrong size corrects its frame when the
   // original loads (Р6); the content's width follows (Р1), for that picture
@@ -521,11 +522,7 @@ export function Detail({
     () => detailContentFullWidth(readingCard, viewportHeight, pictureOwnSize),
     [readingCard, viewportHeight, pictureOwnSize],
   );
-  // In the card's window the window's place decides the layout and the
-  // window narrows to the content it is told of (SPEC_CARD_PEEK.md, О3,
-  // О8); full page the card's own width decides.
-  const detailFrame = useDetailFrame();
-  const frameLayout = sizedBy === "frame" ? detailFrame?.layout ?? null : null;
+  const frameLayout = sizedBy === "frame" && !framedAsFullPage ? detailFrame?.layout ?? null : null;
   const isStackedLayout = frameLayout !== null
     ? frameLayout === "stacked"
     : detailLayoutMetrics !== null
@@ -565,11 +562,18 @@ export function Detail({
     setLonePictureOwnSize(null);
   }, [block.slug]);
 
-  const [chromeEntered, setChromeEntered] = useState(false);
+  // The top bar fades in as Отклик one frame after it mounts; at Off, where
+  // Отклик takes no time, it stands entered from its first frame
+  // (SPEC_MOTION_LEVELS.md, В1, РД6).
+  const [chromeEntered, setChromeEntered] = useState(() => roleMs("response", "enter") === 0);
 
   useEffect(() => {
     if (isClosing) {
       setChromeEntered(false);
+      return;
+    }
+    if (roleMs("response", "enter") === 0) {
+      setChromeEntered(true);
       return;
     }
     setChromeEntered(false);
@@ -650,8 +654,6 @@ export function Detail({
   }, [block, refreshFullBlock]);
 
   const panelRef = useRef<HTMLDivElement>(null);
-  const topFade = useTopFadeMask(panelRef, scrollEdgeFade);
-  const panelTopFade = useTopFadeMask(undefined, scrollEdgeFade);
 
   // ESC closes Detail. Arrow keys remain native to the reading surface.
   useEffect(() => {
@@ -717,7 +719,7 @@ export function Detail({
         isClosing ? "pointer-events-none bg-transparent" : "bg-background",
         "flex flex-col",
       )}
-      style={sizedBy === "frame" && detailLayoutMetrics
+      style={sizedBy === "frame" && !framedAsFullPage && detailLayoutMetrics
         ? detailMediaMaxHeightStyle(detailLayoutMetrics.viewportHeight)
         : DETAIL_ROOT_STYLE}
       role="dialog"
@@ -782,14 +784,12 @@ export function Detail({
           className="pointer-events-none invisible absolute top-0 left-0 h-0 w-[var(--card-content-pad)]"
           data-detail-pad-probe
         />
-        <TopFadeScrim scrolled={topFade.scrolled} surface="detail" color="var(--background)" />
         {/* Layer 1: Scrollable content + invisible spacer */}
         <div
-          ref={topFade.ref}
+          ref={panelRef}
           tabIndex={-1}
           className="h-full w-full overflow-y-auto outline-none"
           data-detail-scroll
-          data-detail-top-fade={topFade.scrolled ? "true" : undefined}
         >
           <div
             // Stacked, the panel's band carries the bottom space, so its
@@ -873,7 +873,7 @@ export function Detail({
         {!isStackedLayout && (
           /* Layer 2: the panel, fixed while the content scrolls, with its own
              scroll when its cards are taller than the open card (Р8). Above
-             the content's band, so each band fades only its own surface. */
+             the scrolled content. */
           <div
             className="pointer-events-none absolute inset-0 z-10 overflow-hidden"
             data-detail-fixed-metadata-layer
@@ -896,10 +896,8 @@ export function Detail({
                     height; under a short panel the content scrolls as
                     before. */}
                 <div
-                  ref={panelTopFade.ref}
                   className="pointer-events-auto min-h-0 overflow-y-auto overflow-x-hidden"
                   data-metadata-scroll
-                  data-detail-panel-top-fade={panelTopFade.scrolled ? "true" : undefined}
                 >
                   <div className={cn("pt-[var(--card-content-pad)]", DETAIL_BOTTOM_SAFE_SPACE_CLASS)}>
                     <MetadataPanel
@@ -919,7 +917,6 @@ export function Detail({
                     />
                   </div>
                 </div>
-                <TopFadeScrim scrolled={panelTopFade.scrolled} surface="detail-panel" color="var(--sidebar)" />
               </div>
             </div>
           </div>
@@ -2777,6 +2774,8 @@ interface MediaMenuKit {
   Item: ComponentType<{
     variant?: "default" | "destructive" | "detach";
     disabled?: boolean;
+    /** It keeps the menu open and shows its result in place: no blink. */
+    staysOpen?: boolean;
     className?: string;
     onSelect?: (event: Event) => void;
     children?: ReactNode;
@@ -2873,6 +2872,7 @@ function MediaAssetMenuItems({
         Copy Path
       </Item>
       <Item
+        staysOpen
         onSelect={(event) => {
           event.preventDefault();
           setActionError(null);
@@ -3095,6 +3095,7 @@ function CreateCardCollectionPicker<TPayload>({
               key={item.tag || "__everything__"}
               className="h-[var(--menu-row-height)] py-0"
               disabled={pendingTag !== null}
+              staysOpen
               onSelect={(event) => {
                 event.preventDefault();
                 void connect(item.tag, false);
@@ -3109,6 +3110,7 @@ function CreateCardCollectionPicker<TPayload>({
           <Item
             className="h-[var(--menu-row-height)] py-0"
             disabled={pendingTag !== null}
+            staysOpen
             onSelect={(event) => {
               event.preventDefault();
               void connect(trimmed, true);

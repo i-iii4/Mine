@@ -416,7 +416,8 @@ try {
   await settle();
   let segment = await segmentNow();
   assert.deepEqual(segment.motion, segment.asideMotion, "1200 collapsing: the segment moves by the sidebar's own motion");
-  assert.deepEqual(segment.motion, ["width", "0.2s", "ease"], "1200 collapsing: its width over 200 ms");
+  // Поверхность: 200 ms on the response curve (SPEC_MOTION_LEVELS.md, С1, РД7; was `ease`).
+  assert.deepEqual(segment.motion, ["width", "0.2s", "cubic-bezier(0.22, 1, 0.36, 1)"], "1200 collapsing: its width over 200 ms");
   assert.ok(segment.width < TARGET && segment.width > 1, `1200 collapsing: on its way to none (${segment.width})`);
   assert.equal(segment.spaceName, true, "1200 collapsing: the space switcher leaves with it");
   assert.equal(segment.line, "1px", "1200 collapsing: its line goes with it");

@@ -193,40 +193,67 @@ describe("the clipper and the graph (УД9, УД10, НС7)", () => {
   });
 });
 
-describe("a motion's time and a scroll's behaviour (УД2, УД4)", () => {
-  it("gives Full its own time, Minimal the lesser of it and the set's, Off none, a key none on every level", async () => {
+describe("a role's time and curve, a spring's way and a scroll's behaviour (РД2, РД4, УД4)", () => {
+  it("gives each role its time by the level, Off none, a key none on every level", async () => {
     systemMotion(false);
     const motion = await load();
     motion.installMotionLevel();
-    expect(motion.motionMs(200, "enter")).toBe(200);
-    expect(motion.motionMs(200, "enter", { byKey: true })).toBe(0);
+    // Full: Отклик 150/100, Поверхность 200 both ways, Перемещение 200.
+    expect(motion.roleMs("response", "enter")).toBe(150);
+    expect(motion.roleMs("response", "exit")).toBe(100);
+    expect(motion.roleMs("surface", "enter")).toBe(200);
+    expect(motion.roleMs("surface", "exit")).toBe(200);
+    expect(motion.roleMs("move", "enter")).toBe(200);
+    expect(motion.roleMs("move", "exit")).toBe(200);
+    expect(motion.roleMs("surface", "enter", { byKey: true })).toBe(0);
+    // Minimal: Отклик the same, Поверхность 150/100, Перемещение 150.
     motion.chooseMotionLevel("minimal");
-    expect(motion.motionMs(200, "enter")).toBe(150);
-    expect(motion.motionMs(200, "exit")).toBe(100);
-    expect(motion.motionMs(120, "enter")).toBe(120);
-    expect(motion.motionMs(200, "enter", { byKey: true })).toBe(0);
+    expect(motion.roleMs("response", "enter")).toBe(150);
+    expect(motion.roleMs("response", "exit")).toBe(100);
+    expect(motion.roleMs("surface", "enter")).toBe(150);
+    expect(motion.roleMs("surface", "exit")).toBe(100);
+    expect(motion.roleMs("move", "enter")).toBe(150);
+    expect(motion.roleMs("move", "exit")).toBe(150);
+    expect(motion.roleMs("move", "enter", { byKey: true })).toBe(0);
     motion.chooseMotionLevel("off");
-    expect(motion.motionMs(200, "enter")).toBe(0);
-    expect(motion.motionMs(200, "exit", { byKey: true })).toBe(0);
+    for (const role of ["response", "surface", "move"] as const) {
+      expect(motion.roleMs(role, "enter")).toBe(0);
+      expect(motion.roleMs(role, "exit")).toBe(0);
+    }
   });
 
   it("gives the system's flag with no choice Minimal's times, not none", async () => {
     systemMotion(true);
     const motion = await load();
     motion.installMotionLevel();
-    expect(motion.motionMs(400, "enter")).toBe(150);
+    expect(motion.roleMs("surface", "enter")).toBe(150);
     motion.chooseMotionLevel("off");
-    expect(motion.motionMs(400, "enter")).toBe(0);
+    expect(motion.roleMs("surface", "enter")).toBe(0);
   });
 
-  it("turns the curve to E only where Minimal shortens the time", async () => {
+  it("gives each role one curve on every level", async () => {
     systemMotion(false);
     const motion = await load();
     motion.installMotionLevel();
-    expect(motion.motionEasing(200, "enter", "ease")).toBe("ease");
+    for (const level of motion.MOTION_LEVELS) {
+      motion.chooseMotionLevel(level);
+      expect(motion.roleEasing("response")).toBe(motion.MOTION_EASE);
+      expect(motion.roleEasing("surface")).toBe(motion.MOTION_EASE);
+      expect(motion.roleEasing("move")).toBe(motion.MOTION_MOVE_EASE);
+    }
+  });
+
+  it("moves a member of Пружина on its spring in Full, as Перемещение in Minimal, at once at Off and by a key", async () => {
+    systemMotion(false);
+    const motion = await load();
+    motion.installMotionLevel();
+    expect(motion.springMotion()).toBe("spring");
+    expect(motion.springMotion({ byKey: true })).toBe("instant");
     motion.chooseMotionLevel("minimal");
-    expect(motion.motionEasing(200, "enter", "ease")).toBe(motion.MOTION_EASE);
-    expect(motion.motionEasing(120, "enter", "ease")).toBe("ease");
+    expect(motion.springMotion()).toBe("move");
+    expect(motion.springMotion({ byKey: true })).toBe("instant");
+    motion.chooseMotionLevel("off");
+    expect(motion.springMotion()).toBe("instant");
   });
 
   it("scrolls smoothly only in Full and not by a key", async () => {
@@ -242,7 +269,7 @@ describe("a motion's time and a scroll's behaviour (УД2, УД4)", () => {
   });
 });
 
-describe("the five tokens («Величины»)", () => {
+describe("the roles' tokens (РД2)", () => {
   /** A token's value in the root block of global.css. */
   async function token(name: string): Promise<string> {
     const { readFileSync } = await import("node:fs");
@@ -257,12 +284,14 @@ describe("the five tokens («Величины»)", () => {
     const { HOVER_INTENT } = await import("./hoverIntent");
     const { CARD_PEEK_CENTER_SCALE, CARD_PEEK_MARGIN_PX, CARD_PEEK_NUDGE_SCALE } = await import("./cardPeek");
     expect(await token("--motion-enter")).toBe(`${motion.MOTION_ENTER_MS}ms`);
-    expect(await token("--hover-intent-fade-in")).toBe(`${motion.MOTION_ENTER_MS}ms`);
     expect(HOVER_INTENT.fadeInMs).toBe(motion.MOTION_ENTER_MS);
     expect(await token("--motion-exit")).toBe(`${motion.MOTION_EXIT_MS}ms`);
-    expect(await token("--hover-intent-fade-out")).toBe(`${motion.MOTION_EXIT_MS}ms`);
     expect(HOVER_INTENT.fadeOutMs).toBe(motion.MOTION_EXIT_MS);
     expect(await token("--motion-ease")).toBe(motion.MOTION_EASE);
+    expect(await token("--motion-surface-enter")).toBe(`${motion.MOTION_SURFACE_MS}ms`);
+    expect(await token("--motion-move")).toBe(`${motion.MOTION_MOVE_MS}ms`);
+    expect(await token("--motion-move-ease")).toBe(motion.MOTION_MOVE_EASE);
+    expect(await token("--motion-menu-blink")).toBe(`${motion.MOTION_MENU_BLINK_MS}ms`);
     const shift = /^calc\((\d+)px \/ (\d+)\)$/.exec(await token("--motion-shift"));
     expect(Number(shift?.[1]) / Number(shift?.[2]) * 6).toBe(CARD_PEEK_MARGIN_PX);
     expect(Number(await token("--motion-scale"))).toBe(CARD_PEEK_CENTER_SCALE);
@@ -277,6 +306,8 @@ describe("a key's mark (УД4, п. 3, п. 7)", () => {
     const start = css.indexOf("[data-motion-key] *:not(");
     const rule = start < 0 ? "" : css.slice(start, css.indexOf(")::before", start));
     expect(rule).toContain("[data-name-refused]");
+    // Nor does Off stand the shake still (SPEC_MOTION_LEVELS.md, В3, РД6).
+    expect(css).toContain('[data-motion="off"] *:not(.mine-progress-indeterminate, .animate-spin, [data-name-refused]),');
     expect(rule).toContain(':is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key])');
     expect(rule).toContain(':is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key]) *');
   });

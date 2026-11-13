@@ -112,12 +112,12 @@ export const MenuTextTrigger = React.forwardRef<HTMLButtonElement, MenuTextTrigg
                 <ChevronRight
                   data-menu-chevron=""
                   data-motion-key={chevronByKey ? "" : undefined}
-                  className="size-[13px] shrink-0 transition-transform duration-150 group-data-[state=open]:rotate-90 motion-reduce:transition-none"
+                  className="size-[13px] shrink-0 transition-transform duration-(--motion-enter) ease-(--motion-ease) group-data-[state=open]:rotate-90"
                 />
               ) : null}
             </Plate>
             {showChevron && isClipperHeader ? (
-              <ChevronRight className="size-[13px] shrink-0 text-muted-foreground transition-transform duration-150 group-hover:text-foreground group-data-[state=open]:rotate-90 group-data-[state=open]:text-foreground" />
+              <ChevronRight className="size-[13px] shrink-0 text-muted-foreground transition-transform duration-(--motion-enter) ease-(--motion-ease) group-hover:text-foreground group-data-[state=open]:rotate-90 group-data-[state=open]:text-foreground" />
             ) : null}
           </>
         )}

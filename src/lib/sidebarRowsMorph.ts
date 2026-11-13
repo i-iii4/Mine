@@ -24,7 +24,8 @@ import { sidebarCompactRowsBelowPx } from "./appLayout";
 import { SPRING_RESPONSE_S, SPRING_SAMPLES, SPRING_SETTLE } from "./channelIcon";
 import { getSidebarStyle } from "./compactStack";
 import { setSidebarLook, sidebarLookOf } from "./sidebarLook";
-import { motionLevel } from "./motion";
+import { cubicBezierCurve } from "./cubicBezier";
+import { MOTION_MOVE_EASE, roleMs, springMotion, type SpringMotion } from "./motion";
 
 // ─── The spring ─────────────────────────────────────────────────────────
 
@@ -104,6 +105,45 @@ export function morphSpring(v = 0): MorphSpring {
       return ((samples[index + 1]! - samples[index]!) * SPRING_SAMPLES) / (durationMs / 1000);
     },
   };
+}
+
+/** The move curve as a function: Minimal's move in place of the spring. */
+const moveEase = cubicBezierCurve(MOTION_MOVE_EASE);
+
+/** The step, as a share of the time, that `speed` reads the curve's slope
+ *  over. */
+const MOVE_SLOPE_STEP = 1e-3;
+
+/** Minimal's run from 0 to 1 in place of the spring (SPEC_MOTION_LEVELS.md,
+ *  С3, С4, РД4): Перемещение's time on the move curve, from rest, whatever
+ *  speed the run it turns had. The same shape as the spring's, so the morphs
+ *  play either. */
+export function morphMove(durationMs: number = roleMs("move", "enter")): MorphSpring {
+  const share = (elapsedMs: number) => Math.min(1, Math.max(0, elapsedMs / durationMs));
+  return {
+    durationMs,
+    easing: MOTION_MOVE_EASE,
+    progress(elapsedMs) {
+      if (elapsedMs >= durationMs) return 1;
+      return moveEase(share(elapsedMs));
+    },
+    speed(elapsedMs) {
+      if (elapsedMs >= durationMs || elapsedMs < 0) return 0;
+      const at = share(elapsedMs);
+      const before = Math.max(0, at - MOVE_SLOPE_STEP);
+      const after = Math.min(1, at + MOVE_SLOPE_STEP);
+      return ((moveEase(after) - moveEase(before)) / (after - before)) / (durationMs / 1000);
+    },
+  };
+}
+
+/** The run a member of Пружина makes at the level in force: the spring from
+ *  speed `v` in Full, Minimal's move from rest; null at Off and by a key,
+ *  which change at once. */
+export function morphRun(motion: SpringMotion, v = 0): MorphSpring | null {
+  if (motion === "spring") return morphSpring(v);
+  if (motion === "move") return morphMove();
+  return null;
 }
 
 // ─── A part's look ──────────────────────────────────────────────────────
@@ -294,6 +334,8 @@ interface Segment {
   q0: number;
   q1: number;
   spring: MorphSpring;
+  /** How the run moves, read as it started (УД11). */
+  motion: SpringMotion;
   /** One of the segment's animations, whose time is all of theirs: made in
    *  one task, they start together on the frame that first shows them. */
   clock: Animation | null;
@@ -472,14 +514,20 @@ export function observeSidebarRowsMorph(nav: HTMLElement): () => void {
   };
 
   /** Moves toward `toNarrow` from narrowness `q0` at speed `speed` (per
-   *  second), the layouts read afresh. */
-  const start = (toNarrow: boolean, q0: number, speed: number) => {
+   *  second), the layouts read afresh, on `run`: the spring in Full,
+   *  Minimal's move (РД4). */
+  const start = (toNarrow: boolean, q0: number, speed: number, motion: SpringMotion) => {
     const q1 = toNarrow ? 1 : 0;
+    const span = q1 - q0;
+    const runOf = morphRun(motion, span !== 0 ? speed / span : 0);
+    if (runOf === null) {
+      release();
+      return;
+    }
     const rows = morph?.rows ?? visibleRows();
     if (morph) for (const part of morph.parts) part.animation?.cancel();
     const { wide, narrow } = measure(rows, null);
-    const span = q1 - q0;
-    const segment: Segment = { q0, q1, spring: morphSpring(span !== 0 ? speed / span : 0), clock: null };
+    const segment: Segment = { q0, q1, spring: runOf, motion, clock: null };
     if (!morph) nav.addEventListener("scroll", release, { passive: true });
     const shown = morph?.shown ?? new Map<Element, number>();
     morph = { rows, narrow, shown, parts: buildParts(rows, wide, narrow, shown), segment };
@@ -502,7 +550,7 @@ export function observeSidebarRowsMorph(nav: HTMLElement): () => void {
     // movement; then the parts are laid anew from where they are.
     if (parts.length !== current.parts.length || parts.some((part, index) => part.element !== current.parts[index]!.element || part.pseudoElement !== current.parts[index]!.pseudoElement)) {
       const { q, speed } = now(current.segment);
-      start(current.segment.q1 === 1, q, speed);
+      start(current.segment.q1 === 1, q, speed, current.segment.motion);
       return;
     }
     const { q0, q1 } = current.segment;
@@ -523,8 +571,10 @@ export function observeSidebarRowsMorph(nav: HTMLElement): () => void {
     const narrow = width < threshold;
     const crossed = lastNarrow !== null && narrow !== lastNarrow;
     lastNarrow = narrow;
-    // WAAPI, which no CSS rule of the level reaches (Р2).
-    if (motionLevel() !== "full" || getSidebarStyle() === "list") {
+    // WAAPI, which no CSS rule of the level reaches (Р2): the spring in
+    // Full, Minimal's move, at once at Off (С4, РД4).
+    const motion = springMotion();
+    if (motion === "instant" || getSidebarStyle() === "list") {
       release();
       return;
     }
@@ -532,13 +582,13 @@ export function observeSidebarRowsMorph(nav: HTMLElement): () => void {
       const toNarrow = morph.segment.q1 === 1;
       if (narrow !== toNarrow) {
         const { q, speed } = now(morph.segment);
-        start(narrow, q, speed);
+        start(narrow, q, speed, motion);
       } else {
         retarget(morph);
       }
       return;
     }
-    if (crossed) start(narrow, narrow ? 0 : 1, 0);
+    if (crossed) start(narrow, narrow ? 0 : 1, 0, motion);
   };
 
   const observer = new ResizeObserver((entries) => {

@@ -1,5 +1,6 @@
-// SPEC_MOTION_LEVELS.md, В3; УД4, п. 7: a refused name shakes only in Full,
-// after Enter too; Minimal and Off keep the reason under the name alone.
+// SPEC_MOTION_LEVELS.md, В3; УД4, п. 7; РД5: a refused name shakes on every
+// level, after Enter and on leaving the field alike, the reason under the
+// name (user's decision of 12.11.2026: a refusal, not a move).
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NAME_REFUSAL_NOTICE_MS, NAME_REFUSED_SHAKE_MS, useNameEdit } from "./useNameEdit";
@@ -49,27 +50,28 @@ describe("the refused name's shake by the motion level", () => {
     expect(end).not.toHaveBeenCalled();
   });
 
-  it.each(["minimal", "off"] as const)("does not shake at %s after Enter: the reason stays under the kept field", async (level) => {
+  it.each(["minimal", "off"] as const)("shakes at %s after Enter as in Full, then keeps the field and the reason", async (level) => {
     setMotionLevel(level);
     const { result, end } = nameEdit();
     act(() => result.current.begin("Inbox"));
     act(() => result.current.submit("Taken"));
     await settle();
+    expect(result.current.refused).toBe(true);
+    expect(result.current.notice).toBe(REASON);
+    act(() => vi.advanceTimersByTime(NAME_REFUSED_SHAKE_MS));
     expect(result.current.refused).toBe(false);
     expect(result.current.notice).toBe(REASON);
     expect(end).not.toHaveBeenCalled();
-    // The field takes the next try at once: nothing is held for a shake.
-    act(() => result.current.submit("Taken"));
-    await settle();
-    expect(result.current.notice).toBe(REASON);
   });
 
-  it.each(["minimal", "off"] as const)("does not shake at %s on leaving: the old name returns, the reason stays its 2.5 s", async (level) => {
+  it.each(["minimal", "off"] as const)("shakes at %s on leaving, then the old name returns and the reason stays its 2.5 s", async (level) => {
     setMotionLevel(level);
     const { result, end } = nameEdit();
     act(() => result.current.begin("Inbox"));
     act(() => result.current.leave("Taken"));
     await settle();
+    expect(result.current.refused).toBe(true);
+    act(() => vi.advanceTimersByTime(NAME_REFUSED_SHAKE_MS));
     expect(result.current.refused).toBe(false);
     expect(end).toHaveBeenCalledTimes(1);
     expect(result.current.notice).toBe(REASON);

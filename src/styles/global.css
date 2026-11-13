@@ -142,45 +142,66 @@ select,
   display: none;
 }
 
-/* The motion levels' tokens (SPEC_MOTION_LEVELS.md, «Величины»): Minimal's
-   appearance and leaving, its curve, the card window's rise and the close
-   hint's step, the scale a window starts from and ends at. motion.ts holds
-   the same times and curve, cardPeek.ts the same step and scale; a test keeps
-   them equal. The level in force is the attribute `data-motion` on the page's
-   root (motion.ts); its rules below are written by an ancestor's attribute,
-   not by `:root`, because the clipper's window over a page lives in Shadow
-   DOM, where `:root` selects nothing (НС7). */
+/* The roles' tokens (SPEC_MOTION_LEVELS.md, РД2): the only times and curves
+   of motion in the CSS. Отклик answers, appears and fades (enter, exit, E);
+   Поверхность is a window, the search, the sidebar and their scrims
+   (surface-enter, surface-exit, E); Перемещение carries a thing from place
+   to place (move, the move curve), and so does a spring at Minimal. The card
+   lift keeps its own curves outside the roles (РД5). motion.ts holds the
+   same times and curves, cardPeek.ts the card window's step and scale; a
+   test keeps them equal (РД8).
+
+   The level is an ancestor's attribute, not only the root's: the clipper's
+   window over a page lives in Shadow DOM, where `:root` selects nothing
+   (НС7). The level rules come after the `:root` declarations they override,
+   which have the same specificity. The level changes the tokens' times and
+   nothing else (РД6); Off gives every one 0.01ms, not none, because code
+   waits for the end events (УД7). */
 :root {
   --motion-enter: 150ms;
   --motion-exit: 100ms;
   --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-surface-enter: 200ms;
+  --motion-surface-exit: 200ms;
+  --motion-move: 200ms;
+  --motion-move-ease: cubic-bezier(0.37, 0, 0.63, 1);
+  /* The blink of a chosen menu item, outside the roles: the same on every
+     level (РД5; user's decision of 13.11.2026). */
+  --motion-menu-blink: 150ms;
   --motion-shift: calc(40px / 6);
   --motion-scale: 0.95;
+  /* The lift's two curves are each a cubic-bezier fitted by least squares to
+     the share of the path measured at 10, 25, 50, 75 and 90 percent of the
+     time in a recording of another app (SPEC_CARD_STATES.md, С8.4). */
+  --card-lift-curve-up: cubic-bezier(0.45, 0, 0.2, 1);
+  --card-lift-curve-down: cubic-bezier(0.61, 0, 0.39, 1);
+  --lift-up: 200ms var(--card-lift-curve-up);
+  --lift-down: 150ms var(--card-lift-curve-down);
 }
-
-/* Answers to the pointer fade in over one duration and out over a shorter
-   one (SPEC_CARD_STATES.md, С7.6): a row's pill and count, its button and
-   labels, a card's border. Leaving then reads as a response, not a lag. The
-   engine holds the same values as HOVER_INTENT.fadeInMs and fadeOutMs; a test
-   keeps them equal. A row's name brightens a little faster, it is the click
-   target. Minimal keeps them: they are no longer than its set. Off swaps at
-   once; the dwell and the speed gate still apply (SPEC_MOTION_LEVELS.md,
-   С6, УД5). These rules come after the `:root` declarations they override,
-   which have the same specificity. */
-:root {
-  --hover-intent-fade-in: 150ms;
-  --hover-intent-fade-out: 100ms;
-  --hover-intent-name-fade: 120ms;
+/* Minimal shortens Поверхность and Перемещение; Отклик is the same. The lift
+   keeps its own curves: on E an interrupted lift came back with a first step
+   of 5.3 and 5.7 px and its parts parted (УД2, Л1). */
+[data-motion="minimal"] {
+  --motion-surface-enter: 150ms;
+  --motion-surface-exit: 100ms;
+  --motion-move: 150ms;
+  --lift-up: 150ms var(--card-lift-curve-up);
+  --lift-down: 100ms var(--card-lift-curve-down);
 }
-
 [data-motion="off"] {
-  --hover-intent-fade-in: 0ms;
-  --hover-intent-fade-out: 0ms;
-  --hover-intent-name-fade: 0ms;
+  --motion-enter: 0.01ms;
+  --motion-exit: 0.01ms;
+  --motion-surface-enter: 0.01ms;
+  --motion-surface-exit: 0.01ms;
+  --motion-move: 0.01ms;
+  --lift-up: 0.01ms var(--card-lift-curve-up);
+  --lift-down: 0.01ms var(--card-lift-curve-down);
 }
 
+/* A row's name brightens as Отклик: on --motion-enter to bright, on
+   --motion-exit back (SPEC_MOTION_LEVELS.md, С6, РД7). */
 [data-sidebar-row-text] {
-  transition: color var(--hover-intent-name-fade) cubic-bezier(0.22, 1, 0.36, 1);
+  transition: color var(--motion-exit) var(--motion-ease);
 }
 
 /* Previews' right edge (SPEC_FRONTEND.md, «Thumbnail strip»; user's decision
@@ -250,6 +271,7 @@ select,
 
 [data-sidebar-scroll]:not([data-sidebar-link-editor-mode="true"]) [data-sidebar-row-active="true"] [data-sidebar-row-text] {
   color: var(--foreground);
+  transition-duration: var(--motion-enter);
 }
 
 /* The row under the pointer answers in the feed and in an open card alike:
@@ -258,6 +280,7 @@ select,
    (SPEC_CARD_STATES.md, С7.10; user's decision of 06.11.2026). */
 [data-sidebar-scroll][data-sidebar-row-focus-mode="true"] [data-sidebar-row-focused="true"]:not(:has(> [data-sidebar-link-action][data-sidebar-link-pointer])) [data-sidebar-row-text] {
   color: var(--foreground);
+  transition-duration: var(--motion-enter);
 }
 
 /* What the keyboard's focus lights is what its key does (SPEC_KEYBOARD.md, М5; user's
@@ -266,6 +289,7 @@ select,
    the name stays quiet. The count does not answer. */
 [data-sidebar-scroll]:not([data-sidebar-link-editor-mode="true"]) [data-sidebar-row-keyboard-focus="true"] [data-sidebar-row-text]:not([data-sidebar-meta-count]) {
   color: var(--foreground);
+  transition-duration: var(--motion-enter);
 }
 
 /* The keyboard's walk moves nothing: the name, the count and the button with its word and
@@ -287,13 +311,13 @@ select,
    under the keyboard's focus, whose Enter presses it (SPEC_KEYBOARD.md, М5). Over the
    rest of the row they stay at rest (SPEC_CARD_STATES.md, С7.10). */
 [data-sidebar-link-word] {
-  transition-duration: var(--hover-intent-fade-out);
+  transition-duration: var(--motion-exit);
 }
 [data-sidebar-link-word="press"] {
   opacity: 0;
 }
 [data-sidebar-link-action]:is([data-sidebar-link-pointer], :focus-visible, [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-word] {
-  transition-duration: var(--hover-intent-fade-in);
+  transition-duration: var(--motion-enter);
 }
 [data-sidebar-link-action]:is([data-sidebar-link-pointer], :focus-visible, [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-word="rest"] {
   opacity: 0;
@@ -329,7 +353,7 @@ select,
    fade-in speed and leaves at the fade-out speed. The frame's line and its
    media's outline read the same property, so they change colour together. */
 [data-block-slug] {
-  --card-frame-fade: var(--hover-intent-fade-out);
+  --card-frame-fade: var(--motion-exit);
 }
 
 /* A state colours the frame through --card-frame-color: its line
@@ -339,7 +363,7 @@ select,
 [data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-block-slug],
 [data-grid-scroll] [data-feed-grid-item-collection-lit="true"] [data-block-slug] {
   --card-frame-color: var(--border-accent);
-  --card-frame-fade: var(--hover-intent-fade-in);
+  --card-frame-fade: var(--motion-enter);
 }
 
 /* Keyboard focus lights the frame's outer line alone (SPEC_FEED_DISPLAY.md, Д20;
@@ -355,7 +379,7 @@ select,
    focused selected card keeps the selection border. */
 [data-grid-scroll] [data-feed-grid-item][data-feed-grid-item-live][data-feed-grid-item-selected="true"] [data-block-slug] {
   --card-frame-color: var(--feed-selection-frame);
-  --card-frame-fade: var(--hover-intent-fade-in);
+  --card-frame-fade: var(--motion-enter);
 }
 
 /* The media's outline at its bottom edge (SPEC_FEED_DISPLAY.md, Д20; user's
@@ -379,7 +403,7 @@ select,
   border-radius: var(--card-frame-outer-radius);
   clip-path: inset(var(--media-outline-half) 0 0 0);
   pointer-events: none;
-  transition: border-color var(--card-frame-fade, 0s) cubic-bezier(0.22, 1, 0.36, 1);
+  transition: border-color var(--card-frame-fade, var(--motion-exit)) var(--motion-ease);
 }
 /* Media with text under it: drawn from the top of the text part, which
    starts at the media's bottom edge and rises with the media on a lift; the
@@ -399,14 +423,14 @@ select,
   bottom: -0.5px;
   transition:
     transform var(--lift-down),
-    border-color var(--card-frame-fade, 0s) cubic-bezier(0.22, 1, 0.36, 1);
+    border-color var(--card-frame-fade, var(--motion-exit)) var(--motion-ease);
 }
 [data-card-lift-hover]:hover [data-card-media-outline="on-lift"],
 [data-card-lift-pinned] [data-card-media-outline="on-lift"] {
   transform: translateY(calc(-1 * var(--card-lift)));
   transition:
     transform var(--lift-up),
-    border-color var(--card-frame-fade, 0s) cubic-bezier(0.22, 1, 0.36, 1);
+    border-color var(--card-frame-fade, var(--motion-exit)) var(--motion-ease);
 }
 
 /* The wash lives on the media window, not on the slot: a card lift moves the
@@ -420,31 +444,26 @@ select,
   background: var(--graphic-card-focus-overlay);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity var(--motion-exit) var(--motion-ease);
 }
 
 /* The wash is for pictures only; a text card shows the border alone. A row
    lights many cards at once, so its highlight is the border without the wash
    (С3, С7). */
+/* The wash is Отклик: in on --motion-enter, out on --motion-exit
+   (SPEC_MOTION_LEVELS.md, Л3, РД7); the keyboard's wash lands at once at
+   every level (below, «At once»). */
 [data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-card-media-clip] > [data-card-lift="window"]::after,
 [data-grid-scroll] [data-feed-grid-item-selected="true"] [data-card-media-clip] > [data-card-lift="window"]::after {
   opacity: 1;
-}
-/* Minimal washes in on the enter time and out on the exit time, on the
-   wash's own E (SPEC_MOTION_LEVELS.md, Л3); the keyboard's wash lands at
-   once at every level (below, «At once»). */
-[data-motion="minimal"] [data-card-media-clip] > [data-card-lift="window"]::after {
-  transition-duration: var(--motion-exit);
-}
-[data-motion="minimal"] [data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-card-media-clip] > [data-card-lift="window"]::after,
-[data-motion="minimal"] [data-grid-scroll] [data-feed-grid-item-selected="true"] [data-card-media-clip] > [data-card-lift="window"]::after {
   transition-duration: var(--motion-enter);
 }
 
 /* A refused name shakes once, side to side, before the old name returns
-   (05.10.2026). Only Full shakes: in Minimal and Off useNameEdit.ts never
-   sets the attribute, and the reason under the name says it alone
-   (SPEC_MOTION_LEVELS.md, В3). */
+   (05.10.2026). It shakes on every level, after Enter too: a refusal, not a
+   move, outside the roles on its own time and curve; neither Off nor a key
+   stands it still (SPEC_MOTION_LEVELS.md, В3, РД5; user's decision of
+   12.11.2026). */
 @keyframes name-refused {
   0%, 100% { transform: translateX(0); }
   20% { transform: translateX(-4px); }
@@ -478,20 +497,6 @@ select,
    Everything that travels with the lift shares one timing, so the row stays
    under the text in every frame and a reversal starts from where each part
    stands. Reduced motion lands at once through the global rule (Ф12). */
-:root {
-  --card-lift-curve-up: cubic-bezier(0.45, 0, 0.2, 1);
-  --card-lift-curve-down: cubic-bezier(0.61, 0, 0.39, 1);
-  --lift-up: 200ms var(--card-lift-curve-up);
-  --lift-down: 150ms var(--card-lift-curve-down);
-}
-/* Minimal lifts on the set's times and keeps the lift's own curves: on E an
-   interrupted lift came back with a first step of 5.3 and 5.7 px and its
-   parts parted (SPEC_MOTION_LEVELS.md, УД2, Л1). The top buttons of
-   `media-only` read the same values. */
-[data-motion="minimal"] {
-  --lift-up: var(--motion-enter) var(--card-lift-curve-up);
-  --lift-down: var(--motion-exit) var(--card-lift-curve-down);
-}
 [data-feed-card-frame] {
   --card-lift-drift: 8px;
 }
@@ -522,7 +527,7 @@ select,
   border: 1px solid var(--card-frame-color);
   border-radius: inherit;
   pointer-events: none;
-  transition: border-color var(--card-frame-fade, 0s) cubic-bezier(0.22, 1, 0.36, 1);
+  transition: border-color var(--card-frame-fade, var(--motion-exit)) var(--motion-ease);
 }
 
 [data-card-lift] {
@@ -679,7 +684,7 @@ select,
 }
 
 [data-sidebar-scroll][data-sidebar-row-switching="true"] [data-sidebar-row-text] {
-  transition-duration: 0ms;
+  transition: none;
 }
 
 /* Cursor contract (DESIGN_SYSTEM.md → Интерактивные состояния → Курсор).
@@ -744,6 +749,15 @@ body.sidebar-resizing ::selection {
 }
 [data-floating-menu="search"] {
   --floating-menu-width: 300px;
+}
+
+/* A chosen menu item blinks once (src/lib/menuBlink.ts; user's decision of
+   13.11.2026): its highlight is out for the first half of
+   --motion-menu-blink and back for the second, then the menu closes and the
+   command runs. At once both ways, as the highlight comes under the pointer;
+   no motion, the same on every level. */
+[data-menu-blink] {
+  background-image: none;
 }
 
 /* No menu is modal, and a press outside an open one only closes it
@@ -897,22 +911,22 @@ body {
 
 /* The top rows' motion (user's decision of 23.10.2026): everything in the
    row fades in and out where it stands, the place's switcher and an open
-   card's name too; nothing slides or scales. In over --hover-intent-fade-in,
-   out over the shorter --hover-intent-fade-out, the hover answers' values;
-   with "Reduce motion" both are instant. */
+   card's name too; nothing slides or scales. Отклик (SPEC_MOTION_LEVELS.md,
+   В1): in over --motion-enter, out over the shorter --motion-exit, the hover
+   answers' values; Off at once. */
 .detail-top-bar-enter,
 .detail-top-bar-line-enter,
 .main-secondary-bar-layer,
 [data-top-row-fade] {
   opacity: 0;
-  transition: opacity var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity var(--motion-exit) var(--motion-ease);
 }
 .detail-top-bar-enter[data-entered="true"],
 .detail-top-bar-line-enter[data-entered="true"],
 .main-secondary-bar-layer[data-entered="true"],
 [data-top-row-fade][data-entered="true"] {
   opacity: 1;
-  transition-duration: var(--hover-intent-fade-in);
+  transition-duration: var(--motion-enter);
 }
 .main-secondary-bar-layer {
   pointer-events: none;
@@ -959,78 +973,33 @@ body {
   animation: mine-progress-indeterminate 1.4s ease-in-out infinite;
 }
 
-/* Menus, tooltips and windows at Minimal (SPEC_MOTION_LEVELS.md, М1, М2,
-   М3, М5): the same fade, 95 % and 8 px as Full, in over 150 ms and out
-   over 100 ms on E, the scrim with its window. tw-animate-css times them on
-   the surfaces themselves (`animate-in`, `animate-out`, `duration-200` in
-   modal-window.ts), in Tailwind's utilities layer; these rules stand outside
-   any layer and beat them (НС6). Off and a key's motion land at once by the
-   rule below, which is !important. */
-[data-motion="minimal"] :is(
-  [data-slot="dropdown-menu-content"],
-  [data-slot="dropdown-menu-sub-content"],
-  [data-slot="context-menu-content"],
-  [data-slot="context-menu-sub-content"],
-  [data-slot="tooltip-content"],
-  [data-slot="dialog-overlay"],
-  [data-slot="dialog-content"],
-  [data-slot="alert-dialog-overlay"],
-  [data-slot="alert-dialog-content"]
-) {
-  animation-duration: var(--motion-enter);
-  animation-timing-function: var(--motion-ease);
-}
-[data-motion="minimal"] :is(
-  [data-slot="dropdown-menu-content"],
-  [data-slot="dropdown-menu-sub-content"],
-  [data-slot="context-menu-content"],
-  [data-slot="context-menu-sub-content"],
-  [data-slot="tooltip-content"],
-  [data-slot="dialog-overlay"],
-  [data-slot="dialog-content"],
-  [data-slot="alert-dialog-overlay"],
-  [data-slot="alert-dialog-content"]
-)[data-state="closed"] {
-  animation-duration: var(--motion-exit);
-}
-
-/* A menu's chevron turns in 150 ms both ways on E at Minimal (М4); the
-   pill's button slides and its labels change colour in 150 ms on E (М7).
-   Only where they already move: the indicator placed without a slide has no
-   `data-animate`, and a duration alone would start one. */
-[data-motion="minimal"] [data-menu-chevron],
-[data-motion="minimal"] [data-tabs-indicator][data-animate],
-[data-motion="minimal"] [data-slot="tabs-list"][data-variant="chrome"] > [data-slot="tabs-trigger"] {
-  transition-duration: var(--motion-enter);
-  transition-timing-function: var(--motion-ease);
-}
-
-/* At once (SPEC_MOTION_LEVELS.md, УД4, УД7): every transition and animation
-   at the level Off, and whatever a key started at every level. Menus,
-   dialogs, the top rows, the sidebar's width and its top segment land in the
-   frame of the event. 0.01ms, not none: code waits for the end events (Р1).
-   `transition-delay` stays: the sidebar handle's 300 ms is an intent delay
-   (УД5, Р9). A spinner and the indeterminate progress keep moving: they say
-   work goes on, in place. Code that animates itself reads the same level
-   through src/lib/motion.ts.
+/* At once (SPEC_MOTION_LEVELS.md, УД4, УД7, РД6). Off gives every role's
+   token 0.01ms in the level block above; this rule stands the rest at once:
+   the clipper's own motions at Off, which have no role tokens (УД10), and
+   whatever a key started at every level. 0.01ms, not none: code waits for
+   the end events (Р1). `transition-delay` stays: the sidebar handle's 300 ms
+   is an intent delay (УД5, Р9). A spinner, the indeterminate progress and
+   the shake of a refused name keep moving: the first two say work goes on,
+   in place, the shake is a refusal rather than a move (РД5, В3). Code that
+   animates itself reads the same level through src/lib/motion.ts.
 
    A key's motion: the feed's keyboard mode (`data-feed-grid-interaction-mode`,
    Grid.tsx) lands the lift and everything that goes with it (Л1), the
    frame's colour (Л2) and the wash (Л3) at once at every level; a mouse move
    that ends the mode lowers the card by the level. A menu, a window or the
    search a key opened carries `data-motion-key` on its surface and its scrim
-   while it is on the page (src/lib/motionInput.ts).
+   while it is on the page (src/lib/motionInput.ts). A turn of the Contents
+   list's mark Enter made carries `data-sidebar-link-turn="key"` (С7).
 
    At Minimal the search stands at once from the bottom bar's button too (М6),
    and a tooltip after the first one, which Radix opens `instant-open` (М3):
    the surface and the scrim alone, so a menu opened in the search goes by the
-   level.
+   level. These two are the places where the level changes what a role does,
+   not only its time (РД6).
 
    Inside a surface a key opened, a menu or a tooltip the pointer opened there
-   (the search's menus render inside it) keeps the level, and so does the
-   shake of a name that cannot be saved, a refusal rather than a move
-   (УД4, п. 3, п. 7). */
-[data-motion="off"] *:not(.mine-progress-indeterminate):not(.animate-spin),
+   (the search's menus render inside it) keeps the level (УД4, п. 3). */
+[data-motion="off"] *:not(.mine-progress-indeterminate, .animate-spin, [data-name-refused]),
 [data-motion="off"] *::before,
 [data-motion="off"] *::after,
 [data-grid-scroll][data-feed-grid-interaction-mode="keyboard"] :is(
@@ -1045,6 +1014,7 @@ body {
 [data-grid-scroll][data-feed-grid-interaction-mode="keyboard"] [data-card-media-clip] > [data-card-lift="window"]::after,
 [data-motion="minimal"] :is([data-search-overlay], [data-search-overlay-scrim]),
 [data-motion="minimal"] [data-slot="tooltip-content"][data-state="instant-open"],
+[data-sidebar-link-icon][data-sidebar-link-turn="key"],
 [data-motion-key],
 [data-motion-key]::before,
 [data-motion-key]::after,
@@ -1077,15 +1047,6 @@ body {
   animation: mine-progress-breathe 2s ease-in-out infinite;
 }
 
-[data-motion="off"] :is(.detail-top-bar-enter, .detail-top-bar-line-enter) {
-  opacity: 1;
-  transform: none;
-  transition: none;
-}
-
-[data-motion="off"] [data-card-media-clip] > [data-card-lift="window"]::after {
-  transition: none;
-}
 
 @theme inline {
   /* The stacks are SYSTEM_SANS_STACK and SYSTEM_MONO_STACK in
@@ -2092,20 +2053,17 @@ body {
 :root[data-sidebar-stack-ring] [data-channel-icon-card] {
   box-shadow: 0 0 0 1px var(--surface);
 }
+/* The stack is a member of Пружина (SPEC_MOTION_LEVELS.md, С5, РД4): in Full
+   its spring stands on the stack's box (channelIcon.ts); without it the cards
+   move as Перемещение, 150 ms on the move curve in Minimal. Off keeps the
+   stack at rest, unopened: there the level changes what it does, not its
+   time (РД6). */
 [data-channel-icon-card] {
   transform: var(--channel-icon-rest);
-  transition: transform var(--channel-icon-duration) var(--channel-icon-easing);
+  transition: transform var(--channel-icon-duration, var(--motion-move)) var(--channel-icon-easing, var(--motion-move-ease));
 }
 [data-sidebar-scroll] [data-sidebar-row-answer="true"] [data-channel-icon-card] {
   transform: var(--channel-icon-hover);
-}
-/* Minimal opens the stack in 150 ms and closes it in 100 ms on E; Off keeps
-   it at rest, unopened (SPEC_MOTION_LEVELS.md, С5). */
-[data-motion="minimal"] [data-channel-icon-card] {
-  transition: transform var(--motion-exit) var(--motion-ease);
-}
-[data-motion="minimal"] [data-sidebar-scroll] [data-sidebar-row-answer="true"] [data-channel-icon-card] {
-  transition-duration: var(--motion-enter);
 }
 [data-motion="off"] [data-sidebar-scroll] [data-sidebar-row-answer="true"] [data-channel-icon-card] {
   transform: var(--channel-icon-rest);
@@ -2169,19 +2127,11 @@ body {
   from { rotate: 45deg; }
   to { rotate: 0deg; }
 }
-/* Minimal turns the mark in 150 ms on E; Off does not turn it
-   (SPEC_MOTION_LEVELS.md, С7). No code waits for the turn's end. */
-[data-motion="minimal"] [data-sidebar-link-icon] {
-  animation-duration: var(--motion-enter) !important;
-  animation-timing-function: var(--motion-ease) !important;
-}
+/* The mark turns on the stack's spring in Full and as Перемещение in Minimal
+   (Sidebar.tsx sets the spring only in Full); Off does not turn it
+   (SPEC_MOTION_LEVELS.md, С7, РД4, РД6). No code waits for the turn's end. */
 [data-motion="off"] [data-sidebar-link-icon] {
   animation: none !important;
-}
-/* A turn a key made, Enter on the row (Sidebar.tsx, `data-sidebar-link-turn`),
-   stands at once on every level (SPEC_MOTION_LEVELS.md, С7, УД4). */
-[data-sidebar-link-icon][data-sidebar-link-turn="key"] {
-  animation-duration: 0.01ms !important;
 }
 /* The hover mark of Connect and Connected, used by the Contents list only. */
 [data-sidebar-link-icon] {
@@ -2406,7 +2356,7 @@ body {
     position: relative;
     padding-left: var(--spacing-surface);
     background-color: var(--sidebar-word-ground, var(--sidebar));
-    transition: translate var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1);
+    transition: translate var(--motion-exit) var(--motion-ease);
   }
   /* Where the stepped word stands over the name's last line, the name and
      the leader under it fade into the word over the edge fade's width
@@ -2424,11 +2374,11 @@ body {
     opacity: 0;
     pointer-events: none;
     /* Goes and comes with the word's step, on its timing. */
-    transition: opacity var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1);
+    transition: opacity var(--motion-exit) var(--motion-ease);
   }
   :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-action][data-sidebar-link-over-name]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-label]::before {
     opacity: 1;
-    transition-duration: var(--hover-intent-fade-in);
+    transition-duration: var(--motion-enter);
   }
   /* The stepped word's box reaches as far left as the word went, so the
      pointer on its first letter still holds it (Sidebar.tsx keeps the same
@@ -2443,7 +2393,7 @@ body {
   }
   :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-action]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-label] {
     translate: calc(-1 * (var(--text-interface) + var(--spacing-surface))) 0;
-    transition-duration: var(--hover-intent-fade-in);
+    transition-duration: var(--motion-enter);
   }
   :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-icon] {
     display: block;
@@ -2453,15 +2403,15 @@ body {
     width: var(--text-interface);
     height: var(--text-interface);
     opacity: 0;
-    transition: opacity var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1);
+    transition: opacity var(--motion-exit) var(--motion-ease);
     /* The plus turns into the cross and back whenever the state changes,
        even if the row is drawn anew for it, on the stack's spring
-       (Sidebar.tsx, LINK_ICON_SPRING_STYLE). */
-    animation: sidebar-link-icon-to-plus var(--channel-icon-duration) var(--channel-icon-easing);
+       (Sidebar.tsx, channelIconSpringStyle). */
+    animation: sidebar-link-icon-to-plus var(--channel-icon-duration, var(--motion-move)) var(--channel-icon-easing, var(--motion-move-ease));
   }
   :root[data-sidebar-list][data-sidebar-list-toc] & [data-sidebar-link-action]:is([data-sidebar-link-pointer], [data-sidebar-row-keyboard-focus="true"] > *) [data-sidebar-link-icon] {
     opacity: 1;
-    transition-duration: var(--hover-intent-fade-in);
+    transition-duration: var(--motion-enter);
   }
   /* A pointer that lands right on the word, its row not yet lit: the word
      comes in already stepped left with its mark, in the button's own fade,
@@ -2666,32 +2616,25 @@ body {
    У5; SidebarOverlay.tsx). Its scrim is the shared one (`.modal-scrim`
    above) over the feed and the strip; here it only fades in and out while
    the panel slides in from the left, and the panel's shadow is the K11 step
-   `shadow-lg`. 200 ms on the project's ease-out, none with reduced motion. */
+   `shadow-lg`. Поверхность (SPEC_MOTION_LEVELS.md, С2, РД1): in on
+   --motion-surface-enter, out on --motion-surface-exit, the role's curve; a
+   key at once through the rule «At once». SidebarOverlay.tsx keeps its
+   timer on the same role (roleMs). */
 .sidebar-overlay-scrim {
   opacity: 0;
-  transition: opacity 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity var(--motion-surface-exit) var(--motion-ease);
 }
 .sidebar-overlay-panel {
   transform: translateX(-100%);
-  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform var(--motion-surface-exit) var(--motion-ease);
 }
 [data-sidebar-overlay][data-state="open"] .sidebar-overlay-scrim {
   opacity: 1;
+  transition-duration: var(--motion-surface-enter);
 }
 [data-sidebar-overlay][data-state="open"] .sidebar-overlay-panel {
   transform: none;
-}
-/* Minimal: in 150 ms, out 100 ms on E; Off and a key at once
-   (SPEC_MOTION_LEVELS.md, С2). SidebarOverlay.tsx keeps its timer on the
-   same values (motionMs). */
-[data-motion="minimal"] :is(.sidebar-overlay-scrim, .sidebar-overlay-panel) {
-  transition-duration: var(--motion-exit);
-}
-[data-motion="minimal"] [data-sidebar-overlay][data-state="open"] :is(.sidebar-overlay-scrim, .sidebar-overlay-panel) {
-  transition-duration: var(--motion-enter);
-}
-[data-motion="off"] :is(.sidebar-overlay-scrim, .sidebar-overlay-panel) {
-  transition: none;
+  transition-duration: var(--motion-surface-enter);
 }
 
 /* The selection's commands in a second row (SPEC_NARROW_WINDOW.md, У10;
@@ -2722,17 +2665,15 @@ body {
   margin-top: var(--top-second-row-height);
 }
 /* The second row's left edge follows the sidebar's as it collapses or
-   opens, with the sidebar's own motion (useSidebarResize.ts): Full 200 ms
-   `ease`; Minimal an opening 150 ms and a collapse 100 ms on E, the panel's
-   values (SPEC_MOTION_LEVELS.md, С1). Off and a key never animate. */
+   opens, with the sidebar's own motion (useSidebarResize.ts): Поверхность,
+   the opening on --motion-surface-enter, the collapse on
+   --motion-surface-exit (SPEC_MOTION_LEVELS.md, С1, РД1). Off and a key
+   never animate. */
 [data-sidebar-width-animating] [data-top-row-bar] {
-  transition: left 200ms ease;
+  transition: left var(--motion-surface-exit) var(--motion-ease);
 }
-[data-motion="minimal"] [data-sidebar-width-animating] [data-top-row-bar] {
-  transition: left var(--motion-exit) var(--motion-ease);
-}
-[data-motion="minimal"] [data-sidebar-width-animating="enter"] [data-top-row-bar] {
-  transition-duration: var(--motion-enter);
+[data-sidebar-width-animating="enter"] [data-top-row-bar] {
+  transition-duration: var(--motion-surface-enter);
 }
 .chrome-control {
   height: var(--chrome-row-content-height);
@@ -2881,10 +2822,11 @@ button:active:not(:disabled) > .button-depth,
   max-width: var(--row-fit-name-min);
 }
 
-/* The create row parts the sidebar list as it appears: its height runs from
-   nothing to its own, fast, on the project's ease-out, in Full and Minimal
-   alike. Leaving, it goes at once. Off and ⇧⌘N (`data-motion-key`) land at
-   once through the general rule (SPEC_MOTION_LEVELS.md, С8). */
+/* The create row parts the sidebar list as it appears, Отклик: its height
+   runs from nothing to its own on --motion-enter and the response curve, in
+   Full and Minimal alike. Leaving, it goes at once. Off by the tokens; ⇧⌘N
+   and Enter in `Find or create...` (`data-motion-key`) land at once through
+   the general rule (SPEC_MOTION_LEVELS.md, С8, УД4, п. 8). */
 @keyframes sidebar-row-part {
   from {
     grid-template-rows: 0fr;
@@ -2897,7 +2839,7 @@ button:active:not(:disabled) > .button-depth,
 [data-sidebar-row-part] {
   display: grid;
   grid-template-rows: 1fr;
-  animation: sidebar-row-part 150ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: sidebar-row-part var(--motion-enter) var(--motion-ease);
 }
 
 [data-sidebar-row-part] > * {
@@ -2972,9 +2914,9 @@ button:active:not(:disabled) > .button-depth,
    shows and goes as the hover answers do (С7.6). */
 [data-card-peek-hint] {
   opacity: 0;
-  transition: opacity var(--hover-intent-fade-out) cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity var(--motion-exit) var(--motion-ease);
 }
 [data-card-peek-hint][data-shown] {
   opacity: 1;
-  transition-duration: var(--hover-intent-fade-in);
+  transition-duration: var(--motion-enter);
 }

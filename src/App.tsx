@@ -7,6 +7,7 @@ import {
   useRef,
   useMemo,
   useLayoutEffect,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import {
@@ -122,10 +123,6 @@ import {
   BOTTOM_ACTION_BAR_HIDDEN_STORAGE_KEY,
   getStoredBottomActionBarHidden,
 } from "@/lib/bottomActionBarVisibility";
-import {
-  SCROLL_EDGE_FADE_STORAGE_KEY,
-  getStoredScrollEdgeFade,
-} from "@/lib/scrollEdgeFade";
 import { DENSITY_STORAGE_KEY, applyDensity, getStoredDensity } from "@/lib/density";
 import {
   FEED_SHOW_STORAGE_KEY,
@@ -354,7 +351,7 @@ import { followNoteRename, isNoteHeldForEditing, noteMissingFromIndex } from "@/
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useSidebarOverlay } from "@/hooks/useSidebarOverlay";
 import { useSidebarKeyboardFocus, type FeedKeyboardFocus } from "@/hooks/useSidebarKeyboardFocus";
-import { MOVED_BY_KEY_STATE, sidebarEnterLabel } from "@/lib/sidebarKeyboardFocus";
+import { MOVED_BY_KEY_STATE, focusOpenCardRoot, sidebarEnterLabel } from "@/lib/sidebarKeyboardFocus";
 import { SIDEBAR_COLUMNS_STORAGE_KEY, reloadSidebarColumnLayout } from "@/lib/sidebarColumnLayout";
 import {
   COMPACT_STACK_EDGE_STORAGE_KEY,
@@ -416,7 +413,7 @@ import { GraphView } from "@/components/GraphView";
 import { DragCardStackPreview } from "@/components/Card";
 import { ActionButton } from "@/components/ActionButton";
 import { applyTheme, getStoredTheme, THEME_STORAGE_KEY } from "@/lib/themeMode";
-import { MOTION_LEVEL_STORAGE_KEY, motionMs, reloadMotionLevel, type MotionOptions } from "@/lib/motion";
+import { MOTION_LEVEL_STORAGE_KEY, reloadMotionLevel, roleMs, type MotionOptions } from "@/lib/motion";
 import { lastInputIsKey } from "@/lib/motionInput";
 import { flipWindowButtonStyleHere } from "@/lib/buttonStyle";
 import { ButtonStyleNotice } from "@/components/ButtonStyleNotice";
@@ -459,10 +456,10 @@ const GRID_PAGE_SIZE = 200;
 /// entries bounds the retries: a store that keeps failing leaves its error on
 /// screen instead of being polled forever (SPEC_AUDIT_FIXES.md, Г4.1, Д1.4).
 const FEED_READ_RETRY_DELAYS_MS = [1_000, 4_000, 15_000] as const;
-/// How long the closed full page stays drawn under the top rows' fade out in
-/// Full; the level shortens it with the fade (Minimal 100 ms, Off and a key
-/// none: SPEC_MOTION_LEVELS.md, В1, Р3).
-const DETAIL_SECONDARY_CHROME_EXIT_MS = 190;
+/// The full page held unseen while the card's window goes to it: laid out
+/// and loading, so it stands whole in the frame the window hands it over
+/// (SPEC_CARD_PEEK.md, О17).
+const FULL_PAGE_HELD_STYLE: CSSProperties = { visibility: "hidden" };
 /// How many further feed pages a restored tab reads to find the card it was
 /// scrolled to before it starts at the top instead (SPEC_TABS.md, В40):
 /// GRID_PAGE_SIZE cards each.
@@ -1040,7 +1037,6 @@ export function AppWithVault({
   // The graph's Display panel on this page and the Settings window change
   // the same value (SPEC_GRAPH_VIEW.md, «Панель графа»).
   const graphPreferences = useGraphPreferences();
-  const [scrollEdgeFade, setScrollEdgeFade] = useState(getStoredScrollEdgeFade);
   // Grid or Graph is the tab's own (SPEC_TABS.md, В78).
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>(() => restoreView?.mode ?? "grid");
   // What the feed area draws: the tab's mode, a grid in an author's feed.
@@ -1201,6 +1197,14 @@ export function AppWithVault({
   detailViewRef.current = detailView;
   const [peekOpening, setPeekOpening] = useState<CardPeekOpening | null>(null);
   const [peekExit, setPeekExit] = useState<CardPeekExit>("return");
+  // TRIAL (SPEC_CARD_PEEK.md, О17): the open card handed between its window
+  // and the full page. On the way to the full page (`toFull`) the full page
+  // is laid out unseen while the window's edges go to the right part's, and
+  // shows in the frame the window hands it over; back to the window
+  // (`toWindow`) the full page stays shown until the window stands on its
+  // place to take it. The top rows show the view the card is seen in.
+  const [cardHandover, setCardHandover] = useState<"toFull" | "toWindow" | null>(null);
+  const seenCardView = cardHandover === "toFull" ? "peek" : cardHandover === "toWindow" ? "full" : detailView;
   const peekOpeningSequenceRef = useRef(0);
   // The right part the card's window stands over (SPEC_CARD_PEEK.md, О3).
   const peekAreaRef = useRef<HTMLDivElement>(null);
@@ -1747,10 +1751,10 @@ export function AppWithVault({
   // (SPEC_NARROW_WINDOW.md, У15). The card's window leaves its name out of
   // the row (SPEC_CARD_PEEK.md, О5), and the place's name with it while the
   // sidebar is hidden: gone as the window opens, back as it begins to close.
-  const topRowDetailBlock = topRowCard(renderedDetailBlock, detailView);
+  const topRowDetailBlock = topRowCard(renderedDetailBlock, seenCardView);
   const topRowCardView: TopRowCardView = topRowDetailBlock !== null
     ? "full"
-    : selectedBlock !== null && detailView === "peek" ? "window" : "none";
+    : selectedBlock !== null && seenCardView === "peek" ? "window" : "none";
   const placeReplaced = !topRowShowsPlace({
     sidebar: !sidebarNarrow && !sidebarCollapsed ? "beside" : "hidden",
     card: topRowCardView,
@@ -3333,8 +3337,6 @@ export function AppWithVault({
         setBottomActionBarHidden(getStoredBottomActionBarHidden());
       } else if (key === GRAPH_PREFERENCES_STORAGE_KEY) {
         reloadGraphPreferences();
-      } else if (key === SCROLL_EDGE_FADE_STORAGE_KEY) {
-        setScrollEdgeFade(getStoredScrollEdgeFade());
       } else if (key === CARD_RADIUS_STORAGE_KEY) {
         applyCardRadius(getStoredCardRadius());
       } else if (key === DENSITY_STORAGE_KEY) {
@@ -3462,7 +3464,9 @@ export function AppWithVault({
     if (!selectedBlock || detailChromeClosing) return;
     // A handler may hand its event in: only an explicit `byKey` counts.
     const byKey = options?.byKey === true;
-    const holdMs = motionMs(DETAIL_SECONDARY_CHROME_EXIT_MS, "exit", { byKey });
+    // The closed full page stays drawn exactly as long as the top rows fade
+    // out, Отклик's leaving; Off and a key hold it not at all (В1, Р3).
+    const holdMs = roleMs("response", "exit", { byKey });
     requestGridFocusRestore(selectedBlock.slug);
     setSelectedBlockAnchor(null);
     setDetailChromeEntered(false);
@@ -3509,7 +3513,34 @@ export function AppWithVault({
     peekOpeningSequenceRef.current += 1;
     setPeekOpening({ sequence: peekOpeningSequenceRef.current, slug, from: "full", restored: false });
     setPeekExit("return");
+    setCardHandover("toWindow");
   }, []);
+
+  // TRIAL (SPEC_CARD_PEEK.md, О17): the window's way to the full page, by
+  // its button or the right part's width.
+  const sendPeekToFull = useCallback(() => {
+    setPeekExit("expand");
+    setCardHandover("toFull");
+  }, []);
+
+  // The window handed the card over: the full page stands, or is gone, in
+  // this commit, and the top rows change with it at once (В1). The full page
+  // takes the keyboard the window held: the window stood out of reach on its
+  // way, so the focus fell to the page (М9).
+  const handleCardHandOver = useCallback((to: "full" | "window") => {
+    setCardHandover(null);
+    setTopRowsByKey(true);
+    if (to !== "full") return;
+    queueMicrotask(() => {
+      const active = document.activeElement;
+      if (active === null || active === document.body) focusOpenCardRoot();
+    });
+  }, []);
+
+  // A card that closes or changes hands nothing over.
+  useEffect(() => {
+    if (!selectedBlock) setCardHandover(null);
+  }, [selectedBlock]);
 
   // TRIAL (SPEC_CARD_PEEK.md, О1, О9; user's decision of 30.10.2026): the
   // open card's buttons choose «Card view» as the Display panel does, stored
@@ -3520,13 +3551,13 @@ export function AppWithVault({
     setDetailCardView(next);
   }, []);
 
-  // TRIAL (SPEC_CARD_PEEK.md, О9, О16): Full page chosen; the window and its
-  // blur fade where they stand, and the same card stands full page at any
-  // width of the right part.
+  // TRIAL (SPEC_CARD_PEEK.md, О9, О16, О17): Full page chosen; the window
+  // goes to the full page, its edges to the right part's, and the same card
+  // stands full page at any width of the right part.
   const handlePeekExpand = useCallback(() => {
-    setPeekExit("fade");
+    sendPeekToFull();
     chooseOpenCardView("full");
-  }, [chooseOpenCardView]);
+  }, [chooseOpenCardView, sendPeekToFull]);
 
   // TRIAL (SPEC_CARD_PEEK.md, О9, О16): Peek chosen; the full page gives the
   // card to its window, and the right part's width decides from now on.
@@ -3552,10 +3583,10 @@ export function AppWithVault({
     if (!open) return;
     if (before !== after) {
       if (after === "peek") givePeekBack(open.slug);
-      else setPeekExit("fade");
+      else sendPeekToFull();
     }
     setDetailAreaHolds(holds);
-  }, [givePeekBack]);
+  }, [givePeekBack, sendPeekToFull]);
 
   // TRIAL (SPEC_CARD_PEEK.md, О10): the input that opened a card decides how
   // its window comes.
@@ -3564,7 +3595,7 @@ export function AppWithVault({
   const handleScrollToTop = useCallback(() => {
     if (selectedBlock) {
       if (detailChromeClosing) return;
-      const holdMs = motionMs(DETAIL_SECONDARY_CHROME_EXIT_MS, "exit");
+      const holdMs = roleMs("response", "exit");
       setSelectedBlockAnchor(null);
       setDetailChromeEntered(false);
       setTopRowsByKey(false);
@@ -4276,9 +4307,12 @@ export function AppWithVault({
     }
     // The one check first: a refused name opens the creation row with it,
     // where the reason stands under the name, as for any name typed there.
+    // Enter opened it, so it stands at once on every level, as ⇧⌘N's row
+    // (SPEC_MOTION_LEVELS.md, С8, УД4, п. 8; user's decision of 12.11.2026).
     void checkNewCollectionName(name).then((refusal) => {
       if (refusal !== null) {
         setPendingCreateChannelDrop(null);
+        setCreateRowByKey(true);
         setIsCreatingChannel(true);
         return;
       }
@@ -5160,7 +5194,6 @@ export function AppWithVault({
       onToggleLinkedTag={handleToggleTag}
       onBatchSetTag={handleBatchSetTag}
       detailChromeClosing={detailChromeClosing}
-      scrollEdgeFade={scrollEdgeFade}
     />
   );
 
@@ -5361,7 +5394,6 @@ export function AppWithVault({
         vaultPath={vaultPath}
         thumbsRootPath={thumbsRootPath ?? undefined}
         isClosing={isClosing}
-        scrollEdgeFade={scrollEdgeFade}
         topChromeMode="external"
         sizedBy={sizedBy}
         onClose={handleDetailClose}
@@ -5577,7 +5609,6 @@ export function AppWithVault({
                 location={currentLocation}
                 viewMode={feedViewMode}
                 graphPreferences={graphPreferences}
-                scrollEdgeFade={scrollEdgeFade}
                 routeSnapshotReady={gridRouteSnapshotReady}
                 scrollToTop={scrollToTopSignal}
                 blockDragActive={blockDragActive}
@@ -5630,7 +5661,17 @@ export function AppWithVault({
           <OpenCollectionDropTarget tag={currentTag} />
         )}
 
-        {renderedDetailBlock && detailView === "full" && renderDetail(renderedDetailBlock, detailChromeClosing, "window")}
+        {/* The full page, unseen and out of reach while the window goes to it
+            and laid out for the frame it is handed over in (О17). */}
+        {renderedDetailBlock && (detailView === "full" || cardHandover === "toWindow") && (
+          cardHandover === "toFull"
+            ? (
+              <div className="contents" style={FULL_PAGE_HELD_STYLE} inert data-detail-held="">
+                {renderDetail(renderedDetailBlock, detailChromeClosing, "window")}
+              </div>
+            )
+            : renderDetail(renderedDetailBlock, detailChromeClosing, "window")
+        )}
 
 
         <DeleteBlockDialog
@@ -5770,7 +5811,6 @@ export function AppWithVault({
         vaultPath={vaultPath}
         thumbsRootPath={thumbsRootPath ?? undefined}
         onQueryChange={setSearchOverlayQuery}
-        scrollEdgeFade={scrollEdgeFade}
         onClose={() => setSearchOverlayOpen(false)}
         onOpenBlock={handleSearchOverlayOpenBlock}
         loadBlockTags={handleLoadBlockTags}
@@ -5816,6 +5856,7 @@ export function AppWithVault({
           areaRef={peekAreaRef}
           onClose={handleDetailClose}
           onReopen={openDetailBlock}
+          onHandOver={handleCardHandOver}
         >
           {(block) => (
             // The header stands above the card, which fills the rest (О9).
@@ -5989,7 +6030,6 @@ interface RouteContext {
   location: TabLocation;
   viewMode: MainViewMode;
   graphPreferences: GraphPreferences;
-  scrollEdgeFade: boolean;
   routeSnapshotReady: boolean;
   scrollToTop: number;
   blockDragActive: boolean;

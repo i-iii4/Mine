@@ -10,10 +10,14 @@
 // `morphSpring`); a crossing back mid-move turns it round from where it is,
 // at the speed it had.
 //
+// In the motion level Minimal the same move runs as Перемещение: 150 ms on
+// the move curve from rest, the fades by the same shares of its time
+// (SPEC_MOTION_LEVELS.md, С3, РД4).
+//
 // This module owns the scrollport's look (sidebarLook.ts): the attribute the
-// stylesheet keys the compact rows on. At rest it follows the width; in the
-// motion levels Minimal and Off (SPEC_MOTION_LEVELS.md, С3), under the narrow
-// table (postponed) and when a frame moves
+// stylesheet keys the compact rows on. At rest it follows the width; at the
+// motion level Off (SPEC_MOTION_LEVELS.md, С3), under the narrow table
+// (postponed) and when a frame moves
 // the width across the threshold by more than a tile and its gap (the most
 // one frame of ЛМ5 adds a tile for, user's decision of 01.11.2026) it
 // changes at once. Otherwise the table is laid out for the whole move:
@@ -48,9 +52,9 @@
 import { SIDEBAR_PREVIEW_TILE_GAP_PX, SIDEBAR_PREVIEW_TILE_PX, sidebarBesideMinWidthPx, sidebarCompactRowsBelowPx, sidebarNameColumnPx, sidebarPanelWidthPx, sidebarRowsWidthPx } from "./appLayout";
 import { CHANNEL_ICON_SPRING_MS, SPRING_SAMPLES } from "./channelIcon";
 import { getListStyle, getSidebarStyle } from "./compactStack";
-import { motionLevel } from "./motion";
+import { roleMs, springMotion, type SpringMotion } from "./motion";
 import { SIDEBAR_LOOK_ATTRIBUTE, SIDEBAR_WIDTH_MOTION_ATTRIBUTE, setSidebarLook, sidebarContentWidth, sidebarLookAt, sidebarLookOfPanel } from "./sidebarLook";
-import { animatesPseudoElements, morphSpring, type MorphSpring } from "./sidebarRowsMorph";
+import { animatesPseudoElements, morphMove, morphSpring, type MorphSpring } from "./sidebarRowsMorph";
 
 // ─── Time ───────────────────────────────────────────────────────────────
 
@@ -71,13 +75,16 @@ export type FadeWay = "in" | "out";
 const clampUnit = (value: number) => Math.min(1, Math.max(0, value));
 
 /** A fading part's share of its own opacity `elapsedMs` into a run that
- *  began with it at `from`: in, it holds where it was until halfway, then
- *  shows evenly up to the settling time; out, it is gone by the end of the
- *  first third. The stylesheet's animations play the same (global.css,
- *  «List and table»). */
-export function fadeShare(way: FadeWay, elapsedMs: number, from: number): number {
-  if (way === "out") return from * clampUnit(1 - elapsedMs / LIST_MORPH_FADE_OUT_MS);
-  return from + (1 - from) * clampUnit((elapsedMs - LIST_MORPH_FADE_IN_FROM_MS) / (LIST_MORPH_SETTLE_MS - LIST_MORPH_FADE_IN_FROM_MS));
+ *  began with it at `from` and settles in `settleMs`: in, it holds where it
+ *  was until halfway, then shows evenly up to the settling time; out, it is
+ *  gone by the end of the first third. Full's run settles in
+ *  `LIST_MORPH_SETTLE_MS`, Minimal's in Перемещение's time. The stylesheet's
+ *  animations play the same (global.css, «List and table»). */
+export function fadeShare(way: FadeWay, elapsedMs: number, from: number, settleMs: number = LIST_MORPH_SETTLE_MS): number {
+  const outMs = settleMs * (LIST_MORPH_FADE_OUT_MS / LIST_MORPH_SETTLE_MS);
+  const inFromMs = settleMs * (LIST_MORPH_FADE_IN_FROM_MS / LIST_MORPH_SETTLE_MS);
+  if (way === "out") return from * clampUnit(1 - elapsedMs / outMs);
+  return from + (1 - from) * clampUnit((elapsedMs - inFromMs) / (settleMs - inFromMs));
 }
 
 /** The keyframes WAAPI plays `fadeShare` by, linear between them. */
@@ -86,13 +93,13 @@ export interface FadeTrack {
   frames: { offset: number; share: number }[];
 }
 
-export function fadeTrack(way: FadeWay, from: number): FadeTrack {
+export function fadeTrack(way: FadeWay, from: number, settleMs: number = LIST_MORPH_SETTLE_MS): FadeTrack {
   if (way === "out") {
-    return { durationMs: LIST_MORPH_FADE_OUT_MS, frames: [{ offset: 0, share: from }, { offset: 1, share: 0 }] };
+    return { durationMs: settleMs * (LIST_MORPH_FADE_OUT_MS / LIST_MORPH_SETTLE_MS), frames: [{ offset: 0, share: from }, { offset: 1, share: 0 }] };
   }
   const half = LIST_MORPH_FADE_IN_FROM_MS / LIST_MORPH_SETTLE_MS;
   return {
-    durationMs: LIST_MORPH_SETTLE_MS,
+    durationMs: settleMs,
     frames: [{ offset: 0, share: from }, { offset: half, share: from }, { offset: 1, share: 1 }],
   };
 }
@@ -108,10 +115,11 @@ export interface MoveSegment {
 }
 
 /** A run from `q0` toward `q1` that starts at `speed` (List-ness per
- *  second): from rest, the stack's own spring. */
-export function segmentToward(q0: number, q1: number, speed: number): MoveSegment {
+ *  second): from rest, the stack's own spring; Minimal's move (`"move"`)
+ *  from rest whatever the speed (РД4). */
+export function segmentToward(q0: number, q1: number, speed: number, motion: Exclude<SpringMotion, "instant"> = "spring"): MoveSegment {
   const span = q1 - q0;
-  return { q0, q1, spring: morphSpring(span !== 0 ? speed / span : 0) };
+  return { q0, q1, spring: motion === "move" ? morphMove() : morphSpring(span !== 0 ? speed / span : 0) };
 }
 
 /** A run's List-ness at evenly spaced times: the spring's own samples, the
@@ -365,6 +373,12 @@ interface Episode {
   tableFrom: number;
   listFrom: number;
   segment: MoveSegment;
+  /** How the run moves, read as it starts (УД11): the spring in Full,
+   *  Minimal's move. */
+  motion: Exclude<SpringMotion, "instant">;
+  /** The run's settling time from rest, which the fades take their shares
+   *  of: the spring's in Full, Перемещение's in Minimal. */
+  settleMs: number;
   /** An animation of nothing that lasts the run: its time is the run's,
    *  its end the run's end. */
   clock: Animation | null;
@@ -819,7 +833,7 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
   const makeFades = (current: Episode, time: number | null) => {
     for (const fade of current.fades) {
       const tableLook = fade.look === "table";
-      const track = fadeTrack(tableLook === current.toTable ? "in" : "out", tableLook ? current.tableFrom : current.listFrom);
+      const track = fadeTrack(tableLook === current.toTable ? "in" : "out", tableLook ? current.tableFrom : current.listFrom, current.settleMs);
       fade.animation = fade.element.animate(
         track.frames.map((frame) => ({ offset: frame.offset, opacity: frame.share * fade.own })),
         { duration: track.durationMs, easing: "linear", fill: "both", pseudoElement: fade.pseudoElement },
@@ -885,14 +899,14 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
     const { spring } = current.segment;
     nav.setAttribute(FADE_ATTRIBUTE, current.toTable ? "table" : "list");
     const host = nav.querySelector(GUIDES_SELECTOR) ?? nav;
-    const clock = host.animate([], { duration: Math.max(spring.durationMs, LIST_MORPH_SETTLE_MS) });
+    const clock = host.animate([], { duration: Math.max(spring.durationMs, current.settleMs) });
     current.clock = clock;
     // Going back to the List the table's parts leave the layout once they
     // are gone; going to the table they are in it from the first frame.
     if (current.toTable) {
       nav.removeAttribute(BARE_ATTRIBUTE);
     } else if (!nav.hasAttribute(BARE_ATTRIBUTE)) {
-      const bareClock = host.animate([], { duration: LIST_MORPH_FADE_OUT_MS });
+      const bareClock = host.animate([], { duration: current.settleMs * (LIST_MORPH_FADE_OUT_MS / LIST_MORPH_SETTLE_MS) });
       current.bareClock = bareClock;
       void bareClock.finished.then(() => {
         if (episode === current && current.bareClock === bareClock) nav.setAttribute(BARE_ATTRIBUTE, "");
@@ -917,8 +931,8 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
     });
   };
 
-  /** A move from the look on screen across the threshold. */
-  const start = (toTable: boolean) => {
+  /** A move from the look on screen across the threshold, as `motion`. */
+  const start = (toTable: boolean, motion: Exclude<SpringMotion, "instant">) => {
     const scroll = nav.scrollTop;
     const height = nav.clientHeight;
     // Each scroll is the one the engine takes: it sets a scroll on its own
@@ -968,7 +982,9 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
       listRows: list.listRows,
       tableFrom: toTable ? 0 : 1,
       listFrom: toTable ? 1 : 0,
-      segment: toTable ? segmentToward(1, 0, 0) : segmentToward(0, 1, 0),
+      segment: toTable ? segmentToward(1, 0, 0, motion) : segmentToward(0, 1, 0, motion),
+      motion,
+      settleMs: motion === "move" ? roleMs("move", "enter") : LIST_MORPH_SETTLE_MS,
       clock: null,
       bareClock: null,
     };
@@ -981,21 +997,22 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
   const turn = (current: Episode) => {
     const elapsed = Number(current.clock?.currentTime ?? 0);
     const { q, speed } = segmentAt(current.segment, elapsed);
-    current.tableFrom = fadeShare(current.toTable ? "in" : "out", elapsed, current.tableFrom);
-    current.listFrom = fadeShare(current.toTable ? "out" : "in", elapsed, current.listFrom);
+    current.tableFrom = fadeShare(current.toTable ? "in" : "out", elapsed, current.tableFrom, current.settleMs);
+    current.listFrom = fadeShare(current.toTable ? "out" : "in", elapsed, current.listFrom, current.settleMs);
     cancel(current);
     current.toTable = !current.toTable;
-    current.segment = segmentToward(q, current.toTable ? 0 : 1, speed);
+    current.segment = segmentToward(q, current.toTable ? 0 : 1, speed, current.motion);
     run(current, false);
   };
 
   const onWidth = (width: number) => {
     // The width's motion passes widths that are not the sidebar's.
     if (held) return;
+    // WAAPI, which no CSS rule of the level reaches (Р2): the spring in
+    // Full, Minimal's move; Off changes the look at once (С3, РД4).
+    const motion = springMotion();
     const step = widthStep({
-      // WAAPI, which no CSS rule of the level reaches: Minimal and Off
-      // change the look at once (С3, Р2).
-      active: canMove && getSidebarStyle() === "list" && motionLevel() === "full",
+      active: canMove && getSidebarStyle() === "list" && motion !== "instant",
       threshold,
       width,
       previous,
@@ -1016,7 +1033,8 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
         if (width < threshold && !kept) keepList();
         return;
       case "start":
-        start(width >= threshold);
+        // A start is only ever active, so the level moves it.
+        if (motion !== "instant") start(width >= threshold, motion);
         return;
       case "turn":
         for (const slide of episode!.slides) fitEnds(slide, width + gutter);

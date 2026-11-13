@@ -10,7 +10,7 @@ import {
 } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealInFinder } from "@/lib/systemActions";
-import { MINIMAL_EASE_CLASS, MINIMAL_EXIT_CLASS } from "@/lib/motionClasses";
+import { responseFadeClass } from "@/lib/motionClasses";
 import { FolderOpen, FolderPlus, Plus, X } from "lucide-react";
 import {
   DropdownMenu,
@@ -590,10 +590,12 @@ function SpaceRow({
       </SearchMenuAction>
       <div
         className={cn(
-          "absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 transition-opacity duration-[120ms]",
-          // Minimal keeps the 120 ms appearance, already within the set, and
-          // fades out on the exit time, both on E (В2).
-          actionsVisible ? cn("opacity-100", MINIMAL_EASE_CLASS) : cn("pointer-events-none opacity-0", MINIMAL_EXIT_CLASS),
+          "absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 transition-opacity",
+          // Buttons that come up under the pointer answer as Отклик: in on
+          // the enter time, out on the exit time (В2; user's decision of
+          // 12.11.2026).
+          responseFadeClass(actionsVisible),
+          actionsVisible ? "opacity-100" : "pointer-events-none opacity-0",
         )}
         data-vault-switcher-row-actions=""
       >

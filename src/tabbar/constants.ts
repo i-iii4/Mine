@@ -27,12 +27,6 @@ export const TAB_MAX_WIDTH_PX = 200;
  *  (domain/windows.rs `TAB_DETACH_THRESHOLD_PX`, В61). */
 export const TAB_DETACH_THRESHOLD_PX = 24;
 
-/** How long neighbours take to make room for a dragged tab (В60). */
-export const TAB_REORDER_MOTION_MS = 150;
-
-/** The project's ease-out, the curve the sidebar's rows part with. */
-export const TAB_REORDER_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
-
 /** Width of the line that marks where a tab from another window would land (В63). */
 export const DROP_MARKER_WIDTH_PX = 2;
 

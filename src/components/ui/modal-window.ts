@@ -2,34 +2,35 @@
 // `Dialog` and `AlertDialog` so the two cannot drift apart again: one
 // dimming, one surface, two widths by role, one header, one footer.
 //
-// The classes below are Full's motion: the window in 200 ms, its scrim in
-// 150 ms, `ease`, a fade and 95 %. Minimal (150 ms in, 100 ms out, E, the
-// same fade and 95 %), Off and a key's at once are global.css's, which beat
-// these utilities (SPEC_MOTION_LEVELS.md, М5, НС6). The layers that play
-// the entrance and exit themselves follow their own specs.
+// The window and its scrim move together as Поверхность: a fade and 95 %,
+// in on --motion-surface-enter, out on --motion-surface-exit, the response
+// curve; Full 200 ms both ways, Minimal 150 and 100 ms, Off at once by the
+// tokens, a key at once by global.css (SPEC_MOTION_LEVELS.md, М5, РД1; user's
+// decision of 12.11.2026 on the scrim). The layers that play the entrance and
+// exit themselves follow their own specs.
 
 /** The scrim under a window: the one scrim every layer over the page shares
  *  (global.css, `.modal-scrim`; SPEC_COLOR_RULES.md, 3.9.1; user's decisions
  *  of 16.10.2026), the whole page of the tab blurred and dimmed by the
  *  canvas at 32 %. */
 export const MODAL_OVERLAY_CLASS =
-  "modal-scrim data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50"
+  "modal-scrim data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=open]:duration-(--motion-surface-enter) data-[state=closed]:duration-(--motion-surface-exit) ease-(--motion-ease) fixed inset-0 z-50"
 
 /** A floating layer on `--popover`, held by its line and shadow
  *  (SPEC_COLOR_RULES.md, 3.3; K11), 16px off each edge of a narrow app
  *  window, the window field 24px (`--spacing-s4`), its parts 16px apart. Its
  *  width is its role's (`MODAL_WIDTH_CLASS`). */
 export const MODAL_SURFACE_CLASS =
-  "bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-[calc(100%-32px)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-1 border border-border p-6 shadow-lg duration-200 outline-none"
+  "bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=open]:duration-(--motion-surface-enter) data-[state=closed]:duration-(--motion-surface-exit) ease-(--motion-ease) fixed top-[50%] left-[50%] z-50 grid w-[calc(100%-32px)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-1 border border-border p-6 shadow-lg outline-none"
 
 /** The dialogs' own entrance and exit, for a layer that plays them itself
  *  over its own content (the card's window, SPEC_CARD_PEEK.md, О11; the image
  *  preview, SPEC_MEDIA_ASSET_ACTIONS.md): the surface's as above, the scrim's
  *  as `MODAL_OVERLAY_CLASS`'s. */
-export const MODAL_SURFACE_ENTER_CLASS = "animate-in fade-in-0 zoom-in-95 duration-200"
-export const MODAL_SURFACE_LEAVE_CLASS = "animate-out fade-out-0 zoom-out-95 duration-200 fill-mode-forwards"
-export const MODAL_SCRIM_ENTER_CLASS = "animate-in fade-in-0"
-export const MODAL_SCRIM_LEAVE_CLASS = "animate-out fade-out-0 fill-mode-forwards"
+export const MODAL_SURFACE_ENTER_CLASS = "animate-in fade-in-0 zoom-in-95 duration-(--motion-surface-enter) ease-(--motion-ease)"
+export const MODAL_SURFACE_LEAVE_CLASS = "animate-out fade-out-0 zoom-out-95 duration-(--motion-surface-exit) ease-(--motion-ease) fill-mode-forwards"
+export const MODAL_SCRIM_ENTER_CLASS = "animate-in fade-in-0 duration-(--motion-surface-enter) ease-(--motion-ease)"
+export const MODAL_SCRIM_LEAVE_CLASS = "animate-out fade-out-0 duration-(--motion-surface-exit) ease-(--motion-ease) fill-mode-forwards"
 
 /** What a window holds sets its width. A question (a title, a description,
  *  the buttons; no field, list or preview) is 384px; a window with content

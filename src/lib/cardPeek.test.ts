@@ -14,7 +14,6 @@ import {
   CARD_PEEK_CONTENT_IN_FROM_MS,
   CARD_PEEK_SPRING_MS,
   CARD_PEEK_SPRING_RESPONSE_S,
-  CARD_PEEK_SWITCH_EXIT_MS,
   CARD_PEEK_FRAME_STEP_MS,
   CARD_PEEK_INPUT_WINDOW_MS,
   CARD_PEEK_MAX_WIDTH,
@@ -451,8 +450,8 @@ describe("card peek opening and closing (О10, О11; SPEC_MOTION_LEVELS.md)", ()
     expect(peekInputByKey(null, 1010)).toBe(false);
   });
 
-  it("opens by the table of events on each level: a key, the tab and the full page at once everywhere", () => {
-    const open = (from: PeekOpeningFrom, level: MotionLevel, restored = false) => peekOpeningKind({ from, restored, level });
+  it("opens by the table of events on each level: a key and the tab at once everywhere, the full page by the way back from it", () => {
+    const open = (from: PeekOpeningFrom, level: MotionLevel, restored = false, byKey = false) => peekOpeningKind({ from, restored, level, byKey });
     // Full: out of the card or the centre (О10).
     expect(open("card", "full")).toBe("card");
     expect(open("elsewhere", "full")).toBe("center");
@@ -464,9 +463,15 @@ describe("card peek opening and closing (О10, О11; SPEC_MOTION_LEVELS.md)", ()
     expect(open("elsewhere", "off")).toBe("instant");
     for (const level of ["full", "minimal", "off"] as const) {
       expect(open("keyboard", level)).toBe("instant");
-      expect(open("full", level)).toBe("instant");
       expect(open("card", level, true)).toBe("instant");
+      // From the full page by a key (⌃⌘S across `R_min`) at once (ОУ7).
+      expect(open("full", level, false, true)).toBe("instant");
     }
+    // From the full page: the way back from it on Full and Minimal, at once
+    // at Off (О17, ОУ7; user's decision of 12.11.2026).
+    expect(open("full", "full")).toBe("expand");
+    expect(open("full", "minimal")).toBe("expand");
+    expect(open("full", "off")).toBe("instant");
   });
 
   // О16 (user's decision of 30.10.2026): the window's place, the right part
@@ -492,24 +497,29 @@ describe("card peek opening and closing (О10, О11; SPEC_MOTION_LEVELS.md)", ()
     expect(close({ cardOnScreen: false })).toBe("center");
     expect(close({ openedAs: "center" })).toBe("center");
     expect(close({ openedAs: "fade" })).toBe("fade");
-    expect(close({ exit: "fade" })).toBe("fade");
+    // To the full page: its edges to the right part's, never a fade (О17);
+    // at once when a key started it (ОУ7).
+    expect(close({ exit: "expand" })).toBe("expand");
+    expect(close({ exit: "expand", openedAs: "fade" })).toBe("expand");
+    expect(close({ exit: "expand", byKey: true })).toBe("instant");
   });
 
-  it("sinks away in Minimal however it opened, fades toward the full page, and closes at once at Off (ОУ3, ОУ7, ОУ8)", () => {
-    for (const openedAs of ["card", "center", "fade", "instant", "rise"] as const) {
+  it("sinks away in Minimal however it opened, goes to the full page by its edges, and closes at once at Off (ОУ3, ОУ7, ОУ8)", () => {
+    for (const openedAs of ["card", "center", "fade", "instant", "rise", "expand"] as const) {
       for (const cardOnScreen of [true, false]) {
         expect(peekClosingKind({ openedAs, exit: "return", level: "minimal", cardOnScreen })).toBe("sink");
-        expect(peekClosingKind({ openedAs, exit: "fade", level: "minimal", cardOnScreen })).toBe("fade");
+        expect(peekClosingKind({ openedAs, exit: "expand", level: "minimal", cardOnScreen })).toBe("expand");
+        expect(peekClosingKind({ openedAs, exit: "expand", level: "minimal", cardOnScreen, byKey: true })).toBe("instant");
         expect(peekClosingKind({ openedAs, exit: "return", level: "off", cardOnScreen })).toBe("instant");
-        expect(peekClosingKind({ openedAs, exit: "fade", level: "off", cardOnScreen })).toBe("instant");
+        expect(peekClosingKind({ openedAs, exit: "expand", level: "off", cardOnScreen })).toBe("instant");
       }
     }
   });
 
   // О11 (user's decision of 05.11.2026): a change of collection or view.
   it("leaves a change of collection or view in Full in the dialogs' time, down by the close hint's step, with no scale", () => {
-    expect(CARD_PEEK_SWITCH_EXIT_MS).toBe(200);
-    expect(MODAL_SURFACE_CLASS).toContain(`duration-${CARD_PEEK_SWITCH_EXIT_MS}`);
+    // Поверхность's time, the dialogs' own (SPEC_MOTION_LEVELS.md, О4, РД1).
+    expect(MODAL_SURFACE_CLASS).toContain("data-[state=closed]:duration-(--motion-surface-exit)");
     expect(CARD_PEEK_NUDGE_OFFSET_PX).toBeCloseTo(6.667, 3);
     expect(peekSwitchExitKeyframes()).toEqual({
       window: { opacity: 0, transform: "translateY(6.667px)" },

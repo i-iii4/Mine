@@ -500,7 +500,8 @@ try {
     await page.evaluate(() => { document.querySelector("#scroller").scrollTop = 400; });
     await clickBackground(page);
     const leaving = await state(page);
-    for (const name of ["animate-out", "fade-out-0", "zoom-out-95", "duration-200"]) {
+    // Поверхность's leaving, on its token (SPEC_MOTION_LEVELS.md, К2, РД1).
+    for (const name of ["animate-out", "fade-out-0", "zoom-out-95", "duration-(--motion-surface-exit)"]) {
       assert(leaving.stage.includes(name), `leaves as a dialog: ${name}`);
     }
     await page.waitForFunction(() => document.querySelector("[data-image-preview-overlay]") === null, null, { polling: 50 });
@@ -605,7 +606,7 @@ try {
     await hold(page);
     await page.locator("#no-source").click();
     const opened = await state(page);
-    for (const name of ["animate-in", "fade-in-0", "zoom-in-95", "duration-200"]) {
+    for (const name of ["animate-in", "fade-in-0", "zoom-in-95", "duration-(--motion-surface-enter)"]) {
       assert(opened.stage.includes(name), `opens as a dialog: ${name}`);
     }
     assert.equal(opened.clipPath, "", "no flight without a source");

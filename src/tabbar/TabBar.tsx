@@ -43,10 +43,9 @@ import {
   stepTabHistory,
   toggleWindowSidebar,
 } from "@/lib/commands";
-import { motionMs } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import type { DropHover, TabBarState, TabBarTab, TabId } from "@/types";
-import { DROP_MARKER_WIDTH_PX, TAB_REORDER_EASING, TAB_REORDER_MOTION_MS, TRAFFIC_LIGHT_RESERVE_PX } from "./constants";
+import { DROP_MARKER_WIDTH_PX, TRAFFIC_LIGHT_RESERVE_PX } from "./constants";
 import {
   draggedOffset,
   dropMarkerLeft,
@@ -82,6 +81,10 @@ import {
 import { createTabMenu, type TabMenu } from "./tabMenu";
 import { listenHere } from "./useTabBarState";
 import { logTabBarFailure, type TabBarAction } from "@/lib/tabBarFailure";
+
+/** How neighbours make room for a dragged tab: Перемещение (SPEC_MOTION_LEVELS.md,
+ *  РД1, Т3). */
+const TAB_SHIFT_TRANSITION = "transform var(--motion-move) var(--motion-move-ease)";
 
 export const NEW_TAB_LABEL = "New Tab";
 export const CLOSE_TAB_BUTTON_LABEL = "Close Tab";
@@ -538,11 +541,10 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
     ? null
     : reorderTarget({ fromIndex: reorder.fromIndex, offset: reorder.offset, width, count });
   // Neighbours glide aside only while a tab is dragged: after a drop the
-  // new order is laid out in place, with nothing to animate. Minimal keeps
-  // the 150 ms, Off moves them at once (SPEC_MOTION_LEVELS.md, Т3).
-  const shiftTransition = reorder !== null
-    ? `transform ${motionMs(TAB_REORDER_MOTION_MS, "enter")}ms ${TAB_REORDER_EASING}`
-    : undefined;
+  // new order is laid out in place, with nothing to animate. They make room
+  // as Перемещение, the role's tokens by the level (В60; SPEC_MOTION_LEVELS.md,
+  // Т3, РД1).
+  const shiftTransition = reorder !== null ? TAB_SHIFT_TRANSITION : undefined;
 
   function tabShift(index: number, tabId: TabId): { offset: number; follows: boolean } {
     if (reorder === null || reorderTargetIndex === null) return { offset: 0, follows: false };

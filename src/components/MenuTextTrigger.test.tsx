@@ -121,7 +121,8 @@ describe("MenuTextTrigger's chevron by the input", () => {
     fireEvent.pointerDown(trigger);
     setState("open");
     expect(chevron(trigger)).not.toHaveAttribute(MOTION_KEY_ATTRIBUTE);
-    expect(chevron(trigger)).toHaveClass("transition-transform", "duration-150", "motion-reduce:transition-none");
+    // Отклик, 150 ms both ways on the response curve (М4, РД1).
+    expect(chevron(trigger)).toHaveClass("transition-transform", "duration-(--motion-enter)", "ease-(--motion-ease)");
   });
 
   it("turns at once when a key opened the menu, and back at once whatever closes it", () => {

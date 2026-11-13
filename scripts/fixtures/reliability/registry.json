@@ -4152,13 +4152,26 @@
         "src/hooks/useHiddenEdges.ts",
         "src/hooks/useHiddenEdges.test.tsx",
         "src/components/FadeScrollRow.tsx",
-        "src/components/reading/ArticleTable.tsx"
+        "src/components/reading/ArticleTable.tsx",
+        "src/lib/edgeFade.test.ts"
       ],
-      "requirement": "SPEC_SCROLL_EDGE_FADE.md### Полоса вкладок",
+      "requirement": "DESIGN_SYSTEM.md### Растворение кромок (edge fade)",
       "tests": [
         "src/hooks/useHiddenEdges.test.tsx",
         "src/components/FadeScrollRow.test.tsx",
-        "src/components/reading/ArticleTable.test.tsx"
+        "src/components/reading/ArticleTable.test.tsx",
+        "src/lib/edgeFade.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/dev/FeedScrollAuditRoute.tsx",
+        "src/dev/FeedScrollAuditRoute.test.tsx"
+      ],
+      "requirement": "SPEC_FEED_SCROLL_PERFORMANCE.md### Diagnostics",
+      "tests": [
+        "src/dev/FeedScrollAuditRoute.test.tsx"
       ],
       "command": "test:frontend"
     },
@@ -5110,16 +5123,39 @@
     },
     {
       "paths": [
+        "src/styles/motionRoles.test.ts",
+        "src/components/ui/switch.tsx",
+        "src/components/ui/scroll-area.tsx",
+        "src/components/ui/roleClasses.test.tsx"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md### Роли движения",
+      "tests": [
+        "src/styles/motionRoles.test.ts",
+        "src/components/ui/roleClasses.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/menuBlink.ts",
+        "src/lib/menuBlink.test.tsx"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md### Роли движения",
+      "tests": [
+        "src/lib/menuBlink.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "src/lib/motionClasses.ts",
         "src/lib/motionClasses.test.ts",
-        "src/components/TopFadeScrim.tsx",
         "src/components/CardRowActions.tsx",
         "src/components/CardRowActions.test.tsx"
       ],
       "requirement": "SPEC_MOTION_LEVELS.md#### Лента",
       "tests": [
         "src/lib/motionClasses.test.ts",
-        "src/lib/edgeFade.test.ts",
         "src/components/CardRowActions.test.tsx"
       ],
       "command": "test:frontend"

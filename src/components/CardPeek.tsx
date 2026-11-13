@@ -37,8 +37,10 @@
 // The window's size is heard by a ResizeObserver, never read in a frame.
 
 import {
+  createContext,
   Fragment,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -61,9 +63,8 @@ import {
   CARD_PEEK_PLATE_HEIGHT_PX,
   CARD_PEEK_PREPARE_MAX_MS,
   CARD_PEEK_RADIUS_PX,
-  CARD_PEEK_SWITCH_EXIT_EASING,
-  CARD_PEEK_SWITCH_EXIT_MS,
   CARD_PEEK_TOP_INSET_PX,
+  FRAME_LINE_PX,
   PEEK_FRAME_CORNERS,
   PEEK_FRAME_PIECES,
   PEEK_POSE_NUDGED,
@@ -90,6 +91,7 @@ import {
   peekFrameTransforms,
   peekInputByKey,
   peekLaidMediaTransforms,
+  peekMoveEase,
   peekMediaTransforms,
   peekNudgeTransform,
   peekOpeningKind,
@@ -130,7 +132,7 @@ import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { commandById } from "@/lib/commandRegistry";
 import { usePeekWidth, type PeekWidth } from "@/lib/cardView";
 import type { DetailLayoutMode } from "@/lib/detailLayout";
-import { MOTION_ENTER_MS, MOTION_EXIT_MS, motionLevel, type MotionLevel, type MotionOptions } from "@/lib/motion";
+import { MOTION_ENTER_MS, MOTION_EXIT_MS, motionLevel, roleEasing, roleMs, springMotion, type MotionLevel, type MotionOptions } from "@/lib/motion";
 import { lastInputIsKey } from "@/lib/motionInput";
 import { createPoseRunner, type PoseTargets } from "@/lib/poseMotion";
 import { cn } from "@/lib/utils";
@@ -177,21 +179,40 @@ export interface CardPeekProps {
   onClose: (options?: MotionOptions) => void;
   /** The closing window was pressed: open its card again (О11). */
   onReopen: (block: PeekBlock) => void;
+  /** The window hands the open card over to the full page or takes it
+   *  from it (О17): `full` in the frame after its last on the way to the
+   *  full page, where the full page stands in its place; `window` in the
+   *  frame it first shows coming from the full page, which goes then. The
+   *  page holds the full page unseen, or shown, until then. */
+  onHandOver?: (to: "full" | "window") => void;
   /** The window's content: the open card and its plate. */
   children: (block: PeekBlock) => ReactNode;
 }
 
 /** The window's movements on the spring (Full): its opening and closing,
- *  and `resize`, the window at its place narrowing to its content or
- *  widening for the panel beside it (О3, О8). Minimal's rise and sink run on
- *  the compositor instead (`createPoseRunner`, poseMotion.ts). */
+ *  `resize`, the window at its place narrowing to its content or widening
+ *  for the panel beside it (О3, О8), and `expand`, the way to and from the
+ *  full page (О17). Minimal's rise and sink run on the compositor instead
+ *  (`createPoseRunner`, poseMotion.ts); its `resize` and `expand` run here
+ *  as Перемещение in place of the spring (SPEC_MOTION_LEVELS.md, ОУ6, ОУ7). */
 type MovingKind = Exclude<PeekMotionKind, "instant" | "rise" | "sink"> | "resize";
 
 /** What a motion of the window in Minimal is for (SPEC_MOTION_LEVELS.md,
- *  ОУ2–ОУ7): the opening's rise; the hint's step and its way back; the
- *  leaving; the fade into the full page; the way back to the place from a
- *  leaving the same card's opening turned round. */
-type PeekPosePurpose = "rise" | "nudge" | "sink" | "fade" | "back";
+ *  ОУ2–ОУ5): the opening's rise; the hint's step and its way back; the
+ *  leaving; the way back to the place from a leaving the same card's
+ *  opening turned round. */
+type PeekPosePurpose = "rise" | "nudge" | "sink" | "back";
+
+/** Where the window is laid out: at its place over the right part, or over
+ *  the whole right part as the full page stands, its line a pixel past each
+ *  edge, where the right part cuts it (О17; the line inside the window's
+ *  box would otherwise inset the card a pixel from the full page's). */
+type PeekStance = "window" | "full";
+
+/** The view the window's content stands in while the window moves: the
+ *  window's, or the full page's on the way to it (О17, п. 5). The header
+ *  shows the button of the view it is in. */
+const PeekStanceContext = createContext<PeekStance>("window");
 
 /** Whether a kind goes by the spring (Full's opening and closing). */
 function springKind(kind: PeekMotionKind): kind is Exclude<MovingKind, "resize"> {
@@ -228,6 +249,10 @@ interface PeekMotion {
    *  its place; null, its place's (a closing that cut a resize short starts
    *  from the width it had). */
   windowWidth: number | null;
+  /** Minimal's move in place of the spring (ОУ6, ОУ7): the spring's
+   *  position runs from `from` to its target over `ms` on the move curve,
+   *  by `elapsed`; null on the spring. */
+  glide: { from: number; ms: number } | null;
   frame: number | null;
 }
 
@@ -457,8 +482,11 @@ function PeekFrameUnder({ view, cut }: { view: PeekMotionView; cut: PeekFrameCut
 }
 
 /** The frame over the window's surface and the card's picture: the four
- *  lines and the corners' line, as the card's line lies over its picture. */
+ *  lines and the corners' line, as the card's line lies over its picture.
+ *  The full page has no line of its own: on the way to it the line goes by
+ *  the window's share (О17, п. 1). */
 function PeekFrameOver({ view, cut }: { view: PeekMotionView; cut: PeekFrameCut }) {
+  const toFullPage = view.kind === "expand";
   return (
     <>
       {(["lineTop", "lineBottom", "lineLeft", "lineRight"] as const).map((piece) => (
@@ -467,6 +495,7 @@ function PeekFrameOver({ view, cut }: { view: PeekMotionView; cut: PeekFrameCut 
           className={cn(FRAME_PIECE_CLASS, "bg-border")}
           style={peekFramePieceStyle(piece, cut)}
           data-peek-piece={piece}
+          data-peek-weight={toFullPage ? "window" : undefined}
         />
       ))}
       {PEEK_FRAME_CORNERS.map((corner) => (
@@ -476,7 +505,7 @@ function PeekFrameOver({ view, cut }: { view: PeekMotionView; cut: PeekFrameCut 
           style={peekFramePieceStyle(corner, cut)}
           data-peek-piece={corner}
         >
-          {(["card", "window"] as const).map((owner) => (
+          {(toFullPage ? (["window"] as const) : (["card", "window"] as const)).map((owner) => (
             <div
               key={owner}
               className={cn("absolute border border-border", MOVED_CLASS)}
@@ -620,7 +649,7 @@ function originalOf(frame: HTMLElement | null): string | null {
 }
 
 /** The open card's window over the right part. */
-export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onClose, onReopen, children }: CardPeekProps) {
+export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onClose, onReopen, onHandOver, children }: CardPeekProps) {
   // The card the window shows: the open one, and the last one while the
   // window leaves.
   const [held, setHeld] = useState<PeekBlock | null>(block);
@@ -661,6 +690,18 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
   exitRef.current = exit;
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const onHandOverRef = useRef(onHandOver);
+  onHandOverRef.current = onHandOver;
+  // Where the window is laid out (О17), and an unseen box always laid out at
+  // the window's place, which the way to and from the full page reads in
+  // every frame: the right part may change under it as it goes (О4, О16).
+  const [stance, setStance] = useState<PeekStance>("window");
+  const placeProbeRef = useRef<HTMLDivElement>(null);
+  // The way to the full page is under way, or ended and not yet handed
+  // over: the page hears `full` once, whatever ends it.
+  const handingToFullRef = useRef(false);
+  // `vanish`, for the callbacks made before it.
+  const vanishRef = useRef<() => void>(() => undefined);
   const heldRef = useRef(held);
   heldRef.current = held;
   const closingRef = useRef(closing);
@@ -688,8 +729,8 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     queueMicrotask(() => evaluateFrameRef.current());
   }, []);
   const detailFrame = useMemo<DetailFrame>(
-    () => ({ layout: frameLayout?.layout ?? null, report: reportFrame }),
-    [frameLayout?.layout, reportFrame],
+    () => ({ layout: frameLayout?.layout ?? null, report: reportFrame, fullPage: stance === "full" }),
+    [frameLayout?.layout, reportFrame, stance],
   );
 
   // О15: the pointer resting on the scrim round the window steps the window
@@ -948,6 +989,33 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     });
   }, []);
 
+  /** The ends of the way to and from the full page in the window's own
+   *  space, as they stand this frame (О17): the right part with the window's
+   *  line a pixel past each edge (`full`), and the window's place, read
+   *  from the unseen box laid out there (`window`); and the window's own
+   *  box as it is laid out now (`laid`), read here rather than heard: a
+   *  change of stance made in a commit lands after the commit that asked
+   *  for it, and the frame painted after it must be laid by it. */
+  const expandEnds = useCallback((): { laid: PeekRect; full: PeekRect; window: PeekRect } | null => {
+    const anchor = anchorRef.current;
+    const probe = placeProbeRef.current;
+    // The window's own root over the right part, which both boxes stand in.
+    const root = anchor?.parentElement;
+    if (!anchor || !probe || !root) return null;
+    const x = anchor.offsetLeft;
+    const y = anchor.offsetTop;
+    return {
+      laid: { x: 0, y: 0, width: anchor.offsetWidth, height: anchor.offsetHeight },
+      full: {
+        x: -FRAME_LINE_PX - x,
+        y: -FRAME_LINE_PX - y,
+        width: root.clientWidth + 2 * FRAME_LINE_PX,
+        height: root.clientHeight + 2 * FRAME_LINE_PX,
+      },
+      window: { x: probe.offsetLeft - x, y: probe.offsetTop - y, width: probe.offsetWidth, height: probe.offsetHeight },
+    };
+  }, []);
+
   /** Writes one frame of the movement. */
   const paint = useCallback(() => {
     const motion = motionRef.current;
@@ -957,13 +1025,25 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     const contentElement = contentRef.current;
     const pieces = piecesRef.current;
     if (!motion || !anchor || !scrim || !surface || !contentElement || !pieces) return;
+    // The way to and from the full page reads the window's place and the
+    // right part's as they stand this frame, before anything is written.
+    const fullPageWay = motion.kind === "expand" ? expandEnds() : null;
+    if (motion.kind === "expand" && !fullPageWay) return;
     writeNudge();
-    const place = laid();
+    const place = fullPageWay ? fullPageWay.laid : laid();
     let shown: PeekRect;
     // The window's share: of the card's corner and fill against its own, of
     // the shadow, of the picture's way.
     let p: number;
-    if (motion.kind === "resize") {
+    if (fullPageWay) {
+      // Between the full page (0) and the window's place (1): the edges move,
+      // the corner, the line, the shadow and the scrim go by the share, the
+      // window itself never fades (О17).
+      p = clampUnit(motion.spring.position);
+      scrim.style.opacity = String(p);
+      anchor.style.opacity = "1";
+      shown = lerpPeekRect(fullPageWay.full, fullPageWay.window, p);
+    } else if (motion.kind === "resize") {
       // The window alone, at its place: its width only moves. Unclamped: a
       // turn that carries speed against the new target goes on a little
       // past where it turned before it comes back (О12).
@@ -989,7 +1069,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     for (const element of pieces.weights) {
       element.style.opacity = String(element.dataset.peekWeight === "card" ? 1 - p : p);
     }
-    const surfaceTransforms = peekSurfaceTransforms(place, shown);
+    const surfaceTransforms = peekSurfaceTransforms(place, shown, fullPageWay ? "top" : "centre");
     surface.style.transform = surfaceTransforms.surface;
     contentElement.style.transform = surfaceTransforms.content;
     contentElement.style.opacity = String(motion.kind === "card" ? motion.content : 1);
@@ -1051,7 +1131,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
         piece.underline.style.opacity = flight.fades === "share" ? opacity : String(1 - p);
       }
     });
-  }, [writeNudge]);
+  }, [expandEnds, writeNudge]);
 
   /** At rest the carried picture goes once the window's own original shows
    *  under it, so the end needs no swap; the window's frame shows again.
@@ -1102,6 +1182,17 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
    *  frame exactly on the card (О11, п. 4), the card shows under it the
    *  next frame, and the window goes the frame after (О14). */
   const finish = useCallback((motion: PeekMotion) => {
+    // At the full page: its last frame lies exactly on it; the frame after,
+    // the full page stands in its place and the window is gone, in one
+    // commit (О17, п. 2).
+    if (motion.kind === "expand" && motion.spring.target === 0) {
+      motion.frame = requestAnimationFrame(() => {
+        motion.frame = null;
+        if (motionRef.current !== motion) return;
+        flushSync(() => vanishRef.current());
+      });
+      return;
+    }
     if (motion.kind === "resize") {
       motion.frame = requestAnimationFrame((now) => {
         motion.frame = null;
@@ -1164,13 +1255,22 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     // One frame at most: a frame held up slows the window, never jumps it.
     const step = Math.min(CARD_PEEK_FRAME_STEP_MS, Math.max(0, now - motion.last));
     motion.last = now;
-    motion.spring = stepPeekSpring(motion.spring, step);
-    motion.elapsed += step;
+    const glide = motion.glide;
+    if (glide) {
+      // Minimal: Перемещение's time on the move curve in place of the
+      // spring, from where the window stood (ОУ6, ОУ7).
+      motion.elapsed += step;
+      const share = glide.ms > 0 ? clampUnit(motion.elapsed / glide.ms) : 1;
+      motion.spring = { position: lerp(glide.from, motion.spring.target, peekMoveEase(share)), velocity: 0, target: motion.spring.target };
+    } else {
+      motion.spring = stepPeekSpring(motion.spring, step);
+      motion.elapsed += step;
+    }
     motion.ride = peekRideOpacity(motion.direction, motion.elapsed, motion.rideStart);
     motion.content = motion.kind === "card"
       ? peekContentOpacity(motion.direction, motion.elapsed, motion.contentStart)
       : 1;
-    const settled = peekSpringSettled(motion.spring);
+    const settled = glide ? motion.elapsed >= glide.ms : peekSpringSettled(motion.spring);
     if (settled) {
       motion.spring = { position: motion.spring.target, velocity: 0, target: motion.spring.target };
       motion.content = motion.spring.target;
@@ -1407,6 +1507,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
       kind,
       slug,
       spring,
+      glide: null,
       direction: spring.target === 1 ? "in" : "out",
       // A movement that turns another round keeps its clock: no frame stands
       // still at the turn.
@@ -1456,7 +1557,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
    *  place's, in the frame it is called in. Only the frame's edges move,
    *  in pieces, as in an opening; the card stands in its new layout at once,
    *  clipped by them and never stretched (О12). */
-  const startResize = (fromWidth: number, spring: PeekSpring) => {
+  const startResize = (fromWidth: number, spring: PeekSpring, glide: PeekMotion["glide"]) => {
     const previous = motionRef.current;
     stopLoop(previous);
     const now = performance.now();
@@ -1464,6 +1565,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
       kind: "resize",
       slug: heldRef.current?.slug ?? "",
       spring,
+      glide,
       direction: "in",
       // A resize that turns another keeps its clock, as a reversal does.
       last: previous ? previous.last : now,
@@ -1490,9 +1592,10 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
 
   /** Applies the window's width and the card's layout for `next`: the card
    *  takes its new layout in this frame, and the window's edges go from the
-   *  width shown now to the new one by the spring when `animate`, keeping
-   *  the speed of a resize under way (О12), else stand there at once. */
-  const applyFrame = (next: PeekFrameLayout, animate: boolean) => {
+   *  width shown now to the new one when `animate`, by the spring keeping
+   *  the speed of a resize under way (О12), or in Minimal as Перемещение from
+   *  where they stand (ОУ6), else stand there at once. */
+  const applyFrame = (next: PeekFrameLayout, animate: "spring" | "move" | null) => {
     const anchor = anchorRef.current;
     const motion = motionRef.current?.kind === "resize" ? motionRef.current : null;
     const before = sizeRef.current.width;
@@ -1515,7 +1618,11 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
       }
       return;
     }
-    startResize(shownWidth, { position: 0, velocity: speed / distance, target: 1 });
+    startResize(
+      shownWidth,
+      { position: 0, velocity: animate === "spring" ? speed / distance : 0, target: 1 },
+      animate === "move" ? { from: 0, ms: roleMs("move", "enter") } : null,
+    );
   };
 
   /** Decides the window's width and the card's layout for the window's
@@ -1544,9 +1651,13 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     const posing = poseRunner.motion();
     if (posing && posing.purpose !== "nudge") return;
     const unseen = preparationRef.current !== null;
-    // Only Full carries the width; Minimal and Off stand at the new one at
-    // once (SPEC_MOTION_LEVELS.md, ОУ6).
-    applyFrame({ layout, contentWidth: content.width, width }, applied !== null && !unseen && motionLevel() === "full");
+    // Full carries the width on the spring, Minimal as Перемещение, Off
+    // stands at the new one at once (SPEC_MOTION_LEVELS.md, ОУ6, РД4).
+    const way = springMotion();
+    applyFrame(
+      { layout, contentWidth: content.width, width },
+      applied !== null && !unseen && way !== "instant" ? way : null,
+    );
   };
   evaluateFrameRef.current = evaluateFrame;
 
@@ -1608,6 +1719,93 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
       setLive(false);
     });
     poseRunner.move("rise", PEEK_POSE_RISE_FROM, PEEK_POSE_REST, MOTION_ENTER_MS, poseTargets(), settlePose);
+  };
+
+  /** What the way to and from the full page puts on the page: no card, the
+   *  full page's square corner against the window's own (О17, п. 1). */
+  const expandView = (): PeekMotionView => {
+    viewIdRef.current += 1;
+    return { kind: "expand", cardRadius: 0, windowRadius: readWindowRadius(), fill: "var(--background)", id: viewIdRef.current };
+  };
+
+  /** Sets the way between the full page (0) and the window's place (1)
+   *  going, from `from` toward `target`: on the window's spring in Full,
+   *  keeping `velocity` through a turn (О17, п. 6), as Перемещение from where
+   *  it stands in Minimal (SPEC_MOTION_LEVELS.md, ОУ7). Its first frame is
+   *  written before this frame is painted. */
+  const startExpand = (from: number, target: 0 | 1, level: MotionLevel, velocity = 0) => {
+    const anchor = anchorRef.current;
+    if (anchor) sizeRef.current = { width: anchor.offsetWidth, height: anchor.offsetHeight };
+    const now = performance.now();
+    motionRef.current = {
+      kind: "expand",
+      slug: heldRef.current?.slug ?? "",
+      spring: { position: from, velocity: level === "minimal" ? 0 : velocity, target },
+      glide: level === "minimal" ? { from, ms: roleMs("move", "enter") } : null,
+      direction: target === 1 ? "in" : "out",
+      last: now,
+      elapsed: 0,
+      contentStart: 1,
+      content: 1,
+      rideStart: 0,
+      ride: 0,
+      card: null,
+      flights: [],
+      widths: [null, null],
+      windowWidth: null,
+      frame: null,
+    };
+    gatherAndPaint();
+  };
+
+  /** The window goes to the full page (О17): laid out over the whole right
+   *  part as the full page stands, the card in the full page's layout from
+   *  the first frame, its edges from where they stand to the right part's.
+   *  The page holds the full page unseen until the window hands it over. */
+  const expandToFull = (level: MotionLevel) => {
+    const motion = motionRef.current;
+    const turning = motion?.kind === "expand";
+    const from = turning ? clampUnit(motion.spring.position) : 1;
+    const velocity = turning ? motion.spring.velocity : 0;
+    stopLoop(motion);
+    restoreHiddenFrame(motion);
+    motionRef.current = null;
+    cancelPreparation();
+    cancelHandover();
+    poseRunner.stop(true);
+    clearInline();
+    hideCard(null);
+    holdGate();
+    handingToFullRef.current = true;
+    setHintShown(false);
+    flushSync(() => {
+      setStance("full");
+      setLive(false);
+      setFlyer(null);
+      setView(expandView());
+    });
+    startExpand(from, 0, level, velocity);
+  };
+
+  /** The full page gives the card back to its window (О17, п. 3): the window
+   *  stands on the full page's place in its first frame, the page lets the
+   *  full page go in the same commit, and the edges go to the window's place
+   *  with the card in the window's layout. A way to the full page under way
+   *  turns round from where it is. */
+  const comeFromFull = (level: MotionLevel, from = 0, velocity = 0) => {
+    if (anchorRef.current) anchorRef.current.style.opacity = "";
+    if (scrimRef.current) scrimRef.current.style.opacity = "";
+    holdGate();
+    handingToFullRef.current = false;
+    flushSync(() => {
+      onHandOverRef.current?.("window");
+      setStance("window");
+      setPreparing(false);
+      setClosing(false);
+      setLive(false);
+      setView(expandView());
+    });
+    startExpand(from, 1, level, velocity);
   };
 
   /** Lays the card out unseen and waits for it, `CARD_PEEK_PREPARE_MAX_MS`
@@ -1816,6 +2014,13 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
    *  feed (О11: Escape, a narrow window's full page). */
   const vanish = () => {
     const motion = motionRef.current;
+    // The window was on its way to the full page: the page shows it now, in
+    // this commit (О17, п. 2).
+    if (handingToFullRef.current) {
+      handingToFullRef.current = false;
+      onHandOverRef.current?.("full");
+    }
+    setStance("window");
     cancelSwitchExit();
     setSwitching(false);
     cancelPreparation();
@@ -1836,6 +2041,8 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     setHintShown(false);
     setLeavingAsDialog(false);
   };
+  vanishRef.current = vanish;
+
 
   /** The window and its scrim leave as a dialog does (О11): the card it
    *  grew out of has no place on screen now (another place, another view,
@@ -1858,15 +2065,13 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     setLeavingAsDialog(true);
   };
 
-  /** Minimal's leaving (ОУ3, ОУ7): down the line to 40 px and 95 % with the
-   *  scrim fading, or toward the full page a fade where the window stands,
-   *  both in 100 ms on E from where it stands now. Its last frame stays on
+  /** Minimal's leaving (ОУ3): down the line to 40 px and 95 % with the scrim
+   *  fading, in 100 ms on E from where it stands now. Its last frame stays on
    *  the page, faded out, and it is gone the frame after (ОУ4, rule 4),
    *  unless the same card opened again meanwhile. */
-  const sinkPose = (purpose: "sink" | "fade") => {
+  const sinkPose = () => {
     const from = poseRunner.current();
-    const to = purpose === "sink" ? PEEK_POSE_SUNK : { ...from, opacity: 0 };
-    poseRunner.move(purpose, from, to, MOTION_EXIT_MS, poseTargets(), () => {
+    poseRunner.move("sink", from, PEEK_POSE_SUNK, MOTION_EXIT_MS, poseTargets(), () => {
       const ended = poseRunner.generation();
       requestAnimationFrame(() => {
         if (poseRunner.generation() !== ended) return;
@@ -1879,7 +2084,8 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
    *  started at (SPEC_MOTION_LEVELS.md, УД11). */
   const closingLevel = (): MotionLevel => {
     const motion = motionRef.current;
-    if (motion && motion.kind !== "resize") return "full";
+    // Minimal's way to and from the full page runs here too, as Перемещение.
+    if (motion && motion.kind !== "resize") return motion.glide ? "minimal" : "full";
     if (poseRunner.active()) return "minimal";
     return motionLevel();
   };
@@ -1931,7 +2137,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
         return;
       }
       if (exiting.kind === "sink") {
-        sinkPose("sink");
+        sinkPose();
         return;
       }
       const anchor = anchorRef.current;
@@ -1942,8 +2148,9 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
       }
       const ends = peekSwitchExitKeyframes();
       const timing: KeyframeAnimationOptions = {
-        duration: CARD_PEEK_SWITCH_EXIT_MS,
-        easing: CARD_PEEK_SWITCH_EXIT_EASING,
+        // Поверхность's leaving (О4, РД1): only Full gets here.
+        duration: roleMs("surface", "exit"),
+        easing: roleEasing("surface"),
         fill: "forwards",
       };
       const windowExit = anchor.animate([ends.window], timing);
@@ -1973,11 +2180,19 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
       // in 150 ms on E (SPEC_MOTION_LEVELS.md, ОУ5).
       const posing = poseRunner.motion();
       if (
-        posing && (posing.purpose === "sink" || posing.purpose === "fade")
+        posing && posing.purpose === "sink"
         && !switchExitRef.current && leavingSlugRef.current === block.slug
       ) {
         setClosing(false);
         poseRunner.move("back", null, PEEK_POSE_REST, MOTION_ENTER_MS, poseTargets(), settlePose);
+        return;
+      }
+      // The full page gives the card back while the window goes to it (the
+      // right part's width crossed back): the way turns round from where it
+      // is (О17, п. 6).
+      if (motion?.kind === "expand" && motion.spring.target === 0 && motion.slug === block.slug) {
+        stopLoop(motion);
+        comeFromFull(motion.glide ? "minimal" : "full", clampUnit(motion.spring.position), motion.spring.velocity);
         return;
       }
       // The same card opened again while its window leaves: back from where
@@ -2031,17 +2246,33 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
       setLeavingAsDialog(false);
       queueMicrotask(() => evaluateFrameRef.current());
       const from = opening && opening.slug === block.slug ? opening.from : "elsewhere";
+      const level = motionLevel();
       let kind = peekOpeningKind({
         from,
         restored: opening?.slug === block.slug && opening.restored,
-        level: motionLevel(),
+        level,
+        // The full page given back by a key, ⌃⌘S across `R_min` or a native
+        // menu item, which counts as one (ОУ7; УД4, п. 1).
+        byKey: from === "full" && (peekInputByKey(lastPeekInput(), performance.now()) || lastInputIsKey()),
       });
       if (kind === "card" && !(area && findPeekSource(area, block.slug))) kind = "center";
-      // A window a key or the full page stood at once still fades in place
-      // when it closes other than by Escape (О9, О11).
-      openedAsRef.current = (from === "keyboard" || from === "full") && kind === "instant" && !(opening?.restored ?? false) ? "fade" : kind;
+      // A window a key or the full page stood still fades in place when it
+      // closes other than by Escape (О9, О11).
+      openedAsRef.current = from === "full" || (from === "keyboard" && kind === "instant" && !(opening?.restored ?? false)) ? "fade" : kind;
       if (kind === "instant") {
+        // From the full page at once: the page lets it go in this commit.
+        if (from === "full") onHandOverRef.current?.("window");
         setPreparing(false);
+        return;
+      }
+      // From the full page: the window prepares unseen while the page still
+      // shows the full page, and stands on its place in its first frame
+      // (О17, п. 3).
+      if (kind === "expand") {
+        if (scrimRef.current) scrimRef.current.style.opacity = "0";
+        if (anchorRef.current) anchorRef.current.style.opacity = "0";
+        setPreparing(true);
+        prepare(() => comeFromFull(level), () => new Map(), true);
         return;
       }
       // Unseen while it prepares: nothing changes on screen until the start.
@@ -2119,23 +2350,36 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
         exit: exitRef.current,
         level,
         cardOnScreen: source !== null,
+        // The way to the full page a key started, ⌃⌘S across `R_min` or a
+        // native menu item (ОУ7; УД4, п. 1).
+        byKey: exitRef.current === "expand" && (peekInputByKey(lastPeekInput(), performance.now()) || lastInputIsKey()),
       });
       if (escapedRef.current || kind === "instant") {
         escapedRef.current = false;
+        // Toward the full page at once: the page shows it in this commit.
+        if (exitRef.current === "expand") handingToFullRef.current = true;
         vanish();
+        return;
+      }
+      // Toward the full page: its edges go to the right part's on every
+      // level but Off, the window never fading (О17, ОУ7).
+      if (kind === "expand") {
+        expandToFull(level);
         return;
       }
       // Minimal: the leaving from where the window stands, in the frame the
       // closing comes, a step or a rise under way carried on (ОУ3, ОУ4).
       if (level === "minimal") {
         // A window Full grew out of its card before the level changed gives
-        // the card back now: Minimal hides none (ОУ2, п. 4).
+        // the card back now: Minimal hides none (ОУ2, п. 4). A way from the
+        // full page under way stops where it stands and sinks from there.
+        if (moving) stopLoop(moving);
         hideCard(null);
         holdGate();
         setLive(false);
         setClosing(true);
         leavingSlugRef.current = held.slug;
-        sinkPose(kind === "fade" ? "fade" : "sink");
+        sinkPose();
         return;
       }
       if (!springKind(kind)) return;
@@ -2248,11 +2492,13 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     const down = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.metaKey || event.altKey || event.ctrlKey) return;
       escapedRef.current = true;
-      if (closingRef.current) {
+      const motion = motionRef.current;
+      // Closing, or on the way to the full page: gone at once, the full page
+      // standing in its place.
+      if (closingRef.current || (motion?.kind === "expand" && motion.spring.target === 0)) {
         flushSync(() => vanish());
         return;
       }
-      const motion = motionRef.current;
       const rising = poseRunner.motion()?.purpose === "rise";
       if (!rising && (!motion || motion.kind === "resize" || motion.spring.target !== 1)) return;
       event.preventDefault();
@@ -2349,14 +2595,50 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     </Fragment>
   );
 
+  // In M from the right part's sides and bottom, and from its top by M less
+  // the window's line, so the line lies on the top row's and the header
+  // fills the sidebar's first row; with «Peek width» Fit card never wider
+  // than the card, and with the panel under the content no wider than the
+  // content, the auto margins centring it once the right part is wider (О3).
+  const placeStyle: CSSProperties = {
+    top: CARD_PEEK_TOP_INSET_PX,
+    right: CARD_PEEK_MARGIN_PX,
+    bottom: CARD_PEEK_MARGIN_PX,
+    left: CARD_PEEK_MARGIN_PX,
+    maxWidth: frameMaxWidth(frameLayout, peekWidth),
+    marginInline: "auto",
+  };
+  // On its way to the full page the window is laid out as the full page
+  // stands, its line a pixel past each edge of the right part (О17).
+  const fullPageStyle: CSSProperties = {
+    top: -FRAME_LINE_PX,
+    right: -FRAME_LINE_PX,
+    bottom: -FRAME_LINE_PX,
+    left: -FRAME_LINE_PX,
+  };
+
   return (
+    <PeekStanceContext.Provider value={stance}>
     <div
       className="pointer-events-none absolute inset-0 z-10"
       data-card-peek=""
       data-card-peek-closing={closing ? "" : undefined}
       data-card-peek-switching={switching ? "" : undefined}
       data-card-peek-preparing={preparing ? "" : undefined}
+      data-card-peek-stance={stance}
+      // On its way to the full page nothing in it takes a press or a key:
+      // the card is the full page's already (О17).
+      inert={stance === "full"}
     >
+      {/* Where the window stands at its place, unseen: the way to and from
+          the full page reads it in every frame (О17). */}
+      <div
+        ref={placeProbeRef}
+        aria-hidden="true"
+        className="pointer-events-none invisible absolute"
+        style={placeStyle}
+        data-card-peek-place=""
+      />
       {/* A drag holds the step and the hint (С7.8). */}
       <HoverIntentDragWatch intent={scrimIntent} />
       <div
@@ -2387,20 +2669,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
         onAnimationEnd={(event) => {
           if (leavingAsDialog && event.target === event.currentTarget) vanish();
         }}
-        // In M from the right part's sides and bottom, and from its top by M
-        // less the window's line, so the line lies on the top row's and the
-        // header fills the sidebar's first row; with «Peek width» Fit card
-        // never wider than the card, and with the panel under the content no
-        // wider than the content, the auto margins centring it once the
-        // right part is wider (О3).
-        style={{
-          top: CARD_PEEK_TOP_INSET_PX,
-          right: CARD_PEEK_MARGIN_PX,
-          bottom: CARD_PEEK_MARGIN_PX,
-          left: CARD_PEEK_MARGIN_PX,
-          maxWidth: frameMaxWidth(frameLayout, peekWidth),
-          marginInline: "auto",
-        }}
+        style={stance === "full" ? fullPageStyle : placeStyle}
         data-card-peek-window=""
       >
         {/* The window as one, stepped back while the pointer rests on the
@@ -2454,6 +2723,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
         ESC to close card
       </div>
     </div>
+    </PeekStanceContext.Provider>
   );
 }
 
@@ -2498,6 +2768,9 @@ export function CardPeekPlate({
   // The page counts ⌘K over every open card; the plate's menu answers the
   // requests that came since this window opened.
   const menuBaselineRef = useRef(menuOpenRequestSequence);
+  // On its way to the full page the header stands as the full page's top
+  // row does, with its button back to the window (О17, п. 5).
+  const stance = useContext(PeekStanceContext);
   return (
     <header
       className="flex shrink-0 flex-col bg-chrome"
@@ -2532,7 +2805,7 @@ export function CardPeekPlate({
             onClick={onExpand}
             data-card-peek-expand=""
           >
-            <ViewToggleIcon to="full" />
+            <ViewToggleIcon to={stance === "full" ? "window" : "full"} />
           </Button>
           <ChromeCloseButton onClick={onClose} />
         </ChromeActions>

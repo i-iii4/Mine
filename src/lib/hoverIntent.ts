@@ -71,9 +71,11 @@ export const HOVER_INTENT = {
   scrollSettleMs: 150,
   /**
    * С7.6: answers fade in over `fadeInMs` and out over the shorter
-   * `fadeOutMs`, so leaving reads as a response, not a lag. CSS holds the same
-   * values as `--hover-intent-fade-in` and `--hover-intent-fade-out`; a test
-   * keeps them equal.
+   * `fadeOutMs`, so leaving reads as a response, not a lag. They are
+   * Отклик's times: CSS holds them as `--motion-enter` and `--motion-exit`,
+   * motion.ts as `MOTION_ENTER_MS` and `MOTION_EXIT_MS`; a test keeps them
+   * equal (SPEC_MOTION_LEVELS.md, РД8). The graph reads them as they are,
+   * at every level (УД9).
    */
   fadeInMs: 150,
   fadeOutMs: 100,

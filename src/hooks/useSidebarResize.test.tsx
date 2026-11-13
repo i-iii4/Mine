@@ -2,9 +2,14 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SidebarLayout } from "@/types";
 import { APP_MAIN_MIN_WIDTH_PX, SIDEBAR_MAX_WIDTH_PX, SIDEBAR_MIN_WIDTH_PX, sidebarBesideMinWidthPx } from "@/lib/appLayout";
-import { MOTION_EASE, MOTION_ENTER_MS, MOTION_EXIT_MS, MOTION_LEVELS } from "@/lib/motion";
+import { MOTION_EASE, MOTION_ENTER_MS, MOTION_EXIT_MS, MOTION_LEVELS, MOTION_SURFACE_MS } from "@/lib/motion";
 import { setMotionLevel } from "@/test/motionLevel";
-import { SIDEBAR_WIDTH_MOTION_MS, SIDEBAR_WIDTH_TRANSITION, useSidebarResize } from "./useSidebarResize";
+import { useSidebarResize } from "./useSidebarResize";
+
+/** The width's motion in Full: Поверхность, 200 ms both ways on the response
+ *  curve (SPEC_MOTION_LEVELS.md, С1, РД7; was 200 ms `ease`). */
+const SIDEBAR_WIDTH_MOTION_MS = MOTION_SURFACE_MS;
+const SIDEBAR_WIDTH_TRANSITION = `width ${MOTION_SURFACE_MS}ms ${MOTION_EASE}`;
 
 const commands = vi.hoisted(() => ({
   setWindowSidebar: vi.fn(async (_sidebar: { width_px: number; collapsed: boolean }) => {}),
@@ -447,7 +452,7 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
     const minimalCollapse = `width ${MOTION_EXIT_MS}ms ${MOTION_EASE}`;
     const minimalOpening = `width ${MOTION_ENTER_MS}ms ${MOTION_EASE}`;
 
-    it("moves by the button in Full for 200 ms on ease, both ways, one value for the panel and its segment", () => {
+    it("moves by the button in Full for 200 ms on the response curve, both ways, one value for the panel and its segment", () => {
       vi.useFakeTimers();
       try {
         const { result } = renderHook(() => useSidebarResize({ width_px: 480, collapsed: false }));

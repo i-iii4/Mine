@@ -12,11 +12,15 @@ import { clearActionFailures } from "@/lib/actionFailures";
 import { isTabVisible, setTabVisible } from "@/lib/tabVisibility";
 import { TAB_VIEW_REPORT_DEBOUNCE_MS } from "@/lib/tabPage";
 import { useThumbnailUpgrade } from "@/hooks/useThumbnailUpgrade";
-import { SIDEBAR_WIDTH_TRANSITION } from "@/hooks/useSidebarResize";
+import { sidebarWidthTransition } from "@/hooks/useSidebarResize";
 import type { ReactNode } from "react";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act, render, screen, waitFor, fireEvent, within } from "@testing-library/react";
-import { MOTION_EXIT_MS } from "@/lib/motion";
+import { MOTION_EXIT_MS, MOTION_SURFACE_MS } from "@/lib/motion";
+
+/** The sidebar's width in Full: Поверхность, 200 ms on the response curve
+ *  (SPEC_MOTION_LEVELS.md, С1). */
+const SIDEBAR_WIDTH_TRANSITION = sidebarWidthTransition({ ms: MOTION_SURFACE_MS });
 import { installMotionInput } from "@/lib/motionInput";
 import { setMotionLevel } from "@/test/motionLevel";
 import { MemoryRouter } from "react-router";
@@ -228,7 +232,7 @@ vi.mock("@/hooks/useSidebarResize", async (importOriginal) => {
       collapsed,
       isResizing: sidebarResizeState.isResizing,
       widthAnimating: sidebarResizeState.widthAnimating,
-      widthTransition: sidebarResizeState.widthAnimating ? actual.SIDEBAR_WIDTH_TRANSITION : "none",
+      widthTransition: sidebarResizeState.widthAnimating ? actual.sidebarWidthTransition({ ms: MOTION_SURFACE_MS }) : "none",
       widthPhase: sidebarResizeState.widthAnimating ? sidebarResizeState.widthPhase : null,
       besideShown: !overlaid,
       // As the hook has it: open, or for the motion of a collapse.
@@ -637,7 +641,11 @@ vi.mock("@/components/Sidebar", async () => {
       linkedBlockSlug = null,
       linkedTags = [],
       onToggleLinkedTag,
+      isCreatingChannel = false,
+      isCreatingChannelByKey = false,
     }: {
+      isCreatingChannel?: boolean;
+      isCreatingChannelByKey?: boolean;
       onOpenCardMenu?: (block: LightBlock, point: { x: number; y: number }) => void;
       keyboardFocusRowKey?: string | null;
       linkedBlockSlug?: string | null;
@@ -663,6 +671,8 @@ vi.mock("@/components/Sidebar", async () => {
           data-sidebar-mock=""
           data-sidebar-mock-drop-dragging={String(isDropDragging)}
           data-sidebar-mock-keyboard-row={keyboardFocusRowKey ?? undefined}
+          // The creation row and what opened it (SPEC_MOTION_LEVELS.md, С8).
+          data-sidebar-mock-creating={isCreatingChannel ? (isCreatingChannelByKey ? "key" : "pointer") : undefined}
         >
           {topRow}
           {/* The creation row's `Create`: a refusal comes back to the row. */}
@@ -2327,6 +2337,12 @@ describe("AppWithVault", () => {
           await act(async () => undefined);
           expect(commandMocks.createChannel).not.toHaveBeenCalled();
           expect(field()).toHaveValue("Gamma");
+          // The creation row opens with the name, at once on every level:
+          // Enter opened it (SPEC_MOTION_LEVELS.md, С8, УД4, п. 8; user's
+          // decision of 12.11.2026).
+          await waitFor(() => {
+            expect(document.querySelector("[data-sidebar-mock]")).toHaveAttribute("data-sidebar-mock-creating", "key");
+          });
         });
 
         it("Enter in the empty field does nothing", async () => {
@@ -3798,8 +3814,9 @@ describe("AppWithVault", () => {
   });
 
   // SPEC_MOTION_LEVELS.md, В1, Р3: the top rows fade by the level, and the
-  // closed full page is held for the fade's time: Full 190 ms, Minimal 100 ms,
-  // Off and a key not at all; a key's open and close land the rows at once.
+  // closed full page is held for the fade's time, Отклик's leaving: Full and
+  // Minimal 100 ms (Full was 190 ms, РД7), Off and a key not at all; a key's
+  // open and close land the rows at once.
   describe("the top rows of the full page by the motion level", () => {
     const detailMenu = () => document.querySelector("[data-secondary-detail-top-menu]");
     /** The row that holds the place's name and the open card's menu. */
@@ -3820,13 +3837,14 @@ describe("AppWithVault", () => {
     }
     const wait = (ms: number) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
 
-    it("holds the closed page for 190 ms in Full", async () => {
+    it("holds the closed page for 100 ms in Full, the rows' fade out", async () => {
       await openCard();
       fireEvent.click(screen.getByRole("button", { name: "Close" }));
       expect(detailMenu()).toHaveAttribute("data-entered", "false");
-      await wait(MOTION_EXIT_MS + 20);
+      await wait(MOTION_EXIT_MS - 40);
       expect(detailMenu()).not.toBeNull();
-      await waitFor(() => expect(detailMenu()).toBeNull());
+      await wait(60);
+      expect(detailMenu()).toBeNull();
     });
 
     it("holds the closed page for 100 ms in Minimal", async () => {
@@ -4014,11 +4032,14 @@ describe("AppWithVault", () => {
       fireEvent.click(collapse);
       expect(localStorage.getItem(CARD_VIEW_STORAGE_KEY)).toBe("peek");
       expect(getCardView()).toBe("peek");
-      // The card stands in its window at once; the top row is as with no card.
+      // The card's window prepares while the full page still shows, then
+      // takes the card from it; the top row is then as with no card (О17).
       const window = document.querySelector<HTMLElement>("[data-card-peek]");
       expect(window).not.toBeNull();
       expect(within(window!).getByTestId("detail-title")).toHaveTextContent("alpha-block");
-      expect(document.querySelector("[data-secondary-detail-top-menu]")).toBeNull();
+      await waitFor(() => {
+        expect(document.querySelector("[data-secondary-detail-top-menu]")).toBeNull();
+      });
 
       fireEvent.click(within(window!).getByRole("button", { name: "Open as full page" }));
       expect(localStorage.getItem(CARD_VIEW_STORAGE_KEY)).toBe("full");

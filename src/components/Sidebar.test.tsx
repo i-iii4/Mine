@@ -23,6 +23,7 @@ import {
 import { sidebarStripTileCount } from "@/lib/appLayout";
 import { isCardLitByCollection, resetCollectionHover, setCollectionMemberships, setHoveredCard, setSelectedCards } from "@/lib/collectionHover";
 import { HOVER_INTENT } from "@/lib/hoverIntent";
+import { installMotionInput } from "@/lib/motionInput";
 import { NAME_REFUSAL_NOTICE_MS, NAME_REFUSED_SHAKE_MS } from "@/hooks/useNameEdit";
 import { indexedBlock } from "@/test/blocks";
 import { installSidebarStripWidth, setSidebarStripWidth } from "@/test/sidebarStrip";
@@ -826,15 +827,11 @@ describe("Sidebar", () => {
     expect(nav).toHaveClass("pb-8");
 
     // The inset belongs to the scroll container, and nothing above it may claim
-    // vertical space. The nav sits inside a positioning wrapper — the fade band
-    // has to be a sibling of the scrollport rather than a child of it — so the
-    // check is that the wrapper is layout-transparent and holds no other
-    // space-taking element before the nav.
-    const wrapper = container.querySelector("aside")?.firstElementChild;
-    expect(wrapper).toContainElement(nav as HTMLElement);
-    expect(wrapper).toHaveClass("flex-1");
-    expect(wrapper).toHaveClass("min-h-0");
-    expect(wrapper?.firstElementChild).toBe(nav);
+    // vertical space: the nav is the panel's first child and takes its height
+    // (the top fade's wrapper went with the fade, SPEC_MOTION_LEVELS.md,
+    // решение 9).
+    expect(container.querySelector("aside")?.firstElementChild).toBe(nav);
+    expect(nav).toHaveClass("flex-1", "overflow-y-auto");
   });
 
   it("applies collapsed width via style", () => {
@@ -941,7 +938,10 @@ describe("Sidebar", () => {
     const mark = () => document.querySelector('[data-sidebar-row-key="tag:beta"] [data-sidebar-link-icon]');
     const button = () => screen.getByRole("button", { name: /(Connect|Disconnect) beta/ });
 
-    // Enter on the row: a click with no count of presses.
+    // Enter on the row: a click with no count of presses, the page's last
+    // input a key.
+    const removeInput = installMotionInput();
+    fireEvent.keyDown(window, { key: "Enter" });
     fireEvent.click(button(), { detail: 0 });
     expect(mark()).not.toHaveAttribute("data-sidebar-link-turn");
     rerender(sidebarTree(linked(["beta"])));
@@ -954,6 +954,15 @@ describe("Sidebar", () => {
     expect(mark()).not.toHaveAttribute("data-sidebar-link-turn");
     rerender(sidebarTree(linked(["beta"])));
     expect(mark()).not.toHaveAttribute("data-sidebar-link-turn");
+
+    // The bottom bar's Connect pressed by the pointer reaches the button as a
+    // click with no count of presses too: it turns by the level (УД4, п. 2;
+    // user's decision of 12.11.2026).
+    fireEvent.pointerDown(window, { button: 0 });
+    fireEvent.click(button(), { detail: 0 });
+    rerender(sidebarTree(linked([])));
+    expect(mark()).not.toHaveAttribute("data-sidebar-link-turn");
+    removeInput();
   });
 
   it("parts the list for the create row at once after ⇧⌘N, by the level after `+` (SPEC_MOTION_LEVELS.md, С8)", () => {
@@ -2190,12 +2199,10 @@ describe("the list's look while the width moves (user's decision of 01.11.2026)"
     const moving = renderSidebar({ ...defaultProps, widthAnimating: true, openWidth: 420 });
     const list = scrollport(moving.container) as HTMLElement;
     expect(list.style.minWidth).toBe("max(var(--sidebar-nav-min-width), 419px)");
-    expect((list.parentElement as HTMLElement).style.minWidth).toBe("max(var(--sidebar-nav-min-width), 419px)");
     moving.unmount();
     const resting = renderSidebar({ ...defaultProps, widthAnimating: false, openWidth: 420 });
     const still = scrollport(resting.container) as HTMLElement;
     expect(still.style.minWidth).toBe("");
-    expect((still.parentElement as HTMLElement).style.minWidth).toBe("");
   });
 
   it("gives a name's cell the columns' width, not the sidebar's", () => {

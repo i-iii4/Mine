@@ -2827,14 +2827,16 @@ const liftTimes = (level: MotionLevel): { up: number; down: number } => {
 describe("the card lift by the motion level (SPEC_MOTION_LEVELS.md, Л1–Л3, «Тесты» п. 8)", () => {
   it("lifts in Minimal on the set's 150 and 100 ms, on the lift's own curves", () => {
     const minimal = levelRules.find((rule) => rule.selector === '[data-motion="minimal"]' && rule.body.includes("--lift-up:"))!;
-    expect(minimal.body).toContain("--lift-up: var(--motion-enter) var(--card-lift-curve-up)");
-    expect(minimal.body).toContain("--lift-down: var(--motion-exit) var(--card-lift-curve-down)");
+    // The level's block beside the roles' tokens (SPEC_MOTION_LEVELS.md, РД2,
+    // РД6): the lift outside the roles keeps its own curves.
+    expect(minimal.body).toContain(`--lift-up: ${MOTION_ENTER_MS}ms var(--card-lift-curve-up)`);
+    expect(minimal.body).toContain(`--lift-down: ${MOTION_EXIT_MS}ms var(--card-lift-curve-down)`);
     expect(tokenMs("--motion-enter")).toBe(MOTION_ENTER_MS);
     expect(tokenMs("--motion-exit")).toBe(MOTION_EXIT_MS);
     expect(liftTimes("full")).toEqual({ up: 200, down: 150 });
     expect(liftTimes("minimal")).toEqual({ up: 150, down: 100 });
     // Same weight as the root's clock: written after it, so it wins.
-    expect(levelCss.indexOf(minimal.selector + " {\n  --lift-up")).toBeGreaterThan(levelCss.indexOf("--lift-up: 200ms"));
+    expect(levelCss.indexOf(`${minimal.selector} {`)).toBeGreaterThan(levelCss.indexOf("--lift-up: 200ms"));
   });
 
   it("lands the keyboard's lift, frame and wash at once at every level", () => {
@@ -2856,7 +2858,7 @@ describe("the card lift by the motion level (SPEC_MOTION_LEVELS.md, Л1–Л3, �
 
   it("lands everything at once in Off at 0.01 ms, keeping the delays of intent", () => {
     const { selector, body } = atOnceRule();
-    expect(selector).toContain('[data-motion="off"] *:not(.mine-progress-indeterminate):not(.animate-spin)');
+    expect(selector).toContain('[data-motion="off"] *:not(.mine-progress-indeterminate, .animate-spin, [data-name-refused])');
     expect(selector).toContain('[data-motion="off"] *::before');
     expect(selector).toContain('[data-motion="off"] *::after');
     expect(body).toContain("animation-duration: 0.01ms !important");
@@ -2864,12 +2866,12 @@ describe("the card lift by the motion level (SPEC_MOTION_LEVELS.md, Л1–Л3, �
     expect(body).not.toMatch(/transition:\s*none|animation:\s*none/);
   });
 
-  it("washes a pointer's selection in Minimal on 150 in and 100 out, the wash's own E kept", () => {
+  it("washes a pointer's selection as Отклик on every level: in on the enter time, out on the exit time (Л3, РД7)", () => {
     const wash = '[data-card-media-clip] > [data-card-lift="window"]::after';
-    const minimalBody = (selector: string) => levelRules.find((rule) => rule.selector.split(/,\s*\n/).map((part) => part.trim()).includes(selector))?.body ?? "";
-    expect(minimalBody(`[data-motion="minimal"] ${wash}`)).toContain("transition-duration: var(--motion-exit)");
-    expect(minimalBody(`[data-motion="minimal"] [data-grid-scroll] [data-feed-grid-item-selected="true"] ${wash}`)).toContain("transition-duration: var(--motion-enter)");
-    expect(minimalBody(wash)).toContain("cubic-bezier(0.22, 1, 0.36, 1)");
+    const bodyOf = (selector: string) => levelRules.find((rule) => rule.selector.split(/,\s*\n/).map((part) => part.trim()).includes(selector))?.body ?? "";
+    expect(bodyOf(wash)).toContain("transition: opacity var(--motion-exit) var(--motion-ease)");
+    expect(bodyOf(`[data-grid-scroll] [data-feed-grid-item-selected="true"] ${wash}`)).toContain("transition-duration: var(--motion-enter)");
+    expect(levelCss).not.toMatch(/\[data-motion="minimal"\] \[data-card-media-clip\]/);
   });
 });
 

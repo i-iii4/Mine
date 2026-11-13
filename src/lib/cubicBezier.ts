@@ -69,3 +69,12 @@ export function cubicBezier([x1, y1, x2, y2]: CubicBezierPoints): (t: number) =>
     return yAt(solve(t));
   };
 }
+
+/** A CSS `cubic-bezier()` string as a function, for a curve the code itself
+ *  names (a role's, motion.ts): a string that is no such curve is a mistake
+ *  in the code, not in data, and throws. */
+export function cubicBezierCurve(value: string): (t: number) => number {
+  const points = parseCubicBezier(value);
+  if (points === null) throw new Error(`Not a CSS curve of four control values: ${value}`);
+  return cubicBezier(points);
+}

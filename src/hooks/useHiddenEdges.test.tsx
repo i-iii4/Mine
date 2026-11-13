@@ -53,7 +53,7 @@ function edgesOf(block: HTMLElement) {
   return { left: block.dataset.left === "true", right: block.dataset.right === "true" };
 }
 
-// SPEC_SCROLL_EDGE_FADE.md, «Полоса вкладок».
+// DESIGN_SYSTEM.md, «Растворение кромок».
 describe("useHiddenEdges", () => {
   const saved = globalThis.ResizeObserver;
   beforeEach(() => {

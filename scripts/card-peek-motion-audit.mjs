@@ -9,6 +9,7 @@
 // each way of closing (ОУ3), the hint's step as the leaving's start with a
 // press at rest, in the step and midway through it (ОУ4, rules 1–5), Off
 // (ОУ8), Full's growth out of the card and back (О10, п. 1; О11, п. 4), the
+// way to the full page and back on the three levels (О17, ОУ7), the
 // system's flag with no stored level (НС3) and the level on the root before
 // the first render of the three app pages (НС5). Starts and stops its own
 // Vite.
@@ -28,6 +29,11 @@ const ENTER_MS = 150;
 const EXIT_MS = 100;
 /** E, --motion-ease. */
 const EASE = [0.22, 1, 0.36, 1];
+/** --motion-move at Minimal: the way to and from the full page (ОУ7). */
+const MOVE_MS = 150;
+/** How far a box may lie from where it should be, px: the frame's pieces
+ *  are written in whole and half pixels. */
+const BOX_SLACK_PX = 0.75;
 /** ОУ4, rule 1: how far a frame may lie off the line. */
 const LINE_TOLERANCE = 0.002;
 /** How far the clock a leaving starts on may lie from the frame's: the
@@ -52,7 +58,7 @@ const STAND_PAGE = `
   let sequence=0;
   function Stand(){
     const areaRef=React.useRef(null);
-    const [state,setState]=React.useState({block:null,opening:null,exit:'return',place:'one'});
+    const [state,setState]=React.useState({block:null,opening:null,exit:'return',place:'one',full:null,handover:null});
     const open=(slug)=>{
       sequence+=1;
       setState((s)=>({...s,block:{slug,id:sequence},opening:{sequence,slug,from:peekOpeningFrom(lastPeekInput(),slug,performance.now()),restored:false},exit:'return'}));
@@ -60,16 +66,29 @@ const STAND_PAGE = `
     const close=()=>setState((s)=>({...s,block:null,exit:'return'}));
     window.__switchPlace=()=>setState((s)=>({...s,block:null,exit:'switch',place:s.place==='one'?'two':'one'}));
     window.__hideCards=()=>{for(const card of document.querySelectorAll('[data-feed-card-frame]'))card.style.display='none';};
+    // The page's side of the way to the full page and back (App.tsx, О17):
+    // the full page laid out unseen until the window hands it over, and
+    // shown until the window comes to take it.
+    window.__expand=()=>setState((s)=>({...s,full:s.block,block:null,exit:'expand',handover:'toFull'}));
+    window.__collapse=()=>setState((s)=>{
+      sequence+=1;
+      const slug=s.full.slug;
+      return {...s,block:s.full,opening:{sequence,slug,from:'full',restored:false},exit:'return',full:null,handover:'toWindow'};
+    });
+    const handOver=()=>setState((s)=>({...s,handover:null}));
+    const content=(block,id)=>h('div',{'data-detail-root':'',id,style:{padding:24,height:'100%',boxSizing:'border-box'}},
+      h('button',{id:id?undefined:'close',onClick:close,style:{width:32,height:32}},'×'),
+      h('h1',{style:{fontSize:24}},block.slug),
+      h('p',null,'The card in its window.'));
+    const fullBlock=state.full??(state.handover==='toWindow'?state.block:null);
     return h('div',{style:{display:'flex',height:'100vh',background:'#eef2f7'}},
       h('main',{ref:areaRef,style:{position:'relative',flex:'1',minWidth:0,overflow:'hidden'}},
+        fullBlock&&h('div',{'data-full-page':'',style:{position:'absolute',inset:0,zIndex:5,background:'white',visibility:state.handover==='toFull'?'hidden':'visible'}},content(fullBlock,'full-root')),
         h('div',{'data-grid-scroll':'',id:'feed','data-place':state.place,style:{position:'absolute',inset:0}},
           SLUGS.map((slug,index)=>h('div',{key:slug,'data-feed-card-frame':'','data-block-slug':slug,id:'card-'+index,onClick:()=>open(slug),
             style:{position:'absolute',left:80+index*300,top:220,width:240,height:180,borderRadius:4,background:'#c9d6ea',border:'1px solid #9fb1c9'}},slug))),
-        h(CardPeek,{block:state.block,opening:state.opening,exit:state.exit,placeReady:true,areaRef,onClose:close,onReopen:(block)=>open(block.slug)},
-          (block)=>h('div',{'data-detail-root':'',style:{padding:24,height:'100%'}},
-            h('button',{id:'close',onClick:close,style:{width:32,height:32}},'×'),
-            h('h1',{style:{fontSize:24}},block.slug),
-            h('p',null,'The card in its window.')))));
+        h(CardPeek,{block:state.block,opening:state.opening,exit:state.exit,placeReady:true,areaRef,onClose:close,onReopen:(block)=>open(block.slug),onHandOver:handOver},
+          (block)=>content(block,undefined))));
   }
   createRoot(document.getElementById('root')).render(h(Stand));
 `;
@@ -89,7 +108,19 @@ function installRecorder() {
     const content = document.querySelector("[data-card-peek-content]");
     const anchor = document.querySelector("[data-card-peek-window]");
     const card = document.querySelector("#card-0");
-    if (!nudge || !scrim || !surface || !anchor) return { present: false };
+    const full = document.querySelector("[data-full-page]");
+    const fullRoot = full?.querySelector("[data-detail-root]");
+    const boxOf = (element) => {
+      const box = element.getBoundingClientRect();
+      return { x: box.left, y: box.top, width: box.width, height: box.height };
+    };
+    const fullPage = full && getComputedStyle(full).visibility !== "hidden" ? boxOf(fullRoot) : null;
+    if (!nudge || !scrim || !surface || !anchor) return { present: false, fullPage };
+    const weight = (selector) => {
+      const element = anchor.querySelector(selector);
+      return element ? Number(getComputedStyle(element).opacity) : null;
+    };
+    const root = document.querySelector("[data-card-peek-content] [data-detail-root]");
     const style = getComputedStyle(nudge);
     const matrix = /^matrix\(([^)]+)\)$/.exec(style.transform);
     const values = matrix ? matrix[1].split(",").map(Number) : [1, 0, 0, 1, 0, 0];
@@ -107,6 +138,15 @@ function installRecorder() {
       surface: { x: box.left, y: box.top, width: box.width, height: box.height },
       cardShown: card ? getComputedStyle(card).visibility !== "hidden" && !card.hasAttribute("data-card-peek-hidden") : false,
       preparing: document.querySelector("[data-card-peek-preparing]") !== null,
+      // The way to and from the full page (О17): the frame's line, shadow
+      // and the window's corner by their shares, the card's box, the full
+      // page's box while it shows.
+      line: weight('[data-peek-piece="lineTop"]'),
+      shadow: weight('[data-peek-piece="shadow"]'),
+      corner: weight('[data-peek-piece="cornerTopLeft"] [data-peek-weight="window"]'),
+      contentBox: root ? boxOf(root) : null,
+      area: boxOf(document.querySelector("main")),
+      fullPage,
     };
   };
   // A frame's time on the clock the animations run by, the document
@@ -474,6 +514,140 @@ try {
     for (const side of ["x", "y", "width", "height"]) near(last.surface[side], card[side], `Full: the last frame on the card (${side})`, 1.5);
     assert.deepEqual(errors, [], "Full: page errors");
     passed("Full grows out of its card and lands back on it as before");
+    await page.close();
+  }
+
+  // ── О17, ОУ7: the way to the full page and back ──
+  /** The right part with the window's line a pixel past each edge: where
+   *  the window's frame ends on the way to the full page. */
+  const fullRect = (frame) => ({ x: frame.area.x - 1, y: frame.area.y - 1, width: frame.area.width + 2, height: frame.area.height + 2 });
+  const boxNear = (actual, expected, message) => {
+    assert(actual, `${message}: a box`);
+    for (const side of ["x", "y", "width", "height"]) near(actual[side], expected[side], `${message} (${side})`, BOX_SLACK_PX);
+  };
+  const holds = (outer, inner) => outer.x <= inner.x + BOX_SLACK_PX && outer.y <= inner.y + BOX_SLACK_PX
+    && outer.x + outer.width >= inner.x + inner.width - BOX_SLACK_PX && outer.y + outer.height >= inner.y + inner.height - BOX_SLACK_PX;
+  /** The window's share, 1 at its place and 0 at the full page, by its width. */
+  const windowShare = (frame, place) => {
+    const full = fullRect(frame).width;
+    return (full - frame.surface.width) / (full - place.width);
+  };
+  const shownWindow = (frame) => frame.present && !frame.preparing && frame.opacity > 1 - 1e-3;
+  /** The frames from the trigger on, read once the frame's callbacks ran. */
+  const fromTrigger = (run) => {
+    const at = run.clicks.at(-1);
+    return run.frames.filter((frame) => frame.at >= at).map((frame) => frame.painted).filter(Boolean);
+  };
+  const FRAME_MS = 1000 / 60;
+  /** How far the way may go in its first frame, as a share: the window's
+   *  spring from rest moves 7 % in a frame, the move curve less. The frame's
+   *  box is read once the frame's callbacks ran, the first step included. */
+  const FIRST_STEP_SHARE = 0.1;
+  /** CARD_PEEK_SPRING_MS (cardPeek.ts): the window's spring from rest to rest. */
+  const SPRING_MS = 367;
+  for (const motionName of ["full", "minimal"]) {
+    const { page, errors } = await fresh({ level: motionName });
+    await openToRest(page);
+    const place = (await page.evaluate(() => window.__read())).surface;
+
+    // Out to the full page.
+    await record(page);
+    await frames(page, 3);
+    await page.evaluate(() => {
+      window.__clicks.push(performance.now());
+      window.__expand();
+    });
+    await frames(page, motionName === "full" ? 45 : 25);
+    const out = fromTrigger(await recorded(page));
+    const outWindow = out.filter((frame) => frame.present);
+    assert(outWindow.length >= 4, `${motionName}: the way to the full page has frames (${outWindow.length})`);
+    // No jump at the start: the first frame within a frame's step of the
+    // window's place, the top edge and the sides alike.
+    const firstOut = outWindow[0];
+    assert(windowShare(firstOut, place) >= 1 - FIRST_STEP_SHARE, `${motionName}: the first frame ${windowShare(firstOut, place)} of the way from the window's place`);
+    assert(holds(firstOut.surface, place), `${motionName}: the first frame holds the window's place`);
+    for (const [index, frame] of out.entries()) {
+      assert(shownWindow(frame) || frame.fullPage, `${motionName}: frame ${index} shows neither the window nor the full page`);
+      if (!frame.present) continue;
+      near(frame.opacity, 1, `${motionName}: the window does not fade (frame ${index})`, 1e-3);
+      near(frame.y, 0, `${motionName}: the window does not move down (frame ${index})`, 1e-3);
+      assert(frame.fullPage === null, `${motionName}: the full page unseen while the window goes (frame ${index})`);
+      const p = windowShare(frame, place);
+      for (const part of ["scrim", "line", "shadow", "corner"]) near(frame[part], p, `${motionName}: the ${part} by the window's share (frame ${index})`, 0.02);
+    }
+    for (let index = 1; index < outWindow.length; index += 1) {
+      assert(holds(outWindow[index].surface, outWindow[index - 1].surface), `${motionName}: the edges only go out (frame ${index})`);
+    }
+    const lastOut = outWindow.at(-1);
+    boxNear(lastOut.surface, fullRect(lastOut), `${motionName}: the last frame on the right part's edges`);
+    boxNear(lastOut.contentBox, lastOut.area, `${motionName}: the card in the last frame where the full page stands`);
+    const handed = out[out.indexOf(lastOut) + 1];
+    assert(handed && !handed.present && handed.fullPage, `${motionName}: the full page in the frame after the window's last`);
+    boxNear(handed.fullPage, lastOut.contentBox, `${motionName}: the full page where the window's last frame held the card`);
+    const outMs = lastOut.frameTime - outWindow[0].frameTime;
+    if (motionName === "minimal") near(outMs, MOVE_MS, "Minimal: the way to the full page lasts 150 ms", 2 * FRAME_MS + 1);
+    else near(outMs, SPRING_MS, "Full: the way to the full page on the window's spring", 3 * FRAME_MS + 1);
+    passed(`${motionName}: the window goes to the full page in ${Math.round(outMs)} ms, not fading, not moving down, line, shadow, corner and scrim by its share; its last frame is the full page's first`);
+
+    // Back from the full page to the window.
+    await record(page);
+    await frames(page, 3);
+    await page.evaluate(() => {
+      window.__clicks.push(performance.now());
+      window.__collapse();
+    });
+    await frames(page, motionName === "full" ? 45 : 25);
+    const back = fromTrigger(await recorded(page));
+    const backWindow = back.filter(shownWindow);
+    assert(backWindow.length >= 4, `${motionName}: the way back has frames (${backWindow.length})`);
+    for (const [index, frame] of back.entries()) {
+      assert(shownWindow(frame) || frame.fullPage, `${motionName}: frame ${index} of the way back shows neither`);
+      if (shownWindow(frame)) assert(frame.fullPage === null, `${motionName}: the full page gone once the window shows (frame ${index})`);
+    }
+    const firstBack = backWindow[0];
+    assert(windowShare(firstBack, place) <= FIRST_STEP_SHARE, `${motionName}: the first frame back ${windowShare(firstBack, place)} of the way from the full page`);
+    assert(holds(fullRect(firstBack), firstBack.surface), `${motionName}: the first frame back within the full page's place`);
+    for (let index = 1; index < backWindow.length; index += 1) {
+      assert(holds(backWindow[index - 1].surface, backWindow[index].surface), `${motionName}: the edges only come in (frame ${index})`);
+      near(backWindow[index].y, 0, `${motionName}: the window does not move down on the way back (frame ${index})`, 1e-3);
+    }
+    // Landed: the frame the way ends on its place exactly, the spring's
+    // settling or the move's end (a spring is within the slack long before).
+    const LANDED_PX = 0.05;
+    const landed = backWindow.find((frame) => Math.abs(frame.surface.width - place.width) <= LANDED_PX && Math.abs(frame.surface.y - place.y) <= LANDED_PX);
+    assert(landed, `${motionName}: the window lands on its place`);
+    boxNear(backWindow.at(-1).surface, place, `${motionName}: the window at its place at rest`);
+    near(backWindow.at(-1).scrim, 1, `${motionName}: the scrim back`, 1e-3);
+    const backMs = landed.frameTime - firstBack.frameTime;
+    if (motionName === "minimal") near(backMs, MOVE_MS, "Minimal: the way back lasts 150 ms", 2 * FRAME_MS + 1);
+    else near(backMs, SPRING_MS, "Full: the way back on the window's spring", 3 * FRAME_MS + 1);
+    assert.deepEqual(errors, [], `${motionName}: page errors`);
+    passed(`${motionName}: the full page gives the card back, the window's first frame on the full page's place, at its place in ${Math.round(backMs)} ms`);
+    await page.close();
+  }
+  {
+    const { page, errors } = await fresh({ level: "off" });
+    await openToRest(page);
+    const place = (await page.evaluate(() => window.__read())).surface;
+    await record(page);
+    await page.evaluate(() => {
+      window.__clicks.push(performance.now());
+      window.__expand();
+    });
+    await frames(page, 3);
+    const out = fromTrigger(await recorded(page));
+    assert(out[0] && !out[0].present && out[0].fullPage, "Off: the full page in the first frame, no window");
+    await record(page);
+    await page.evaluate(() => {
+      window.__clicks.push(performance.now());
+      window.__collapse();
+    });
+    await frames(page, 3);
+    const back = fromTrigger(await recorded(page));
+    assert(back[0] && shownWindow(back[0]) && back[0].fullPage === null, "Off: the window in the first frame, no full page");
+    boxNear(back[0].surface, place, "Off: the window at its place at once");
+    assert.deepEqual(errors, [], "Off: page errors");
+    passed("Off: the full page and the window each stand in one frame");
     await page.close();
   }
 

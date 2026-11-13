@@ -7,7 +7,6 @@ import {
   type PointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { useMotionLevel, type MotionLevel } from "@/lib/motion";
 import { sidebarDragBounds } from "@/lib/sidebarPlacement";
 import { sidebarWidthHost } from "@/lib/sidebarWidth";
 import { cn } from "@/lib/utils";
@@ -38,15 +37,6 @@ const CATCH_LEFT = "calc(var(--sidebar-width) - 9px)";
 const DRAG_THRESHOLD = 4;
 /// One arrow key press moves the line by the spacing step.
 const KEYBOARD_STEP_PX = 16;
-
-/// The light's fade at `level` (SPEC_MOTION_LEVELS.md, С11): Full 180 ms both
-/// ways; Minimal 150 ms lighting and 100 ms going out; Off at once. The curve
-/// is E on every level.
-function handleLightDuration(level: MotionLevel, lit: boolean): string {
-  if (level === "off") return "after:duration-0";
-  if (level === "minimal") return lit ? "after:duration-[var(--motion-enter)]" : "after:duration-[var(--motion-exit)]";
-  return "after:duration-[180ms]";
-}
 
 interface SidebarResizeHandleProps {
   isResizing: boolean;
@@ -100,7 +90,6 @@ export function SidebarResizeHandle({
   // One line runs through both parts, so the pointer over either lights both.
   const [pointerOver, setPointerOver] = useState(false);
   const [pressed, setPressed] = useState(false);
-  const motionLevel = useMotionLevel();
 
   const handlePointerDown = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
@@ -185,10 +174,13 @@ export function SidebarResizeHandle({
   const catchClassName = cn(
     "absolute z-40 outline-hidden",
     "after:absolute after:inset-y-0 after:left-1/2 after:w-[2px]",
-    "after:transition-[background-color] after:ease-[cubic-bezier(0.22,1,0.36,1)]",
-    handleLightDuration(motionLevel, lit),
+    // The light's fade is Отклик (SPEC_MOTION_LEVELS.md, С11, РД7): lighting
+    // on the enter time, going out on the exit time, the response curve; the
+    // level sets the tokens, Off at once.
+    "after:transition-[background-color] after:ease-(--motion-ease)",
+    lit ? "after:duration-(--motion-enter)" : "after:duration-(--motion-exit)",
     // A keyboard focus lights it at once on every level (УД4).
-    "focus-visible:after:bg-ring focus-visible:after:delay-0 focus-visible:after:duration-0",
+    "focus-visible:after:bg-ring focus-visible:after:delay-0 focus-visible:after:transition-none",
     disabled && "pointer-events-none",
     !disabled && held && "after:bg-sidebar-border-hover",
     !disabled && !held && pointerOver && "after:bg-sidebar-border-hover after:delay-300",

@@ -1,6 +1,6 @@
 // A row that scrolls sideways when its content is wider than it, its edges
 // dissolving where content is hidden past them, by the rule the tab bar's
-// strip follows (SPEC_SCROLL_EDGE_FADE.md, «Полоса вкладок»;
+// strip follows (DESIGN_SYSTEM.md, «Растворение кромок»;
 // `hiddenEdges` and `stripFadeMaskStyle` in src/lib/edgeFade.ts, followed by
 // `useHiddenEdges`). The bottom bar of a narrow window holds its commands in
 // one (SPEC_NARROW_WINDOW.md, У13).

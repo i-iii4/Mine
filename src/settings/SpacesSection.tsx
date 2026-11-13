@@ -136,9 +136,13 @@ function SpaceRow({ path, isOpen, stats, available, onOpen, onRemove }: SpaceRow
                 size="icon"
                 aria-label={`Space actions for ${basename(path)}`}
                 className={cn(
+                  // A button that comes up under the pointer answers as
+                  // Отклик: in on the enter time, out on the exit time
+                  // (SPEC_MOTION_LEVELS.md, РД1; user's decision of 12.11.2026).
+                  "transition-opacity duration-(--motion-exit) ease-(--motion-ease)",
                   menuOpen
-                    ? "opacity-100"
-                    : "opacity-0 group-hover/space:opacity-100 group-focus-within/space:opacity-100",
+                    ? "opacity-100 duration-(--motion-enter)"
+                    : "opacity-0 group-hover/space:opacity-100 group-hover/space:duration-(--motion-enter) group-focus-within/space:opacity-100 group-focus-within/space:duration-(--motion-enter)",
                 )}
               >
                 <MoreHorizontal className="size-[13px]" />

@@ -1,24 +1,20 @@
-// src/lib/motionClasses.ts: Minimal's time and curve as Tailwind classes, for
-// a transition whose start a component's own state decides
-// (SPEC_MOTION_LEVELS.md, УД2). They apply under `data-motion="minimal"` on an
-// ancestor, as every level rule does (НС6), and leave Full to the
-// component's own classes. Off needs none: global.css lands every transition
-// at once.
+// src/lib/motionClasses.ts: the roles' time and curve as Tailwind classes,
+// for a transition whose start a component's own state decides
+// (SPEC_MOTION_LEVELS.md, РД1, РД3). Each class reads a role's token, so the
+// level changes it in global.css's level blocks and nowhere else (РД6).
 
-/** Minimal's curve, E (`--motion-ease`), for a transition that keeps its own
- *  time in Minimal. */
-export const MINIMAL_EASE_CLASS = "[[data-motion=minimal]_&]:ease-[var(--motion-ease)]";
+/** Отклик, an appearance or a move to a new state: `--motion-enter` on the
+ *  response curve. */
+export const RESPONSE_ENTER_CLASS = "duration-(--motion-enter) ease-(--motion-ease)";
 
-/** An appearance or a move to a new state in Minimal: `--motion-enter` on E. */
-export const MINIMAL_ENTER_CLASS =
-  "[[data-motion=minimal]_&]:duration-[var(--motion-enter)] [[data-motion=minimal]_&]:ease-[var(--motion-ease)]";
+/** Отклик, a leaving or a fade out: `--motion-exit` on the response curve. */
+export const RESPONSE_EXIT_CLASS = "duration-(--motion-exit) ease-(--motion-ease)";
 
-/** A leaving or a fade out in Minimal: `--motion-exit` on E. */
-export const MINIMAL_EXIT_CLASS =
-  "[[data-motion=minimal]_&]:duration-[var(--motion-exit)] [[data-motion=minimal]_&]:ease-[var(--motion-ease)]";
+/** Перемещение: `--motion-move` on the move curve, both ways. */
+export const MOVE_CLASS = "duration-(--motion-move) ease-(--motion-move-ease)";
 
-/** A fade shown or hidden by state in Minimal: in on the enter time, out on
- *  the exit time. */
-export function minimalFadeClass(shown: boolean): string {
-  return shown ? MINIMAL_ENTER_CLASS : MINIMAL_EXIT_CLASS;
+/** A fade shown or hidden by state, Отклик: in on the enter time, out on the
+ *  exit time. */
+export function responseFadeClass(shown: boolean): string {
+  return shown ? RESPONSE_ENTER_CLASS : RESPONSE_EXIT_CLASS;
 }

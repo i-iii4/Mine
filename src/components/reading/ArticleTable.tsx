@@ -82,7 +82,7 @@ export interface ArticleTableEditing {
  * table wider than its budget scrolls sideways inside its own block, the
  * header row with the body; the page never does. The block dissolves the
  * edges that hide columns past them, as the tab bar's strip does
- * (SPEC_SCROLL_EDGE_FADE.md, «Полоса вкладок»): the mask lies on the block,
+ * (DESIGN_SYSTEM.md, «Растворение кромок»): the mask lies on the block,
  * so the table's lines dissolve with its text. The budget is the width of
  * the block it stands in: the column, or the content of a list, quote,
  * callout or footnote (Ч5.4; user's decision of 18.10.2026 on В1: a table

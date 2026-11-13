@@ -209,7 +209,7 @@ describe("ImagePreviewOverlay", () => {
     fireEvent.click(collapseButton);
     // No source: it leaves as a dialog, gone when the exit has played.
     expect(onClose).not.toHaveBeenCalled();
-    expect(stage).toHaveClass("animate-out", "fade-out-0", "zoom-out-95", "duration-200");
+    expect(stage).toHaveClass("animate-out", "fade-out-0", "zoom-out-95", "duration-(--motion-surface-exit)");
     finishAnimation(stage!);
     expect(onClose).toHaveBeenCalled();
   });
@@ -263,7 +263,8 @@ describe("ImagePreviewOverlay", () => {
     expect(image.style.transition).toBe("none");
   });
 
-  it.each([["full", "160ms"], ["minimal", "150ms"]] as const)(
+  // Отклик, 150 ms on every level but Off (К3, РД7; was 160 ms in Full).
+  it.each([["full", "150ms"], ["minimal", "150ms"]] as const)(
     "glides a zoom button's press at %s over %s, and zooms at once when a key presses it (SPEC_MOTION_LEVELS.md, К3)",
     (level, duration) => {
       setMotionLevel(level);
@@ -856,7 +857,7 @@ describe("ImagePreviewOverlay motion", () => {
 
   it("opens and leaves as a dialog without a source", () => {
     const { stage, scrim, controls, onClose } = open({ source: undefined });
-    expect(stage).toHaveClass("animate-in", "fade-in-0", "zoom-in-95", "duration-200");
+    expect(stage).toHaveClass("animate-in", "fade-in-0", "zoom-in-95", "duration-(--motion-surface-enter)");
     expect(scrim).toHaveClass("animate-in", "fade-in-0");
     expect(controls).toHaveClass("animate-in", "fade-in-0");
     expect(scrim.style.opacity).toBe("");
@@ -864,7 +865,7 @@ describe("ImagePreviewOverlay motion", () => {
     expect(stage).not.toHaveClass("animate-in");
 
     fireEvent.click(screen.getByLabelText("Collapse image preview"));
-    expect(stage).toHaveClass("animate-out", "fade-out-0", "zoom-out-95", "duration-200");
+    expect(stage).toHaveClass("animate-out", "fade-out-0", "zoom-out-95", "duration-(--motion-surface-exit)");
     expect(scrim).toHaveClass("animate-out", "fade-out-0");
     expect(onClose).not.toHaveBeenCalled();
     finishAnimation(stage);
@@ -888,7 +889,7 @@ describe("ImagePreviewOverlay motion", () => {
     expect(element.style.visibility).toBe("hidden");
     setElementBox(picture, { left: 40, top: 5000, width: 200, height: 150 });
     fireEvent.click(screen.getByLabelText("Collapse image preview"));
-    expect(stage).toHaveClass("animate-out", "zoom-out-95", "duration-200");
+    expect(stage).toHaveClass("animate-out", "zoom-out-95", "duration-(--motion-surface-exit)");
     expect(element.style.visibility).toBe("");
     finishAnimation(stage);
     expect(onClose).toHaveBeenCalledTimes(1);

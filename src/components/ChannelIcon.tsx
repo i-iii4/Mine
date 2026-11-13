@@ -1,6 +1,7 @@
 import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
 import { channelIconBoxStyle } from "@/lib/channelIcon";
+import { springMotion, useMotionLevel } from "@/lib/motion";
 
 // The PLAN 7.23 stack of mini-cards, the previews of a compact sidebar item;
 // its geometry lives in src/lib/channelIcon.ts.
@@ -13,11 +14,14 @@ export const CHANNEL_ICON_CARD_CLASS = "absolute top-0 overflow-hidden rounded-0
 
 /** The stack's box; the cards inside are placed by `channelIconCardStyle`. */
 export function ChannelIcon({ style, className, ...props }: ComponentProps<"span">) {
+  // The stack moves on its spring in Full and as Перемещение in Minimal
+  // (SPEC_MOTION_LEVELS.md, С5, РД4), renewed with the level.
+  useMotionLevel();
   return (
     <span
       {...props}
       className={cn("relative shrink-0", className)}
-      style={{ ...style, ...channelIconBoxStyle() }}
+      style={{ ...style, ...channelIconBoxStyle(springMotion()) }}
       data-channel-icon=""
     />
   );

@@ -32,7 +32,9 @@ describe("AppearanceSection", () => {
 
   it("only offers the retained appearance controls", () => {
     render(<AppearanceSection />);
-    for (const label of ["Design", "Compact Detail top menu", "Interface font", "Content font", "Bottom bar buttons"]) {
+    // The top-edge fade is gone with its row (SPEC_MOTION_LEVELS.md, user
+    // decision 9 of 12.11.2026).
+    for (const label of ["Design", "Compact Detail top menu", "Interface font", "Content font", "Bottom bar buttons", "Fade content under the chrome"]) {
       expect(screen.queryByRole("group", { name: label })).not.toBeInTheDocument();
       expect(screen.queryByRole("checkbox", { name: label })).not.toBeInTheDocument();
     }
@@ -52,21 +54,6 @@ describe("AppearanceSection", () => {
     expect(localStorage.getItem("mine.bottomActionBarHidden")).toBe("false");
   });
 
-  it("persists the scroll edge fade flag and broadcasts its key", () => {
-    render(<AppearanceSection />);
-
-    const checkbox = screen.getByRole("checkbox", { name: "Fade content under the chrome" });
-    // Off by default: a fresh install keeps the existing hard content edge.
-    expect(checkbox).toHaveAttribute("data-state", "unchecked");
-
-    fireEvent.click(checkbox);
-    expect(localStorage.getItem("mine.scrollEdgeFade")).toBe("true");
-    expect(emit).toHaveBeenCalledWith("settings-changed", expect.objectContaining({ key: "mine.scrollEdgeFade" }));
-
-    fireEvent.click(checkbox);
-    expect(localStorage.getItem("mine.scrollEdgeFade")).toBe("false");
-  });
-
   it("applies the card corner radius and broadcasts it", () => {
     render(<AppearanceSection />);
 
@@ -82,12 +69,12 @@ describe("AppearanceSection", () => {
 
   it("reflects stored values on mount", () => {
     localStorage.setItem("theme", "light");
-    localStorage.setItem("mine.scrollEdgeFade", "true");
+    localStorage.setItem("mine.bottomActionBarHidden", "true");
 
     render(<AppearanceSection />);
 
     expect(
-      screen.getByRole("checkbox", { name: "Fade content under the chrome" }),
+      screen.getByRole("checkbox", { name: "Hide bottom menu" }),
     ).toHaveAttribute("data-state", "checked");
 
     expect(screen.getByRole("tab", { name: "Light" })).toHaveAttribute(

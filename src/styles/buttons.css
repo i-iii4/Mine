@@ -43,6 +43,30 @@ html:root :is(.bg-depth-fill, .bg-component-fill-inner).state-active {
   background-image: linear-gradient(var(--active), var(--active)), var(--button-face-layer);
 }
 
+/* ── Press, every style ──────────────────────────────────────────────────────
+   Every pressable button of every variant flashes while it is held (user's
+   decision of 12.11.2026; DESIGN_SYSTEM.md, «Нажатие»): half a state layer,
+   --press, over its hover look, at once, as hover is, with no shift and no
+   change of size or corner. A button with depth flashes its face; Retro and
+   Linear also lower it 1px (global.css). A button without depth lays the
+   layer over its own hover look, or over what is under it where it has no
+   plate; a chrome icon button flashes its plate instead (global.css). A
+   reference and a disabled button cannot be pressed and do not flash. The
+   flash is no motion and has no role (SPEC_MOTION_LEVELS.md, РД1). The
+   list weighs as much as the hover's above, `:is()` taking its heaviest
+   member, and comes after it, so a held button under the pointer flashes. */
+html:root :is(
+  .button-depth:active:not(:disabled),
+  button:active:not(:disabled) > .button-depth,
+  [data-action-button]:not([data-selected="true"]):active > .button-depth,
+  [data-action-button]:active > .button-depth
+) {
+  background-image: linear-gradient(var(--press), var(--press)), linear-gradient(var(--active), var(--active)), var(--button-face-layer);
+}
+html:root [data-slot="button"]:active:not(:disabled, .button-depth, [data-variant="reference"], :has(> [data-chrome-plate])) {
+  background-image: linear-gradient(var(--press), var(--press));
+}
+
 /* A disabled carrier has no face and no state layer: it keeps the disabled
    frame of global.css (DESIGN_SYSTEM.md, «Недоступно»; SPEC_COLOR_RULES.md,
    3.6). Last and as heavy as the rules above, so it wins over them. */
@@ -101,7 +125,7 @@ html:root:not([data-buttons]) :is(
 }
 
 /* A macOS button does not move when pressed (05.10.2026): while it is held,
-   its face flashes half a state layer further than hover (--press) and the
+   its face flashes as every button's does («Press, every style») and the
    outline follows the face. Retro and Linear keep the 1px press. */
 html:root:not([data-buttons]) :is(
   .button-depth:active:not(:disabled),
@@ -109,7 +133,6 @@ html:root:not([data-buttons]) :is(
   [data-action-button]:active > .button-depth
 ) {
   transform: none;
-  background-image: linear-gradient(var(--press), var(--press)), linear-gradient(var(--active), var(--active)), var(--button-face-layer);
   --macos-outline-from: color-mix(
     in srgb,
     color-mix(in srgb, var(--macos-face), var(--foreground) var(--active-alpha)),

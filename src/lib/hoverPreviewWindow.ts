@@ -17,7 +17,8 @@ import { CARD_PEEK_FRAME_STEP_MS, clampUnit, lerp } from "./cardPeek";
 import { FLOATING_LAYER_EDGE_PX } from "./floatingLayer";
 import { HOVER_INTENT } from "./hoverIntent";
 import type { HoverPreviewOpener } from "./hoverPreviewTiming";
-import { motionLevel, motionMs } from "./motion";
+import { cubicBezierCurve } from "./cubicBezier";
+import { MOTION_MOVE_EASE, roleMs, springMotion } from "./motion";
 
 /** The window's width: С10.4, the sidebar's and the related notes' card. */
 export const HOVER_PREVIEW_WINDOW_WIDTH_PX = 240;
@@ -142,16 +143,32 @@ function fadeTo(from: number, to: number, ms: number): Fade {
   return { value: ms <= 0 ? to : from, from, to, ms, elapsed: 0 };
 }
 
-/** The window's and its content's fade in and fade out at the level in force
- *  (SPEC_MOTION_LEVELS.md, Н1, Н2): Full and Minimal 150/100, Off at once. The
- *  values themselves stay `HOVER_INTENT`'s, which the graph reads as they are
- *  (УД9). */
+/** The window's and its content's fade in and fade out at the level in force:
+ *  Отклик, Full and Minimal 150/100, Off at once (SPEC_MOTION_LEVELS.md, Н1,
+ *  Н2, РД1). `HOVER_INTENT` keeps the same values for the graph, which reads
+ *  them as they are (УД9); a test keeps them equal (РД8). */
 function fadeInMs(): number {
-  return motionMs(HOVER_INTENT.fadeInMs, "enter");
+  return roleMs("response", "enter");
 }
 
 function fadeOutMs(): number {
-  return motionMs(HOVER_INTENT.fadeOutMs, "exit");
+  return roleMs("response", "exit");
+}
+
+/** The move curve as a function: Minimal moves the window to a new trigger on
+ *  it in place of the spring (Н2, РД4). */
+const moveEase = cubicBezierCurve(MOTION_MOVE_EASE);
+
+/** Minimal's move of the window to a new trigger (Н2): the way left in both
+ *  axes and the height, from where they stood at its start to their targets,
+ *  over Перемещение's time on its curve. A new change starts a new move from
+ *  where the window stands (УД8). */
+interface HoverPreviewGlide {
+  fromX: number;
+  fromY: number;
+  fromHeight: number;
+  ms: number;
+  elapsed: number;
 }
 
 function stepFade(fade: Fade, dtMs: number): void {
@@ -323,6 +340,8 @@ export class HoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard> {
   private height = springAt(0);
   /** Spring time since the last retarget: past the settling, it is over. */
   private sinceRetargetMs = 0;
+  /** Minimal's move in place of the springs (Н2), none in Full and Off. */
+  private glide: HoverPreviewGlide | null = null;
   private windowFade = fadeTo(1, 1, 0);
 
   private frame: number | null = null;
@@ -549,6 +568,7 @@ export class HoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard> {
     this.layers = [this.layerOf(pending, measure, fadeTo(1, 1, 0))];
     this.pending = null;
     this.height = springAt(measure.height);
+    this.glide = null;
     this.sinceRetargetMs = HOVER_PREVIEW_WINDOW_SETTLE_MS;
     this.laidHeight = measure.height;
     this.layOutAt(this.clampedLeft(place.left), clampedTop(place.top, measure.height, this.viewportHeight));
@@ -585,15 +605,34 @@ export class HoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard> {
     this.laidHeight = Math.max(shownHeight, measure.height);
     this.height = { ...this.height, target: measure.height };
     this.goTo(place);
-    // Only Full springs to the new trigger; Minimal and Off stand there at
-    // once, the content changing by its fade (Н2).
-    if (motionLevel() !== "full") {
+    // Full springs to the new trigger, Minimal moves there over Перемещение's
+    // time on its curve, Off stands there at once; the content changes by its
+    // fade on each (SPEC_MOTION_LEVELS.md, Н2, РД4).
+    const motion = springMotion();
+    this.glide = null;
+    if (motion === "move") this.startGlide();
+    else if (motion === "instant") {
       this.height = springAt(measure.height);
       this.x = springAt(0);
       this.y = springAt(0);
       this.sinceRetargetMs = HOVER_PREVIEW_WINDOW_SETTLE_MS;
     }
     this.settleOn(pending.target);
+  }
+
+  /** Minimal's move from where the window stands now to its targets, with no
+   *  speed carried over: the move curve starts from rest (Н2, УД8). */
+  private startGlide(): void {
+    this.glide = {
+      fromX: this.x.position,
+      fromY: this.y.position,
+      fromHeight: this.height.position,
+      ms: roleMs("move", "enter"),
+      elapsed: 0,
+    };
+    this.x = { position: this.x.position, velocity: 0, target: this.x.target };
+    this.y = { position: this.y.position, velocity: 0, target: this.y.target };
+    this.height = { position: this.height.position, velocity: 0, target: this.height.target };
   }
 
   /** A new place from where the window is, at the speed it has. */
@@ -653,10 +692,11 @@ export class HoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard> {
     }
     this.phase = "leaving";
     this.windowFade = fadeTo(this.windowFade.value, 0, outMs);
-    // In place: the springs stop where they are.
+    // In place: the springs and Minimal's move stop where they are.
     this.x = springAt(this.x.position);
     this.y = springAt(this.y.position);
     this.height = springAt(this.height.position);
+    this.glide = null;
     this.sinceRetargetMs = HOVER_PREVIEW_WINDOW_SETTLE_MS;
     this.fadingKey = this.shownTarget?.key ?? null;
     this.shownTarget = null;
@@ -669,6 +709,7 @@ export class HoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard> {
     this.frame = null;
     const wasShown = this.shownTarget !== null;
     this.phase = "closed";
+    this.glide = null;
     this.layers = [];
     this.pending = null;
     this.frameMoving = false;
@@ -717,7 +758,11 @@ export class HoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard> {
     if (next.left === place.left && next.top === place.top) return false;
     // Its own movement has no lag. Turning to the trigger's other side is a
     // change of place, so that part goes by the spring.
-    if (next.side !== place.side) this.y = { ...this.y, position: this.y.position + place.top - next.top, target: 0 };
+    if (next.side !== place.side) {
+      this.y = { ...this.y, position: this.y.position + place.top - next.top, target: 0 };
+      // Minimal's move goes on to the other side from where it stands.
+      if (this.glide !== null) this.startGlide();
+    }
     this.place = next;
     this.sinceRetargetMs = 0;
     this.resting = false;
@@ -726,7 +771,23 @@ export class HoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard> {
 
   private advance(dt: number): void {
     this.sinceRetargetMs += dt;
-    if (this.sinceRetargetMs >= HOVER_PREVIEW_WINDOW_SETTLE_MS) {
+    const glide = this.glide;
+    if (glide !== null) {
+      glide.elapsed += dt;
+      const share = glide.ms <= 0 ? 1 : clampUnit(glide.elapsed / glide.ms);
+      const eased = moveEase(share);
+      this.x = { position: lerp(glide.fromX, this.x.target, eased), velocity: 0, target: this.x.target };
+      this.y = { position: lerp(glide.fromY, this.y.target, eased), velocity: 0, target: this.y.target };
+      this.height = {
+        position: lerp(glide.fromHeight, this.height.target, eased),
+        velocity: 0,
+        target: this.height.target,
+      };
+      if (share >= 1) {
+        this.glide = null;
+        this.sinceRetargetMs = HOVER_PREVIEW_WINDOW_SETTLE_MS;
+      }
+    } else if (this.sinceRetargetMs >= HOVER_PREVIEW_WINDOW_SETTLE_MS) {
       this.x = springAt(this.x.target);
       this.y = springAt(this.y.target);
       this.height = springAt(this.height.target);
@@ -740,7 +801,8 @@ export class HoverPreviewWindow<TTarget extends HoverPreviewTarget, TCard> {
   }
 
   private settled(): boolean {
-    return this.sinceRetargetMs >= HOVER_PREVIEW_WINDOW_SETTLE_MS
+    return this.glide === null
+      && this.sinceRetargetMs >= HOVER_PREVIEW_WINDOW_SETTLE_MS
       && fadeDone(this.windowFade)
       && this.layers.every((layer) => fadeDone(layer.fade));
   }

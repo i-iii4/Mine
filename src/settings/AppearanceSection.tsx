@@ -12,10 +12,6 @@ import {
   getStoredBottomActionBarHidden,
 } from "@/lib/bottomActionBarVisibility";
 import {
-  SCROLL_EDGE_FADE_STORAGE_KEY,
-  getStoredScrollEdgeFade,
-} from "@/lib/scrollEdgeFade";
-import {
   CARD_RADIUS_OPTIONS,
   CARD_RADIUS_STORAGE_KEY,
   applyCardRadius,
@@ -58,7 +54,6 @@ export function AppearanceSection() {
   const [bottomActionBarHidden, setBottomActionBarHidden] = useState(
     getStoredBottomActionBarHidden,
   );
-  const [scrollEdgeFade, setScrollEdgeFade] = useState(getStoredScrollEdgeFade);
   const [cardRadius, setCardRadius] = useState<CardRadius>(getStoredCardRadius);
   // The level in force, the system's choice included, heard as it changes
   // (НС1, НС3).
@@ -92,12 +87,6 @@ export function AppearanceSection() {
     setCardRadius(value);
     applyCardRadius(value);
     broadcastSettingsChange(CARD_RADIUS_STORAGE_KEY);
-  };
-
-  const handleScrollEdgeFadeChange = (checked: boolean) => {
-    setScrollEdgeFade(checked);
-    localStorage.setItem(SCROLL_EDGE_FADE_STORAGE_KEY, checked ? "true" : "false");
-    broadcastSettingsChange(SCROLL_EDGE_FADE_STORAGE_KEY);
   };
 
   return (
@@ -135,17 +124,6 @@ export function AppearanceSection() {
             ))}
           </TabsList>
         </Tabs>
-      </SettingRow>
-
-      <SettingRow
-        label="Fade content under the chrome"
-        caption="Dissolve the top edge of the sidebar, feed, Detail and search as they scroll"
-      >
-        <Checkbox
-          aria-label="Fade content under the chrome"
-          checked={scrollEdgeFade}
-          onCheckedChange={(checked) => handleScrollEdgeFadeChange(checked === true)}
-        />
       </SettingRow>
 
       <SettingRow

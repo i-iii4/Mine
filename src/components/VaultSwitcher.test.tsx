@@ -389,6 +389,17 @@ describe("VaultSwitcher", () => {
     }
   });
 
+  // Buttons that come up under the pointer answer as Отклик: in on
+  // --motion-enter, out on --motion-exit, the response curve
+  // (SPEC_MOTION_LEVELS.md, В2; user's decision of 12.11.2026; was 120 ms).
+  it("fades the row actions in and out on Отклик's tokens", async () => {
+    await openSwitcherWithSpaces();
+    const actions = screen.getByRole("button", { name: "Reveal Тест in Finder" }).closest("[data-vault-switcher-row-actions]");
+    expect(actions).toHaveClass("transition-opacity", "ease-(--motion-ease)");
+    expect(actions?.className).toMatch(/duration-\(--motion-(enter|exit)\)/);
+    expect(actions?.className).not.toMatch(/duration-\[|data-motion/);
+  });
+
   it("explains the reveal action on hover", async () => {
     await openSwitcherWithSpaces();
 

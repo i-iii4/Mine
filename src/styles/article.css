@@ -260,7 +260,7 @@
    focus wash, as a focused card of the feed does. */
 .mine-article [data-note-embed-open]:is(:hover, :focus-visible) [data-feed-card-frame] {
   --card-frame-color: var(--border-accent);
-  --card-frame-fade: var(--hover-intent-fade-in);
+  --card-frame-fade: var(--motion-enter);
 }
 
 .mine-article [data-note-embed-open]:focus-visible [data-card-media-clip] > [data-card-lift="window"]::after {

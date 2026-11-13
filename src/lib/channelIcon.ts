@@ -10,6 +10,7 @@
 // (global.css, «Compact rows»).
 
 import type { CSSProperties } from "react";
+import type { SpringMotion } from "./motion";
 
 /** Most cards a stack holds. */
 export const CHANNEL_ICON_MAX_CARDS = 3;
@@ -138,8 +139,12 @@ export const CHANNEL_ICON_SPRING_EASING = `linear(${Array.from(
 ).join(", ")})`;
 
 /** The spring as custom properties, for whatever moves on it: the stack's
- *  cards, the Contents list's plus turning into a cross. */
-export function channelIconSpringStyle(): CSSProperties {
+ *  cards, the Contents list's plus turning into a cross. They are members of
+ *  Пружина (SPEC_MOTION_LEVELS.md, РД4): only `"spring"` (Full) sets them;
+ *  otherwise global.css falls back to Перемещение's tokens, 150 ms on the move
+ *  curve in Minimal and at once at Off (С5, С7). */
+export function channelIconSpringStyle(motion: SpringMotion): CSSProperties {
+  if (motion !== "spring") return {};
   // Custom properties by construction; CSSProperties has no key for them.
   return {
     "--channel-icon-duration": `${CHANNEL_ICON_SPRING_MS}ms`,
@@ -147,12 +152,12 @@ export function channelIconSpringStyle(): CSSProperties {
   } as CSSProperties;
 }
 
-/** The stack box's own style: its size and the spring its cards move on. */
-export function channelIconBoxStyle(): CSSProperties {
+/** The stack box's own style: its size and how its cards move. */
+export function channelIconBoxStyle(motion: SpringMotion): CSSProperties {
   return {
     width: CHANNEL_ICON_WIDTH_PX,
     height: CHANNEL_ICON_HEIGHT_PX,
-    ...channelIconSpringStyle(),
+    ...channelIconSpringStyle(motion),
   };
 }
 

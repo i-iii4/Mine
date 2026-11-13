@@ -20,7 +20,6 @@ import {
   FEED_HEAVY_HYSTERESIS_FRACTION,
   type HeavyPlaybackCandidate,
 } from "./Grid";
-import { TOP_FADE_HEIGHT } from "@/lib/edgeFade";
 import {
   computeMasonryLayout,
   getMasonryColumnWidth,
@@ -42,7 +41,7 @@ import type { ComponentProps } from "react";
 import type { FeedKeyboardFocus } from "@/hooks/useSidebarKeyboardFocus";
 import type { DeleteBlockMedia, DeleteBlocksPlan, LightBlock } from "@/types";
 import { lightBlock } from "@/test/blocks";
-import { MOTION_EASE, MOTION_ENTER_MS } from "@/lib/motion";
+import { MOTION_ENTER_MS, MOTION_MOVE_EASE, MOTION_MOVE_MS } from "@/lib/motion";
 import { setMotionLevel } from "@/test/motionLevel";
 
 // These constants must match the ones in Grid.tsx. If Grid.tsx changes
@@ -723,61 +722,23 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(layoutEl?.style.marginTop).toBe("32px");
   });
 
-  it("leaves the scrollport unmasked when the top fade preference is off", async () => {
+  it("keeps the scrolled feed's top edge hard, with no band over the content", async () => {
+    // SPEC_MOTION_LEVELS.md, user decision 9 of 12.11.2026.
     vi.useFakeTimers();
-    // The band is a dark-theme treatment; jsdom resolves to light by default.
-    document.documentElement.setAttribute("data-theme", "dark");
-
-    const blocks = [makeBlock(8101), makeBlock(8102)];
-    setBlockHeight(8101, 200);
-    setBlockHeight(8102, 220);
-
-    render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="fade-off" />);
-    await flushAsync();
-
-    const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement | null;
-    expect(scrollEl).toBeTruthy();
-    expect(scrollEl?.dataset.gridTopFade).toBeUndefined();
-    // The band stays mounted but fully transparent, so turning it on is a
-    // compositor-only opacity change rather than a mount.
-    const resting = document.querySelector('[data-top-fade-scrim="feed"]') as HTMLElement;
-    expect(resting.dataset.topFadeVisible).toBe("false");
-    expect(resting.style.opacity).toBe("0");
-  });
-
-  it("masks the scrolled feed without dropping the scrollport's own styles", async () => {
-    vi.useFakeTimers();
-    document.documentElement.setAttribute("data-theme", "dark");
 
     const blocks = Array.from({ length: 12 }, (_, index) => makeBlock(8200 + index));
     blocks.forEach((_block, index) => setBlockHeight(8200 + index, 200 + index));
 
-    render(
-      <Grid {...BASE_PROPS} blocks={blocks} currentTag="fade-on" scrollEdgeFade />,
-    );
+    render(<Grid {...BASE_PROPS} blocks={blocks} currentTag="hard-edge" />);
     await flushAsync();
 
     const scrollEl = document.querySelector("[data-grid-scroll]") as HTMLElement;
     const paddingBeforeScroll = scrollEl.style.paddingLeft;
 
-    // At rest the first row must stay fully opaque.
-    expect(scrollEl.dataset.gridTopFade).toBeUndefined();
-
     scrollEl.scrollTop = 600;
     fireEvent.scroll(scrollEl);
     await flushAsync();
 
-    expect(scrollEl.dataset.gridTopFade).toBe("true");
-    const scrim = document.querySelector('[data-top-fade-scrim="feed"]') as HTMLElement;
-    expect(scrim).toBeTruthy();
-    expect(scrim.dataset.topFadeVisible).toBe("true");
-    expect(scrim.style.opacity).toBe("1");
-    // Constant height: scrolling changes opacity only, never layout.
-    expect(scrim.style.height).toBe(`${TOP_FADE_HEIGHT}px`);
-    // Outside the scrollport, so it inherits none of its padding and adds no
-    // layout work to the scrolled subtree.
-    expect(scrollEl.contains(scrim)).toBe(false);
-    // The scrollport keeps its own styles and is never masked.
     expect(scrollEl.style.paddingLeft).toBe(paddingBeforeScroll);
     expect(scrollEl.style.scrollbarGutter).toBe("stable");
     expect(scrollEl.style.maskImage).toBe("");
@@ -1326,11 +1287,14 @@ describe("Grid — no collapse after add / revisit", () => {
   });
 
   // SPEC_MOTION_LEVELS.md, Л4, Л5: the cards' move and the insets' change
-  // follow the level, whoever changed the data (УД4, п. 6).
+  // are Перемещение (РД1), by the level whoever changed the data (УД4,
+  // п. 6): the cards through WAAPI by `roleMs`, the insets by the role's
+  // tokens, which the level's block of global.css sets.
+  const INSETS = "padding-left var(--motion-move) var(--motion-move-ease), padding-right var(--motion-move) var(--motion-move-ease)";
   it.each([
-    ["full", { duration: 200, easing: "cubic-bezier(0.37, 0, 0.63, 1)" }, "200ms ease"],
-    ["minimal", { duration: MOTION_ENTER_MS, easing: MOTION_EASE }, `${MOTION_ENTER_MS}ms ${MOTION_EASE}`],
-    ["off", null, "0ms ease"],
+    ["full", { duration: MOTION_MOVE_MS, easing: MOTION_MOVE_EASE }, INSETS],
+    ["minimal", { duration: MOTION_ENTER_MS, easing: MOTION_MOVE_EASE }, INSETS],
+    ["off", null, INSETS],
   ] as const)("moves the shifted cards and the insets at the level %s by its time", async (level, move, inset) => {
     setMotionLevel(level);
     vi.useFakeTimers();
@@ -1371,7 +1335,7 @@ describe("Grid — no collapse after add / revisit", () => {
       for (const timing of options) expect(timing).toEqual(move);
     }
     const scroll = container.querySelector<HTMLElement>("[data-grid-scroll]")!;
-    expect(scroll.style.transition).toBe(`padding-left ${inset}, padding-right ${inset}`);
+    expect(scroll.style.transition).toBe(inset);
     delete (HTMLElement.prototype as { animate?: unknown }).animate;
   });
 

@@ -5,7 +5,7 @@ import { useCardPicturesVersion } from "@/lib/pictureVersions";
 import type { NormalizedFeedPlaybackDescriptor } from "@/lib/feedPlayback";
 import { FeedVideoPoster } from "./FeedVideoPoster";
 import { PlayBadge } from "./PlayBadge";
-import { minimalFadeClass } from "@/lib/motionClasses";
+import { responseFadeClass } from "@/lib/motionClasses";
 
 export const FEED_VIDEO_DIRECT_TIMEOUT_MS = 1200;
 export const FEED_VIDEO_BLOB_TIMEOUT_MS = 1800;
@@ -303,12 +303,12 @@ export function FeedVideoSurface({
       data-feed-video-phase={phase}
       className="relative h-full w-full"
     >
-      {/* The poster and the video cross-fade; in Minimal the one coming in
+      {/* The poster and the video cross-fade as Отклик: the one coming in
           takes the enter time and the one going out the exit time (Л6). */}
       <FeedVideoPoster
         candidateUrls={resolvedPosterCandidates}
         alt=""
-        className={`${className ?? "h-full w-full object-cover"} absolute inset-0 transition-opacity ${minimalFadeClass(posterVisible)} ${
+        className={`${className ?? "h-full w-full object-cover"} absolute inset-0 transition-opacity ${responseFadeClass(posterVisible)} ${
           posterVisible ? "z-10 opacity-100" : "z-0 opacity-0"
         }`}
         loading="eager"
@@ -318,7 +318,7 @@ export function FeedVideoSurface({
         <video
           ref={directVideoRef}
           src={directSrc}
-          className={`${videoGeometryClassName} z-0 transition-opacity ${minimalFadeClass(directVideoVisible)} ${
+          className={`${videoGeometryClassName} z-0 transition-opacity ${responseFadeClass(directVideoVisible)} ${
             directVideoVisible ? "opacity-100" : "opacity-0"
           }`}
           style={videoBoxStyle}
@@ -366,7 +366,7 @@ export function FeedVideoSurface({
         <video
           ref={blobVideoRef}
           src={blobUrl}
-          className={`${videoGeometryClassName} z-0 transition-opacity ${minimalFadeClass(blobVideoVisible)} ${
+          className={`${videoGeometryClassName} z-0 transition-opacity ${responseFadeClass(blobVideoVisible)} ${
             blobVideoVisible ? "opacity-100" : "opacity-0"
           }`}
           style={videoBoxStyle}

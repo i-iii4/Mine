@@ -1,6 +1,7 @@
 import { act, fireEvent, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { setMotionLevel } from "@/test/motionLevel";
+import { MOTION_LEVELS } from "@/lib/motion";
 import { SidebarResizeHandle } from "./SidebarResizeHandle";
 
 /// The divider is the handle, built as shadcn's `SidebarRail` is (user's
@@ -92,33 +93,21 @@ describe("SidebarResizeHandle", () => {
     };
     const has = (classNames: string[], name: string) => classNames.every((className) => className.split(" ").includes(name));
 
-    it("fades in and out over 180 ms on E in Full, after 300 ms", () => {
+    // Отклик (SPEC_MOTION_LEVELS.md, С11, РД7): in on --motion-enter, out
+    // on --motion-exit, the response curve, the level by the tokens; the
+    // 300 ms wait an intent delay on every level (УД5).
+    it.each(MOTION_LEVELS)("fades in on the enter time and out on the exit time at %s, after 300 ms", (level) => {
+      setMotionLevel(level);
       const { lit, out } = hoverAndLeave();
-      expect(has(lit, "after:duration-[180ms]")).toBe(true);
+      expect(has(lit, "after:duration-(--motion-enter)")).toBe(true);
       expect(has(lit, "after:delay-300")).toBe(true);
-      expect(has(out, "after:duration-[180ms]")).toBe(true);
-      expect(has(lit, "after:ease-[cubic-bezier(0.22,1,0.36,1)]")).toBe(true);
-    });
-
-    it("fades in over 150 ms and out over 100 ms in Minimal, after the same 300 ms", () => {
-      setMotionLevel("minimal");
-      const { lit, out } = hoverAndLeave();
-      expect(has(lit, "after:duration-[var(--motion-enter)]")).toBe(true);
-      expect(has(lit, "after:delay-300")).toBe(true);
-      expect(has(out, "after:duration-[var(--motion-exit)]")).toBe(true);
-    });
-
-    it("lights at once in Off, still after 300 ms", () => {
-      setMotionLevel("off");
-      const { lit, out } = hoverAndLeave();
-      expect(has(lit, "after:duration-0")).toBe(true);
-      expect(has(lit, "after:delay-300")).toBe(true);
-      expect(has(out, "after:duration-0")).toBe(true);
+      expect(has(out, "after:duration-(--motion-exit)")).toBe(true);
+      expect(has(lit, "after:ease-(--motion-ease)")).toBe(true);
     });
 
     it("lights at once under a keyboard focus on every level (УД4)", () => {
       const { container } = render(<SidebarResizeHandle {...props()} />);
-      expect(parts(container).body).toHaveClass("focus-visible:after:duration-0", "focus-visible:after:delay-0");
+      expect(parts(container).body).toHaveClass("focus-visible:after:transition-none", "focus-visible:after:delay-0");
     });
   });
 
