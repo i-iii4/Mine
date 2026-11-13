@@ -1,6 +1,6 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_X_THREADS.md](SPEC_X_THREADS.md) | [SPEC_AUDIT_FIXES.md](SPEC_AUDIT_FIXES.md) | [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md) | [SPEC_TABS.md](SPEC_TABS.md) | [SPEC_CLIPPER_DRAFTS_REMOVAL.md](SPEC_CLIPPER_DRAFTS_REMOVAL.md) | [SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md) | [SPEC_CARD_UNIFIED.md](SPEC_CARD_UNIFIED.md) | [SPEC_CARD_ASSOCIATIONS.md](SPEC_CARD_ASSOCIATIONS.md) | [SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md) | [SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md) | [SPEC_NARROW_WINDOW.md](SPEC_NARROW_WINDOW.md) | [SPEC_KEYBOARD.md](SPEC_KEYBOARD.md) | [SPEC_READING_MODE.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_READING_MODE.md>) | [SPEC_EDITING.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_EDITING.md>) | [SPEC_CARD_PEEK.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_PEEK.md>) | [SPEC_SIDEBAR_STRIP.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SIDEBAR_STRIP.md>) | [SPEC_MOTION_LEVELS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MOTION_LEVELS.md>)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_X_THREADS.md](SPEC_X_THREADS.md) | [SPEC_AUDIT_FIXES.md](SPEC_AUDIT_FIXES.md) | [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md) | [SPEC_TABS.md](SPEC_TABS.md) | [SPEC_CLIPPER_DRAFTS_REMOVAL.md](SPEC_CLIPPER_DRAFTS_REMOVAL.md) | [SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md) | [SPEC_CARD_UNIFIED.md](SPEC_CARD_UNIFIED.md) | [SPEC_CARD_ASSOCIATIONS.md](SPEC_CARD_ASSOCIATIONS.md) | [SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md) | [SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md) | [SPEC_NARROW_WINDOW.md](SPEC_NARROW_WINDOW.md) | [SPEC_KEYBOARD.md](SPEC_KEYBOARD.md) | [SPEC_READING_MODE.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_READING_MODE.md>) | [SPEC_EDITING.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_EDITING.md>) | [SPEC_CARD_PEEK.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_PEEK.md>) | [SPEC_SIDEBAR_STRIP.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SIDEBAR_STRIP.md>) | [SPEC_MOTION_LEVELS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MOTION_LEVELS.md>)
 
 ## Context
 
@@ -1899,35 +1899,15 @@ generations. `App.test.tsx` additionally proves obsolete `A -> B -> A -> B`
 opens cannot publish and pagination cannot combine two generations. The common
 `bun run test:browser` runner owns Feed, Graph and cold-space gates.
 
-### 030: Scroll edge fade overlays the surface colour instead of masking content
+### 030: Scroll edge fade (withdrawn 12.11.2026)
 
-| Approach | Problem |
-|---|---|
-| Mask the scroll container | Masked content dissolves into the page background; on a light background a photograph bleaches toward white and reads as damaged rather than distant |
-| `box-shadow` at the edge | `box-shadow` is reserved for floating menus; planes are separated by background levels, borders and overlays |
-| Progressive blur (`backdrop-filter`) | Genuine depth and what iOS 26 does natively, but a different effect than the reference, and several `backdrop-filter` layers over a scrolling feed threaten the frame budget |
-| **Gradient band in the surface colour** (chosen) | Content keeps its own opacity and passes underneath; the result depends only on a background token |
-
-Rationale: the band is the surface colour laid over the content and faded out, so
-the content reads as sliding under the chrome. It is a dark-theme treatment only
-— covering with a near-black colour darkens content into the distance, while
-covering with a near-white one bleaches it — so `isTopFadeSupported` returns true
-for `dark` alone and the band does not render in the light theme.
-
-One height (`24px`) and one coverage serve every surface: the band means the same
-thing everywhere, and it has to fit inside the sidebar's 32px rows. Colour is
-per-surface (`--background`, `--sidebar`, `--card`), because the chrome token is
-a different shade and painting the band with it left a rectangle of the wrong
-colour over the feed.
-
-The band is a sibling of each scroll container, absolutely positioned in its
-parent, with constant height and only `opacity` changing between "at rest" and
-"scrolled". Everything else was tried and failed: `position: sticky` inside the
-container cannot escape its padding box, and deriving height from the scroll
-offset re-rendered the whole surface once per frame and made scrolling stutter.
-All four surfaces share `useTopFadeMask`, which attaches through a callback ref
-so surfaces mounted later by a Radix `Dialog` are observed too. Full contract:
-[SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md).
+The band at the top edge of scrollable surfaces and its setting
+(`mine.scrollEdgeFade`, Appearance «Fade content under the chrome») are removed
+by the user's decision of 12.11.2026
+([SPEC_MOTION_LEVELS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MOTION_LEVELS.md>),
+decision 9; PLAN.md, 50.88). The horizontal edges of the tab strip, the narrow
+window's bottom bar and wide article tables keep their masks
+([DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), «Растворение кромок»).
 
 
 ### 031: Restricted-post video is delegated to yt-dlp, not reimplemented
@@ -2999,7 +2979,8 @@ Tauri по умолчанию), приложение и native-host 11.0 (зна
    `mine.motion` и системную настройку «Уменьшить движение». Без выбора
    системная настройка выбирает `Minimal`, и модуль следит за ней на ходу.
    Остальной код спрашивает уровень (`motionLevel`, `useMotionLevel`), время
-   (`motionMs`), кривую (`motionEasing`) и прокрутку (`scrollBehavior`). Граф
+   и кривую своей роли (`roleMs`, `roleEasing`, `springMotion`; до 50.88
+   `motionMs` и `motionEasing`, решение 067) и прокрутку (`scrollBehavior`). Граф
    берёт только системный флаг (`systemReducesMotion`), клиппер следует только
    системе (`followSystemMotion`).
 2. **Уровень атрибутом на корне.** Каждая страница приложения ставит
@@ -3037,3 +3018,29 @@ Tauri по умолчанию), приложение и native-host 11.0 (зна
 | Один модуль и атрибут на корне | Принято: CSS и код читают одно значение, первый кадр новой вкладки идёт с выбранным уровнем |
 | `@media (prefers-reduced-motion)` и отдельный флаг в коде | Не выбрано: системная настройка не даёт выбора из трёх уровней и не перекрывается выбором пользователя |
 | Движение `Minimal` окна карточки кадрами `requestAnimationFrame` | Не выбрано: работа страницы под окном задерживает кадры, а компоновщик ведёт `transform` и `opacity` сам |
+
+### 067: Роли движения: время и кривая только из токенов роли
+
+Решение пользователя 12.11.2026. Контракт:
+[SPEC_MOTION_LEVELS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MOTION_LEVELS.md>),
+«Роли движения»; токены в [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), «Роли движения».
+
+1. **Четыре роли.** Каждое движение принадлежит роли Отклик, Поверхность,
+   Перемещение или Пружина либо стоит вне ролей (подъём карточки,
+   встряхивание имени, спиннеры, граф, клиппер). Роль задаёт время и кривую
+   на каждом уровне.
+2. **Числа в одном месте.** Время и кривые движения стоят только в блоке
+   токенов `src/styles/global.css` и в постоянных `src/lib/motion.ts`; тест
+   держит их равными. Компоненты пишут `var(--motion-…)` или спрашивают
+   `roleMs`, `roleEasing`, `springMotion`. Тест `src/styles/motionRoles.test.ts`
+   ловит числа длительности и кривые вне токенов.
+3. **Уровень меняет только токены.** Блоки `[data-motion="minimal"]` и
+   `[data-motion="off"]` рядом с токенами меняют их значения; своих правил
+   уровня у компонентов нет, кроме мест, где уровень меняет вид движения, а
+   не время. Пружины `Full` остаются в своих модулях, в `Minimal` их заменяет
+   Перемещение.
+
+| Вариант | Результат выбора |
+|---|---|
+| Токены ролей и тест на числа | Принято: одно движение одного рода идёт одинаково везде, уровень меняется в одном месте |
+| Время `Full` числом в месте вызова и общая функция уровня (`motionMs(fullMs)`, 50.86) | Не выбрано: числа расходились у одинаковых движений (соседи вкладки 150 мс, соседи строки 250 мс), и каждое место держало своё правило `Minimal` |

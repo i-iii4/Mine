@@ -1,6 +1,6 @@
 # Вкладки пространств
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_KEYBOARD.md](SPEC_KEYBOARD.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_SCROLL_EDGE_FADE.md](SPEC_SCROLL_EDGE_FADE.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_KEYBOARD.md](SPEC_KEYBOARD.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
 
 ## Статус
 
@@ -296,7 +296,7 @@ pub struct ScrollAnchor { pub slug: String, pub offset_px: f64 }
 
 **В47.** Подпись (РП4, изменено 03.10.2026): самый глубокий открытый раздел. На Everything имя пространства, внутри коллекции имя коллекции, в ленте автора автор как написан (с 07.10.2026, поле `TabBarTab.place` вместо `collection`), при открытой карточке её видимый заголовок по общему правилу (`getNavigationLabel`, SPEC_DISPLAY_TITLE.md): заголовок карточки, а без него её подпись без папки и расширения (`Куртка`, не `Cards/Куртка.md`). Имя пространства после коллекции больше не пишется. Подпись меняется одновременно с верхним рядом страницы: место и открытую карточку вкладка сообщает без задержки (В31, 23.10.2026). Вкладка без пространства подписана `Choose Space`. Имя пространства берётся из реестра по идентификатору пространства (`tabs::space_name`), заголовок карточки хранится в памяти вкладки (`OpenCard.title`), поэтому выгруженная вкладка подписана без своей страницы. Выбор пространства во вкладке (`select_vault`: пространство из переключателя, `Add Space`, `Create new space`, `Locate folder…`) сначала записывает в реестр пространство с тем идентификатором, к которому привязана вкладка, и только потом сообщает о нём окнам и полосе (`show_bound_space` в `commands/vault.rs`). Полоса получает `tabbar-state` при каждом выборе, даже когда идентификатор вкладки не сменился: папка, найденная через `Locate folder…`, может называться иначе. Ошибка 13.10.2026: полоса узнавала о выборе раньше реестра, и папка, которая стала пространством в этом выборе (`Add Space` с пустой папкой, папка из списка без идентификатора), подписывала вкладку `Choose Space`; подпись не исправлялась, пока вкладка оставалась на Everything.
 
-**В48.** Вкладки одной ширины, от `TAB_MIN_WIDTH_PX` (72 px: 4 или 5 букв подписи и место крестику) до `TAB_MAX_WIDTH_PX` (200 px, компактнее по референсу пользователя). По умолчанию вкладка максимальной ширины; когда вкладок много, полоса делит доступную ширину поровну. Когда вкладки не помещаются и в минимальной ширине, полоса прокручивается по горизонтали с растворением краёв (SPEC_SCROLL_EDGE_FADE.md), видимая вкладка всегда прокручена в видимую часть. После закрытия вкладки крестиком ширины остальных не меняются, пока указатель над полосой: под указателем оказывается крестик следующей вкладки.
+**В48.** Вкладки одной ширины, от `TAB_MIN_WIDTH_PX` (72 px: 4 или 5 букв подписи и место крестику) до `TAB_MAX_WIDTH_PX` (200 px, компактнее по референсу пользователя). По умолчанию вкладка максимальной ширины; когда вкладок много, полоса делит доступную ширину поровну. Когда вкладки не помещаются и в минимальной ширине, полоса прокручивается по горизонтали с растворением краёв (DESIGN_SYSTEM.md, «Растворение кромок»), видимая вкладка всегда прокручена в видимую часть. После закрытия вкладки крестиком ширины остальных не меняются, пока указатель над полосой: под указателем оказывается крестик следующей вкладки.
 
 **В49.** Полоса доступна с клавиатуры: роль `tablist`, у вкладки роль `tab` и `aria-selected`; стрелки влево и вправо двигают фокус, Enter и пробел выбирают вкладку, Delete закрывает. Фокус полоса держит только при работе с клавиатуры: щелчок по вкладке отдаёт фокус выбранной вкладке.
 
@@ -326,7 +326,7 @@ pub struct ScrollAnchor { pub slug: String, pub offset_px: f64 }
 
 ## Перетаскивание
 
-**В60.** Перестановка (Т4): нажать на вкладку и сдвинуть по горизонтали дальше порога жеста хрома (4 px, `DEFAULT_CHROME_DRAG_THRESHOLD_PX` в `usePressDragGesture.ts`). Вкладка идёт за указателем, соседние раздвигаются за `TAB_REORDER_MOTION_MS`, без движения при уменьшении движения (`src/lib/motion.ts`). Отпускание фиксирует порядок и сразу пишет сохранённые окна; Escape возвращает вкладку на место.
+**В60.** Перестановка (Т4): нажать на вкладку и сдвинуть по горизонтали дальше порога жеста хрома (4 px, `DEFAULT_CHROME_DRAG_THRESHOLD_PX` в `usePressDragGesture.ts`). Вкладка идёт за указателем, соседние раздвигаются за время роли Перемещение, `--motion-move` по кривой перемещения, в `Off` сразу (SPEC_MOTION_LEVELS.md, «Роли движения», Т3; `src/lib/motion.ts`). Отпускание фиксирует порядок и сразу пишет сохранённые окна; Escape возвращает вкладку на место.
 
 **В61.** Отрыв (Т5): указатель уходит от полосы по вертикали дальше `TAB_DETACH_THRESHOLD_PX` или за пределы окна. Бэкенд создаёт окно того же размера так, чтобы вкладка в его полосе встала под указателем с тем же смещением захвата, переносит в него страницу вкладки (`reparent`), и окно идёт за указателем до отпускания кнопки. Страница не перезагружается: это тот же процесс, память вкладки сохраняется целиком.
 
@@ -486,7 +486,7 @@ Settings (SPEC_DEEP_AUDIT.md, Н11, Е6.10; до 13.10.2026 всё это ухо
 | `TAB_MIN_WIDTH_PX` | 72 | |
 | `TAB_MAX_WIDTH_PX` | 200 | |
 | `TAB_DETACH_THRESHOLD_PX` | 24 | от края полосы по вертикали |
-| `TAB_REORDER_MOTION_MS` | 150 | |
+| `TAB_REORDER_MOTION_MS` | уходит | соседи раздвигаются за время роли Перемещение, `--motion-move` (200 мс в `Full`, до 12.11.2026 150 мс; [SPEC_MOTION_LEVELS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MOTION_LEVELS.md>), «Роли движения») |
 | `TAB_ACTIVATION_PAINT_TIMEOUT_MS` | 250 | |
 | `TAB_VIEW_REPORT_DEBOUNCE_MS` | 250 | |
 | `SAVE_WINDOWS_DEBOUNCE_MS` | 500 | |

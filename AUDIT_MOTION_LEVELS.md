@@ -74,7 +74,7 @@
 | Л5 | Поля ленты | [Grid.tsx:2642][grid] | 200 мс, ease, свойство `padding` | настройка Spacing | редко | сразу | украшение |
 | Л6 | Смена постера и видео растворением | [FeedVideoSurface.tsx:308][fvs] | 150 мс, кривая Tailwind по умолчанию | данные: видео готово | сотни | сразу | украшение |
 | Л7 | Команды строк поиска и Related notes | [CardRowActions.tsx:104][cra] | 150/100 | указатель | десятки | сразу | украшение |
-| Л8 | Растворение верхней кромки при прокрутке | [TopFadeScrim.tsx:76][tfs] | 150 мс, кривая Tailwind по умолчанию | прокрутка от верха | десятки | сразу | украшение |
+| Л8 | Растворение верхней кромки при прокрутке; удалено 12.11.2026 (SPEC_MOTION_LEVELS.md, решение 9) | `TopFadeScrim.tsx:76` | 150 мс, кривая Tailwind по умолчанию | прокрутка от верха | десятки | сразу | украшение |
 | Л9 | Плавная прокрутка к карточке в клавиатурном фокусе | [interaction.ts:377][gint], [Grid.tsx:1686][grid] | время WebKit | стрелки | сотни у клавиатуры | сразу | смысл |
 
 | № | Full | Minimal | Off |
@@ -86,7 +86,7 @@
 | Л5 | как сейчас | 150, E | сразу |
 | Л6 | как сейчас | 150/100, E | сразу |
 | Л7 | как сейчас | как сейчас | сразу |
-| Л8 | как сейчас | 150/100, E | сразу |
+| Л8 | удалено 12.11.2026 | | |
 | Л9 | как сейчас | сразу | сразу |
 
 Скелетоны ленты неподвижны ([Card.tsx:184][card]), выделение рамкой движения не имеет.
@@ -425,7 +425,6 @@ export function scrollBehavior(): ScrollBehavior;    // smooth only in Full
 [chm]: file:///Users/i_iii/Проекты/Личные%20проекты/local-arena/.claude/worktrees/youtube-referer/src/components/CardHoverMenu.tsx
 [fvs]: file:///Users/i_iii/Проекты/Личные%20проекты/local-arena/.claude/worktrees/youtube-referer/src/components/FeedVideoSurface.tsx
 [cra]: file:///Users/i_iii/Проекты/Личные%20проекты/local-arena/.claude/worktrees/youtube-referer/src/components/CardRowActions.tsx
-[tfs]: file:///Users/i_iii/Проекты/Личные%20проекты/local-arena/.claude/worktrees/youtube-referer/src/components/TopFadeScrim.tsx
 [vs]: file:///Users/i_iii/Проекты/Личные%20проекты/local-arena/.claude/worktrees/youtube-referer/src/components/VaultSwitcher.tsx
 [une]: file:///Users/i_iii/Проекты/Личные%20проекты/local-arena/.claude/worktrees/youtube-referer/src/hooks/useNameEdit.ts
 [app]: file:///Users/i_iii/Проекты/Личные%20проекты/local-arena/.claude/worktrees/youtube-referer/src/App.tsx

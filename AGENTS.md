@@ -52,7 +52,6 @@
 - `SPEC_SEARCH.md` — Hybrid Search: FTS5 lexical/alias retrieval, searchable metadata chunks, chunk fuzzy matching, локальные multilingual semantic embeddings (fastembed), deterministic fusion/rerank
 - `SPEC_SEARCH_OVERLAY.md` — поиск по блокам: модальный overlay (`Cmd+F`), список результатов с подсветкой первого совпадения, превью-карточка справа; заменяет невидимый грид-фильтр main search
 - `SPEC_SETTINGS_WINDOW.md` — отдельное окно настроек: Appearance / Spaces / Orphans (сироты-медиа с batch delete/convert), межоконная синхронизация
-- `SPEC_SCROLL_EDGE_FADE.md` — растворение верхней кромки прокручиваемых поверхностей: общая кривая маски, порог активации, настройка `mine.scrollEdgeFade`
 - `SPEC_DISTRIBUTION.md` — production-контракт подписи, доставки, обновлений, диагностики; статус DEFERRED по явному продуктовому решению
 - `SPEC_STARTUP_PERFORMANCE.md` — принятый контракт мгновенного запуска: окно и local snapshot образуют отдельный critical path, а клиппер/freshness/preview maintenance выполняются после первого интерактивного кадра
 - `DESIGN_SYSTEM_IOS.md` — дизайн-система iOS: цвета, типографика, компоненты, жесты
