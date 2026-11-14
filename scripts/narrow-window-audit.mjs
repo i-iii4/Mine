@@ -301,7 +301,8 @@ try {
   await page.waitForFunction(() => document.querySelector("[data-sidebar-overlay]") === null, null, { timeout: 2000 });
   console.log("PASS 400, Full: in and out over 200 ms");
 
-  // Minimal: in 150 ms, out 100 ms on E (С2).
+  // Minimal changes no role's time: in and out over 200 ms on E, as in Full
+  // (SPEC_MOTION_LEVELS.md, «Режимы», С2).
   await chooseLevel("minimal");
   await toggle();
   await page.waitForFunction(() => document.querySelector("[data-sidebar-overlay]")?.getAttribute("data-state") === "open");
@@ -311,13 +312,13 @@ try {
     return { panel: [panel.transitionDuration, panel.transitionTimingFunction], scrim: [scrim.transitionDuration, scrim.transitionTimingFunction] };
   });
   const minimalIn = await overlayMotion();
-  assert.deepEqual(minimalIn.panel, ["0.15s", "cubic-bezier(0.22, 1, 0.36, 1)"], "Minimal: the panel comes in 150 ms");
-  assert.deepEqual(minimalIn.scrim, ["0.15s", "cubic-bezier(0.22, 1, 0.36, 1)"], "Minimal: the scrim comes in 150 ms");
+  assert.deepEqual(minimalIn.panel, ["0.2s", "cubic-bezier(0.22, 1, 0.36, 1)"], "Minimal: the panel comes in 200 ms, as in Full");
+  assert.deepEqual(minimalIn.scrim, ["0.2s", "cubic-bezier(0.22, 1, 0.36, 1)"], "Minimal: the scrim comes in 200 ms, as in Full");
   await toggle();
   const minimalOut = await overlayMotion();
-  assert.deepEqual(minimalOut.panel, ["0.1s", "cubic-bezier(0.22, 1, 0.36, 1)"], "Minimal: the panel leaves in 100 ms");
+  assert.deepEqual(minimalOut.panel, ["0.2s", "cubic-bezier(0.22, 1, 0.36, 1)"], "Minimal: the panel leaves in 200 ms, as in Full");
   await page.waitForFunction(() => document.querySelector("[data-sidebar-overlay]") === null, null, { timeout: 2000 });
-  console.log("PASS 400, Minimal: in over 150 ms, out over 100 ms");
+  console.log("PASS 400, Minimal: in and out over 200 ms, as in Full");
   await chooseLevel("full");
 
   // Across the threshold the sidebar beside the feed moves out of the row
@@ -447,20 +448,20 @@ try {
     const element = document.querySelector("[data-app-top-sidebar-segment]");
     return element && element.getBoundingClientRect().width === target && getComputedStyle(element).transitionDuration === "0s";
   }, TARGET, { timeout: 2000 });
-  // Minimal: a collapse in 100 ms and an opening in 150 ms on E, one value
-  // for the panel and the segment (С1).
+  // Minimal: a collapse and an opening in 200 ms on E, as in Full, one value
+  // for the panel and the segment («Режимы», С1).
   await chooseLevel("minimal");
   await toggle();
   await settle();
   segment = await segmentNow();
   assert.deepEqual(segment.motion, segment.asideMotion, "Minimal, 1200 collapsing: the segment moves by the sidebar's own motion");
-  assert.deepEqual(segment.motion, ["width", "0.1s", "cubic-bezier(0.22, 1, 0.36, 1)"], "Minimal, 1200 collapsing: its width over 100 ms on E");
+  assert.deepEqual(segment.motion, ["width", "0.2s", "cubic-bezier(0.22, 1, 0.36, 1)"], "Minimal, 1200 collapsing: its width over 200 ms on E, as in Full");
   await page.waitForFunction(() => document.querySelector("[data-app-top-sidebar-segment]")?.childElementCount === 0, null, { timeout: 2000 });
   await toggle();
   await settle();
   segment = await segmentNow();
   assert.deepEqual(segment.motion, segment.asideMotion, "Minimal, 1200 opening: by the sidebar's own motion");
-  assert.deepEqual(segment.motion, ["width", "0.15s", "cubic-bezier(0.22, 1, 0.36, 1)"], "Minimal, 1200 opening: its width over 150 ms on E");
+  assert.deepEqual(segment.motion, ["width", "0.2s", "cubic-bezier(0.22, 1, 0.36, 1)"], "Minimal, 1200 opening: its width over 200 ms on E, as in Full");
   await page.waitForFunction((target) => {
     const element = document.querySelector("[data-app-top-sidebar-segment]");
     return element && element.getBoundingClientRect().width === target && getComputedStyle(element).transitionDuration === "0s";
@@ -475,7 +476,7 @@ try {
   segment = await segmentNow();
   assert.equal(segment.width, TARGET, "Off, 1200 open: its width at once");
   assert.equal(segment.spaceName, true, "Off, 1200 open: the space switcher at once");
-  console.log("PASS 1200: the segment leaves with a collapse and comes back with an opening, on the panel's edge: 200 ms in Full, 100 and 150 ms in Minimal, at once in Off; collapsed, none of the row");
+  console.log("PASS 1200: the segment leaves with a collapse and comes back with an opening, on the panel's edge: 200 ms in Full and Minimal, at once in Off; collapsed, none of the row");
 
   // A sidebar collapsed beside the feed stays collapsed across the narrow
   // window (У7).

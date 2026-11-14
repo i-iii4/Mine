@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useContext, useState } from "react";
-import { MOTION_ENTER_MS, MOTION_EXIT_MS, MOTION_LEVELS, MOTION_SURFACE_MS } from "@/lib/motion";
+import { MOTION_LEVELS, MOTION_SURFACE_MS } from "@/lib/motion";
 import { setMotionLevel } from "@/test/motionLevel";
 import { SIDEBAR_OVERLAY_LABEL, SidebarOverlay, SidebarOverlayWidthContext } from "./SidebarOverlay";
 
@@ -137,10 +137,9 @@ describe("SidebarOverlay: the sidebar over the feed (SPEC_NARROW_WINDOW.md, У4 
     expectPointerClosing(MOTION_SURFACE_MS);
   });
 
-  it("moves out over 100 ms in Minimal, the time of its CSS (Р3)", () => {
+  it("moves out in Minimal as in Full: Minimal changes no role's time («Режимы»)", () => {
     setMotionLevel("minimal");
-    expect(MOTION_EXIT_MS).toBeLessThan(MOTION_ENTER_MS);
-    expectPointerClosing(MOTION_EXIT_MS);
+    expectPointerClosing(MOTION_SURFACE_MS);
   });
 
   it("comes and goes at once in Off: open in the frame it opens, gone in the frame it closes", () => {

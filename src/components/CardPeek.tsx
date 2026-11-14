@@ -67,10 +67,11 @@ import {
   FRAME_LINE_PX,
   PEEK_FRAME_CORNERS,
   PEEK_FRAME_PIECES,
-  PEEK_POSE_NUDGED,
+  PEEK_LINE_NUDGE_SHARE,
   PEEK_POSE_REST,
   PEEK_POSE_RISE_FROM,
   PEEK_POSE_SUNK,
+  peekLinePose,
   carriedPeekMediaPlace,
   carriedPeekImage,
   carriedPeekRect,
@@ -132,7 +133,7 @@ import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { commandById } from "@/lib/commandRegistry";
 import { usePeekWidth, type PeekWidth } from "@/lib/cardView";
 import type { DetailLayoutMode } from "@/lib/detailLayout";
-import { MOTION_ENTER_MS, MOTION_EXIT_MS, motionLevel, roleEasing, roleMs, springMotion, type MotionLevel, type MotionOptions } from "@/lib/motion";
+import { MOTION_ENTER_MS, MOTION_EXIT_MS, MOTION_SPRING_MOVE_MS, motionLevel, roleEasing, roleMs, springMotion, type MotionLevel, type MotionOptions } from "@/lib/motion";
 import { lastInputIsKey } from "@/lib/motionInput";
 import { createPoseRunner, type PoseTargets } from "@/lib/poseMotion";
 import { cn } from "@/lib/utils";
@@ -1621,7 +1622,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     startResize(
       shownWidth,
       { position: 0, velocity: animate === "spring" ? speed / distance : 0, target: 1 },
-      animate === "move" ? { from: 0, ms: roleMs("move", "enter") } : null,
+      animate === "move" ? { from: 0, ms: MOTION_SPRING_MOVE_MS } : null,
     );
   };
 
@@ -1680,11 +1681,9 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     const on = allowed && (steppedRef.current || (attendedRef.current && !towardWindowRef.current));
     steppedRef.current = on;
     setHintShown(on);
-    // Full steps on the spring, Minimal along the leaving's line, Off shows
-    // the hint alone (SPEC_MOTION_LEVELS.md, ОУ4, ОУ8).
-    const level = motionLevel();
-    aimNudge(on && level === "full" ? 1 : 0);
-    aimPoseNudge(on && level === "minimal");
+    // The step answers the pointer: on the window's spring in every mode
+    // (SPEC_MOTION_LEVELS.md, «Режимы», ОУ4).
+    aimNudge(on ? 1 : 0);
   };
   updateNudgeRef.current = updateNudge;
 
@@ -1697,14 +1696,6 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
     setLive(true);
     evaluateFrameRef.current();
     updateNudgeRef.current();
-  };
-
-  /** The hint's step in Minimal (ОУ4): along the leaving's line to a sixth
-   *  of it in 150 ms on E and back in 100 ms, from where the window stands. */
-  const aimPoseNudge = (on: boolean) => {
-    const target = on ? PEEK_POSE_NUDGED : PEEK_POSE_REST;
-    if (poseRunner.target() === target) return;
-    poseRunner.move("nudge", null, target, on ? MOTION_ENTER_MS : MOTION_EXIT_MS, poseTargets(), on ? () => undefined : settlePose);
   };
 
   /** Minimal's opening (ОУ2): from faded, 6.67 px low and 95 % to its place
@@ -1741,7 +1732,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
       kind: "expand",
       slug: heldRef.current?.slug ?? "",
       spring: { position: from, velocity: level === "minimal" ? 0 : velocity, target },
-      glide: level === "minimal" ? { from, ms: roleMs("move", "enter") } : null,
+      glide: level === "minimal" ? { from, ms: MOTION_SPRING_MOVE_MS } : null,
       direction: target === 1 ? "in" : "out",
       last: now,
       elapsed: 0,
@@ -2070,7 +2061,21 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
    *  the page, faded out, and it is gone the frame after (ОУ4, rule 4),
    *  unless the same card opened again meanwhile. */
   const sinkPose = () => {
-    const from = poseRunner.current();
+    let from = poseRunner.current();
+    // The hint's step is the leaving's first sixth (ОУ4): a window stepped
+    // back on its spring, wholly or partway, goes on down the same line from
+    // where it stands. The spring's step is handed to the leaving whole: its
+    // loop stops and its transform goes, the leaving's first frame shows the
+    // same place.
+    const nudge = nudgeSpringRef.current;
+    const stepped = nudge.spring.position;
+    if (!poseRunner.active() && Math.abs(stepped) > 1e-4) {
+      from = peekLinePose(PEEK_LINE_NUDGE_SHARE * stepped);
+      if (nudge.frame !== null) cancelAnimationFrame(nudge.frame);
+      nudge.frame = null;
+      nudge.spring = { position: 0, velocity: 0, target: 0 };
+      writeNudge();
+    }
     poseRunner.move("sink", from, PEEK_POSE_SUNK, MOTION_EXIT_MS, poseTargets(), () => {
       const ended = poseRunner.generation();
       requestAnimationFrame(() => {

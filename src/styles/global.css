@@ -151,12 +151,21 @@ select,
    same times and curves, cardPeek.ts the card window's step and scale; a
    test keeps them equal (РД8).
 
-   The level is an ancestor's attribute, not only the root's: the clipper's
+   The mode is an ancestor's attribute, not only the root's: the clipper's
    window over a page lives in Shadow DOM, where `:root` selects nothing
-   (НС7). The level rules come after the `:root` declarations they override,
-   which have the same specificity. The level changes the tokens' times and
-   nothing else (РД6); Off gives every one 0.01ms, not none, because code
-   waits for the end events (УД7). */
+   (НС7). The mode's rules come after the `:root` declarations they override,
+   which have the same specificity.
+
+   Three whole sets of motion (SPEC_MOTION_LEVELS.md, «Режимы»; user's
+   decision of 13.11.2026). What answers the pointer, the keyboard's focus
+   and a drag in hand moves the same in every mode: the lift, the buttons,
+   the frame and the wash, the rows, the stack, the hint, the tooltips.
+   Minimal changes no token: it replaces only the heavy motions of a press,
+   the flights and the springs, and code does that (motion.ts,
+   `springMotion`; cardPeek.ts). Off stands the result of a press at once:
+   Поверхность and Перемещение get 0.01ms here, and so does Отклик on what a
+   press shows, the list below; 0.01ms, not none, because code waits for the
+   end events (УД7). */
 :root {
   --motion-enter: 150ms;
   --motion-exit: 100ms;
@@ -177,25 +186,32 @@ select,
   --card-lift-curve-down: cubic-bezier(0.61, 0, 0.39, 1);
   --lift-up: 200ms var(--card-lift-curve-up);
   --lift-down: 150ms var(--card-lift-curve-down);
-}
-/* Minimal shortens Поверхность and Перемещение; Отклик is the same. The lift
-   keeps its own curves: on E an interrupted lift came back with a first step
-   of 5.3 and 5.7 px and its parts parted (УД2, Л1). */
-[data-motion="minimal"] {
-  --motion-surface-enter: 150ms;
-  --motion-surface-exit: 100ms;
-  --motion-move: 150ms;
-  --lift-up: 150ms var(--card-lift-curve-up);
-  --lift-down: 100ms var(--card-lift-curve-down);
+  /* The wash of a picture under the keyboard's focus or in the selection,
+     both ways (Л3): its own time, as before the roles. */
+  --card-wash-fade: 180ms;
 }
 [data-motion="off"] {
-  --motion-enter: 0.01ms;
-  --motion-exit: 0.01ms;
   --motion-surface-enter: 0.01ms;
   --motion-surface-exit: 0.01ms;
   --motion-move: 0.01ms;
-  --lift-up: 0.01ms var(--card-lift-curve-up);
-  --lift-down: 0.01ms var(--card-lift-curve-down);
+}
+/* What a press shows on Отклик's times, at once at Off: the menus, the top
+   rows, the row a new collection is named in, a switch, a pill's label and
+   the chevron of a menu's trigger. Everything else on Отклик answers the
+   pointer or the focus and keeps its time. */
+[data-motion="off"] :is(
+  [data-radix-menu-content],
+  .detail-top-bar-enter,
+  .detail-top-bar-line-enter,
+  .main-secondary-bar-layer,
+  [data-top-row-fade],
+  [data-sidebar-row-part],
+  [data-slot="switch"],
+  [data-slot="tabs-trigger"],
+  [data-menu-chevron]
+) {
+  --motion-enter: 0.01ms;
+  --motion-exit: 0.01ms;
 }
 
 /* A row's name brightens as Отклик: on --motion-enter to bright, on
@@ -444,19 +460,17 @@ select,
   background: var(--graphic-card-focus-overlay);
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--motion-exit) var(--motion-ease);
+  transition: opacity var(--card-wash-fade) var(--motion-ease);
 }
 
 /* The wash is for pictures only; a text card shows the border alone. A row
    lights many cards at once, so its highlight is the border without the wash
    (С3, С7). */
-/* The wash is Отклик: in on --motion-enter, out on --motion-exit
-   (SPEC_MOTION_LEVELS.md, Л3, РД7); the keyboard's wash lands at once at
-   every level (below, «At once»). */
+/* The wash comes and goes on its own time, --card-wash-fade, the same in
+   every mode and under the keyboard (SPEC_MOTION_LEVELS.md, «Режимы», Л3). */
 [data-grid-scroll][data-feed-grid-focus-mode="true"] [data-feed-grid-item-focused="true"] [data-card-media-clip] > [data-card-lift="window"]::after,
 [data-grid-scroll] [data-feed-grid-item-selected="true"] [data-card-media-clip] > [data-card-lift="window"]::after {
   opacity: 1;
-  transition-duration: var(--motion-enter);
 }
 
 /* A refused name shakes once, side to side, before the old name returns
@@ -973,66 +987,43 @@ body {
   animation: mine-progress-indeterminate 1.4s ease-in-out infinite;
 }
 
-/* At once (SPEC_MOTION_LEVELS.md, УД4, УД7, РД6). Off gives every role's
-   token 0.01ms in the level block above; this rule stands the rest at once:
-   the clipper's own motions at Off, which have no role tokens (УД10), and
-   whatever a key started at every level. 0.01ms, not none: code waits for
-   the end events (Р1). `transition-delay` stays: the sidebar handle's 300 ms
-   is an intent delay (УД5, Р9). A spinner, the indeterminate progress and
-   the shake of a refused name keep moving: the first two say work goes on,
-   in place, the shake is a refusal rather than a move (РД5, В3). Code that
-   animates itself reads the same level through src/lib/motion.ts.
+/* At once (SPEC_MOTION_LEVELS.md, УД4, УД7). What a key's command opened
+   stands at once in every mode: a menu, a window or the search carries
+   `data-motion-key` on its surface and its scrim while it is on the page
+   (src/lib/motionInput.ts), and a turn of the Contents list's mark Enter made
+   carries `data-sidebar-link-turn="key"` (С7). The keyboard's focus walking
+   the feed is no command: the card it lands on lifts as under the pointer
+   («Режимы»; user's decision of 13.11.2026). 0.01ms, not none: code waits
+   for the end events (Р1). `transition-delay` stays: the sidebar handle's
+   300 ms is an intent delay (УД5, Р9). A spinner, the indeterminate progress
+   and the shake of a refused name keep moving (РД5, В3). Code that animates
+   itself reads the same through src/lib/motion.ts.
 
-   A key's motion: the feed's keyboard mode (`data-feed-grid-interaction-mode`,
-   Grid.tsx) lands the lift and everything that goes with it (Л1), the
-   frame's colour (Л2) and the wash (Л3) at once at every level; a mouse move
-   that ends the mode lowers the card by the level. A menu, a window or the
-   search a key opened carries `data-motion-key` on its surface and its scrim
-   while it is on the page (src/lib/motionInput.ts). A turn of the Contents
-   list's mark Enter made carries `data-sidebar-link-turn="key"` (С7).
+   The clipper follows the system's flag alone (УД10): under it everything
+   of the clipper's stands at once, as it did, by its own mark on its root
+   (`data-motion-clipper`, motion.ts). An app page at Off has no such rule:
+   there only a press's result is at once, by the tokens above.
 
-   At Minimal the search stands at once from the bottom bar's button too (М6),
-   and a tooltip after the first one, which Radix opens `instant-open` (М3):
-   the surface and the scrim alone, so a menu opened in the search goes by the
-   level. These two are the places where the level changes what a role does,
-   not only its time (РД6).
-
-   Inside a surface a key opened, a menu or a tooltip the pointer opened there
-   (the search's menus render inside it) keeps the level (УД4, п. 3). */
-[data-motion="off"] *:not(.mine-progress-indeterminate, .animate-spin, [data-name-refused]),
-[data-motion="off"] *::before,
-[data-motion="off"] *::after,
-[data-grid-scroll][data-feed-grid-interaction-mode="keyboard"] :is(
-  [data-card-lift],
-  [data-card-lift-fade],
-  [data-card-media-outline],
-  [data-card-hover-more-action],
-  [data-card-hover-connect-action],
-  [data-card-hover-overlay]
-),
-[data-grid-scroll][data-feed-grid-interaction-mode="keyboard"] [data-feed-card-frame]::after,
-[data-grid-scroll][data-feed-grid-interaction-mode="keyboard"] [data-card-media-clip] > [data-card-lift="window"]::after,
-[data-motion="minimal"] :is([data-search-overlay], [data-search-overlay-scrim]),
-[data-motion="minimal"] [data-slot="tooltip-content"][data-state="instant-open"],
+   The mark stands at once the surface itself and the parts that carry its
+   entrance: the sidebar's panel and scrim over the feed, the top rows'
+   layers, a pill's indicator. What is inside the surface goes on answering
+   the pointer as everywhere: the rows of a search ⌘F opened, a menu or a
+   tooltip the pointer opens there (УД4, п. 3; «Режимы»). */
+[data-motion-clipper][data-motion="off"] *:not(.mine-progress-indeterminate, .animate-spin, [data-name-refused]),
+[data-motion-clipper][data-motion="off"] *::before,
+[data-motion-clipper][data-motion="off"] *::after,
 [data-sidebar-link-icon][data-sidebar-link-turn="key"],
 [data-motion-key],
 [data-motion-key]::before,
 [data-motion-key]::after,
-[data-motion-key] *:not(
-  .mine-progress-indeterminate,
-  .animate-spin,
-  [data-name-refused],
-  :is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key]),
-  :is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key]) *
-),
-[data-motion-key] *:not(
-  :is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key]),
-  :is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key]) *
-)::before,
-[data-motion-key] *:not(
-  :is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key]),
-  :is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key]) *
-)::after {
+[data-motion-key] > :is([data-sidebar-overlay-scrim], [data-sidebar-overlay-panel]),
+[data-motion-key] :is(
+  .detail-top-bar-enter,
+  .detail-top-bar-line-enter,
+  .main-secondary-bar-layer,
+  [data-top-row-fade],
+  [data-tabs-indicator]
+) {
   animation-duration: 0.01ms !important;
   animation-iteration-count: 1 !important;
   animation-delay: 0s !important;
@@ -2053,20 +2044,15 @@ body {
 :root[data-sidebar-stack-ring] [data-channel-icon-card] {
   box-shadow: 0 0 0 1px var(--surface);
 }
-/* The stack is a member of Пружина (SPEC_MOTION_LEVELS.md, С5, РД4): in Full
-   its spring stands on the stack's box (channelIcon.ts); without it the cards
-   move as Перемещение, 150 ms on the move curve in Minimal. Off keeps the
-   stack at rest, unopened: there the level changes what it does, not its
-   time (РД6). */
+/* The stack is a member of Пружина (SPEC_MOTION_LEVELS.md, С5, РД4). It
+   answers the pointer, so its spring stands on the stack's box in every mode
+   (channelIcon.ts; «Режимы»). */
 [data-channel-icon-card] {
   transform: var(--channel-icon-rest);
   transition: transform var(--channel-icon-duration, var(--motion-move)) var(--channel-icon-easing, var(--motion-move-ease));
 }
 [data-sidebar-scroll] [data-sidebar-row-answer="true"] [data-channel-icon-card] {
   transform: var(--channel-icon-hover);
-}
-[data-motion="off"] [data-sidebar-scroll] [data-sidebar-row-answer="true"] [data-channel-icon-card] {
-  transform: var(--channel-icon-rest);
 }
 
 /* Rows morph (src/lib/sidebarRowsMorph.ts, user's decisions of 23.10.2026):
@@ -2127,9 +2113,10 @@ body {
   from { rotate: 45deg; }
   to { rotate: 0deg; }
 }
-/* The mark turns on the stack's spring in Full and as Перемещение in Minimal
-   (Sidebar.tsx sets the spring only in Full); Off does not turn it
-   (SPEC_MOTION_LEVELS.md, С7, РД4, РД6). No code waits for the turn's end. */
+/* The mark turns on a press: on the stack's spring in Full, by the calm move
+   that stands in for a spring in Minimal (Sidebar.tsx, channelIconSpringStyle);
+   Off does not turn it (SPEC_MOTION_LEVELS.md, С7, РД4). No code waits for the
+   turn's end. */
 [data-motion="off"] [data-sidebar-link-icon] {
   animation: none !important;
 }

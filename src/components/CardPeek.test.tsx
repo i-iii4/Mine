@@ -14,7 +14,6 @@ import {
   peekPoseKeyframes,
   recordPeekInput,
   registerPeekGraphSource,
-  PEEK_POSE_NUDGED,
   PEEK_POSE_REST,
   PEEK_POSE_RISE_FROM,
   PEEK_POSE_SUNK,
@@ -450,7 +449,7 @@ describe("CardPeek", () => {
       const settle = () => {
         for (let frame = 0; frame < 60; frame += 1) frames.run(() => null);
       };
-      return { view, scrim, surface, nudge, hint, settle, moveArea };
+      return { view, scrim, surface, nudge, hint, settle, moveArea, frames };
     }
 
     const cleanUp = () => {
@@ -546,87 +545,85 @@ describe("CardPeek", () => {
       }
     });
 
-    it("shows the hint alone at Off, no step (SPEC_MOTION_LEVELS.md, ОУ8)", () => {
-      setMotionLevel("off");
+    // The step answers the pointer: the same spring in every mode
+    // (SPEC_MOTION_LEVELS.md, «Режимы»; user's decision of 13.11.2026).
+    it.each(["minimal", "off"] as const)("steps on the window's spring at %s as in Full, with no motion of the level's", (level) => {
+      setMotionLevel(level);
+      const heard = hearMotions();
       try {
-        const { scrim, nudge, hint, settle } = steppedPeek();
+        const { scrim, surface, nudge, hint, settle, frames } = steppedPeek();
         restAt(500, 20, scrim);
-        settle();
         expect(hint).toHaveAttribute("data-shown");
+        // Partway after a few frames, not there in one.
+        frames.run(() => null);
+        frames.run(() => null);
+        const partway = /translateY\(([\d.]+)px\)/.exec(nudge.style.transform);
+        expect(Number(partway?.[1])).toBeGreaterThan(0);
+        expect(Number(partway?.[1])).toBeLessThan(CARD_PEEK_NUDGE_OFFSET_PX);
+        settle();
+        expect(nudge.style.transform).toBe(stepped);
+        expect(heard).toEqual([]);
+        // Off the band: back on the same spring.
+        pointerAt(500, 400, surface);
+        settle();
         expect(nudge.style.transform).toBe("");
+        expect(heard).toEqual([]);
       } finally {
+        forgetMotions();
         cleanUp();
       }
     });
 
-    describe("in Minimal, along the leaving's line (SPEC_MOTION_LEVELS.md, ОУ4)", () => {
+    describe("in Minimal, a press goes on down the leaving's line (SPEC_MOTION_LEVELS.md, ОУ4)", () => {
       afterEach(forgetMotions);
 
       /** Where a heard motion of the window stands at its clock's time. */
+      const read = (frame: Keyframe | undefined) => {
+        const match = /translateY\((-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(String(frame?.transform));
+        return { y: Number(match?.[1]), scale: Number(match?.[2]), opacity: Number(frame?.opacity) };
+      };
       const poseOf = (motion: HeardMotion) => {
         const [from, to] = motion.keyframes;
-        const read = (frame: Keyframe | undefined) => {
-          const match = /translateY\((-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(String(frame?.transform));
-          return { y: Number(match?.[1]), scale: Number(match?.[2]), opacity: Number(frame?.opacity) };
-        };
         return peekPoseAt({ from: read(from), to: read(to), duration: Number(motion.timing.duration) }, motion.animation.currentTime);
       };
       const onLine = (pose: { y: number; scale: number }) => Math.abs(pose.y / CARD_PEEK_MARGIN_PX - (1 - pose.scale) / 0.05);
 
-      it("steps a sixth of the leaving in 150 ms on E and back in 100 ms, from where it stands", () => {
-        setMotionLevel("minimal");
-        const heard = hearMotions();
-        try {
-          const { scrim, surface, nudge, hint, settle } = steppedPeek();
-          restAt(500, 20, scrim);
-          expect(hint).toHaveAttribute("data-shown");
-          const timing = (duration: number) => ({ duration, easing: MOTION_EASE, fill: "forwards" });
-          expect(heard.map(({ element, keyframes, timing: heardTiming }) => ({ element, keyframes, timing: heardTiming }))).toEqual([
-            { element: nudge, keyframes: [peekPoseKeyframes(PEEK_POSE_REST).window, peekPoseKeyframes(PEEK_POSE_NUDGED).window], timing: timing(150) },
-            { element: scrim, keyframes: [{ opacity: 1 }, { opacity: 1 }], timing: timing(150) },
-          ]);
-          // The spring of Full stays still.
-          settle();
-          expect(nudge.style.transform).toBe("");
-          // Off the band halfway through the step: back from there in 100 ms.
-          heard[0]!.animation.currentTime = 60;
-          const halfway = peekPoseAt({ from: PEEK_POSE_REST, to: PEEK_POSE_NUDGED, duration: 150 }, 60);
-          pointerAt(500, 400, surface);
-          expect(heard[0]!.animation.cancel).toHaveBeenCalled();
-          expect(heard[2]!.keyframes).toEqual([peekPoseKeyframes(halfway).window, peekPoseKeyframes(PEEK_POSE_REST).window]);
-          expect(heard[2]!.timing).toEqual(timing(100));
-          // At its place once it is back: no motion's style left.
-          act(() => heard[2]!.finish());
-          expect(heard[2]!.animation.cancel).toHaveBeenCalled();
-        } finally {
-          cleanUp();
-        }
-      });
-
       it.each([
-        ["at rest", null],
-        ["in the step", 150],
-        ["midway through the step", 40],
-      ] as const)("goes on down the same line from a press on the band %s, with no jump (ОУ4, rules 1, 2, 5)", (_name, stepTime) => {
+        ["at rest", 0],
+        ["in the step", 60],
+        ["midway through the step", 3],
+      ] as const)("from a press on the band %s, with no jump (ОУ4, rules 1, 2, 5)", (_name, stepFrames) => {
         setMotionLevel("minimal");
         const heard = hearMotions();
         try {
-          const { view, scrim, nudge, settle } = steppedPeek();
-          if (stepTime !== null) {
+          const { view, scrim, nudge, settle, frames } = steppedPeek();
+          if (stepFrames > 0) {
             restAt(500, 20, scrim);
-            heard[0]!.animation.currentTime = stepTime;
+            for (let frame = 0; frame < stepFrames; frame += 1) frames.run(() => null);
           }
-          const before = stepTime === null
-            ? PEEK_POSE_REST
-            : peekPoseAt({ from: PEEK_POSE_REST, to: PEEK_POSE_NUDGED, duration: 150 }, stepTime);
+          // Where the spring's step stands in the frame of the press.
+          const stood = /translateY\(([\d.]+)px\) scale\(([\d.]+)\)/.exec(nudge.style.transform);
+          const before = stood ? { y: Number(stood[1]), scale: Number(stood[2]) } : { y: 0, scale: 1 };
+          if (stepFrames === 60) expect(before.y).toBeCloseTo(CARD_PEEK_NUDGE_OFFSET_PX, 3);
+          if (stepFrames === 3) {
+            expect(before.y).toBeGreaterThan(0);
+            expect(before.y).toBeLessThan(CARD_PEEK_NUDGE_OFFSET_PX);
+          }
           fireEvent.click(scrim, { clientX: 500, clientY: 20 });
           expect(view.onClose).toHaveBeenCalledTimes(1);
           view.rerenderWith({ block: null, opening: null });
           const leaving = heard.filter((motion) => motion.element === nudge).at(-1)!;
-          expect(leaving.keyframes).toEqual([peekPoseKeyframes(before).window, peekPoseKeyframes(PEEK_POSE_SUNK).window]);
+          // The leaving starts where the step stood, on the line, at full
+          // opacity, and ends sunk; the spring's own transform is handed over.
+          const first = read(leaving.keyframes[0]);
+          expect(first.y).toBeCloseTo(before.y, 3);
+          expect(first.scale).toBeCloseTo(before.scale, 5);
+          expect(first.opacity).toBe(1);
+          expect(leaving.keyframes[1]).toEqual(peekPoseKeyframes(PEEK_POSE_SUNK).window);
           expect(leaving.timing.duration).toBe(100);
+          expect(nudge.style.transform).toBe("");
           // Each of its frames on the line, moving down all the way.
-          let share = before.y / CARD_PEEK_MARGIN_PX;
+          let share = first.y / CARD_PEEK_MARGIN_PX;
           for (let time = 0; time <= 100; time += 1000 / 60) {
             leaving.animation.currentTime = time;
             const pose = poseOf(leaving);

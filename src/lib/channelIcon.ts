@@ -10,7 +10,7 @@
 // (global.css, «Compact rows»).
 
 import type { CSSProperties } from "react";
-import type { SpringMotion } from "./motion";
+import { MOTION_MOVE_EASE, MOTION_SPRING_MOVE_MS, type SpringMotion } from "./motion";
 
 /** Most cards a stack holds. */
 export const CHANNEL_ICON_MAX_CARDS = 3;
@@ -138,14 +138,21 @@ export const CHANNEL_ICON_SPRING_EASING = `linear(${Array.from(
     : String(Math.round((1 - springRemainder((index / SPRING_SAMPLES) * SETTLE_OMEGA_T)) * 10000) / 10000)),
 ).join(", ")})`;
 
-/** The spring as custom properties, for whatever moves on it: the stack's
- *  cards, the Contents list's plus turning into a cross. They are members of
- *  Пружина (SPEC_MOTION_LEVELS.md, РД4): only `"spring"` (Full) sets them;
- *  otherwise global.css falls back to Перемещение's tokens, 150 ms on the move
- *  curve in Minimal and at once at Off (С5, С7). */
+/** How whatever moves on the stack's spring moves, as custom properties: the
+ *  stack's cards, the Contents list's plus turning into a cross. They are
+ *  members of Пружина (SPEC_MOTION_LEVELS.md, РД4). The stack answers the
+ *  pointer and keeps the spring in every mode (С5). The mark turns on a press
+ *  (С7): on the spring in Full, by the calm move that stands in for a spring
+ *  in Minimal; at Off global.css does not turn it. */
 export function channelIconSpringStyle(motion: SpringMotion): CSSProperties {
-  if (motion !== "spring") return {};
+  if (motion === "instant") return {};
   // Custom properties by construction; CSSProperties has no key for them.
+  if (motion === "move") {
+    return {
+      "--channel-icon-duration": `${MOTION_SPRING_MOVE_MS}ms`,
+      "--channel-icon-easing": MOTION_MOVE_EASE,
+    } as CSSProperties;
+  }
   return {
     "--channel-icon-duration": `${CHANNEL_ICON_SPRING_MS}ms`,
     "--channel-icon-easing": CHANNEL_ICON_SPRING_EASING,

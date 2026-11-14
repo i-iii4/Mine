@@ -255,9 +255,8 @@ describe("the pill by the level", () => {
     expect(variant).toBe('&:not(:where([data-motion="off"] *))');
   });
 
-  it("slides at Minimal by the level's token alone, with no rule of its own (РД6)", () => {
-    expect(css).not.toMatch(/\[data-motion="minimal"\] \[data-tabs-indicator\]/);
-    expect(css).toMatch(/\[data-motion="minimal"\] \{[^}]*--motion-move: 150ms;/);
+  it("slides at Minimal as in Full: no rule and no token of Minimal's («Режимы»)", () => {
+    expect(css).not.toContain('[data-motion="minimal"]');
   });
 
   it("keeps the key's mark off a page that did not install the rule (the clipper)", () => {

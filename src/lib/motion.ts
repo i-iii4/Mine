@@ -7,8 +7,12 @@
 
 import { useSyncExternalStore } from "react";
 
-/** How the interface answers the pointer: as it moves today, by one short
- *  motion, or at once (SPEC_MOTION_LEVELS.md, УД1). */
+/** Three sets of motion, each whole (SPEC_MOTION_LEVELS.md, «Режимы»; user's
+ *  decision of 13.11.2026). What answers the pointer, the keyboard's focus
+ *  and a drag moves the same in all three. A press or a command plays as it
+ *  always did in Full; in Minimal its heavy motions, the flights and the
+ *  springs, give way to one calm short one; at Off its result stands at
+ *  once. */
 export type MotionLevel = "full" | "minimal" | "off";
 
 /** The levels, in the order Settings shows them. */
@@ -20,6 +24,11 @@ export const MOTION_LEVEL_STORAGE_KEY = "mine.motion";
 /** The attribute that carries the level in force on a page's root, or on the
  *  clipper's top element inside its Shadow DOM (НС5, НС7). */
 export const MOTION_LEVEL_ATTRIBUTE = "data-motion";
+
+/** The clipper's own mark beside it (УД10): under the system's flag
+ *  everything of the clipper's stands at once, as it always did, by the rule
+ *  «At once» in global.css; an app page at Off has no such rule. */
+export const MOTION_CLIPPER_ATTRIBUTE = "data-motion-clipper";
 
 /** The roles of motion (РД1). Пружина is asked of `springMotion`: in Full it
  *  keeps its own spring, in Minimal it moves as Перемещение. */
@@ -36,12 +45,14 @@ export const MOTION_ENTER_MS = 150;
 export const MOTION_EXIT_MS = 100;
 /** The curve of Отклик and Поверхность, E. */
 export const MOTION_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
-/** Поверхность in Full, both ways; Minimal gives it MOTION_ENTER_MS and
- *  MOTION_EXIT_MS (РД2). */
+/** Поверхность, both ways, in Full and Minimal alike (РД2). */
 export const MOTION_SURFACE_MS = 200;
-/** Перемещение in Full, both ways; Minimal gives it MOTION_ENTER_MS, and so
- *  to Пружина (РД2, РД4). */
+/** Перемещение, both ways, in Full and Minimal alike (РД2). */
 export const MOTION_MOVE_MS = 200;
+/** A member of Пружина a press started, in Minimal: the calm move that
+ *  stands in for its spring lasts the response's entering time, on the move
+ *  curve (РД4). */
+export const MOTION_SPRING_MOVE_MS = MOTION_ENTER_MS;
 /** The curve of Перемещение, and of Пружина in Minimal. */
 export const MOTION_MOVE_EASE = "cubic-bezier(0.37, 0, 0.63, 1)";
 /** The blink of a chosen menu item: its highlight goes out for the first
@@ -177,6 +188,7 @@ export function installMotionLevel(): void {
  *  on `root`; the stored key is never read. Returns the listener's removal. */
 export function followSystemMotion(root: HTMLElement): () => void {
   mode = "clipper";
+  root.setAttribute(MOTION_CLIPPER_ATTRIBUTE, "");
   const apply = () => {
     const level: MotionLevel = systemReducesMotion() ? "off" : "full";
     writeAttribute(root, level);
@@ -189,22 +201,25 @@ export function followSystemMotion(root: HTMLElement): () => void {
   return () => query.removeEventListener("change", apply);
 }
 
-/** What a motion asks of the level: whether a key started it (УД4). */
+/** What started a motion (SPEC_MOTION_LEVELS.md, «Режимы»). `byKey`: a key's
+ *  command, at once in every mode (УД4). `answers`: the motion answers the
+ *  pointer over a thing, the keyboard's focus walking, or a drag in hand, and
+ *  moves the same in every mode. Neither: a press or a command, which Off
+ *  stands at once. */
 export interface MotionOptions {
   byKey?: boolean;
+  answers?: boolean;
 }
 
-/** How long a motion of `role` lasts at the level in force (РД2): Off 0, and
- *  0 at every level by a key (УД4). Перемещение has one time for both
+/** How long a motion of `role` lasts (РД2): 0 by a key's command; its own
+ *  time when it answers the pointer or the focus, in every mode; else its own
+ *  time in Full and Minimal and 0 at Off. Перемещение has one time for both
  *  phases. */
 export function roleMs(role: MotionRole, phase: MotionPhase, options: MotionOptions = {}): number {
   if (options.byKey) return 0;
-  const level = motionLevel();
-  if (level === "off") return 0;
+  if (!options.answers && motionLevel() === "off") return 0;
   if (role === "response") return phase === "enter" ? MOTION_ENTER_MS : MOTION_EXIT_MS;
-  if (level === "full") return role === "surface" ? MOTION_SURFACE_MS : MOTION_MOVE_MS;
-  if (role === "move") return MOTION_ENTER_MS;
-  return phase === "enter" ? MOTION_ENTER_MS : MOTION_EXIT_MS;
+  return role === "surface" ? MOTION_SURFACE_MS : MOTION_MOVE_MS;
 }
 
 /** The role's curve, the same on every level (РД2). */
@@ -215,17 +230,23 @@ export function roleEasing(role: MotionRole): string {
 /** How a member of Пружина moves: its own spring, Перемещение, or at once. */
 export type SpringMotion = "spring" | "move" | "instant";
 
-/** How a member of Пружина moves (РД4): its spring in Full, Перемещение in
- *  Minimal, at once at Off and by a key. */
+/** How a member of Пружина moves (РД4): at once by a key's command; on its
+ *  spring in every mode when it answers the pointer or the focus; else its
+ *  spring in Full, a calm move of `MOTION_SPRING_MOVE_MS` in Minimal, at once
+ *  at Off. */
 export function springMotion(options: MotionOptions = {}): SpringMotion {
   if (options.byKey) return "instant";
+  if (options.answers) return "spring";
   const level = motionLevel();
   if (level === "full") return "spring";
   return level === "minimal" ? "move" : "instant";
 }
 
-/** A programmatic scroll: smooth only in Full and not by a key (УД4,
- *  «Программная прокрутка»). */
+/** A programmatic scroll: at once by a key's command; smooth in every mode
+ *  when it follows the keyboard's focus walking; else smooth in Full and
+ *  Minimal, at once at Off («Программная прокрутка»). */
 export function scrollBehavior(options: MotionOptions = {}): ScrollBehavior {
-  return motionLevel() === "full" && !options.byKey ? "smooth" : "auto";
+  if (options.byKey) return "auto";
+  if (options.answers) return "smooth";
+  return motionLevel() === "off" ? "auto" : "smooth";
 }

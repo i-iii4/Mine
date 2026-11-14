@@ -21,13 +21,11 @@ const TAG_ROW_DROP_SIDE_EFFECTS = defaultDropAnimationSideEffects({
   styles: { active: { opacity: "0" } },
 });
 
-/// The drop flight, Перемещение at the level in force (SPEC_MOTION_LEVELS.md,
-/// С9, РД1): Full 200 ms, Minimal 150 ms, the move curve; Off none, the row
-/// lands where it is dropped. dnd-kit plays it with Web Animations, which no
-/// CSS rule of the level reaches, so the level is asked here (Р2). Read at
-/// render, so the level at the moment of the drag decides.
+/// The drop flight, Перемещение (SPEC_MOTION_LEVELS.md, С9, РД1): it answers
+/// a drag in hand, so it is the same in every mode («Режимы»). dnd-kit plays
+/// it with Web Animations, so the time is asked here.
 export function tagRowDropAnimation(): DropAnimation | null {
-  const duration = roleMs("move", "enter");
+  const duration = roleMs("move", "enter", { answers: true });
   if (duration === 0) return null;
   return {
     duration,
@@ -36,10 +34,10 @@ export function tagRowDropAnimation(): DropAnimation | null {
   };
 }
 
-/// The neighbours' move to their new places, the same Перемещение (С9): Full
-/// 200 ms, Minimal 150 ms, Off none, they stand there at once.
+/// The neighbours' move to their new places, the same Перемещение (С9), the
+/// same in every mode: they answer the drag.
 export function tagRowSortTransition(): SortableTransition | null {
-  const duration = roleMs("move", "enter");
+  const duration = roleMs("move", "enter", { answers: true });
   if (duration === 0) return null;
   return { duration, easing: roleEasing("move") };
 }

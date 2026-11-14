@@ -21,7 +21,7 @@ export function ChannelIcon({ style, className, ...props }: ComponentProps<"span
     <span
       {...props}
       className={cn("relative shrink-0", className)}
-      style={{ ...style, ...channelIconBoxStyle(springMotion()) }}
+      style={{ ...style, ...channelIconBoxStyle(springMotion({ answers: true })) }}
       data-channel-icon=""
     />
   );

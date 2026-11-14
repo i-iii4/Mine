@@ -25,7 +25,7 @@ import { SPRING_RESPONSE_S, SPRING_SAMPLES, SPRING_SETTLE } from "./channelIcon"
 import { getSidebarStyle } from "./compactStack";
 import { setSidebarLook, sidebarLookOf } from "./sidebarLook";
 import { cubicBezierCurve } from "./cubicBezier";
-import { MOTION_MOVE_EASE, roleMs, springMotion, type SpringMotion } from "./motion";
+import { MOTION_MOVE_EASE, MOTION_SPRING_MOVE_MS, springMotion, type SpringMotion } from "./motion";
 
 // ─── The spring ─────────────────────────────────────────────────────────
 
@@ -118,7 +118,7 @@ const MOVE_SLOPE_STEP = 1e-3;
  *  С3, С4, РД4): Перемещение's time on the move curve, from rest, whatever
  *  speed the run it turns had. The same shape as the spring's, so the morphs
  *  play either. */
-export function morphMove(durationMs: number = roleMs("move", "enter")): MorphSpring {
+export function morphMove(durationMs: number = MOTION_SPRING_MOVE_MS): MorphSpring {
   const share = (elapsedMs: number) => Math.min(1, Math.max(0, elapsedMs / durationMs));
   return {
     durationMs,

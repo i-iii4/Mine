@@ -165,12 +165,13 @@ describe("ArticleMarkdown footnotes", () => {
   });
 
   // SPEC_MOTION_LEVELS.md, В5: a link the pointer clicked scrolls smoothly
-  // only in Full; one ↵ followed (a click with no press count) and the other
-  // levels land at once.
+  // in Full and Minimal; one ↵ followed (a click with no press count) and Off
+  // land at once.
   it.each([
     ["full", 1, "smooth"],
     ["full", 0, "auto"],
-    ["minimal", 1, "auto"],
+    ["minimal", 1, "smooth"],
+    ["minimal", 0, "auto"],
     ["off", 1, "auto"],
   ] as const)("at %s, a click with %s presses scrolls %s", (level, detail, behavior) => {
     setMotionLevel(level);

@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SidebarLayout } from "@/types";
 import { APP_MAIN_MIN_WIDTH_PX, SIDEBAR_MAX_WIDTH_PX, SIDEBAR_MIN_WIDTH_PX, sidebarBesideMinWidthPx } from "@/lib/appLayout";
-import { MOTION_EASE, MOTION_ENTER_MS, MOTION_EXIT_MS, MOTION_LEVELS, MOTION_SURFACE_MS } from "@/lib/motion";
+import { MOTION_EASE, MOTION_LEVELS, MOTION_SURFACE_MS } from "@/lib/motion";
 import { setMotionLevel } from "@/test/motionLevel";
 import { useSidebarResize } from "./useSidebarResize";
 
@@ -449,8 +449,9 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
   });
 
   describe("the width's motion by level (SPEC_MOTION_LEVELS.md, С1)", () => {
-    const minimalCollapse = `width ${MOTION_EXIT_MS}ms ${MOTION_EASE}`;
-    const minimalOpening = `width ${MOTION_ENTER_MS}ms ${MOTION_EASE}`;
+    // Minimal changes no role's time: the width moves as in Full («Режимы»).
+    const minimalCollapse = SIDEBAR_WIDTH_TRANSITION;
+    const minimalOpening = SIDEBAR_WIDTH_TRANSITION;
 
     it("moves by the button in Full for 200 ms on the response curve, both ways, one value for the panel and its segment", () => {
       vi.useFakeTimers();
@@ -470,7 +471,7 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
       }
     });
 
-    it("collapses in Minimal for 100 ms and opens for 150 ms on E, its timer the same time", () => {
+    it("collapses and opens in Minimal as in Full, its timer the same time", () => {
       vi.useFakeTimers();
       try {
         setMotionLevel("minimal");
@@ -479,7 +480,7 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
         expect(result.current.widthTransition).toBe(minimalCollapse);
         expect(result.current.widthPhase).toBe("exit");
         expect(result.current.besideOpenShown).toBe(true);
-        act(() => vi.advanceTimersByTime(MOTION_EXIT_MS - 1));
+        act(() => vi.advanceTimersByTime(SIDEBAR_WIDTH_MOTION_MS - 1));
         expect(result.current.widthAnimating).toBe(true);
         act(() => vi.advanceTimersByTime(1));
         expect(result.current.widthAnimating).toBe(false);
@@ -488,7 +489,7 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
         act(() => result.current.toggleCollapsed());
         expect(result.current.widthTransition).toBe(minimalOpening);
         expect(result.current.widthPhase).toBe("enter");
-        act(() => vi.advanceTimersByTime(MOTION_ENTER_MS - 1));
+        act(() => vi.advanceTimersByTime(SIDEBAR_WIDTH_MOTION_MS - 1));
         expect(result.current.widthAnimating).toBe(true);
         act(() => vi.advanceTimersByTime(1));
         expect(result.current.widthTransition).toBe("none");
@@ -541,7 +542,7 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
       expect(result.current.widthTransition).toBe(minimalCollapse);
     });
 
-    it("times the crossing of the threshold by the level in Minimal: leaving 100 ms, coming back 150 ms (Р3)", () => {
+    it("times the crossing of the threshold in Minimal as in Full, both ways (Р3)", () => {
       vi.useFakeTimers();
       try {
         setMotionLevel("minimal");
@@ -552,7 +553,7 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
         rerender({ overlaid: true });
         expect(result.current.widthTransition).toBe(minimalCollapse);
         expect(result.current.widthPhase).toBe("exit");
-        act(() => vi.advanceTimersByTime(MOTION_EXIT_MS - 1));
+        act(() => vi.advanceTimersByTime(SIDEBAR_WIDTH_MOTION_MS - 1));
         expect(result.current.besideShown).toBe(true);
         act(() => vi.advanceTimersByTime(1));
         expect(result.current.besideShown).toBe(false);
@@ -560,7 +561,7 @@ describe("useSidebarResize: the window's sidebar (SPEC_TABS.md, В56, В78)", ()
         rerender({ overlaid: false });
         expect(result.current.widthTransition).toBe(minimalOpening);
         expect(result.current.widthPhase).toBe("enter");
-        act(() => vi.advanceTimersByTime(MOTION_ENTER_MS - 1));
+        act(() => vi.advanceTimersByTime(SIDEBAR_WIDTH_MOTION_MS - 1));
         expect(result.current.widthAnimating).toBe(true);
         act(() => vi.advanceTimersByTime(1));
         expect(result.current.widthAnimating).toBe(false);

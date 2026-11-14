@@ -194,27 +194,23 @@ describe("the clipper and the graph (УД9, УД10, НС7)", () => {
 });
 
 describe("a role's time and curve, a spring's way and a scroll's behaviour (РД2, РД4, УД4)", () => {
-  it("gives each role its time by the level, Off none, a key none on every level", async () => {
+  it("gives each role its time in Full and Minimal alike, a press none at Off, a key none in every mode", async () => {
     systemMotion(false);
     const motion = await load();
     motion.installMotionLevel();
-    // Full: Отклик 150/100, Поверхность 200 both ways, Перемещение 200.
-    expect(motion.roleMs("response", "enter")).toBe(150);
-    expect(motion.roleMs("response", "exit")).toBe(100);
-    expect(motion.roleMs("surface", "enter")).toBe(200);
-    expect(motion.roleMs("surface", "exit")).toBe(200);
-    expect(motion.roleMs("move", "enter")).toBe(200);
-    expect(motion.roleMs("move", "exit")).toBe(200);
-    expect(motion.roleMs("surface", "enter", { byKey: true })).toBe(0);
-    // Minimal: Отклик the same, Поверхность 150/100, Перемещение 150.
-    motion.chooseMotionLevel("minimal");
-    expect(motion.roleMs("response", "enter")).toBe(150);
-    expect(motion.roleMs("response", "exit")).toBe(100);
-    expect(motion.roleMs("surface", "enter")).toBe(150);
-    expect(motion.roleMs("surface", "exit")).toBe(100);
-    expect(motion.roleMs("move", "enter")).toBe(150);
-    expect(motion.roleMs("move", "exit")).toBe(150);
-    expect(motion.roleMs("move", "enter", { byKey: true })).toBe(0);
+    // Отклик 150/100, Поверхность 200 both ways, Перемещение 200: Minimal
+    // changes no role's time («Режимы»).
+    for (const level of ["full", "minimal"] as const) {
+      motion.chooseMotionLevel(level);
+      expect(motion.roleMs("response", "enter")).toBe(150);
+      expect(motion.roleMs("response", "exit")).toBe(100);
+      expect(motion.roleMs("surface", "enter")).toBe(200);
+      expect(motion.roleMs("surface", "exit")).toBe(200);
+      expect(motion.roleMs("move", "enter")).toBe(200);
+      expect(motion.roleMs("move", "exit")).toBe(200);
+      expect(motion.roleMs("surface", "enter", { byKey: true })).toBe(0);
+      expect(motion.roleMs("move", "enter", { byKey: true })).toBe(0);
+    }
     motion.chooseMotionLevel("off");
     for (const role of ["response", "surface", "move"] as const) {
       expect(motion.roleMs(role, "enter")).toBe(0);
@@ -222,11 +218,30 @@ describe("a role's time and curve, a spring's way and a scroll's behaviour (РД
     }
   });
 
-  it("gives the system's flag with no choice Minimal's times, not none", async () => {
+  it("keeps what answers the pointer, the focus or a drag the same in every mode", async () => {
+    systemMotion(false);
+    const motion = await load();
+    motion.installMotionLevel();
+    for (const level of motion.MOTION_LEVELS) {
+      motion.chooseMotionLevel(level);
+      expect(motion.roleMs("response", "enter", { answers: true })).toBe(150);
+      expect(motion.roleMs("response", "exit", { answers: true })).toBe(100);
+      expect(motion.roleMs("surface", "enter", { answers: true })).toBe(200);
+      expect(motion.roleMs("move", "enter", { answers: true })).toBe(200);
+      expect(motion.springMotion({ answers: true })).toBe("spring");
+      expect(motion.scrollBehavior({ answers: true })).toBe("smooth");
+      // A key's command is at once all the same.
+      expect(motion.roleMs("move", "enter", { answers: true, byKey: true })).toBe(0);
+    }
+  });
+
+  it("gives the system's flag with no choice Minimal, whose times are Full's", async () => {
     systemMotion(true);
     const motion = await load();
     motion.installMotionLevel();
-    expect(motion.roleMs("surface", "enter")).toBe(150);
+    expect(motion.motionLevel()).toBe("minimal");
+    expect(motion.roleMs("surface", "enter")).toBe(200);
+    expect(motion.springMotion()).toBe("move");
     motion.chooseMotionLevel("off");
     expect(motion.roleMs("surface", "enter")).toBe(0);
   });
@@ -256,14 +271,15 @@ describe("a role's time and curve, a spring's way and a scroll's behaviour (РД
     expect(motion.springMotion()).toBe("instant");
   });
 
-  it("scrolls smoothly only in Full and not by a key", async () => {
+  it("scrolls smoothly in Full and Minimal, at once at Off and by a key", async () => {
     systemMotion(false);
     const motion = await load();
     motion.installMotionLevel();
     expect(motion.scrollBehavior()).toBe("smooth");
     expect(motion.scrollBehavior({ byKey: true })).toBe("auto");
     motion.chooseMotionLevel("minimal");
-    expect(motion.scrollBehavior()).toBe("auto");
+    expect(motion.scrollBehavior()).toBe("smooth");
+    expect(motion.scrollBehavior({ byKey: true })).toBe("auto");
     motion.chooseMotionLevel("off");
     expect(motion.scrollBehavior()).toBe("auto");
   });
@@ -300,15 +316,20 @@ describe("the roles' tokens (РД2)", () => {
 });
 
 describe("a key's mark (УД4, п. 3, п. 7)", () => {
-  it("lands what a key opened at once, but not a menu or tooltip the pointer opened inside it, nor a refused name's shake", async () => {
+  it("lands at once the surface a key opened and the parts that carry its entrance, nothing that answers the pointer inside it", async () => {
     const { readFileSync } = await import("node:fs");
-    const css = readFileSync("src/styles/global.css", "utf8");
-    const start = css.indexOf("[data-motion-key] *:not(");
-    const rule = start < 0 ? "" : css.slice(start, css.indexOf(")::before", start));
-    expect(rule).toContain("[data-name-refused]");
-    // Nor does Off stand the shake still (SPEC_MOTION_LEVELS.md, В3, РД6).
-    expect(css).toContain('[data-motion="off"] *:not(.mine-progress-indeterminate, .animate-spin, [data-name-refused]),');
-    expect(rule).toContain(':is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key])');
-    expect(rule).toContain(':is([data-radix-menu-content], [data-slot="tooltip-content"]):not([data-motion-key]) *');
+    const css = readFileSync("src/styles/global.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const end = css.indexOf("animation-duration: 0.01ms !important;");
+    const rule = css.slice(css.lastIndexOf("}", end) + 1, end);
+    expect(rule).toContain("[data-motion-key],");
+    expect(rule).toContain("[data-motion-key] > :is([data-sidebar-overlay-scrim], [data-sidebar-overlay-panel])");
+    expect(rule).toContain("[data-tabs-indicator]");
+    // No blanket over what the surface holds: the rows of a search ⌘F
+    // opened go on answering the pointer («Режимы»).
+    expect(rule).not.toContain("[data-motion-key] *");
+    // An app page at Off has no blanket rule either; the clipper keeps its
+    // own, which leaves the shake of a refused name moving (УД10, В3).
+    expect(rule).not.toMatch(/(^|,)\s*\[data-motion="off"\] \*/);
+    expect(rule).toContain('[data-motion-clipper][data-motion="off"] *:not(.mine-progress-indeterminate, .animate-spin, [data-name-refused])');
   });
 });

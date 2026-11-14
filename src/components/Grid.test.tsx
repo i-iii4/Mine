@@ -41,7 +41,7 @@ import type { ComponentProps } from "react";
 import type { FeedKeyboardFocus } from "@/hooks/useSidebarKeyboardFocus";
 import type { DeleteBlockMedia, DeleteBlocksPlan, LightBlock } from "@/types";
 import { lightBlock } from "@/test/blocks";
-import { MOTION_ENTER_MS, MOTION_MOVE_EASE, MOTION_MOVE_MS } from "@/lib/motion";
+import { MOTION_MOVE_EASE, MOTION_MOVE_MS } from "@/lib/motion";
 import { setMotionLevel } from "@/test/motionLevel";
 
 // These constants must match the ones in Grid.tsx. If Grid.tsx changes
@@ -1293,7 +1293,8 @@ describe("Grid — no collapse after add / revisit", () => {
   const INSETS = "padding-left var(--motion-move) var(--motion-move-ease), padding-right var(--motion-move) var(--motion-move-ease)";
   it.each([
     ["full", { duration: MOTION_MOVE_MS, easing: MOTION_MOVE_EASE }, INSETS],
-    ["minimal", { duration: MOTION_ENTER_MS, easing: MOTION_MOVE_EASE }, INSETS],
+    // Minimal changes no role's time: the cards move as in Full («Режимы»).
+    ["minimal", { duration: MOTION_MOVE_MS, easing: MOTION_MOVE_EASE }, INSETS],
     ["off", null, INSETS],
   ] as const)("moves the shifted cards and the insets at the level %s by its time", async (level, move, inset) => {
     setMotionLevel(level);

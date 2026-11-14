@@ -27,28 +27,22 @@ describe("ChannelIcon", () => {
     expect(box.style.marginLeft).toBe("4px");
   });
 
-  // A member of Пружина (SPEC_MOTION_LEVELS.md, С5, РД4): its spring on the
-  // box in Full; in Minimal and at Off none, and the stylesheet falls back to
-  // Перемещение's tokens, 150 ms on the move curve in Minimal.
-  it("carries the stack's spring in Full alone", () => {
-    const spring = (level: (typeof MOTION_LEVELS)[number]) => {
+  // A member of Пружина (SPEC_MOTION_LEVELS.md, С5, РД4). The stack answers
+  // the pointer, so its spring stands on the box in every mode («Режимы»).
+  it("carries the stack's spring in every mode", () => {
+    for (const level of MOTION_LEVELS) {
       setMotionLevel(level);
       const { container, unmount } = render(<ChannelIcon />);
       const value = container.querySelector<HTMLElement>("[data-channel-icon]")!.style.getPropertyValue("--channel-icon-duration");
       unmount();
-      return value;
-    };
-    expect(spring("full")).toBe(`${CHANNEL_ICON_SPRING_MS}ms`);
-    expect(spring("minimal")).toBe("");
-    expect(spring("off")).toBe("");
+      expect(value, level).toBe(`${CHANNEL_ICON_SPRING_MS}ms`);
+    }
   });
 
-  it("opens on the spring in Full, as Перемещение in Minimal, and stays at rest in Off (С5)", () => {
+  it("opens under the pointer in every mode: no rule of a mode holds it at rest (С5)", () => {
     expect(rule("[data-channel-icon-card]")).toContain(
       "transition: transform var(--channel-icon-duration, var(--motion-move)) var(--channel-icon-easing, var(--motion-move-ease))",
     );
-    expect(css).not.toMatch(/\[data-motion="minimal"\] \[data-channel-icon-card\]/);
-    expect(rule('[data-motion="off"] [data-sidebar-scroll] [data-sidebar-row-answer="true"] [data-channel-icon-card]'))
-      .toBe("transform: var(--channel-icon-rest);");
+    expect(css).not.toMatch(/\[data-motion="(minimal|off)"\][^{]*\[data-channel-icon-card\]/);
   });
 });

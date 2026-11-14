@@ -81,10 +81,13 @@ import {
 import { createTabMenu, type TabMenu } from "./tabMenu";
 import { listenHere } from "./useTabBarState";
 import { logTabBarFailure, type TabBarAction } from "@/lib/tabBarFailure";
+import { roleEasing, roleMs } from "@/lib/motion";
 
 /** How neighbours make room for a dragged tab: Перемещение (SPEC_MOTION_LEVELS.md,
- *  РД1, Т3). */
-const TAB_SHIFT_TRANSITION = "transform var(--motion-move) var(--motion-move-ease)";
+ *  РД1, Т3). They answer a drag in hand, so they move the same in every mode
+ *  («Режимы»); the time is asked of motion.ts, which a mode's tokens do not
+ *  reach. */
+const TAB_SHIFT_TRANSITION = `transform ${roleMs("move", "enter", { answers: true })}ms ${roleEasing("move")}`;
 
 export const NEW_TAB_LABEL = "New Tab";
 export const CLOSE_TAB_BUTTON_LABEL = "Close Tab";
@@ -542,8 +545,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
     : reorderTarget({ fromIndex: reorder.fromIndex, offset: reorder.offset, width, count });
   // Neighbours glide aside only while a tab is dragged: after a drop the
   // new order is laid out in place, with nothing to animate. They make room
-  // as Перемещение, the role's tokens by the level (В60; SPEC_MOTION_LEVELS.md,
-  // Т3, РД1).
+  // as Перемещение, the same in every mode (В60; SPEC_MOTION_LEVELS.md, Т3).
   const shiftTransition = reorder !== null ? TAB_SHIFT_TRANSITION : undefined;
 
   function tabShift(index: number, tabId: TabId): { offset: number; follows: boolean } {

@@ -2806,72 +2806,62 @@ const levelRules = levelCss.split("}").flatMap((chunk) => {
 });
 /** The milliseconds a token of `:root` holds. */
 const tokenMs = (name: string) => Number(new RegExp(`${name}:\\s*(\\d+)ms`).exec(levelCss)?.[1]);
-/** The rule that lands everything at once: Off, the feed's keyboard mode and
- *  what a key opened (SPEC_MOTION_LEVELS.md, УД4, УД7). */
+/** The rule that lands at once what a key's command opened, and the
+ *  clipper under the system's flag (SPEC_MOTION_LEVELS.md, УД4, УД7). */
 const atOnceRule = () => levelRules.find((rule) => rule.body.includes("transition-duration: 0.01ms !important"))!;
-/** The lift's two times at a level, in ms; at Off, the 0.01 ms of the rule
- *  above. */
+/** The lift's two times at a level, in ms: the last rule that sets them for
+ *  it, the root's when the level has none of its own. */
 const liftTimes = (level: MotionLevel): { up: number; down: number } => {
-  if (level === "off") return { up: 0.01, down: 0.01 };
-  const selector = level === "minimal" ? '[data-motion="minimal"]' : ":root";
-  const body = levelRules.find((rule) => rule.selector === selector && rule.body.includes("--lift-up:"))!.body;
+  const own = levelRules.find((rule) => rule.selector === `[data-motion="${level}"]` && rule.body.includes("--lift-up:"));
+  const body = (own ?? levelRules.find((rule) => rule.selector === ":root" && rule.body.includes("--lift-up:"))!).body;
   const timeOf = (name: string) => {
     const value = new RegExp(`${name}:\\s*([^;]+);`).exec(body)![1]!;
-    const own = /^(\d+)ms/.exec(value);
-    if (own) return Number(own[1]);
-    return tokenMs(/var\((--motion-[a-z]+)\)/.exec(value)![1]!);
+    return Number(/^([\d.]+)ms/.exec(value)![1]);
   };
   return { up: timeOf("--lift-up"), down: timeOf("--lift-down") };
 };
 
-describe("the card lift by the motion level (SPEC_MOTION_LEVELS.md, Л1–Л3, «Тесты» п. 8)", () => {
-  it("lifts in Minimal on the set's 150 and 100 ms, on the lift's own curves", () => {
-    const minimal = levelRules.find((rule) => rule.selector === '[data-motion="minimal"]' && rule.body.includes("--lift-up:"))!;
-    // The level's block beside the roles' tokens (SPEC_MOTION_LEVELS.md, РД2,
-    // РД6): the lift outside the roles keeps its own curves.
-    expect(minimal.body).toContain(`--lift-up: ${MOTION_ENTER_MS}ms var(--card-lift-curve-up)`);
-    expect(minimal.body).toContain(`--lift-down: ${MOTION_EXIT_MS}ms var(--card-lift-curve-down)`);
+describe("the card lift in every mode (SPEC_MOTION_LEVELS.md, «Режимы», Л1–Л3)", () => {
+  it("lifts on the same clock and curves in Full, Minimal and Off: it answers the pointer", () => {
+    for (const level of MOTION_LEVELS) expect(liftTimes(level), level).toEqual({ up: 200, down: 150 });
+    // No mode sets the lift's clock or its curves.
+    for (const rule of levelRules) {
+      if (!rule.selector.includes("[data-motion=")) continue;
+      expect(rule.body, rule.selector).not.toMatch(/--lift-(up|down):|--card-lift-curve-(up|down):/);
+    }
     expect(tokenMs("--motion-enter")).toBe(MOTION_ENTER_MS);
     expect(tokenMs("--motion-exit")).toBe(MOTION_EXIT_MS);
-    expect(liftTimes("full")).toEqual({ up: 200, down: 150 });
-    expect(liftTimes("minimal")).toEqual({ up: 150, down: 100 });
-    // Same weight as the root's clock: written after it, so it wins.
-    expect(levelCss.indexOf(`${minimal.selector} {`)).toBeGreaterThan(levelCss.indexOf("--lift-up: 200ms"));
   });
 
-  it("lands the keyboard's lift, frame and wash at once at every level", () => {
-    const { selector, body } = atOnceRule();
-    const keyboard = '[data-grid-scroll][data-feed-grid-interaction-mode="keyboard"]';
-    const lifted = selector.slice(selector.indexOf(`${keyboard} :is(`), selector.indexOf(")", selector.indexOf(`${keyboard} :is(`)));
-    for (const part of ["[data-card-lift]", "[data-card-lift-fade]", "[data-card-media-outline]", "[data-card-hover-more-action]", "[data-card-hover-connect-action]", "[data-card-hover-overlay]"]) {
-      expect(lifted, part).toContain(part);
+  it("lifts the keyboard's card as the pointer's: walking the feed is no command", () => {
+    // The rule «At once» names nothing of the feed's keyboard mode (user's
+    // decision of 13.11.2026: a card that lands lifted jumps).
+    for (const rule of levelRules) {
+      if (!/0\.01ms/.test(rule.body)) continue;
+      expect(rule.selector).not.toContain("data-feed-grid-interaction-mode");
+      expect(rule.selector).not.toMatch(/data-card-lift|data-card-hover|data-feed-card-frame|data-card-media/);
     }
-    expect(selector).toContain(`${keyboard} [data-feed-card-frame]::after`);
-    expect(selector).toContain(`${keyboard} [data-card-media-clip] > [data-card-lift="window"]::after`);
-    // No level in the keyboard's selectors: Full, Minimal and Off alike, and
-    // !important outranks the level's own times.
-    for (const part of selector.split(/,\s*\n/).filter((line) => line.includes(keyboard))) {
-      expect(part).not.toContain("data-motion");
-    }
-    expect(body).toMatch(/transition-duration: 0\.01ms !important/);
   });
 
-  it("lands everything at once in Off at 0.01 ms, keeping the delays of intent", () => {
+  it("has no blanket rule over an app page at Off: only the clipper stands everything at once", () => {
     const { selector, body } = atOnceRule();
-    expect(selector).toContain('[data-motion="off"] *:not(.mine-progress-indeterminate, .animate-spin, [data-name-refused])');
-    expect(selector).toContain('[data-motion="off"] *::before');
-    expect(selector).toContain('[data-motion="off"] *::after');
+    const parts = selector.split(/,\s*\n/).map((part) => part.trim());
+    expect(parts).toContain('[data-motion-clipper][data-motion="off"] *:not(.mine-progress-indeterminate, .animate-spin, [data-name-refused])');
+    expect(parts.some((part) => part.startsWith('[data-motion="off"]'))).toBe(false);
     expect(body).toContain("animation-duration: 0.01ms !important");
     expect(body).not.toContain("transition-delay");
     expect(body).not.toMatch(/transition:\s*none|animation:\s*none/);
   });
 
-  it("washes a pointer's selection as Отклик on every level: in on the enter time, out on the exit time (Л3, РД7)", () => {
+  it("washes a picture on the wash's own time, both ways, in every mode (Л3)", () => {
     const wash = '[data-card-media-clip] > [data-card-lift="window"]::after';
     const bodyOf = (selector: string) => levelRules.find((rule) => rule.selector.split(/,\s*\n/).map((part) => part.trim()).includes(selector))?.body ?? "";
-    expect(bodyOf(wash)).toContain("transition: opacity var(--motion-exit) var(--motion-ease)");
-    expect(bodyOf(`[data-grid-scroll] [data-feed-grid-item-selected="true"] ${wash}`)).toContain("transition-duration: var(--motion-enter)");
-    expect(levelCss).not.toMatch(/\[data-motion="minimal"\] \[data-card-media-clip\]/);
+    expect(bodyOf(wash)).toContain("transition: opacity var(--card-wash-fade) var(--motion-ease)");
+    expect(tokenMs("--card-wash-fade")).toBe(180);
+    expect(bodyOf(`[data-grid-scroll] [data-feed-grid-item-selected="true"] ${wash}`)).not.toContain("transition-duration");
+    for (const rule of levelRules) {
+      if (rule.selector.includes("[data-motion=")) expect(rule.body).not.toContain("--card-wash-fade");
+    }
   });
 });
 
@@ -3278,12 +3268,8 @@ describe("Media Only: no lift, the buttons alone answer the pointer (SPEC_FEED_D
     expect(keyboard.container.querySelector("[data-card-lift='tray'], [data-card-caption]")).toBeNull();
   });
 
-  it("fades the top buttons in 200 and 150 ms in Full, 150 and 100 in Minimal, at once in Off", () => {
-    expect(liftTimes("full")).toEqual({ up: 200, down: 150 });
-    expect(liftTimes("minimal")).toEqual({ up: 150, down: 100 });
-    expect(liftTimes("off")).toEqual({ up: 0.01, down: 0.01 });
-    // The buttons are under the page's root: Off's rule reaches them.
-    expect(atOnceRule().selector).toContain('[data-motion="off"] *:not(');
+  it("fades the top buttons in 200 and 150 ms in every mode: they answer the pointer", () => {
+    for (const level of MOTION_LEVELS) expect(liftTimes(level), level).toEqual({ up: 200, down: 150 });
   });
 
   it("keeps the keyboard's card down: its chord in the top row, no row of collections", () => {

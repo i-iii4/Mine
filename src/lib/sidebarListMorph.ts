@@ -52,7 +52,7 @@
 import { SIDEBAR_PREVIEW_TILE_GAP_PX, SIDEBAR_PREVIEW_TILE_PX, sidebarBesideMinWidthPx, sidebarCompactRowsBelowPx, sidebarNameColumnPx, sidebarPanelWidthPx, sidebarRowsWidthPx } from "./appLayout";
 import { CHANNEL_ICON_SPRING_MS, SPRING_SAMPLES } from "./channelIcon";
 import { getListStyle, getSidebarStyle } from "./compactStack";
-import { roleMs, springMotion, type SpringMotion } from "./motion";
+import { MOTION_SPRING_MOVE_MS, springMotion, type SpringMotion } from "./motion";
 import { SIDEBAR_LOOK_ATTRIBUTE, SIDEBAR_WIDTH_MOTION_ATTRIBUTE, setSidebarLook, sidebarContentWidth, sidebarLookAt, sidebarLookOfPanel } from "./sidebarLook";
 import { animatesPseudoElements, morphMove, morphSpring, type MorphSpring } from "./sidebarRowsMorph";
 
@@ -984,7 +984,7 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
       listFrom: toTable ? 1 : 0,
       segment: toTable ? segmentToward(1, 0, 0, motion) : segmentToward(0, 1, 0, motion),
       motion,
-      settleMs: motion === "move" ? roleMs("move", "enter") : LIST_MORPH_SETTLE_MS,
+      settleMs: motion === "move" ? MOTION_SPRING_MOVE_MS : LIST_MORPH_SETTLE_MS,
       clock: null,
       bareClock: null,
     };

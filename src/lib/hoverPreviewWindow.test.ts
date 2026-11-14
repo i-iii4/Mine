@@ -528,12 +528,15 @@ describe("one window over the list (SPEC_CARD_STATES.md, С7.11)", () => {
   // SPEC_MOTION_LEVELS.md, Н1, Н2: Minimal keeps Full's fades and moves in
   // place of the spring as Перемещение (user's decision of 12.11.2026); Off
   // shows and takes everything at once, after the same rest.
-  describe("at the level Minimal", () => {
+  // The window answers the pointer: it appears, leaves and springs to a new
+  // trigger the same in every mode (SPEC_MOTION_LEVELS.md, «Режимы», Н1, Н2;
+  // user's decision of 13.11.2026).
+  describe.each(["minimal", "off"] as const)("at the level %s, as in Full", (level) => {
     beforeEach(() => {
-      setMotionLevel("minimal");
+      setMotionLevel(level);
     });
 
-    it("appears and leaves on the same fades as Full", async () => {
+    it("appears and leaves on the same fades", async () => {
       const context = setup();
       context.preview.pointer(context.target("a", 400));
       await context.advance(HOVER_PREVIEW_COLD_OPEN_DELAY_MS);
@@ -552,7 +555,7 @@ describe("one window over the list (SPEC_CARD_STATES.md, С7.11)", () => {
       context.preview.dispose();
     });
 
-    it("moves to the new trigger over Перемещение's 150 ms on the move curve, the content changing by its fade (Н2)", async () => {
+    it("springs to the new trigger, the content changing by its fade (Н2)", async () => {
       const context = setup({ heights: { a: 200, b: 400 } });
       await openAt(context, "a", 300);
       context.preview.pointer(context.target("b", 450));
@@ -562,68 +565,17 @@ describe("one window over the list (SPEC_CARD_STATES.md, С7.11)", () => {
       const to = 450 - 200;
       expect(context.shownTop()).toBe(from);
       expect(context.last().height).toBe(200);
-      const [oldId, newId] = context.preview.getView()!.layers.map((layer) => layer.id);
-      const opacityOf = (id: number | undefined) => context.last().layers.find((layer) => layer.id === id)?.opacity;
-      expect(opacityOf(oldId)).toBe(1);
-      expect(opacityOf(newId)).toBe(0);
-      const tops = [context.shownTop()];
-      let elapsed = 0;
-      while (elapsed < MOTION_ENTER_MS) {
-        await context.advance(FRAME_MS);
-        elapsed += FRAME_MS;
-        tops.push(context.shownTop());
-      }
-      // One move: never back, never past the place; slow at both ends, as
-      // the move curve is (the sine's ease-in-out), never a spring's jump.
-      for (let index = 1; index < tops.length; index += 1) {
-        expect(tops[index]!).toBeGreaterThanOrEqual(tops[index - 1]!);
-        expect(tops[index]!).toBeLessThanOrEqual(to);
-      }
-      const halfway = tops[Math.round(tops.length / 2)]!;
-      expect(halfway).toBeGreaterThan(from + (to - from) * 0.3);
-      expect(halfway).toBeLessThan(from + (to - from) * 0.7);
-      expect(tops[1]! - tops[0]!).toBeLessThan((to - from) * 0.1);
-      await context.advance(FRAME_MS);
+      // On its way after a few frames, neither there at once nor in 150 ms.
+      await context.advance(FRAME_MS * 3);
+      expect(context.shownTop()).toBeGreaterThan(from);
+      expect(context.shownTop()).toBeLessThan(to);
+      await context.advance(MOTION_ENTER_MS);
+      expect(context.shownTop()).toBeLessThan(to);
+      await context.advance(HOVER_PREVIEW_WINDOW_SETTLE_MS);
       expect(context.shownTop()).toBe(to);
       expect(context.last().height).toBe(400);
       // At rest the new card alone stays, whole.
       expect(context.current()).toEqual(["b"]);
-      expect(opacityOf(oldId)).toBeUndefined();
-      expect(opacityOf(newId)).toBe(1);
-      context.preview.dispose();
-    });
-  });
-
-  describe("at the level Off", () => {
-    beforeEach(() => {
-      setMotionLevel("off");
-    });
-
-    it("appears whole after the same rest, and goes in the frame it is let go", async () => {
-      const context = setup();
-      context.preview.pointer(context.target("a", 400));
-      await context.advance(HOVER_PREVIEW_COLD_OPEN_DELAY_MS - 1);
-      expect(context.preview.getView()).toBeNull();
-      await context.advance(1);
-      expect(context.current()).toEqual(["a"]);
-      expect(context.last().opacity).toBe(1);
-      context.preview.leave();
-      expect(context.preview.getView()).toBeNull();
-      expect(context.shown).toEqual(["a", null]);
-      context.preview.dispose();
-    });
-
-    it("stands at the new trigger with the new card at once", async () => {
-      const context = setup({ heights: { a: 200, b: 400 } });
-      await openAt(context, "a", 300);
-      context.preview.pointer(context.target("b", 450));
-      await context.flush();
-      expect(context.last().height).toBe(400);
-      expect(context.shownTop()).toBe(450 - 200);
-      const [oldId, newId] = context.preview.getView()!.layers.map((layer) => layer.id);
-      const opacityOf = (id: number | undefined) => context.last().layers.find((layer) => layer.id === id)?.opacity;
-      expect(opacityOf(oldId)).toBe(0);
-      expect(opacityOf(newId)).toBe(1);
       context.preview.dispose();
     });
   });

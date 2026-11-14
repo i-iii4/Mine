@@ -9,11 +9,11 @@ import { roleEasing, roleMs, useMotionLevel } from "@/lib/motion";
 /** What `useSortable` takes as its rows' move: a time and a curve, or none. */
 export type SortableMove = NonNullable<UseSortableArguments["transition"]>;
 
-/** The rows' move at the level in force: Full 200 ms, Minimal 150 ms, the
- *  move curve, Off none; a reorder by the keyboard moves none at every level
- *  (УД4). `null` stands the rows in place at once. */
+/** The rows' move: they answer a drag in hand, so it is the same in every
+ *  mode («Режимы»); a reorder by the keyboard moves none (УД4). `null` stands
+ *  the rows in place at once. */
 export function sortableMove(byKey: boolean): SortableMove | null {
-  const duration = roleMs("move", "enter", { byKey });
+  const duration = roleMs("move", "enter", { byKey, answers: true });
   if (duration === 0) return null;
   return { duration, easing: roleEasing("move") };
 }

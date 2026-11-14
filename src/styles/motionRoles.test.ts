@@ -16,6 +16,7 @@ import {
   MOTION_MENU_BLINK_MS,
   MOTION_MOVE_EASE,
   MOTION_MOVE_MS,
+  MOTION_SPRING_MOVE_MS,
   MOTION_SURFACE_MS,
 } from "@/lib/motion";
 
@@ -164,21 +165,16 @@ function selectorList(selector: string): string[] {
   return parts.map((one) => one.replace(/\s+/g, " "));
 }
 
-/** The token block: `:root` with the roles' tokens and the level's two
- *  blocks beside it, in global.css (РД2, РД6). */
-function tokenBlock(selector: string): string | null {
-  const rule = RULES.find((candidate) => candidate.file === "src/styles/global.css"
-    && candidate.selector === selector
-    && candidate.declarations.some((declaration) => declaration.property.startsWith("--motion-")));
-  return rule === undefined ? null : rule.selector;
-}
+/** What a press shows on Отклик's times, which Off stands at once: the one
+ *  list beside the token block where Off sets Отклик's two tokens
+ *  (SPEC_MOTION_LEVELS.md, «Режимы»). */
+const OFF_PRESS_SELECTOR = '[data-motion="off"] :is( [data-radix-menu-content], .detail-top-bar-enter, .detail-top-bar-line-enter, .main-secondary-bar-layer, [data-top-row-fade], [data-sidebar-row-part], [data-slot="switch"], [data-slot="tabs-trigger"], [data-menu-chevron] )';
 
-const TOKEN_SELECTORS = new Set([':root', '[data-motion="minimal"]', '[data-motion="off"]']);
+const TOKEN_SELECTORS = new Set([':root', '[data-motion="off"]', OFF_PRESS_SELECTOR]);
 
 function inTokenBlock(declaration: Declaration): boolean {
   return declaration.file === "src/styles/global.css"
-    && TOKEN_SELECTORS.has(declaration.selector)
-    && tokenBlock(declaration.selector) !== null
+    && TOKEN_SELECTORS.has(declaration.selector.replace(/\s+/g, " "))
     && RULES.some((rule) => rule.selector === declaration.selector
       && rule.declarations.includes(declaration)
       && rule.declarations.some((other) => other.property.startsWith("--motion-")));
@@ -486,19 +482,16 @@ function codeFindings(): Finding[] {
  *  (РД6): the rule «At once», and where the level changes what moves, not
  *  only its time. */
 const LEVEL_SELECTORS = new Set([
-  '[data-motion="minimal"]',
   '[data-motion="off"]',
-  // «At once»: Off for the clipper's own motions (УД10).
-  '[data-motion="off"] *:not(.mine-progress-indeterminate, .animate-spin, [data-name-refused])',
-  '[data-motion="off"] *::before',
-  '[data-motion="off"] *::after',
-  // М6: the search stands at once at Minimal; М3: the tooltips after the first.
-  '[data-motion="minimal"] :is([data-search-overlay], [data-search-overlay-scrim])',
-  '[data-motion="minimal"] [data-slot="tooltip-content"][data-state="instant-open"]',
+  // What a press shows on Отклик's times, at once at Off («Режимы»).
+  OFF_PRESS_SELECTOR,
+  // «At once» for the clipper alone, under the system's flag (УД10).
+  '[data-motion-clipper][data-motion="off"] *:not(.mine-progress-indeterminate, .animate-spin, [data-name-refused])',
+  '[data-motion-clipper][data-motion="off"] *::before',
+  '[data-motion-clipper][data-motion="off"] *::after',
   // З1: the progress without a length breathes in place at Off.
   '[data-motion="off"] .mine-progress-indeterminate',
-  // С5: the stack does not open at Off; С7: the mark does not turn.
-  '[data-motion="off"] [data-sidebar-scroll] [data-sidebar-row-answer="true"] [data-channel-icon-card]',
+  // С7: the mark does not turn at Off.
   '[data-motion="off"] [data-sidebar-link-icon]',
 ]);
 
@@ -566,26 +559,33 @@ describe("the roles of motion (SPEC_MOTION_LEVELS.md, РД8)", () => {
     expect(tokenValue(":root", "--motion-ease")).toBe(MOTION_EASE);
     expect(milliseconds(tokenValue(":root", "--motion-surface-enter"))).toBe(MOTION_SURFACE_MS);
     expect(milliseconds(tokenValue(":root", "--motion-surface-exit"))).toBe(MOTION_SURFACE_MS);
-    expect(milliseconds(tokenValue('[data-motion="minimal"]', "--motion-surface-enter"))).toBe(MOTION_ENTER_MS);
-    expect(milliseconds(tokenValue('[data-motion="minimal"]', "--motion-surface-exit"))).toBe(MOTION_EXIT_MS);
     expect(milliseconds(tokenValue(":root", "--motion-move"))).toBe(MOTION_MOVE_MS);
-    expect(milliseconds(tokenValue('[data-motion="minimal"]', "--motion-move"))).toBe(MOTION_ENTER_MS);
+    // The calm move that stands in for a spring in Minimal borrows Отклик's
+    // entering time (РД4); no token carries it.
+    expect(MOTION_SPRING_MOVE_MS).toBe(MOTION_ENTER_MS);
     expect(tokenValue(":root", "--motion-move-ease")).toBe(MOTION_MOVE_EASE);
     expect(milliseconds(tokenValue(":root", "--motion-menu-blink"))).toBe(MOTION_MENU_BLINK_MS);
   });
 
-  it("gives every role's time 0.01ms at Off, and Minimal no time of Отклик's", () => {
-    for (const token of ["--motion-enter", "--motion-exit", "--motion-surface-enter", "--motion-surface-exit", "--motion-move"]) {
-      expect(tokenValue('[data-motion="off"]', token), token).toBe("0.01ms");
-    }
-    expect(tokenValue('[data-motion="off"]', "--lift-up")).toBe("0.01ms var(--card-lift-curve-up)");
-    expect(tokenValue('[data-motion="off"]', "--lift-down")).toBe("0.01ms var(--card-lift-curve-down)");
-    // Отклик is the same at Minimal as at Full; the menu's blink is no
-    // motion and keeps its time on every level (решение 13.11.2026).
-    for (const token of ["--motion-enter", "--motion-exit", "--motion-menu-blink"]) {
-      expect(tokenValue('[data-motion="minimal"]', token), token).toBeUndefined();
-    }
-    expect(tokenValue('[data-motion="off"]', "--motion-menu-blink")).toBeUndefined();
+  it("changes no token in Minimal, and at Off stands at once only what a press shows («Режимы»)", () => {
+    // Minimal has no block: it replaces the heavy motions of a press in code.
+    expect(RULES.some((rule) => rule.selector.includes('[data-motion="minimal"]'))).toBe(false);
+    // Off: Поверхность and Перемещение everywhere, Отклик only on what a
+    // press shows. The lift, the wash and the menu's blink keep their times:
+    // they answer the pointer and the focus, or are a sign.
+    const off = RULES.find((rule) => rule.file === "src/styles/global.css" && rule.selector === '[data-motion="off"]'
+      && rule.declarations.some((declaration) => declaration.property === "--motion-move"));
+    const offTokens = Object.fromEntries((off?.declarations ?? []).map((declaration) => [declaration.property, declaration.value]));
+    expect(offTokens).toEqual({
+      "--motion-surface-enter": "0.01ms",
+      "--motion-surface-exit": "0.01ms",
+      "--motion-move": "0.01ms",
+    });
+    const press = RULES.find((rule) => rule.selector.replace(/\s+/g, " ") === OFF_PRESS_SELECTOR);
+    expect(Object.fromEntries((press?.declarations ?? []).map((declaration) => [declaration.property, declaration.value]))).toEqual({
+      "--motion-enter": "0.01ms",
+      "--motion-exit": "0.01ms",
+    });
   });
 
   it("keeps the card window's step on the line of its leaving (ОУ4)", () => {

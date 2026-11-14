@@ -356,18 +356,19 @@ describe("hover intent (SPEC_CARD_STATES.md, С7)", () => {
   // SPEC_MOTION_LEVELS.md, Р4, УД9: the level never changes the values, which
   // the graph reads as they are; the preview window takes Отклик's time
   // through `roleMs`, and CSS lands the answers at once at Off alone.
-  it("keeps its fades at every level, and CSS sets Отклик's times to nothing only at Off", () => {
+  it("keeps its fades in every mode: no mode's block sets Отклик's times for what answers the pointer", () => {
     for (const level of MOTION_LEVELS) {
       setMotionLevel(level);
       expect(HOVER_INTENT.fadeInMs).toBe(MOTION_ENTER_MS);
       expect(HOVER_INTENT.fadeOutMs).toBe(MOTION_EXIT_MS);
     }
     const css = readFileSync("src/styles/global.css", "utf8");
+    // Off's own block leaves Отклик alone; it zeroes it only on what a press
+    // shows, a list of its own (SPEC_MOTION_LEVELS.md, «Режимы»).
     const off = /\[data-motion="off"\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
-    expect(off).toMatch(/--motion-enter:\s*0\.01ms/);
-    expect(off).toMatch(/--motion-exit:\s*0\.01ms/);
-    const minimal = /\[data-motion="minimal"\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
-    expect(minimal).not.toMatch(/--motion-enter|--motion-exit/);
+    expect(off).toMatch(/--motion-move:\s*0\.01ms/);
+    expect(off).not.toMatch(/--motion-enter|--motion-exit/);
+    expect(css).not.toMatch(/\[data-motion="minimal"\]\s*\{/);
   });
 });
 

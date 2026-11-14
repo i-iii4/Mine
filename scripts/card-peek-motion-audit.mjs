@@ -24,6 +24,11 @@ const MARGIN_PX = 40;
 const CENTER_SCALE = 0.95;
 /** The hint's step, a sixth of the leaving. */
 const NUDGE_SHARE = 1 / 6;
+/** CARD_PEEK_NUDGE_OFFSET_PX: how far down the step carries the window. */
+const NUDGE_PX = MARGIN_PX / 6;
+/** CARD_PEEK_SPRING_MS: the window's spring from rest to rest. The step
+ *  answers the pointer on it in every mode («Режимы»). */
+const SPRING_SETTLE_MS = 367;
 /** --motion-enter and --motion-exit. */
 const ENTER_MS = 150;
 const EXIT_MS = 100;
@@ -413,23 +418,25 @@ try {
     await record(page);
     await frames(page, 3);
     // Midway, while the step still grows: the press is sent from the page in
-    // the first frame the step has run `wait` ms, watched from before the
-    // pointer comes, as a press there would come.
-    const pressedMidway = typeof wait === "number" ? page.evaluate((ms) => new Promise((resolve) => {
+    // the first frame the step's spring has carried the window `wait` percent
+    // of the step, watched from before the pointer comes, as a press there
+    // would come. The step answers the pointer on the window's spring in
+    // every mode («Режимы»), so it is read from the window's own transform.
+    const pressedMidway = typeof wait === "number" ? page.evaluate(({ percent, stepPx }) => new Promise((resolve) => {
       const watch = () => {
         const nudge = document.querySelector("[data-card-peek-nudge]");
-        const step = nudge?.getAnimations().find((animation) => String(animation.effect?.getKeyframes().at(-1)?.transform ?? "").includes("6.667px"));
-        if (typeof step?.currentTime !== "number" || step.currentTime < ms) {
+        const moved = Number(/translateY\(([\d.]+)px\)/.exec(nudge?.style.transform ?? "")?.[1] ?? 0);
+        if (moved < (stepPx * percent) / 100) {
           requestAnimationFrame(watch);
           return;
         }
         setTimeout(() => {
           document.querySelector("[data-card-peek-scrim]").dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 606, clientY: 26, detail: 1 }));
-          resolve(step.currentTime);
+          resolve(moved);
         }, 2);
       };
       requestAnimationFrame(watch);
-    }), wait) : null;
+    }), { percent: wait, stepPx: NUDGE_PX }) : null;
     if (wait !== null) {
       // A slow pointer that comes to rest on the band over the window.
       await page.mouse.move(600, 26);
@@ -439,7 +446,8 @@ try {
       }
       if (wait === "settled") {
         await page.waitForSelector("[data-card-peek-hint][data-shown]");
-        await page.waitForTimeout(ENTER_MS + 80);
+        // The window's spring settles in 367 ms.
+        await page.waitForTimeout(SPRING_SETTLE_MS + 80);
       }
     }
     if (pressedMidway) await pressedMidway;

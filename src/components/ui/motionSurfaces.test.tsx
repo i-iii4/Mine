@@ -33,7 +33,7 @@ const css = readFileSync(path.join(process.cwd(), "src/styles/global.css"), "utf
 /** How the rule of a key's motion ends: its last selector, the pseudo-element
  *  after everything a key's surface holds but a menu or a tooltip the pointer
  *  opened inside it. */
-const KEY_RULE_END = ':not([data-motion-key]) *\n)::after';
+const KEY_RULE_END = '  [data-tabs-indicator]\n)';
 
 /** The body of the top-level rule whose selector ends with `selectorEnd`. */
 function topLevelRule(selectorEnd: string): { selector: string; body: string; depth: number } | null {
@@ -240,23 +240,27 @@ describe("the surfaces' rules in global.css", () => {
     expect(css).not.toMatch(/animation-duration: var\(--motion-enter\);/);
   });
 
-  it("lands a key's surface at once at every level, its scrim and what it holds", () => {
+  it("lands a key's surface at once in every mode, with the parts that carry its entrance", () => {
     const atOnce = topLevelRule(KEY_RULE_END);
     expect(atOnce?.depth).toBe(0);
     expect(atOnce?.selector).toMatch(/^\[data-motion-key\],$/m);
+    expect(atOnce?.selector).toContain("[data-motion-key] > :is([data-sidebar-overlay-scrim], [data-sidebar-overlay-panel]),");
+    // What the surface holds goes on answering the pointer («Режимы»).
+    expect(atOnce?.selector).not.toContain("[data-motion-key] *");
     expect(atOnce?.body).toMatch(/animation-duration: 0\.01ms !important;/);
     expect(atOnce?.body).toMatch(/transition-duration: 0\.01ms !important;/);
   });
 
-  it("stands a tooltip after the first at once at Minimal (М3), and the search (М6)", () => {
-    const atOnce = topLevelRule(KEY_RULE_END);
-    expect(atOnce?.selector).toContain('[data-motion="minimal"] [data-slot="tooltip-content"][data-state="instant-open"],');
-    expect(atOnce?.selector).toContain('[data-motion="minimal"] :is([data-search-overlay], [data-search-overlay-scrim]),');
+  it("gives Minimal no rule of its own: the search and the tooltips move as in Full («Режимы»)", () => {
+    expect(css).not.toContain('[data-motion="minimal"]');
   });
 
-  it("keeps Off's at once for every surface", () => {
-    const atOnce = topLevelRule(KEY_RULE_END);
-    expect(atOnce?.selector).toContain('[data-motion="off"] *:not(.mine-progress-indeterminate, .animate-spin, [data-name-refused]),');
+  it("stands a press's surfaces at once at Off by their tokens, with no blanket rule", () => {
+    // The menus read Отклик, which Off zeroes on them alone; the windows and
+    // the search read Поверхность, which Off zeroes everywhere.
+    expect(css).toMatch(/\[data-motion="off"\] :is\(\s*\[data-radix-menu-content\],/);
+    expect(css).toMatch(/\[data-motion="off"\] \{\s*--motion-surface-enter: 0\.01ms;/);
+    expect(css).not.toMatch(/^\[data-motion="off"\] \*/m);
   });
 
   it("names the surfaces by the slots the rules read", async () => {

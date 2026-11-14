@@ -1,3 +1,4 @@
+import { MOTION_MOVE_EASE, MOTION_MOVE_MS } from "@/lib/motion";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { setMotionLevel } from "@/test/motionLevel";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
@@ -153,8 +154,9 @@ afterEach(() => {
 });
 
 
-/** How neighbours make room for a dragged tab: Перемещение's tokens. */
-const TAB_SHIFT = "transform var(--motion-move) var(--motion-move-ease)";
+/** How neighbours make room for a dragged tab: Перемещение, 200 ms on the
+ *  move curve. */
+const TAB_SHIFT = `transform ${MOTION_MOVE_MS}ms ${MOTION_MOVE_EASE}`;
 
 describe("a tab that could not open (Е2.9)", () => {
   // Decision of 14.10.2026: no text and no mark; selecting the tab makes its
@@ -701,10 +703,9 @@ describe("reorder (В60)", () => {
     expect(commands.moveTab).not.toHaveBeenCalled();
   });
 
-  // Перемещение (SPEC_MOTION_LEVELS.md, Т3, РД1): the role's tokens, 200 ms
-  // in Full (was 150 ms on E, РД7), 150 ms in Minimal, at once at Off, by
-  // the level's block of global.css.
-  it.each(["full", "minimal", "off"] as const)("moves the neighbours at %s on Перемещение's tokens", (level) => {
+  // Перемещение (SPEC_MOTION_LEVELS.md, Т3, РД1). The neighbours answer a
+  // drag in hand, so they move the same in every mode («Режимы»).
+  it.each(["full", "minimal", "off"] as const)("moves the neighbours at %s as Перемещение, the same in every mode", (level) => {
     setMotionLevel(level);
     renderBar(barState([tab("a"), tab("b")]));
     press(tabById("a"), 100).move(300);

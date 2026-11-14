@@ -376,7 +376,7 @@ export function scrollPositionIntoView(
   }
 
   if (nextTop !== null) {
-    scrollElement.scrollTo({ top: nextTop, behavior: scrollBehavior({ byKey: true }) });
+    scrollElement.scrollTo({ top: nextTop, behavior: scrollBehavior({ answers: true }) });
   }
 }
 

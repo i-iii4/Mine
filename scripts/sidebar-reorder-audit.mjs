@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // The collection rows' reorder gesture at the motion level Full, the level
-// with no stored choice, and its motion again at Minimal, stored before the
-// page loads (SPEC_MOTION_LEVELS.md, С9): the neighbours part and the copy
-// lands as Перемещение, over 200 ms on the move curve in Full (were 250 ms
-// `ease` and 200 ms on E, РД7), over 150 ms on it in Minimal.
+// with no stored choice, and its motion again at Minimal and Off, stored
+// before the page loads (SPEC_MOTION_LEVELS.md, «Режимы», С9): the neighbours
+// part and the copy lands as Перемещение, over 200 ms on the move curve. They
+// answer a drag in hand, so they are the same in every mode.
 import { chromium } from "playwright";
 
 const DEFAULT_AUDIT_URL = "http://127.0.0.1:1420/__sidebar-reorder-audit";
@@ -54,12 +54,13 @@ function waitForAnimationFrames(page, count) {
   }), count);
 }
 
-/** The motion of each level (tagRowDragOverlay.ts): Перемещение, the move
- *  curve (--motion-move-ease) on every level. */
+/** The motion at each level (tagRowDragOverlay.ts): Перемещение on the move
+ *  curve, the same in every mode. */
 const MOVE = "cubic-bezier(0.37, 0, 0.63, 1)";
 const LEVEL_MOTION = {
   full: { sort: `transform 200ms ${MOVE}`, dropMs: 200, dropEasing: MOVE },
-  minimal: { sort: `transform 150ms ${MOVE}`, dropMs: 150, dropEasing: MOVE },
+  minimal: { sort: `transform 200ms ${MOVE}`, dropMs: 200, dropEasing: MOVE },
+  off: { sort: `transform 200ms ${MOVE}`, dropMs: 200, dropEasing: MOVE },
 };
 
 /** One short drag at `level`: the neighbour's transition while the copy
@@ -354,6 +355,7 @@ async function main() {
   await page.close();
   await motionPass(browser, "full");
   await motionPass(browser, "minimal");
+  await motionPass(browser, "off");
 
   for (const note of notes) console.log(`INFO ${note}`);
 
