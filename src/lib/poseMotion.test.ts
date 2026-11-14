@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { peekPoseAt, peekPoseKeyframes, PEEK_POSE_REST, PEEK_POSE_RISE_FROM, PEEK_POSE_SUNK } from "./cardPeek";
-import { MOTION_EASE } from "./motion";
+import { MOTION_SURFACE_EASE } from "./motion";
 import { createPoseRunner } from "./poseMotion";
 
 /** Animations of the page, heard, each with a clock set by hand. */
@@ -30,12 +30,12 @@ describe("Minimal's motion of a window (SPEC_MOTION_LEVELS.md, ОУ2–ОУ5, О
     return { part, island, scrim, targets: { parts: [part, island], scrim } };
   };
 
-  it("moves each part by one transform and one opacity, the scrim by its opacity, on E", () => {
+  it("moves each part by one transform and one opacity, the scrim by its opacity, on the surface curve", () => {
     const heard = hearAnimations();
     const { part, island, scrim, targets: moving } = targets();
     const runner = createPoseRunner<"rise">();
     runner.move("rise", PEEK_POSE_RISE_FROM, PEEK_POSE_REST, 150, moving, vi.fn());
-    const timing = { duration: 150, easing: MOTION_EASE, fill: "forwards" };
+    const timing = { duration: 150, easing: MOTION_SURFACE_EASE, fill: "forwards" };
     const window = [peekPoseKeyframes(PEEK_POSE_RISE_FROM).window, peekPoseKeyframes(PEEK_POSE_REST).window];
     expect(heard.map(({ element, keyframes, timing: heardTiming }) => ({ element, keyframes, heardTiming }))).toEqual([
       { element: part, keyframes: window, heardTiming: timing },

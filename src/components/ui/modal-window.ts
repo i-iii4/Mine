@@ -14,23 +14,23 @@
  *  of 16.10.2026), the whole page of the tab blurred and dimmed by the
  *  canvas at 32 %. */
 export const MODAL_OVERLAY_CLASS =
-  "modal-scrim data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=open]:duration-(--motion-surface-enter) data-[state=closed]:duration-(--motion-surface-exit) ease-(--motion-ease) fixed inset-0 z-50"
+  "modal-scrim data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=open]:duration-(--motion-surface-enter) data-[state=closed]:duration-(--motion-surface-exit) ease-(--motion-surface-ease) fixed inset-0 z-50"
 
 /** A floating layer on `--popover`, held by its line and shadow
  *  (SPEC_COLOR_RULES.md, 3.3; K11), 16px off each edge of a narrow app
  *  window, the window field 24px (`--spacing-s4`), its parts 16px apart. Its
  *  width is its role's (`MODAL_WIDTH_CLASS`). */
 export const MODAL_SURFACE_CLASS =
-  "bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=open]:duration-(--motion-surface-enter) data-[state=closed]:duration-(--motion-surface-exit) ease-(--motion-ease) fixed top-[50%] left-[50%] z-50 grid w-[calc(100%-32px)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-1 border border-border p-6 shadow-lg outline-none"
+  "bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=open]:duration-(--motion-surface-enter) data-[state=closed]:duration-(--motion-surface-exit) ease-(--motion-surface-ease) fixed top-[50%] left-[50%] z-50 grid w-[calc(100%-32px)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-1 border border-border p-6 shadow-lg outline-none"
 
 /** The dialogs' own entrance and exit, for a layer that plays them itself
  *  over its own content (the card's window, SPEC_CARD_PEEK.md, О11; the image
  *  preview, SPEC_MEDIA_ASSET_ACTIONS.md): the surface's as above, the scrim's
  *  as `MODAL_OVERLAY_CLASS`'s. */
-export const MODAL_SURFACE_ENTER_CLASS = "animate-in fade-in-0 zoom-in-95 duration-(--motion-surface-enter) ease-(--motion-ease)"
-export const MODAL_SURFACE_LEAVE_CLASS = "animate-out fade-out-0 zoom-out-95 duration-(--motion-surface-exit) ease-(--motion-ease) fill-mode-forwards"
-export const MODAL_SCRIM_ENTER_CLASS = "animate-in fade-in-0 duration-(--motion-surface-enter) ease-(--motion-ease)"
-export const MODAL_SCRIM_LEAVE_CLASS = "animate-out fade-out-0 duration-(--motion-surface-exit) ease-(--motion-ease) fill-mode-forwards"
+export const MODAL_SURFACE_ENTER_CLASS = "animate-in fade-in-0 zoom-in-95 duration-(--motion-surface-enter) ease-(--motion-surface-ease)"
+export const MODAL_SURFACE_LEAVE_CLASS = "animate-out fade-out-0 zoom-out-95 duration-(--motion-surface-exit) ease-(--motion-surface-ease) fill-mode-forwards"
+export const MODAL_SCRIM_ENTER_CLASS = "animate-in fade-in-0 duration-(--motion-surface-enter) ease-(--motion-surface-ease)"
+export const MODAL_SCRIM_LEAVE_CLASS = "animate-out fade-out-0 duration-(--motion-surface-exit) ease-(--motion-surface-ease) fill-mode-forwards"
 
 /** What a window holds sets its width. A question (a title, a description,
  *  the buttons; no field, list or preview) is 384px; a window with content

@@ -6,7 +6,7 @@
 // moment, so the next motion starts there with no jump (УД8).
 
 import { PEEK_POSE_REST, peekPoseAt, peekPoseKeyframes, type PeekPose, type PeekPoseMove } from "./cardPeek";
-import { MOTION_EASE } from "./motion";
+import { MOTION_SURFACE_EASE } from "./motion";
 
 /** What moves: the window's parts, each about its own centre, and the scrim,
  *  which only fades. */
@@ -91,7 +91,7 @@ export function createPoseRunner<Purpose extends string>(): PoseRunner<Purpose> 
     }
     const first = peekPoseKeyframes(start);
     const last = peekPoseKeyframes(to);
-    const timing: KeyframeAnimationOptions = { duration, easing: MOTION_EASE, fill: "forwards" };
+    const timing: KeyframeAnimationOptions = { duration, easing: MOTION_SURFACE_EASE, fill: "forwards" };
     const animations = parts.map((part) => part.animate([first.window, last.window], timing));
     if (targets.scrim) animations.push(targets.scrim.animate([first.scrim, last.scrim], timing));
     const startedAt = frameTime();

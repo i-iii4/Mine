@@ -2,14 +2,14 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SidebarLayout } from "@/types";
 import { APP_MAIN_MIN_WIDTH_PX, SIDEBAR_MAX_WIDTH_PX, SIDEBAR_MIN_WIDTH_PX, sidebarBesideMinWidthPx } from "@/lib/appLayout";
-import { MOTION_EASE, MOTION_LEVELS, MOTION_SURFACE_MS } from "@/lib/motion";
+import { MOTION_LEVELS, MOTION_SURFACE_EASE, MOTION_SURFACE_MS } from "@/lib/motion";
 import { setMotionLevel } from "@/test/motionLevel";
 import { useSidebarResize } from "./useSidebarResize";
 
 /** The width's motion in Full: Поверхность, 200 ms both ways on the response
  *  curve (SPEC_MOTION_LEVELS.md, С1, РД7; was 200 ms `ease`). */
 const SIDEBAR_WIDTH_MOTION_MS = MOTION_SURFACE_MS;
-const SIDEBAR_WIDTH_TRANSITION = `width ${MOTION_SURFACE_MS}ms ${MOTION_EASE}`;
+const SIDEBAR_WIDTH_TRANSITION = `width ${MOTION_SURFACE_MS}ms ${MOTION_SURFACE_EASE}`;
 
 const commands = vi.hoisted(() => ({
   setWindowSidebar: vi.fn(async (_sidebar: { width_px: number; collapsed: boolean }) => {}),

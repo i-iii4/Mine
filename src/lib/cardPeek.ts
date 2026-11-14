@@ -18,7 +18,7 @@ import { useSyncExternalStore, type CSSProperties } from "react";
 import { APP_MAIN_MIN_WIDTH_PX } from "./appLayout";
 import { SPRING_SETTLE, springSettleMs } from "./channelIcon";
 import { cubicBezier, cubicBezierCurve, parseCubicBezier } from "./cubicBezier";
-import { MOTION_EASE, MOTION_MOVE_EASE, type MotionLevel } from "./motion";
+import { MOTION_MOVE_EASE, MOTION_SURFACE_EASE, type MotionLevel } from "./motion";
 import {
   DETAIL_CONTENT_MAX_WIDTH_PX,
   DETAIL_RAIL_LINE_PX,
@@ -200,7 +200,7 @@ export interface PeekPoseMove {
   duration: number;
 }
 
-const MOTION_EASE_POINTS = parseCubicBezier(MOTION_EASE);
+const MOTION_EASE_POINTS = parseCubicBezier(MOTION_SURFACE_EASE);
 /** E, `--motion-ease`, as a function of the time's share. */
 export const peekMotionEase: (t: number) => number = MOTION_EASE_POINTS ? cubicBezier(MOTION_EASE_POINTS) : (t) => t;
 

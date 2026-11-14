@@ -120,6 +120,7 @@
 | src/lib/motionInput.ts + motionClasses.ts + sortableMotion.ts | Клавиша или указатель начали движение (`data-motion-key`, пункт нативного меню как клавиша); классы ролей для переходов по состоянию; перестановка списков dnd-kit как Перемещение |
 | src/lib/menuBlink.ts | Мигание выбранного пункта меню 150 мс на всех уровнях перед закрытием меню и командой, ровно один раз (решение 13.11.2026; `DropdownMenuItem`, `ContextMenuItem`, `staysOpen`) |
 | src/styles/motionRoles.test.ts | Проверка ролей движения (SPEC_MOTION_LEVELS.md, РД8): ни одного числа времени и кривой вне токенов ролей и исключений, правила уровня только в блоке токенов и местах РД6, токены CSS равны постоянным `motion.ts` |
+| src/styles/motionSystem.test.ts | Отношения между значениями движения (SPEC_MOTION_LEVELS.md, «Отношения системы»): по кривой и времени считает долю пути за первый кадр и время основной части пути, сверяет порядок времён, читаемость и `Minimal` не медленнее `Full` |
 | src/lib/feedDisplay.ts | Параметры ленты: порядок и вид карточек (`cards`, `media`, `media-only`), хранение между запусками |
 | ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
 | Vitest + Testing Library | Frontend-тесты (`bun run test:frontend`) |

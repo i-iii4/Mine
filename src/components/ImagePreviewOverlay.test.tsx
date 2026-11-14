@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ImagePreviewOverlay, visibleImagePreviewTransform, type ImagePreviewRequest } from "./ImagePreviewOverlay";
 import { copyMediaAssetToClipboard } from "@/lib/commands";
 import { peekPoseAt, peekPoseKeyframes, PEEK_POSE_REST, PEEK_POSE_RISE_FROM, PEEK_POSE_SUNK } from "@/lib/cardPeek";
-import { MOTION_EASE } from "@/lib/motion";
+import { MOTION_SURFACE_EASE, MOTION_SURFACE_MS } from "@/lib/motion";
 import { setMotionLevel } from "@/test/motionLevel";
 
 vi.mock("@/lib/commands", () => ({
@@ -767,7 +767,7 @@ describe("ImagePreviewOverlay motion", () => {
       animation: { currentTime: number; startTime: number | null; onfinish: (() => void) | null; cancel: ReturnType<typeof vi.fn> };
     }
     let heard: Heard[] = [];
-    const timing = (duration: number) => ({ duration, easing: MOTION_EASE, fill: "forwards" });
+    const timing = (duration: number) => ({ duration, easing: MOTION_SURFACE_EASE, fill: "forwards" });
 
     beforeEach(() => {
       setMotionLevel("minimal");
@@ -798,9 +798,9 @@ describe("ImagePreviewOverlay motion", () => {
       expect(stage.style.opacity).toBe("0");
       frame(7);
       expect(heard.map(({ element: part, keyframes, timing: heardTiming }) => ({ part, keyframes, heardTiming }))).toEqual([
-        { part: stage, keyframes: [peekPoseKeyframes(PEEK_POSE_RISE_FROM).window, peekPoseKeyframes(PEEK_POSE_REST).window], heardTiming: timing(150) },
-        { part: controls, keyframes: [peekPoseKeyframes(PEEK_POSE_RISE_FROM).window, peekPoseKeyframes(PEEK_POSE_REST).window], heardTiming: timing(150) },
-        { part: scrim, keyframes: [{ opacity: 0 }, { opacity: 1 }], heardTiming: timing(150) },
+        { part: stage, keyframes: [peekPoseKeyframes(PEEK_POSE_RISE_FROM).window, peekPoseKeyframes(PEEK_POSE_REST).window], heardTiming: timing(MOTION_SURFACE_MS) },
+        { part: controls, keyframes: [peekPoseKeyframes(PEEK_POSE_RISE_FROM).window, peekPoseKeyframes(PEEK_POSE_REST).window], heardTiming: timing(MOTION_SURFACE_MS) },
+        { part: scrim, keyframes: [{ opacity: 0 }, { opacity: 1 }], heardTiming: timing(MOTION_SURFACE_MS) },
       ]);
       for (const part of [scrim, controls, stage]) expect(part.style.opacity).toBe("");
       // Nothing flies: the source stays where it stands.
@@ -809,16 +809,16 @@ describe("ImagePreviewOverlay motion", () => {
       expect(heard[0]!.animation.cancel).toHaveBeenCalled();
     });
 
-    it("sinks the stage from where it stands on the button in 100 ms, the zoomed picture with its zoom, and goes the frame after", () => {
+    it("sinks the stage from where it stands on the button on Поверхность's time, the zoomed picture with its zoom, and goes the frame after", () => {
       const { element } = sourceFrame();
       const { image, onClose } = open({ source: element });
       frame(7);
       heard[0]!.animation.currentTime = 50;
-      const midway = peekPoseAt({ from: PEEK_POSE_RISE_FROM, to: PEEK_POSE_REST, duration: 150 }, 50);
+      const midway = peekPoseAt({ from: PEEK_POSE_RISE_FROM, to: PEEK_POSE_REST, duration: MOTION_SURFACE_MS }, 50);
       fireEvent.click(screen.getByLabelText("Collapse image preview"));
       const [stageLeaving, , scrimLeaving] = heard.slice(3);
       expect(stageLeaving!.keyframes).toEqual([peekPoseKeyframes(midway).window, peekPoseKeyframes(PEEK_POSE_SUNK).window]);
-      expect(stageLeaving!.timing).toEqual(timing(100));
+      expect(stageLeaving!.timing).toEqual(timing(MOTION_SURFACE_MS));
       expect(scrimLeaving!.keyframes).toEqual([{ opacity: midway.opacity }, { opacity: 0 }]);
       expect(image.style.clipPath).toBe("");
       finish(stageLeaving!);
@@ -827,19 +827,19 @@ describe("ImagePreviewOverlay motion", () => {
       expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    it("turns the leaving back in 150 ms when zoom takes it over, and the viewer stays", () => {
+    it("turns the leaving back on Поверхность's time when zoom takes it over, and the viewer stays", () => {
       const { element } = sourceFrame();
       const { overlay, onClose } = open({ source: element });
       frame(7);
       finish(heard[0]!);
       fireEvent.click(screen.getByLabelText("Collapse image preview"));
       heard[3]!.animation.currentTime = 40;
-      const midway = peekPoseAt({ from: PEEK_POSE_REST, to: PEEK_POSE_SUNK, duration: 100 }, 40);
+      const midway = peekPoseAt({ from: PEEK_POSE_REST, to: PEEK_POSE_SUNK, duration: MOTION_SURFACE_MS }, 40);
       fireEvent.wheel(overlay, { deltaY: -40, clientX: 600, clientY: 400 });
       expect(overlay).not.toHaveClass("pointer-events-none");
       const back = heard.at(-3)!;
       expect(back.keyframes).toEqual([peekPoseKeyframes(midway).window, peekPoseKeyframes(PEEK_POSE_REST).window]);
-      expect(back.timing).toEqual(timing(150));
+      expect(back.timing).toEqual(timing(MOTION_SURFACE_MS));
       finish(back);
       frame(3);
       expect(onClose).not.toHaveBeenCalled();

@@ -253,7 +253,7 @@ describe("a role's time and curve, a spring's way and a scroll's behaviour (РД
     for (const level of motion.MOTION_LEVELS) {
       motion.chooseMotionLevel(level);
       expect(motion.roleEasing("response")).toBe(motion.MOTION_EASE);
-      expect(motion.roleEasing("surface")).toBe(motion.MOTION_EASE);
+      expect(motion.roleEasing("surface")).toBe(motion.MOTION_SURFACE_EASE);
       expect(motion.roleEasing("move")).toBe(motion.MOTION_MOVE_EASE);
     }
   });

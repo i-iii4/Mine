@@ -47,7 +47,7 @@ import {
   type ImagePreviewTransform,
 } from "@/lib/imagePreviewMotion";
 import { cn } from "@/lib/utils";
-import { MOTION_ENTER_MS, MOTION_EXIT_MS, motionLevel, roleEasing, roleMs, type MotionLevel } from "@/lib/motion";
+import { MOTION_SURFACE_MS, motionLevel, roleEasing, roleMs, type MotionLevel } from "@/lib/motion";
 import { createPoseRunner, type PoseTargets } from "@/lib/poseMotion";
 
 export type ImagePreviewRequest = {
@@ -639,7 +639,7 @@ export function ImagePreviewOverlay({
     if (poseRunner.motion()?.purpose === "sink") {
       closingRef.current = false;
       setClosing(false);
-      poseRunner.move("back", null, PEEK_POSE_REST, MOTION_ENTER_MS, poseTargets(), settlePose);
+      poseRunner.move("back", null, PEEK_POSE_REST, MOTION_SURFACE_MS, poseTargets(), settlePose);
       return;
     }
     const motion = motionRef.current;
@@ -652,7 +652,7 @@ export function ImagePreviewOverlay({
     for (const element of [stageRef.current, controlsRef.current, scrimRef.current]) {
       if (element) element.style.opacity = "";
     }
-    poseRunner.move("rise", PEEK_POSE_RISE_FROM, PEEK_POSE_REST, MOTION_ENTER_MS, poseTargets(), settlePose);
+    poseRunner.move("rise", PEEK_POSE_RISE_FROM, PEEK_POSE_REST, MOTION_SURFACE_MS, poseTargets(), settlePose);
   }, [poseRunner, poseTargets, settlePose]);
 
   /** The opening's first frame, once the original is decoded or the wait is
@@ -786,7 +786,7 @@ export function ImagePreviewOverlay({
       // From where the stage stands, a rise under way included; its last
       // frame stays, faded out, and the viewer goes the frame after (ОУ3, ОУ4).
       setDialogMotion(null);
-      poseRunner.move("sink", null, PEEK_POSE_SUNK, MOTION_EXIT_MS, poseTargets(), () => {
+      poseRunner.move("sink", null, PEEK_POSE_SUNK, MOTION_SURFACE_MS, poseTargets(), () => {
         const ended = poseRunner.generation();
         requestAnimationFrame(() => {
           if (poseRunner.generation() !== ended) return;

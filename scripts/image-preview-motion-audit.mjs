@@ -579,7 +579,7 @@ try {
         clip: document.querySelector("[data-image-preview-image]").style.clipPath,
       };
     });
-    assert.equal(rise.duration, 150, "Minimal: the rise lasts 150 ms");
+    assert.equal(rise.duration, 200, "Minimal: the rise lasts Поверхность's 200 ms");
     assert.equal(rise.from, "translateY(6.667px) scale(0.95)", "Minimal: the rise starts 6.67 px low at 95 %");
     assert.equal(rise.to, "translateY(0px) scale(1)", "Minimal: the rise ends at its place");
     assert.equal(rise.controls, 1, "Minimal: the island rises with the stage");
@@ -592,11 +592,11 @@ try {
       const frames = animation.effect.getKeyframes();
       return { duration: animation.effect.getTiming().duration, to: frames.at(-1).transform, opacity: frames.at(-1).opacity };
     });
-    assert.equal(sink.duration, 100, "Minimal: the leaving lasts 100 ms");
+    assert.equal(sink.duration, 200, "Minimal: the leaving lasts Поверхность's 200 ms");
     assert.equal(sink.to, "translateY(40px) scale(0.95)", "Minimal: the leaving ends 40 px down at 95 %");
     assert.equal(Number(sink.opacity), 0, "Minimal: the leaving fades out");
     await page.waitForFunction(() => !document.querySelector("[data-image-preview-overlay]"));
-    passed("with Reduce motion and no stored level the preview rises in 150 ms and sinks in 100 ms (Minimal)");
+    passed("with Reduce motion and no stored level the preview rises and sinks in 200 ms (Minimal)");
     await page.close();
   }
 

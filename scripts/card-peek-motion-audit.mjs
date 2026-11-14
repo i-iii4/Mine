@@ -29,13 +29,14 @@ const NUDGE_PX = MARGIN_PX / 6;
 /** CARD_PEEK_SPRING_MS: the window's spring from rest to rest. The step
  *  answers the pointer on it in every mode («Режимы»). */
 const SPRING_SETTLE_MS = 367;
-/** --motion-enter and --motion-exit. */
-const ENTER_MS = 150;
-const EXIT_MS = 100;
-/** E, --motion-ease. */
-const EASE = [0.22, 1, 0.36, 1];
-/** --motion-move at Minimal: the way to and from the full page (ОУ7). */
-const MOVE_MS = 150;
+/** --motion-surface-enter and --motion-surface-exit: Minimal's window comes
+ *  and goes as Поверхность (SPEC_MOTION_LEVELS.md, «Основания значений»). */
+const ENTER_MS = 200;
+const EXIT_MS = 200;
+/** --motion-surface-ease. */
+const EASE = [0.2, 0, 0, 1];
+/** --motion-move: the way to and from the full page in Minimal (ОУ7). */
+const MOVE_MS = 200;
 /** How far a box may lie from where it should be, px: the frame's pieces
  *  are written in whole and half pixels. */
 const BOX_SLACK_PX = 0.75;
@@ -366,7 +367,7 @@ try {
     const rest = shown.find((frame) => frame.opacity >= 1 - 1e-4 && frame.y <= 1e-3);
     assert(rest, "it came to rest");
     const took = rest.frameTime - first.frameTime;
-    near(took, ENTER_MS, "the rise lasts 150 ms", 2 * (1000 / 60) + 1);
+    near(took, ENTER_MS, "the rise lasts Поверхность's 200 ms", 2 * (1000 / 60) + 1);
     assert(moving.length >= 4, `the rise has frames of its own (${moving.length})`);
     assert.deepEqual(errors, [], "page errors");
     passed(`Minimal rises from ${first.y.toFixed(2)} px and ${first.scale.toFixed(4)} to its place in ${Math.round(took)} ms, content shown, the card in view`);
@@ -593,7 +594,7 @@ try {
     assert(handed && !handed.present && handed.fullPage, `${motionName}: the full page in the frame after the window's last`);
     boxNear(handed.fullPage, lastOut.contentBox, `${motionName}: the full page where the window's last frame held the card`);
     const outMs = lastOut.frameTime - outWindow[0].frameTime;
-    if (motionName === "minimal") near(outMs, MOVE_MS, "Minimal: the way to the full page lasts 150 ms", 2 * FRAME_MS + 1);
+    if (motionName === "minimal") near(outMs, MOVE_MS, "Minimal: the way to the full page lasts Перемещение's 200 ms", 2 * FRAME_MS + 1);
     else near(outMs, SPRING_MS, "Full: the way to the full page on the window's spring", 3 * FRAME_MS + 1);
     passed(`${motionName}: the window goes to the full page in ${Math.round(outMs)} ms, not fading, not moving down, line, shadow, corner and scrim by its share; its last frame is the full page's first`);
 
@@ -627,7 +628,7 @@ try {
     boxNear(backWindow.at(-1).surface, place, `${motionName}: the window at its place at rest`);
     near(backWindow.at(-1).scrim, 1, `${motionName}: the scrim back`, 1e-3);
     const backMs = landed.frameTime - firstBack.frameTime;
-    if (motionName === "minimal") near(backMs, MOVE_MS, "Minimal: the way back lasts 150 ms", 2 * FRAME_MS + 1);
+    if (motionName === "minimal") near(backMs, MOVE_MS, "Minimal: the way back lasts Перемещение's 200 ms", 2 * FRAME_MS + 1);
     else near(backMs, SPRING_MS, "Full: the way back on the window's spring", 3 * FRAME_MS + 1);
     assert.deepEqual(errors, [], `${motionName}: page errors`);
     passed(`${motionName}: the full page gives the card back, the window's first frame on the full page's place, at its place in ${Math.round(backMs)} ms`);

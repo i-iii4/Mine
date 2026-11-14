@@ -172,6 +172,10 @@ select,
   --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-surface-enter: 200ms;
   --motion-surface-exit: 200ms;
+  /* Поверхность and the small popups decelerate from a soft start (Material
+     3's standard easing): on E a third of a window's path fell into the
+     first frame. */
+  --motion-surface-ease: cubic-bezier(0.2, 0, 0, 1);
   --motion-move: 200ms;
   --motion-move-ease: cubic-bezier(0.37, 0, 0.63, 1);
   /* The blink of a chosen menu item, outside the roles: the same on every
@@ -981,6 +985,13 @@ body {
 @keyframes mine-progress-breathe {
   0%, 100% { opacity: 0.35; }
   50% { opacity: 1; }
+}
+
+/* The fill of a progress with a known length follows the work: 300 ms,
+   ease-out, its value before the roles. A status, outside the roles, the
+   same in every mode (SPEC_MOTION_LEVELS.md, З2, РД5). */
+.mine-progress-fill {
+  transition: transform 300ms ease-out;
 }
 
 .mine-progress-indeterminate {
@@ -2609,11 +2620,11 @@ body {
    timer on the same role (roleMs). */
 .sidebar-overlay-scrim {
   opacity: 0;
-  transition: opacity var(--motion-surface-exit) var(--motion-ease);
+  transition: opacity var(--motion-surface-exit) var(--motion-surface-ease);
 }
 .sidebar-overlay-panel {
   transform: translateX(-100%);
-  transition: transform var(--motion-surface-exit) var(--motion-ease);
+  transition: transform var(--motion-surface-exit) var(--motion-surface-ease);
 }
 [data-sidebar-overlay][data-state="open"] .sidebar-overlay-scrim {
   opacity: 1;
@@ -2657,7 +2668,7 @@ body {
    --motion-surface-exit (SPEC_MOTION_LEVELS.md, С1, РД1). Off and a key
    never animate. */
 [data-sidebar-width-animating] [data-top-row-bar] {
-  transition: left var(--motion-surface-exit) var(--motion-ease);
+  transition: left var(--motion-surface-exit) var(--motion-surface-ease);
 }
 [data-sidebar-width-animating="enter"] [data-top-row-bar] {
   transition-duration: var(--motion-surface-enter);

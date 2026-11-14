@@ -1,7 +1,6 @@
 import * as React from "react"
 import { Progress as ProgressPrimitive } from "radix-ui"
 
-import { MOVE_CLASS } from "@/lib/motionClasses"
 import { cn } from "@/lib/utils"
 
 /**
@@ -46,8 +45,9 @@ function Progress({
         <ProgressPrimitive.Indicator
           data-slot="progress-indicator"
           className={cn(
-            "bg-primary h-full w-full transition-transform",
-            MOVE_CLASS,
+            // The fill follows the work on its own time, outside the roles
+            // (global.css, `.mine-progress-fill`; SPEC_MOTION_LEVELS.md, З2).
+            "mine-progress-fill bg-primary h-full w-full",
             indicatorClassName
           )}
           style={{ transform: `translateX(-${100 - Math.min(100, Math.max(0, value))}%)` }}

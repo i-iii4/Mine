@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { APP_MAIN_MIN_WIDTH_PX } from "./appLayout";
 import { CHANNEL_ICON_SPRING_MS, springSettleMs } from "./channelIcon";
 import { MODAL_SURFACE_CLASS } from "@/components/ui/modal-window";
-import type { MotionLevel } from "./motion";
+import { MOTION_SURFACE_MS, type MotionLevel } from "./motion";
 import {
   CARD_PEEK_MARGIN_PX,
   CARD_PEEK_MIN_AREA_WIDTH_PX,
@@ -559,9 +559,9 @@ describe("Minimal's rise, sink and hint step (SPEC_MOTION_LEVELS.md, ОУ2–О�
 
   it("stays on the line on its way from any point of it to the end: no jump, no second transform (ОУ4)", () => {
     for (const start of [0, 0.05, 1 / 6]) {
-      const move = { from: peekLinePose(start), to: PEEK_POSE_SUNK, duration: 100 };
+      const move = { from: peekLinePose(start), to: PEEK_POSE_SUNK, duration: MOTION_SURFACE_MS };
       let previous = start;
-      for (let elapsed = 0; elapsed <= 100; elapsed += 100 / 6) {
+      for (let elapsed = 0; elapsed <= MOTION_SURFACE_MS; elapsed += MOTION_SURFACE_MS / 12) {
         const pose = peekPoseAt(move, elapsed);
         const share = pose.y / CARD_PEEK_MARGIN_PX;
         expect(Math.abs(share - (1 - pose.scale) / (1 - CARD_PEEK_CENTER_SCALE))).toBeLessThan(0.002);
@@ -569,24 +569,27 @@ describe("Minimal's rise, sink and hint step (SPEC_MOTION_LEVELS.md, ОУ2–О�
         previous = share;
       }
       expect(peekPoseAt(move, 0).y).toBeCloseTo(start * CARD_PEEK_MARGIN_PX, 9);
-      expect(peekPoseAt(move, 100)).toEqual(PEEK_POSE_SUNK);
+      expect(peekPoseAt(move, MOTION_SURFACE_MS)).toEqual(PEEK_POSE_SUNK);
     }
   });
 
-  it("goes on E, the leaving faster at its start than the step anywhere on its way (ОУ4, rule 3)", () => {
+  it("goes on the surface curve, the leaving's first frame faster than the step's spring anywhere on its way (ОУ4, rule 3)", () => {
     expect(peekMotionEase(0)).toBe(0);
     expect(peekMotionEase(1)).toBe(1);
-    // cubic-bezier(0.22, 1, 0.36, 1) at half its time.
-    expect(peekMotionEase(0.5)).toBeGreaterThan(0.9);
-    const slope = (move: { from: ReturnType<typeof peekLinePose>; to: ReturnType<typeof peekLinePose>; duration: number }, at: number) => (
-      (peekPoseAt(move, at + 0.01).y - peekPoseAt(move, at).y) / 0.01
-    );
-    const step = { from: PEEK_POSE_REST, to: PEEK_POSE_NUDGED, duration: 150 };
-    let fastestStep = 0;
-    for (let at = 0; at < 150; at += 1) fastestStep = Math.max(fastestStep, slope(step, at));
+    // cubic-bezier(0.2, 0, 0, 1): past most of the path at half its time,
+    // from a soft start.
+    expect(peekMotionEase(0.5)).toBeGreaterThan(0.85);
+    expect(peekMotionEase(16.7 / MOTION_SURFACE_MS)).toBeLessThan(0.2);
+    // The step answers the pointer on the window's spring («Режимы»): a
+    // critically damped spring is fastest at 1/ω, by step × ω / e.
+    const omega = (2 * Math.PI) / CARD_PEEK_SPRING_RESPONSE_S;
+    const fastestStep = (CARD_PEEK_NUDGE_OFFSET_PX * omega) / Math.E / 1000;
+    const frame = 1000 / 60;
     for (const start of [0, 0.05, 1 / 6]) {
-      const leaving = { from: peekLinePose(start), to: PEEK_POSE_SUNK, duration: 100 };
-      expect(slope(leaving, 0)).toBeGreaterThan(fastestStep);
+      const leaving = { from: peekLinePose(start), to: PEEK_POSE_SUNK, duration: MOTION_SURFACE_MS };
+      // px per ms over the first frame after the press.
+      const firstFrame = (peekPoseAt(leaving, frame).y - peekPoseAt(leaving, 0).y) / frame;
+      expect(firstFrame).toBeGreaterThan(fastestStep);
     }
   });
 

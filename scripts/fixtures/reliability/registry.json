@@ -5137,6 +5137,16 @@
     },
     {
       "paths": [
+        "src/styles/motionSystem.test.ts"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md### Отношения системы",
+      "tests": [
+        "src/styles/motionSystem.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "src/lib/menuBlink.ts",
         "src/lib/menuBlink.test.tsx"
       ],

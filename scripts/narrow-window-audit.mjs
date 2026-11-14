@@ -293,15 +293,15 @@ try {
     const scrim = getComputedStyle(document.querySelector("[data-sidebar-overlay-scrim]"));
     return { panel: [panel.transitionDuration, panel.transitionTimingFunction], scrim: [scrim.transitionDuration, scrim.transitionTimingFunction] };
   });
-  assert.deepEqual(motion.panel, ["0.2s", "cubic-bezier(0.22, 1, 0.36, 1)"], "the panel moves 200 ms");
-  assert.deepEqual(motion.scrim, ["0.2s", "cubic-bezier(0.22, 1, 0.36, 1)"], "the scrim fades 200 ms");
+  assert.deepEqual(motion.panel, ["0.2s", "cubic-bezier(0.2, 0, 0, 1)"], "the panel moves 200 ms");
+  assert.deepEqual(motion.scrim, ["0.2s", "cubic-bezier(0.2, 0, 0, 1)"], "the scrim fades 200 ms");
   await page.waitForFunction(() => document.querySelector("[data-sidebar-overlay]")?.getAttribute("data-state") === "open");
   await toggle();
   assert.equal((await page.evaluate(readLayout)).overlayState, "closed", "closing, still on screen");
   await page.waitForFunction(() => document.querySelector("[data-sidebar-overlay]") === null, null, { timeout: 2000 });
   console.log("PASS 400, Full: in and out over 200 ms");
 
-  // Minimal changes no role's time: in and out over 200 ms on E, as in Full
+  // Minimal changes no role's time: in and out over 200 ms on the surface curve, as in Full
   // (SPEC_MOTION_LEVELS.md, «Режимы», С2).
   await chooseLevel("minimal");
   await toggle();
@@ -312,11 +312,11 @@ try {
     return { panel: [panel.transitionDuration, panel.transitionTimingFunction], scrim: [scrim.transitionDuration, scrim.transitionTimingFunction] };
   });
   const minimalIn = await overlayMotion();
-  assert.deepEqual(minimalIn.panel, ["0.2s", "cubic-bezier(0.22, 1, 0.36, 1)"], "Minimal: the panel comes in 200 ms, as in Full");
-  assert.deepEqual(minimalIn.scrim, ["0.2s", "cubic-bezier(0.22, 1, 0.36, 1)"], "Minimal: the scrim comes in 200 ms, as in Full");
+  assert.deepEqual(minimalIn.panel, ["0.2s", "cubic-bezier(0.2, 0, 0, 1)"], "Minimal: the panel comes in 200 ms, as in Full");
+  assert.deepEqual(minimalIn.scrim, ["0.2s", "cubic-bezier(0.2, 0, 0, 1)"], "Minimal: the scrim comes in 200 ms, as in Full");
   await toggle();
   const minimalOut = await overlayMotion();
-  assert.deepEqual(minimalOut.panel, ["0.2s", "cubic-bezier(0.22, 1, 0.36, 1)"], "Minimal: the panel leaves in 200 ms, as in Full");
+  assert.deepEqual(minimalOut.panel, ["0.2s", "cubic-bezier(0.2, 0, 0, 1)"], "Minimal: the panel leaves in 200 ms, as in Full");
   await page.waitForFunction(() => document.querySelector("[data-sidebar-overlay]") === null, null, { timeout: 2000 });
   console.log("PASS 400, Minimal: in and out over 200 ms, as in Full");
   await chooseLevel("full");
@@ -418,7 +418,7 @@ try {
   let segment = await segmentNow();
   assert.deepEqual(segment.motion, segment.asideMotion, "1200 collapsing: the segment moves by the sidebar's own motion");
   // Поверхность: 200 ms on the response curve (SPEC_MOTION_LEVELS.md, С1, РД7; was `ease`).
-  assert.deepEqual(segment.motion, ["width", "0.2s", "cubic-bezier(0.22, 1, 0.36, 1)"], "1200 collapsing: its width over 200 ms");
+  assert.deepEqual(segment.motion, ["width", "0.2s", "cubic-bezier(0.2, 0, 0, 1)"], "1200 collapsing: its width over 200 ms");
   assert.ok(segment.width < TARGET && segment.width > 1, `1200 collapsing: on its way to none (${segment.width})`);
   assert.equal(segment.spaceName, true, "1200 collapsing: the space switcher leaves with it");
   assert.equal(segment.line, "1px", "1200 collapsing: its line goes with it");
@@ -448,20 +448,20 @@ try {
     const element = document.querySelector("[data-app-top-sidebar-segment]");
     return element && element.getBoundingClientRect().width === target && getComputedStyle(element).transitionDuration === "0s";
   }, TARGET, { timeout: 2000 });
-  // Minimal: a collapse and an opening in 200 ms on E, as in Full, one value
+  // Minimal: a collapse and an opening in 200 ms on the surface curve, as in Full, one value
   // for the panel and the segment («Режимы», С1).
   await chooseLevel("minimal");
   await toggle();
   await settle();
   segment = await segmentNow();
   assert.deepEqual(segment.motion, segment.asideMotion, "Minimal, 1200 collapsing: the segment moves by the sidebar's own motion");
-  assert.deepEqual(segment.motion, ["width", "0.2s", "cubic-bezier(0.22, 1, 0.36, 1)"], "Minimal, 1200 collapsing: its width over 200 ms on E, as in Full");
+  assert.deepEqual(segment.motion, ["width", "0.2s", "cubic-bezier(0.2, 0, 0, 1)"], "Minimal, 1200 collapsing: its width over 200 ms on the surface curve, as in Full");
   await page.waitForFunction(() => document.querySelector("[data-app-top-sidebar-segment]")?.childElementCount === 0, null, { timeout: 2000 });
   await toggle();
   await settle();
   segment = await segmentNow();
   assert.deepEqual(segment.motion, segment.asideMotion, "Minimal, 1200 opening: by the sidebar's own motion");
-  assert.deepEqual(segment.motion, ["width", "0.2s", "cubic-bezier(0.22, 1, 0.36, 1)"], "Minimal, 1200 opening: its width over 200 ms on E, as in Full");
+  assert.deepEqual(segment.motion, ["width", "0.2s", "cubic-bezier(0.2, 0, 0, 1)"], "Minimal, 1200 opening: its width over 200 ms on the surface curve, as in Full");
   await page.waitForFunction((target) => {
     const element = document.querySelector("[data-app-top-sidebar-segment]");
     return element && element.getBoundingClientRect().width === target && getComputedStyle(element).transitionDuration === "0s";

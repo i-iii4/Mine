@@ -67,7 +67,7 @@ function TooltipContent({
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
         className={cn(
-          "bg-card text-card-foreground animate-in fade-in-0 zoom-in-95 duration-(--motion-enter) ease-(--motion-ease) data-[state=closed]:animate-out data-[state=closed]:duration-(--motion-exit) data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 flex w-fit items-center gap-2 origin-(--radix-tooltip-content-transform-origin) rounded-1 border px-2 py-1 text-sm text-balance shadow-md",
+          "bg-card text-card-foreground animate-in fade-in-0 zoom-in-95 duration-(--motion-enter) ease-(--motion-surface-ease) data-[state=closed]:animate-out data-[state=closed]:duration-(--motion-enter) data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 flex w-fit items-center gap-2 origin-(--radix-tooltip-content-transform-origin) rounded-1 border px-2 py-1 text-sm text-balance shadow-md",
           className
         )}
         {...props}

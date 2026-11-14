@@ -184,7 +184,7 @@ function DropdownMenuContent({
         onPointerDownOutside={surface.onPointerDownOutside}
         onCloseAutoFocus={surface.onCloseAutoFocus}
         className={cn(
-          "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:duration-(--motion-enter) data-[state=closed]:duration-(--motion-exit) ease-(--motion-ease) data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 max-h-(--radix-dropdown-menu-content-available-height) origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-1 border p-surface shadow-md",
+          "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:duration-(--motion-enter) data-[state=closed]:duration-(--motion-enter) ease-(--motion-surface-ease) data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 max-h-(--radix-dropdown-menu-content-available-height) origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-1 border p-surface shadow-md",
           className
         )}
         {...props}
@@ -402,7 +402,7 @@ function DropdownMenuSubContent({
       data-floating-menu={widthRole}
       collisionPadding={collisionPadding}
       className={cn(
-        "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:duration-(--motion-enter) data-[state=closed]:duration-(--motion-exit) ease-(--motion-ease) data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden rounded-1 border p-surface shadow-md",
+        "bg-card text-card-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:duration-(--motion-enter) data-[state=closed]:duration-(--motion-enter) ease-(--motion-surface-ease) data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden rounded-1 border p-surface shadow-md",
         className
       )}
       {...props}

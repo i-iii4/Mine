@@ -133,7 +133,7 @@ import { HOVER_INTENT } from "@/lib/hoverIntent";
 import { commandById } from "@/lib/commandRegistry";
 import { usePeekWidth, type PeekWidth } from "@/lib/cardView";
 import type { DetailLayoutMode } from "@/lib/detailLayout";
-import { MOTION_ENTER_MS, MOTION_EXIT_MS, MOTION_SPRING_MOVE_MS, motionLevel, roleEasing, roleMs, springMotion, type MotionLevel, type MotionOptions } from "@/lib/motion";
+import { MOTION_SPRING_MOVE_MS, MOTION_SURFACE_MS, motionLevel, roleEasing, roleMs, springMotion, type MotionLevel, type MotionOptions } from "@/lib/motion";
 import { lastInputIsKey } from "@/lib/motionInput";
 import { createPoseRunner, type PoseTargets } from "@/lib/poseMotion";
 import { cn } from "@/lib/utils";
@@ -1709,7 +1709,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
       setPreparing(false);
       setLive(false);
     });
-    poseRunner.move("rise", PEEK_POSE_RISE_FROM, PEEK_POSE_REST, MOTION_ENTER_MS, poseTargets(), settlePose);
+    poseRunner.move("rise", PEEK_POSE_RISE_FROM, PEEK_POSE_REST, MOTION_SURFACE_MS, poseTargets(), settlePose);
   };
 
   /** What the way to and from the full page puts on the page: no card, the
@@ -2076,7 +2076,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
       nudge.spring = { position: 0, velocity: 0, target: 0 };
       writeNudge();
     }
-    poseRunner.move("sink", from, PEEK_POSE_SUNK, MOTION_EXIT_MS, poseTargets(), () => {
+    poseRunner.move("sink", from, PEEK_POSE_SUNK, MOTION_SURFACE_MS, poseTargets(), () => {
       const ended = poseRunner.generation();
       requestAnimationFrame(() => {
         if (poseRunner.generation() !== ended) return;
@@ -2189,7 +2189,7 @@ export function CardPeek({ block, opening, exit, placeReady = true, areaRef, onC
         && !switchExitRef.current && leavingSlugRef.current === block.slug
       ) {
         setClosing(false);
-        poseRunner.move("back", null, PEEK_POSE_REST, MOTION_ENTER_MS, poseTargets(), settlePose);
+        poseRunner.move("back", null, PEEK_POSE_REST, MOTION_SURFACE_MS, poseTargets(), settlePose);
         return;
       }
       // The full page gives the card back while the window goes to it (the

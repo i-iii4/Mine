@@ -223,7 +223,7 @@ describe("a window and its scrim (М5)", () => {
     for (const classes of [MODAL_SURFACE_CLASS, MODAL_OVERLAY_CLASS]) {
       expect(classes).toContain("data-[state=open]:duration-(--motion-surface-enter)");
       expect(classes).toContain("data-[state=closed]:duration-(--motion-surface-exit)");
-      expect(classes).toContain("ease-(--motion-ease)");
+      expect(classes).toContain("ease-(--motion-surface-ease)");
       expect(classes).not.toMatch(/duration-\d/);
     }
     expect(MODAL_SURFACE_CLASS).toContain("data-[state=open]:zoom-in-95");

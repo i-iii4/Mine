@@ -43,16 +43,24 @@ export type MotionPhase = "enter" | "exit";
 export const MOTION_ENTER_MS = 150;
 /** Отклик: a leaving and a fade out. */
 export const MOTION_EXIT_MS = 100;
-/** The curve of Отклик and Поверхность, E. */
+/** The curve of Отклик, E: small fades and what answers the pointer start at
+ *  once. */
 export const MOTION_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+/** The curve of Поверхность and of the small popups, menus and tooltips: a
+ *  thing the size of a window, or a popup with a scale, comes and goes
+ *  decelerating from a soft start. Material 3's standard easing. On E a third
+ *  of a window's path fell into its first frame and its leaving read as a cut
+ *  (SPEC_MOTION_LEVELS.md, «Основания значений»; user's report of
+ *  14.11.2026). */
+export const MOTION_SURFACE_EASE = "cubic-bezier(0.2, 0, 0, 1)";
 /** Поверхность, both ways, in Full and Minimal alike (РД2). */
 export const MOTION_SURFACE_MS = 200;
 /** Перемещение, both ways, in Full and Minimal alike (РД2). */
 export const MOTION_MOVE_MS = 200;
 /** A member of Пружина a press started, in Minimal: the calm move that
- *  stands in for its spring lasts the response's entering time, on the move
- *  curve (РД4). */
-export const MOTION_SPRING_MOVE_MS = MOTION_ENTER_MS;
+ *  stands in for its spring is Перемещение, its time on the move curve
+ *  (РД4): one kind of motion, a thing carried across the page, one value. */
+export const MOTION_SPRING_MOVE_MS = MOTION_MOVE_MS;
 /** The curve of Перемещение, and of Пружина in Minimal. */
 export const MOTION_MOVE_EASE = "cubic-bezier(0.37, 0, 0.63, 1)";
 /** The blink of a chosen menu item: its highlight goes out for the first
@@ -224,7 +232,8 @@ export function roleMs(role: MotionRole, phase: MotionPhase, options: MotionOpti
 
 /** The role's curve, the same on every level (РД2). */
 export function roleEasing(role: MotionRole): string {
-  return role === "move" ? MOTION_MOVE_EASE : MOTION_EASE;
+  if (role === "move") return MOTION_MOVE_EASE;
+  return role === "surface" ? MOTION_SURFACE_EASE : MOTION_EASE;
 }
 
 /** How a member of Пружина moves: its own spring, Перемещение, or at once. */

@@ -209,6 +209,7 @@ const CSS_CURVE = /cubic-bezier\(|(?<![\w-])linear\(|(?<![\w-])ease(-in|-out|-in
 const CSS_EXCEPTIONS: ReadonlyArray<{ selector: RegExp; reason: string }> = [
   { selector: /^\[data-name-refused\]$/, reason: "the shake of a refused name, 320 ms on its own curve (В3)" },
   { selector: /^\.mine-progress-indeterminate$/, reason: "the progress without a length keeps moving (З1)" },
+  { selector: /^\.mine-progress-fill$/, reason: "the fill of a progress follows the work, 300 ms ease-out, a status outside the roles (З2)" },
   { selector: /^\[data-motion="off"\] \.mine-progress-indeterminate$/, reason: "the progress breathes in place at Off (З1)" },
 ];
 
@@ -560,9 +561,9 @@ describe("the roles of motion (SPEC_MOTION_LEVELS.md, РД8)", () => {
     expect(milliseconds(tokenValue(":root", "--motion-surface-enter"))).toBe(MOTION_SURFACE_MS);
     expect(milliseconds(tokenValue(":root", "--motion-surface-exit"))).toBe(MOTION_SURFACE_MS);
     expect(milliseconds(tokenValue(":root", "--motion-move"))).toBe(MOTION_MOVE_MS);
-    // The calm move that stands in for a spring in Minimal borrows Отклик's
-    // entering time (РД4); no token carries it.
-    expect(MOTION_SPRING_MOVE_MS).toBe(MOTION_ENTER_MS);
+    // The calm move that stands in for a spring in Minimal is Перемещение
+    // (РД4): one kind of motion, one value.
+    expect(MOTION_SPRING_MOVE_MS).toBe(MOTION_MOVE_MS);
     expect(tokenValue(":root", "--motion-move-ease")).toBe(MOTION_MOVE_EASE);
     expect(milliseconds(tokenValue(":root", "--motion-menu-blink"))).toBe(MOTION_MENU_BLINK_MS);
   });
