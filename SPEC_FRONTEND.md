@@ -1561,8 +1561,15 @@ Image media expansion:
   (SPEC_DEEP_AUDIT.md, Е6.1, Е6.3; до 13.10.2026 после сбоя строка оставалась
   `Connected`).
 - `Escape` внутри submenu закрывает только Connect submenu и возвращает фокус
-  на parent `Connect` item в overflow menu. В standalone DropdownMenu content
-  `Escape` отдаётся родительскому меню.
+  на parent `Connect` item. Так во всех подменю Connect: в меню карточки по
+  кнопке `···` и по ⌘K, в контекстном меню карточки по правому щелчку (решение
+  пользователя 15.11.2026, до него оно закрывало всё контекстное меню), в меню
+  и контекстном меню выделения и в пробе меню карточки в отдельном окне. С
+  набранным запросом первый `Escape` только очищает запрос, меню и подменю
+  остаются открытыми, каретка в поле; следующий закрывает подменю, ещё один
+  меню. Выбор коллекций слышит `Escape` на окне раньше Radix
+  (`usePickerEscape` в `CollectionPicker.tsx`). В standalone DropdownMenu
+  content `Escape` после очистки запроса отдаётся родительскому меню.
   Directional back arrow также закрывает Connect submenu по реальному
   `data-side`: `right -> ArrowLeft`, `left -> ArrowRight`,
   `bottom -> ArrowUp`, `top -> ArrowDown`.

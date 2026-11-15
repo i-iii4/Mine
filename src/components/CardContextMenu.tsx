@@ -6,6 +6,7 @@ import {
   ContextMenuSubContent,
   ContextMenuSubTrigger,
 } from "@/components/ui/context-menu";
+import { useRef, useState } from "react";
 import { ExternalLink, Plus, Trash2, Unlink } from "lucide-react";
 import type { LightBlock, TagCount } from "@/types";
 import { collectionRefLabel } from "@/lib/collections";
@@ -53,25 +54,14 @@ export function CardTagMenu({
 
   return (
     <ContextMenuContent>
-      <ContextMenuSub>
-        <ContextMenuSubTrigger>
-          <MenuIconSlot>
-            <Plus className="size-[13px]" />
-          </MenuIconSlot>
-          Connect
-        </ContextMenuSubTrigger>
-        <ContextMenuSubContent widthRole="search" className={COLLECTION_PICKER_CONTENT_CLASS}>
-          <CollectionPicker
-            blockSlug={block.slug}
-            selectedTags={selectedTags}
-            tags={tags}
-            currentTag={currentTag}
-            onToggleTag={onToggleTag}
-            onCreateAndAssign={onCreateAndAssign}
-            stopKeyPropagation
-          />
-        </ContextMenuSubContent>
-      </ContextMenuSub>
+      <ConnectSubmenu
+        block={block}
+        selectedTags={selectedTags}
+        tags={tags}
+        currentTag={currentTag}
+        onToggleTag={onToggleTag}
+        onCreateAndAssign={onCreateAndAssign}
+      />
 
       {/* Groups by what they act on: the card's collections, its link, its
           file, the card itself (user's decision of 12.11.2026). A card
@@ -134,5 +124,52 @@ export function CardTagMenu({
         Delete
       </ContextMenuItem>
     </ContextMenuContent>
+  );
+}
+
+/**
+ * The Connect submenu of the card's context menu. Escape in it closes the
+ * submenu alone and gives the focus back to its Connect item, as in the
+ * card's `···` menu and the selection's context menu; with a query typed the
+ * first Escape clears the query (CollectionPicker.tsx, `usePickerEscape`;
+ * user's decision of 15.11.2026). It lives inside the menu's content, so
+ * every opening of the menu starts with the submenu shut.
+ */
+function ConnectSubmenu({
+  block,
+  selectedTags,
+  tags,
+  currentTag,
+  onToggleTag,
+  onCreateAndAssign,
+}: Pick<CardTagMenuProps, "block" | "tags" | "currentTag" | "onToggleTag" | "onCreateAndAssign"> & {
+  selectedTags: string[];
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLDivElement>(null);
+  return (
+    <ContextMenuSub open={open} onOpenChange={setOpen}>
+      <ContextMenuSubTrigger ref={triggerRef}>
+        <MenuIconSlot>
+          <Plus className="size-[13px]" />
+        </MenuIconSlot>
+        Connect
+      </ContextMenuSubTrigger>
+      <ContextMenuSubContent widthRole="search" className={COLLECTION_PICKER_CONTENT_CLASS}>
+        <CollectionPicker
+          blockSlug={block.slug}
+          selectedTags={selectedTags}
+          tags={tags}
+          currentTag={currentTag}
+          onToggleTag={onToggleTag}
+          onCreateAndAssign={onCreateAndAssign}
+          stopKeyPropagation
+          onRequestClose={() => {
+            setOpen(false);
+            requestAnimationFrame(() => triggerRef.current?.focus());
+          }}
+        />
+      </ContextMenuSubContent>
+    </ContextMenuSub>
   );
 }

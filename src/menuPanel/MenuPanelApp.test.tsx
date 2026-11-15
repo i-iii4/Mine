@@ -92,6 +92,33 @@ describe("the menu panel's page", () => {
     await waitFor(() => expect(invokes("menu_panel_close")).toEqual([{ menu: 3, reason: "escape" }]));
   });
 
+  // The card's context menu drawn here (a right click in the Window trial):
+  // Escape in Connect climbs one layer at a time, as on the page
+  // (CardContextMenu.tsx; user's decision of 15.11.2026).
+  it("clears the query, then closes Connect alone with the focus on it, then the menu, in a context menu", async () => {
+    render(<MenuPanelApp />);
+    const point = encodeCardMenuPayload({ ...PAYLOAD, opener: { kind: "point" } });
+    backend(MENU_PANEL_OPEN_EVENT, opening(6, point));
+    await waitFor(() => expect(invokes("menu_panel_show")).toHaveLength(1));
+    const connect = screen.getByRole("menuitem", { name: "Connect" });
+    fireEvent.keyDown(connect, { key: "ArrowRight" });
+    const field = (await screen.findByPlaceholderText("Search collections...")) as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "We" } });
+
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(field.value).toBe("");
+    expect(invokes("menu_panel_close")).toEqual([]);
+
+    fireEvent.keyDown(field, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByPlaceholderText("Search collections...")).toBeNull());
+    expect(screen.getByText("Copy Path")).toBeTruthy();
+    expect(invokes("menu_panel_close")).toEqual([]);
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Connect" })).toHaveFocus());
+
+    fireEvent.keyDown(screen.getByRole("menuitem", { name: "Connect" }), { key: "Escape" });
+    await waitFor(() => expect(invokes("menu_panel_close")).toEqual([{ menu: 6, reason: "escape" }]));
+  });
+
   it("closes a menu the backend closed without asking again", async () => {
     render(<MenuPanelApp />);
     backend(MENU_PANEL_OPEN_EVENT, opening(4));

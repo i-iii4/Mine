@@ -1991,8 +1991,11 @@ bar без placeholder-строки и без изменения высоты to
 Shortcut `Cmd+,` продолжает открывать то же окно настроек.
 
 Кнопка логотипа: подсветка в `8px` от края окна (`--chrome-edge-pad`, с
-03.10.2026 общее правило иконочных кнопок хрома), SVG-область ещё на `4px`
-внутри.
+03.10.2026 общее правило иконочных кнопок хрома). Коробка знака 12×8px стоит
+по центру плашки 24px, на `6px` внутри неё, поэтому знак стоит в `14px` от
+края окна (записано по коду 15.11.2026; это расстояние проверяет
+`scripts/settings-menu-audit.mjs`; прежние «ещё на 4px внутри» остались со
+времени, когда SVG был 16px).
 Штатный `Button variant="chrome" size="chrome-icon"` имеет область нажатия 24×30px
 и отдельную центрированную видимую плашку 24×24px;
 логотип рисуется по своей сетке 8×5 пикселей знака: один пиксель знака
@@ -4794,7 +4797,10 @@ row count, and reveals the right action button. `ArrowUp` /
 `ArrowDown` move across rows and the conditional create action, `Enter` runs
 the visible `Connect`/`Disconnect` or create action, and `Escape` from a
 submenu returns to the parent `Connect` item instead of closing the whole
-overflow menu.
+menu: the card's `···` menu, the card's context menu (решение пользователя
+15.11.2026), the selection's menus and the card menu in a window of its own.
+With a query typed the first `Escape` only clears it, the menu and the
+submenu staying open with the caret in the field.
 Pointer and keyboard navigation share the same `activeIndex`: moving the mouse
 selects that row, pressing arrows transfers ownership back to keyboard, and
 there is never a simultaneous pointer hover and keyboard hover. Right-slot

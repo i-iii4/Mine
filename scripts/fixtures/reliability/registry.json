@@ -5352,6 +5352,19 @@
     },
     {
       "paths": [
+        "src/components/CardContextMenu.tsx",
+        "src/components/CardContextMenu.test.tsx",
+        "src/menuPanel/MenuPanelApp.test.tsx"
+      ],
+      "requirement": "SPEC_FRONTEND.md#### CollectionPicker",
+      "tests": [
+        "src/components/CardContextMenu.test.tsx",
+        "src/menuPanel/MenuPanelApp.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "src/lib/menuBlink.ts",
         "src/lib/menuBlink.test.tsx",
         "src/components/SearchMenuAction.tsx",
