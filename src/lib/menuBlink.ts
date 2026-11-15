@@ -13,6 +13,10 @@
 // is chosen again once the blink is over, the way the menu chooses it, so the
 // menu closes and the command runs as without the blink, exactly once: a
 // second press or Enter during the blink chooses nothing.
+//
+// A row of a menu with a search field is not the menu's own item: the menu
+// chooses it itself, by a press or by Enter in the field. Such a row blinks
+// the same way through `useMenuRowBlink` (user's decision of 15.11.2026).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MOTION_MENU_BLINK_MS } from "./motion";
@@ -107,4 +111,70 @@ export function useMenuItemBlink<E extends MenuSelectEvent>(
   }, [blinks]);
 
   return { onSelect: select, off };
+}
+
+/** The blink of a row the menu chooses itself: a row of a menu with a search
+ *  field, which is not the menu's own item (user's decision of 15.11.2026).
+ *  `choose` blinks the row `key` and runs `run` once the blink is over, the
+ *  menu open meanwhile. `chosen` is that row for the whole blink: the menu
+ *  lights it and no other, whatever the pointer or the arrows do meanwhile,
+ *  so its highlight is back in the second half however it was chosen. `off`
+ *  is true while its highlight is out, the first half. A second choice during
+ *  the blink chooses nothing. `cancel` drops the blink and its command: the
+ *  menu closed meanwhile (Escape, a press outside). `lit` and `outAt` say
+ *  what a row shows: `lit(key, active)` is the row's own active state at
+ *  rest and "is it the chosen row" during a blink; `outAt(key)` is the
+ *  chosen row in the first half. The menus of spaces in the app and in the
+ *  clipper both take their rows' state from here. */
+export function useMenuRowBlink<K>(): {
+  chosen: K | null;
+  off: boolean;
+  blinking: boolean;
+  lit: (key: K, active: boolean) => boolean;
+  outAt: (key: K) => boolean;
+  choose: (key: K, run: () => void) => void;
+  cancel: () => void;
+} {
+  const [blink, setBlink] = useState<{ key: K; off: boolean } | null>(null);
+  const timersRef = useRef<number[] | null>(null);
+
+  const cancel = useCallback(() => {
+    const timers = timersRef.current;
+    if (!timers) return;
+    for (const timer of timers) window.clearTimeout(timer);
+    timersRef.current = null;
+    setBlink(null);
+  }, []);
+
+  useEffect(() => () => {
+    for (const timer of timersRef.current ?? []) window.clearTimeout(timer);
+    timersRef.current = null;
+  }, []);
+
+  const choose = useCallback((key: K, run: () => void) => {
+    // A second press or Enter during the blink chooses nothing.
+    if (timersRef.current) return;
+    const ms = menuBlinkMs();
+    if (ms <= 0) {
+      run();
+      return;
+    }
+    const timers = [
+      window.setTimeout(() => setBlink({ key, off: false }), ms / 2),
+      window.setTimeout(() => {
+        if (timersRef.current !== timers) return;
+        timersRef.current = null;
+        setBlink(null);
+        run();
+      }, ms),
+    ];
+    timersRef.current = timers;
+    setBlink({ key, off: true });
+  }, []);
+
+  const chosen = blink?.key ?? null;
+  const off = blink?.off ?? false;
+  const lit = (key: K, active: boolean): boolean => (blink === null ? active : blink.key === key);
+  const outAt = (key: K): boolean => blink !== null && blink.off && blink.key === key;
+  return { chosen, off, blinking: blink !== null, lit, outAt, choose, cancel };
 }

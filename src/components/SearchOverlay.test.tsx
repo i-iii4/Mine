@@ -7,6 +7,7 @@ import {
   SEARCH_OVERLAY_PREVIEW_WIDTH_PX,
   SEARCH_OVERLAY_RECENT_LIMIT,
   SEARCH_OVERLAY_RESULT_LIMIT,
+  searchOverlayQueryReady,
 } from "./SearchOverlay";
 import { lightBlock } from "@/test/blocks";
 import { installMotionInput, MOTION_KEY_ATTRIBUTE, noteNativeMenuCommand } from "@/lib/motionInput";
@@ -260,19 +261,54 @@ describe("SearchOverlay", () => {
     });
   });
 
-  it("keeps a one-character query pending without an IPC request or empty state", () => {
-    renderOverlay({ query: "a" });
+  // One letter or digit is searched, by file names only, which the backend
+  // narrows (user's decision of 15.11.2026): the same request, debounce,
+  // rows, count and preview as any search.
+  it("searches one letter by the ordinary request and shows its rows, count and preview", async () => {
+    listGridBlocksMock.mockResolvedValue(snapshot([
+      makeBlock(1, "Cards/Город света", {
+        search_match: { field: "title", kind: "prefix", excerpt: "Город света", ranges: [{ start: 0, end: 1 }], score: 8, explanation: null },
+      }),
+    ]));
+    renderOverlay({ query: "г" });
 
     expect(SEARCH_OVERLAY_MIN_QUERY_CHARS).toBe(2);
+    // The debounce of live typing holds it as any text.
+    expect(listGridBlocksMock).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(listGridBlocksMock).toHaveBeenCalledWith(undefined, 0, SEARCH_OVERLAY_RESULT_LIMIT, "г");
+    });
+    await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(1));
+    expect(document.querySelector("[data-search-overlay-result-count]")).toHaveTextContent("1");
+    expect(screen.getByRole("option").querySelector("mark")).toHaveTextContent("Г");
+    expect(screen.getByTestId("overlay-preview")).toBeInTheDocument();
+  });
+
+  it("shows No results for one letter that no name starts a word with", async () => {
+    listGridBlocksMock.mockResolvedValue(snapshot([], 508));
+    renderOverlay({ query: "7" });
+    await waitFor(() => expect(screen.getByText("No results")).toBeInTheDocument());
+    expect(listGridBlocksMock).toHaveBeenCalledWith(undefined, 0, SEARCH_OVERLAY_RESULT_LIMIT, "7");
+    expect(document.querySelector("[data-search-overlay-result-count]")).toHaveTextContent("0");
+  });
+
+  it.each(["#", "-", "."])("keeps one %s pending without an IPC request or empty state", async (query) => {
+    renderOverlay({ query });
+    await new Promise((resolve) => window.setTimeout(resolve, 150));
     expect(listGridBlocksMock).not.toHaveBeenCalled();
     expect(screen.queryByText("No results")).not.toBeInTheDocument();
-    expect(
-      document.querySelector("[data-search-overlay-result-count]"),
-    ).toBeNull();
+    expect(document.querySelector("[data-search-overlay-result-count]")).toBeNull();
     expect(screen.queryByTestId("overlay-preview")).not.toBeInTheDocument();
   });
 
-  it("clears visible results when an existing search is replaced by one Cyrillic character", async () => {
+  it("tells a searched character from one still being typed", () => {
+    for (const query of ["a", "Г", "ё", "7", "Ω", "あ"]) expect(searchOverlayQueryReady(query)).toBe(true);
+    for (const query of ["#", "-", ".", "\u2014", "\u{1F600}", " "]) expect(searchOverlayQueryReady(query)).toBe(false);
+    expect(searchOverlayQueryReady("ab")).toBe(true);
+    expect(searchOverlayQueryReady("#-")).toBe(true);
+  });
+
+  it("replaces the results of an existing search by those of one character at once", async () => {
     listGridBlocksMock.mockResolvedValue(snapshot([makeBlock(1, "alpha")]));
     const { rerender, onQueryChange, onClose, onOpenBlock } = renderOverlay({
       query: "alpha",
@@ -283,10 +319,39 @@ describe("SearchOverlay", () => {
     });
     expect(listGridBlocksMock).toHaveBeenCalledTimes(1);
 
+    listGridBlocksMock.mockResolvedValue(snapshot([makeBlock(2, "Город")]));
     rerender(
       <SearchOverlay
         open
         query="Г"
+        vaultPath="/vault"
+        onQueryChange={onQueryChange}
+        onClose={onClose}
+        onOpenBlock={onOpenBlock}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Город")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("alpha")).not.toBeInTheDocument();
+    expect(listGridBlocksMock).toHaveBeenCalledTimes(2);
+    expect(listGridBlocksMock).toHaveBeenLastCalledWith(undefined, 0, SEARCH_OVERLAY_RESULT_LIMIT, "Г");
+  });
+
+  it("clears visible results when an existing search is replaced by one character still being typed", async () => {
+    listGridBlocksMock.mockResolvedValue(snapshot([makeBlock(1, "alpha")]));
+    const { rerender, onQueryChange, onClose, onOpenBlock } = renderOverlay({
+      query: "alpha",
+    });
+    await waitFor(() => {
+      expect(screen.getByText("alpha")).toBeInTheDocument();
+    });
+
+    rerender(
+      <SearchOverlay
+        open
+        query="#"
         vaultPath="/vault"
         onQueryChange={onQueryChange}
         onClose={onClose}

@@ -31,6 +31,7 @@ const commands = vi.hoisted(() => ({
   beginTabDrag: vi.fn(async () => undefined),
   closeOtherTabs: vi.fn(async () => undefined),
   closeTab: vi.fn(async () => undefined),
+  closeTabsBeside: vi.fn(async () => undefined),
   moveTab: vi.fn(async () => undefined),
   moveTabToNewWindow: vi.fn(async () => undefined),
   newTab: vi.fn(async () => undefined),
@@ -147,9 +148,52 @@ describe("tab bar page", () => {
     render(<TabBarApp />);
     await screen.findByRole("tab");
 
-    const hover: DropHover = { tab_id: "x", x: 5 };
+    const hover: DropHover = { x: 5, item: { kind: "tab", tab_id: "x" } };
     emitToPage("tabbar-drop-hover", hover);
     expect(commands.reportDropSlot).toHaveBeenCalledWith(0);
+  });
+
+  /// В86: cards of the visible tab held over the bar, let go, and landing.
+  it("lands dropped cards where their placeholder stood, in the state that brings their tabs", async () => {
+    const { container } = render(<TabBarApp />);
+    await screen.findByRole("tab");
+    const placeholder = () => container.querySelector("[data-tab-card-placeholder]");
+    const cards = (x: number | null, dropped = false): DropHover => ({
+      x,
+      item: { kind: "cards", title: "Jacket", dropped },
+    });
+
+    emitToPage("tabbar-drop-hover", cards(5));
+    expect(placeholder()).toHaveTextContent("Jacket");
+    expect(placeholder()).toHaveAttribute("data-tab-card-placeholder", "0");
+    // Cards over the bar report no slot until they are let go.
+    expect(commands.reportDropSlot).not.toHaveBeenCalled();
+
+    emitToPage("tabbar-drop-hover", cards(5, true));
+    expect(commands.reportDropSlot).toHaveBeenCalledTimes(1);
+    expect(commands.reportDropSlot).toHaveBeenCalledWith(0);
+    // The room stays until the tabs come.
+    expect(placeholder()).not.toBeNull();
+    // A report of the pointer that reached the backend after the drop
+    // changes nothing.
+    emitToPage("tabbar-drop-hover", cards(300));
+    expect(placeholder()).toHaveAttribute("data-tab-card-placeholder", "0");
+
+    emitToPage("tabbar-state", barState({
+      tabs: [tab("n", "Mine", null, true), tab("a", "Mine", null, true)],
+      active_tab: "n",
+    }));
+    expect(placeholder()).toBeNull();
+    expect(screen.getAllByRole("tab").map((node) => node.dataset.tabId)).toEqual(["n", "a"]);
+    for (const node of screen.getAllByRole("tab")) {
+      expect(node.style.transform).toBe("");
+      expect(node.style.transition).toBe("");
+    }
+
+    // The end of the drop; the slot is not reported again.
+    emitToPage("tabbar-drop-hover", cards(null));
+    expect(placeholder()).toBeNull();
+    expect(commands.reportDropSlot).toHaveBeenCalledTimes(1);
   });
 
   it("takes the theme the settings window chooses", async () => {

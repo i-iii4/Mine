@@ -488,18 +488,35 @@ impl SavedWindows {
     /// Add a tab at the end of `window` and make it visible (В51). Returns
     /// whether the window exists.
     pub fn add_tab(&mut self, window: &WindowId, tab: TabId, space: TabSpace, view: TabView) -> bool {
+        let end = self.window(window).map_or(0, |target| target.tabs.len());
+        self.insert_tabs(window, end, vec![NewTab { id: tab, space, view }], 0)
+    }
+
+    /// Put `tabs` into `window` from `index` on (clamped to the end), in
+    /// their order, and make `tabs[visible]` the visible one: cards dropped
+    /// on the tab bar (В86), a new tab at the end (В51). Every new tab opens
+    /// with the sidebar of the tab that was visible (В56). Returns whether
+    /// anything was added: the window exists, `tabs` is not empty and
+    /// `visible` names one of them.
+    pub fn insert_tabs(&mut self, window: &WindowId, index: usize, tabs: Vec<NewTab>, visible: usize) -> bool {
+        let Some(shown) = tabs.get(visible).map(|tab| tab.id.clone()) else {
+            return false;
+        };
         let Some(target) = self.window_mut(window) else {
             return false;
         };
-        // A new tab opens with the sidebar of the tab it was opened from.
         let sidebar = target.active_sidebar();
-        target.tabs.push(SavedTab {
-            id: tab.clone(),
-            space,
-            view,
-            sidebar: Some(sidebar),
-        });
-        target.active_tab = tab;
+        let at = index.min(target.tabs.len());
+        target.tabs.splice(
+            at..at,
+            tabs.into_iter().map(|tab| SavedTab {
+                id: tab.id,
+                space: tab.space,
+                view: tab.view,
+                sidebar: Some(sidebar),
+            }),
+        );
+        target.active_tab = shown;
         true
     }
 
@@ -587,6 +604,31 @@ impl SavedWindows {
         window.tabs = kept;
         window.active_tab = tab.clone();
         closed
+    }
+
+    /// Close every tab of `tab`'s window on its `side` (В50): `Close Tabs to
+    /// the Left` and `Close Tabs to the Right`. `tab` stays; when the visible
+    /// tab is among the closed, `tab` becomes visible, as with `Close Other
+    /// Tabs`. Nothing changes for an unknown tab or one with no tab on that
+    /// side.
+    pub fn close_tabs_beside(&mut self, tab: &TabId, side: TabSide) -> TabsClosed {
+        let Some(window) = self.window_of_mut(tab) else {
+            return TabsClosed::default();
+        };
+        let Some(index) = window.tabs.iter().position(|candidate| &candidate.id == tab) else {
+            return TabsClosed::default();
+        };
+        let closed: Vec<SavedTab> = match side {
+            TabSide::Left => window.tabs.drain(..index).collect(),
+            TabSide::Right => window.tabs.drain(index + 1..).collect(),
+        };
+        let now_visible = if closed.iter().any(|candidate| candidate.id == window.active_tab) {
+            window.active_tab = tab.clone();
+            Some(tab.clone())
+        } else {
+            None
+        };
+        TabsClosed { closed, now_visible }
     }
 
     /// Move `tab` to `index` within its window (В60). The index is clamped.
@@ -777,6 +819,32 @@ pub fn registry_status(known: Option<&std::collections::BTreeSet<String>>, vault
         Some(known) if !known.contains(vault_id) => SpaceStatus::Unknown,
         _ => SpaceStatus::Known,
     }
+}
+
+/// A tab about to be added to a window: its identity, space and memory.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewTab {
+    pub id: TabId,
+    pub space: TabSpace,
+    pub view: TabView,
+}
+
+/// Which side of a tab `Close Tabs to the Left` and `Close Tabs to the
+/// Right` close (В50).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum TabSide {
+    Left,
+    Right,
+}
+
+/// What closing the tabs on one side of a tab did.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TabsClosed {
+    /// The closed tabs, left to right.
+    pub closed: Vec<SavedTab>,
+    /// The tab shown now, when the visible tab was among the closed.
+    pub now_visible: Option<TabId>,
 }
 
 /// What closing a tab did.
@@ -1444,5 +1512,105 @@ mod tests {
         assert!(model.add_tab(&WindowId("w1".into()), TabId("c".into()), TabSpace::Picker, TabView::default()));
         assert_eq!(model.windows[0].tab_sidebar(&TabId("c".into())), closed);
         assert!(!model.set_tab_sidebar(&TabId("gone".into()), narrow));
+    }
+
+    fn order(model: &SavedWindows) -> Vec<String> {
+        model.windows[0].tabs.iter().map(|tab| tab.id.0.clone()).collect()
+    }
+
+    fn card_tab(id: &str, slug: &str) -> NewTab {
+        NewTab {
+            id: TabId(id.into()),
+            space: TabSpace::Space { vault_id: "x".into() },
+            view: TabView {
+                open_card: Some(OpenCard {
+                    slug: slug.into(),
+                    title: slug.into(),
+                }),
+                ..TabView::default()
+            },
+        }
+    }
+
+    /// В86 (decision of 15.11.2026): cards dropped on the bar become tabs
+    /// from the slot on in the order given, the grabbed card's first and
+    /// visible, on the placeholder's slot; each takes the sidebar of the tab
+    /// the drag began in. А, Б, В in the feed's order, В grabbed: В, А, Б.
+    #[test]
+    fn dropped_cards_become_tabs_at_the_slot_with_the_grabbed_one_first_and_shown() {
+        let shown_sidebar = SidebarLayout { width_px: 300, collapsed: true };
+        let mut model = saved(vec![window("w1", vec![tab("a", "x"), tab("b", "x"), tab("c", "x")], "b")]);
+        model.windows[0].tabs[1].sidebar = Some(shown_sidebar);
+        let tabs = vec![card_tab("v", "three"), card_tab("a1", "one"), card_tab("b1", "two")];
+        assert!(model.insert_tabs(&WindowId("w1".into()), 1, tabs, 0));
+        assert_eq!(order(&model), vec!["a", "v", "a1", "b1", "b", "c"]);
+        assert_eq!(model.windows[0].active_tab, TabId("v".into()));
+        for id in ["v", "a1", "b1"] {
+            assert_eq!(model.windows[0].tab_sidebar(&TabId(id.into())), shown_sidebar);
+        }
+        assert_eq!(
+            model.tab(&TabId("v".into())).and_then(|tab| tab.view.open_card.as_ref()).map(|card| card.slug.as_str()),
+            Some("three"),
+        );
+    }
+
+    #[test]
+    fn dropped_cards_past_the_last_tab_go_to_the_end() {
+        let mut model = saved(vec![window("w1", vec![tab("a", "x"), tab("b", "x")], "a")]);
+        assert!(model.insert_tabs(&WindowId("w1".into()), 9, vec![card_tab("n", "one")], 0));
+        assert_eq!(order(&model), vec!["a", "b", "n"]);
+        assert!(model.insert_tabs(&WindowId("w1".into()), 0, vec![card_tab("m", "two")], 0));
+        assert_eq!(order(&model), vec!["m", "a", "b", "n"]);
+        assert_eq!(model.windows[0].active_tab, TabId("m".into()));
+    }
+
+    #[test]
+    fn nothing_is_added_without_a_window_tabs_or_a_tab_to_show() {
+        let mut model = saved(vec![window("w1", vec![tab("a", "x")], "a")]);
+        let before = model.clone();
+        assert!(!model.insert_tabs(&WindowId("gone".into()), 0, vec![card_tab("n", "one")], 0));
+        assert!(!model.insert_tabs(&WindowId("w1".into()), 0, Vec::new(), 0));
+        assert!(!model.insert_tabs(&WindowId("w1".into()), 0, vec![card_tab("n", "one")], 1));
+        assert_eq!(model, before);
+    }
+
+    /// В50: Close Tabs to the Left and to the Right keep the clicked tab and
+    /// everything on its other side.
+    #[test]
+    fn tabs_on_one_side_close_and_the_clicked_tab_stays() {
+        let mut model = saved(vec![window(
+            "w1",
+            vec![tab("a", "x"), tab("b", "x"), tab("c", "x"), tab("d", "x")],
+            "d",
+        )]);
+        let closed = model.close_tabs_beside(&TabId("b".into()), TabSide::Left);
+        assert_eq!(closed.closed.iter().map(|tab| tab.id.0.as_str()).collect::<Vec<_>>(), vec!["a"]);
+        assert_eq!(closed.now_visible, None);
+        assert_eq!(order(&model), vec!["b", "c", "d"]);
+        assert_eq!(model.windows[0].active_tab, TabId("d".into()));
+
+        let closed = model.close_tabs_beside(&TabId("b".into()), TabSide::Right);
+        assert_eq!(closed.closed.iter().map(|tab| tab.id.0.as_str()).collect::<Vec<_>>(), vec!["c", "d"]);
+        assert_eq!(order(&model), vec!["b"]);
+        // The visible tab was closed: the clicked one shows, as with Close
+        // Other Tabs.
+        assert_eq!(closed.now_visible, Some(TabId("b".into())));
+        assert_eq!(model.windows[0].active_tab, TabId("b".into()));
+    }
+
+    #[test]
+    fn a_side_with_no_tabs_closes_nothing() {
+        let mut model = saved(vec![window("w1", vec![tab("a", "x"), tab("b", "x")], "a")]);
+        let before = model.clone();
+        assert_eq!(model.close_tabs_beside(&TabId("a".into()), TabSide::Left), TabsClosed::default());
+        assert_eq!(model.close_tabs_beside(&TabId("b".into()), TabSide::Right), TabsClosed::default());
+        assert_eq!(model.close_tabs_beside(&TabId("gone".into()), TabSide::Left), TabsClosed::default());
+        assert_eq!(model, before);
+    }
+
+    #[test]
+    fn the_side_crosses_to_the_page_as_a_plain_name() {
+        assert_eq!(serde_json::to_string(&TabSide::Left).unwrap(), "\"left\"");
+        assert_eq!(serde_json::from_str::<TabSide>("\"right\"").unwrap(), TabSide::Right);
     }
 }

@@ -126,6 +126,10 @@ const sidebarResizeState = vi.hoisted(() => ({
 }));
 
 const clipboardWriteText = vi.hoisted(() => vi.fn<(text: string) => Promise<void>>());
+// The folder dialog of ⇧⌘O (SPEC_KEYBOARD.md, «Global»).
+const folderDialog = vi.hoisted(() => vi.fn<() => Promise<string | null>>(async () => null));
+const selectVaultMock = vi.hoisted(() => vi.fn<(path: string) => Promise<void>>(async () => {}));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: folderDialog }));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: clipboardWriteText }));
 const webClipboardWriteText = vi.fn<(text: string) => Promise<void>>();
 
@@ -145,7 +149,7 @@ vi.mock("@/lib/commands", () => ({
   createBlock: commandMocks.createBlock,
   readClipboardPayload: commandMocks.readClipboardPayload,
   openVault: commandMocks.openVault,
-  selectVault: vi.fn(),
+  selectVault: selectVaultMock,
   startVaultSync: commandMocks.startVaultSync,
   recordStartupMilestone: commandMocks.recordStartupMilestone,
   startStartupMaintenance: commandMocks.startStartupMaintenance,
@@ -530,6 +534,7 @@ vi.mock("@/components/Detail", () => ({
     onRequestRename,
     onRequestDelete,
     onOpenAuthorFeed,
+    onOpenImagePreview,
   }: {
     block: LightBlock | IndexedBlock;
     topChromeMode?: "classic" | "external";
@@ -537,6 +542,7 @@ vi.mock("@/components/Detail", () => ({
     onRequestRename: (block: LightBlock | IndexedBlock) => void;
     onRequestDelete: (slug: string) => void;
     onOpenAuthorFeed?: (author: string) => void;
+    onOpenImagePreview?: (preview: { src: string; mediaRef: string | null; openedBy?: "pointer" | "keyboard" }) => void;
   }) => (
     <div
       role="dialog"
@@ -568,6 +574,13 @@ vi.mock("@/components/Detail", () => ({
       {/* The author heading of an association block. */}
       <button type="button" onClick={() => onOpenAuthorFeed?.("@kotecinho")}>
         Open author feed
+      </button>
+      {/* The card's picture opened by a key: the viewer stands at once. */}
+      <button
+        type="button"
+        onClick={() => onOpenImagePreview?.({ src: "asset://localhost/photo.png", mediaRef: "photo.png", openedBy: "keyboard" })}
+      >
+        Open picture
       </button>
     </div>
   ),
@@ -870,7 +883,7 @@ describe("AppWithVault", () => {
     commandMocks.deleteBlock.mockResolvedValue({ removed: true, kept_media: [] });
     commandMocks.deleteBlocks.mockResolvedValue({ removed: 2, kept_media: [] });
     commandMocks.deleteChannel.mockResolvedValue({ deleted: true, kept_links: [] });
-    commandMocks.mergeBlocks.mockResolvedValue({});
+    commandMocks.mergeBlocks.mockResolvedValue({ timing: { cards: 2, pictures: 0, steps: [] } });
     commandMocks.getBlock.mockImplementation(async (slug: string) => indexedBlock(1, slug, slug));
     commandMocks.listGridBlocks.mockImplementation(async (tag, offset, limit, query) => {
       if (isSearchOverlayQuery(limit, query)) {
@@ -2520,7 +2533,9 @@ describe("AppWithVault", () => {
           expect(focusedRowKey()).toBeNull();
         });
 
-        it("ArrowRight on the current route's row goes back, the query gone and the list whole", async () => {
+        // Only Escape clears the query (user's decision of 15.11.2026): ArrowRight
+        // goes back with the query in the field and the list filtered.
+        it("ArrowRight on the current route's row goes back, the query and the filtered list staying", async () => {
           await onFilteredRow("alp");
           expect(focusedRowKey()).toBe("tag:alpha");
           expect(rowLink(/beta/)).toBeNull();
@@ -2528,11 +2543,22 @@ describe("AppWithVault", () => {
           press({ key: "ArrowRight" });
           expect(focusedRowKey()).toBeNull();
           expect(feedKeyboardFocus.take).toHaveBeenCalledTimes(1);
+          expect(field()).toHaveValue("alp");
+          expect(rowLink(/beta/)).toBeNull();
+          // ArrowLeft lands on the current row, which the query shows, the query as it is.
+          reachEdge();
+          expect(focusedRowKey()).toBe("tag:alpha");
+          expect(field()).toHaveValue("alp");
+          // Escape still clears it: the list is whole, the focus stays on the row.
+          press({ key: "Escape" });
           expect(field()).toHaveValue("");
           expect(rowLink(/beta/)).not.toBeNull();
+          expect(focusedRowKey()).toBe("tag:alpha");
+          press({ key: "Escape" });
+          expect(focusedRowKey()).toBeNull();
         });
 
-        it("ArrowRight on another row goes back without opening it, the query gone and the list whole", async () => {
+        it("ArrowRight on another row goes back without opening it, the query and the filtered list staying", async () => {
           await onFilteredRow("be");
           expect(focusedRowKey()).toBe("tag:beta");
           expect(rowLink(/alpha/)).toBeNull();
@@ -2542,11 +2568,13 @@ describe("AppWithVault", () => {
           expect(feedKeyboardFocus.take).toHaveBeenCalledTimes(1);
           await act(async () => undefined);
           expect(grid()).toHaveTextContent("alpha:1");
-          expect(field()).toHaveValue("");
-          expect(rowLink(/alpha/)).not.toBeNull();
-          // The current collection's row is back, and ArrowLeft lands on it.
+          expect(field()).toHaveValue("be");
+          expect(rowLink(/alpha/)).toBeNull();
+          // The query hides the current collection's row: ArrowLeft lands on the top
+          // visible row, the query as it is (М1).
           reachEdge();
-          expect(focusedRowKey()).toBe("tag:alpha");
+          expect(focusedRowKey()).toBe("tag:beta");
+          expect(field()).toHaveValue("be");
         });
 
         it("ArrowRight with no card in the feed keeps the focus and the query", async () => {
@@ -2641,14 +2669,17 @@ describe("AppWithVault", () => {
           expect(hasCard()).toBe(true);
         });
 
-        it("ArrowRight on any row goes back to the card, the query gone and the list whole", async () => {
+        it("ArrowRight on any row goes back to the card, the query and the filtered list staying", async () => {
           await onFilteredCardRow();
+          const query = (field() as HTMLInputElement).value;
+          expect(query).not.toBe("");
+          expect(rowLink(/alpha/)).toBeNull();
           expect(bar("→ Back")).toBeInTheDocument();
           press({ key: "ArrowRight" });
           expect(focusedRowKey()).toBeNull();
           expect(hasCard()).toBe(true);
-          expect(field()).toHaveValue("");
-          expect(rowLink(/alpha/)).not.toBeNull();
+          expect(field()).toHaveValue(query);
+          expect(rowLink(/alpha/)).toBeNull();
           expect(grid()).toHaveTextContent("__all__");
         });
 
@@ -2779,7 +2810,7 @@ describe("AppWithVault", () => {
           expect(commandMocks.setWindowSidebar).not.toHaveBeenCalled();
         });
 
-        it("goes on ArrowRight, the route staying and the query gone from its next showing", async () => {
+        it("goes on ArrowRight, the route staying and the query seen at its next showing", async () => {
           sidebarResizeState.collapsed = true;
           await onFilteredRow("al");
           expect(focusedRowKey()).toBe("all");
@@ -2788,7 +2819,7 @@ describe("AppWithVault", () => {
           expect(grid()).toHaveTextContent("alpha:1");
           reachEdge();
           expect(focusedRowKey()).toBe("tag:alpha");
-          expect(field()).toHaveValue("");
+          expect(field()).toHaveValue("al");
         });
 
         it("over the feed the panel stays through Enter in the field as well", async () => {
@@ -6847,7 +6878,12 @@ describe("AppWithVault", () => {
       send("block:removed", { slug: alpha.slug, tags: [] });
       send("block:removed", { slug: beta.slug, tags: [] });
       send("vault-changed", { path: "/vault", renames: [] });
-      return { block: indexedBlock(4, merged.slug), merged_slug: merged.slug, removed_slugs: [alpha.slug, beta.slug] };
+      return {
+        block: indexedBlock(4, merged.slug),
+        merged_slug: merged.slug,
+        removed_slugs: [alpha.slug, beta.slug],
+        timing: { cards: 2, pictures: 0, steps: [] },
+      };
     });
     render(<MemoryRouter><AppWithVault vaultPath="/vault" onVaultSelected={vi.fn()} /></MemoryRouter>);
     await waitFor(() => expect(screen.getByTestId("grid-slugs")).toHaveTextContent(/^alpha-block,beta-block,gamma-block$/));
@@ -7992,6 +8028,159 @@ describe("AppWithVault", () => {
         render(<App />);
         await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
         expect(document.querySelector("[data-chrome-frame-edge=top]")).not.toBeNull();
+      });
+    });
+
+    // The page's commands over the image preview (SPEC_MEDIA_ASSET_ACTIONS.md,
+    // «Команды при открытом просмотре»; user's decision of 15.11.2026).
+    describe("commands over the image preview", () => {
+      beforeEach(() => {
+        vi.mocked(isTauri).mockReturnValue(true);
+        commandMocks.getVaultPath.mockResolvedValue("/vault");
+        commandMocks.getTabBootstrap.mockResolvedValue(bootstrap({ sidebar: { width_px: 360, collapsed: false } }));
+        folderDialog.mockReset();
+        folderDialog.mockResolvedValue(null);
+        selectVaultMock.mockClear();
+        commandMocks.openSettingsWindow.mockClear();
+      });
+
+      afterEach(() => {
+        delete (HTMLElement.prototype as { animate?: unknown }).animate;
+        sidebarResizeState.collapsed = false;
+      });
+
+      const viewer = () => document.querySelector<HTMLElement>("[data-image-preview-overlay]");
+      const search = () => document.querySelector("[data-search-overlay]");
+
+      /** The tab with a card open and its picture in the viewer. */
+      async function openPicture() {
+        render(<App />);
+        await waitFor(() => expect(screen.getByTestId("grid")).toHaveTextContent("__all__:2"));
+        fireEvent.click(screen.getByRole("button", { name: "Open alpha-block" }));
+        await waitFor(() => expect(screen.getByTestId("detail-title")).toBeInTheDocument());
+        fireEvent.click(screen.getByRole("button", { name: "Open picture" }));
+        expect(viewer()).not.toBeNull();
+        return viewer()!;
+      }
+
+      /** The fades a press asks for, held until the test ends them. */
+      function holdFades() {
+        const fades: { element: Element; onfinish: (() => void) | null }[] = [];
+        Object.defineProperty(HTMLElement.prototype, "animate", {
+          configurable: true,
+          value(this: HTMLElement) {
+            const fade = { element: this as Element, onfinish: null as (() => void) | null, cancel: vi.fn(), commitStyles: vi.fn() };
+            fades.push(fade);
+            return fade;
+          },
+        });
+        return {
+          started: () => fades.length > 0,
+          finish: () => act(() => fades[0]?.onfinish?.()),
+        };
+      }
+
+      it("⌘F of the menu takes the picture away in its frame and opens the search at once", async () => {
+        await openPicture();
+        act(() => send("surface-search-shortcut", "main"));
+        expect(viewer()).toBeNull();
+        expect(search()).not.toBeNull();
+        expect(document.querySelector("[data-search-overlay-scrim]")).not.toHaveAttribute("data-scrim-handed-over");
+      });
+
+      it("the tab bar's search fades the picture first, then the search opens on the scrim it hands over", async () => {
+        await openPicture();
+        const fades = holdFades();
+        act(() => send("surface-search-shortcut", "main-button"));
+        expect(fades.started()).toBe(true);
+        expect(viewer()).not.toBeNull();
+        expect(search()).toBeNull();
+        fades.finish();
+        expect(viewer()).toBeNull();
+        expect(search()).not.toBeNull();
+        expect(document.querySelector("[data-search-overlay-scrim]")).toHaveAttribute("data-scrim-handed-over", "");
+        // One scrim: the picture's went in the frame the search's came.
+        expect(document.querySelectorAll(".modal-scrim")).toHaveLength(1);
+        // Closed and opened again, the search's scrim comes in on its own.
+        act(() => send("surface-search-shortcut", "main"));
+        await waitFor(() => expect(search()).toBeNull());
+        act(() => send("surface-search-shortcut", "main"));
+        expect(document.querySelector("[data-search-overlay-scrim]")).not.toHaveAttribute("data-scrim-handed-over");
+      });
+
+      it("⇧⌘F takes the picture away and goes to the collections' search", async () => {
+        await openPicture();
+        act(() => send("surface-search-shortcut", "sidebar"));
+        expect(viewer()).toBeNull();
+        expect(search()).toBeNull();
+      });
+
+      it("the View menu's ⌃⌘S takes the picture away and the sidebar stands at once", async () => {
+        await openPicture();
+        act(() => {
+          send("sidebar-key-command");
+          send("window-sidebar-changed", { width_px: 360, collapsed: true });
+        });
+        expect(viewer()).toBeNull();
+        expect(sidebarResizeState.windowSidebar).toEqual({ width_px: 360, collapsed: true });
+        expect(sidebarResizeState.windowChangeByKey()).toBe(true);
+      });
+
+      it("the tab bar's sidebar button: the sidebar waits for the picture to fade out", async () => {
+        await openPicture();
+        const fades = holdFades();
+        act(() => send("window-sidebar-changed", { width_px: 360, collapsed: true }));
+        expect(fades.started()).toBe(true);
+        expect(viewer()).not.toBeNull();
+        expect(sidebarResizeState.windowSidebar).toEqual({ width_px: 360, collapsed: false });
+        fades.finish();
+        expect(viewer()).toBeNull();
+        expect(sidebarResizeState.windowSidebar).toEqual({ width_px: 360, collapsed: true });
+      });
+
+      it("⇧⌘N takes the picture away and opens New collection", async () => {
+        sidebarResizeState.collapsed = true;
+        const overlay = await openPicture();
+        fireEvent.keyDown(overlay, { key: "N", code: "KeyN", metaKey: true, shiftKey: true });
+        expect(viewer()).toBeNull();
+        expect(await screen.findByRole("dialog", { name: "New collection" })).toBeInTheDocument();
+      });
+
+      it("⇧⌘O asks for a folder over the picture, which goes only with the space", async () => {
+        const overlay = await openPicture();
+        folderDialog.mockResolvedValueOnce("/vault");
+        fireEvent.keyDown(overlay, { key: "O", code: "KeyO", metaKey: true, shiftKey: true });
+        await waitFor(() => expect(folderDialog).toHaveBeenCalledTimes(1));
+        await act(async () => {
+          await Promise.resolve();
+        });
+        expect(selectVaultMock).not.toHaveBeenCalled();
+        expect(viewer()).not.toBeNull();
+
+        folderDialog.mockResolvedValueOnce("/other");
+        fireEvent.keyDown(viewer()!, { key: "O", code: "KeyO", metaKey: true, shiftKey: true });
+        await waitFor(() => expect(selectVaultMock).toHaveBeenCalledWith("/other"));
+      });
+
+      it("⌘/ opens Settings in its own window and the picture stays", async () => {
+        const overlay = await openPicture();
+        fireEvent.keyDown(overlay, { key: "/", code: "Slash", metaKey: true });
+        expect(commandMocks.openSettingsWindow).toHaveBeenCalledWith("shortcuts");
+        expect(viewer()).not.toBeNull();
+      });
+
+      it("keeps the viewer's keys: ⌘[, ⌘K, ⇥ and ⌘⌥↓ neither close the picture nor act under it", async () => {
+        const overlay = await openPicture();
+        for (const key of [
+          { key: "[", code: "BracketLeft", metaKey: true },
+          { key: "k", code: "KeyK", metaKey: true },
+          { key: "Tab", code: "Tab" },
+          { key: "ArrowDown", code: "ArrowDown", metaKey: true, altKey: true },
+        ]) {
+          fireEvent.keyDown(overlay, key);
+          expect(viewer()).not.toBeNull();
+        }
+        expect(screen.getByTestId("detail-title")).toHaveTextContent("alpha-block");
       });
     });
   });

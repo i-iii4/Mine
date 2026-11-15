@@ -803,6 +803,27 @@ function PreviewCollectionsRow({ collections }: { collections: readonly string[]
   );
 }
 
+/// The frame of a preview window's content that is not a card: a
+/// collection over its name in the sidebar (SPEC_CARD_STATES.md, С7.12). The
+/// unfolded preview's own frame, `StaticCard`'s: the card's line, corner,
+/// fill and shadow, `width` wide, the height its content takes.
+export function PreviewCardFrame({
+  width,
+  children,
+  ...props
+}: Omit<CardFrameProps, "style" | "className"> & { width: number }) {
+  return (
+    <CardFrame
+      data-card-preview=""
+      className={cn("pointer-events-none", CARD_SHADOW_CLASS.lg)}
+      style={{ width }}
+      {...props}
+    >
+      {children}
+    </CardFrame>
+  );
+}
+
 /// A card shown on hover (graph, sidebar, related notes) or as the search
 /// result's preview: the feed card unfolded, everything its lift would bring
 /// up shown without the lift (С10; 07.10.2026). A preview

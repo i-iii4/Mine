@@ -7,6 +7,7 @@ import {
   type PointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { SIDEBAR_RESIZING_CLASS } from "@/lib/sidebarLook";
 import { sidebarDragBounds } from "@/lib/sidebarPlacement";
 import { sidebarWidthHost } from "@/lib/sidebarWidth";
 import { cn } from "@/lib/utils";
@@ -99,7 +100,7 @@ export function SidebarResizeHandle({
       // WebKit selection is held off from the press itself, not from the
       // drag threshold (SPEC_FRONTEND.md, «Sidebar Resize»).
       clearNativeSelection();
-      document.body.classList.add("sidebar-resizing");
+      document.body.classList.add(SIDEBAR_RESIZING_CLASS);
       e.currentTarget.setPointerCapture(e.pointerId);
       startXRef.current = e.clientX;
       startWidthRef.current = width;
@@ -130,7 +131,7 @@ export function SidebarResizeHandle({
         e.currentTarget.releasePointerCapture(e.pointerId);
       }
       if (didDragRef.current) onResizeEnd();
-      else document.body.classList.remove("sidebar-resizing");
+      else document.body.classList.remove(SIDEBAR_RESIZING_CLASS);
       didDragRef.current = false;
       setPressed(false);
     },

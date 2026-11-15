@@ -34,9 +34,9 @@ use crate::commands::state::CommandError;
 use crate::commands::vault::SpaceMovedPayload;
 use crate::domain::windows::{
     MainViewMode, OpenCard, ScrollAnchor, SidebarIntent, SidebarLayout, SidebarOverlay, TabId,
-    TabLocation, TabSpace, TabView, WindowId,
+    TabLocation, TabSide, TabSpace, TabView, WindowId,
 };
-use crate::tabs::drag::DropHover;
+use crate::tabs::drag::{CardBarDrop, CardDragHover, DropHover, DropItem};
 use crate::tabs::{
     SpaceLead, TabBarState, TabBarTab, TabBootstrap, TabFileDrag, TabHistory, TabHistoryStep, TabVisibility,
 };
@@ -69,6 +69,10 @@ use crate::storage::note_links::{LabelMatch, NoteLinkQuery, NoteLinkSuggestion};
 use crate::commands::edit_sessions::{FlushEditsPayload, NoteChangedPayload};
 use crate::domain::edit_menu::{EditMenuCommand, FocusedEditor};
 use crate::watcher::handler::ScanResult;
+use crate::menu_panel::{
+    MenuPanelCloseReason, MenuPanelClosed, MenuPanelOpenRequest, MenuPanelOpening, MenuPanelPaint,
+    MenuPanelRefusal, MenuPanelShown, MenuPanelSize, MenuPanelStatus, MenuPanelTicket, ScreenPoint, ScreenRect,
+};
 
 pub fn export_types(check_only: bool) -> Result<()> {
     let mut types = TypeCollection::default();
@@ -109,6 +113,10 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<RenamedKind>()
         .register::<SpaceMovedPayload>()
         .register::<DropHover>()
+        .register::<DropItem>()
+        .register::<CardDragHover>()
+        .register::<CardBarDrop>()
+        .register::<TabSide>()
         .register::<ClipboardPayload>()
         .register::<ShortcutBinding>()
         .register::<LightBlock>()
@@ -169,6 +177,9 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<DeleteBlocksPlan>()
         .register::<DeleteBlocksOutcome>()
         .register::<MergeBlocksResult>()
+        .register::<crate::commands::merge_timing::MergeTiming>()
+        .register::<crate::commands::merge_timing::MergeStepTime>()
+        .register::<crate::commands::merge_timing::MergeStep>()
         .register::<MediaAssetMutationResult>()
         .register::<MediaAssetReferenceBlock>()
         .register::<DeleteMediaAssetPlan>()
@@ -220,7 +231,19 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<OrphanMediaList>()
         .register::<OrphanMediaBatchRequest>()
         .register::<PromoteOrphanResult>()
-        .register::<DeleteOrphanResult>();
+        .register::<DeleteOrphanResult>()
+        .register::<ScreenRect>()
+        .register::<ScreenPoint>()
+        .register::<MenuPanelSize>()
+        .register::<MenuPanelStatus>()
+        .register::<MenuPanelOpenRequest>()
+        .register::<MenuPanelTicket>()
+        .register::<MenuPanelOpening>()
+        .register::<MenuPanelShown>()
+        .register::<MenuPanelCloseReason>()
+        .register::<MenuPanelClosed>()
+        .register::<MenuPanelPaint>()
+        .register::<MenuPanelRefusal>();
 
     let output = Typescript::default()
         .bigint(BigIntExportBehavior::Number)

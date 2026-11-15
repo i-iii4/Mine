@@ -835,7 +835,10 @@ describe("typing in the menu: what stands around it (SPEC_KEYBOARD.md, «Вво�
     expect(document.activeElement).not.toBe(filter());
   });
 
-  it("ArrowRight puts the list back where it stood as well, the query gone", () => {
+  // Only Escape clears the query (user's decision of 15.11.2026): ArrowRight goes
+  // back with the query and the filtered list where they stand, the row forgotten,
+  // as when the sidebar hides during the focus.
+  it("ArrowRight goes back with the query and the filtered list where they stand, the row forgotten", () => {
     const { feed } = setup();
     act(() => { handle.current!.enter(); });
     list().scrollTop = 120;
@@ -844,10 +847,18 @@ describe("typing in the menu: what stands around it (SPEC_KEYBOARD.md, «Вво�
     act(() => { handle.current!.fieldDown(); });
     list().scrollTop = 0;
     key({ key: "ArrowRight" });
-    expect(filter()).toHaveValue("");
-    expect(list().scrollTop).toBe(120);
+    expect(filter()).toHaveValue("b");
+    expect(list().scrollTop).toBe(0);
     expect(feed.take).toHaveBeenCalledTimes(1);
     expect(handle.current!.rowKey).toBeNull();
+    // Back in the menu, Escape clears the query: no row is remembered any more, so the
+    // focus stays on the row ArrowLeft found.
+    act(() => { handle.current!.enter(); });
+    const entered = handle.current!.rowKey;
+    expect(entered).not.toBeNull();
+    key({ key: "Escape" });
+    expect(filter()).toHaveValue("");
+    expect(handle.current!.rowKey).toBe(entered);
   });
 
   it("ArrowRight with no card for it leaves the focus and the query where they are", () => {
@@ -988,6 +999,22 @@ describe("from the graph (SPEC_KEYBOARD.md, «Graph»)", () => {
     update({ rows: [] });
     key({ key: "ArrowLeft" });
     expect(screen.getByRole("textbox", { name: "The filter" })).toHaveFocus();
+  });
+
+  it("ArrowRight goes back to the graph with the query staying, and Escape clears it after", () => {
+    onGraph();
+    key({ key: "ArrowLeft" });
+    key({ key: "b" });
+    expect(filter()).toHaveValue("b");
+    act(() => { handle.current!.fieldDown(); });
+    expect(focusedRow()).not.toBeNull();
+    key({ key: "ArrowRight" });
+    expect(focusedRow()).toBeNull();
+    expect(filter()).toHaveValue("b");
+    key({ key: "ArrowLeft" });
+    expect(focusedRow()).not.toBeNull();
+    key({ key: "Escape" });
+    expect(filter()).toHaveValue("");
   });
 
   it("the walk, ⌘K and typing work as from the feed", async () => {

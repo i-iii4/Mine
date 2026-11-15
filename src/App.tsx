@@ -27,7 +27,7 @@ import type { SettingsSection } from "@/lib/settingsSections";
 import { isTauri } from "@tauri-apps/api/core";
 import { listenPage } from "@/lib/pageEvents";
 import { noteSpaceShown } from "@/lib/pictureVersions";
-import { getNavigationLabel } from "@/lib/displayTitle";
+import { getFileName, getNavigationLabel } from "@/lib/displayTitle";
 import {
   SIDEBAR_KEY_COMMAND_EVENT,
   SPACE_LEAD_CHANGED_EVENT,
@@ -101,7 +101,7 @@ import { topRowCard, topRowShowsPlace, type TopRowCardView } from "@/lib/topRowP
 import { CARD_VIEW_STORAGE_KEY, PEEK_WIDTH_STORAGE_KEY, getCardView, offersPeekCollapse, openCardView, reloadCardView, reloadPeekWidth, setCardView, useCardView, type CardView } from "@/lib/cardView";
 import { lastPeekInput, peekAreaHoldsWindow, peekOpeningFrom, type CardPeekExit } from "@/lib/cardPeek";
 import { listenPeekInput } from "@/lib/cardPeekSource";
-import { nativeMenuCommandIsKey, noteNativeMenuCommand } from "@/lib/motionInput";
+import { nativeMenuCommandIsKey, noteNativeMenuCommand, notePointerCommand } from "@/lib/motionInput";
 import { cn } from "@/lib/utils";
 import { commandById } from "@/lib/commandRegistry";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
@@ -269,6 +269,8 @@ import type {
   TabHistoryStep,
   TabLocation,
   TabView,
+  CardBarDrop,
+  MergeTiming,
   TabVisibility,
   VaultChangedPayload,
 } from "@/types";
@@ -415,6 +417,11 @@ import { ActionButton } from "@/components/ActionButton";
 import { applyTheme, getStoredTheme, THEME_STORAGE_KEY } from "@/lib/themeMode";
 import { MOTION_LEVEL_STORAGE_KEY, reloadMotionLevel, roleMs, type MotionOptions } from "@/lib/motion";
 import { lastInputIsKey } from "@/lib/motionInput";
+import {
+  useHeldPastImagePreview,
+  useImagePreviewCommands,
+  type PreviewCommandInput,
+} from "@/hooks/useImagePreviewCommands";
 import { flipWindowButtonStyleHere } from "@/lib/buttonStyle";
 import { ButtonStyleNotice } from "@/components/ButtonStyleNotice";
 import {
@@ -433,6 +440,10 @@ import { RenameBlockDialog } from "@/components/RenameBlockDialog";
 import { SearchOverlay } from "@/components/SearchOverlay";
 import { CreateCollectionDialog } from "@/components/CreateCollectionDialog";
 import { DeleteBlockDialog } from "@/components/DeleteBlockDialog";
+import { OpenCardTabsDialog } from "@/components/OpenCardTabsDialog";
+import { useCardDragToTabBar } from "@/hooks/useCardDragToTabBar";
+import { asksBeforeOpening, cardTabsOrder } from "@/lib/cardTabDrop";
+import { logMergeTiming } from "@/lib/mergeTiming";
 import { DeleteKeptMediaNotice, keptOfferedMedia } from "@/components/DeleteWindowParts";
 import type { DeleteSelectionAction } from "@/components/DeleteSelectedCardsDialog";
 import {
@@ -512,7 +523,18 @@ interface BlockAddedEvent {
   is_text: boolean;
 }
 
+/** What the backend asks of the page's search: `main` and `sidebar` from the
+ *  native menu, `main-button` from the tab bar's search button, a press
+ *  (SPEC_MOTION_LEVELS.md, УД4, п. 2). */
+type SurfaceSearchShortcutPayload = "main" | "sidebar" | "main-button";
 type SurfaceSearchShortcutTarget = "main" | "sidebar";
+
+/** Whether `target` lies in the image preview. Over it the page's commands
+ *  still run (SPEC_MEDIA_ASSET_ACTIONS.md, «Команды при открытом просмотре»;
+ *  user's decision of 15.11.2026). */
+function isImagePreviewTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("[data-image-preview-overlay]") !== null;
+}
 
 type MediaAssetDragPayload = {
   type: "media_asset";
@@ -1042,6 +1064,12 @@ export function AppWithVault({
   // What the feed area draws: the tab's mode, a grid in an author's feed.
   const feedViewMode: MainViewMode = onAuthorPlace ? "grid" : mainViewMode;
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequest | null>(null);
+  // The page's commands over the picture: those whose result shows on this
+  // page take the picture away first (user's decision of 15.11.2026).
+  const imagePreviewOpen = imagePreview !== null;
+  const imagePreviewOpenRef = useRef(imagePreviewOpen);
+  imagePreviewOpenRef.current = imagePreviewOpen;
+  const { handleRef: imagePreviewHandleRef, runPast: runPastImagePreview } = useImagePreviewCommands(imagePreviewOpen);
   const [isCreatingChannel, setIsCreatingChannel] = useState(false);
   // The create row was opened by ⇧⌘N (SPEC_MOTION_LEVELS.md, С8).
   const [createRowByKey, setCreateRowByKey] = useState(false);
@@ -1248,6 +1276,12 @@ export function AppWithVault({
     sequence: number;
   } | null>(null);
   const [searchOverlayOpen, setSearchOverlayOpen] = useState(false);
+  // The search opened by a press from over the image preview took its scrim
+  // as it stood (SPEC_SEARCH_OVERLAY.md, «Открытие и закрытие»).
+  const [searchScrimHandedOver, setSearchScrimHandedOver] = useState(false);
+  useEffect(() => {
+    if (!searchOverlayOpen) setSearchScrimHandedOver(false);
+  }, [searchOverlayOpen]);
   // Query survives the session: reopening shows it selected (SPEC_SEARCH_OVERLAY).
   const [searchOverlayQuery, setSearchOverlayQuery] = useState("");
   // The collection filter is the tab's own too (В78).
@@ -1266,6 +1300,9 @@ export function AppWithVault({
   /// before the card a thumbnail carries has been read (SPEC_FRONTEND.md,
   /// «Перетаскивание миниатюры»).
   const [blockDragActive, setBlockDragActive] = useState(false);
+  /// The card a card drag took hold of: its title names the tab it would
+  /// become over the tab bar (SPEC_TABS.md, В86).
+  const [blockDragSlug, setBlockDragSlug] = useState<string | null>(null);
   /// Counts card drags, so a card read that lands after its drag ended draws
   /// nothing.
   const blockDragSequenceRef = useRef(0);
@@ -1680,6 +1717,8 @@ export function AppWithVault({
       if (intent.kind === "toggle" || beside.collapsed === intent.open) beside.toggle(byKey);
     },
     takeKeyCommand: takeSidebarKeyCommand,
+    // Over the image preview the picture goes first (15.11.2026).
+    commandGate: (byKey, run) => runPastImagePreview(byKey ? "key" : "pointer", run),
   });
   const sidebarNarrow = sidebarOverlay.narrow;
   const closeSidebarOverlay = sidebarOverlay.close;
@@ -1708,6 +1747,16 @@ export function AppWithVault({
   }, [remeasureBottomBar, sidebarNarrow]);
 
   // ── Sidebar resize ──────────────────────────────────────────────────────
+  // A layout the backend sends while the image preview is open waits for the
+  // picture: by the View menu or ⌃⌘S the picture goes in this frame, by the
+  // tab bar's button it fades out first, and only then does the sidebar move
+  // (user's decision of 15.11.2026).
+  const shownWindowSidebar = useHeldPastImagePreview(
+    windowSidebar,
+    imagePreviewOpen,
+    windowSidebarChangedByKey,
+    runPastImagePreview,
+  );
   const {
     width: sidebarWidth,
     collapsed: sidebarCollapsed,
@@ -1723,7 +1772,7 @@ export function AppWithVault({
     endResize,
     resizeTo: resizeSidebarTo,
     toggleCollapsed,
-  } = useSidebarResize(windowSidebar, sidebarNarrow, sidebarOpenedForKeyboard, windowSidebarChangedByKey);
+  } = useSidebarResize(shownWindowSidebar, sidebarNarrow, sidebarOpenedForKeyboard, windowSidebarChangedByKey);
   // The toggle during the keyboard's visit, from the bottom bar or forwarded by the
   // backend (`onBesideIntent` above): the sidebar on screen goes, and what is stored
   // already says hidden, so nothing is written.
@@ -1733,7 +1782,7 @@ export function AppWithVault({
   besideSidebarRef.current = { collapsed: sidebarCollapsed, toggle: toggleBesideSidebar };
   // What is stored changed under the visit: a drag of the edge stored it open. That
   // is the person's now, and nothing hides the sidebar after the visit.
-  const windowSidebarCollapsed = windowSidebar?.collapsed;
+  const windowSidebarCollapsed = shownWindowSidebar?.collapsed;
   useEffect(() => {
     setSidebarOpenedForKeyboard(false);
   }, [windowSidebarCollapsed]);
@@ -3166,10 +3215,13 @@ export function AppWithVault({
   const handleSwitchVault = useCallback(async () => {
     const selected = await openDialog({ directory: true, multiple: false, canCreateDirectories: true });
     if (!selected) return;
+    // Over the image preview the picture goes only with the space: the same
+    // folder chosen again changes nothing (user's decision of 15.11.2026).
+    if (imagePreviewOpenRef.current && selected === vaultPath) return;
     await selectVault(selected);
     navigate("/", { replace: true });
     onVaultSelected(selected);
-  }, [navigate, onVaultSelected]);
+  }, [navigate, onVaultSelected, vaultPath]);
 
   // A space chosen with ⌘ in the switcher opens in a new tab of this window;
   // this tab keeps its own (SPEC_TABS.md, В52).
@@ -3223,7 +3275,24 @@ export function AppWithVault({
     sidebarSearchInputRef.current?.focus({ preventScroll: true });
   }, []);
 
-  const handleSurfaceSearchShortcut = useCallback((target: SurfaceSearchShortcutTarget) => {
+  const handleSurfaceSearchShortcut = useCallback((
+    target: SurfaceSearchShortcutTarget,
+    input: PreviewCommandInput = "key",
+  ) => {
+    // Over the image preview both searches take the picture away first: by a
+    // key at once, by the tab bar's button after it has faded, the scrim
+    // handed over to the search as it stands (user's decision of 15.11.2026).
+    if (imagePreviewOpenRef.current) {
+      if (target === "sidebar") {
+        runPastImagePreview(input, focusSidebarSearch);
+        return;
+      }
+      runPastImagePreview(input, () => {
+        setSearchScrimHandedOver(input === "pointer");
+        setSearchOverlayOpen(true);
+      }, "stays");
+      return;
+    }
     const active = document.activeElement;
     // Focus inside the search overlay must not swallow the shortcut: a repeat
     // Cmd+F closes the overlay (SPEC_SEARCH_OVERLAY.md). An open card is a
@@ -3238,14 +3307,21 @@ export function AppWithVault({
       return;
     }
     toggleSearchOverlay();
-  }, [focusSidebarSearch, toggleSearchOverlay]);
+  }, [focusSidebarSearch, runPastImagePreview, toggleSearchOverlay]);
 
   useEffect(() => {
     let cancelled = false;
-    const unlisten = listenPage<SurfaceSearchShortcutTarget>(
+    const unlisten = listenPage<SurfaceSearchShortcutPayload>(
       "surface-search-shortcut",
       (event) => {
         if (cancelled) return;
+        if (event.payload === "main-button") {
+          // The tab bar's search button: a press, which moves by the level
+          // (SPEC_MOTION_LEVELS.md, УД4, п. 2).
+          notePointerCommand();
+          handleSurfaceSearchShortcut("main", "pointer");
+          return;
+        }
         // Find Elements and Find Collections of the native menu: a key, so
         // the search opens and closes at once (SPEC_MOTION_LEVELS.md, М6).
         noteNativeMenuCommand();
@@ -3287,6 +3363,45 @@ export function AppWithVault({
   const handleOpenRouteElsewhere = useCallback((to: string, newWindow: boolean) => {
     openPlaceElsewhere(tabLocationFromPath(to), null, newWindow);
   }, [openPlaceElsewhere]);
+
+  // ── Cards dragged onto the tab bar (SPEC_TABS.md, В86) ─────────────────
+  // A tab each, as `openPlaceElsewhere` makes one: this space, the card open
+  // over this tab's place, in this tab's mode.
+  const cardTitleOf = useCallback((slug: string) => {
+    const block = blocks.find((candidate) => candidate.slug === slug)
+      ?? renderedDragBlocks.find((candidate) => candidate.slug === slug);
+    return block ? getNavigationLabel(block) : getFileName({ slug });
+  }, [blocks, renderedDragBlocks]);
+  const {
+    takeDrop: takeCardDropOnTabBar,
+    dropOnBar: sendCardsToTabBar,
+    leaveBar: leaveTabBar,
+  } = useCardDragToTabBar({
+    enabled: tabPage,
+    dragging: blockDragActive,
+    title: blockDragSlug === null ? "" : cardTitleOf(blockDragSlug),
+  });
+  /// Cards waiting for `Open N tabs?` to be answered (В86, п. 6).
+  const [cardTabsAsked, setCardTabsAsked] = useState<CardBarDrop | null>(null);
+  const openDroppedCardsInTabs = useCallback((x: number, slugs: readonly string[], grabbed: string) => {
+    const views: TabView[] = cardTabsOrder(slugs, blocks.map((block) => block.slug), grabbed).map((slug) => ({
+      location: currentLocation,
+      mode: mainViewMode,
+      open_card: { slug, title: cardTitleOf(slug) },
+      scroll_anchor: null,
+      collection_filter: "",
+    }));
+    // The grabbed card's tab comes first, on the placeholder's slot.
+    const drop: CardBarDrop = { x, title: cardTitleOf(grabbed), views };
+    if (!asksBeforeOpening(views.length)) {
+      sendCardsToTabBar(drop);
+      return;
+    }
+    // The room in the bar closes while the question is open; the tabs come
+    // at the place of the drop once it is answered with Open.
+    leaveTabBar();
+    setCardTabsAsked(drop);
+  }, [blocks, cardTitleOf, currentLocation, leaveTabBar, mainViewMode, sendCardsToTabBar]);
 
   const handleOpenSettings = useCallback((section?: SettingsSection) => {
     void openSettingsWindow(section).catch((error: unknown) => {
@@ -3396,7 +3511,7 @@ export function AppWithVault({
         // WKWebView handle the same keydown would toggle the sidebar twice.
         if (isTauri()) return;
         e.preventDefault();
-        toggleSidebar(true);
+        runPastImagePreview("key", () => toggleSidebar(true));
         return;
       }
       const searchSurface = commandPressed("find-collections", e)
@@ -3406,7 +3521,8 @@ export function AppWithVault({
           : null;
       if (searchSurface) {
         // Opens over an open card too; only a layer above the card holds it.
-        if (isDetailShortcutBlockedTarget(e.target)) return;
+        // The image preview lets it through and goes first (15.11.2026).
+        if (!isImagePreviewTarget(e.target) && isDetailShortcutBlockedTarget(e.target)) return;
         e.preventDefault();
         handleSurfaceSearchShortcut(searchSurface);
         return;
@@ -3431,6 +3547,18 @@ export function AppWithVault({
         copyTextToClipboard(blockMarkdownPath(vaultPath, selectedBlock.slug), COPY_PATH_FAILED_TITLE);
         return;
       }
+      // Over the image preview ⇧⌘N takes the picture away and runs, ⇧⌘O asks
+      // for a folder over it (user's decision of 15.11.2026).
+      if (isImagePreviewTarget(e.target)) {
+        if (commandPressed("switch-space", e)) {
+          e.preventDefault();
+          void handleSwitchVault();
+        } else if (commandPressed("new-collection", e)) {
+          e.preventDefault();
+          runPastImagePreview("key", () => beginCreateCollection(true));
+        }
+        return;
+      }
       if (isOverlayKeyboardTarget(e.target)) return;
       if (commandPressed("switch-space", e)) {
         e.preventDefault();
@@ -3449,6 +3577,7 @@ export function AppWithVault({
     handleSwitchVault,
     navigate,
     renderedDetailBlock,
+    runPastImagePreview,
     selectedBlock,
     toggleSidebar,
     vaultPath,
@@ -4632,6 +4761,7 @@ export function AppWithVault({
         }
         const sequence = blockDragSequenceRef.current + 1;
         blockDragSequenceRef.current = sequence;
+        setBlockDragSlug(data?.type === "block" && data.slug ? data.slug : id);
         const dragBlocks = resolveBlockDragBlocks(id, data, blocks);
         setActiveDragBlocks(dragBlocks);
         setBlockDragActive(true);
@@ -4661,11 +4791,20 @@ export function AppWithVault({
 
   const handleDndEnd = useCallback(
     (event: DragEndEvent) => {
+      // Let go over the tab bar: a tab each, whatever the card is over in
+      // this page (В86). The bar takes card drags only.
+      const tabBarX = takeCardDropOnTabBar();
       clearBlockDrag();
       setActiveDragTag(null);
       setActiveDragMediaAsset(null);
       setActiveDragTextSelection(null);
       const { active, over } = event;
+      if (tabBarX !== null) {
+        const data = active.data.current as Partial<BlockDragData> | undefined;
+        const grabbed = data?.type === "block" && data.slug ? data.slug : String(active.id);
+        openDroppedCardsInTabs(tabBarX, resolveBlockDragSlugs(String(active.id), data), grabbed);
+        return;
+      }
       if (!over) {
         clearActiveMineTextSelectionDragPayload();
         return;
@@ -4765,6 +4904,8 @@ export function AppWithVault({
       handleMediaAssetDrop,
       handleReorderTag,
       handleTextSelectionDrop,
+      openDroppedCardsInTabs,
+      takeCardDropOnTabBar,
     ],
   );
 
@@ -4887,15 +5028,37 @@ export function AppWithVault({
   const handleMergeSelectedBlocks = useCallback(
     async (orderedSlugs: string[]) => {
       if (orderedSlugs.length < 2) return;
+      // The measurement of this merge, from the press on Merge to the feed
+      // drawn again: one line in Mine.log (SPEC_CARD_MERGE.md, «Замер
+      // слияния»). It changes nothing the merge does or waits for.
+      const pressed = performance.now();
+      let timing: MergeTiming | null = null;
+      let answered = pressed;
       setSelectedBlock(null);
       setSelectedBlockAnchor(null);
       try {
-        await mergeBlocks(orderedSlugs);
+        timing = (await mergeBlocks(orderedSlugs)).timing;
       } catch (err) {
         console.error("Failed to merge selected blocks:", err);
         throw err;
       } finally {
+        answered = performance.now();
         await reloadAllSnapshots();
+        const read = performance.now();
+        const backend = timing;
+        requestAnimationFrame(() => {
+          const drawn = performance.now();
+          logMergeTiming(
+            backend,
+            {
+              commandMs: answered - pressed,
+              reloadMs: read - answered,
+              paintMs: drawn - read,
+              totalMs: drawn - pressed,
+            },
+            orderedSlugs.length,
+          );
+        });
       }
     },
     [reloadAllSnapshots],
@@ -5517,6 +5680,7 @@ export function AppWithVault({
             currentAuthor={currentLocation.kind === "author" ? currentLocation.author : undefined}
             onRename={handleRenameTag}
             onCheckName={checkCollectionName}
+            selectionActive={hasSelection}
             joinsNext
           />
           {/* No third row: what it held over the feed joins this row after
@@ -5686,6 +5850,13 @@ export function AppWithVault({
           onKeepMedia={() => confirmDeleteBlock(false)}
           onDeleteMedia={() => confirmDeleteBlock(Boolean(deletePlan?.unused_media.length))}
         />
+        <OpenCardTabsDialog
+          count={cardTabsAsked?.views.length ?? null}
+          onCancel={() => setCardTabsAsked(null)}
+          onConfirm={() => {
+            if (cardTabsAsked !== null) sendCardsToTabBar(cardTabsAsked);
+          }}
+        />
       </main>
 
       {/* Dev button styles: which style a switch turned on. */}
@@ -5820,6 +5991,7 @@ export function AppWithVault({
         onCreateAndAssign={handleCreateTagFromMenu}
         onRequestRename={setRenamingBlock}
         onRequestDelete={requestDeleteBlock}
+        scrimHandedOver={searchOverlayOpen && searchScrimHandedOver}
       />
       {cardActionsMenuTarget ? (
         <CardPointMenu
@@ -5954,6 +6126,7 @@ export function AppWithVault({
         </SidebarOverlay>
       )}
       <ImagePreviewOverlay
+        ref={imagePreviewHandleRef}
         preview={imagePreview}
         onClose={() => setImagePreview(null)}
       />

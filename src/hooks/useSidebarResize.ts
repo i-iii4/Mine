@@ -10,6 +10,7 @@ import {
 } from "@/lib/sidebarPlacement";
 import type { SidebarLayout } from "@/types";
 import { writeSidebarWidth } from "@/lib/sidebarWidth";
+import { SIDEBAR_RESIZING_CLASS } from "@/lib/sidebarLook";
 
 // ─── Motion ─────────────────────────────────────────────────────────────────
 
@@ -275,7 +276,7 @@ export function useSidebarResize(
     pendingWidthRef.current = start;
     setDragWidth(start);
     setIsResizing(true);
-    document.body.classList.add("sidebar-resizing");
+    document.body.classList.add(SIDEBAR_RESIZING_CLASS);
   }, []);
 
   // The line follows the cursor 1:1 between the bounds and stops at them: the
@@ -305,7 +306,7 @@ export function useSidebarResize(
       rafIdRef.current = null;
     }
     setIsResizing(false);
-    document.body.classList.remove("sidebar-resizing");
+    document.body.classList.remove(SIDEBAR_RESIZING_CLASS);
     const finalWidth = clampToWindow(pendingWidthRef.current);
     setStoredWidth(finalWidth);
     setDragWidth(finalWidth);

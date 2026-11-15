@@ -1,5 +1,24 @@
+import { useState } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 import {
   BatchCollectionPicker,
@@ -430,5 +449,135 @@ describe("BatchCollectionPicker", () => {
 
     expect(screen.getByRole("button", { name: "Connect tools" })).toBeInTheDocument();
     expect(onBatchSetTag).toHaveBeenCalledWith(["alpha", "beta"], "tools", true);
+  });
+});
+
+// Escape in the picker inside the real Radix menus it stands in (user's
+// decision of 15.11.2026): Radix hears Escape on the document before the
+// picker, so a picker rendered without a menu cannot catch a press that
+// closes the whole menu over a query.
+describe("Escape in the picker inside a menu", () => {
+  const TAGS = [tag("tools", 1), tag("design", 2)];
+  type Kind = "one" | "batch";
+  const picker = (kind: Kind, onRequestClose?: () => void) => (kind === "one"
+    ? <CollectionPicker blockSlug="alpha" selectedTags={[]} tags={TAGS} onToggleTag={vi.fn()} onCreateAndAssign={vi.fn()} stopKeyPropagation onRequestClose={onRequestClose} />
+    : <BatchCollectionPicker selectedSlugs={["alpha", "beta"]} tags={TAGS} tagLookup={new Map()} onBatchSetTag={vi.fn()} onCreateAndAssign={vi.fn()} onRequestClose={onRequestClose} />);
+
+  /** The card's `···` menu or the selection's menu: Connect a submenu that
+   *  closes itself (CardHoverMenu, GroupSelectionCardMenu, the menu panel). */
+  function SubMenu({ kind, onSubClose }: { kind: Kind; onSubClose: () => void }) {
+    const [sub, setSub] = useState(true);
+    return (
+      <DropdownMenu defaultOpen>
+        <DropdownMenuTrigger>More</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem>Rename</DropdownMenuItem>
+          <DropdownMenuSub open={sub} onOpenChange={setSub}>
+            <DropdownMenuSubTrigger>Connect</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              {picker(kind, () => {
+                onSubClose();
+                setSub(false);
+              })}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+
+  /** The card's Connect button, the open card's and the selection's: the
+   *  picker is the menu (CardHoverMenu, Detail, GroupSelectionCommands). */
+  function StandaloneMenu({ kind }: { kind: Kind }) {
+    return (
+      <DropdownMenu defaultOpen>
+        <DropdownMenuTrigger>Connect</DropdownMenuTrigger>
+        <DropdownMenuContent>{picker(kind)}</DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+
+  /** The card's context menu: Connect a submenu with no close of its own
+   *  (CardContextMenu). */
+  function ContextSubMenu() {
+    return (
+      <ContextMenu>
+        <ContextMenuTrigger>Card</ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem>Rename</ContextMenuItem>
+          <ContextMenuSub open>
+            <ContextMenuSubTrigger>Connect</ContextMenuSubTrigger>
+            <ContextMenuSubContent>{picker("one")}</ContextMenuSubContent>
+          </ContextMenuSub>
+        </ContextMenuContent>
+      </ContextMenu>
+    );
+  }
+
+  const menus = () => document.querySelectorAll("[role='menu']").length;
+  const field = () => screen.getByRole("textbox") as HTMLInputElement;
+  const pickerShown = () => document.querySelector("[data-collection-picker]") !== null;
+
+  /** Types a query that hides a row, and checks it took. */
+  function type(query: string) {
+    fireEvent.change(field(), { target: { value: query } });
+    expect(screen.queryByText("tools")).toBeNull();
+  }
+
+  for (const kind of ["one", "batch"] as const) {
+    it(`${kind}: in a submenu the first Escape clears the query, the next closes only the submenu, the next the menu`, async () => {
+      const onSubClose = vi.fn();
+      render(<SubMenu kind={kind} onSubClose={onSubClose} />);
+      await screen.findByRole("textbox");
+      type("des");
+      fireEvent.keyDown(field(), { key: "Escape" });
+      expect(field().value).toBe("");
+      expect(screen.getByText("tools")).toBeInTheDocument();
+      expect(menus()).toBe(2);
+      expect(field()).toHaveFocus();
+      expect(onSubClose).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(field(), { key: "Escape" });
+      expect(onSubClose).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(pickerShown()).toBe(false));
+      expect(menus()).toBe(1);
+    });
+
+    it(`${kind}: as the menu itself the first Escape clears the query, the next closes the menu`, async () => {
+      render(<StandaloneMenu kind={kind} />);
+      await screen.findByRole("textbox");
+      type("des");
+      fireEvent.keyDown(field(), { key: "Escape" });
+      expect(field().value).toBe("");
+      expect(menus()).toBe(1);
+      fireEvent.keyDown(field(), { key: "Escape" });
+      await waitFor(() => expect(menus()).toBe(0));
+    });
+
+    // SPEC_FRONTEND.md, CollectionPicker: Escape in the Connect submenu
+    // closes only the submenu. Radix closed the whole menu here too before.
+    it(`${kind}: with no query Escape in a submenu closes only the submenu`, async () => {
+      const onSubClose = vi.fn();
+      render(<SubMenu kind={kind} onSubClose={onSubClose} />);
+      await screen.findByRole("textbox");
+      fireEvent.keyDown(field(), { key: "Escape" });
+      expect(onSubClose).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(pickerShown()).toBe(false));
+      expect(menus()).toBe(1);
+    });
+  }
+
+  it("in the context menu the first Escape clears the query, the next closes the menu, as Radix does with no query", async () => {
+    render(<ContextSubMenu />);
+    const card = screen.getByText("Card");
+    fireEvent.pointerDown(card, { button: 2 });
+    fireEvent.contextMenu(card);
+    await screen.findByRole("textbox");
+    type("des");
+    fireEvent.keyDown(field(), { key: "Escape" });
+    expect(field().value).toBe("");
+    expect(menus()).toBe(2);
+    fireEvent.keyDown(field(), { key: "Escape" });
+    await waitFor(() => expect(menus()).toBe(0));
   });
 });

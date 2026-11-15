@@ -170,7 +170,11 @@ export class SaveQueue<Answer extends SaveAnswer> {
    *  over, for neither side has anything the other lacks. */
   rebase(baseBodyHash: string, body: string): void {
     this.baseBodyHash = baseBodyHash;
-    this.savedBody = body;
+    // The same text as the queue's keeps the queue's own copy: the file
+    // asked on opening answers with a copy of what the editor holds, which
+    // the queue would otherwise keep alive beside it (user's decision of
+    // 15.11.2026; SPEC_EDITING.md, Л14.3).
+    if (body !== this.savedBody) this.savedBody = body;
     if (this.status === "conflict" || this.status === "stopped") this.recover();
   }
 

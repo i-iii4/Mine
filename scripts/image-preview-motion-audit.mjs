@@ -30,7 +30,10 @@ const STAND_PAGE = `
   import {Detail} from '/src/components/Detail.tsx';
   import {DndContext,PointerSensor,useSensor,useSensors} from '@dnd-kit/core';
   import {TooltipProvider} from '/src/components/ui/tooltip.tsx';
-  import {installMotionLevel} from '/src/lib/motion.ts';
+  import {installMotionLevel,roleMs} from '/src/lib/motion.ts';
+  import {SearchOverlay} from '/src/components/SearchOverlay.tsx';
+  import {useHeldPastImagePreview,useImagePreviewCommands} from '/src/hooks/useImagePreviewCommands.ts';
+  import {sidebarWidthTransition} from '/src/hooks/useSidebarResize.ts';
   import '/src/styles/global.css';
   // The level as an app page takes it: the stored one, else the system's.
   installMotionLevel();
@@ -65,8 +68,35 @@ const STAND_PAGE = `
         h(Detail,{block:base,vaultPath:'/vault',thumbsRootPath:'/thumbs',tags:[],onClose:noop,onToggleTag:noop,onCreateAndAssign:noop,onRequestRename:noop,onRequestDelete:noop,onOpenImagePreview:setPreview}))),
       h(ImagePreviewOverlay,{preview,onClose:()=>setPreview(null)})));
   }
+  // The page's commands over the picture (user's decision of 15.11.2026), on
+  // the app's own hooks: a sidebar whose layout comes as a value, as the
+  // backend sends it, and the real search on the scrim it takes over.
+  function CommandsPage(){
+    const [preview,setPreview]=React.useState(null);
+    const [layout,setLayout]=React.useState({collapsed:false});
+    const [searchOpen,setSearchOpen]=React.useState(false);
+    const [handedOver,setHandedOver]=React.useState(false);
+    const byKeyRef=React.useRef(false);
+    const byKey=React.useCallback(()=>byKeyRef.current,[]);
+    const {handleRef,runPast}=useImagePreviewCommands(preview!==null);
+    const shown=useHeldPastImagePreview(layout,preview!==null,byKey,runPast);
+    window.__stand={
+      open:()=>setPreview({src:media('photo.png'),mediaRef:'photo.png',openedBy:'keyboard'}),
+      // The tab bar's button or the View menu: a new layout from the backend.
+      sidebar:key=>{byKeyRef.current=key;setLayout(current=>({collapsed:!current.collapsed}));},
+      search:input=>runPast(input,()=>{setHandedOver(input==='pointer');setSearchOpen(true);},'stays'),
+    };
+    // The sidebar's width moves as Поверхность, a key's at once (С1, УД4).
+    const ms=byKeyRef.current?0:roleMs('surface','enter');
+    return h(TooltipProvider,null,
+      h('div',{id:'page',style:{position:'fixed',inset:0,display:'flex',background:'repeating-linear-gradient(45deg,#dfe7f2 0 40px,#c9d6ea 40px 80px)'}},
+        h('aside',{id:'sidebar',style:{width:shown.collapsed?0:300,flex:'none',overflow:'hidden',background:'#8aa0c8',transition:ms>0?sidebarWidthTransition({ms}):'none'}}),
+        h('main',{style:{flex:1,position:'relative'}},h('img',{src:media('photo.png'),alt:'',style:{width:200,height:150,margin:40}}))),
+      h(SearchOverlay,{open:searchOpen,query:'',vaultPath:'/vault',onQueryChange:()=>undefined,onClose:()=>{setSearchOpen(false);setHandedOver(false);},onOpenBlock:()=>undefined,scrimHandedOver:searchOpen&&handedOver}),
+      h(ImagePreviewOverlay,{ref:handleRef,preview,onClose:()=>setPreview(null)}));
+  }
   const page=new URLSearchParams(location.search).get('page');
-  createRoot(document.getElementById('root')).render(h(page==='detail'?DetailPage:Stand));
+  createRoot(document.getElementById('root')).render(h(page==='detail'?DetailPage:page==='commands'?CommandsPage:Stand));
 `;
 
 /** Hand stepping of the page's frames: `requestAnimationFrame` and the clock
@@ -727,6 +757,126 @@ try {
     assert.equal(await state(page), null, "Detail: Escape closes at once");
     passed(`Detail's media frame: first and last frames on the frame (${changed} pixels), ⤢ by a key at once`);
     await page.close();
+  }
+
+  // ── Commands over the picture (user's decision of 15.11.2026) ──
+  // On the real clock: every frame from the command on is read in the frame
+  // itself, the picture's opacity, the scrims on the page and the sidebar.
+  {
+    /** Reads every frame for `ms` after `command` runs in a frame. */
+    const recordCommand = (page, command, ms = 520) => page.evaluate(async ({ command: name, arg, ms: span }) => {
+      const read = () => {
+        const overlay = document.querySelector("[data-image-preview-overlay]");
+        const stage = overlay?.querySelector("[data-image-preview-stage]");
+        const scrims = [...document.querySelectorAll(".modal-scrim")].map((scrim) => {
+          const style = getComputedStyle(scrim);
+          return { opacity: Number(style.opacity), filter: style.webkitBackdropFilter || style.backdropFilter, color: style.backgroundColor };
+        });
+        return {
+          picture: overlay ? Number(getComputedStyle(stage).opacity) : null,
+          scrims,
+          sidebar: document.querySelector("#sidebar").getBoundingClientRect().width,
+          search: document.querySelector("[data-search-overlay]") !== null,
+        };
+      };
+      const frames = [];
+      await new Promise((resolve) => requestAnimationFrame(() => {
+        frames.push({ time: 0, ...read() });
+        const start = performance.now();
+        window.__stand[name](arg);
+        const next = (now) => {
+          frames.push({ time: now - start, ...read() });
+          if (now - start < span) requestAnimationFrame(next);
+          else resolve();
+        };
+        requestAnimationFrame(next);
+      }));
+      return frames;
+    }, { command: command.name, arg: command.arg, ms });
+
+    const openCommands = async (level) => {
+      const opened = await fresh({ page: "commands", level });
+      await opened.page.evaluate(() => window.__stand.open());
+      await opened.page.waitForFunction(() => document.querySelector("[data-image-preview-overlay]"));
+      await opened.page.waitForTimeout(200);
+      return opened;
+    };
+    const gone = (frame) => frame.picture === null;
+
+    // A press on the sidebar's button, Full and Minimal alike: the picture
+    // and the scrim fade out over Поверхность's 200 ms, nothing of the
+    // sidebar moves meanwhile, and the sidebar starts right after.
+    for (const level of ["full", "minimal"]) {
+      const { page, errors } = await openCommands(level);
+      const frames = await recordCommand(page, { name: "sidebar", arg: false });
+      const width = frames[0].sidebar;
+      const goneAt = frames.findIndex(gone);
+      assert(goneAt > 1, `${level}: the picture fades out before it goes`);
+      const fadeMs = frames[goneAt].time;
+      assert(fadeMs >= 200 - FRAME_MS && fadeMs <= 200 + 3 * FRAME_MS, `${level}: the fade lasts Поверхность's 200 ms, ${fadeMs.toFixed(1)} ms`);
+      assert(frames[goneAt - 1].picture <= 0.02, `${level}: the picture is faded out when it goes, ${frames[goneAt - 1].picture}`);
+      const fades = frames.slice(0, goneAt).map((frame) => frame.picture);
+      assert(fades.every((value, index) => index === 0 || value <= fades[index - 1] + 1e-6), `${level}: the picture only fades`);
+      for (const frame of frames.slice(0, goneAt)) {
+        assert.equal(frame.sidebar, width, `${level}: the sidebar stands while the picture shows (${frame.time.toFixed(1)} ms)`);
+      }
+      // The picture goes in the frame its fade ends; the sidebar's width
+      // changes from the frame after, as a transition's first frame shows
+      // where it starts.
+      const moved = frames.findIndex((frame) => frame.sidebar !== width);
+      assert(moved >= goneAt, `${level}: the sidebar does not move before the picture is out`);
+      assert(moved - goneAt <= 1, `${level}: the sidebar starts right after the picture, ${moved - goneAt} frames later`);
+      assert(frames.slice(goneAt).every(gone), `${level}: the picture is off the page while the sidebar moves`);
+      assert(frames.at(-1).sidebar < width, `${level}: the sidebar collapsed`);
+      assert.deepEqual(errors, []);
+      passed(`${level}: a press on the sidebar's button fades the picture in ${fadeMs.toFixed(0)} ms, then the sidebar moves ${moved - goneAt} frame(s) after it goes`);
+      await page.close();
+    }
+
+    // A press on the search's button: the picture fades, the one scrim stands
+    // through, the search comes over it.
+    for (const level of ["full", "minimal"]) {
+      const { page, errors } = await openCommands(level);
+      const frames = await recordCommand(page, { name: "search", arg: "pointer" });
+      const [first] = frames[0].scrims;
+      assert(first && first.opacity === 1, `${level}: the picture's scrim at rest`);
+      for (const frame of frames) {
+        const shown = frame.scrims.filter((scrim) => scrim.opacity > 0);
+        assert.equal(shown.length, 1, `${level}: one scrim on the page at ${frame.time.toFixed(1)} ms, not ${shown.length}`);
+        assert.equal(shown[0].opacity, 1, `${level}: the scrim stands at ${frame.time.toFixed(1)} ms`);
+        assert.equal(shown[0].filter, first.filter, `${level}: the scrim's blur stands at ${frame.time.toFixed(1)} ms`);
+        assert.equal(shown[0].color, first.color, `${level}: the scrim's veil stands at ${frame.time.toFixed(1)} ms`);
+      }
+      const goneAt = frames.findIndex(gone);
+      const searchAt = frames.findIndex((frame) => frame.search);
+      assert(goneAt > 0 && searchAt === goneAt, `${level}: the search comes in the frame the picture goes (${searchAt}, ${goneAt})`);
+      assert(frames[goneAt].time >= 200 - FRAME_MS, `${level}: the picture fades first, ${frames[goneAt].time.toFixed(1)} ms`);
+      assert.deepEqual(errors, []);
+      passed(`${level}: the search takes the picture's scrim over: ${frames.length} frames with one standing scrim, the search at ${frames[goneAt].time.toFixed(0)} ms`);
+      await page.close();
+    }
+
+    // A key, and Off for a press: everything in the frame of the command.
+    for (const { level, input } of [{ level: "full", input: "key" }, { level: "off", input: "pointer" }]) {
+      for (const name of ["sidebar", "search"]) {
+        const { page, errors } = await openCommands(level);
+        const arg = name === "sidebar" ? input === "key" : input;
+        const frames = await recordCommand(page, { name, arg }, 120);
+        const after = frames[1];
+        assert(gone(after), `${level}, ${input}, ${name}: the picture is gone in the command's frame`);
+        if (name === "sidebar") {
+          assert.equal(after.sidebar, 0, `${level}, ${input}: the sidebar stands collapsed in the command's frame`);
+        } else {
+          assert(after.search, `${level}, ${input}: the search is there in the command's frame`);
+          for (const frame of frames) {
+            assert(frame.scrims.filter((scrim) => scrim.opacity > 0).length <= 1, `${level}, ${input}: never two scrims`);
+          }
+        }
+        assert.deepEqual(errors, []);
+        await page.close();
+      }
+      passed(`${level}, ${input}: the picture goes and the sidebar or the search stands in the command's frame`);
+    }
   }
 
   // ── The real clock: frame times ──

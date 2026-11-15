@@ -84,9 +84,18 @@ import { publishCollectionOrder } from "@/lib/cardCollections";
 import { movedByKey, scrollSidebarRowIntoView } from "@/lib/sidebarKeyboardFocus";
 import { SIDEBAR_THUMBNAIL_DRAG_ID_PREFIX, type BlockDragData } from "@/lib/blockDrag";
 import { HoverIntentDragWatch, useHoverIntent } from "@/hooks/useHoverIntent";
-import { hoverPreviewBesidePanel } from "@/lib/hoverPreviewWindow";
 import { RestingPointer } from "@/lib/restingPointer";
-import { HoverPreviewWindowLayer, useHoverPreviewWindow } from "./HoverPreviewWindow";
+import { HoverPreviewWindowSurface, useHoverPreviewWindow } from "./HoverPreviewWindow";
+import { ReadOnlyCardPreview } from "./Card";
+import {
+  CollectionHoverPreview,
+  SIDEBAR_PREVIEW_TILE_FILL_CLASS,
+  collectionPreviewContent,
+  firstThumbnails,
+  sidebarTileFaceClass,
+  type CollectionPreviewContent,
+} from "./CollectionHoverPreview";
+import { HOVER_PREVIEW_WINDOW_WIDTH_PX, hoverPreviewBesidePanel } from "@/lib/hoverPreviewWindow";
 import {
   MicroPreviewThumbnail,
   microPreviewFromPreviewCard,
@@ -249,7 +258,6 @@ const SIDEBAR_PREVIEW_MASK_STYLE = { "--sidebar-preview-mask": SIDEBAR_PREVIEW_M
 /// skeleton's quiet `bg-accent`: it is what a placeholder shows, and what a
 /// real tile shows behind its image until that image has decoded.
 const SIDEBAR_PREVIEW_TILE_LAYOUT_CLASS = "relative size-8 shrink-0 overflow-hidden";
-const SIDEBAR_PREVIEW_TILE_FILL_CLASS = "bg-accent";
 const SIDEBAR_PREVIEW_TILE_CLASS = `${SIDEBAR_PREVIEW_TILE_LAYOUT_CLASS} ${SIDEBAR_PREVIEW_TILE_FILL_CLASS}`;
 
 type SidebarPreviewTarget = {
@@ -258,8 +266,16 @@ type SidebarPreviewTarget = {
   slug: string;
 };
 
-/// A thumbnail under the pointer, as the preview window takes it.
+/// A thumbnail or a collection's name under the pointer, as the preview
+/// window takes it: a thumbnail's card, or the collection (С7.12), whose
+/// key and slug are `collection:<rowKey>`.
 type SidebarPreviewWindowTarget = SidebarPreviewTarget & { element: Element };
+
+/// What the window shows: a thumbnail's card, or a collection over its name.
+type SidebarPreviewContent = { kind: "card"; block: LightBlock | IndexedBlock } | CollectionPreviewContent;
+
+/// The key and slug of a row's collection as the window's target.
+const COLLECTION_PREVIEW_PREFIX = "collection:";
 
 type CardMenuPoint = {
   x: number;
@@ -500,9 +516,44 @@ const SidebarCore = memo(function SidebarCore({
   });
   // The one preview window over the rows, as the open card's panel's (С7.11).
   const [previewPointer] = useState(() => new RestingPointer());
-  const previewWindow = useHoverPreviewWindow<SidebarPreviewWindowTarget, LightBlock | IndexedBlock>({
+  // What a collection's window holds is what the row's strip already holds:
+  // no read (SPEC_SIDEBAR_STRIP.md, ЛМ1).
+  const collectionSourceRef = useRef<{
+    channelPreviews: Map<string, PreviewCard[]>;
+    visibleTags: readonly TagCount[];
+    totalBlocks: number | null;
+    previewsPending: boolean;
+  }>({ channelPreviews, visibleTags: [], totalBlocks, previewsPending });
+  const readPreviewContent = useCallback(async (slug: string): Promise<SidebarPreviewContent | null> => {
+    if (!slug.startsWith(COLLECTION_PREVIEW_PREFIX)) {
+      const block = await getBlock(slug);
+      return block ? { kind: "card", block } : null;
+    }
+    const rowKey = slug.slice(COLLECTION_PREVIEW_PREFIX.length);
+    const source = collectionSourceRef.current;
+    if (rowKey === "all") {
+      return collectionPreviewContent({
+        rowKey,
+        name: "Everything",
+        count: source.totalBlocks ?? 0,
+        cards: source.channelPreviews.get("__all__"),
+        previewsPending: source.previewsPending,
+      });
+    }
+    const tag = rowKey.startsWith("tag:") ? rowKey.slice(4) : null;
+    const row = tag === null ? undefined : source.visibleTags.find((tc) => tc.tag === tag);
+    if (!row || tag === null) return null;
+    return collectionPreviewContent({
+      rowKey,
+      name: collectionRefLabel(tag),
+      count: row.count,
+      cards: source.channelPreviews.get(tag),
+      previewsPending: source.previewsPending,
+    });
+  }, []);
+  const previewWindow = useHoverPreviewWindow<SidebarPreviewWindowTarget, SidebarPreviewContent>({
     intent: rowIntent,
-    readCard: getBlock,
+    readCard: readPreviewContent,
     place: hoverPreviewBesidePanel(
       () => navRef.current?.closest("[data-sidebar-panel]")?.getBoundingClientRect() ?? null,
       "after",
@@ -643,6 +694,7 @@ const SidebarCore = memo(function SidebarCore({
     filterSidebarTags(orderedTags, searchQuery)
   ), [orderedTags, searchQuery]);
   const showEverythingRow = shouldShowSidebarEverythingRow(searchQuery);
+  collectionSourceRef.current = { channelPreviews, visibleTags, totalBlocks, previewsPending };
   const editingRowKey = !isLinkEditorActive && editingTag !== null
     ? `tag:${editingTag}`
     : isCreatingChannel
@@ -802,7 +854,10 @@ const SidebarCore = memo(function SidebarCore({
     const rowKey = row?.dataset.sidebarRowKey ?? null;
     rowIntent.move(rowKey, event.clientX, event.clientY);
     if (previewPointer.move(event.clientX, event.clientY) && !isDropDraggingRef.current && !isTagDraggingRef.current) {
-      previewWindow.pointer(previewTargetUnder(event.target));
+      previewWindow.pointer(
+        previewTargetUnder(event.target)
+          ?? collectionTargetUnder(row, event.target, event.clientX, event.clientY, linkActionPointerRef.current),
+      );
     }
     const last = lastPointerPointRowRef.current;
     const still = last !== null && last.x === event.clientX && last.y === event.clientY;
@@ -903,6 +958,15 @@ const SidebarCore = memo(function SidebarCore({
 
   const closePreview = useCallback(() => {
     previewWindow.dismiss();
+  }, [previewWindow]);
+
+  // A press on a row opens its collection, or starts a drag or a menu: the
+  // collection's window goes at once, as a thumbnail's card goes when its
+  // thumbnail is pressed (С7.12). A thumbnail's card stays for its menu.
+  const shownPreviewKeyRef = useRef<string | null>(null);
+  shownPreviewKeyRef.current = hoveredPreview?.key ?? null;
+  const dismissCollectionPreviewOnPress = useCallback(() => {
+    if (shownPreviewKeyRef.current?.startsWith(COLLECTION_PREVIEW_PREFIX)) previewWindow.dismiss();
   }, [previewWindow]);
 
   // The open preview belongs to its thumbnail. A strip update (a card saved
@@ -1024,6 +1088,7 @@ const SidebarCore = memo(function SidebarCore({
         data-sidebar-row-switching={sidebarRowSwitching ? "true" : undefined}
         onPointerMove={handleSidebarPointerMove}
         onPointerLeave={handleSidebarPointerLeave}
+        onPointerDownCapture={dismissCollectionPreviewOnPress}
         // The list slid under the pointer: the next real move names the row.
         onScroll={quietRowsUnderPointer}
         onFocusCapture={handleSidebarFocusCapture}
@@ -1155,10 +1220,18 @@ const SidebarCore = memo(function SidebarCore({
       </nav>
 
       {vaultPath && (
-        <HoverPreviewWindowLayer
+        <HoverPreviewWindowSurface
           controller={previewWindow}
-          vaultPath={vaultPath}
-          thumbsRootPath={thumbsRootPath}
+          renderCard={(content) => (content.kind === "card" ? (
+            <ReadOnlyCardPreview
+              block={content.block}
+              vaultPath={vaultPath}
+              thumbsRootPath={thumbsRootPath}
+              width={HOVER_PREVIEW_WINDOW_WIDTH_PX}
+            />
+          ) : (
+            <CollectionHoverPreview content={content} width={HOVER_PREVIEW_WINDOW_WIDTH_PX} />
+          ))}
           attribute="data-sidebar-thumbnail-hover-preview"
         />
       )}
@@ -1175,6 +1248,31 @@ function previewTargetUnder(target: EventTarget): SidebarPreviewWindowTarget | n
   if (!tile) return null;
   const { sidebarPreviewKey: key, sidebarPreviewRow: rowKey, sidebarPreviewSlug: slug } = tile.dataset;
   return key && rowKey && slug ? { key, rowKey, slug, element: tile } : null;
+}
+
+/// A collection's name under a pointer event, as the window's target
+/// (SPEC_CARD_STATES.md, С7.12): the name's cell of a collection's row or of
+/// Everything, in the part of the row the name answers (С7.10). Over the
+/// row's button the button answers (`overButton`, the pointer's mark,
+/// `data-sidebar-link-pointer`), and so does a button the pointer passes
+/// through before its row lights: its box decides, as the mark's does. A
+/// row whose name is being typed shows no window. The window stands by the
+/// row.
+function collectionTargetUnder(
+  row: HTMLElement | null,
+  target: EventTarget,
+  x: number,
+  y: number,
+  overButton: HTMLElement | null,
+): SidebarPreviewWindowTarget | null {
+  if (!row || !(target instanceof Element) || !target.closest("[data-sidebar-name-cell]")) return null;
+  const rowKey = row.dataset.sidebarRowKey;
+  if (!rowKey || (rowKey !== "all" && !rowKey.startsWith("tag:"))) return null;
+  if (row.hasAttribute("data-sidebar-row-editing")) return null;
+  const button = row.querySelector<HTMLElement>("[data-sidebar-link-action]");
+  if (button && (button === overButton || pointIsInsideRect({ x, y }, button.getBoundingClientRect()))) return null;
+  const key = `${COLLECTION_PREVIEW_PREFIX}${rowKey}`;
+  return { key, rowKey, slug: key, element: row };
 }
 
 function clientPointFromEvent(event: Event): CardMenuPoint | null {
@@ -2207,18 +2305,6 @@ function sidebarPreviewPlaceholderCount(count: number, shown: number, tiles: num
   return Math.max(0, Math.min(count, tiles) - shown);
 }
 
-/// The first `limit` cards of a row's list that have a thumbnail, in the
-/// list's order. The list holds every card of the collection; only what the
-/// strip shows is walked.
-function firstThumbnails(cards: PreviewCard[], limit: number): PreviewCard[] {
-  const shown: PreviewCard[] = [];
-  for (const card of cards) {
-    if (shown.length >= limit) break;
-    if (card.hasThumb) shown.push(card);
-  }
-  return shown;
-}
-
 /// How many tiles a strip holds, from its own width (SPEC_SIDEBAR_STRIP.md,
 /// ЛМ2), and the callback ref that measures it. The width is read once the
 /// strip is laid out, before its first frame paints, and again whenever its
@@ -2240,10 +2326,7 @@ function useStripTileCount(): [number, (strip: HTMLDivElement | null) => (() => 
 /// MicroPreviewThumbnail would draw: its fill until the picture is in, then
 /// a text thumb's card fill with its ink (MicroPreviewThumbnail.tsx).
 function sidebarStripTileClass(preview: MicroPreviewModel, picture: MicroPreviewPicture): string {
-  return cn(
-    SIDEBAR_PREVIEW_TILE_LAYOUT_CLASS,
-    preview.text && picture.loaded ? "bg-card" : SIDEBAR_PREVIEW_TILE_FILL_CLASS,
-  );
+  return cn(SIDEBAR_PREVIEW_TILE_LAYOUT_CLASS, sidebarTileFaceClass(preview, picture));
 }
 
 /// A strip tile's image. A picture that loaded stays in the page's cache, so

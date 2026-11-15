@@ -16,7 +16,9 @@ use std::{
 #[cfg(all(not(target_os = "ios"), not(test)))]
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 
-use crate::storage::block_queries::{collection_membership_join_sql, collections_column_sql};
+use crate::storage::block_queries::{
+    collection_membership_join_sql, collections_column_sql, grid_rows_by_slug, FeedOrder,
+};
 use crate::storage::index::{
     light_block_from_row, LightBlock, SearchMatch, SearchMatchField, SearchMatchKind,
     SearchTextRange, LIGHT_BLOCK_BODY_PREVIEW_CHARS,
@@ -203,6 +205,9 @@ fn search_grid_blocks_prepared_with_provider(
     query: &str,
     semantic_provider: Option<&dyn SemanticEmbeddingProvider>,
 ) -> Result<(Vec<LightBlock>, bool)> {
+    if let Some(initial) = title_initial(query) {
+        return title_initial_search(conn, tag, offset, limit, &initial);
+    }
     let Some(plan) = SearchPlan::from_query(query) else {
         return Ok((Vec::new(), false));
     };
@@ -236,6 +241,92 @@ fn search_grid_blocks_prepared_with_provider(
         .collect();
 
     Ok((blocks, has_more))
+}
+
+/// The one letter or digit a query of one character is, lowercased: such a
+/// query finds the cards with a word of their file name starting with it
+/// (user's decision of 15.11.2026, SPEC_SEARCH.md, «Запрос из одного
+/// символа»). Any other query, and one character that is neither a letter
+/// nor a digit, goes the full way, which plans nothing under two characters.
+fn title_initial(query: &str) -> Option<String> {
+    let mut chars = query.trim().chars();
+    let initial = chars.next()?;
+    (chars.next().is_none() && initial.is_alphanumeric()).then(|| initial.to_lowercase().collect())
+}
+
+/// A query of one character searches names only: one character over the
+/// text, the authors, the addresses or by meaning is noise, and it is no
+/// word, so no stop word and no transliteration applies to it. The file name
+/// is the name a result shows (SPEC_SEARCH.md, Match Metadata); the cards
+/// come newest first, in the order of the recent cards of the empty query
+/// (`FeedOrder::Newest`).
+///
+/// The FTS `title` column holds every name of a card, the file name among
+/// them, so its prefix match is the index's superset of the answer; only
+/// the slugs of those candidates are read and sorted, and the file name
+/// decides. The page's rows are then read as the feed reads them.
+fn title_initial_search(
+    conn: &Connection,
+    tag: Option<&str>,
+    offset: usize,
+    limit: usize,
+    initial: &str,
+) -> Result<(Vec<LightBlock>, bool)> {
+    let mut sql = String::from(
+        "SELECT b.slug FROM blocks b JOIN blocks_fts ON blocks_fts.rowid = b.id",
+    );
+    let mut params = vec![Value::Text(format!("title : {}", fts5_prefix_term(initial)))];
+    if tag.is_some() {
+        sql.push_str(&collection_route_join_sql());
+    }
+    sql.push_str(" WHERE b.card_kind != 'channel' AND blocks_fts MATCH ?1");
+    if let Some(tag) = tag {
+        params.push(Value::Text(tag.to_string()));
+        sql.push_str(" AND page.tag = ?2");
+    }
+    sql.push_str(&format!(" ORDER BY {}", FeedOrder::Newest.order_by("b.")));
+
+    let wanted = offset.saturating_add(limit).saturating_add(1);
+    let mut slugs = Vec::new();
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query(params_from_iter(params.iter()))?;
+    while let Some(row) = rows.next()? {
+        let slug: String = row.get(0)?;
+        if title_initial_match(&slug, initial).is_some() {
+            slugs.push(slug);
+            if slugs.len() == wanted {
+                break;
+            }
+        }
+    }
+
+    let has_more = slugs.len() > offset.saturating_add(limit);
+    let page: Vec<String> = slugs.into_iter().skip(offset).take(limit).collect();
+    let mut blocks = grid_rows_by_slug(conn, &page)?;
+    for block in &mut blocks {
+        block.search_match = title_initial_match(&block.slug, initial);
+    }
+    Ok((blocks, has_more))
+}
+
+/// The match of a one-character query in the file name: the first word that
+/// starts with it, case aside, as any typed prefix is highlighted.
+fn title_initial_match(slug: &str, initial: &str) -> Option<SearchMatch> {
+    let file_name = search_file_name(slug)?;
+    let (start, end) =
+        first_prefix_token_match_range(&file_name, &file_name.to_lowercase(), initial)?;
+    let needle = SearchNeedle {
+        term: initial.to_string(),
+        kind: SearchMatchKind::Prefix,
+    };
+    Some(SearchMatch {
+        field: SearchMatchField::Title,
+        kind: match_kind_for_text(&file_name, &needle, start, end),
+        ranges: vec![full_text_search_range(&file_name, start, end)],
+        excerpt: file_name,
+        score: TITLE_MATCH_WEIGHT,
+        explanation: None,
+    })
 }
 
 pub fn warm_search_index(
@@ -2668,29 +2759,175 @@ mod tests {
         assert_eq!(blocks[0].slug, "memory-title");
     }
 
+    /// A card for the one-character tests: `slug` names its file, the rest
+    /// of it can hold the letter anywhere but in a word of that name.
+    fn upsert_initial_card(
+        conn: &Connection,
+        slug: &str,
+        saved_at: &str,
+        description: Option<&str>,
+        author: Option<&str>,
+        url: Option<&str>,
+        body: &str,
+    ) {
+        let mut block = make_block_full(slug, "article", None, saved_at, &[], body);
+        block.frontmatter.description = description.map(ToOwned::to_owned);
+        block.frontmatter.author = author.map(ToOwned::to_owned);
+        block.frontmatter.url = url.map(ToOwned::to_owned);
+        upsert_block(conn, &block, None).unwrap();
+    }
+
+    fn slugs_of(blocks: &[LightBlock]) -> Vec<&str> {
+        blocks.iter().map(|block| block.slug.as_str()).collect()
+    }
+
+    /// One character searches names only (user's decision of 15.11.2026): a
+    /// word of the file name starting with it, case aside, newest first; the
+    /// text, the H1, the description, the author, the address and meaning
+    /// find nothing, and the semantic provider is never asked.
     #[test]
-    fn one_character_query_does_not_create_search_plan() {
+    fn one_character_finds_file_names_with_a_word_starting_with_it_newest_first() {
         let conn = test_conn();
-        upsert_block(
+        upsert_initial_card(&conn, "Cards/Город света", "2026-01-03T00:00:00Z", None, None, None, "Plain body.");
+        upsert_initial_card(&conn, "Cards/Старый город", "2026-01-05T00:00:00Z", None, None, None, "Plain body.");
+        upsert_initial_card(&conn, "Cards/огород", "2026-01-09T00:00:00Z", None, None, None, "Plain body.");
+        upsert_initial_card(
             &conn,
-            &make_block_full(
-                "available-title",
-                "article",
-                Some("Available notes"),
-                "2026-01-01T00:00:00Z",
-                &[],
-                "Plain lexical body.",
-            ),
-            None,
-        )
-        .unwrap();
+            "Cards/Notes",
+            "2026-01-10T00:00:00Z",
+            Some("Город в описании"),
+            Some("Горький"),
+            Some("https://gorod.example/г"),
+            "# Город в заголовке\n\nГород в тексте.",
+        );
 
         let provider = PanicSemanticProvider;
         let (blocks, has_more) =
             search_grid_blocks_with_provider(&conn, None, 0, 20, "г", Some(&provider)).unwrap();
-
         assert!(!has_more);
-        assert!(blocks.is_empty());
+        assert_eq!(slugs_of(&blocks), ["Cards/Старый город", "Cards/Город света"]);
+
+        let (upper, _) =
+            search_grid_blocks_with_provider(&conn, None, 0, 20, " Г ", Some(&provider)).unwrap();
+        assert_eq!(slugs_of(&upper), slugs_of(&blocks), "case and the trimmed spaces aside");
+
+        let found = blocks[0].search_match.as_ref().unwrap();
+        assert_eq!(found.field, SearchMatchField::Title);
+        assert_eq!(found.excerpt, "Старый город");
+        assert_eq!(found.ranges, vec![SearchTextRange { start: 7, end: 8 }]);
+        assert_eq!(blocks[1].search_match.as_ref().unwrap().ranges, vec![SearchTextRange { start: 0, end: 1 }]);
+    }
+
+    /// The character is the start of a word, not a word: no stop word drops
+    /// it, no transliteration widens it, and a digit counts as a letter.
+    #[test]
+    fn one_character_has_no_stop_words_and_no_transliteration() {
+        let conn = test_conn();
+        upsert_initial_card(&conn, "Cards/A frame house", "2026-01-01T00:00:00Z", None, None, None, "");
+        upsert_initial_card(&conn, "Cards/Gorod", "2026-01-02T00:00:00Z", None, None, None, "");
+        upsert_initial_card(&conn, "Cards/2025 plans", "2026-01-03T00:00:00Z", None, None, None, "");
+        upsert_initial_card(&conn, "Cards/Year 2025", "2026-01-04T00:00:00Z", None, None, None, "");
+
+        let provider = PanicSemanticProvider;
+        let search = |query: &str| {
+            search_grid_blocks_with_provider(&conn, None, 0, 20, query, Some(&provider)).unwrap().0
+        };
+        assert_eq!(slugs_of(&search("a")), ["Cards/A frame house"], "the stop word `a` is a letter here");
+        assert!(search("г").is_empty(), "`г` is not `g*`");
+        assert_eq!(slugs_of(&search("2")), ["Cards/Year 2025", "Cards/2025 plans"]);
+    }
+
+    /// A character that is neither a letter nor a digit is still waiting,
+    /// as before (SPEC_SEARCH_OVERLAY.md, «Минимальная длина запроса»).
+    #[test]
+    fn one_character_that_is_no_letter_or_digit_finds_nothing() {
+        let conn = test_conn();
+        upsert_initial_card(&conn, "Cards/#tag and - dash", "2026-01-01T00:00:00Z", None, None, None, "# - .");
+        let provider = PanicSemanticProvider;
+        for query in ["#", "-", ".", "\"", "*"] {
+            let (blocks, has_more) =
+                search_grid_blocks_with_provider(&conn, None, 0, 20, query, Some(&provider)).unwrap();
+            assert!(blocks.is_empty() && !has_more, "{query:?}");
+        }
+    }
+
+    /// Pages of a one-character search follow the overlay's paging: `limit`
+    /// rows from `offset`, `has_more` while more names match.
+    #[test]
+    fn one_character_pages_by_offset_and_limit() {
+        let conn = test_conn();
+        for day in 1..=5 {
+            upsert_initial_card(&conn, &format!("Cards/Note {day}"), &format!("2026-01-0{day}T00:00:00Z"), None, None, None, "");
+        }
+        let (first, has_more) = search_grid_blocks_prepared(&conn, None, 0, 2, "n").unwrap();
+        assert_eq!(slugs_of(&first), ["Cards/Note 5", "Cards/Note 4"]);
+        assert!(has_more);
+        let (last, has_more) = search_grid_blocks_prepared(&conn, None, 4, 2, "n").unwrap();
+        assert_eq!(slugs_of(&last), ["Cards/Note 1"]);
+        assert!(!has_more);
+    }
+
+    /// From two characters on, the full search is unchanged: the text and
+    /// the description find cards again, with the ranking as before.
+    #[test]
+    fn two_characters_keep_the_full_search() {
+        let conn = test_conn();
+        upsert_initial_card(&conn, "Cards/Город света", "2026-01-03T00:00:00Z", None, None, None, "Plain body.");
+        upsert_initial_card(&conn, "Cards/Notes", "2026-01-10T00:00:00Z", Some("Город в описании"), None, None, "Город в тексте.");
+        let provider = PanicSemanticProvider;
+        let (blocks, _) =
+            search_grid_blocks_with_provider(&conn, None, 0, 20, "го", Some(&provider)).unwrap();
+        assert_eq!(slugs_of(&blocks), ["Cards/Город света", "Cards/Notes"]);
+        assert_eq!(blocks[1].search_match.as_ref().unwrap().field, SearchMatchField::Description);
+    }
+
+    /// The speed of a one-character search on a large space: 10 000 cards
+    /// whose names start with the same few letters, so the letter matches
+    /// thousands of them. The limit is the search's (SPEC_SEARCH.md,
+    /// Performance Contract: first results under 100 ms on a warm index),
+    /// asserted in an optimised build through `INITIAL_TIMING_ENV`; an
+    /// unoptimised build says its numbers.
+    #[test]
+    fn a_one_character_search_of_a_large_space_answers_within_the_search_limit() {
+        const CARDS: usize = 10_000;
+        const READS: usize = 12;
+        const LIMIT: std::time::Duration = std::time::Duration::from_millis(100);
+        const INITIAL_TIMING_ENV: &str = "MINE_SEARCH_INITIAL_TIMING";
+        let words = ["город", "дом", "сад", "Garden", "house", "street", "мост", "река"];
+        let conn = test_conn();
+        conn.execute_batch("BEGIN").unwrap();
+        for card in 0..CARDS {
+            let name = format!("{} {} {card}", words[card % words.len()], words[(card / 8) % words.len()]);
+            let saved_at = format!("2026-01-01T{:02}:{:02}:{:02}Z", card / 3600 % 24, card / 60 % 60, card % 60);
+            let body = format!("Текст заметки {card}: город, дом и сад вдоль реки.");
+            upsert_initial_card(&conn, &format!("Cards/{name}"), &saved_at, None, None, None, &body);
+        }
+        conn.execute_batch("COMMIT").unwrap();
+        sync_search_documents(&conn).unwrap().record_committed(&conn);
+
+        let time = |query: &str| {
+            let mut timings = Vec::with_capacity(READS);
+            let mut found = (0, false);
+            for _ in 0..READS {
+                let started = std::time::Instant::now();
+                let (blocks, has_more) = search_grid_blocks_prepared(&conn, None, 0, 200, query).unwrap();
+                timings.push(started.elapsed());
+                found = (blocks.len(), has_more);
+            }
+            timings.sort();
+            (timings[READS / 2], timings[READS - 1], found)
+        };
+        let (median, slowest, found) = time("г");
+        assert_eq!(found, (200, true));
+        let (two_median, two_slowest, _) = time("го");
+        let asserted = std::env::var(INITIAL_TIMING_ENV).is_ok_and(|value| value == "assert");
+        eprintln!(
+            "one-character search, {CARDS} cards: median {median:?}, slowest {slowest:?}; two characters: median {two_median:?}, slowest {two_slowest:?}; limit {LIMIT:?}{}",
+            if asserted { ", asserted" } else { ", reported" },
+        );
+        if asserted {
+            assert!(slowest <= LIMIT, "one-character search {slowest:?} over {LIMIT:?} (median {median:?})");
+        }
     }
 
     #[test]

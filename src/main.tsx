@@ -5,6 +5,7 @@ import { hydrateCommandOverrides, watchCommandOverrides } from "@/lib/shortcutOv
 import { applyTheme, getStoredTheme } from "@/lib/themeMode";
 import { installMotionLevel } from "@/lib/motion";
 import { installMotionInput } from "@/lib/motionInput";
+import { followWindowLiveResize } from "@/lib/windowLiveResize";
 import { applyCardRadius, getStoredCardRadius } from "@/lib/cardRadius";
 import { applyDensity, getStoredDensity } from "@/lib/density";
 import { followWindowButtonStyle } from "@/lib/buttonStyle";
@@ -20,6 +21,7 @@ import { installControlCharGuard } from "@/lib/controlCharGuard";
 import { startCardPictureVersions } from "@/lib/pictureVersions";
 import { answerSwipeQuestion } from "@/lib/horizontalScroller";
 import { scheduleAfterNextPaint } from "@/lib/startup";
+import { followMenuPanel } from "@/lib/menuPanelSource";
 import { afterTwoFrames } from "@/lib/tabPage";
 import "./styles/global.css";
 
@@ -49,6 +51,9 @@ installMotionLevel();
 // The last input, a key or the pointer: what a key opened lands at once
 // (SPEC_MOTION_LEVELS.md, УД4).
 installMotionInput();
+// The person holding the window's edge: the sidebar crosses its threshold
+// on the spring at every level (SPEC_MOTION_LEVELS.md, С3).
+followWindowLiveResize();
 applyCardRadius(getStoredCardRadius());
 applyDensity(getStoredDensity());
 applyInterfaceFont(getStoredInterfaceFont());
@@ -104,6 +109,10 @@ class ErrorBoundary extends React.Component<
 function StartupPaintReporter() {
   React.useEffect(() => scheduleAfterNextPaint(() => {
     void recordStartupMilestone("window_shell_painted").catch(() => {});
+    // TRIAL: the menu panel, made after the first frame and only when the
+    // card menu is drawn there (DESIGN_SYSTEM.md, «Меню карточки в
+    // отдельном окне: проба»).
+    followMenuPanel();
   }), []);
   return null;
 }

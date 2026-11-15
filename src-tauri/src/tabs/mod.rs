@@ -6,6 +6,7 @@
 //! and pages in line, tells the tab bars and schedules a save.
 
 pub mod drag;
+pub mod live_resize;
 pub mod native;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,7 +28,7 @@ use crate::commands::state::AppState;
 use crate::domain::windows::{
     cascaded_frame, centered_frame, normalize, route_sidebar_intent, sidebar_shown, RestoreStep, ScreenArea,
     SavedTab, SavedWindow, SavedWindows, SidebarIntent, SidebarLayout, SidebarOverlay, SidebarRoute,
-    TabId, TabSpace, TabView, WindowFrame, WindowId, TAB_BAR_HEIGHT_PX,
+    TabId, TabSide, TabSpace, TabView, WindowFrame, WindowId, TAB_BAR_HEIGHT_PX,
     WINDOW_DEFAULT_HEIGHT, WINDOW_DEFAULT_WIDTH, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH,
 };
 use crate::storage::window_store::{load, Loaded, WindowStore};
@@ -671,6 +672,9 @@ fn furnish_window(app: &AppHandle, window: &Window, saved: &SavedWindow) -> anyh
     // window goes full screen: AppKit takes both when the window enters it.
     native::hide_toolbar_in_full_screen(window);
     native::set_compact_title_bar(window);
+    // The edge in hand: the pages' sidebars cross their threshold on the
+    // spring (SPEC_MOTION_LEVELS.md, С3).
+    live_resize::observe(app, window, &saved.id);
     if saved.fullscreen {
         window.set_fullscreen(true)?;
     }
@@ -885,6 +889,13 @@ fn window_frame(window: &Window) -> Option<WindowFrame> {
 fn on_window_focused(app: &AppHandle, window_id: &WindowId) {
     let shell = shell(app);
     if shell.quitting() {
+        return;
+    }
+    // TRIAL: the window takes the keyboard back from the card menu's panel
+    // (DESIGN_SYSTEM.md, «Меню карточки в отдельном окне: проба»). It is no
+    // return to the app: the window stayed the last one, its page kept the
+    // keyboard's place, and the disk was not left (В42).
+    if crate::menu_panel::focus_returns_from_panel(app, window_id) {
         return;
     }
     if !focus_is_chosen(&mut lock(&shell.live).restore_focus, window_id, Instant::now()) {
@@ -1278,6 +1289,7 @@ fn forget_page(app: &AppHandle, tab: &TabId) -> String {
     }
     let label = tab.label();
     crate::frame_context_menu::unregister_page(&label);
+    drag::forget_card_reports(&label);
     label
 }
 
@@ -1482,6 +1494,26 @@ pub fn close_other_tabs(app: &AppHandle, tab: &TabId) {
     }
 }
 
+/// Close every tab of `tab`'s window on its `side` (В50): `Close Tabs to
+/// the Left` and `Close Tabs to the Right`, by the path of `Close Other
+/// Tabs`. The clicked tab becomes visible when the visible one was closed.
+pub fn close_tabs_beside(app: &AppHandle, tab: &TabId, side: TabSide) {
+    let shell = shell(app);
+    let closed = shell.change(|model| model.close_tabs_beside(tab, side));
+    if closed.closed.is_empty() {
+        return;
+    }
+    for closed_tab in &closed.closed {
+        close_page(app, &closed_tab.id);
+    }
+    if let Some(now_visible) = &closed.now_visible {
+        activate(app, now_visible);
+    }
+    if let Some(window) = window_of(app, tab) {
+        emit_bar_state(app, &window);
+    }
+}
+
 /// Close `window_id` with its tabs. The last tab window ends the app and
 /// stays saved, to come back at the next launch (В33).
 pub fn close_window(app: &AppHandle, window_id: &WindowId) {
@@ -1643,7 +1675,10 @@ pub fn step_history(app: &AppHandle, bar_label: &str, forward: bool) {
 }
 
 /// The tab bar's search button: its window's visible tab opens the cards'
-/// search, as the Find menu item and Cmd+F do (SPEC_TABS.md, В43).
+/// search, as the Find menu item and Cmd+F do (SPEC_TABS.md, В43). The
+/// payload says a button was pressed: the page moves the search as the
+/// pointer's, not as a key's (SPEC_MOTION_LEVELS.md, УД4, п. 2), and over the
+/// image preview the picture fades before it (user's decision of 15.11.2026).
 pub fn open_search(app: &AppHandle, bar_label: &str) {
     let Some(window) = WindowId::from_label(bar_label) else {
         return;
@@ -1651,7 +1686,7 @@ pub fn open_search(app: &AppHandle, bar_label: &str) {
     let Some(tab) = shell(app).snapshot().window(&window).map(|window| window.active_tab.clone()) else {
         return;
     };
-    space_events::emit_to_labels(app, [tab.label()], SURFACE_SEARCH_EVENT, "main");
+    space_events::emit_to_labels(app, [tab.label()], SURFACE_SEARCH_EVENT, "main-button");
 }
 
 /// The tab `label` shows the space `vault_id` now (В10).
@@ -1945,6 +1980,8 @@ pub fn other_window_focused(app: &AppHandle) -> Option<Window> {
 mod tests {
     use std::cell::RefCell;
 
+    use crate::domain::windows::NewTab;
+
     use super::*;
 
     fn tab(id: &str, space: &str) -> SavedTab {
@@ -2157,5 +2194,60 @@ mod tests {
         let (windows, _) = windows_to_restore(&start, &[]);
 
         assert_eq!(tabs_of(&windows), vec!["a", "b"]);
+    }
+
+    /// The saved windows written after `change`, read back from `windows.json`
+    /// once the store's writer got to it.
+    fn written_after(change: impl FnOnce(&mut SavedWindows)) -> SavedWindows {
+        let dir = tempfile::tempdir().unwrap();
+        let shell = TabShell::new(Some(dir.path().to_path_buf()));
+        *lock(&shell.model) = saved(vec![window("w", vec![tab("a", "x"), tab("b", "x"), tab("c", "x")])]);
+        shell.change(change);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if let Loaded::Windows(windows) = load(dir.path()).unwrap() {
+                return windows;
+            }
+            assert!(Instant::now() < deadline, "the change was never written");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn written_order(windows: &SavedWindows) -> Vec<&str> {
+        windows.windows[0].tabs.iter().map(|tab| tab.id.0.as_str()).collect()
+    }
+
+    /// В50: closing the tabs on one side is written to the saved windows as
+    /// closing the other tabs is, through the shell's one change.
+    #[test]
+    fn closing_tabs_on_one_side_is_written_to_the_saved_windows() {
+        let written = written_after(|model| {
+            model.close_tabs_beside(&TabId("b".into()), TabSide::Right);
+        });
+        assert_eq!(written_order(&written), vec!["a", "b"]);
+        let written = written_after(|model| {
+            model.close_tabs_beside(&TabId("b".into()), TabSide::Left);
+        });
+        assert_eq!(written_order(&written), vec!["b", "c"]);
+        // The visible tab `a` was closed: the clicked tab shows.
+        assert_eq!(written.windows[0].active_tab, TabId("b".into()));
+    }
+
+    /// В86: the tabs of dropped cards are written with their places.
+    #[test]
+    fn the_tabs_of_dropped_cards_are_written_to_the_saved_windows() {
+        let written = written_after(|model| {
+            let tabs = ["grabbed", "n2"]
+                .into_iter()
+                .map(|id| NewTab {
+                    id: TabId(id.into()),
+                    space: TabSpace::Space { vault_id: "x".into() },
+                    view: TabView::default(),
+                })
+                .collect();
+            model.insert_tabs(&WindowId("w".into()), 1, tabs, 0);
+        });
+        assert_eq!(written_order(&written), vec!["a", "grabbed", "n2", "b", "c"]);
+        assert_eq!(written.windows[0].active_tab, TabId("grabbed".into()));
     }
 }

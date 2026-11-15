@@ -1,5 +1,5 @@
 // What this window's tab bar shows, kept current from the backend
-// (SPEC_TABS.md, В21, В56, В63). Whether the visible tab's sidebar is shown
+// (SPEC_TABS.md, В21, В56, В63, В86). Whether the visible tab's sidebar is shown
 // comes in `tabbar-state` too: beside the feed or over it, only the backend
 // and the page know (SPEC_NARROW_WINDOW.md, У4).
 //
@@ -41,7 +41,11 @@ interface BarModel {
   bar: TabBarState | null;
   /** An event already delivered a state; the start answer is older then. */
   live: boolean;
+  /** What is held over the bar: a tab of another window (В63) or cards of
+   *  this window's visible tab (В86). */
   dropHover: DropHover | null;
+  /** Cards let go over the bar, until the backend says the drop is over (В86). */
+  landing: DropHover | null;
 }
 
 type BarAction =
@@ -55,16 +59,35 @@ function reduce(model: BarModel, action: BarAction): BarModel {
       if (model.live || action.bar === null) return model;
       return { ...model, bar: action.bar };
     case "state":
-      return { ...model, bar: action.bar, live: true };
+      // The state after cards were let go brings their tabs: the gap they
+      // land in goes in the same frame (В86).
+      return {
+        ...model,
+        bar: action.bar,
+        live: true,
+        dropHover: model.landing === null ? model.dropHover : null,
+      };
     case "drop-hover":
-      return { ...model, dropHover: action.hover.x === null ? null : action.hover };
+      if (action.hover.item.kind === "cards" && action.hover.item.dropped) {
+        return { ...model, landing: action.hover };
+      }
+      // A report of the pointer that reached the backend after the drop
+      // changes nothing; the end of the drop ends the landing.
+      if (model.landing !== null && action.hover.item.kind === "cards" && action.hover.x !== null) {
+        return model;
+      }
+      return { ...model, dropHover: action.hover.x === null ? null : action.hover, landing: null };
   }
 }
 
-const INITIAL: BarModel = { bar: null, live: false, dropHover: null };
+const INITIAL: BarModel = { bar: null, live: false, dropHover: null, landing: null };
 
-/** The bar's state and the tab another window drags over it, if any. */
-export function useTabBarState(): { bar: TabBarState | null; dropHover: DropHover | null } {
+/** The bar's state, what is held over it, and cards let go over it. */
+export function useTabBarState(): {
+  bar: TabBarState | null;
+  dropHover: DropHover | null;
+  landing: DropHover | null;
+} {
   const [model, dispatch] = useReducer(reduce, INITIAL);
 
   useEffect(() => {
@@ -88,5 +111,5 @@ export function useTabBarState(): { bar: TabBarState | null; dropHover: DropHove
     };
   }, []);
 
-  return { bar: model.bar, dropHover: model.dropHover };
+  return { bar: model.bar, dropHover: model.dropHover, landing: model.landing };
 }

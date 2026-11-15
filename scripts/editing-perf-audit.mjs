@@ -58,13 +58,20 @@ const LIMITS = {
   longFrameMs: 50,
   entryMs: 150,
   chunkLoadMs: 100,
-  /** The open card with its editor holds the note's text twice and not
-   *  more: the card's content text, which the open card derives in either
-   *  mode (`deriveCardContent`, its preview without the markup), and the
-   *  editor's document; a second copy of the document would be a third.
-   *  What the heap grows by from 1 MB to 10 MB of prose stays under this
-   *  many copies of the text added. */
-  memoryCopies: 2.5,
+  /** The card just opened in the editor, before its first edit, holds the
+   *  note's text once: the editor's document, whose lines are slices of the
+   *  body the session opened with; the save queue keeps the same string. Its
+   *  content text is a preview of 400 signs. The half above one is room for
+   *  the structures that grow with the text (the document's tree, the
+   *  parse). Until 15.11.2026 the limit was 2.5 on the belief that the
+   *  content text was a second copy the card needs: it was the whole cleaned
+   *  body kept alive under the preview's slice, and the queue kept a third
+   *  copy from the file asked on opening (SPEC_EDITING.md, Л14.3). After
+   *  the first save the saved text and the document are two copies by
+   *  right; this measure, before any edit, does not see that state. What the
+   *  heap grows by from 1 MB to 10 MB of prose stays under this many copies
+   *  of the text added. */
+  memoryCopies: 1.5,
 };
 
 /** Keys typed at every place; the 95th percentile is the third highest. */

@@ -71,4 +71,15 @@ describe("clipper overlay custom properties inside Shadow DOM", () => {
   it("gives the host the fills derived from its surface", () => {
     expect(selectorDeclaring(rewriteRootForShadow(globalCss), "@apply surface-fills;")).toMatch(/^:root,:host,\s*\.bg-background,/);
   });
+
+  // A chosen row of the clipper's list of spaces blinks (user's decision of
+  // 15.11.2026): the rule that puts its highlight out must reach the overlay
+  // as it is, outside every layer, so it outranks the highlight's utilities.
+  it("keeps the blink rule of a chosen menu row unlayered and as it is", () => {
+    const shadow = rewriteRootForShadow(globalCss).replace(/\/\*[\s\S]*?\*\//g, "");
+    const rule = /\[data-menu-blink\]\s*\{\s*background-image:\s*none;\s*\}/.exec(shadow);
+    expect(rule).not.toBeNull();
+    const before = shadow.slice(0, rule?.index ?? 0);
+    expect((before.match(/\{/g) ?? []).length - (before.match(/\}/g) ?? []).length).toBe(0);
+  });
 });

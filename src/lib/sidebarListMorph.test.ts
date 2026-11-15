@@ -3,11 +3,16 @@ import { SIDEBAR_PREVIEW_TILE_GAP_PX, SIDEBAR_PREVIEW_TILE_PX, sidebarCompactRow
 import { CHANNEL_ICON_SPRING_EASING, CHANNEL_ICON_SPRING_MS, SPRING_SAMPLES } from "./channelIcon";
 import { setListStyle } from "./compactStack";
 import { setMotionLevel } from "@/test/motionLevel";
+import { MOTION_SPRING_MOVE_MS } from "./motion";
+import { installMotionInput } from "./motionInput";
+import { SIDEBAR_RESIZING_CLASS } from "./sidebarLook";
+import { WINDOW_LIVE_RESIZE_EVENT, followWindowLiveResize } from "./windowLiveResize";
 import {
   LIST_MORPH_FADE_IN_FROM_MS,
   LIST_MORPH_FADE_OUT_MS,
   LIST_MORPH_SETTLE_MS,
   LIST_MORPH_STEP_LIMIT_PX,
+  STRIP_TILES_FRAME,
   anchoredScroll,
   fadeShare,
   fadeTrack,
@@ -25,6 +30,28 @@ import {
 
 /// The rows' move between the List and the table (user's decision of
 /// 01.11.2026; DESIGN_SYSTEM.md, «Переход между List и таблицей»).
+
+/** The backend's word on this page's window: its live resize. */
+const pageEvents = vi.hoisted(() => new Map<string, (payload: unknown) => void>());
+/** The strips' widths the move holds (sidebarStripWidth.ts): taken and let go. */
+const strips = vi.hoisted(() => ({ held: 0, released: 0 }));
+vi.mock("./sidebarStripWidth", () => ({
+  holdStripWidths: () => {
+    strips.held += 1;
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      strips.released += 1;
+    };
+  },
+}));
+vi.mock("./pageEvents", () => ({
+  listenPage: async (event: string, handler: (event: { event: string; id: number; payload: unknown }) => void) => {
+    pageEvents.set(event, (payload) => handler({ event, id: 1, payload }));
+    return () => pageEvents.delete(event);
+  },
+}));
 
 const ROWS = 60;
 const PORT = 600;
@@ -853,21 +880,162 @@ describe("the scrollport", () => {
     setListStyle("plain");
   });
 
-  it.each(["minimal", "off"] as const)("moves nothing in %s: the look follows the width at once (SPEC_MOTION_LEVELS.md, С3)", (level) => {
-    setMotionLevel(level);
-    const { nav, state, threshold } = mountList();
-    const stop = observeSidebarListMorph(nav);
-    report(state.width);
-    state.width = threshold - 20;
-    report(state.width);
-    expect(nav.getAttribute("data-sidebar-look")).toBe("compact");
-    state.width = threshold + 20;
-    report(state.width);
-    nextFrame();
-    expect(nav.getAttribute("data-sidebar-look")).toBe("table");
-    expect(played).toEqual([]);
-    expect(nav.hasAttribute("data-sidebar-rows-bare")).toBe(false);
-    expect(nav.hasAttribute("data-sidebar-rows-fade")).toBe(false);
-    stop();
+  // The move answers the edge in hand on every level (SPEC_MOTION_LEVELS.md,
+  // Р1, С3; user's decision of 15.11.2026); any other width is a command's,
+  // by its level and at once after a key (Р2, Р3, Р4).
+  describe("by what changed the width", () => {
+    let removeInput: (() => void) | null = null;
+    afterEach(() => {
+      document.body.classList.remove(SIDEBAR_RESIZING_CLASS);
+      removeInput?.();
+      removeInput = null;
+    });
+
+    /** The width crossing the threshold by `by` px from `by` px below it:
+     *  the look after, whether the rows move, and their moves' times. */
+    const cross = (by: number) => {
+      const { nav, rows, state, threshold } = mountList(threshold0() - 10);
+      const stop = observeSidebarListMorph(nav);
+      report(state.width);
+      state.width = threshold - 10 + by;
+      report(state.width);
+      nextFrame();
+      const seen = {
+        look: nav.getAttribute("data-sidebar-look"),
+        moving: nav.getAttribute("data-sidebar-rows-fade"),
+        durations: [...new Set(moves(rows).map((play) => play.options.duration))],
+      };
+      stop();
+      return seen;
+    };
+
+    it.each(["full", "minimal", "off"] as const)("moves the rows on the spring under the edge in hand in %s", (level) => {
+      setMotionLevel(level);
+      document.body.classList.add(SIDEBAR_RESIZING_CLASS);
+      expect(cross(20)).toEqual({ look: "table", moving: "table", durations: [LIST_MORPH_SETTLE_MS] });
+    });
+
+    it.each(["full", "minimal", "off"] as const)("switches at once under the edge in hand in %s for a step larger than a tile and its gap", (level) => {
+      setMotionLevel(level);
+      document.body.classList.add(SIDEBAR_RESIZING_CLASS);
+      expect(cross(LIST_MORPH_STEP_LIMIT_PX + 1)).toEqual({ look: "table", moving: null, durations: [] });
+      expect(played).toEqual([]);
+    });
+
+    it.each([
+      ["full", [LIST_MORPH_SETTLE_MS]],
+      ["minimal", [MOTION_SPRING_MOVE_MS]],
+      ["off", []],
+    ] as const)("moves the rows by the level for a command's width in %s", (level, durations) => {
+      setMotionLevel(level);
+      expect(cross(20)).toEqual({ look: "table", moving: durations.length > 0 ? "table" : null, durations });
+    });
+
+    it.each(["full", "minimal", "off"] as const)("moves the rows on the spring in %s while the window's edge is held, and at once for a larger step", async (level) => {
+      setMotionLevel(level);
+      const stopFollowing = followWindowLiveResize();
+      await vi.waitFor(() => expect(pageEvents.has(WINDOW_LIVE_RESIZE_EVENT)).toBe(true));
+      pageEvents.get(WINDOW_LIVE_RESIZE_EVENT)!(true);
+      expect(cross(20)).toEqual({ look: "table", moving: "table", durations: [LIST_MORPH_SETTLE_MS] });
+      played = [];
+      expect(cross(LIST_MORPH_STEP_LIMIT_PX + 1)).toEqual({ look: "table", moving: null, durations: [] });
+      expect(played).toEqual([]);
+      // Released: a command's width again.
+      pageEvents.get(WINDOW_LIVE_RESIZE_EVENT)!(false);
+      expect(cross(20).durations).toEqual(level === "full" ? [LIST_MORPH_SETTLE_MS] : level === "minimal" ? [MOTION_SPRING_MOVE_MS] : []);
+      stopFollowing();
+    });
+
+    // The strips take their tiles a few frames after the crossing, still
+    // transparent (user's decision of 15.11.2026; SPEC_SIDEBAR_STRIP.md, ЛМ2).
+    describe("the strips' tiles going to the table", () => {
+      beforeEach(() => {
+        strips.held = 0;
+        strips.released = 0;
+      });
+
+      /** The width crossing to the table by `by` px: the move's observer. */
+      const toTable = (by: number) => {
+        const { nav, state, threshold } = mountList(threshold0() - 10);
+        const stop = observeSidebarListMorph(nav);
+        report(state.width);
+        state.width = threshold - 10 + by;
+        report(state.width);
+        return { nav, state, threshold, stop };
+      };
+
+      it.each(["full", "minimal", "off"] as const)("wait from the crossing to the frame after the move's animations in %s", (level) => {
+        setMotionLevel(level);
+        document.body.classList.add(SIDEBAR_RESIZING_CLASS);
+        const { nav, stop } = toTable(20);
+        expect(nav.getAttribute("data-sidebar-rows-fade")).toBe("table");
+        expect(strips).toEqual({ held: 1, released: 0 });
+        // The next frame makes the move's animations; the tiles wait still.
+        nextFrame();
+        expect(played.length).toBeGreaterThan(0);
+        expect(strips.released).toBe(0);
+        for (let frame = 2; frame < STRIP_TILES_FRAME; frame += 1) {
+          nextFrame();
+          expect(strips.released).toBe(0);
+        }
+        nextFrame();
+        expect(strips).toEqual({ held: 1, released: 1 });
+        stop();
+        expect(strips).toEqual({ held: 1, released: 1 });
+      });
+
+      it("take them at once once the move ends before their frame: a scroll, a larger step back, the teardown", () => {
+        document.body.classList.add(SIDEBAR_RESIZING_CLASS);
+        const scrolled = toTable(20);
+        scrolled.nav.scrollTop = 120;
+        scrolled.nav.dispatchEvent(new Event("scroll"));
+        expect(strips).toEqual({ held: 1, released: 1 });
+        scrolled.stop();
+        document.body.innerHTML = "";
+
+        // Back across the threshold by more than a tile and its gap.
+        const jumped = toTable(20);
+        jumped.state.width -= LIST_MORPH_STEP_LIMIT_PX + 1;
+        report(jumped.state.width);
+        expect(jumped.nav.getAttribute("data-sidebar-look")).toBe("compact");
+        expect(strips).toEqual({ held: 2, released: 2 });
+        jumped.stop();
+        document.body.innerHTML = "";
+
+        const stopped = toTable(20);
+        stopped.stop();
+        expect(strips).toEqual({ held: 3, released: 3 });
+      });
+
+      it("hold nothing where the look changes at once or the List is reached", () => {
+        document.body.classList.add(SIDEBAR_RESIZING_CLASS);
+        toTable(LIST_MORPH_STEP_LIMIT_PX + 1).stop();
+        expect(strips).toEqual({ held: 0, released: 0 });
+        document.body.innerHTML = "";
+        // Going to the List the strips show as they leave.
+        const { nav, state, threshold } = mountList(threshold0() + 10);
+        const stop = observeSidebarListMorph(nav);
+        report(state.width);
+        state.width = threshold - 10;
+        report(state.width);
+        expect(nav.getAttribute("data-sidebar-rows-fade")).toBe("list");
+        expect(strips.held).toBe(0);
+        stop();
+        document.body.innerHTML = "";
+        // A command's width at Off.
+        document.body.classList.remove(SIDEBAR_RESIZING_CLASS);
+        setMotionLevel("off");
+        toTable(20).stop();
+        expect(strips).toEqual({ held: 0, released: 0 });
+      });
+    });
+
+    it.each(["full", "minimal", "off"] as const)("switches at once in %s for a width a key changed", (level) => {
+      setMotionLevel(level);
+      removeInput = installMotionInput();
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+      expect(cross(20)).toEqual({ look: "table", moving: null, durations: [] });
+      expect(played).toEqual([]);
+    });
   });
 });

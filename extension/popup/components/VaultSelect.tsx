@@ -20,6 +20,7 @@ import { QuantizedMenuScrollArea } from "@/components/QuantizedMenuScrollArea";
 import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
 import { filterAndRankChannelSearch } from "@/lib/channelSearch";
+import { useMenuRowBlink } from "@/lib/menuBlink";
 import { ClipperOverflowMenu } from "./ClipperOverflowMenu";
 
 interface VaultSelectProps {
@@ -44,6 +45,11 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  // A chosen row blinks once before the list closes and its command runs, as
+  // a row of the app's menu of spaces does (src/lib/menuBlink.ts; user's
+  // decision of 15.11.2026). A row is blinked by what it is, a space or a
+  // pinned action, not by its place in the list.
+  const rowBlink = useMenuRowBlink<string>();
   const actionIdPrefix = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   // The pointer press on the name whose click decides the menu: whether the
@@ -78,6 +84,8 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
 
   useEffect(() => {
     if (!open) {
+      // The list closed during a row's blink: its command does not run.
+      rowBlink.cancel();
       setQuery("");
       setActiveIndex(null);
       return;
@@ -87,7 +95,7 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
       searchInputRef.current?.select();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [open]);
+  }, [open, rowBlink.cancel]);
 
   useEffect(() => {
     setActiveIndex((current) => {
@@ -104,6 +112,48 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
     onChange(path);
   }, [onChange]);
 
+  /// What the row at `index` is: a space, or one of the pinned actions.
+  const rowKeyAt = useCallback((index: number): string => {
+    const path = visibleVaults[index];
+    if (path) return `space:${path}`;
+    return index === revealActionIndex ? "reveal" : "add";
+  }, [revealActionIndex, visibleVaults]);
+
+  /// The command of the row at `index`; null for a row that does nothing
+  /// (Reveal in Finder with no space chosen), which does not blink either.
+  const commandAt = useCallback((index: number): (() => void) | null => {
+    const path = visibleVaults[index];
+    if (path) return () => selectVault(path);
+    if (index === revealActionIndex) {
+      if (!value) return null;
+      return () => {
+        setOpen(false);
+        onReveal(value);
+      };
+    }
+    if (index === addSpaceActionIndex) {
+      return () => {
+        setOpen(false);
+        onAddSpace();
+      };
+    }
+    return null;
+  }, [addSpaceActionIndex, onAddSpace, onReveal, revealActionIndex, selectVault, value, visibleVaults]);
+
+  // A press and Enter in the field choose a row by this one path: the row
+  // blinks, then the list closes and the command runs, once.
+  const chooseIndex = useCallback((index: number | null) => {
+    if (index === null) return;
+    const command = commandAt(index);
+    if (!command) return;
+    rowBlink.choose(rowKeyAt(index), command);
+  }, [commandAt, rowBlink.choose, rowKeyAt]);
+
+  // While a row blinks it is the one row lit, out for the first half.
+  const rowLit = (index: number): boolean => rowBlink.lit(rowKeyAt(index), activeIndex === index);
+  const rowOff = (index: number): boolean => rowBlink.outAt(rowKeyAt(index));
+  const blinking = rowBlink.blinking;
+
   const moveActiveIndex = useCallback((direction: 1 | -1) => {
     if (actionCount <= 0) return;
     setActiveIndex((current) => {
@@ -117,13 +167,19 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
 
   const handleSearchKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape") {
+      // The menu's own Escape decides (onEscapeKeyDown below): Radix hears
+      // the key on the document before the field, and by now has cleared
+      // the query or closed the menu, dropping a blinking row's command.
       event.preventDefault();
       event.stopPropagation();
-      if (query) {
-        setQuery("");
-      } else {
-        setOpen(false);
-      }
+      return;
+    }
+
+    // During a row's blink the list takes no other key: the rows and the
+    // query stay as they were chosen from.
+    if (blinking) {
+      event.preventDefault();
+      event.stopPropagation();
       return;
     }
 
@@ -137,31 +193,14 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
     if (event.key !== "Enter" || activeIndex === null) return;
     event.preventDefault();
     event.stopPropagation();
-    const path = visibleVaults[activeIndex];
-    if (path) {
-      selectVault(path);
-      return;
-    }
-    if (activeIndex === revealActionIndex && value) {
-      setOpen(false);
-      onReveal(value);
-      return;
-    }
-    if (activeIndex === addSpaceActionIndex) {
-      setOpen(false);
-      onAddSpace();
-    }
+    chooseIndex(activeIndex);
   }, [
     activeIndex,
-    addSpaceActionIndex,
+    blinking,
+    chooseIndex,
     moveActiveIndex,
-    onAddSpace,
-    onReveal,
     query,
-    revealActionIndex,
-    selectVault,
-    value,
-    visibleVaults,
+    rowBlink.cancel,
   ]);
 
   return (
@@ -202,6 +241,18 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
           side="bottom"
           widthRole="search"
           className="overflow-hidden bg-accent p-0 text-foreground"
+          // Radix hears Escape on the document before the field does and
+          // would close the whole list: with a query typed, the first Escape
+          // clears it and the list stays open with the caret in the field,
+          // the next one closes it. During a row's blink Escape drops the
+          // command and closes the list.
+          onEscapeKeyDown={(event) => {
+            if (!query || rowBlink.blinking) return;
+            event.preventDefault();
+            setQuery("");
+            setActiveIndex(null);
+            searchInputRef.current?.focus({ preventScroll: true });
+          }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             triggerRef.current?.blur();
@@ -215,6 +266,7 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
             controlSize="clipper"
             value={query}
             onChange={(event) => {
+              if (blinking) return;
               setQuery(event.target.value);
               setActiveIndex(null);
             }}
@@ -231,10 +283,11 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
                 <SearchMenuAction
                   id={`${actionIdPrefix}-clipper-space-action-${index}`}
                   key={path}
-                  active={activeIndex === index}
+                  active={rowLit(index)}
+                  blinkOff={rowOff(index)}
                   rowSize="clipper"
                   onActive={() => setActiveIndex(index)}
-                  onPress={() => selectVault(path)}
+                  onPress={() => chooseIndex(index)}
                 >
                   <MenuIconSlot />
                   <span className="min-w-0 truncate">
@@ -252,14 +305,11 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
           <div className="border-t border-border p-1" data-clipper-space-pinned-actions="">
             <SearchMenuAction
               id={`${actionIdPrefix}-clipper-space-action-${revealActionIndex}`}
-              active={activeIndex === revealActionIndex}
+              active={rowLit(revealActionIndex)}
+              blinkOff={rowOff(revealActionIndex)}
               rowSize="clipper"
               onActive={() => setActiveIndex(revealActionIndex)}
-              onPress={() => {
-                if (!value) return;
-                setOpen(false);
-                onReveal(value);
-              }}
+              onPress={() => chooseIndex(revealActionIndex)}
             >
               <MenuIconSlot>
                 <FolderOpen className="size-[13px]" />
@@ -268,13 +318,11 @@ export function VaultSelect({ value, options, onChange, onReveal, onAddSpace, on
             </SearchMenuAction>
             <SearchMenuAction
               id={`${actionIdPrefix}-clipper-space-action-${addSpaceActionIndex}`}
-              active={activeIndex === addSpaceActionIndex}
+              active={rowLit(addSpaceActionIndex)}
+              blinkOff={rowOff(addSpaceActionIndex)}
               rowSize="clipper"
               onActive={() => setActiveIndex(addSpaceActionIndex)}
-              onPress={() => {
-                setOpen(false);
-                onAddSpace();
-              }}
+              onPress={() => chooseIndex(addSpaceActionIndex)}
             >
               <MenuIconSlot>
                 <FolderPlus className="size-[13px]" />

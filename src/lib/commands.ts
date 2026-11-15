@@ -7,11 +7,14 @@ import {
   type InvokeOptions,
 } from "@tauri-apps/api/core";
 import type {
+  CardBarDrop,
+  CardDragHover,
   SidebarLayout,
   SidebarOverlay,
   TabBarState,
   TabBootstrap,
   TabId,
+  TabSide,
   TabLocation,
   TabView,
   IndexedBlock,
@@ -917,6 +920,10 @@ export const closeTab = (tabId: TabId) => invoke<void>("close_tab", { tabId });
 /** Close every tab of `tabId`'s window but it (В50). */
 export const closeOtherTabs = (tabId: TabId) => invoke<void>("close_other_tabs", { tabId });
 
+/** Close every tab of `tabId`'s window on its `side` (В50). */
+export const closeTabsBeside = (tabId: TabId, side: TabSide) =>
+  invoke<void>("close_tabs_beside", { tabId, side });
+
 /** Move the tab `tabId` to `index` in its window (В60). */
 export const moveTab = (tabId: TabId, index: number) => invoke<void>("move_tab", { tabId, index });
 
@@ -960,6 +967,19 @@ export const showSpace = (path: string, goEverything: boolean) =>
 export const spacesInTabs = () => invoke<string[]>("spaces_in_tabs");
 
 /** This tab bar reports the slot under a dragged tab from another window,
- *  or `null` when none (В63). Sent while `tabbar-drop-hover` arrives. */
+ *  or `null` when none (В63). Sent while `tabbar-drop-hover` arrives; once,
+ *  for cards let go over the bar, the slot they land at (В86). */
 export const reportDropSlot = (index: number | null) =>
   invoke<void>("report_drop_slot", { index });
+
+/** This tab drags cards over its window's tab bar at `hover`, or no longer
+ *  (`null`, В86). `seq` numbers this page's card reports, each above the one
+ *  before: calls may arrive out of order (В10), and the backend drops a late
+ *  one. */
+export const reportCardDrag = (seq: number, hover: CardDragHover | null) =>
+  invoke<void>("report_card_drag", { seq, hover });
+
+/** This tab let cards go over its window's tab bar: a tab each at the slot
+ *  under `drop.x` (В86). `seq` as for `reportCardDrag`. */
+export const dropCardsOnTabBar = (seq: number, drop: CardBarDrop) =>
+  invoke<void>("drop_cards_on_tab_bar", { seq, drop });

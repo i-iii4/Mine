@@ -972,6 +972,13 @@ body {
   -webkit-backdrop-filter: blur(var(--scrim-blur)) saturate(var(--scrim-saturate));
   backdrop-filter: blur(var(--scrim-blur)) saturate(var(--scrim-saturate));
 }
+/* A scrim handed over: the search opened from over the image preview takes
+   the preview's scrim as it stands, so it does not come in again; no frame
+   without a scrim and none with two (SPEC_SEARCH_OVERLAY.md, «Открытие и
+   закрытие»; user's decision of 15.11.2026). Its leaving is its own. */
+[data-scrim-handed-over][data-state="open"] {
+  animation: none;
+}
 
 
 /* Progress without a known length (components/ui/progress.tsx): a pill
@@ -1721,6 +1728,32 @@ body {
 ) {
   --surface: var(--popover);
   background-color: var(--popover);
+}
+
+/* A tooltip that took over from its neighbour in the group glides there
+   (SPEC_MOTION_LEVELS.md, М3; user's decision of 15.11.2026;
+   src/lib/tooltipGlide.ts): its own appearance does not run while it is
+   open, its leaving does. On the way its frame is drawn in pieces at the
+   place it moves through, so its own fill, line and shadow give way, and
+   the text is clipped inside the moving line. While the pointer crosses
+   the group's gap, label or button with no tooltip, the leaving of the
+   tooltip it left waits at its start, the tooltip whole, for the preview's
+   grace across a gap (`HOVER_INTENT.leaveGraceMs`); then it runs. */
+[data-slot="tooltip-content"][data-tooltip-handoff]:not([data-state="closed"]) {
+  animation: none;
+}
+[data-slot="tooltip-content"][data-tooltip-hold][data-state="closed"] {
+  animation-play-state: paused;
+}
+[data-slot="tooltip-content"][data-tooltip-gliding] {
+  position: relative;
+  background-color: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+[data-tooltip-gliding] > [data-tooltip-clip] {
+  position: relative;
+  overflow: hidden;
 }
 
 /* The colour ladder over what lies below (DESIGN_SYSTEM.md, «Цвет от того,
@@ -2661,6 +2694,13 @@ body {
 }
 [data-top-row="two"] [data-below-top-row] {
   margin-top: var(--top-second-row-height);
+}
+/* With the commands in the second row the first row holds the place's name
+   alone: it takes the row up to its neighbour again, not the half the
+   commands take in one row (TopCollectionSwitcher.tsx; user's decision of
+   15.11.2026). A try of one row gives the commands their half back. */
+[data-top-row="two"]:not([data-top-row-try]) [data-top-collection-switcher-slot]:not([data-overlay]) {
+  max-width: none;
 }
 /* The second row's left edge follows the sidebar's as it collapses or
    opens, with the sidebar's own motion (useSidebarResize.ts): Поверхность,

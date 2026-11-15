@@ -6,6 +6,7 @@ import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
 import { SETTINGS_SECTIONS, type SettingsSection } from "@/lib/settingsSections";
 import { BUTTON_STYLES, shownButtonStyle, type ButtonStyle } from "@/lib/buttonStyle";
+import { MENU_MODES, chooseMenuMode, menuMode } from "@/lib/menuMode";
 
 /** The bar's settings menu. */
 export interface SettingsMenu {
@@ -35,9 +36,21 @@ export async function createSettingsMenu(actions: SettingsMenuActions): Promise<
       }).then((item) => ({ value, item }))),
   );
   const buttons = await Submenu.new({ text: "Buttons", items: styles.map(({ item }) => item) });
+  // TRIAL: where the feed card's menu is drawn, for the whole app: on the
+  // page or in a window of its own (src/lib/menuMode.ts; DESIGN_SYSTEM.md,
+  // «Меню карточки в отдельном окне: проба»).
+  const modes = await Promise.all(
+    MENU_MODES.map(({ value, label }) =>
+      CheckMenuItem.new({
+        text: label,
+        checked: false,
+        action: () => chooseMenuMode(value),
+      }).then((item) => ({ value, item }))),
+  );
+  const menus = await Submenu.new({ text: "Menus", items: modes.map(({ item }) => item) });
   const buttonsSeparator = await PredefinedMenuItem.new({ item: "Separator" });
   const menu = await Menu.new({
-    items: [...sections, buttonsSeparator, buttons],
+    items: [...sections, buttonsSeparator, buttons, menus],
   });
   return {
     // The bar page starts at the window's top left corner, so its pixels are
@@ -45,6 +58,8 @@ export async function createSettingsMenu(actions: SettingsMenuActions): Promise<
     open: async (at) => {
       const shown = shownButtonStyle();
       await Promise.all(styles.map(({ value, item }) => item.setChecked(shown === value)));
+      const mode = menuMode();
+      await Promise.all(modes.map(({ value, item }) => item.setChecked(mode === value)));
       await menu.popup(new LogicalPosition(at.x, at.y));
     },
   };

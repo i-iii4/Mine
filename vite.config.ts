@@ -75,6 +75,9 @@ export default defineConfig(async () => ({
         main: path.resolve(__dirname, "index.html"),
         settings: path.resolve(__dirname, "settings.html"),
         tabbar: path.resolve(__dirname, "tabbar.html"),
+        // TRIAL: the card menu's own window (DESIGN_SYSTEM.md, «Меню
+        // карточки в отдельном окне: проба»).
+        menuPanel: path.resolve(__dirname, "menu-panel.html"),
       },
     },
   },

@@ -197,6 +197,19 @@ describe("SaveQueue (SPEC_EDITING.md, Л3.1, Л3.2, Л3.8)", () => {
     expect(session.writes).toHaveLength(1);
   });
 
+  it("takes only the new base when the file's text is its own (Л4.2, Л14.3)", () => {
+    const session = setup("same body");
+    // The file asked on opening holds what the editor holds: the queue keeps
+    // its copy (which copy it holds only the memory check sees) and moves
+    // its base on, with nothing to write.
+    session.queue.rebase("hash-disk", ["same", "body"].join(" "));
+    expect(session.queue.base).toBe("hash-disk");
+    expect(session.queue.dirty).toBe(false);
+    expect(session.writes).toHaveLength(0);
+    session.type("same body!");
+    expect(session.writes.map((write) => write.request)).toEqual([{ baseBodyHash: "hash-disk", body: "same body!" }]);
+  });
+
   it("goes on from a base the session took from the file (Л4.2)", () => {
     const session = setup();
     session.queue.rebase("hash-disk", "disk body");

@@ -1,7 +1,13 @@
+import { createRef } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ImagePreviewOverlay, visibleImagePreviewTransform, type ImagePreviewRequest } from "./ImagePreviewOverlay";
+import {
+  ImagePreviewOverlay,
+  visibleImagePreviewTransform,
+  type ImagePreviewHandle,
+  type ImagePreviewRequest,
+} from "./ImagePreviewOverlay";
 import { copyMediaAssetToClipboard } from "@/lib/commands";
 import { peekPoseAt, peekPoseKeyframes, PEEK_POSE_REST, PEEK_POSE_RISE_FROM, PEEK_POSE_SUNK } from "@/lib/cardPeek";
 import { MOTION_SURFACE_EASE, MOTION_SURFACE_MS } from "@/lib/motion";
@@ -1113,5 +1119,150 @@ describe("ImagePreviewOverlay motion", () => {
     unmount();
     expect(element.style.visibility).toBe("");
     expect(pending.size).toBe(0);
+  });
+
+  // The page's commands over the picture (SPEC_MEDIA_ASSET_ACTIONS.md,
+  // «Команды при открытом просмотре»; user's decision of 15.11.2026).
+  describe("leaving for a command of the page", () => {
+    interface Heard {
+      element: Element;
+      keyframes: Keyframe[];
+      timing: KeyframeAnimationOptions;
+      animation: { onfinish: (() => void) | null; cancel: ReturnType<typeof vi.fn> };
+    }
+    let heard: Heard[] = [];
+
+    beforeEach(() => {
+      heard = [];
+      Object.defineProperty(HTMLElement.prototype, "animate", {
+        configurable: true,
+        value(this: HTMLElement, keyframes: Keyframe[], options: KeyframeAnimationOptions) {
+          const animation = { onfinish: null as (() => void) | null, cancel: vi.fn(), commitStyles: vi.fn() };
+          heard.push({ element: this, keyframes, timing: options, animation });
+          return animation;
+        },
+      });
+    });
+
+    afterEach(() => {
+      delete (HTMLElement.prototype as { animate?: unknown }).animate;
+    });
+
+    /** The viewer at rest, opened by a key so nothing moves, with its handle. */
+    function openAtRest(onClose = vi.fn()) {
+      const handle = createRef<ImagePreviewHandle>();
+      const preview: ImagePreviewRequest = {
+        src: "asset://localhost/photo.jpg",
+        mediaRef: "photo.jpg",
+        openedBy: "keyboard",
+      };
+      const result = render(<ImagePreviewOverlay ref={handle} preview={preview} onClose={onClose} />);
+      const part = (selector: string) => result.container.querySelector<HTMLElement>(selector)!;
+      return {
+        ...result,
+        handle,
+        onClose,
+        overlay: part("[data-image-preview-overlay]"),
+        stage: part("[data-image-preview-stage]"),
+        controls: part("[data-image-preview-controls]"),
+        scrim: part("[data-image-preview-scrim]"),
+      };
+    }
+
+    const fadeTiming = { duration: MOTION_SURFACE_MS, easing: MOTION_SURFACE_EASE, fill: "forwards" };
+
+    it("goes in this frame for a key, the command running with it", () => {
+      const order: string[] = [];
+      const { handle, onClose } = openAtRest(vi.fn(() => order.push("closed")));
+      act(() => handle.current!.leave("now", () => order.push("command")));
+      expect(order).toEqual(["command", "closed"]);
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(heard).toHaveLength(0);
+    });
+
+    for (const level of ["full", "minimal"] as const) {
+      it(`${level}: fades the picture, its buttons and the scrim over Поверхность's leaving, then runs the command`, () => {
+        setMotionLevel(level);
+        const order: string[] = [];
+        const { handle, overlay, stage, controls, scrim } = openAtRest(vi.fn(() => order.push("closed")));
+        act(() => handle.current!.leave("fade", () => order.push("command")));
+        expect(heard.map(({ element, keyframes, timing }) => ({ element, keyframes, timing }))).toEqual([
+          { element: stage, keyframes: [{ opacity: 1 }, { opacity: 0 }], timing: fadeTiming },
+          { element: controls, keyframes: [{ opacity: 1 }, { opacity: 0 }], timing: fadeTiming },
+          { element: scrim, keyframes: [{ opacity: 1 }, { opacity: 0 }], timing: fadeTiming },
+        ]);
+        // Nothing runs before the picture is gone, and the page takes the
+        // pointer meanwhile.
+        expect(order).toEqual([]);
+        expect(overlay).toHaveClass("pointer-events-none");
+        // No flight: nothing writes the picture's way to a source.
+        frame(30);
+        expect(order).toEqual([]);
+        act(() => heard[0]!.animation.onfinish?.());
+        expect(order).toEqual(["command", "closed"]);
+      });
+    }
+
+    it("keeps the scrim standing for the search to take it over", () => {
+      const { handle, scrim } = openAtRest();
+      act(() => handle.current!.leave("keep-scrim", vi.fn()));
+      const scrimFade = heard.find(({ element }) => element === scrim)!;
+      expect(scrimFade.keyframes).toEqual([{ opacity: 1 }, { opacity: 1 }]);
+      expect(heard.filter(({ keyframes }) => keyframes.at(-1)?.opacity === 0)).toHaveLength(2);
+    });
+
+    it("goes in this frame at Off, a press included", () => {
+      setMotionLevel("off");
+      const run = vi.fn();
+      const { handle, onClose } = openAtRest();
+      act(() => handle.current!.leave("fade", run));
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(heard).toHaveLength(0);
+    });
+
+    it("runs every command once: a second one joins the fade, a key ends it at once", () => {
+      const first = vi.fn();
+      const second = vi.fn();
+      const third = vi.fn();
+      const { handle, onClose } = openAtRest();
+      act(() => handle.current!.leave("fade", first));
+      act(() => handle.current!.leave("keep-scrim", second));
+      expect(heard).toHaveLength(3);
+      expect(first).not.toHaveBeenCalled();
+      act(() => handle.current!.leave("now", third));
+      for (const run of [first, second, third]) expect(run).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledTimes(1);
+      act(() => heard[0]!.animation.onfinish?.());
+      for (const run of [first, second, third]) expect(run).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("lets Escape during the fade close the viewer at once, the command still running", () => {
+      const run = vi.fn();
+      const { handle, onClose } = openAtRest();
+      act(() => handle.current!.leave("fade", run));
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves the press on the background and the button as they were during no command", () => {
+      const { overlay, onClose } = openAtRest();
+      fireEvent.click(overlay, { detail: 1 });
+      // Opened by a key, the viewer fades where it stands on its own spring.
+      expect(heard).toHaveLength(0);
+      frame(30);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("runs the command at once with nothing on screen", () => {
+      const handle = createRef<ImagePreviewHandle>();
+      render(<ImagePreviewOverlay ref={handle} preview={null} onClose={vi.fn()} />);
+      expect(handle.current).not.toBeNull();
+      const run = vi.fn();
+      handle.current!.leave("fade", run);
+      expect(run).toHaveBeenCalledTimes(1);
+    });
   });
 });

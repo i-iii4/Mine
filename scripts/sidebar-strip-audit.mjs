@@ -24,6 +24,17 @@
 // (`commands::channels`, its own target folder), its limit asserted;
 // `--skip-rust` leaves it out. Builds and serves its own page; touches no dev
 // server.
+//
+// The move between the List and the table across the compact threshold
+// (SPEC_MOTION_LEVELS.md, Р1, С3; user's decision of 15.11.2026), at the
+// levels Full, Minimal and Off stored before the page loads: the edge
+// dragged across it 8 px a frame moves the rows on the spring on every
+// level; a frame that moves the width across it by more than a tile and its
+// gap changes the look at once (user's decision of 01.11.2026); the
+// window's edge in hand, which the backend tells the page of, moves them on
+// the spring on every level too, and a window resized without it by the
+// level (user's decision of 15.11.2026); an arrow key on the edge, a key's
+// command, changes it at once (Р4).
 import { spawn } from "node:child_process";
 import { createReadStream, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -93,7 +104,14 @@ const entryPlugin = {
       import {useChannelPreviewsEvents} from "/src/hooks/useChannelPreviewsEvents.ts";
       import {setSidebarColumnShown} from "/src/lib/sidebarColumnLayout.ts";
       import {sidebarStripTileCount, APP_MAIN_MIN_WIDTH_PX} from "/src/lib/appLayout.ts";
+      import {installMotionLevel} from "/src/lib/motion.ts";
+      import {installMotionInput} from "/src/lib/motionInput.ts";
+      import {followWindowLiveResize} from "/src/lib/windowLiveResize.ts";
       import "/src/styles/global.css";
+      // The level stored before the page loaded, as the app's entry reads it;
+      // none stored is Full (SPEC_MOTION_LEVELS.md, НС3).
+      installMotionLevel();
+      installMotionInput();
       const h=React.createElement, noop=()=>{};
       const large=new URLSearchParams(location.search).get("set")==="large";
       const set=large?{cards:10000,collections:100,members:300}:{cards:1000,collections:40,members:100};
@@ -114,18 +132,33 @@ const entryPlugin = {
         tileCount:sidebarStripTileCount};
       window.__audit=audit;
       // The backend: the IPC answers with a JSON body the page parses.
+      // The backend's events reach the page's listeners as Tauri hands
+      // them: a callback per listener, called with the event.
+      const callbacks=new Map(), listeners=new Map();
+      audit.emit=(event,payload)=>{ for(const id of listeners.get(event)??[]) callbacks.get(id)?.({event,id,payload}); };
       window.__TAURI_INTERNALS__={
-        invoke:async(command)=>{
+        metadata:{currentWindow:{label:"window-audit"},currentWebview:{label:"tab-audit"}},
+        transformCallback:(callback)=>{ const id=callbacks.size+1; callbacks.set(id,callback); return id; },
+        unregisterCallback:(id)=>callbacks.delete(id),
+        invoke:async(command,args)=>{
           if(command==="list_channel_previews"){
             audit.reads+=1;
             audit.generation+=1;
             return new Response('{"generation":'+audit.generation+',"previews":'+previewsJson+'}').json();
           }
+          if(command==="plugin:event|listen"){
+            listeners.set(args.event,[...(listeners.get(args.event)??[]),args.handler]);
+            return args.handler;
+          }
+          if(command==="plugin:event|unlisten") return null;
           audit.unknown.push(command);
           return null;
         },
         convertFileSrc:(path)=>path,
       };
+      window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{}};
+      // The window's edge in hand, as the app's entry follows it.
+      followWindowLiveResize();
       window.auditColumns={shown:setSidebarColumnShown};
       const tags=names.map((name)=>({tag:name,count:lists[name].length}));
       function Fixture(){
@@ -206,7 +239,16 @@ function watchStrips() {
   const audit = window.__audit;
   audit.frames = 0;
   audit.wrong = [];
+  audit.unseen = 0;
   const check = (strip, width) => {
+    // A strip nobody sees in this frame need not hold its tiles: going from
+    // the List to the table they wait while the strips stand transparent
+    // (user's decision of 15.11.2026; SPEC_SIDEBAR_STRIP.md, ЛМ2).
+    const rail = strip.closest("[data-sidebar-preview-rail]");
+    if (rail && Number(getComputedStyle(rail).opacity) === 0) {
+      audit.unseen += 1;
+      return;
+    }
     const row = strip.closest("[data-sidebar-row-key]")?.getAttribute("data-sidebar-row-key");
     const length = audit.lengths[row];
     if (length === undefined) return;
@@ -379,6 +421,197 @@ function percentile(frames, share) {
 }
 const showFrames = (frames) => JSON.stringify(frames.slice(0, 6).map((frame) => ({ width: frame.width, ms: round(frame.ms) })));
 
+// ─── The move between the List and the table ───────────────────────────────
+
+const MORPH_LEVELS = ["full", "minimal", "off"];
+/** The compact stack's spring settles in 441 ms (channelIcon.ts,
+ *  CHANNEL_ICON_SPRING_MS; sidebarListMorph.ts, LIST_MORPH_SETTLE_MS): the
+ *  move's clock runs that long from rest; Minimal's move would run 200. */
+const LIST_MORPH_SPRING_MS = 441;
+/** Minimal's move for a command's width (motion.ts, MOTION_SPRING_MOVE_MS). */
+const MORPH_MOVE_MS = 200;
+/** A step across the threshold larger than a tile and its gap, 36 px
+ *  (sidebarListMorph.ts, LIST_MORPH_STEP_LIMIT_PX). */
+const MORPH_JUMP_PX = 72;
+/** The widths the edge is held at below and above the threshold. */
+const MORPH_LIST_PX = 340;
+const MORPH_TABLE_PX = 400;
+/** Just past the threshold, 367.2 px, from MORPH_LIST_PX by steps of 8. */
+const MORPH_ACROSS_PX = 372;
+/** The narrowest feed beside the sidebar (appLayout.ts, APP_MAIN_MIN_WIDTH_PX). */
+const MORPH_FEED_MIN_PX = 390;
+/** Below the threshold by less than the separator's arrow step, 16 px
+ *  (SidebarResizeHandle.tsx). */
+const MORPH_ARROW_FROM_PX = 360;
+
+/** Starts watching the list's scrollport: every frame, whether its rows
+ *  move and how long their move's clock runs. */
+function watchMorph() {
+  const nav = document.querySelector("[data-sidebar-look]");
+  const seen = { moved: false, longestMs: 0, lookBefore: nav.getAttribute("data-sidebar-look"), wrongShown: [], frames: 0 };
+  window.__morph = seen;
+  const audit = window.__audit;
+  const port = nav.getBoundingClientRect();
+  // Every frame, every strip one sees holds as many tiles as its width
+  // takes, its last at its edge (ЛМ2). A strip whose width the frame's
+  // layout changed is read by an observer made after the strips' own, after
+  // their update; any other is read in the frame's animation callbacks,
+  // where the frame's opacities are sampled and its tiles are the ones it
+  // paints unless its width changes.
+  const laidOut = new Map();
+  const wrongIfShown = (strip, width) => {
+    const rail = strip.closest("[data-sidebar-preview-rail]");
+    if (rail && Number(getComputedStyle(rail).opacity) === 0) return;
+    if (width === 0) return;
+    const box = strip.getBoundingClientRect();
+    if (box.bottom <= port.top || box.top >= port.bottom) return;
+    const row = strip.closest("[data-sidebar-row-key]")?.getAttribute("data-sidebar-row-key");
+    const length = audit.lengths[row];
+    if (length === undefined) return;
+    const expected = Math.min(audit.tileCount(width), length);
+    const track = strip.querySelector("[data-sidebar-strip-track]");
+    const tiles = track?.children.length ?? 0;
+    const edgeShort = length > expected && tiles > 0 && track.lastElementChild.getBoundingClientRect().right < box.right - 0.01;
+    if (tiles !== expected || edgeShort) seen.wrongShown.push({ frame: seen.frames, row, width: Math.round(width), expected, tiles, edgeShort });
+  };
+  const strips = [...nav.querySelectorAll("[data-sidebar-thumbnail-strip]")];
+  for (const strip of strips) laidOut.set(strip, strip.getBoundingClientRect().width);
+  const observer = new ResizeObserver((entries) => {
+    if (window.__morph !== seen) return;
+    for (const entry of entries) {
+      laidOut.set(entry.target, entry.contentRect.width);
+      wrongIfShown(entry.target, entry.contentRect.width);
+    }
+  });
+  for (const strip of strips) observer.observe(strip);
+  seen.stop = () => observer.disconnect();
+  const shownStripsWrong = () => {
+    for (const strip of strips) {
+      const width = strip.getBoundingClientRect().width;
+      if (Math.abs(width - (laidOut.get(strip) ?? -1)) > 0.01) continue;
+      wrongIfShown(strip, width);
+    }
+  };
+  const sample = () => {
+    if (window.__morph !== seen) return;
+    seen.frames += 1;
+    shownStripsWrong();
+    if (nav.hasAttribute("data-sidebar-rows-fade")) seen.moved = true;
+    for (const animation of nav.getAnimations({ subtree: true })) {
+      const duration = Number(animation.effect?.getTiming().duration);
+      if (Number.isFinite(duration)) seen.longestMs = Math.max(seen.longestMs, Math.round(duration));
+    }
+    requestAnimationFrame(sample);
+  };
+  sample();
+}
+
+/** Stops watching once the rows stand still: what was seen and the look. */
+async function morphSeen(page) {
+  await page.waitForFunction(() => !document.querySelector("[data-sidebar-look]").hasAttribute("data-sidebar-rows-fade"));
+  await page.evaluate(frameDrawn);
+  return page.evaluate(() => {
+    const seen = window.__morph;
+    window.__morph = null;
+    seen.stop();
+    const { stop, ...result } = seen;
+    return { ...result, lookAfter: document.querySelector("[data-sidebar-look]").getAttribute("data-sidebar-look") };
+  });
+}
+
+const describeMorph = (seen) => `${seen.moved ? `moved, its clock ${seen.longestMs} ms` : "at once"}, ${seen.lookBefore} to ${seen.lookAfter}${seen.wrongShown.length ? `, ${seen.wrongShown.length} strips shown with the wrong tiles: ${JSON.stringify(seen.wrongShown.slice(0, 3))}` : ""}`;
+
+/** The edge crossing the threshold at `level`: dragged both ways 8 px a
+ *  frame, a step larger than a tile and its gap, and an arrow key. */
+async function morphPass(browser, level, errors) {
+  const context = await browser.newContext({ viewport: VIEWPORT });
+  await context.addInitScript((stored) => window.localStorage.setItem("mine.motion", stored), level);
+  const page = await context.newPage();
+  page.on("pageerror", (error) => errors.push(`${level}: ${error.message}`));
+  try {
+    await page.goto(new URL(route, server.origin).href);
+    await page.waitForFunction(readyRow, null, { timeout: COLD_START_MS });
+    const shown = await page.evaluate(() => document.documentElement.getAttribute("data-motion"));
+    if (shown !== level) throw new Error(`the level in force is ${shown}, not ${level}`);
+    const handle = page.locator('[role="separator"][data-sidebar-resize-handle]');
+    await handle.focus();
+    await page.keyboard.press("Home");
+    await page.locator("[data-audit-feed]").click();
+    await page.evaluate(frameDrawn);
+    const box = await handle.boundingBox();
+    const x0 = box.x + box.width / 2;
+    const y = box.y + 200;
+    // The handle's centre is the panel's last pixel: the edge is `width` there.
+    const edgeAt = (width) => x0 + (width - MIN_WIDTH);
+    const dragAcross = async (from, to, step) => {
+      await page.mouse.move(edgeAt(from), y);
+      await page.mouse.down();
+      await page.evaluate(watchMorph);
+      for (const width of positions(from, to, step)) {
+        await page.mouse.move(edgeAt(width), y);
+        await page.evaluate(frameDrawn);
+      }
+      await page.mouse.up();
+      return morphSeen(page);
+    };
+    // From the narrowest, the List, to below the threshold, at rest.
+    await dragAcross(MIN_WIDTH, MORPH_LIST_PX, 72);
+    const dragged = await dragAcross(MORPH_LIST_PX, MORPH_TABLE_PX, 8);
+    const back = await dragAcross(MORPH_TABLE_PX, MORPH_LIST_PX, 8);
+    const jumped = await dragAcross(MORPH_LIST_PX, MORPH_LIST_PX + MORPH_JUMP_PX, MORPH_JUMP_PX);
+    // The window resized under the sidebar of 412 px: it squeezes to the
+    // window less the narrowest feed (sidebarPlacement.ts).
+    const widest = MORPH_LIST_PX + MORPH_JUMP_PX + MORPH_FEED_MIN_PX;
+    const resizeWindow = async (from, to, held) => {
+      await page.setViewportSize({ width: from, height: VIEWPORT.height });
+      await page.evaluate(frameDrawn);
+      if (held) await page.evaluate(() => window.__audit.emit("window-live-resize", true));
+      await page.evaluate(watchMorph);
+      for (const width of positions(from, to, 8)) {
+        await page.setViewportSize({ width, height: VIEWPORT.height });
+        await page.evaluate(frameDrawn);
+      }
+      if (held) await page.evaluate(() => window.__audit.emit("window-live-resize", false));
+      return morphSeen(page);
+    };
+    const windowHeld = await resizeWindow(widest, widest - 60, true);
+    const windowCommand = await resizeWindow(widest - 60, widest, false);
+    await page.setViewportSize(VIEWPORT);
+    await page.evaluate(frameDrawn);
+    // The hand on the threshold and back across it, before the strips take
+    // their tiles and after: no strip shows without them.
+    const dragThrough = async (from, steps) => {
+      await page.mouse.move(edgeAt(from), y);
+      await page.mouse.down();
+      await page.evaluate(watchMorph);
+      for (const step of steps) {
+        if (typeof step === "number") await page.mouse.move(edgeAt(step), y);
+        for (let frame = 0; frame < (typeof step === "number" ? 1 : step.wait); frame += 1) await page.evaluate(frameDrawn);
+      }
+      await page.mouse.up();
+      return morphSeen(page);
+    };
+    await dragAcross(MORPH_LIST_PX + MORPH_JUMP_PX, MORPH_LIST_PX, 72);
+    const across = positions(MORPH_LIST_PX, MORPH_ACROSS_PX, 8);
+    const heldOnThreshold = await dragThrough(MORPH_LIST_PX, [...across, { wait: 40 }]);
+    await dragAcross(MORPH_ACROSS_PX, MORPH_LIST_PX, 72);
+    const backBeforeTiles = await dragThrough(MORPH_LIST_PX, [...across, MORPH_ACROSS_PX - 8, { wait: 40 }]);
+    await dragAcross(MORPH_ACROSS_PX - 8, MORPH_LIST_PX, 72);
+    const backAfterTiles = await dragThrough(MORPH_LIST_PX, [...across, { wait: 4 }, MORPH_ACROSS_PX - 8, { wait: 40 }]);
+    await dragAcross(MORPH_LIST_PX, MORPH_LIST_PX + MORPH_JUMP_PX, 72);
+    // An arrow from a width less than an arrow's step below the threshold.
+    await dragAcross(MORPH_LIST_PX + MORPH_JUMP_PX, MORPH_ARROW_FROM_PX, 72);
+    await handle.focus();
+    await page.evaluate(watchMorph);
+    await page.keyboard.press("ArrowRight");
+    await page.evaluate(frameDrawn);
+    const keyed = await morphSeen(page);
+    return { dragged, back, jumped, windowHeld, windowCommand, heldOnThreshold, backBeforeTiles, backAfterTiles, keyed };
+  } finally {
+    await context.close();
+  }
+}
+
 // ─── The Rust read ──────────────────────────────────────────────────────────
 
 /** The Rust test of the full read built optimised as the app is, in a target
@@ -458,6 +691,10 @@ try {
         await page.evaluate(() => window.auditColumns.shown("previews", true));
         await page.evaluate(frameDrawn);
         passes.push({ run, control });
+        // The frames of the move from the List to the table: the crossing,
+        // the move's animations, the strips' tiles (ЛМ2), going wider.
+        const across = run.frames.findIndex((frame) => frame.width > LIST_BELOW_PX);
+        if (across >= 0) console.log(`${name}: the List to the table, frames from the crossing: ${run.frames.slice(across, across + 4).map((frame) => `${frame.width} px ${round(frame.ms)} ms`).join(", ")}`);
         const over = run.frames.filter((frame) => frame.ms > FRAME_LIMIT_MS);
         const controlOver = control.frames.filter((frame) => frame.ms > FRAME_LIMIT_MS);
         const longest = Math.max(...run.frames.map((frame) => frame.ms));
@@ -505,6 +742,31 @@ try {
     const longest = Math.max(...again);
     console.log(`the full read of 10 000 cards and 100 collections of 300, the sidebar at its ${label}: the longest task of ${LARGE_READS} reads ${round(longest)} ms`);
     check(longest <= FRAME_LIMIT_MS, `the full read, the sidebar at its ${label}: a task of ${round(longest)} ms over ${FRAME_LIMIT_MS} ms`);
+  }
+  for (const level of MORPH_LEVELS) {
+    const result = await morphPass(browser, level, errors);
+    console.log(`the List and the table at ${level}: the dragged crossing ${describeMorph(result.dragged)}, back ${describeMorph(result.back)}; a step of ${MORPH_JUMP_PX} px across ${describeMorph(result.jumped)}; the window's edge in hand ${describeMorph(result.windowHeld)}; the window resized without it ${describeMorph(result.windowCommand)}; the hand held past the threshold ${describeMorph(result.heldOnThreshold)}; back before the tiles ${describeMorph(result.backBeforeTiles)}; back after them ${describeMorph(result.backAfterTiles)}; an arrow key across ${describeMorph(result.keyed)}`);
+    for (const [way, seen] of [["the dragged crossing to the table", result.dragged], ["the dragged crossing back to the List", result.back]]) {
+      check(seen.moved, `${level}: ${way} did not move the rows`);
+      check(seen.longestMs === LIST_MORPH_SPRING_MS, `${level}: ${way} ran ${seen.longestMs} ms, not the spring's ${LIST_MORPH_SPRING_MS} ms`);
+      check(seen.lookBefore !== seen.lookAfter, `${level}: ${way} left the look ${seen.lookAfter}`);
+    }
+    check(!result.jumped.moved && result.jumped.lookAfter === "table", `${level}: a step of ${MORPH_JUMP_PX} px across the threshold: ${describeMorph(result.jumped)}`);
+    // The window's edge in hand is a drag too (user's decision of
+    // 15.11.2026); a window resized without it is a command's, by the level.
+    check(result.windowHeld.moved && result.windowHeld.longestMs === LIST_MORPH_SPRING_MS && result.windowHeld.lookAfter === "compact",
+      `${level}: the window's edge in hand across the threshold: ${describeMorph(result.windowHeld)}`);
+    const commandMs = { full: LIST_MORPH_SPRING_MS, minimal: MORPH_MOVE_MS, off: 0 }[level];
+    check(result.windowCommand.moved === commandMs > 0 && result.windowCommand.longestMs === commandMs && result.windowCommand.lookAfter === "table",
+      `${level}: the window resized without its edge in hand across the threshold: ${describeMorph(result.windowCommand)}, not ${commandMs} ms`);
+    check(!result.keyed.moved && result.keyed.lookAfter === "table", `${level}: an arrow key across the threshold: ${describeMorph(result.keyed)}`);
+    check(result.heldOnThreshold.moved && result.heldOnThreshold.lookAfter === "table", `${level}: the hand held past the threshold: ${describeMorph(result.heldOnThreshold)}`);
+    check(result.backBeforeTiles.moved && result.backBeforeTiles.lookAfter === "compact", `${level}: back across before the strips' tiles: ${describeMorph(result.backBeforeTiles)}`);
+    check(result.backAfterTiles.moved && result.backAfterTiles.lookAfter === "compact", `${level}: back across after the strips' tiles: ${describeMorph(result.backAfterTiles)}`);
+    // In every frame of every case, a strip one sees holds its tiles (ЛМ2).
+    for (const [name, seen] of Object.entries(result)) {
+      check(seen.wrongShown.length === 0, `${level}, ${name}: strips shown with the wrong tiles: ${JSON.stringify(seen.wrongShown.slice(0, 5))}`);
+    }
   }
   check(errors.length === 0, `page errors: ${errors.join("; ")}`);
 

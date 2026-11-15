@@ -767,12 +767,16 @@ describe("one source for all the surfaces (SPEC_CARD_STATES.md, С7.11)", () => 
     const graph = readFileSync("src/components/GraphView.tsx", "utf8");
     for (const source of [sidebar, detail, graph]) {
       expect(source).toContain("useHoverPreviewWindow<");
-      expect(source).toContain("<HoverPreviewWindowLayer");
       expect(source).toContain("new RestingPointer()");
     }
-    for (const source of [sidebar, detail]) {
-      expect(source).toContain("readCard: getBlock");
-    }
+    for (const source of [detail, graph]) expect(source).toContain("<HoverPreviewWindowLayer");
+    expect(detail).toContain("readCard: getBlock");
+    // The sidebar's window shows a card or a collection over its name
+    // (С7.12): the same window, its content drawn by the sidebar, the card
+    // still read through `get_block`.
+    expect(sidebar).toContain("<HoverPreviewWindowSurface");
+    expect(sidebar).toContain("readCard: readPreviewContent");
+    expect(sidebar).toContain("await getBlock(slug)");
     expect(graph).not.toContain("useHoverPreviewOpener");
     expect(sidebar).not.toContain("useHoverPreviewOpener");
     expect(sidebar).not.toContain("onPreviewEnter");

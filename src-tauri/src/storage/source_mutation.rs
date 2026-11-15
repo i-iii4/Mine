@@ -231,6 +231,20 @@ pub enum SourceFileMode {
     Rename,
 }
 
+/// A part of publishing a staged mutation, for a measurement
+/// ([`StagedSourceMutation::commit_with_index_observed`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitPhase {
+    /// A file written, created or renamed in place, with its folder synced.
+    Write,
+    /// A file moved to the Trash, with its folder synced.
+    Trash,
+    /// The index rows written and the transaction committed.
+    Index,
+    /// The originals kept for a rollback cleaned up.
+    Finalize,
+}
+
 #[derive(Debug, Clone)]
 pub struct SourceFileWrite {
     pub path: PathBuf,
@@ -604,10 +618,27 @@ impl StagedSourceMutation {
     /// Publish the staged files. The returned guard must be finalized only
     /// after the matching SQLite transaction commits; otherwise Drop restores
     /// every original source file.
-    pub fn commit(mut self) -> std::result::Result<CommittedSourceMutation, SourceMutationError> {
+    pub fn commit(self) -> std::result::Result<CommittedSourceMutation, SourceMutationError> {
+        self.commit_observed(&mut |_, _| {})
+    }
+
+    /// [`Self::commit`], telling `observe` how long each file took to
+    /// publish, a deletion as [`CommitPhase::Trash`], any other write as
+    /// [`CommitPhase::Write`] (SPEC_CARD_MERGE.md, «Замер слияния»). A
+    /// measurement only: the files publish exactly as with `commit`.
+    pub fn commit_observed(
+        mut self,
+        observe: &mut dyn FnMut(CommitPhase, std::time::Duration),
+    ) -> std::result::Result<CommittedSourceMutation, SourceMutationError> {
         let mut originals = Vec::with_capacity(self.files.len());
         for index in 0..self.files.len() {
             let file = &self.files[index];
+            let started = std::time::Instant::now();
+            let phase = if file.mode == SourceFileMode::Delete {
+                CommitPhase::Trash
+            } else {
+                CommitPhase::Write
+            };
             let published = publish(file);
             let original = match published {
                 Ok(original) => original,
@@ -638,6 +669,7 @@ impl StagedSourceMutation {
                     .as_deref()
                     .map_or(Ok(()), files::sync_parent_directory)
             });
+            observe(phase, started.elapsed());
             if let Err(source) = synced {
                 let error = SourceMutationError::CommitFile {
                     path: file.path.clone(),
@@ -664,6 +696,20 @@ impl StagedSourceMutation {
         operation: &'static str,
         apply_index: impl FnOnce(&Connection) -> Result<T>,
     ) -> std::result::Result<T, SourceMutationError> {
+        self.commit_with_index_observed(conn, operation, apply_index, &mut |_, _| {})
+    }
+
+    /// [`Self::commit_with_index`], telling `observe` how long each part
+    /// took: every file's publication ([`Self::commit_observed`]), the index
+    /// with its transaction ([`CommitPhase::Index`]) and the clean-up of the
+    /// originals ([`CommitPhase::Finalize`]). A measurement only.
+    pub fn commit_with_index_observed<T>(
+        self,
+        conn: &Connection,
+        operation: &'static str,
+        apply_index: impl FnOnce(&Connection) -> Result<T>,
+        observe: &mut dyn FnMut(CommitPhase, std::time::Duration),
+    ) -> std::result::Result<T, SourceMutationError> {
         conn.execute_batch("BEGIN IMMEDIATE").map_err(|source| {
             SourceMutationError::CommitIndex {
                 operation,
@@ -671,13 +717,14 @@ impl StagedSourceMutation {
             }
         })?;
 
-        let committed = match self.commit() {
+        let committed = match self.commit_observed(observe) {
             Ok(committed) => committed,
             Err(error) => {
                 let _ = conn.execute_batch("ROLLBACK");
                 return Err(error);
             }
         };
+        let indexing = std::time::Instant::now();
         let value = match apply_index(conn) {
             Ok(value) => value,
             Err(source) => {
@@ -694,7 +741,10 @@ impl StagedSourceMutation {
             };
             return rollback_after_index_failure(committed, original);
         }
+        observe(CommitPhase::Index, indexing.elapsed());
+        let finalizing = std::time::Instant::now();
         committed.finalize();
+        observe(CommitPhase::Finalize, finalizing.elapsed());
         Ok(value)
     }
 }

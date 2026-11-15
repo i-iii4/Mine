@@ -2,6 +2,7 @@ import { MissingAwareImage } from "./MissingAwareImage";
 import {
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -9,8 +10,10 @@ import {
   type AnimationEvent as ReactAnimationEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type Ref,
   type WheelEvent as ReactWheelEvent,
 } from "react";
+import { flushSync } from "react-dom";
 import { Copy, Minimize2, Minus, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -67,6 +70,24 @@ export type ImagePreviewRequest = {
   /// What opened the viewer: a key stands it at once (SPEC_CARD_PEEK.md, О10).
   openedBy?: "pointer" | "keyboard";
 };
+
+/** How the viewer leaves for a command of the page (SPEC_MEDIA_ASSET_ACTIONS.md,
+ *  «Команды при открытом просмотре»; user's decision of 15.11.2026): `now`,
+ *  gone in this frame, as by Escape (a key, a native menu item, Off);
+ *  `fade`, the picture, its buttons and the scrim fade out where they stand
+ *  over Поверхность's leaving, with no flight to the source; `keep-scrim`,
+ *  the same with the scrim standing, for a layer that takes the scrim over
+ *  in the frame the viewer goes (the search). */
+export type ImagePreviewLeaving = "now" | "fade" | "keep-scrim";
+
+export interface ImagePreviewHandle {
+  /** The viewer leaves `how`, and `then` runs in the same task as its
+   *  closing, so the command's result and the viewer's going make one
+   *  frame. A viewer already leaving for a command keeps leaving and runs
+   *  `then` with the rest; `now` ends that leaving at once. With nothing on
+   *  screen `then` runs at once. */
+  leave(how: ImagePreviewLeaving, then: () => void): void;
+}
 
 export type ImagePreviewSibling = {
   src: string;
@@ -204,12 +225,45 @@ function clearImageBacking(image: HTMLImageElement) {
   image.style.backgroundRepeat = "";
 }
 
+/** A leaving for a command under way: what runs once the viewer is gone,
+ *  and the fades that take it there. */
+type CommandLeaving = {
+  thens: (() => void)[];
+  animations: Animation[];
+};
+
+/** The opacity an element shows now, read from its computed style. */
+function shownOpacity(element: HTMLElement | null): number {
+  if (!element) return 0;
+  const raw = getComputedStyle(element).opacity;
+  const value = Number(raw);
+  return raw !== "" && Number.isFinite(value) ? value : 1;
+}
+
+/** Whatever moves `element` now stops where it stands: a running animation
+ *  writes its present values to the element's style and goes. */
+function freezeAnimations(element: HTMLElement | null) {
+  if (!element || typeof element.getAnimations !== "function") return;
+  for (const animation of element.getAnimations()) {
+    try {
+      animation.commitStyles();
+    } catch {
+      // An element out of the rendered tree has nothing to commit.
+    }
+    animation.onfinish = null;
+    animation.cancel();
+  }
+}
+
 export function ImagePreviewOverlay({
   preview,
   onClose,
+  ref,
 }: {
   preview: ImagePreviewRequest | null;
   onClose: () => void;
+  /** The page's commands make the viewer leave through it. */
+  ref?: Ref<ImagePreviewHandle>;
 }) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const scrimRef = useRef<HTMLDivElement>(null);
@@ -248,6 +302,9 @@ export function ImagePreviewOverlay({
   /// The viewer is on its way out: the page takes the pointer and the keys
   /// from now on, but for the picture and the toolbar, which turn it back.
   const [closing, setClosing] = useState(false);
+  /// The viewer leaves for a command: nothing of it answers the pointer.
+  const [commandLeaving, setCommandLeaving] = useState(false);
+  const commandLeavingRef = useRef<CommandLeaving | null>(null);
   /// The dialogs' own entrance or exit plays (`MODAL_SURFACE_*_CLASS`).
   const [dialogMotion, setDialogMotion] = useState<"in" | "out" | null>(null);
   /// Minimal (SPEC_MOTION_LEVELS.md, ОУ9): the stage with the picture and the
@@ -501,6 +558,7 @@ export function ImagePreviewOverlay({
     closingRef.current = false;
     setClosing(false);
     setDialogMotion(null);
+    setCommandLeaving(false);
   }, [cancelFrames, clearMotionStyles, hideSource, poseRunner]);
 
   const step = useCallback((direction: -1 | 1) => {
@@ -744,11 +802,90 @@ export function ImagePreviewOverlay({
 
   useLayoutEffect(() => stopAll, [stopAll]);
 
-  /** Gone in this frame: Escape, or a closing before anything showed. */
+  /** The commands a leaving waited for, taken: they run as the viewer goes. */
+  const takeCommandThens = useCallback((): (() => void)[] => {
+    const leaving = commandLeavingRef.current;
+    commandLeavingRef.current = null;
+    if (!leaving) return [];
+    for (const animation of leaving.animations) animation.onfinish = null;
+    return leaving.thens;
+  }, []);
+
+  /** Gone in this frame: Escape, or a closing before anything showed. A
+   *  command the viewer was leaving for runs with it: the page heard it. */
   const vanish = useCallback(() => {
+    const thens = takeCommandThens();
     stopAll();
+    for (const then of thens) then();
     onCloseRef.current();
-  }, [stopAll]);
+  }, [stopAll, takeCommandThens]);
+
+  /** The faded viewer goes with the commands it waited for, in one task: its
+   *  last frame stays on the page, faded, until the page drops it. */
+  const leaveFaded = useCallback(() => {
+    const thens = takeCommandThens();
+    for (const then of thens) then();
+    onCloseRef.current();
+  }, [takeCommandThens]);
+
+  // A viewer that goes before its leaving ended (a new request, the page's
+  // own closing) still lets the commands it held run.
+  useLayoutEffect(() => {
+    const thens = takeCommandThens();
+    for (const then of thens) then();
+  }, [preview, takeCommandThens]);
+
+  const leave = useCallback((how: ImagePreviewLeaving, then: () => void) => {
+    if (!preview) {
+      then();
+      return;
+    }
+    const pending = commandLeavingRef.current;
+    if (pending) {
+      pending.thens.push(then);
+      if (how === "now") vanish();
+      return;
+    }
+    // Поверхность's leaving: 200 ms in Full and Minimal, none at Off.
+    const duration = how === "now" ? 0 : roleMs("surface", "exit");
+    const stage = stageRef.current;
+    const controls = controlsRef.current;
+    const scrim = scrimRef.current;
+    const animates = duration > 0 && stage !== null && typeof stage.animate === "function";
+    if (!animates) {
+      commandLeavingRef.current = { thens: [then], animations: [] };
+      vanish();
+      return;
+    }
+    // Everything stops where it stands, the flight and Minimal's motions
+    // included, and fades from there: the picture does not fly to its source.
+    const from = {
+      stage: shownOpacity(stage),
+      controls: shownOpacity(controls),
+      scrim: shownOpacity(scrim),
+    };
+    cancelFrames();
+    for (const element of [stage, controls, scrim, imageRef.current]) freezeAnimations(element);
+    poseRunner.stop(false);
+    closingRef.current = true;
+    setCommandLeaving(true);
+    const timing: KeyframeAnimationOptions = { duration, easing: roleEasing("surface"), fill: "forwards" };
+    const animations = [stage.animate([{ opacity: from.stage }, { opacity: 0 }], timing)];
+    if (controls) animations.push(controls.animate([{ opacity: from.controls }, { opacity: 0 }], timing));
+    // The scrim fades with the picture, or stands for the layer that takes
+    // it over: a scrim still coming in comes in the rest of the way.
+    if (scrim) animations.push(scrim.animate([{ opacity: from.scrim }, { opacity: how === "fade" ? 0 : 1 }], timing));
+    const leaving: CommandLeaving = { thens: [then], animations };
+    commandLeavingRef.current = leaving;
+    animations[0]!.onfinish = () => {
+      if (commandLeavingRef.current !== leaving) return;
+      // In the frame the fade ends, not a frame after it: the command's own
+      // motion starts at once behind the picture that has gone.
+      flushSync(leaveFaded);
+    };
+  }, [cancelFrames, leaveFaded, poseRunner, preview, vanish]);
+
+  useImperativeHandle(ref, () => ({ leave }), [leave]);
 
   /** The button or the background: the way back from where it stands. */
   const requestClose = useCallback(() => {
@@ -986,7 +1123,7 @@ export function ImagePreviewOverlay({
 
   // On its way out the viewer keeps the pointer only where it can turn back;
   // the dialogs' exit has nothing to turn back to.
-  const interactiveWhileClosing = closing && dialogMotion !== "out" && "pointer-events-auto";
+  const interactiveWhileClosing = closing && !commandLeaving && dialogMotion !== "out" && "pointer-events-auto";
 
   return (
     <div
@@ -995,7 +1132,7 @@ export function ImagePreviewOverlay({
       // Focused only to take the preview's keys: no ring around the window.
       className={cn(
         "fixed inset-0 z-[70] overflow-hidden text-black outline-none",
-        closing && "pointer-events-none",
+        (closing || commandLeaving) && "pointer-events-none",
       )}
       role="dialog"
       aria-modal="false"

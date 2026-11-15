@@ -4,6 +4,7 @@
 // closes and the command runs, once, on every level, by the pointer, Enter
 // and Space alike. A check, a choice of a value, a submenu's trigger, an item
 // that keeps its menu open and a disabled item do not blink.
+import { readFileSync } from "node:fs";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,9 +26,10 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { setMotionLevel } from "@/test/motionLevel";
 import { MOTION_LEVELS, MOTION_MENU_BLINK_MS } from "./motion";
-import { MENU_BLINK_ATTRIBUTE, menuBlinkMs, setMenuBlinkMsForTests } from "./menuBlink";
+import { MENU_BLINK_ATTRIBUTE, menuBlinkMs, setMenuBlinkMsForTests, useMenuRowBlink } from "./menuBlink";
 
 const HALF = MOTION_MENU_BLINK_MS / 2;
 
@@ -218,4 +220,98 @@ describe("the blink of a chosen menu item", () => {
     expect(onRename).toHaveBeenCalledTimes(1);
     expect(document.querySelector('[data-slot="context-menu-content"]')).toBeNull();
   });
+});
+
+// A row of a menu with a search field, which the menu chooses itself by a
+// press or by Enter in the field, blinks the same way (user's decision of
+// 15.11.2026; the space menu, VaultSwitcher.test.tsx).
+function RowMenu({ onRun }: { onRun: (key: string) => void }) {
+  const blink = useMenuRowBlink<string>();
+  return (
+    <div>
+      {["One", "Two"].map((key) => (
+        <SearchMenuAction
+          key={key}
+          active={blink.chosen === key}
+          blinkOff={blink.off && blink.chosen === key}
+          onPress={() => blink.choose(key, () => onRun(key))}
+        >
+          {key}
+        </SearchMenuAction>
+      ))}
+      <button type="button" onClick={blink.cancel}>Close</button>
+    </div>
+  );
+}
+
+describe("the blink of a row a menu chooses itself", () => {
+  const row = (name: string) => screen.getByRole("menuitem", { name });
+
+  for (const level of MOTION_LEVELS) {
+    it(`${level}: holds the chosen row for the whole blink, out then back, and runs once`, () => {
+      setMotionLevel(level);
+      const onRun = vi.fn();
+      render(<RowMenu onRun={onRun} />);
+      vi.useFakeTimers();
+      fireEvent.click(row("One"));
+      expect(row("One")).toHaveAttribute(MENU_BLINK_ATTRIBUTE);
+      expect(row("One")).toHaveAttribute("data-search-menu-action-active", "true");
+      advance(HALF);
+      expect(row("One")).not.toHaveAttribute(MENU_BLINK_ATTRIBUTE);
+      expect(row("One")).toHaveAttribute("data-search-menu-action-active", "true");
+      expect(onRun).not.toHaveBeenCalled();
+      advance(HALF);
+      expect(onRun).toHaveBeenCalledTimes(1);
+      expect(onRun).toHaveBeenCalledWith("One");
+      expect(row("One")).not.toHaveAttribute("data-search-menu-action-active");
+    });
+  }
+
+  it("chooses nothing a second time during the blink, the same row or another", () => {
+    const onRun = vi.fn();
+    render(<RowMenu onRun={onRun} />);
+    vi.useFakeTimers();
+    fireEvent.click(row("One"));
+    fireEvent.click(row("One"));
+    fireEvent.click(row("Two"));
+    expect(row("Two")).not.toHaveAttribute(MENU_BLINK_ATTRIBUTE);
+    advance(MOTION_MENU_BLINK_MS * 2);
+    expect(onRun).toHaveBeenCalledTimes(1);
+    expect(onRun).toHaveBeenCalledWith("One");
+  });
+
+  it("drops the command when the menu closes during the blink", () => {
+    const onRun = vi.fn();
+    render(<RowMenu onRun={onRun} />);
+    vi.useFakeTimers();
+    fireEvent.click(row("One"));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(row("One")).not.toHaveAttribute(MENU_BLINK_ATTRIBUTE);
+    advance(MOTION_MENU_BLINK_MS * 2);
+    expect(onRun).not.toHaveBeenCalled();
+  });
+
+  it("drops the command when the menu goes away during the blink", () => {
+    const onRun = vi.fn();
+    const { unmount } = render(<RowMenu onRun={onRun} />);
+    vi.useFakeTimers();
+    fireEvent.click(row("One"));
+    unmount();
+    advance(MOTION_MENU_BLINK_MS * 2);
+    expect(onRun).not.toHaveBeenCalled();
+  });
+});
+
+// The highlight is a utility of Tailwind's layer: the pointer's
+// (`hover:state-active`), the keyboard's (`focus:state-active`) and the
+// active row's (`state-active`). An unlayered rule wins over every layered
+// one whatever its selector, so the blink puts out each of them.
+it("puts the highlight out from an unlayered rule", () => {
+  const css = readFileSync("src/styles/global.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const rule = /\[data-menu-blink\]\s*\{\s*background-image:\s*none;\s*\}/.exec(css);
+  expect(rule).not.toBeNull();
+  const before = css.slice(0, rule?.index ?? 0);
+  const depth = (before.match(/\{/g) ?? []).length - (before.match(/\}/g) ?? []).length;
+  expect(depth).toBe(0);
+  expect(MENU_BLINK_ATTRIBUTE).toBe("data-menu-blink");
 });

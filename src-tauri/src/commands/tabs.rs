@@ -4,7 +4,7 @@
 use tauri::{AppHandle, Manager, Webview};
 
 use super::state::CommandError;
-use crate::domain::windows::{SidebarLayout, SidebarOverlay, TabId, TabSpace, TabView};
+use crate::domain::windows::{SidebarLayout, SidebarOverlay, TabId, TabSide, TabSpace, TabView};
 use crate::tabs::{self, TabBarState, TabBootstrap};
 
 /// What the calling tab page needs to start. A page that starts again
@@ -15,6 +15,7 @@ pub fn get_tab_bootstrap(app: AppHandle, webview: Webview) -> Option<TabBootstra
     let state = app.state::<super::state::AppState>();
     state.edit_sessions.end_page(webview.label());
     state.focused_editors.forget(webview.label());
+    tabs::drag::forget_card_reports(webview.label());
     tabs::bootstrap(&app, webview.label())
 }
 
@@ -118,6 +119,12 @@ pub fn close_other_tabs(app: AppHandle, tab_id: TabId) {
     tabs::close_other_tabs(&app, &tab_id);
 }
 
+/// Close every tab of `tab_id`'s window on its `side` (В50).
+#[tauri::command]
+pub fn close_tabs_beside(app: AppHandle, tab_id: TabId, side: TabSide) {
+    tabs::close_tabs_beside(&app, &tab_id, side);
+}
+
 /// Move `tab_id` to `index` within its window (В60).
 #[tauri::command]
 pub fn move_tab(app: AppHandle, tab_id: TabId, index: usize) {
@@ -196,10 +203,26 @@ pub fn begin_tab_drag(app: AppHandle, tab_id: TabId, grab_x: f64, grab_y: f64) {
     tabs::drag::begin(&app, &tab_id, (grab_x, grab_y));
 }
 
-/// The calling tab bar reports the slot under a dragged tab, or none (В63).
+/// The calling tab bar reports the slot under a dragged tab, or none (В63),
+/// or the slot where cards were let go (В86).
 #[tauri::command]
 pub fn report_drop_slot(app: AppHandle, webview: Webview, index: Option<usize>) {
     if let Some(window) = tabs::window_of_label(&app, webview.label()) {
-        tabs::drag::report_drop_slot(&window, index);
+        tabs::drag::report_drop_slot(&app, &window, index);
     }
+}
+
+/// The calling tab drags cards over its window's tab bar at `hover`, or no
+/// longer (В86). `seq` numbers the page's card reports: a late one is
+/// dropped (В10).
+#[tauri::command]
+pub fn report_card_drag(app: AppHandle, webview: Webview, seq: u32, hover: Option<tabs::drag::CardDragHover>) {
+    tabs::drag::report_card_drag(&app, webview.label(), seq, hover);
+}
+
+/// The calling tab let cards go over its window's tab bar: a tab each at the
+/// slot under `drop.x` (В86). `seq` as for `report_card_drag`.
+#[tauri::command]
+pub fn drop_cards_on_tab_bar(app: AppHandle, webview: Webview, seq: u32, drop: tabs::drag::CardBarDrop) {
+    tabs::drag::drop_cards(&app, webview.label(), seq, drop);
 }

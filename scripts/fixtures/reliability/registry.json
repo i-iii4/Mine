@@ -1063,6 +1063,17 @@
     {
       "paths": [
         "src/lib/cardLayout.ts",
+        "src/lib/cardLayout.preview.test.ts"
+      ],
+      "requirement": "SPEC_EDITING.md### Л14. Производительность и загрузка",
+      "tests": [
+        "src/lib/cardLayout.preview.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/cardLayout.ts",
         "src/lib/cardLayout.test.ts",
         "src/lib/cardHeight.ts",
         "src/lib/cardHeight.test.ts",
@@ -1299,6 +1310,27 @@
         "src-tauri/src/commands/state.rs"
       ],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src-tauri/src/storage/search_engine.rs"
+      ],
+      "requirement": "SPEC_SEARCH.md#### Запрос из одного символа",
+      "tests": [
+        "src-tauri/src/storage/search_engine.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/components/SearchOverlay.tsx",
+        "src/components/SearchOverlay.test.tsx"
+      ],
+      "requirement": "SPEC_SEARCH_OVERLAY.md#### Минимальная длина запроса",
+      "tests": [
+        "src/components/SearchOverlay.test.tsx"
+      ],
+      "command": "test:frontend"
     },
     {
       "paths": [
@@ -2180,6 +2212,46 @@
         "src/tabbar/tabMenu.test.ts",
         "src/components/ui/fade-text.test.tsx",
         "src/tabbar/appearance.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/commands/merge_timing.rs"
+      ],
+      "requirement": "SPEC_CARD_MERGE.md### Замер слияния",
+      "tests": [
+        "src-tauri/src/commands/merge_timing.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/lib/mergeTiming.ts",
+        "src/lib/mergeTiming.test.ts"
+      ],
+      "requirement": "SPEC_CARD_MERGE.md### Замер слияния",
+      "tests": [
+        "src/lib/mergeTiming.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/cardTabDrop.ts",
+        "src/lib/cardTabDrop.test.ts",
+        "src/hooks/useCardDragToTabBar.ts",
+        "src/hooks/useCardDragToTabBar.test.tsx",
+        "src/components/OpenCardTabsDialog.tsx",
+        "src/components/OpenCardTabsDialog.test.tsx"
+      ],
+      "requirement": "SPEC_TABS.md### Перетаскивание",
+      "tests": [
+        "src/lib/cardTabDrop.test.ts",
+        "src/hooks/useCardDragToTabBar.test.tsx",
+        "src/components/OpenCardTabsDialog.test.tsx",
+        "src/tabbar/TabBar.test.tsx",
+        "src/tabbar/TabBarApp.test.tsx"
       ],
       "command": "test:frontend"
     },
@@ -3391,6 +3463,18 @@
     },
     {
       "paths": [
+        "src/components/TopCollectionSwitcher.tsx",
+        "src/components/MainSecondaryChrome.tsx",
+        "scripts/top-row-wrap-audit.mjs"
+      ],
+      "requirement": "DESIGN_SYSTEM.md### Верхние ряды",
+      "tests": [
+        "scripts/top-row-wrap-audit.mjs"
+      ],
+      "command": "test:top-row"
+    },
+    {
+      "paths": [
         "mine-core/tests/save-fixtures.json",
         "scripts/clipper-worker-smoke.mjs"
       ],
@@ -4163,6 +4247,38 @@
         "src/lib/edgeFade.test.ts"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/tabs/live_resize.rs"
+      ],
+      "requirement": "SPEC_TABS.md#### События",
+      "tests": [
+        "src-tauri/src/tabs/live_resize.rs"
+      ],
+      "command": "test:rust"
+    },
+    {
+      "paths": [
+        "src/lib/windowLiveResize.ts",
+        "src/lib/windowLiveResize.test.ts"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md#### Боковое меню",
+      "tests": [
+        "src/lib/windowLiveResize.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/feed-scroll-audit.mjs",
+        "scripts/audit-vite.mjs"
+      ],
+      "requirement": "SPEC_FEED_SCROLL_PERFORMANCE.md### Diagnostics",
+      "tests": [
+        "scripts/feed-scroll-audit.mjs"
+      ],
+      "command": "test:feed-scroll"
     },
     {
       "paths": [
@@ -4949,6 +5065,36 @@
     },
     {
       "paths": [
+        "src/hooks/useImagePreviewCommands.ts",
+        "src/hooks/useImagePreviewCommands.test.tsx",
+        "src/components/ImagePreviewOverlay.tsx",
+        "src/components/ImagePreviewOverlay.test.tsx",
+        "src/App.tsx",
+        "src/App.test.tsx"
+      ],
+      "requirement": "SPEC_MEDIA_ASSET_ACTIONS.md### Команды при открытом просмотре",
+      "tests": [
+        "src/hooks/useImagePreviewCommands.test.tsx",
+        "src/components/ImagePreviewOverlay.test.tsx",
+        "src/App.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/image-preview-motion-audit.mjs",
+        "src/hooks/useImagePreviewCommands.ts",
+        "src/components/ImagePreviewOverlay.tsx",
+        "src/components/SearchOverlay.tsx"
+      ],
+      "requirement": "SPEC_MEDIA_ASSET_ACTIONS.md### Команды при открытом просмотре",
+      "tests": [
+        "scripts/image-preview-motion-audit.mjs"
+      ],
+      "command": "test:image-preview"
+    },
+    {
+      "paths": [
         "scripts/swipe-scroller-audit.mjs"
       ],
       "requirement": "SPEC_NARROW_WINDOW.md### Правила",
@@ -5097,6 +5243,54 @@
     },
     {
       "paths": [
+        "src/lib/tooltipGlide.ts",
+        "src/lib/tooltipGlide.test.ts",
+        "src/components/ui/tooltip.test.tsx"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md### Подсказка едет за курсором",
+      "tests": [
+        "src/lib/tooltipGlide.test.ts",
+        "src/components/ui/tooltip.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/tooltip-glide-audit.mjs"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md### Подсказка едет за курсором",
+      "tests": [
+        "scripts/tooltip-glide-audit.mjs"
+      ],
+      "command": "test:tooltip-glide"
+    },
+    {
+      "paths": [
+        "src/components/CollectionHoverPreview.tsx",
+        "src/components/CollectionHoverPreview.test.tsx",
+        "src/components/SidebarCollectionPreview.test.tsx"
+      ],
+      "requirement": "SPEC_CARD_STATES.md#### С7. Тишина при движении курсора",
+      "tests": [
+        "src/components/CollectionHoverPreview.test.tsx",
+        "src/components/SidebarCollectionPreview.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/pointerLeftPage.ts",
+        "src/lib/pointerLeftPage.test.ts"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md#### Подсказка уходит, когда курсор покинул окно",
+      "tests": [
+        "src/lib/pointerLeftPage.test.ts",
+        "src/components/ui/tooltip.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "scripts/sidebar-reorder-audit.mjs"
       ],
       "requirement": "SPEC_MOTION_LEVELS.md#### Боковое меню",
@@ -5158,6 +5352,35 @@
     },
     {
       "paths": [
+        "src/lib/menuBlink.ts",
+        "src/lib/menuBlink.test.tsx",
+        "src/components/SearchMenuAction.tsx",
+        "src/components/VaultSwitcher.tsx",
+        "src/components/VaultSwitcher.test.tsx"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md### Решение пользователя 15.11.2026",
+      "tests": [
+        "src/lib/menuBlink.test.tsx",
+        "src/components/VaultSwitcher.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "extension/popup/components/VaultSelect.tsx",
+        "extension/popup/components/VaultSelect.test.tsx",
+        "extension/popup/lib/shadowRootCss.test.ts",
+        "src/lib/menuBlink.ts"
+      ],
+      "requirement": "SPEC_MOTION_LEVELS.md### Решение пользователя 15.11.2026",
+      "tests": [
+        "extension/popup/components/VaultSelect.test.tsx",
+        "extension/popup/lib/shadowRootCss.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "src/lib/motionClasses.ts",
         "src/lib/motionClasses.test.ts",
         "src/components/CardRowActions.tsx",
@@ -5190,6 +5413,52 @@
         "src/components/ui/progress.test.tsx"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/menuPanelGeometry.ts",
+        "src/lib/menuPanelGeometry.test.ts",
+        "src/lib/menuPanelProtocol.ts",
+        "src/lib/menuPanelProtocol.test.ts",
+        "src/lib/menuPanelSource.ts",
+        "src/lib/menuPanelSource.test.ts",
+        "src/lib/menuPanelCommands.ts",
+        "src/lib/menuMode.ts",
+        "src/lib/cardMenuEntries.ts",
+        "src/menuPanel/MenuPanelApp.tsx",
+        "src/menuPanel/MenuPanelApp.test.tsx",
+        "src/menuPanel/appearance.ts",
+        "src/menuPanel/main.tsx",
+        "src/menuPanel/main.test.tsx",
+        "src/menuPanel/menuPanel.css",
+        "menu-panel.html",
+        "src/components/CardMenuPanel.test.tsx",
+        "src/tabbar/settingsMenu.test.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#### Меню карточки в отдельном окне: проба",
+      "tests": [
+        "src/lib/menuPanelGeometry.test.ts",
+        "src/lib/menuPanelProtocol.test.ts",
+        "src/lib/menuPanelSource.test.ts",
+        "src/menuPanel/MenuPanelApp.test.tsx",
+        "src/menuPanel/main.test.tsx",
+        "src/components/CardMenuPanel.test.tsx",
+        "src/tabbar/settingsMenu.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/menu_panel.rs",
+        "src-tauri/src/commands/menu_panel.rs"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#### Меню карточки в отдельном окне: проба",
+      "tests": [
+        "src-tauri/src/menu_panel.rs",
+        "src-tauri/src/commands/effects.rs",
+        "src-tauri/src/lib.rs"
+      ],
+      "command": "test:rust"
     }
   ],
   "release": null

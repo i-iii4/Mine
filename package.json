@@ -28,6 +28,7 @@
     "test:paste-feed": "node scripts/paste-feed-audit.mjs",
     "test:image-preview": "node scripts/image-preview-motion-audit.mjs",
     "test:card-peek-motion": "node scripts/card-peek-motion-audit.mjs",
+    "test:tooltip-glide": "node scripts/tooltip-glide-audit.mjs",
     "test:swipe-scroller": "node scripts/swipe-scroller-audit.mjs",
     "test:native-shell": "node scripts/native-shell-smoke.mjs",
     "test:native-capture": "node scripts/native-capture-smoke.mjs",

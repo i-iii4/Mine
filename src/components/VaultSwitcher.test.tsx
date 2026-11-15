@@ -1,6 +1,11 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { VaultSwitcher } from "./VaultSwitcher";
+import { MOTION_LEVELS, MOTION_MENU_BLINK_MS } from "@/lib/motion";
+import { MENU_BLINK_ATTRIBUTE, setMenuBlinkMsForTests } from "@/lib/menuBlink";
+import { setMotionLevel } from "@/test/motionLevel";
+import { TOOLTIP_GLIDING_ATTRIBUTE } from "@/lib/tooltipGlide";
 import type { SpaceEntry } from "@/types";
 
 it.each(["pointer", "keyboard"])("refreshes externally added spaces when opened by %s", async (input) => {
@@ -510,6 +515,70 @@ describe("VaultSwitcher", () => {
       expect(commandMocks.selectVault).not.toHaveBeenCalled();
     });
 
+    // One tooltip per button, the one written for it; the button's
+    // `aria-label` names the space for assistive technology and is not shown
+    // as a second tooltip (user's decision of 15.11.2026).
+    it.each([
+      ["Open Тест in New Tab", "Open in New Tab"],
+      ["Reveal Тест in Finder", "Reveal in Finder"],
+      ["Remove Тест from the list", "Remove from the list — files stay on disk"],
+    ])("shows one tooltip on %s: %s", async (label, text) => {
+      await openTabSwitcher(vi.fn());
+      const button = screen.getByRole("button", { name: label });
+      await waitFor(() => expect(button).toBeEnabled());
+      fireEvent.pointerMove(button);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(text);
+      // Past any second delay: still the one tooltip, its own text.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+      });
+      const tooltips = screen.getAllByRole("tooltip");
+      expect(tooltips).toHaveLength(1);
+      expect(tooltips[0]).toHaveTextContent(text);
+      expect(document.querySelectorAll("[data-slot='tooltip-content']")).toHaveLength(1);
+      expect(button).toHaveAttribute("aria-label", label);
+    });
+
+    // The row's buttons are one group: the tooltip glides from one to the
+    // next instead of going and coming again (src/lib/tooltipGlide.ts).
+    it("glides the one tooltip from Reveal in Finder to Remove from the list", async () => {
+      // jsdom runs no animation: the names Radix waits for, as global.css and
+      // tw-animate-css give them (src/components/ui/tooltip.test.tsx).
+      const animations = document.createElement("style");
+      animations.textContent = `
+        [data-slot="tooltip-content"] { animation-name: enter; }
+        [data-slot="tooltip-content"][data-state="closed"] { animation-name: exit; }
+        [data-slot="tooltip-content"][data-tooltip-handoff]:not([data-state="closed"]) { animation-name: none; }
+      `;
+      document.head.append(animations);
+      onTestFinished(() => animations.remove());
+      await openTabSwitcher(vi.fn());
+      const place = (element: Element, left: number, width = 24) => {
+        element.getBoundingClientRect = () => DOMRect.fromRect({ x: left, y: 0, width, height: 24 });
+      };
+      const reveal = screen.getByRole("button", { name: "Reveal Тест in Finder" });
+      const remove = screen.getByRole("button", { name: "Remove Тест from the list" });
+      place(reveal.closest("[data-vault-switcher-row-actions]")!, 0, 80);
+      place(screen.getByRole("button", { name: "Open Тест in New Tab" }), 0);
+      place(reveal, 28);
+      place(remove, 56);
+      const contents = () => Array.from(document.querySelectorAll<HTMLElement>("[data-slot='tooltip-content']"));
+      const seen = () => contents().filter((content) => content.style.visibility !== "hidden");
+      fireEvent.pointerMove(reveal, { clientX: 40, clientY: 12 });
+      expect(await screen.findByRole("tooltip")).toHaveTextContent("Reveal in Finder");
+      fireEvent.pointerLeave(reveal, { clientX: 54, clientY: 12 });
+      fireEvent.pointerMove(reveal.closest("[data-vault-switcher-row-actions]")!, { clientX: 54, clientY: 12 });
+      await act(async () => undefined);
+      fireEvent.pointerMove(remove, { clientX: 68, clientY: 12 });
+      await act(async () => undefined);
+      await act(async () => {
+        for (let index = 0; index < 3; index += 1) await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      });
+      expect(seen()).toHaveLength(1);
+      expect(seen()[0]).toHaveAttribute(TOOLTIP_GLIDING_ATTRIBUTE);
+      expect(seen()[0]!.querySelector("[data-tooltip-text]")).toHaveTextContent("Remove from the list — files stay on disk");
+    });
+
     it("has no new tab on a page that is not a tab: ⌘-click switches as before", async () => {
       const { onVaultSelected } = await openTabSwitcher(undefined);
 
@@ -555,5 +624,239 @@ describe("VaultSwitcher", () => {
       Reflect.deleteProperty(root, "clientWidth");
       Reflect.deleteProperty(root, "clientHeight");
     }
+  });
+
+  // A chosen row of the space menu blinks as an item of any other menu does
+  // (src/lib/menuBlink.ts; user's decision of 15.11.2026): its highlight out
+  // for the first half of 150 ms and back for the second, then the menu
+  // closes and the command runs, once, on every level, by a press and by
+  // Enter in the field alike.
+  describe("the blink of a chosen row (user's decision of 15.11.2026)", () => {
+    const MINE = "/spaces/Mine";
+    const TEST = "/spaces/Тест";
+    const OTHER = "/spaces/Other";
+    const HALF = MOTION_MENU_BLINK_MS / 2;
+    const FRAME_MS = 1000 / 60;
+
+    beforeEach(() => {
+      setMenuBlinkMsForTests(MOTION_MENU_BLINK_MS);
+      commandMocks.selectVault.mockClear();
+      vi.mocked(openDialog).mockReset();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** Opens the menu on real time, then holds the clock: the blink is timed
+     *  from here on by the test. */
+    async function openBlinkSwitcher(onOpenInNewTab?: (vaultId: string) => void) {
+      const onVaultSelected = vi.fn();
+      commandMocks.listKnownVaults.mockResolvedValue([MINE, TEST, OTHER]);
+      commandMocks.listSpaces.mockResolvedValue([
+        { vault_id: "mine-id", path: MINE, name: "Mine", available: true, current: true },
+        { vault_id: "test-id", path: TEST, name: "Тест", available: true, current: false },
+        { vault_id: "other-id", path: OTHER, name: "Other", available: true, current: false },
+      ]);
+      render(
+        <VaultSwitcher
+          currentPath={MINE}
+          onVaultSelected={onVaultSelected}
+          onOpenInNewTab={onOpenInNewTab}
+          surface="topChrome"
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Switch space: Mine" }));
+      await screen.findByRole("menuitem", { name: "Тест" });
+      // The spaces' identities have come: ⌘ opens a new tab (В52).
+      if (onOpenInNewTab) {
+        await waitFor(() => expect(screen.getByRole("button", { name: "Open Тест in New Tab" })).toBeEnabled());
+      }
+      vi.useFakeTimers();
+      return { onVaultSelected, search: screen.getByRole("textbox", { name: "Search spaces" }) };
+    }
+
+    const row = (name: string) => screen.getByRole("menuitem", { name });
+    const menu = () => document.querySelector("[data-vault-switcher-menu]");
+    const lit = (name: string) => row(name).getAttribute("data-search-menu-action-active") === "true";
+
+    /** A choice as the menu hears it: a press on the row, or Enter in the
+     *  field on the row the arrows reached (`steps` down from the top). */
+    function choose(search: HTMLElement, name: string, how: "pointer" | "Enter", steps: number, metaKey = false) {
+      if (how === "pointer") {
+        fireEvent.click(row(name), { metaKey });
+        return;
+      }
+      // Each key its own event: the field reads the row the last arrow lit.
+      for (let step = 0; step < steps; step++) fireEvent.keyDown(search, { key: "ArrowDown" });
+      expect(lit(name)).toBe(true);
+      fireEvent.keyDown(search, { key: "Enter", metaKey });
+    }
+
+    async function advance(ms: number) {
+      await act(async () => {
+        vi.advanceTimersByTime(ms);
+      });
+    }
+
+    for (const level of MOTION_LEVELS) {
+      for (const how of ["pointer", "Enter"] as const) {
+        it(`${level}: a space chosen by ${how} blinks, then the menu closes and the space switches once`, async () => {
+          setMotionLevel(level);
+          const { onVaultSelected, search } = await openBlinkSwitcher();
+          choose(search, "Тест", how, 1);
+          // The highlight is out for the first half, the menu still open.
+          expect(row("Тест")).toHaveAttribute(MENU_BLINK_ATTRIBUTE);
+          expect(commandMocks.selectVault).not.toHaveBeenCalled();
+          // The pointer crossing another row does not take the highlight.
+          fireEvent.pointerMove(row("Other"));
+          await advance(HALF);
+          // Back for the second half, on the chosen row and on no other.
+          expect(row("Тест")).not.toHaveAttribute(MENU_BLINK_ATTRIBUTE);
+          expect(lit("Тест")).toBe(true);
+          expect(lit("Other")).toBe(false);
+          expect(commandMocks.selectVault).not.toHaveBeenCalled();
+          expect(menu()).not.toBeNull();
+          await advance(HALF);
+          expect(menu()).toBeNull();
+          expect(commandMocks.selectVault).toHaveBeenCalledTimes(1);
+          expect(commandMocks.selectVault).toHaveBeenCalledWith(TEST);
+          expect(onVaultSelected).toHaveBeenCalledTimes(1);
+          expect(onVaultSelected).toHaveBeenCalledWith(TEST);
+        });
+      }
+    }
+
+    for (const how of ["pointer", "Enter"] as const) {
+      it(`opens the space in a new tab once after the blink, chosen by ⌘ and ${how}`, async () => {
+        const onOpenInNewTab = vi.fn();
+        const { search } = await openBlinkSwitcher(onOpenInNewTab);
+        choose(search, "Тест", how, 1, true);
+        expect(row("Тест")).toHaveAttribute(MENU_BLINK_ATTRIBUTE);
+        await advance(HALF);
+        expect(onOpenInNewTab).not.toHaveBeenCalled();
+        await advance(HALF);
+        expect(onOpenInNewTab).toHaveBeenCalledTimes(1);
+        expect(onOpenInNewTab).toHaveBeenCalledWith("test-id");
+        expect(commandMocks.selectVault).not.toHaveBeenCalled();
+        expect(menu()).toBeNull();
+      });
+    }
+
+    // Two spaces, then Reveal in Finder (3 steps), then Add space (4 steps).
+    for (const how of ["pointer", "Enter"] as const) {
+      it(`blinks Reveal in Finder chosen by ${how}, then reveals the current space once`, async () => {
+        const { search } = await openBlinkSwitcher();
+        choose(search, "Reveal in Finder", how, 3);
+        expect(row("Reveal in Finder")).toHaveAttribute(MENU_BLINK_ATTRIBUTE);
+        await advance(HALF);
+        expect(row("Reveal in Finder")).not.toHaveAttribute(MENU_BLINK_ATTRIBUTE);
+        expect(lit("Reveal in Finder")).toBe(true);
+        expect(revealItemInDir).not.toHaveBeenCalled();
+        await advance(HALF);
+        expect(menu()).toBeNull();
+        expect(revealItemInDir).toHaveBeenCalledTimes(1);
+        expect(revealItemInDir).toHaveBeenCalledWith(MINE);
+      });
+
+      it(`blinks Add space chosen by ${how}, then closes the menu and asks for a folder once`, async () => {
+        const { search } = await openBlinkSwitcher();
+        choose(search, "Add space", how, 4);
+        expect(row("Add space")).toHaveAttribute(MENU_BLINK_ATTRIBUTE);
+        await advance(HALF);
+        expect(row("Add space")).not.toHaveAttribute(MENU_BLINK_ATTRIBUTE);
+        expect(lit("Add space")).toBe(true);
+        expect(openDialog).not.toHaveBeenCalled();
+        await advance(HALF);
+        expect(menu()).toBeNull();
+        expect(openDialog).toHaveBeenCalledTimes(1);
+      });
+    }
+
+    it("switches once for a double click and for Enter pressed again during the blink", async () => {
+      const { search } = await openBlinkSwitcher();
+      choose(search, "Тест", "pointer", 0);
+      choose(search, "Тест", "pointer", 0);
+      choose(search, "Other", "pointer", 0);
+      act(() => {
+        fireEvent.keyDown(search, { key: "Enter" });
+      });
+      await advance(HALF);
+      act(() => {
+        fireEvent.keyDown(search, { key: "Enter" });
+      });
+      await advance(HALF);
+      expect(commandMocks.selectVault).toHaveBeenCalledTimes(1);
+      expect(commandMocks.selectVault).toHaveBeenCalledWith(TEST);
+      await advance(MOTION_MENU_BLINK_MS);
+      expect(commandMocks.selectVault).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the query and the list as they were chosen from during the blink", async () => {
+      const { search } = await openBlinkSwitcher();
+      choose(search, "Тест", "Enter", 1);
+      act(() => {
+        fireEvent.change(search, { target: { value: "Oth" } });
+      });
+      expect(search).toHaveValue("");
+      expect(row("Тест")).toBeInTheDocument();
+      await advance(MOTION_MENU_BLINK_MS);
+      expect(commandMocks.selectVault).toHaveBeenCalledWith(TEST);
+    });
+
+    it("runs nothing when Escape closes the menu during the blink", async () => {
+      const { search } = await openBlinkSwitcher();
+      choose(search, "Тест", "pointer", 0);
+      act(() => {
+        fireEvent.keyDown(search, { key: "Escape" });
+      });
+      expect(menu()).toBeNull();
+      await advance(MOTION_MENU_BLINK_MS * 2);
+      expect(commandMocks.selectVault).not.toHaveBeenCalled();
+    });
+
+    // The field's Escape (SPEC_KEYBOARD.md, «Ввод текста в меню»): with a
+    // query typed the first one clears it and keeps the menu open with the
+    // caret in the field; the next one, or one with no query, closes the
+    // menu. Radix hears Escape on the document before the field does.
+    it("clears a typed query on the first Escape and closes the menu on the second", async () => {
+      const { search } = await openBlinkSwitcher();
+      fireEvent.change(search, { target: { value: "Oth" } });
+      expect(screen.queryByRole("menuitem", { name: "Тест" })).toBeNull();
+      fireEvent.keyDown(search, { key: "Escape" });
+      expect(menu()).not.toBeNull();
+      expect(search).toHaveValue("");
+      expect(row("Тест")).toBeInTheDocument();
+      // The caret goes back in the next frame (restoreSearchFocus).
+      await advance(FRAME_MS);
+      expect(search).toHaveFocus();
+      fireEvent.keyDown(search, { key: "Escape" });
+      expect(menu()).toBeNull();
+    });
+
+    it("closes at once on Escape with no query", async () => {
+      const { search } = await openBlinkSwitcher();
+      fireEvent.keyDown(search, { key: "Escape" });
+      expect(menu()).toBeNull();
+    });
+
+    it("closes and drops the command on Escape during the blink, a query typed", async () => {
+      const { search } = await openBlinkSwitcher();
+      fireEvent.change(search, { target: { value: "Тес" } });
+      choose(search, "Тест", "Enter", 1);
+      fireEvent.keyDown(search, { key: "Escape" });
+      expect(menu()).toBeNull();
+      await advance(MOTION_MENU_BLINK_MS * 2);
+      expect(commandMocks.selectVault).not.toHaveBeenCalled();
+    });
+
+    it("runs nothing when the menu closes another way during the blink", async () => {
+      const { search } = await openBlinkSwitcher();
+      choose(search, "Тест", "pointer", 0);
+      // A press outside the menu closes it.
+      fireEvent.pointerDown(document.body);
+      expect(menu()).toBeNull();
+      await advance(MOTION_MENU_BLINK_MS * 2);
+      expect(commandMocks.selectVault).not.toHaveBeenCalled();
+    });
   });
 });

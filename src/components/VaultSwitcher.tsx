@@ -26,13 +26,9 @@ import { SearchMenuAction } from "@/components/SearchMenuAction";
 import { SearchMenuInput } from "@/components/SearchMenuInput";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import { filterAndRankChannelSearch } from "@/lib/channelSearch";
+import { useMenuRowBlink } from "@/lib/menuBlink";
 import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { forgetKnownVault, listKnownVaults, listSpaces, recordStartupMilestone, selectVault } from "@/lib/commands";
 import type { SpaceEntry } from "@/types";
 import { cn } from "@/lib/utils";
@@ -113,6 +109,9 @@ export function VaultSwitcher({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  // A row is blinked by what it is, a space or a pinned action, not by its
+  // place in the list.
+  const rowBlink = useMenuRowBlink<string>();
   // The space awaiting removal confirmation. Held here rather than inside the
   // row so the dialog outlives the menu that opened it.
   const [pendingForget, setPendingForget] = useState<string | null>(null);
@@ -198,11 +197,13 @@ export function VaultSwitcher({
     handleReveal(currentPath);
   }, [currentPath, handleReveal, resetMenuSearch]);
 
+  // The menu closes before the folder dialog opens, as after any other
+  // chosen row (user's decision of 15.11.2026).
   const handleAddSpace = useCallback(async () => {
-    const selected = await openDialog({ directory: true, multiple: false, canCreateDirectories: true });
-    if (!selected) return;
     setOpen(false);
     resetMenuSearch();
+    const selected = await openDialog({ directory: true, multiple: false, canCreateDirectories: true });
+    if (!selected) return;
     await selectVault(selected);
     onVaultSelected(selected);
   }, [onVaultSelected, resetMenuSearch]);
@@ -253,6 +254,8 @@ export function VaultSwitcher({
   useEffect(() => {
     if (!isTopChrome) return;
     if (!open) {
+      // The menu closed during a row's blink: its command does not run.
+      rowBlink.cancel();
       resetMenuSearch();
       return;
     }
@@ -261,7 +264,7 @@ export function VaultSwitcher({
       searchInputRef.current?.select();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [isTopChrome, open, resetMenuSearch]);
+  }, [isTopChrome, open, resetMenuSearch, rowBlink.cancel]);
 
   useEffect(() => {
     setActiveIndex((current) => {
@@ -307,6 +310,28 @@ export function VaultSwitcher({
     visibleVaults,
   ]);
 
+  /// What the row at `index` is: a space, or one of the pinned actions.
+  const rowKeyAt = useCallback((index: number): string => {
+    const path = visibleVaults[index];
+    if (path) return `space:${path}`;
+    return index === revealActionIndex ? "reveal" : "add";
+  }, [revealActionIndex, visibleVaults]);
+
+  // A chosen row blinks once before the menu closes and its command runs, as
+  // an item of any other menu does (src/lib/menuBlink.ts; user's decision of
+  // 15.11.2026). A press and Enter in the field choose a row by this one path.
+  const chooseIndex = useCallback((index: number | null, metaKey = false) => {
+    if (index === null) return;
+    rowBlink.choose(rowKeyAt(index), () => activateIndex(index, metaKey));
+  }, [activateIndex, rowBlink.choose, rowKeyAt]);
+
+  // While a row blinks it is the one row lit, out for the first half, so its
+  // highlight comes back in the second half whether a press or Enter chose it,
+  // wherever the pointer goes meanwhile.
+  const rowLit = (index: number): boolean => rowBlink.lit(rowKeyAt(index), activeIndex === index);
+  const rowOff = (index: number): boolean => rowBlink.outAt(rowKeyAt(index));
+  const blinking = rowBlink.blinking;
+
   const restoreSearchFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
       searchInputRef.current?.focus({ preventScroll: true });
@@ -315,13 +340,19 @@ export function VaultSwitcher({
 
   const handleSearchKeyDown = useCallback((event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape") {
+      // The menu's own Escape decides (onEscapeKeyDown below): Radix hears
+      // the key on the document before the field, and by now has cleared
+      // the query or closed the menu, dropping a blinking row's command.
       event.preventDefault();
       event.stopPropagation();
-      if (query) {
-        resetMenuSearch();
-      } else {
-        setOpen(false);
-      }
+      return;
+    }
+
+    // During a row's blink the menu takes no other key: the list and the
+    // query stay as they were chosen from.
+    if (blinking) {
+      event.preventDefault();
+      event.stopPropagation();
       return;
     }
 
@@ -337,8 +368,20 @@ export function VaultSwitcher({
     event.preventDefault();
     event.stopPropagation();
     // ⌘Return opens the chosen space in a new tab, as ⌘-click does (В52).
-    activateIndex(activeIndex, event.metaKey);
-  }, [activateIndex, activeIndex, moveActiveIndex, query, resetMenuSearch, restoreSearchFocus]);
+    chooseIndex(activeIndex, event.metaKey);
+  }, [activeIndex, blinking, chooseIndex, moveActiveIndex, query, resetMenuSearch, restoreSearchFocus, rowBlink.cancel]);
+
+  // Radix hears Escape on the document before the field does and would close
+  // the whole menu: with a query typed, the first Escape clears it, the menu
+  // stays open with the caret in the field, and the next one closes it, as
+  // in every field over a list (SPEC_KEYBOARD.md, «Ввод текста в меню»).
+  // During a row's blink Escape drops the command and closes the menu.
+  const handleMenuEscape = useCallback((event: KeyboardEvent) => {
+    if (!query || rowBlink.blinking) return;
+    event.preventDefault();
+    resetMenuSearch();
+    restoreSearchFocus();
+  }, [query, resetMenuSearch, restoreSearchFocus, rowBlink.blinking]);
 
   const handleOpenChange = useCallback((nextOpen: boolean) => {
     setOpen(nextOpen);
@@ -389,6 +432,7 @@ export function VaultSwitcher({
         side={isTopChrome ? "bottom" : "top"}
         align="start"
         onCloseAutoFocus={isTopChrome ? topChromeTrigger.handleCloseAutoFocus : undefined}
+        onEscapeKeyDown={isTopChrome ? handleMenuEscape : undefined}
         widthRole={isTopChrome ? "search" : "action"}
         className={isTopChrome ? "overflow-hidden p-0" : undefined}
         data-vault-switcher-menu={isTopChrome ? "" : undefined}
@@ -401,6 +445,7 @@ export function VaultSwitcher({
             placeholder="Search spaces..."
             value={query}
             onChange={(event) => {
+              if (blinking) return;
               setQuery(event.target.value);
               setActiveIndex(null);
             }}
@@ -420,9 +465,10 @@ export function VaultSwitcher({
                   key={path}
                   id={`${actionIdPrefix}-space-action-${index}`}
                   path={path}
-                  active={activeIndex === index}
+                  active={rowLit(index)}
                   onActive={() => setActiveIndex(index)}
-                  onSwitch={({ metaKey }) => handleChoose(path, metaKey)}
+                  blinkOff={rowOff(index)}
+                  onSwitch={({ metaKey }) => chooseIndex(index, metaKey)}
                   newTab={onOpenInNewTab ? { open: newTabOpener(path) } : null}
                   onReveal={() => {
                     handleReveal(path);
@@ -479,9 +525,10 @@ export function VaultSwitcher({
           <div className="border-t border-border p-surface" data-vault-switcher-pinned-actions="">
             <SearchMenuAction
               id={`${actionIdPrefix}-space-action-${revealActionIndex}`}
-              active={activeIndex === revealActionIndex}
+              active={rowLit(revealActionIndex)}
+              blinkOff={rowOff(revealActionIndex)}
               onActive={() => setActiveIndex(revealActionIndex)}
-              onPress={handleRevealCurrent}
+              onPress={() => chooseIndex(revealActionIndex)}
             >
               <MenuIconSlot>
                 <FolderOpen className="size-[13px]" />
@@ -490,11 +537,10 @@ export function VaultSwitcher({
             </SearchMenuAction>
             <SearchMenuAction
               id={`${actionIdPrefix}-space-action-${addSpaceActionIndex}`}
-              active={activeIndex === addSpaceActionIndex}
+              active={rowLit(addSpaceActionIndex)}
+              blinkOff={rowOff(addSpaceActionIndex)}
               onActive={() => setActiveIndex(addSpaceActionIndex)}
-              onPress={() => {
-                void handleAddSpace();
-              }}
+              onPress={() => chooseIndex(addSpaceActionIndex)}
             >
               <MenuIconSlot>
                 <FolderPlus className="size-[13px]" />
@@ -546,6 +592,7 @@ function SpaceRow({
   id,
   path,
   active,
+  blinkOff,
   onActive,
   onSwitch,
   newTab,
@@ -555,6 +602,8 @@ function SpaceRow({
   id: string;
   path: string;
   active: boolean;
+  /// The row was chosen and its highlight is out (menuBlink.ts).
+  blinkOff: boolean;
   onActive: () => void;
   onSwitch: (modifiers: { metaKey: boolean }) => void;
   /// The Open in New Tab action, on a page that opens tabs. `open` is null
@@ -577,6 +626,7 @@ function SpaceRow({
       <SearchMenuAction
         id={id}
         active={active}
+        blinkOff={blinkOff}
         onActive={onActive}
         onPress={onSwitch}
         // Room for the row's icon actions: two, or three with a new tab.
@@ -599,78 +649,68 @@ function SpaceRow({
         )}
         data-vault-switcher-row-actions=""
       >
+        {/* Each button says its own tooltip through `Button` itself, the
+            one tooltip it shows; its `aria-label` names the space for
+            assistive technology (user's decision of 15.11.2026: an icon
+            button showed its label as a second tooltip beside this one). */}
         {newTab && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label={`Open ${name} in New Tab`}
-                className={ROW_ACTION_CLASS}
-                disabled={newTab.open === null}
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  newTab.open?.();
-                }}
-                data-vault-switcher-open-in-new-tab=""
-              >
-                {/* The tab bar's own sign for a new tab (В43). */}
-                <Plus />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Open in New Tab</TooltipContent>
-          </Tooltip>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Open ${name} in New Tab`}
+            tooltip="Open in New Tab"
+            className={ROW_ACTION_CLASS}
+            disabled={newTab.open === null}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              newTab.open?.();
+            }}
+            data-vault-switcher-open-in-new-tab=""
+          >
+            {/* The tab bar's own sign for a new tab (В43). */}
+            <Plus />
+          </Button>
         )}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              aria-label={`Reveal ${name} in Finder`}
-              className={ROW_ACTION_CLASS}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onReveal();
-              }}
-            >
-              <FolderOpen />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Reveal in Finder</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              aria-label={`Remove ${name} from the list`}
-              // The detach colour belongs to the moment the action is aimed at,
-              // not to an icon sitting in a list: a row painted orange at rest
-              // reads as a warning about the space itself.
-              className={cn(ROW_ACTION_CLASS, "hover:text-detach focus-visible:text-detach")}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onRequestForget();
-              }}
-            >
-              <X />
-            </Button>
-          </TooltipTrigger>
-          {/* The X is the one action in this menu whose consequence is easy to
-              misread, so the tooltip states what stays untouched. */}
-          <TooltipContent>
-            Remove from the list — files stay on disk
-          </TooltipContent>
-        </Tooltip>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Reveal ${name} in Finder`}
+          tooltip="Reveal in Finder"
+          className={ROW_ACTION_CLASS}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onReveal();
+          }}
+        >
+          <FolderOpen />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Remove ${name} from the list`}
+          // The X is the one action in this menu whose consequence is easy to
+          // misread, so the tooltip states what stays untouched.
+          tooltip="Remove from the list — files stay on disk"
+          // The detach colour belongs to the moment the action is aimed at,
+          // not to an icon sitting in a list: a row painted orange at rest
+          // reads as a warning about the space itself.
+          className={cn(ROW_ACTION_CLASS, "hover:text-detach focus-visible:text-detach")}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onRequestForget();
+          }}
+        >
+          <X />
+        </Button>
       </div>
     </div>
   );

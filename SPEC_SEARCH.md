@@ -69,8 +69,9 @@ owned here:
   the left segment contains the native traffic-light spacer, the space
   selector, sidebar channel search and a `border-r border-sidebar-border`, so
   the Sidebar/Main divider continues to the top edge of the window. The right
-  segment starts with a current collection switcher and leaves the remaining
-  pixels as drag region;
+  segment starts with the name of the current place (`TopCollectionSwitcher`,
+  «Название места в верхнем ряду» ниже) and leaves the remaining pixels as
+  drag region;
 - group selection and the overlay do not interact: the modal overlay owns the
   keyboard entirely while open.
 
@@ -97,8 +98,9 @@ The selector width follows the current folder name but is capped at 50% of the
 remaining left chrome width (`max-w-[50%]`). Folder names use end ellipsis.
 The root trigger stays transparent; hover/open/focus state is drawn only by the
 inner pill around the name (`h-6 rounded-1 px-2 bg-active`), with focus fill
-restricted to keyboard focus. Top-chrome triggers do not show dropdown
-chevrons.
+restricted to keyboard focus. The space selector in the top chrome shows a
+dropdown chevron inside the pill, right after the name (`showChevron` of
+`MenuTextTrigger`): closed it points right and turns down as the menu opens.
 Pointer-open closes prevent Radix trigger auto-focus and blur the trigger, so a
 single pointer click cannot leave a sticky hover-colored pill. Pointer drag
 also cannot open the dropdown: pointer activation is deferred to click and a
@@ -123,37 +125,30 @@ navigation. `Enter` activates the active row. `Escape` clears a non-empty
 sidebar search value; with an empty value it blurs the input and clears the
 active descendant.
 
-### Collection Switcher Search
+### Название места в верхнем ряду
 
-The right top chrome collection switcher is route navigation, not a second
-Grid search scope. Its trigger displays the current route collection
-(`Everything` or the active channel). Its dropdown contains a small search
-field that filters only destination collections using the same
-case-insensitive exact/prefix/substring/fuzzy channel matcher as Sidebar
-search and the same Sidebar ordering before ranking. The trigger keeps the
-right-side top-chrome spacing in expanded mode: transparent root `px-6` plus an
-inner `px-2` hover/open pill, placing text on a `32px` content axis from the
-segment edge. In compact/collapsed sidebar mode that wide right-side inset is
-removed: the collection trigger switches to `px-3`, matching the space selector
-root padding. С 11.11.2026 при свёрнутом меню сегмента пространства перед ним
-нет, и название места стоит от края окна (DESIGN_SYSTEM.md, «Верхние ряды»).
+Правый сегмент верхнего ряда начинается с названия места
+(`TopCollectionSwitcher.tsx`): `Everything`, название открытой коллекции или
+автор в его ленте. Это не область поиска и не переход: с 31.10.2026 у названия
+нет выпадающего списка, поля `Search collections`, пункта `Create collection`
+и стрелки (решение пользователя 31.10.2026; SPEC_FRONTEND.md, пункт о
+`TopCollectionSwitcher`; DESIGN_SYSTEM.md, «Верхние ряды»). Место меняют
+боковое меню и ⌘⌥↑↓, коллекцию создают боковое меню, ⇧⌘N и меню карточки.
+Щелчок по названию коллекции открывает поле переименования (`ChromeNameField`),
+`Everything` и автор это простой текст. Отступ названия от линии сегмента или
+от края окна задаёт `--top-collection-pad-x`, он равен `--chrome-edge-pad`. При
+свёрнутом меню сегмента пространства перед названием нет, и оно стоит от края
+окна (решение пользователя 11.11.2026, DESIGN_SYSTEM.md, «Верхние ряды»).
+Название занимает ряд до `Grid / Graph` и кончается многоточием, только когда
+упирается в них, в 4 px перед ними; пока в ряду стоят команды выделения, оно
+занимает половину ряда (решение пользователя 15.11.2026, DESIGN_SYSTEM.md,
+«Верхние ряды»; до него предел был половина ряда всегда).
 
-The current collection is excluded from the dropdown result set entirely. It is
-not duplicated as a disabled row, not marked with a check/radio icon and not
-styled as selected. Choosing any visible item immediately navigates to that
-collection route and closes the menu.
-
-The collection switcher dropdown has a pinned bottom `Create collection` action
-that is always available and never appears as an inline search result.
-Activating it closes the dropdown and opens a separate create-channel dialog.
-The dialog may prefill from the current search query, validates empty/duplicate
-names, uses the normal channel create command, refreshes App snapshots and
-navigates to the created channel.
-
-Space switcher dropdown follows the same no-current/no-check/no-icon menu
-language, adds its own `Search spaces` input, lists only destination spaces and
-keeps a plain pinned `Add space` action. `Search spaces` and Sidebar channel
-search use the same input-owned keyboard model (the collection switcher's
+The space switcher dropdown does not list the current space, marks no row as
+current with a check and puts no icon on space rows. It has its own `Search
+spaces` input, lists only destination spaces and keeps pinned `Reveal in
+Finder` and `Add space` actions. `Search spaces` and Sidebar channel search use
+the same input-owned keyboard model (the collection switcher's
 `Search collections` went with its menu on 31.10.2026):
 `ArrowUp`/`ArrowDown` change `aria-activedescendant`, pointer hover may update
 the active row, but focus remains in the search input.
@@ -264,7 +259,9 @@ Implemented behavior:
   `SearchEngine` boundary;
 - lexical retrieval still uses SQLite FTS5 with prefix terms;
 - query planning refuses stopword-filtered queries shorter than 2 alphanumeric
-  characters, so one-letter fragments never reach FTS/alias/semantic retrieval;
+  characters, so one-letter fragments never reach the full text/alias/semantic
+  retrieval; a query of exactly one letter or digit goes the separate name
+  path instead («Запрос из одного символа» below);
 - query planning expands stopword-filtered token groups with deterministic
   aliases/transliteration;
 - each token group is route-filtered as an OR group internally, while different
@@ -343,7 +340,8 @@ Rules:
 - matching is case-insensitive according to the SQLite FTS tokenizer;
 - empty or whitespace-only query is the normal Grid route;
 - after stopword filtering, a query with fewer than 2 alphanumeric characters
-  is treated as not ready and returns no search plan;
+  is treated as not ready and returns no search plan, except a query of one
+  letter or digit, which searches names («Запрос из одного символа»);
 - semantic-only retrieval is gated until the stopword-filtered query contains
   at least 3 alphanumeric characters;
 - invalid punctuation must not throw user-visible SQL/FTS errors.
@@ -356,6 +354,35 @@ Hybrid query normalization additionally produces:
 - `semantic_query`: the full user query for embedding;
 - `language_hint`: best-effort language/script classification for ranking and
   diagnostics, never a hard filter.
+
+### Запрос из одного символа
+
+Решение пользователя 15.11.2026: поиск начинается с первого символа, но на
+одном символе ищет только по названиям. Запрос, который после обрезки пробелов
+состоит из одной буквы или цифры (`char::is_alphanumeric`), ищет карточки, у
+которых какое-то слово имени файла начинается с этого символа без учёта
+регистра. Имя файла здесь то же поле `title`, что в Match Metadata: последний
+сегмент `slug`, которое показывает строка результата. H1 и legacy
+`frontmatter.title` на одном символе не ищутся, как они не дают совпадения
+`title` и на длинном запросе. Текст, описание, автор, адрес, псевдонимы,
+транслитерация и поиск по смыслу на одном символе не участвуют, служебные
+слова не отбрасываются: символ это начало слова, а не слово. Порядок по
+свежести, как у недавних карточек при пустом запросе (`FeedOrder::Newest`:
+`saved_at DESC`, затем имя). Совпадение возвращается как `field: "title"`,
+`kind: "prefix"` (`"exact"`, если слово из одной буквы латиницы), диапазон
+покрывает первую букву совпавшего слова. Регистр сравнивается по правилу
+подсветки: `to_lowercase` и начало слова после символа, который не буква и не
+цифра. Знаки с диакритикой различаются (`e` не находит `école`), потому что
+так же различает подсветка длинных запросов.
+
+Путь использует индекс: префиксный запрос `title : "x"*` к колонке `title` в
+`blocks_fts` даёт надмножество ответа, потому что эта колонка хранит все имена
+карточки, имя файла среди них. Читаются и сортируются только `slug`
+кандидатов, имя файла решает, и строки страницы читаются так же, как лента
+(`grid_rows_by_slug`). Один знак, который не буква и не цифра, остаётся
+ожиданием и плана не получает. Запросы от двух символов не меняются. Так же
+отвечают `mine search` и MCP-инструмент `search`: они идут через тот же
+`SearchEngine`.
 
 For cross-language queries, semantic search is required. Transliteration and
 alias expansion are useful recall helpers, but they are not a substitute for a
@@ -605,7 +632,13 @@ Backend:
   ranges;
 - exact title matches outrank semantic-only body matches;
 - punctuation in user query cannot break FTS SQL;
-- one-character Cyrillic/Latin queries return no search plan;
+- one-character Cyrillic/Latin queries return no full search plan; one letter
+  or digit finds file names with a word starting with it, case aside, newest
+  first, never by text, H1, description, author, URL or meaning, with no stop
+  words and no transliteration (`г` does not find `Gorod`); one character that
+  is neither a letter nor a digit finds nothing; it pages by offset and limit;
+  two characters keep the full search; on 10 000 cards it answers within the
+  lexical limit (15.11.2026);
 - short Cyrillic/mixed-layout queries bypass the semantic provider;
 - pagination returns `has_more` correctly in search mode;
 - snippets return plain text and valid ranges;

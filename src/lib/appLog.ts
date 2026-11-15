@@ -8,6 +8,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { errorMessage } from "./errorMessage";
 
+/** The logger's level for a measurement (`tauri_plugin_log::LogLevel::Info`). */
+const INFO_LEVEL = 3;
+
 /** The logger's level for a warning (`tauri_plugin_log::LogLevel::Warn`). */
 const WARN_LEVEL = 4;
 
@@ -17,5 +20,14 @@ export function logFailure(what: string, error: unknown): void {
   const message = `${what}: ${errorMessage(error)}`;
   void invoke("plugin:log|log", { level: WARN_LEVEL, message, location: "page" }).catch((logError: unknown) => {
     console.error(message, logError);
+  });
+}
+
+/** Write a measurement line to Mine's log at info (SPEC_CARD_MERGE.md,
+ *  «Замер слияния»). A log that cannot be reached leaves the line to the
+ *  console. */
+export function logInfo(message: string): void {
+  void invoke("plugin:log|log", { level: INFO_LEVEL, message, location: "page" }).catch((logError: unknown) => {
+    console.info(message, logError);
   });
 }

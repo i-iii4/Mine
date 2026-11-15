@@ -50,6 +50,13 @@ export function noteNativeMenuCommand(): void {
   if (installs > 0) last = NATIVE_MENU_INPUT;
 }
 
+/** A button of another page of the window (the tab bar's search) was
+ *  pressed: its command reaches this page as an event and moves as the
+ *  pointer's (УД4, п. 2). Called before the command acts. */
+export function notePointerCommand(): void {
+  if (installs > 0) last = "pointer";
+}
+
 /** Whether a native menu command moves as a key, for a motion that takes
  *  `byKey` from the command itself rather than from the last input (the
  *  sidebar's View menu item). */

@@ -23,9 +23,9 @@
 import { sidebarCompactRowsBelowPx } from "./appLayout";
 import { SPRING_RESPONSE_S, SPRING_SAMPLES, SPRING_SETTLE } from "./channelIcon";
 import { getSidebarStyle } from "./compactStack";
-import { setSidebarLook, sidebarLookOf } from "./sidebarLook";
+import { setSidebarLook, sidebarLookOf, sidebarMorphMotion } from "./sidebarLook";
 import { cubicBezierCurve } from "./cubicBezier";
-import { MOTION_MOVE_EASE, MOTION_SPRING_MOVE_MS, springMotion, type SpringMotion } from "./motion";
+import { MOTION_MOVE_EASE, MOTION_SPRING_MOVE_MS, type SpringMotion } from "./motion";
 
 // ─── The spring ─────────────────────────────────────────────────────────
 
@@ -137,9 +137,9 @@ export function morphMove(durationMs: number = MOTION_SPRING_MOVE_MS): MorphSpri
   };
 }
 
-/** The run a member of Пружина makes at the level in force: the spring from
- *  speed `v` in Full, Minimal's move from rest; null at Off and by a key,
- *  which change at once. */
+/** The run a member of Пружина makes for `motion` (springMotion): the spring
+ *  from speed `v`, Minimal's move from rest; null for `instant` (a command
+ *  at Off or by a key), which changes at once. */
 export function morphRun(motion: SpringMotion, v = 0): MorphSpring | null {
   if (motion === "spring") return morphSpring(v);
   if (motion === "move") return morphMove();
@@ -352,9 +352,13 @@ interface Morph {
 }
 
 /** Watches the list's scrollport `nav` and moves its rows across the
- *  compact threshold. Returns the teardown. Does nothing where WAAPI or
- *  ResizeObserver is missing, in the motion levels Minimal and Off (the
- *  layout switches at once, SPEC_MOTION_LEVELS.md, С4) and in the List look on trial, which is not the narrow table. */
+ *  compact threshold: on the spring under the edge in hand on every motion
+ *  level (SPEC_MOTION_LEVELS.md, Р1, С4; user's decision of 15.11.2026); a
+ *  command's width on the spring in Full and Minimal's move, at once at Off
+ *  and after a key (sidebarLook.ts, `sidebarMorphMotion`). Returns the
+ *  teardown. Does nothing where WAAPI or ResizeObserver is missing and in
+ *  the List look, which is not the narrow table; there the layout switches
+ *  at once. */
 export function observeSidebarRowsMorph(nav: HTMLElement): () => void {
   if (typeof ResizeObserver === "undefined" || typeof nav.animate !== "function" || typeof KeyframeEffect === "undefined") {
     return () => {};
@@ -514,8 +518,8 @@ export function observeSidebarRowsMorph(nav: HTMLElement): () => void {
   };
 
   /** Moves toward `toNarrow` from narrowness `q0` at speed `speed` (per
-   *  second), the layouts read afresh, on `run`: the spring in Full,
-   *  Minimal's move (РД4). */
+   *  second), the layouts read afresh, on `run`: the spring, or Minimal's
+   *  move for a command's width (РД4). */
   const start = (toNarrow: boolean, q0: number, speed: number, motion: SpringMotion) => {
     const q1 = toNarrow ? 1 : 0;
     const span = q1 - q0;
@@ -571,9 +575,10 @@ export function observeSidebarRowsMorph(nav: HTMLElement): () => void {
     const narrow = width < threshold;
     const crossed = lastNarrow !== null && narrow !== lastNarrow;
     lastNarrow = narrow;
-    // WAAPI, which no CSS rule of the level reaches (Р2): the spring in
-    // Full, Minimal's move, at once at Off (С4, РД4).
-    const motion = springMotion();
+    // WAAPI, which no CSS rule of the level reaches (Р2): the spring under
+    // the edge in hand on every level (Р1); a command's width by its level
+    // and at once after a key (С4, РД4, Р4).
+    const motion = sidebarMorphMotion();
     if (motion === "instant" || getSidebarStyle() === "list") {
       release();
       return;

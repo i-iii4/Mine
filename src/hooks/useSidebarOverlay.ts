@@ -59,6 +59,10 @@ export interface UseSidebarOverlayOptions {
   /** The sidebar is on screen only because the keyboard opened it
    *  (SPEC_KEYBOARD.md, М8). */
   openedForKeyboard?: boolean;
+  /** Runs a command of the backend's, `byKey` or by the pointer: the page
+   *  may hold it until a layer over it has gone (the image preview,
+   *  useImagePreviewCommands.ts). At once without it. */
+  commandGate?: (byKey: boolean, run: () => void) => void;
 }
 
 function narrowNow(): boolean {
@@ -83,6 +87,7 @@ export function useSidebarOverlay({
   onBesideIntent,
   takeKeyCommand,
   openedForKeyboard = false,
+  commandGate,
 }: UseSidebarOverlayOptions): SidebarOverlayControls {
   const [narrow, setNarrow] = useState(narrowNow);
   const [requestedOpen, setRequestedOpenState] = useState(false);
@@ -105,6 +110,8 @@ export function useSidebarOverlay({
   onBesideRef.current = onBesideIntent;
   const takeKeyCommandRef = useRef(takeKeyCommand);
   takeKeyCommandRef.current = takeKeyCommand;
+  const commandGateRef = useRef(commandGate);
+  commandGateRef.current = commandGate;
 
   // The window crosses the threshold: narrowing, the sidebar comes over the
   // feed closed; widening with it open, it stands beside the feed, shown (У7).
@@ -143,11 +150,16 @@ export function useSidebarOverlay({
     const unlisten = listenPage<SidebarIntent>(SIDEBAR_OVERLAY_COMMAND_EVENT, ({ payload }) => {
       if (disposed) return;
       const commandByKey = takeKeyCommandRef.current?.() ?? false;
-      if (!narrowRef.current) {
-        onBesideRef.current(payload, commandByKey);
-        return;
-      }
-      setRequestedOpen(payload.kind === "toggle" ? !openRef.current : payload.open, commandByKey);
+      const run = () => {
+        if (!narrowRef.current) {
+          onBesideRef.current(payload, commandByKey);
+          return;
+        }
+        setRequestedOpen(payload.kind === "toggle" ? !openRef.current : payload.open, commandByKey);
+      };
+      const gate = commandGateRef.current;
+      if (gate) gate(commandByKey, run);
+      else run();
     });
     unlisten.catch((error: unknown) => {
       console.error("Could not listen to the sidebar's commands:", error);

@@ -6,21 +6,189 @@
 //! moves a window during a tab drag: page events outside a window are not
 //! guaranteed, and an HTML drag runs a system session in which no window can
 //! follow the pointer (В64).
+//!
+//! Cards dragged in a tab's page over its own window's bar come here too
+//! (В86): the page sees the pointer over the bar, the bar alone knows where
+//! its tabs stand, so the backend carries the pointer to the bar with the
+//! same `tabbar-drop-hover` and takes the slot back with the same
+//! `report_drop_slot`.
 
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, PhysicalPosition, Position};
 
-use super::{create_window, emit_bar_state, lock, new_id, shell, window_of, TabShell};
-use crate::domain::windows::{SavedWindows, TabId, WindowFrame, WindowId, TAB_BAR_HEIGHT_PX};
+use super::{activate, create_window, emit_bar_state, lock, new_id, shell, window_of, TabShell};
+use crate::domain::windows::{
+    NewTab, SavedWindows, TabId, TabSpace, TabView, WindowFrame, WindowId, TAB_BAR_HEIGHT_PX,
+};
 
-/// `tabbar-drop-hover`: the dragged tab is over this bar at `x` (logical
+/// The event that tells a bar what is held over it (В63, В86).
+pub const TABBAR_DROP_HOVER_EVENT: &str = "tabbar-drop-hover";
+
+/// `tabbar-drop-hover`: something dragged is over this bar at `x` (logical
 /// points from the bar's left edge), or left it (`None`).
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct DropHover {
-    pub tab_id: TabId,
     pub x: Option<f64>,
+    pub item: DropItem,
+}
+
+/// What is held over a bar.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DropItem {
+    /// A tab of another window (В63).
+    Tab { tab_id: TabId },
+    /// Cards dragged in this window's visible tab (В86), shown by the title
+    /// of the card the drag holds. `dropped`: the button went up at `x`; the
+    /// bar answers with the slot there (`report_drop_slot`).
+    Cards { title: String, dropped: bool },
+}
+
+/// Where cards dragged in a tab's page are over its window's bar
+/// (`report_card_drag`, В86): `x` in logical points from the bar's left
+/// edge, which is the page's left edge too.
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+pub struct CardDragHover {
+    pub x: f64,
+    /// The title of the card the drag holds (В47).
+    pub title: String,
+}
+
+/// Cards let go over the bar (`drop_cards_on_tab_bar`, В86): one tab each,
+/// the grabbed card's first, on the placeholder's slot, and shown; the rest
+/// after it in the feed's order (decision of 15.11.2026).
+#[derive(Debug, Clone, Deserialize, specta::Type)]
+pub struct CardBarDrop {
+    pub x: f64,
+    pub title: String,
+    pub views: Vec<TabView>,
+}
+
+/// Cards let go over a bar, waiting for that bar's slot.
+struct PendingCards {
+    window: WindowId,
+    space: TabSpace,
+    views: Vec<TabView>,
+}
+
+static PENDING_CARDS: Mutex<Option<PendingCards>> = Mutex::new(None);
+
+/// The number of the latest card report taken from each tab page. A page's
+/// calls may reach the backend in any order (В10): a report numbered no
+/// higher than one already taken is late and changes nothing, so the pointer
+/// leaving the bar is never undone by a move reported before it.
+static CARD_REPORTS: Mutex<BTreeMap<String, u32>> = Mutex::new(BTreeMap::new());
+
+/// Whether the report `seq` of the page `label` is newer than every one
+/// taken from it; a newer one is taken.
+fn take_card_report(label: &str, seq: u32) -> bool {
+    let mut reports = CARD_REPORTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    newer_report(&mut reports, label, seq)
+}
+
+fn newer_report(reports: &mut BTreeMap<String, u32>, label: &str, seq: u32) -> bool {
+    if reports.get(label).is_some_and(|&last| seq <= last) {
+        return false;
+    }
+    reports.insert(label.to_string(), seq);
+    true
+}
+
+/// The page `label` starts again or closes: its card reports count from the
+/// start.
+pub fn forget_card_reports(label: &str) {
+    CARD_REPORTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(label);
+}
+
+fn pending_cards() -> std::sync::MutexGuard<'static, Option<PendingCards>> {
+    PENDING_CARDS.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The window of the tab page `label` and the space its tab shows.
+fn tab_window_and_space(app: &AppHandle, label: &str) -> Option<(WindowId, TabSpace)> {
+    card_target(&shell(app).snapshot(), label)
+}
+
+/// Whose bar hears of cards dragged in the page `label`: the window that
+/// holds its tab, and no other (В86, п. 7); with the space the cards' tabs
+/// show. `None` for a page that is not a tab.
+fn card_target(windows: &SavedWindows, label: &str) -> Option<(WindowId, TabSpace)> {
+    let tab = TabId::from_label(label)?;
+    let window = windows.window_of(&tab)?.id.clone();
+    let space = windows.tab(&tab)?.space.clone();
+    Some((window, space))
+}
+
+/// The tab page `label` drags cards over its own window's bar at `hover`, or
+/// no longer (`None`). Only that window's bar hears of it (В86, п. 7).
+pub fn report_card_drag(app: &AppHandle, label: &str, seq: u32, hover: Option<CardDragHover>) {
+    if !take_card_report(label, seq) {
+        return;
+    }
+    let Some((window, _)) = tab_window_and_space(app, label) else {
+        return;
+    };
+    // A drop waiting for its slot stays: the page's calls may arrive out of
+    // order (В10), and a late report of the pointer must not undo the drop.
+    let (x, title) = match hover {
+        Some(hover) => (Some(hover.x), hover.title),
+        None => (None, String::new()),
+    };
+    emit_drop_hover(app, &window, x, DropItem::Cards { title, dropped: false });
+}
+
+/// The tab page `label` let cards go over its window's bar: they wait for
+/// the slot the bar finds at `drop.x` (В86).
+pub fn drop_cards(app: &AppHandle, label: &str, seq: u32, drop: CardBarDrop) {
+    if !take_card_report(label, seq) {
+        return;
+    }
+    let Some((window, space)) = tab_window_and_space(app, label) else {
+        return;
+    };
+    if drop.views.is_empty() {
+        emit_drop_hover(app, &window, None, DropItem::Cards { title: drop.title, dropped: false });
+        return;
+    }
+    *pending_cards() = Some(PendingCards {
+        window: window.clone(),
+        space,
+        views: drop.views,
+    });
+    emit_drop_hover(app, &window, Some(drop.x), DropItem::Cards { title: drop.title, dropped: true });
+}
+
+/// The cards waiting for `window`'s slot land at `index`: a tab each from
+/// there, the grabbed card's first and shown, where the placeholder stood;
+/// the rest records without a page (В86).
+/// The bar then hears the drop is over, also when nothing was waiting.
+fn land_cards(app: &AppHandle, window: &WindowId, index: usize) {
+    let pending = pending_cards().take_if(|pending| &pending.window == window);
+    if let Some(pending) = pending {
+        let tabs: Vec<NewTab> = pending
+            .views
+            .into_iter()
+            .map(|view| NewTab {
+                id: TabId(new_id()),
+                space: pending.space.clone(),
+                view,
+            })
+            .collect();
+        let shown = tabs[0].id.clone();
+        if shell(app).change(|model| model.insert_tabs(window, index, tabs, 0)) {
+            activate(app, &shown);
+        }
+    }
+    // The state with the new tabs ends the gap they land in; the end of the
+    // drop ends the bar's landing.
+    emit_bar_state(app, window);
+    emit_drop_hover(app, window, None, DropItem::Cards { title: String::new(), dropped: false });
 }
 
 /// What a running drag needs to finish or undo.
@@ -56,14 +224,19 @@ pub fn windows_before_drag() -> Option<SavedWindows> {
     drag().as_ref().map(|running| running.before.clone())
 }
 
-/// The bar `bar` reports the slot under the dragged tab (В63).
-pub fn report_drop_slot(window: &WindowId, index: Option<usize>) {
+/// The bar of `window` reports the slot under the dragged tab (В63), or the
+/// slot where cards were let go (В86).
+pub fn report_drop_slot(app: &AppHandle, window: &WindowId, index: Option<usize>) {
     if let Some(running) = drag().as_mut() {
         if let Some((over, slot)) = running.over.as_mut() {
             if over == window {
                 *slot = index;
             }
         }
+        return;
+    }
+    if let Some(index) = index {
+        land_cards(app, window, index);
     }
 }
 
@@ -74,6 +247,8 @@ pub fn begin(app: &AppHandle, tab: &TabId, grab: (f64, f64)) {
     if drag().is_some() {
         return;
     }
+    // Cards let go over a bar that never answered stay where they are.
+    *pending_cards() = None;
     let shell = shell(app);
     let before = shell.snapshot();
     let Some(source) = before.window_of(tab).cloned() else {
@@ -207,15 +382,11 @@ fn on_drag_moved(app: &AppHandle) {
 }
 
 fn hint(app: &AppHandle, window: &WindowId, tab: &TabId, x: Option<f64>) {
-    crate::commands::space_events::emit_to_labels(
-        app,
-        [window.bar_label()],
-        "tabbar-drop-hover",
-        DropHover {
-            tab_id: tab.clone(),
-            x,
-        },
-    );
+    emit_drop_hover(app, window, x, DropItem::Tab { tab_id: tab.clone() });
+}
+
+fn emit_drop_hover(app: &AppHandle, window: &WindowId, x: Option<f64>, item: DropItem) {
+    crate::commands::space_events::emit_to_labels(app, [window.bar_label()], TABBAR_DROP_HOVER_EVENT, DropHover { x, item });
 }
 
 /// The button went up: join the bar under the pointer, or stay (В63).
@@ -364,8 +535,65 @@ fn stop_following(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::moving_position;
+    use super::{card_target, moving_position, newer_report};
+    use crate::domain::windows::{
+        SavedTab, SavedWindow, SavedWindows, SidebarLayout, TabId, TabSpace, TabView, WindowFrame, WindowId,
+        SAVED_WINDOWS_VERSION,
+    };
+    use std::collections::BTreeMap;
     use tauri::PhysicalPosition;
+
+    fn window(id: &str, tabs: &[(&str, &str)]) -> SavedWindow {
+        SavedWindow {
+            id: WindowId(id.into()),
+            frame: WindowFrame { x: 0.0, y: 0.0, width: 1200.0, height: 840.0 },
+            fullscreen: false,
+            tabs: tabs
+                .iter()
+                .map(|(tab, space)| SavedTab {
+                    id: TabId((*tab).into()),
+                    space: TabSpace::Space { vault_id: (*space).into() },
+                    view: TabView::default(),
+                    sidebar: None,
+                })
+                .collect(),
+            active_tab: TabId(tabs[0].0.into()),
+            sidebar: SidebarLayout::default(),
+        }
+    }
+
+    /// В86, п. 7: cards dragged in a tab go to the bar of its own window,
+    /// in its space; a bar or an unknown page takes none.
+    #[test]
+    fn cards_go_to_the_bar_of_their_own_window_only() {
+        let windows = SavedWindows {
+            version: SAVED_WINDOWS_VERSION,
+            windows: vec![window("w1", &[("a", "x"), ("b", "y")]), window("w2", &[("c", "x")])],
+            window_surface: None,
+        };
+        assert_eq!(
+            card_target(&windows, "tab-b"),
+            Some((WindowId("w1".into()), TabSpace::Space { vault_id: "y".into() })),
+        );
+        assert_eq!(card_target(&windows, "tab-c").map(|(window, _)| window), Some(WindowId("w2".into())));
+        assert_eq!(card_target(&windows, "tabbar-w1"), None);
+        assert_eq!(card_target(&windows, "tab-gone"), None);
+    }
+
+    /// В86: a page's card reports may arrive out of order (В10); a late one
+    /// changes nothing, a page that starts again counts from the start.
+    #[test]
+    fn a_late_card_report_changes_nothing() {
+        let mut reports = BTreeMap::new();
+        assert!(newer_report(&mut reports, "tab-a", 1));
+        assert!(newer_report(&mut reports, "tab-a", 3));
+        assert!(!newer_report(&mut reports, "tab-a", 2));
+        assert!(!newer_report(&mut reports, "tab-a", 3));
+        // Each page counts on its own.
+        assert!(newer_report(&mut reports, "tab-b", 1));
+        reports.remove("tab-a");
+        assert!(newer_report(&mut reports, "tab-a", 1));
+    }
 
     #[test]
     fn the_window_keeps_the_grab_under_the_pointer() {

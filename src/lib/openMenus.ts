@@ -48,11 +48,17 @@ interface Press {
   consumed: boolean;
   /** A menu was open when it began. */
   menuWasOpen: boolean;
+  /** It opened a menu in another window (`holdMenuElsewhere`). */
+  openedElsewhere: boolean;
 }
 
 let press: Press | null = null;
 let pressEndTimer: ReturnType<typeof setTimeout> | null = null;
 let guardHolders = 0;
+
+/** What a menu open in another window, for this page, does on a press here:
+ *  the card menu in the menu panel (src/lib/menuPanelSource.ts). */
+const menusElsewhere = new Set<() => void>();
 
 function openMenuSurface(): HTMLElement | null {
   for (const surface of menuSurfaces) {
@@ -127,8 +133,16 @@ function handlePointerDown(event: PointerEvent): void {
     pressEndTimer = null;
   }
   const surface = openMenuSurface();
+  if (surface === null && menusElsewhere.size > 0) {
+    // The menu is in another window: the press only closes it, as a press
+    // outside a menu on the page does.
+    press = { consumed: true, menuWasOpen: true, openedElsewhere: false };
+    hold(event);
+    for (const dismiss of [...menusElsewhere]) dismiss();
+    return;
+  }
   const outside = surface !== null && !isOnMenu(event);
-  press = { consumed: outside, menuWasOpen: surface !== null };
+  press = { consumed: outside, menuWasOpen: surface !== null, openedElsewhere: false };
   if (surface === null || !outside) return;
   hold(event);
   dismissOpenMenus(surface, event);
@@ -136,7 +150,7 @@ function handlePointerDown(event: PointerEvent): void {
 
 function handlePressEvent(event: Event): void {
   if (press === null || isOnMenu(event)) return;
-  const openedMenu = !press.menuWasOpen && openMenuSurface() !== null;
+  const openedMenu = !press.menuWasOpen && (openMenuSurface() !== null || press.openedElsewhere);
   if (press.consumed || openedMenu) hold(event);
 }
 
@@ -151,7 +165,7 @@ function handlePressEnd(event: Event): void {
 }
 
 function handleWheel(event: WheelEvent): void {
-  if (openMenuSurface() !== null && !isOnMenu(event)) hold(event);
+  if ((openMenuSurface() !== null || menusElsewhere.size > 0) && !isOnMenu(event)) hold(event);
 }
 
 function installGuard(): void {
@@ -261,7 +275,31 @@ export function menuTriggerOf(surface: HTMLElement): HTMLElement | null {
 }
 
 function markMenuOpen(doc: Document): void {
-  doc.documentElement.toggleAttribute(MENU_OPEN_ATTRIBUTE, menuSurfaces.size > 0);
+  doc.documentElement.toggleAttribute(MENU_OPEN_ATTRIBUTE, menuSurfaces.size > 0 || menusElsewhere.size > 0);
+}
+
+/**
+ * A menu of this page is open in another window (the menu panel). Until the
+ * returned release, the page keeps the rules of an open menu: a press here
+ * only closes it, `dismiss` called, and neither the press nor its click
+ * reach what lies under the pointer; the wheel scrolls nothing; embedded
+ * frames take no pointer. Called during the press that opened the menu, it
+ * holds the rest of that press as a menu opened on the page does.
+ */
+export function holdMenuElsewhere(dismiss: () => void): () => void {
+  const entry = () => dismiss();
+  menusElsewhere.add(entry);
+  if (press !== null && !press.menuWasOpen) press.openedElsewhere = true;
+  const releaseGuard = holdGuard();
+  markMenuOpen(document);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    menusElsewhere.delete(entry);
+    markMenuOpen(document);
+    releaseGuard();
+  };
 }
 
 interface MenuSurfaceHandlers {
@@ -368,6 +406,19 @@ export function useContextMenuPresence(open: boolean): void {
     setContextMenuOpen(presence, true);
     return () => setContextMenuOpen(presence, false);
   }, [open]);
+}
+
+/** Reports a context menu that is not on this page (the card menu a right
+ *  click opened in the menu panel) until the returned release. */
+export function holdContextMenuPresence(): () => void {
+  const presence = {};
+  setContextMenuOpen(presence, true);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    setContextMenuOpen(presence, false);
+  };
 }
 
 /** Calls `listener` whenever the first context menu opens or the last one closes. */

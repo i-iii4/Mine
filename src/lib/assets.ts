@@ -53,6 +53,13 @@ export function thumbnailLevelUrl(
   return cardPictureUrl(`${thumbsRootPath}/${slug}.${level}.jpg`, slug);
 }
 
+/// The address of the same thumbnail at another level, its version marks
+/// kept: a surface drawing a card larger than the strip does takes the level
+/// its size needs (SPEC_THUMBNAILS.md, «Уровни миниатюр»).
+export function thumbnailUrlAtLevel(url: string, level: ThumbLevel): string {
+  return url.replace(/\.(?:micro|zoom)\.jpg(?=$|[?#])/, `.${level}.jpg`);
+}
+
 export function previewAssetUrl(thumbsRootPath: string, previewPath: string): string {
   return cardPictureUrl(`${thumbsRootPath}/${previewPath}`, cardSlugOfPreviewPath(previewPath));
 }

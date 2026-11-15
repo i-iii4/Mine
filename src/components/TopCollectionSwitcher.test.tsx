@@ -40,19 +40,73 @@ describe("TopCollectionSwitcher", () => {
     await waitFor(() => expect(screen.queryByRole("textbox", { name: "Rename collection" })).toBeNull());
   });
 
-  // The rename field follows its text up to the place's limit, half the row,
-  // as the name at rest does (user's decision of 01.11.2026): every box
-  // between the field and the place's slot can shrink to it.
-  it("caps the rename field by the place's half of the row", () => {
+  // The name takes the row up to its neighbour on the right (user's decision
+  // of 15.11.2026): the slot shrinks and has no cap of its own, and the
+  // rename field follows its text up to the same limit, as the name at rest
+  // does (01.11.2026): every box between the field and the slot can shrink.
+  it("caps the name and its rename field only by the neighbour on the right", () => {
     const { container, name } = place({ currentTag: "Интерфейсы" });
+    const slot = container.querySelector<HTMLElement>("[data-top-collection-switcher-slot]")!;
+    expect(slot).toHaveClass("min-w-0", "shrink");
+    expect(slot).not.toHaveClass("shrink-0");
+    expect(slot.className).not.toMatch(/max-w-/);
     fireEvent.click(name());
     const field = screen.getByRole("textbox", { name: "Rename collection" });
-    const slot = container.querySelector("[data-top-collection-switcher-slot]")!;
-    expect(slot).toHaveClass("max-w-[50%]", "min-w-0");
     for (let box = field.parentElement; box && box !== slot; box = box.parentElement) {
       expect(box).toHaveClass("min-w-0");
     }
     expect(container.querySelector("[data-top-collection-switcher]")).toHaveClass("max-w-full");
+  });
+
+  // A group selection's commands take the half over the feed in this row
+  // (SPEC_FRONTEND.md, GroupSelectionCommands): the name keeps to the other.
+  it("keeps to half the row while a selection's commands stand in it", () => {
+    const { container, rerender, onRename } = place({ currentTag: "Интерфейсы", selectionActive: true });
+    const slot = () => container.querySelector<HTMLElement>("[data-top-collection-switcher-slot]")!;
+    expect(slot()).toHaveClass("max-w-[50%]");
+    rerender(
+      <TooltipProvider>
+        <TopCollectionSwitcher onRename={onRename} joinsNext currentTag="Интерфейсы" />
+      </TooltipProvider>,
+    );
+    expect(slot().className).not.toMatch(/max-w-/);
+  });
+
+  // Out of the row's flow nothing stops the slot at a neighbour: it keeps
+  // the width it last had in the flow, so the name fades out where it stood.
+  it("keeps the width it had in the row's flow once out of it", () => {
+    const callbacks: (() => void)[] = [];
+    const original = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(callback: ResizeObserverCallback) {
+        callbacks.push(() => callback([], this));
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+    try {
+      const { container, rerender, onRename } = place({ currentTag: "Интерфейсы" });
+      const slot = container.querySelector<HTMLElement>("[data-top-collection-switcher-slot]")!;
+      const width = vi.spyOn(slot, "getBoundingClientRect");
+      width.mockReturnValue(DOMRect.fromRect({ width: 612.5, height: 40 }));
+      act(() => callbacks.forEach((callback) => callback()));
+      expect(slot.style.getPropertyValue("--top-place-flow-width")).toBe("612.5px");
+
+      rerender(
+        <TooltipProvider>
+          <TopCollectionSwitcher onRename={onRename} joinsNext currentTag="Интерфейсы" overlay shown={false} />
+        </TooltipProvider>,
+      );
+      expect(slot).toHaveAttribute("data-overlay");
+      expect(slot).toHaveClass("absolute", "max-w-[var(--top-place-flow-width,50%)]");
+      // Out of the flow its own width is no width to keep.
+      width.mockReturnValue(DOMRect.fromRect({ width: 1200, height: 40 }));
+      act(() => callbacks.forEach((callback) => callback()));
+      expect(slot.style.getPropertyValue("--top-place-flow-width")).toBe("612.5px");
+    } finally {
+      globalThis.ResizeObserver = original;
+    }
   });
 
   it("keeps the old name on Escape and saves nothing", () => {

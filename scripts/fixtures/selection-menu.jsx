@@ -17,9 +17,18 @@ const block = {
 const tags = Array.from({ length: 24 }, (_, i) => ({ tag: `Channel ${String(i).padStart(2, "0")}`, count: i }));
 window.auditActions = [];
 window.__TAURI_INTERNALS__ = {
+  // The editor's Edit menu and focus work name the window they run in.
+  metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
+  // Event subscriptions: no event comes in this fixture (paste-feed-audit.mjs).
+  transformCallback: () => 0,
+  unregisterCallback: () => {},
   convertFileSrc: () => "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
   invoke: async (command) => {
     if (command === "get_block") return block;
+    // The open card edits its note at once and asks the disk for the body it
+    // shows (NoteEditor.tsx), as the backend answers (commands.ts).
+    if (command === "begin_note_edit") return block;
+    if (command === "note_body_state") return { body_hash: block.body_hash, body: block.body };
     if (command === "list_grid_blocks" || command === "search_grid_blocks") return {
       generation: 1, blocks: [block], total: 1, has_more: false, next_cursor: null,
     };

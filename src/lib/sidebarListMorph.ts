@@ -10,17 +10,19 @@
 // `morphSpring`); a crossing back mid-move turns it round from where it is,
 // at the speed it had.
 //
-// In the motion level Minimal the same move runs as Перемещение: 150 ms on
-// the move curve from rest, the fades by the same shares of its time
-// (SPEC_MOTION_LEVELS.md, С3, РД4).
+// The edge in hand moves the rows on the spring on every motion level: the
+// move answers the drag (SPEC_MOTION_LEVELS.md, Р1, С3; user's decision of
+// 15.11.2026). A width a command changes moves them by the level: the spring
+// in Full, Перемещение in Minimal, 200 ms on the move curve from rest with
+// the fades by the same shares of its time (РД4), at once at Off and after a
+// key (Р3, Р4; sidebarLook.ts, `sidebarMorphMotion`).
 //
 // This module owns the scrollport's look (sidebarLook.ts): the attribute the
-// stylesheet keys the compact rows on. At rest it follows the width; at the
-// motion level Off (SPEC_MOTION_LEVELS.md, С3), under the narrow table
-// (postponed) and when a frame moves
-// the width across the threshold by more than a tile and its gap (the most
-// one frame of ЛМ5 adds a tile for, user's decision of 01.11.2026) it
-// changes at once. Otherwise the table is laid out for the whole move:
+// stylesheet keys the compact rows on. At rest it follows the width; for a
+// command at Off or after a key, under the narrow table (postponed) and
+// when a frame moves the width across the threshold by more than a tile and
+// its gap (the most one frame of ЛМ5 adds a tile for, user's decision of
+// 01.11.2026) it changes at once. Otherwise the table is laid out for the whole move:
 // going to it the scrollport takes the table's look in the frame that
 // crossed, before it paints, so its strips take their whole count there
 // (SPEC_SIDEBAR_STRIP.md, ЛМ2); going back it keeps the table until the
@@ -52,9 +54,10 @@
 import { SIDEBAR_PREVIEW_TILE_GAP_PX, SIDEBAR_PREVIEW_TILE_PX, sidebarBesideMinWidthPx, sidebarCompactRowsBelowPx, sidebarNameColumnPx, sidebarPanelWidthPx, sidebarRowsWidthPx } from "./appLayout";
 import { CHANNEL_ICON_SPRING_MS, SPRING_SAMPLES } from "./channelIcon";
 import { getListStyle, getSidebarStyle } from "./compactStack";
-import { MOTION_SPRING_MOVE_MS, springMotion, type SpringMotion } from "./motion";
-import { SIDEBAR_LOOK_ATTRIBUTE, SIDEBAR_WIDTH_MOTION_ATTRIBUTE, setSidebarLook, sidebarContentWidth, sidebarLookAt, sidebarLookOfPanel } from "./sidebarLook";
+import { MOTION_SPRING_MOVE_MS, type SpringMotion } from "./motion";
+import { SIDEBAR_LOOK_ATTRIBUTE, SIDEBAR_WIDTH_MOTION_ATTRIBUTE, setSidebarLook, sidebarContentWidth, sidebarLookAt, sidebarLookOfPanel, sidebarMorphMotion } from "./sidebarLook";
 import { animatesPseudoElements, morphMove, morphSpring, type MorphSpring } from "./sidebarRowsMorph";
+import { holdStripWidths } from "./sidebarStripWidth";
 
 // ─── Time ───────────────────────────────────────────────────────────────
 
@@ -224,9 +227,9 @@ export function listRowAt(model: ListRowModel, nameHeight: number): { height: nu
  *  01.11.2026). */
 export const LIST_MORPH_STEP_LIMIT_PX = SIDEBAR_PREVIEW_TILE_PX + SIDEBAR_PREVIEW_TILE_GAP_PX;
 
-/** What a width of the list does. `idle`: the move does not apply (the
- *  levels Minimal and Off, the narrow table below the threshold, a list not
- *  laid out); a
+/** What a width of the list does. `idle`: the move does not apply (a
+ *  command's width at Off or after a key, the narrow table below the
+ *  threshold, a list not laid out); a
  *  move lands and the look follows the width at once. `rest`: no crossing;
  *  the look follows the width. `instant`: the width crossed the threshold
  *  by more than `LIST_MORPH_STEP_LIMIT_PX` in one frame; a move lands and
@@ -236,7 +239,8 @@ export const LIST_MORPH_STEP_LIMIT_PX = SIDEBAR_PREVIEW_TILE_PX + SIDEBAR_PREVIE
 export type WidthStep = "idle" | "rest" | "instant" | "start" | "turn" | "go-on";
 
 export function widthStep(input: {
-  /** List below the threshold, at the level Full. */
+  /** List below the threshold, and a width whose change moves the rows:
+   *  the edge in hand, or a command's width where its level moves it. */
   active: boolean;
   threshold: number;
   width: number;
@@ -373,11 +377,11 @@ interface Episode {
   tableFrom: number;
   listFrom: number;
   segment: MoveSegment;
-  /** How the run moves, read as it starts (УД11): the spring in Full,
-   *  Minimal's move. */
+  /** How the run moves, read as it starts (УД11): the spring under the
+   *  edge in hand and in Full, Minimal's move for a command's width. */
   motion: Exclude<SpringMotion, "instant">;
   /** The run's settling time from rest, which the fades take their shares
-   *  of: the spring's in Full, Перемещение's in Minimal. */
+   *  of: the spring's, or Перемещение's for Minimal's move. */
   settleMs: number;
   /** An animation of nothing that lasts the run: its time is the run's,
    *  its end the run's end. */
@@ -385,7 +389,18 @@ interface Episode {
   /** An animation of nothing that ends when the table's parts are gone,
    *  going back to the List. */
   bareClock: Animation | null;
+  /** Going to the table: lets the strips take their widths, held from the
+   *  frame that crossed (`STRIP_TILES_FRAME`). */
+  releaseStrips: (() => void) | null;
 }
+
+/** The frame after the crossing in which the strips take their tiles, going
+ *  to the table (user's decision of 15.11.2026; SPEC_SIDEBAR_STRIP.md, ЛМ2):
+ *  the crossing lays the table out and starts the move, the next frame makes
+ *  the move's animations, and this one lays out the tiles. The strips stand
+ *  transparent until the fade-in, halfway through the move, 220.5 ms on the
+ *  spring and 100 ms on Minimal's move, far past it. */
+export const STRIP_TILES_FRAME = 2;
 
 /** Where a name's cell stands in one layout (`ReadLayout.names`): `height`
  *  is its box's, `textHeight` its text's, which its lines change. */
@@ -430,9 +445,10 @@ function ownOpacity(element: Element): number {
  *  its rows between the List and the table as the list crosses the compact
  *  threshold. Puts it in its look at once, before it is first painted.
  *  Returns the teardown. Where ResizeObserver is missing nothing is kept;
- *  where WAAPI is, in Minimal and Off, while the narrow table is the look
- *  below the threshold (sidebarRowsMorph.ts) and for a step larger than
- *  `LIST_MORPH_STEP_LIMIT_PX` the look changes at once. While the sidebar's
+ *  where WAAPI is, for a command's width at Off or after a key, while the
+ *  narrow table is the look below the threshold (sidebarRowsMorph.ts) and
+ *  for a step larger than `LIST_MORPH_STEP_LIMIT_PX` the look changes at
+ *  once. While the sidebar's
  *  width moves (`SIDEBAR_WIDTH_MOTION_ATTRIBUTE`: a collapse, an opening,
  *  leaving the row and coming back) the look is its open width's from the
  *  motion's first frame to its last, whatever width it passes, and nothing
@@ -774,9 +790,19 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
    *  scrolled the table meanwhile. The animations go first, so the restyle
    *  that follows reads none of them; the List's marks go before the List
    *  is laid out, on the table they stand by the table's measures. */
+  /** Lets the strips held for `current` take their widths, once. */
+  const releaseStrips = (current: Episode) => {
+    const release = current.releaseStrips;
+    current.releaseStrips = null;
+    release?.();
+  };
+
   const finish = (current: Episode, scrolled: number) => {
     if (episode !== current) return;
     episode = null;
+    // The strips show from here on: they take their tiles before this
+    // frame paints.
+    releaseStrips(current);
     cancel(current);
     unplace(current);
     nav.removeAttribute(FADE_ATTRIBUTE);
@@ -940,11 +966,14 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
     let list: ReadLayout;
     let table: ReadLayout;
     let listScroll = scroll;
+    let heldStrips: (() => void) | null = null;
     if (toTable) {
       // The frame that crossed laid the List out at the new width before
       // this observer heard of it: its places are read where they stand.
-      // Then the scrollport takes the table's look, which this frame paints.
+      // Then the scrollport takes the table's look, which this frame paints,
+      // its strips transparent: their tiles wait (`STRIP_TILES_FRAME`).
       list = readLayout();
+      heldStrips = holdStripWidths();
       setSidebarLook(nav, "table");
       table = readLayout();
       setScroll(anchoredScroll(list.layout, table.layout, scroll));
@@ -987,8 +1016,18 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
       settleMs: motion === "move" ? MOTION_SPRING_MOVE_MS : LIST_MORPH_SETTLE_MS,
       clock: null,
       bareClock: null,
+      releaseStrips: heldStrips,
     };
     run(episode, true);
+    if (heldStrips) {
+      const current = episode;
+      const wait = (frames: number) => requestAnimationFrame(() => {
+        if (episode !== current) return;
+        if (frames > 1) wait(frames - 1);
+        else releaseStrips(current);
+      });
+      wait(STRIP_TILES_FRAME);
+    }
   };
 
   /** Back across the threshold mid-move: from where it is, at the speed it
@@ -1008,9 +1047,10 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
   const onWidth = (width: number) => {
     // The width's motion passes widths that are not the sidebar's.
     if (held) return;
-    // WAAPI, which no CSS rule of the level reaches (Р2): the spring in
-    // Full, Minimal's move; Off changes the look at once (С3, РД4).
-    const motion = springMotion();
+    // WAAPI, which no CSS rule of the level reaches (Р2): the spring under
+    // the edge in hand on every level (Р1); a command's width by its level
+    // and at once after a key (С3, РД4, Р4).
+    const motion = sidebarMorphMotion();
     const step = widthStep({
       active: canMove && getSidebarStyle() === "list" && motion !== "instant",
       threshold,
@@ -1033,7 +1073,7 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
         if (width < threshold && !kept) keepList();
         return;
       case "start":
-        // A start is only ever active, so the level moves it.
+        // A start is only ever active: the drag or the level moves it.
         if (motion !== "instant") start(width >= threshold, motion);
         return;
       case "turn":

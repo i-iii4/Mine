@@ -1,9 +1,11 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Plus } from "lucide-react";
@@ -124,6 +126,53 @@ type PointerPosition = {
   pointerId: number;
 };
 
+/**
+ * Escape climbs the picker's layers, innermost first (user's decision of
+ * 15.11.2026): a live query is the innermost state, so the first press only
+ * clears it and the menu and its submenu stay open with the caret in the
+ * field. With no query a picker with `onRequestClose` (the Connect submenu)
+ * closes itself and gives the focus back to its parent item; one without it
+ * leaves the press to the surface above, which closes its menu.
+ *
+ * Heard on the window ahead of every menu: Radix hears Escape on the
+ * document before the picker's own handlers, and would close the whole menu
+ * over a query. A press the picker takes goes no further. The path, not the
+ * target, finds the picker: in the clipper's overlay it lies in Shadow DOM.
+ */
+function usePickerEscape(
+  rootRef: RefObject<HTMLDivElement | null>,
+  search: string,
+  clearSearch: () => void,
+  onRequestClose: (() => void) | undefined,
+) {
+  const stateRef = useRef({ search, clearSearch, onRequestClose });
+  useLayoutEffect(() => {
+    stateRef.current = { search, clearSearch, onRequestClose };
+  });
+  useEffect(() => {
+    const view = rootRef.current?.ownerDocument.defaultView ?? window;
+    const handle = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing || event.defaultPrevented) return;
+      const root = rootRef.current;
+      if (!root || !event.composedPath().includes(root)) return;
+      const state = stateRef.current;
+      if (state.search) {
+        event.preventDefault();
+        event.stopPropagation();
+        state.clearSearch();
+        return;
+      }
+      if (state.onRequestClose) {
+        event.preventDefault();
+        event.stopPropagation();
+        state.onRequestClose();
+      }
+    };
+    view.addEventListener("keydown", handle, true);
+    return () => view.removeEventListener("keydown", handle, true);
+  }, [rootRef]);
+}
+
 function pointerPosition(event: ReactPointerEvent): PointerPosition {
   return {
     x: event.clientX,
@@ -169,9 +218,11 @@ export function CollectionPicker({
     states: Map<string, boolean>;
   }>(() => ({ blockSlug, states: new Map() }));
   const inputRef = useRef<HTMLInputElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const lastPointerPositionRef = useRef<PointerPosition | null>(null);
   const blockedPointerPositionRef = useRef<PointerPosition | null>(null);
+  usePickerEscape(rootRef, search, () => setSearch(""), onRequestClose);
   const selectedTagsKey = selectedTags.join("\0");
   const pendingStates = pendingMembership.blockSlug === blockSlug
     ? pendingMembership.states
@@ -279,24 +330,9 @@ export function CollectionPicker({
   };
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      // Escape climbs the layers, innermost first: a live query is the
-      // innermost state, so the first press only clears it. The next press
-      // reaches the surface above — Radix closes its menu, the clipper
-      // closes its panel.
-      if (search) {
-        event.preventDefault();
-        event.stopPropagation();
-        setSearch("");
-        return;
-      }
-      if (onRequestClose) {
-        event.preventDefault();
-        event.stopPropagation();
-        onRequestClose();
-      }
-      return;
-    }
+    // Escape is the window's listener's (usePickerEscape): it comes here
+    // only when the picker leaves it to the surface above.
+    if (event.key === "Escape") return;
 
     const submenuCloseKey = closeKeyForSubmenuSide(
       event.currentTarget
@@ -393,6 +429,7 @@ export function CollectionPicker({
 
   return (
     <div
+      ref={rootRef}
       className={cn("flex min-h-0 flex-1 flex-col", className)}
       data-collection-picker=""
       onKeyDownCapture={handleKeyDown}
@@ -540,9 +577,11 @@ export function BatchCollectionPicker({
   const [interactionMode, setInteractionMode] = useState<MembershipInteractionMode>("keyboard");
   const [pendingStates, setPendingStates] = useState<Map<string, boolean>>(() => new Map());
   const inputRef = useRef<HTMLInputElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const lastPointerPositionRef = useRef<PointerPosition | null>(null);
   const blockedPointerPositionRef = useRef<PointerPosition | null>(null);
+  usePickerEscape(rootRef, search, () => setSearch(""), onRequestClose);
 
   const lc = search.toLowerCase();
   const filtered = lc
@@ -614,24 +653,9 @@ export function BatchCollectionPicker({
   };
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      // Escape climbs the layers, innermost first: a live query is the
-      // innermost state, so the first press only clears it. The next press
-      // reaches the surface above — Radix closes its menu, the clipper
-      // closes its panel.
-      if (search) {
-        event.preventDefault();
-        event.stopPropagation();
-        setSearch("");
-        return;
-      }
-      if (onRequestClose) {
-        event.preventDefault();
-        event.stopPropagation();
-        onRequestClose();
-      }
-      return;
-    }
+    // Escape is the window's listener's (usePickerEscape): it comes here
+    // only when the picker leaves it to the surface above.
+    if (event.key === "Escape") return;
 
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       if (actionCount > 0) {
@@ -708,6 +732,7 @@ export function BatchCollectionPicker({
 
   return (
     <div
+      ref={rootRef}
       className="flex min-h-0 flex-1 flex-col"
       data-batch-collection-picker=""
       data-collection-picker=""

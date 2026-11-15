@@ -33,6 +33,7 @@ import { thumbnailLevelUrl, withQueryParam } from "@/lib/assets";
 import { releaseStripPicturesExcept } from "@/lib/stripPictures";
 import type { PreviewCard, PreviewItem } from "@/types";
 import type { ProjectionRevisionOwner } from "./useProjectionRevisionOwner";
+import { focusReturnsFromMenuPanel } from "@/lib/menuPanelSource";
 
 interface Options {
   thumbsRootPath: string | null;
@@ -186,8 +187,12 @@ export function useChannelPreviewsEvents({ thumbsRootPath, revisionOwner }: Opti
   }, [thumbsRootPath, refresh]);
 
   useEffect(() => {
-    const runRecoveryRefresh = () => {
+    const runRecoveryRefresh = (event: Event) => {
       if (!thumbsRootPathRef.current) return;
+      // The window taking the keyboard back from the card menu's panel is no
+      // return to the app (DESIGN_SYSTEM.md, «Меню карточки в отдельном
+      // окне: проба»).
+      if (event.type === "focus" && focusReturnsFromMenuPanel()) return;
       if (document.visibilityState !== "visible") return;
       const now = Date.now();
       if (now - lastRecoveryRefreshAtRef.current < 1000) return;

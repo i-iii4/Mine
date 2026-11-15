@@ -4,6 +4,7 @@
 
 use anyhow::bail;
 use crate::commands::edit_sessions::SessionFlush;
+use crate::commands::merge_timing::{MergeStep, MergeTiming};
 use crate::commands::effects::VaultChangedPayload;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -215,6 +216,9 @@ pub struct MergeBlocksResult {
     pub block: IndexedBlock,
     pub merged_slug: String,
     pub removed_slugs: Vec<String>,
+    /// How long each step took (SPEC_CARD_MERGE.md, «Замер слияния»): the
+    /// page writes it to the log with its own steps.
+    pub timing: MergeTiming,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -2277,18 +2281,21 @@ fn merge_blocks_unannounced(
     app: AppHandle,
     state: State<'_, AppState>,
     ordered_slugs: Vec<String>,
+    mut timing: MergeTiming,
 ) -> Result<MergeBlocksResult, MergeBlocksError> {
     let space = state.space_for(webview.label()).ok_or(MergeBlocksError::NoVault)?;
-    let vault_state = space
-        .vault_state
-        .lock()
-        .map_err(|_| MergeBlocksError::Internal {
+    let vault_state = timing.time(MergeStep::SpaceLock, || space.vault_state.lock()).map_err(|_| {
+        MergeBlocksError::Internal {
             message: "vault state mutex poisoned".into(),
-        })?;
+        }
+    })?;
     let vs = vault_state.as_ref().ok_or(MergeBlocksError::NoVault)?;
-    let vault = files::layout_for_new_files(&vs.vault).map_err(internal_merge_error)?;
-    let mutation = merge_blocks_inner(Some(&state), &vs.conn, &vault, ordered_slugs)?;
-    let result = mutation.result;
+    let vault = timing
+        .time(MergeStep::Layout, || files::layout_for_new_files(&vs.vault))
+        .map_err(internal_merge_error)?;
+    let mutation = merge_blocks_timed(Some(&state), &vs.conn, &vault, ordered_slugs, timing)?;
+    let mut result = mutation.result;
+    let announcing = std::time::Instant::now();
 
     crate::commands::space_events::announce_to_vault(&app, &vault, 
         "block:added",
@@ -2312,6 +2319,7 @@ fn merge_blocks_unannounced(
         "vault-changed",
         VaultChangedPayload::from_outside(vs.vault.root().to_string_lossy().to_string()),
     );
+    result.timing.add(MergeStep::Announce, announcing.elapsed());
 
     Ok(result)
 }
@@ -2321,13 +2329,16 @@ fn merge_blocks_unannounced(
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn merge_blocks(webview: tauri::Webview, app: AppHandle, state: State<'_, AppState>, ordered_slugs: Vec<String>) -> Result<MergeBlocksResult, MergeBlocksError> {
     let announcing = super::effects::ChangeNews::before(&webview);
+    let mut timing = MergeTiming::default();
     // A merge rewrites the links of notes it finds while it runs: every
     // session of the space writes its edits first (SPEC_EDITING.md, Л4.7).
-    let sessions = SessionFlush::space(&webview);
-    let outcome = merge_blocks_unannounced(webview, app, state, ordered_slugs);
-    if outcome.is_ok() {
-        announcing.send(Vec::new());
-        sessions.announce();
+    let sessions = timing.time(MergeStep::FlushEdits, || SessionFlush::space(&webview));
+    let mut outcome = merge_blocks_unannounced(webview, app, state, ordered_slugs, timing);
+    if let Ok(result) = &mut outcome {
+        result.timing.time(MergeStep::Announce, || {
+            announcing.send(Vec::new());
+            sessions.announce();
+        });
     }
     outcome
 }
@@ -2898,8 +2909,20 @@ pub(crate) fn merge_blocks_inner(
     vault: &VaultLayout,
     ordered_slugs: Vec<String>,
 ) -> Result<MergeBlocksMutation, MergeBlocksError> {
-    let plan = plan_merge_blocks(conn, vault, ordered_slugs)?;
-    apply_merge_plan(state, conn, vault, plan)
+    merge_blocks_timed(state, conn, vault, ordered_slugs, MergeTiming::default())
+}
+
+/// [`merge_blocks_inner`], adding each step's time to `timing`
+/// (SPEC_CARD_MERGE.md, «Замер слияния»): the result carries it.
+pub(crate) fn merge_blocks_timed(
+    state: Option<&AppState>,
+    conn: &rusqlite::Connection,
+    vault: &VaultLayout,
+    ordered_slugs: Vec<String>,
+    mut timing: MergeTiming,
+) -> Result<MergeBlocksMutation, MergeBlocksError> {
+    let plan = plan_merge_blocks(conn, vault, ordered_slugs, &mut timing)?;
+    apply_merge_plan(state, conn, vault, plan, timing)
 }
 
 /// A merge read from disk and ready to write. It carries the text of every
@@ -2919,19 +2942,29 @@ fn plan_merge_blocks(
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     ordered_slugs: Vec<String>,
+    timing: &mut MergeTiming,
 ) -> Result<MergePlan, MergeBlocksError> {
     let ordered_slugs = validate_merge_slugs(ordered_slugs)?;
     // The notes that link the merged cards are taken from the index brought
     // up to the files, and only they are read (SPEC_DEEP_AUDIT.md, Н5, Е5.5).
-    bring_index_up_to_files(conn, vault).map_err(internal_merge_error)?;
+    timing
+        .time(MergeStep::IndexUpToFiles, || bring_index_up_to_files(conn, vault))
+        .map_err(internal_merge_error)?;
     let selected_slugs: BTreeSet<String> = ordered_slugs.iter().cloned().collect();
-    let sources = load_merge_source_blocks(vault, &ordered_slugs)?;
-    let merged_slug = merged_block_slug(conn, vault, &sources)?;
-    let moves = merge_note_moves(vault, &sources, &merged_slug)?;
-    let mut merged_block = build_merged_block(&sources, &moves, merged_slug)?;
-    merged_block.body = retarget_wikilinks(&merged_block.body, |target| moves.retarget(target));
-    let merged_text = merged_card_text(&merged_block, &sources)?;
-    let reference_writes = build_merge_reference_writes(conn, vault, &selected_slugs, &moves)?;
+    let sources = timing.time(MergeStep::ReadSources, || load_merge_source_blocks(vault, &ordered_slugs))?;
+    timing.cards = u32::try_from(sources.len()).unwrap_or(u32::MAX);
+    timing.pictures = u32::try_from(merge_source_pictures(&sources)).unwrap_or(u32::MAX);
+    let merged_slug = timing.time(MergeStep::MergedName, || merged_block_slug(conn, vault, &sources))?;
+    let moves = timing.time(MergeStep::ScanSpaceFiles, || merge_note_moves(vault, &sources, &merged_slug))?;
+    let (merged_block, merged_text) = timing.time(MergeStep::Compose, || {
+        let mut merged_block = build_merged_block(&sources, &moves, merged_slug)?;
+        merged_block.body = retarget_wikilinks(&merged_block.body, |target| moves.retarget(target));
+        let merged_text = merged_card_text(&merged_block, &sources)?;
+        Ok::<_, MergeBlocksError>((merged_block, merged_text))
+    })?;
+    let reference_writes = timing.time(MergeStep::ReferenceWrites, || {
+        build_merge_reference_writes(conn, vault, &selected_slugs, &moves)
+    })?;
     Ok(MergePlan {
         ordered_slugs,
         sources,
@@ -2941,11 +2974,34 @@ fn plan_merge_blocks(
     })
 }
 
+/// The pictures the merged cards name, for the measurement
+/// (SPEC_CARD_MERGE.md, «Замер слияния»): their `file` and `thumbnail` when
+/// those are images, and every image their bodies embed or link.
+fn merge_source_pictures(sources: &[MergeSourceBlock]) -> usize {
+    sources
+        .iter()
+        .map(|source| {
+            let frontmatter = &source.block.frontmatter;
+            let properties = [frontmatter.file.as_deref(), frontmatter.thumbnail.as_deref()]
+                .into_iter()
+                .flatten()
+                .filter(|reference| crate::storage::preview_plan::is_image_media(reference))
+                .count();
+            let body = iter_file_references(&source.block.body)
+                .iter()
+                .filter(|reference| crate::storage::preview_plan::is_image_media(&reference.target))
+                .count();
+            properties + body
+        })
+        .sum()
+}
+
 fn apply_merge_plan(
     state: Option<&AppState>,
     conn: &rusqlite::Connection,
     vault: &VaultLayout,
     plan: MergePlan,
+    mut timing: MergeTiming,
 ) -> Result<MergeBlocksMutation, MergeBlocksError> {
     let MergePlan {
         ordered_slugs,
@@ -2975,15 +3031,25 @@ fn apply_merge_plan(
             .flat_map(|write| [write.path.clone(), vault.thumb_path(&write.block.slug)]),
     );
     if let Some(state) = state {
-        state
-            .suppress_paths(
-                suppressed_paths.iter().cloned(),
-                Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
-            )
+        timing
+            .time(MergeStep::SuppressPaths, || {
+                state.suppress_paths(
+                    suppressed_paths.iter().cloned(),
+                    Duration::from_millis(IN_APP_RENAME_WATCHER_SUPPRESSION_MS),
+                )
+            })
             .map_err(internal_merge_error)?;
     }
 
-    let indexed = match apply_merge_blocks(conn, vault, &merged_block, &merged_text, &sources, &reference_writes) {
+    let indexed = match apply_merge_blocks(
+        conn,
+        vault,
+        &merged_block,
+        &merged_text,
+        &sources,
+        &reference_writes,
+        &mut timing,
+    ) {
         Ok(indexed) => indexed,
         Err(error) => {
             let notes: Vec<PathBuf> = std::iter::once(merged_path)
@@ -3001,6 +3067,7 @@ fn apply_merge_plan(
             block: indexed,
             merged_slug,
             removed_slugs: ordered_slugs,
+            timing,
         },
         removed_events,
     })
@@ -3060,6 +3127,7 @@ fn apply_merge_blocks(
     merged_text: &str,
     sources: &[MergeSourceBlock],
     reference_writes: &[MergeReferenceWrite],
+    timing: &mut MergeTiming,
 ) -> Result<IndexedBlock, MergeBlocksError> {
     let mut writes = Vec::with_capacity(1 + reference_writes.len() + sources.len());
     writes.push(SourceFileWrite::create(
@@ -3081,37 +3149,49 @@ fn apply_merge_blocks(
     writes.extend(sources.iter().map(|source| {
         SourceFileWrite::delete_if_unchanged(source.path.clone(), source.source.clone().into_bytes())
     }));
-    let staged = StagedSourceMutation::stage(writes).map_err(merge_mutation_error)?;
+    let staged = timing
+        .time(MergeStep::Stage, || StagedSourceMutation::stage(writes))
+        .map_err(merge_mutation_error)?;
     let merged_path = vault.block_path(&merged_block.slug);
     staged
-        .commit_with_index(conn, "merge_blocks", |index_conn| {
-            reconcile::project_source_path(index_conn, vault, &merged_path)?;
-            for write in reference_writes {
-                reconcile::project_source_path(index_conn, vault, &write.path)?;
-            }
-            for source in sources {
-                reconcile::remove_source_projection(index_conn, vault, &source.block.slug)?;
-            }
-            Ok(())
-        })
+        .commit_with_index_observed(
+            conn,
+            "merge_blocks",
+            |index_conn| {
+                reconcile::project_source_path(index_conn, vault, &merged_path)?;
+                for write in reference_writes {
+                    reconcile::project_source_path(index_conn, vault, &write.path)?;
+                }
+                for source in sources {
+                    reconcile::remove_source_projection(index_conn, vault, &source.block.slug)?;
+                }
+                Ok(())
+            },
+            &mut |phase, took| timing.add(phase.into(), took),
+        )
         .map_err(merge_mutation_error)?;
 
-    reconcile_committed_preview(conn, vault, &merged_block.slug);
+    timing.time(MergeStep::MergedPreview, || reconcile_committed_preview(conn, vault, &merged_block.slug));
 
-    for write in reference_writes {
-        reconcile_committed_preview(conn, vault, &write.block.slug);
-    }
-    for source in sources {
-        thumbnails::remove_card_pictures(vault, &source.block.slug);
-        if let Err(e) = article_audio::delete_all_artifacts(vault, &source.block.slug) {
-            log::warn!(
-                "failed to delete article audio for merged source {}: {e:#}",
-                source.block.slug
-            );
+    timing.time(MergeStep::ReferencePreviews, || {
+        for write in reference_writes {
+            reconcile_committed_preview(conn, vault, &write.block.slug);
         }
-    }
+    });
+    timing.time(MergeStep::SourcePictures, || {
+        for source in sources {
+            thumbnails::remove_card_pictures(vault, &source.block.slug);
+            if let Err(e) = article_audio::delete_all_artifacts(vault, &source.block.slug) {
+                log::warn!(
+                    "failed to delete article audio for merged source {}: {e:#}",
+                    source.block.slug
+                );
+            }
+        }
+    });
 
-    index::get_block(conn, &merged_block.slug)
+    timing
+        .time(MergeStep::ReadMerged, || index::get_block(conn, &merged_block.slug))
         .map_err(internal_merge_error)?
         .ok_or_else(|| {
             internal_merge_error(anyhow::anyhow!(
@@ -6616,6 +6696,52 @@ mod tests {
         assert!(!external_content.contains("[[Second Image|image card]]"));
     }
 
+    /// SPEC_CARD_MERGE.md, «Замер слияния»: every step of the merge itself
+    /// is timed, in order, with the number of cards and pictures; the steps
+    /// of the command around it (edits, lock, layout, news) are its own.
+    #[test]
+    fn a_merge_times_each_of_its_steps_and_counts_cards_and_pictures() {
+        use crate::commands::merge_timing::MergeStep;
+        let (_root, _derived, vault, conn) = make_vault();
+        let state = AppState::new();
+        let first = image("First Image", "first.png");
+        let mut second = article("Second Note", "Text ![[inline.png]] and ![[clip.mp4]].");
+        second.frontmatter.tags = Vec::new();
+        persist_block(&conn, &vault, &first);
+        persist_block(&conn, &vault, &second);
+        for (name, width) in [("first.png", 8), ("inline.png", 6)] {
+            image::RgbImage::from_pixel(width, 8, image::Rgb([20, 40, 60]))
+                .save(vault.root().join(name))
+                .unwrap();
+        }
+
+        let mutation = merge_blocks_inner(
+            Some(&state),
+            &conn,
+            &vault,
+            vec!["First Image".to_string(), "Second Note".to_string()],
+        )
+        .unwrap();
+
+        let timing = &mutation.result.timing;
+        assert_eq!(timing.cards, 2);
+        // The first card's image file and the image the note embeds; the
+        // video is not a picture.
+        assert_eq!(timing.pictures, 2);
+        let steps: Vec<MergeStep> = timing.steps.iter().map(|entry| entry.step).collect();
+        let merge_steps: Vec<MergeStep> = MergeStep::ALL
+            .into_iter()
+            .filter(|step| {
+                !matches!(
+                    step,
+                    MergeStep::FlushEdits | MergeStep::SpaceLock | MergeStep::Layout | MergeStep::Announce
+                )
+            })
+            .collect();
+        assert_eq!(steps, merge_steps);
+        assert!(timing.steps.iter().all(|entry| entry.ms >= 0.0));
+    }
+
     #[test]
     fn merge_blocks_publishes_multi_image_preview_in_first_grid_snapshot() {
         let (_root, _derived, vault, conn) = make_vault();
@@ -6821,7 +6947,7 @@ mod tests {
         });
 
         let merged_text = merged_card_text(&merged_block, &sources).unwrap();
-        let error = apply_merge_blocks(&conn, &vault, &merged_block, &merged_text, &sources, &reference_writes)
+        let error = apply_merge_blocks(&conn, &vault, &merged_block, &merged_text, &sources, &reference_writes, &mut MergeTiming::default())
             .unwrap_err();
         assert!(matches!(error, MergeBlocksError::Internal { .. }));
 
@@ -10091,6 +10217,7 @@ mod tests {
             &conn,
             &vault,
             vec!["Cards/First".to_string(), "Cards/Second".to_string()],
+            &mut MergeTiming::default(),
         )
         .unwrap();
         let merged_slug = plan.merged_block.slug.clone();
@@ -10104,7 +10231,7 @@ mod tests {
             })
             .unwrap();
 
-        let error = apply_merge_plan(None, &conn, &vault, plan).unwrap_err();
+        let error = apply_merge_plan(None, &conn, &vault, plan, MergeTiming::default()).unwrap_err();
 
         assert!(matches!(error, MergeBlocksError::SourceChanged { .. }), "{error}");
         assert_eq!(read_note(&vault, "Cards/Second"), edited);
@@ -10138,6 +10265,7 @@ mod tests {
             &conn,
             &vault,
             vec!["Cards/First".to_string(), "Cards/Second".to_string()],
+            &mut MergeTiming::default(),
         )
         .unwrap();
         std::fs::OpenOptions::new()
@@ -10148,7 +10276,7 @@ mod tests {
             })
             .unwrap();
 
-        let error = apply_merge_plan(Some(&state), &conn, &vault, plan).unwrap_err();
+        let error = apply_merge_plan(Some(&state), &conn, &vault, plan, MergeTiming::default()).unwrap_err();
 
         assert!(matches!(error, MergeBlocksError::SourceChanged { .. }), "{error}");
         let indexed = index::get_block(&conn, "Cards/Second").unwrap().unwrap();

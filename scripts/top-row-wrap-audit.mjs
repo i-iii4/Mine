@@ -11,9 +11,14 @@
 // sidebar open or collapsed; with no card the place's name stands, first in
 // the row while the sidebar is hidden, which then has no segment; under the
 // card's window the row names the place beside the open sidebar and nothing
-// with it hidden. A name's rename field is as wide as its text up to what
-// caps the name at rest (01.11.2026), the sidebar open or collapsed. Starts
-// and stops its own Vite.
+// with it hidden. The place's name takes the row up to the feed's controls
+// and ends in an ellipsis only where it meets them, 4 px before them as the
+// open card's name before ⋯; with a selection in the row it keeps to half
+// the row, with the selection in a second row it has the first row again;
+// out of the row's flow it keeps the width it had (user's decision of
+// 15.11.2026). A name's rename field is as wide as its text up to what caps
+// the name at rest (01.11.2026), the sidebar open or collapsed. Starts and
+// stops its own Vite.
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 import { COLD_START_MS, startAuditVite } from "./audit-vite.mjs";
@@ -57,7 +62,9 @@ const vite = await startAuditVite([{
         // How an open card stands: full page or in its window (SPEC_CARD_PEEK.md, О5).
         const [cardView,setCardView]=React.useState("full");
         const [view,setView]=React.useState("grid");
-        React.useEffect(()=>{ window.auditSelect=setCount; window.auditOpenCard=setCard; window.auditView=setView; window.auditCollapse=setCollapsed; window.auditCardView=setCardView; },[]);
+        // The collection the feed shows: its name is the place's name.
+        const [tag,setTag]=React.useState("Inbox");
+        React.useEffect(()=>{ window.auditSelect=setCount; window.auditOpenCard=setCard; window.auditView=setView; window.auditCollapse=setCollapsed; window.auditCardView=setCardView; window.auditTag=setTag; },[]);
         const beside=!narrow&&!collapsed;
         const detailBlock=topRowCard(card?{slug:card,title:card,tags:[]}:null,cardView);
         const placeShown=topRowShowsPlace({sidebar:beside?"beside":"hidden",card:!card?"none":cardView==="peek"?"window":"full"});
@@ -71,8 +78,8 @@ const vite = await startAuditVite([{
             h("div",{ref:wrap.rowRef,className:"flex h-full min-w-0 flex-1 items-center"},
               // As App.tsx has it: away, the switcher stays in the page, out
               // of the row's flow, faded out and inert.
-              h(TopCollectionSwitcher,{shown:placeShown,overlay:!placeShown,currentTag:"Inbox",onRename:async()=>undefined,
-                joinsNext:true}),
+              h(TopCollectionSwitcher,{shown:placeShown,overlay:!placeShown,currentTag:tag,onRename:async()=>undefined,
+                selectionActive:count>0,joinsNext:true}),
               h(MainSecondaryTopBar,{viewMode:view,detailBlock,detailEntered:Boolean(detailBlock),onViewModeChange:noop,vaultPath:"",tags:[],onToggleTag:noop,
                 onCreateAndAssign:noop,onRequestRename:noop,onRenameFile:async()=>undefined,onCheckFileName:async()=>null,
                 onRequestDelete:noop,onDetailClose:noop,detailMenuOpenRequestSequence:0,selectionActive:count>0,
@@ -121,6 +128,26 @@ function readPath() {
     buttons: buttons.map((r) => ({ left: r.left, right: r.right })),
     pathLine: document.querySelector("[data-path-card-line]") !== null,
     mainTop: box("main").top,
+  };
+}
+
+/** Where the place's name, its slot and the feed's controls stand. */
+function readPlace() {
+  const box = (selector) => {
+    const element = document.querySelector(selector);
+    return element ? element.getBoundingClientRect().toJSON() : null;
+  };
+  const slot = document.querySelector("[data-top-collection-switcher-slot]");
+  const name = slot.querySelector("[data-top-collection-name]");
+  return {
+    fit: document.querySelector("[data-chrome-shell]").getAttribute("data-top-row"),
+    row: slot.parentElement.getBoundingClientRect().toJSON(),
+    slot: slot.getBoundingClientRect().toJSON(),
+    inert: slot.hasAttribute("inert"),
+    name: name.getBoundingClientRect().toJSON(),
+    nameCut: name.scrollWidth > name.clientWidth,
+    nameEllipsis: getComputedStyle(name).textOverflow,
+    controls: box("[data-main-view-mode-switcher]"),
   };
 }
 
@@ -297,10 +324,86 @@ try {
   await page.evaluate(() => { window.auditOpenCard(null); window.auditCardView("full"); });
   console.log("PASS 1200: an open card's name alone beside the open sidebar and with it collapsed, the place first with no card, nothing named under the card's window with the sidebar hidden");
 
+  // The place's name takes the row up to the feed's controls (user's
+  // decision of 15.11.2026): a long one ends in an ellipsis 4 px before
+  // Grid / Graph, the gap the open card's name keeps before ⋯, at every
+  // width, the sidebar open, collapsed or over the feed; the controls keep
+  // their width and their place at the window's edge. A short one stands
+  // whole with the rest of the row empty after it.
+  const LONG_PLACE = "Города, здания и обитаемые пространства: архитектура, урбанизм и интерьеры ".repeat(3).trim();
+  const readPlaceSettled = async () => { await settle(); return page.evaluate(readPlace); };
+  await page.evaluate(() => { window.auditOpenCard(null); window.auditSelect(0); window.auditView("grid"); });
+  let controlsAtRest = null;
+  for (const collapsed of [false, true]) {
+    await page.evaluate((value) => window.auditCollapse(value), collapsed);
+    for (const width of [1200, 900, 670, 669, 480, 390]) {
+      await page.setViewportSize({ width, height: 700 });
+      const label = `${width} sidebar ${width <= 669 ? "over the feed" : collapsed ? "collapsed" : "open"}`;
+      await page.evaluate((tag) => window.auditTag(tag), LONG_PLACE);
+      let place = await readPlaceSettled();
+      controlsAtRest ??= place.controls;
+      assert.equal(place.fit, "one", `${label}: one row`);
+      assert.equal(place.nameCut, true, `${label}: the long name does not fit`);
+      assert.equal(place.nameEllipsis, "ellipsis", `${label}: the long name ends in an ellipsis`);
+      assert.ok(Math.abs(place.controls.left - place.name.right - 4) <= 0.5,
+        `${label}: the long name ends 4 px before Grid / Graph (${place.name.right} for ${place.controls.left})`);
+      assert.ok(Math.abs(place.controls.width - controlsAtRest.width) <= 0.5, `${label}: Grid / Graph and Display keep their width`);
+      assert.ok(Math.abs((width - place.controls.right) - (1200 - controlsAtRest.right)) <= 0.5,
+        `${label}: Grid / Graph and Display keep their place at the window's edge`);
+      await page.evaluate(() => window.auditTag("Inbox"));
+      place = await readPlaceSettled();
+      assert.equal(place.nameCut, false, `${label}: a short name stands whole`);
+      assert.ok(place.slot.right < place.controls.left - 4, `${label}: a short name leaves the row empty after it`);
+      console.log(`PASS ${label}: the long place's name ends 4 px before Grid / Graph, ${Math.round(place.controls.width)} px of controls kept`);
+    }
+  }
+
+  // With a selection in the row its commands take half the row and the name
+  // keeps to the other; with the commands in a second row the first row is
+  // the name's again; without them the name meets Grid / Graph once more.
+  await page.evaluate((tag) => { window.auditCollapse(false); window.auditTag(tag); window.auditSelect(12); }, LONG_PLACE);
+  await page.setViewportSize({ width: 1200, height: 700 });
+  let place = await readPlaceSettled();
+  assert.equal(place.fit, "one", "1200 with a selection: one row");
+  assert.ok(Math.abs(place.slot.width - place.row.width / 2) <= 0.5, "1200 with a selection: the long name keeps to half the row");
+  await page.setViewportSize({ width: 740, height: 700 });
+  place = await readPlaceSettled();
+  assert.equal(place.fit, "two", "740 with a selection: two rows");
+  assert.ok(Math.abs(place.slot.right - place.row.right) <= 0.5, "740 with the commands in the second row: the name takes the first row");
+  assert.equal(place.nameCut, true, "740 with the commands in the second row: the long name still ends in an ellipsis");
+  await page.evaluate(() => window.auditSelect(0));
+  place = await readPlaceSettled();
+  assert.equal(place.fit, "one", "740 without a selection: one row");
+  assert.ok(Math.abs(place.controls.left - place.name.right - 4) <= 0.5, "740 without a selection: the name ends 4 px before Grid / Graph");
+  console.log("PASS selection: half the row in one row, the first row in two, up to Grid / Graph without it");
+
+  // Out of the row's flow, faded out and inert, the name keeps the width it
+  // had: under the card's window and with a card full page it never lies over
+  // the feed's controls or the card's.
+  await page.setViewportSize({ width: 1200, height: 700 });
+  await page.evaluate(() => window.auditCollapse(true));
+  const inFlow = await readPlaceSettled();
+  for (const cardView of ["peek", "full"]) {
+    await page.evaluate((view) => { window.auditCardView(view); window.auditOpenCard("Nogal"); }, cardView);
+    place = await readPlaceSettled();
+    assert.equal(place.inert, true, `${cardView}: the place's name leaves the row`);
+    assert.ok(Math.abs(place.slot.left - inFlow.slot.left) <= 0.5 && Math.abs(place.slot.width - inFlow.slot.width) <= 0.5,
+      `${cardView}: the name keeps the box it had in the row (${place.slot.width} for ${inFlow.slot.width})`);
+    if (cardView === "peek") assert.ok(place.slot.right <= place.controls.left - 4 + 0.5, "peek: the name stays off Grid / Graph");
+    else {
+      const more = await page.locator("[data-secondary-detail-top-menu] [data-chrome-actions]").boundingBox();
+      assert.ok(place.slot.right <= more.x + 0.5, "full: the name stays off the card's ⋯ and ×");
+    }
+    await page.evaluate(() => window.auditOpenCard(null));
+    await readPlaceSettled();
+  }
+  await page.evaluate(() => { window.auditCardView("full"); window.auditCollapse(false); window.auditTag("Inbox"); });
+  console.log("PASS out of the row's flow: the place's name keeps its box, off the feed's and the card's controls");
+
   // A name's rename field is as wide as its text with the name's 8 px on both
   // sides, as at rest (field-sizing, user's decision of 01.11.2026), and what
-  // caps the name at rest caps the field: the place's half of the row for
-  // the collection, the room up to ⋯ for the open card. At the cap the text
+  // caps the name at rest caps the field: the room up to Grid / Graph for the
+  // collection (15.11.2026), the room up to ⋯ for the open card. At the cap the text
   // scrolls inside and the 8 px after its last glyph stay.
   const SHORT_NAME = "Nogal";
   const TYPED = " House on the hill";
@@ -346,8 +449,9 @@ try {
     field = await readField();
     assert.equal(field.scrolls, true, `${label} at the cap: the text scrolls inside`);
     if (marker === "top-collection-name") {
-      const half = await page.evaluate(() => document.querySelector("[data-top-collection-switcher-slot]").parentElement.getBoundingClientRect().width);
-      assert.ok(field.limit.width <= half / 2 + 0.5, "collection at the cap: the place keeps to half the row");
+      const controls = await page.locator("[data-main-view-mode-switcher]").boundingBox();
+      assert.ok(Math.abs(field.right - (controls.x - 4)) <= 0.5,
+        `collection at the cap: the field ends 4 px before Grid / Graph (${field.right} for ${controls.x})`);
       assert.ok(field.right <= field.limit.right + 0.5, "collection at the cap: the field ends inside the place");
     } else {
       assert.ok(Math.abs(field.right - (field.limit.left - 4)) <= 0.5, "open card at the cap: the field ends at the room up to ⋯");

@@ -152,6 +152,7 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("new_tab", Effect::Reads),
     ("close_tab", Effect::Reads),
     ("close_other_tabs", Effect::Reads),
+    ("close_tabs_beside", Effect::Reads),
     ("move_tab", Effect::Reads),
     ("set_window_sidebar", Effect::Reads),
     ("toggle_window_sidebar", Effect::Reads),
@@ -163,6 +164,14 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("move_tab_to_new_window", Effect::Reads),
     ("begin_tab_drag", Effect::Reads),
     ("report_drop_slot", Effect::Reads),
+    ("report_card_drag", Effect::Reads),
+    ("drop_cards_on_tab_bar", Effect::Reads),
+    ("menu_panel_prepare", Effect::Reads),
+    ("menu_panel_ready", Effect::Reads),
+    ("menu_panel_open", Effect::Reads),
+    ("menu_panel_show", Effect::Reads),
+    ("menu_panel_close", Effect::Reads),
+    ("menu_panel_painted", Effect::Reads),
 ];
 
 /// The commands that run on the main thread, each with why it may: none of
@@ -208,6 +217,7 @@ pub const MAIN_THREAD_COMMANDS: &[(&str, &str)] = &[
     ("new_tab", "opens a tab"),
     ("close_tab", "closes a tab"),
     ("close_other_tabs", "closes tabs"),
+    ("close_tabs_beside", "closes tabs"),
     ("move_tab", "orders the tabs"),
     ("set_window_sidebar", "tabs in memory"),
     ("toggle_window_sidebar", "tabs in memory, or an event to the tab"),
@@ -218,7 +228,18 @@ pub const MAIN_THREAD_COMMANDS: &[(&str, &str)] = &[
     ("spaces_in_tabs", "tabs in memory"),
     ("move_tab_to_new_window", "opens a window"),
     ("begin_tab_drag", "follows the pointer with the window"),
-    ("report_drop_slot", "tabs in memory"),
+    ("report_drop_slot", "tabs in memory, or opens the tabs of dropped cards"),
+    ("report_card_drag", "an event to the window's tab bar"),
+    ("drop_cards_on_tab_bar", "an event to the window's tab bar"),
+    // TRIAL: the card menu's own window (DESIGN_SYSTEM.md, «Меню карточки в
+    // отдельном окне: проба»): AppKit's windows are moved and read on the
+    // main thread, and an opening waits for no pool.
+    ("menu_panel_prepare", "creates the menu panel's window"),
+    ("menu_panel_ready", "the menu panel in memory and its window"),
+    ("menu_panel_open", "reads the page's place on the screen"),
+    ("menu_panel_show", "moves and shows the menu panel"),
+    ("menu_panel_close", "hides the menu panel and gives the keyboard back"),
+    ("menu_panel_painted", "reads the windows' state for the log"),
 ];
 
 /// What was renamed by a change, so a tab showing the old name follows it

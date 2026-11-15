@@ -88,6 +88,24 @@ export type CardAssociations = { generation: ProjectionRevision; slug: string;
 groups: CardAssociationGroup[] }
 
 /**
+ * Cards let go over the bar (`drop_cards_on_tab_bar`, В86): one tab each,
+ * the grabbed card's first, on the placeholder's slot, and shown; the rest
+ * after it in the feed's order (decision of 15.11.2026).
+ */
+export type CardBarDrop = { x: number; title: string; views: TabView[] }
+
+/**
+ * Where cards dragged in a tab's page are over its window's bar
+ * (`report_card_drag`, В86): `x` in logical points from the bar's left
+ * edge, which is the page's left edge too.
+ */
+export type CardDragHover = { x: number;
+/**
+ * The title of the card the drag holds (В47).
+ */
+title: string }
+
+/**
  * What the file at a card's `image_url` becomes.
  */
 export type CardFileRole = "file" | "thumbnail"
@@ -373,10 +391,25 @@ export type DeleteOrphanResult = { deleted: string[]; skipped: string[] }
 export type DeleteTextSelectionParams = { source_slug: string; selected_text: string; first_block_start: number; first_block_end: number; source_body_hash: string }
 
 /**
- * `tabbar-drop-hover`: the dragged tab is over this bar at `x` (logical
+ * `tabbar-drop-hover`: something dragged is over this bar at `x` (logical
  * points from the bar's left edge), or left it (`None`).
  */
-export type DropHover = { tab_id: TabId; x: number | null }
+export type DropHover = { x: number | null; item: DropItem }
+
+/**
+ * What is held over a bar.
+ */
+export type DropItem =
+/**
+ * A tab of another window (В63).
+ */
+{ kind: "tab"; tab_id: TabId } |
+/**
+ * Cards dragged in this window's visible tab (В86), shown by the title
+ * of the card the drag holds. `dropped`: the button went up at `x`; the
+ * bar answers with the slot there (`report_drop_slot`).
+ */
+{ kind: "cards"; title: string; dropped: boolean }
 
 /**
  * A command of the Edit menu that the note editor carries out itself.
@@ -658,6 +691,117 @@ export type MediaFailure =
  */
 { kind: "address"; refusal: AddressRefusal }
 
+/**
+ * Why a menu closed.
+ */
+export type MenuPanelCloseReason =
+/**
+ * An item was chosen.
+ */
+"chosen" |
+/**
+ * Escape, or the chord that opened it.
+ */
+"escape" |
+/**
+ * A press outside it, here, in another window, in another app, or the
+ * app left.
+ */
+"outside" |
+/**
+ * The tab closed it, or another menu took the panel.
+ */
+"source" |
+/**
+ * The panel did not show it in time.
+ */
+"unresponsive" |
+/**
+ * The panel could not draw or show it.
+ */
+"failed"
+
+/**
+ * The menu closed: to the tab and to the panel.
+ */
+export type MenuPanelClosed = { menu: number; reason: MenuPanelCloseReason }
+
+/**
+ * A tab asks for its card menu in the panel.
+ */
+export type MenuPanelOpenRequest = {
+/**
+ * The anchor in the tab's page: the plate of the button, or the point
+ * of a right click as a rectangle of no size.
+ */
+anchor: ScreenRect;
+/**
+ * What the panel draws, JSON the backend passes on unread
+ * (src/lib/menuPanelProtocol.ts).
+ */
+payload: string;
+/**
+ * When the input that opened the menu came, epoch milliseconds.
+ */
+event_at: number }
+
+/**
+ * What the panel's page hears to draw a menu.
+ */
+export type MenuPanelOpening = { menu: number;
+/**
+ * The tab that opened it: the panel sends it every choice.
+ */
+source: string;
+/**
+ * The anchor on the screen.
+ */
+anchor: ScreenRect;
+/**
+ * The visible frame of the screen the anchor is on: without the menu
+ * bar and the Dock.
+ */
+screen: ScreenRect; payload: string; event_at: number }
+
+/**
+ * The panel's page drew its first frame of the menu.
+ */
+export type MenuPanelPaint = { menu: number;
+/**
+ * The time of that frame, epoch milliseconds.
+ */
+frame_at: number;
+/**
+ * `plate` or `point`.
+ */
+opener: string }
+
+/**
+ * Why a menu does not open or show in the panel: the tab then opens it on
+ * its page.
+ */
+export type MenuPanelRefusal = { kind: "not_ready" } | { kind: "app_inactive" } | { kind: "not_a_tab" } | { kind: "no_geometry" } | { kind: "not_open" } | { kind: "not_main_thread" } | { kind: "show_failed" }
+
+/**
+ * The panel showed the menu.
+ */
+export type MenuPanelShown = { menu: number }
+
+/**
+ * The panel's size in points, the page's one source of it.
+ */
+export type MenuPanelSize = { width: number; height: number }
+
+/**
+ * Whether the panel's page listens: until then a menu opens on its page.
+ */
+export type MenuPanelStatus = { ready: boolean }
+
+/**
+ * The menu's number: every later message names it.
+ */
+export type MenuPanelTicket = { menu: number }
+
 export type MergeBlocksError = { kind: "no_vault" } | { kind: "too_few_cards" } | { kind: "duplicate_slug"; slug: string } | { kind: "block_not_found"; slug: string } | { kind: "block_not_mergeable"; slug: string; block_type: string } | { kind: "invalid_slug"; slug: string; reason: string } | { kind: "reference_rewrite_failed"; path: string; message: string } |
 /**
  * A card or a linking note changed on disk after the merge read it.
@@ -665,7 +809,120 @@ export type MergeBlocksError = { kind: "no_vault" } | { kind: "too_few_cards" } 
  */
 { kind: "source_changed"; path: string } | { kind: "internal"; message: string }
 
-export type MergeBlocksResult = { block: IndexedBlock; merged_slug: string; removed_slugs: string[] }
+export type MergeBlocksResult = { block: IndexedBlock; merged_slug: string; removed_slugs: string[];
+/**
+ * How long each step took (SPEC_CARD_MERGE.md, «Замер слияния»): the
+ * page writes it to the log with its own steps.
+ */
+timing: MergeTiming }
+
+/**
+ * One step of a merge, in the order the command runs them.
+ */
+export type MergeStep =
+/**
+ * Every edit session of the space writes its edits first (SPEC_EDITING.md, Л4.7).
+ */
+"flush_edits" |
+/**
+ * The space's index and layout, held by any other work of the space.
+ */
+"space_lock" |
+/**
+ * The folders new files go to.
+ */
+"layout" |
+/**
+ * The index brought up to the files of the whole space (Н5).
+ */
+"index_up_to_files" |
+/**
+ * The merged cards' notes read and parsed.
+ */
+"read_sources" |
+/**
+ * A free name for the merged card.
+ */
+"merged_name" |
+/**
+ * Every file path of the space, for the links that move.
+ */
+"scan_space_files" |
+/**
+ * The merged card's text.
+ */
+"compose" |
+/**
+ * The notes that link a merged card, read and rewritten in memory.
+ */
+"reference_writes" |
+/**
+ * The watcher told to pass over the paths the merge writes.
+ */
+"suppress_paths" |
+/**
+ * The writes staged next to their files.
+ */
+"stage" |
+/**
+ * The merged card's note written and the linking notes rewritten.
+ */
+"commit_writes" |
+/**
+ * The merged cards' notes moved to the Trash.
+ */
+"commit_trash" |
+/**
+ * The index rows written and their transaction committed.
+ */
+"commit_index" |
+/**
+ * The copies kept for a rollback cleaned up.
+ */
+"commit_finalize" |
+/**
+ * The merged card's pictures made.
+ */
+"merged_preview" |
+/**
+ * The pictures of the notes whose links were rewritten made again.
+ */
+"reference_previews" |
+/**
+ * The merged cards' pictures and article audio removed.
+ */
+"source_pictures" |
+/**
+ * The merged card read back from the index.
+ */
+"read_merged" |
+/**
+ * The tabs of the space told of the change.
+ */
+"announce"
+
+/**
+ * How long one step took, in milliseconds to a tenth.
+ */
+export type MergeStepTime = { step: MergeStep; ms: number }
+
+/**
+ * The steps one merge took, with the size of the merge.
+ */
+export type MergeTiming = {
+/**
+ * The cards merged.
+ */
+cards: number;
+/**
+ * The pictures the merged cards name: their `file` and `thumbnail`
+ * when those are images, and every image their bodies embed or link.
+ */
+pictures: number;
+/**
+ * The steps run, in order; a step run twice adds up.
+ */
+steps: MergeStepTime[] }
 
 export type NativeShellSmokeReport = { status: string; vault_path: string | null; location: string; user_agent: string; timestamp_ms: number }
 
@@ -1015,6 +1272,17 @@ indexed: number;
 errors: number }
 
 /**
+ * A point on the screen, from the top left corner of the main screen.
+ */
+export type ScreenPoint = { x: number; y: number }
+
+/**
+ * A rectangle in points. On the page: from the page's top left corner. On
+ * the screen: from the top left corner of the main screen, y down.
+ */
+export type ScreenRect = { x: number; y: number; width: number; height: number }
+
+/**
  * The first card whose top edge is at or below the feed's top edge, and
  * how far below.
  */
@@ -1216,6 +1484,12 @@ export type TabLocation = { kind: "everything" } | { kind: "collection"; tag: st
  * (SPEC_CARD_ASSOCIATIONS.md, «Лента автора»).
  */
 { kind: "author"; author: string }
+
+/**
+ * Which side of a tab `Close Tabs to the Left` and `Close Tabs to the
+ * Right` close (В50).
+ */
+export type TabSide = "left" | "right"
 
 /**
  * What a tab shows.

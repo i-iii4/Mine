@@ -21,6 +21,8 @@ pub mod freshness;
 pub mod graph;
 pub mod icloud_progress;
 pub mod import;
+pub mod menu_panel;
+pub mod merge_timing;
 pub mod native_shell_smoke;
 pub mod note_edit;
 mod preview_reconcile;

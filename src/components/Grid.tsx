@@ -29,6 +29,8 @@ import { Card, CardSkeleton } from "./Card";
 import { EmptySpaceOnboarding } from "./EmptySpaceOnboarding";
 import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
+import { CardPanelPointMenu } from "./CardHoverMenu";
+import { menuPanelUsable } from "@/lib/menuPanelSource";
 import { createPortal } from "react-dom";
 import { GroupSelectionCommands } from "./GroupSelectionCommands";
 import type { MembershipAnswer } from "./CollectionPicker";
@@ -632,6 +634,16 @@ export function Grid({
   /// Decided when the menu is summoned, because that is the only moment the
   /// clicked card and the selection are both known.
   const [contextMenuScope, setContextMenuScope] = useState<"card" | "selection">("card");
+  /// TRIAL: a card's right click menu in the menu panel (DESIGN_SYSTEM.md,
+  /// «Меню карточки в отдельном окне: проба»); each click a new opening.
+  const [panelPointMenu, setPanelPointMenu] = useState<{
+    block: LightBlock;
+    x: number;
+    y: number;
+    eventAt: number;
+    sequence: number;
+  } | null>(null);
+  const panelPointSequenceRef = useRef(0);
   /// The group delete window: the request it answers, and whether it is open.
   /// A closed window keeps its request while it leaves.
   const [deleteSelection, setDeleteSelection] = useState<{
@@ -2452,7 +2464,18 @@ export function Grid({
         return;
       }
       const block = blocksBySlug.get(slug);
-      if (block) {
+      if (block && menuPanelUsable()) {
+        // The menu opens in the panel: the page's context menu does not.
+        e.preventDefault();
+        panelPointSequenceRef.current += 1;
+        setPanelPointMenu({
+          block,
+          x: e.clientX,
+          y: e.clientY,
+          eventAt: performance.timeOrigin + e.timeStamp,
+          sequence: panelPointSequenceRef.current,
+        });
+      } else if (block) {
         setContextMenuScope("card");
         setMenuBlock(block);
       } else {
@@ -2749,6 +2772,23 @@ export function Grid({
         />
       ) : null}
     </ContextMenu>
+    {panelPointMenu && (
+      <CardPanelPointMenu
+        key={panelPointMenu.sequence}
+        block={panelPointMenu.block}
+        vaultPath={vaultPath}
+        tags={tags}
+        currentTag={currentTag}
+        onToggleTag={onToggleTag}
+        onCreateAndAssign={onCreateAndAssign}
+        onRequestRename={onRequestRename}
+        onRequestDelete={onRequestDelete}
+        x={panelPointMenu.x}
+        y={panelPointMenu.y}
+        eventAt={panelPointMenu.eventAt}
+        onClose={() => setPanelPointMenu(null)}
+      />
+    )}
     </div>
     </CardCollectionsContext.Provider>
     </CardColumnWidthContext.Provider>

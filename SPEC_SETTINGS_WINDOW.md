@@ -52,14 +52,17 @@ Related documents: [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_FRONTEND.md](SPE
 `--chrome-edge-pad` (16px). Внешний отступ кнопки — 8px, ещё 8px занимает
 внутренний padding: их сумма, а не каждый отступ отдельно, равна 16px.
 Внутри штатная hover/open/focus-плашка `MenuTextTrigger` высотой 24px.
-Логотип вписан в 16×16px без искажения пропорций; используется точный SVG-контур
-`m` из Redaction 100 Italic, без подложки и зависимости от установленных шрифтов.
-Заливка `currentColor` от `text-foreground` контрастна обеим темам уже в покое.
+Логотип это знак 12×7,5px в коробке 12×8px по своей сетке 8×5 пикселей знака,
+без подложки и без зависимости от установленных шрифтов (`MineLogo.tsx`;
+DESIGN_SYSTEM.md, «Кнопка логотипа», решение пользователя 07.10.2026).
+Заливка `currentColor` наследует цвет кнопки: приглушённый `text-muted-foreground`
+в покое и `text-foreground` при наведении, открытом меню и фокусе клавиатуры
+(вариант `chrome` у `Button`; DESIGN_SYSTEM.md, «Кнопка логотипа»).
 Hover/open не меняют положение или размер знака.
 
 Нажатие открывает штатный `DropdownMenu` вниз с выравниванием по правому краю.
 Пункты и порядок совпадают с навигацией окна настроек: Appearance, Shortcuts,
-Graph, Spaces, Folders, Updates, Orphans. Раздела Extension нет
+Graph, Spaces, New files, Updates, Orphans. Раздела Extension нет
 с 30.09.2026 (SPEC_ONBOARDING.md, О16), раздела Design system нет с 07.10.2026
 (решение пользователя; витрина `ComponentTestBench` удалена из кода в тот же
 день, примитивы смотрятся на страницах dev-сервера, DESIGN_SYSTEM.md «Где

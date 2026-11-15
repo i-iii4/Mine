@@ -22,6 +22,7 @@ const commands = vi.hoisted(() => ({
   beginTabDrag: vi.fn(async () => undefined),
   closeOtherTabs: vi.fn(async () => undefined),
   closeTab: vi.fn(async () => undefined),
+  closeTabsBeside: vi.fn(async () => undefined),
   moveTab: vi.fn(async () => undefined),
   moveTabToNewWindow: vi.fn(async () => undefined),
   newTab: vi.fn(async () => undefined),
@@ -576,14 +577,30 @@ describe("tab menu (В50)", () => {
       tabById("b").dispatchEvent(contextMenu);
     });
     expect(contextMenu.defaultPrevented).toBe(true);
-    expect(menu.open).toHaveBeenCalledWith("b", 3);
+    expect(menu.open).toHaveBeenCalledWith("b", 1, 3);
 
     menu.actions?.moveToNewWindow("b");
     menu.actions?.close("b");
     menu.actions?.closeOthers("b");
+    menu.actions?.closeToTheLeft("b");
+    menu.actions?.closeToTheRight("b");
     expect(commands.moveTabToNewWindow).toHaveBeenCalledWith("b");
     expect(commands.closeTab).toHaveBeenCalledWith("b");
     expect(commands.closeOtherTabs).toHaveBeenCalledWith("b");
+    expect(commands.closeTabsBeside).toHaveBeenNthCalledWith(1, "b", "left");
+    expect(commands.closeTabsBeside).toHaveBeenNthCalledWith(2, "b", "right");
+  });
+
+  it("tells the menu where the tab stands, so a side without tabs is off", async () => {
+    renderBar(barState([tab("a"), tab("b"), tab("c")]));
+    await act(async () => {
+      fireEvent.contextMenu(tabById("a"));
+    });
+    expect(menu.open).toHaveBeenLastCalledWith("a", 0, 3);
+    await act(async () => {
+      fireEvent.contextMenu(tabById("c"));
+    });
+    expect(menu.open).toHaveBeenLastCalledWith("c", 2, 3);
   });
 
   it("builds the menu once for the bar", async () => {
@@ -595,7 +612,7 @@ describe("tab menu (В50)", () => {
       fireEvent.contextMenu(tabById("b"));
     });
     expect(menu.create).toHaveBeenCalledTimes(1);
-    expect(menu.open).toHaveBeenLastCalledWith("b", 2);
+    expect(menu.open).toHaveBeenLastCalledWith("b", 1, 2);
   });
 });
 
@@ -831,7 +848,7 @@ describe("a tab from another window (В63)", () => {
     expect(commands.reportDropSlot).not.toHaveBeenCalled();
 
     // Centres stand at half, one and a half and two and a half widths.
-    update(barState(tabs), { tab_id: "x", x: TAB_MAX_WIDTH_PX + TAB_MAX_WIDTH_PX / 4 });
+    update(barState(tabs), { x: TAB_MAX_WIDTH_PX + TAB_MAX_WIDTH_PX / 4, item: { kind: "tab", tab_id: "x" } });
     expect(commands.reportDropSlot).toHaveBeenLastCalledWith(1);
     expect(marker(container)).toHaveAttribute("data-tab-drop-marker", "1");
     expect(marker(container)?.parentElement).toBe(strip());
@@ -842,27 +859,275 @@ describe("a tab from another window (В63)", () => {
     // The tabs stay where they are; only the marker shows the place.
     for (const node of tabsShown()) expect(transformOf(node)).toBe("");
 
-    update(barState(tabs), { tab_id: "x", x: TAB_MAX_WIDTH_PX + TAB_MAX_WIDTH_PX / 4 + 10 });
+    update(barState(tabs), { x: TAB_MAX_WIDTH_PX + TAB_MAX_WIDTH_PX / 4 + 10, item: { kind: "tab", tab_id: "x" } });
     expect(commands.reportDropSlot).toHaveBeenCalledTimes(1);
 
-    update(barState(tabs), { tab_id: "x", x: 3 * TAB_MAX_WIDTH_PX - 10 });
+    update(barState(tabs), { x: 3 * TAB_MAX_WIDTH_PX - 10, item: { kind: "tab", tab_id: "x" } });
     expect(commands.reportDropSlot).toHaveBeenLastCalledWith(3);
     expect(marker(container)?.style.left).toBe(`${3 * TAB_MAX_WIDTH_PX - 2}px`);
 
-    update(barState(tabs), { tab_id: "x", x: 10 });
+    update(barState(tabs), { x: 10, item: { kind: "tab", tab_id: "x" } });
     expect(commands.reportDropSlot).toHaveBeenLastCalledWith(0);
     expect(marker(container)?.style.left).toBe("0px");
   });
 
   it("hides the marker and reports no slot when the pointer leaves the bar", () => {
     const tabs = [tab("a"), tab("b")];
-    const { container, update } = renderBar(barState(tabs), { tab_id: "x", x: 400 });
+    const { container, update } = renderBar(barState(tabs), { x: 400, item: { kind: "tab", tab_id: "x" } });
     expect(commands.reportDropSlot).toHaveBeenLastCalledWith(2);
 
     update(barState(tabs), null);
     expect(marker(container)).toBeNull();
     expect(commands.reportDropSlot).toHaveBeenLastCalledWith(null);
     expect(commands.reportDropSlot).toHaveBeenCalledTimes(2);
+  });
+});
+
+/** Cards of this window's visible tab held over the bar at `x` (В86). */
+function cards(x: number | null, dropped = false): DropHover {
+  return { x, item: { kind: "cards", title: "Jacket", dropped } };
+}
+
+/** How the row opens and closes the gap for cards: Перемещение, the same
+ *  200 ms on the move curve as a dragged tab's neighbours. */
+const CARD_GAP_TABS = `transform ${MOTION_MOVE_MS}ms ${MOTION_MOVE_EASE}, width ${MOTION_MOVE_MS}ms ${MOTION_MOVE_EASE}`;
+const CARD_GAP_STRIP = `width ${MOTION_MOVE_MS}ms ${MOTION_MOVE_EASE}`;
+
+describe("cards held over the bar (В86)", () => {
+  const placeholder = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>("[data-tab-card-placeholder]");
+  const shifts = () => tabsShown().map(transformOf);
+
+  it("parts the tabs at the slot under the pointer and stands a muted placeholder there", () => {
+    const tabs = [tab("a"), tab("b"), tab("c")];
+    const { container, update } = renderBar(barState(tabs));
+    expect(placeholder(container)).toBeNull();
+
+    // Over the left half of b: before it.
+    update(barState(tabs), cards(TAB_MAX_WIDTH_PX + TAB_MAX_WIDTH_PX / 4));
+    const shown = placeholder(container);
+    expect(shown).toHaveAttribute("data-tab-card-placeholder", "1");
+    expect(shown).toHaveAttribute("aria-hidden", "true");
+    expect(shown).toHaveTextContent("Jacket");
+    expect(shown?.className).toContain("text-muted-foreground");
+    expect(shown?.parentElement).toBe(strip());
+    expect(shown?.style.width).toBe(`${TAB_MAX_WIDTH_PX}px`);
+    expect(shown?.style.transform).toBe(`translateX(${TAB_MAX_WIDTH_PX}px)`);
+    expect(shifts()).toEqual(["", `translateX(${TAB_MAX_WIDTH_PX}px)`, `translateX(${TAB_MAX_WIDTH_PX}px)`]);
+    // The row grows by one tab: three tabs and the gap.
+    expect(strip().style.width).toBe(`${4 * TAB_MAX_WIDTH_PX}px`);
+    // Neighbours, the strip with + after it, and the placeholder move on the
+    // same curve as tabs parting for a dragged tab.
+    for (const node of tabsShown()) expect(node.style.transition).toBe(CARD_GAP_TABS);
+    expect(strip().style.transition).toBe(CARD_GAP_STRIP);
+    expect(shown?.style.transition).toBe(CARD_GAP_TABS);
+
+    // Over the right half of b: after it.
+    update(barState(tabs), cards(TAB_MAX_WIDTH_PX + (3 * TAB_MAX_WIDTH_PX) / 4));
+    expect(placeholder(container)).toHaveAttribute("data-tab-card-placeholder", "2");
+    expect(shifts()).toEqual(["", "", `translateX(${TAB_MAX_WIDTH_PX}px)`]);
+
+    // Over + and past the last tab: at the end, nothing parts.
+    update(barState(tabs), cards(4 * TAB_MAX_WIDTH_PX + 10));
+    expect(placeholder(container)).toHaveAttribute("data-tab-card-placeholder", "3");
+    expect(placeholder(container)?.style.transform).toBe(`translateX(${3 * TAB_MAX_WIDTH_PX}px)`);
+    expect(shifts()).toEqual(["", "", ""]);
+
+    // Over the first tab's left half: first, with the row's left line.
+    update(barState(tabs), cards(10));
+    expect(placeholder(container)).toHaveAttribute("data-tab-card-placeholder", "0");
+    expect(placeholder(container)?.className).toContain("border-l");
+
+    // Tabs under the pointer are not shown, and no slot goes back before the
+    // drop.
+    expect(commands.activateTab).not.toHaveBeenCalled();
+    expect(commands.reportDropSlot).not.toHaveBeenCalled();
+    // A tab from another window draws its marker, not this room.
+    expect(container.querySelector("[data-tab-drop-marker]")).toBeNull();
+  });
+
+  it("shares the room with the gap when the tabs fill the row", () => {
+    zoneWidth = 3 * TAB_MAX_WIDTH_PX + NEW_TAB_SLOT_PX;
+    const tabs = [tab("a"), tab("b"), tab("c")];
+    const { update } = renderBar(barState(tabs));
+    expect(widthOf(tabById("a"))).toBe(TAB_MAX_WIDTH_PX);
+
+    update(barState(tabs), cards(10));
+    const shared = Math.floor(available() / 4);
+    for (const node of tabsShown()) expect(widthOf(node)).toBe(shared);
+    expect(strip().style.width).toBe(`${4 * shared}px`);
+  });
+
+  it("follows the strip when it is scrolled under the held pointer", () => {
+    const tabs = [tab("a"), tab("b"), tab("c")];
+    const { container, update } = renderBar(barState(tabs));
+    update(barState(tabs), cards(TAB_MAX_WIDTH_PX + TAB_MAX_WIDTH_PX / 4));
+    expect(placeholder(container)).toHaveAttribute("data-tab-card-placeholder", "1");
+
+    Object.defineProperty(strip(), "scrollLeft", { configurable: true, writable: true, value: TAB_MAX_WIDTH_PX });
+    fireEvent.scroll(strip());
+    // b's centre now stands a width further left, under the pointer's left.
+    expect(placeholder(container)).toHaveAttribute("data-tab-card-placeholder", "2");
+  });
+
+  it("closes the gap on the same curve when the cards leave or the drag is cancelled", () => {
+    vi.useFakeTimers();
+    try {
+      const tabs = [tab("a"), tab("b")];
+      const { container, update } = renderBar(barState(tabs), cards(10));
+      expect(shifts()).toEqual([`translateX(${TAB_MAX_WIDTH_PX}px)`, `translateX(${TAB_MAX_WIDTH_PX}px)`]);
+
+      update(barState(tabs), null);
+      expect(placeholder(container)).toBeNull();
+      expect(shifts()).toEqual(["", ""]);
+      expect(strip().style.width).toBe(`${2 * TAB_MAX_WIDTH_PX}px`);
+      for (const node of tabsShown()) expect(node.style.transition).toBe(CARD_GAP_TABS);
+      expect(strip().style.transition).toBe(CARD_GAP_STRIP);
+
+      act(() => {
+        vi.advanceTimersByTime(MOTION_MOVE_MS);
+      });
+      for (const node of tabsShown()) expect(node.style.transition).toBe("");
+      expect(strip().style.transition).toBe("");
+      expect(commands.reportDropSlot).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("answers a drop with the slot under it, and the tabs stand where the placeholder stood", () => {
+    const tabs = [tab("a"), tab("b"), tab("c")];
+    const x = TAB_MAX_WIDTH_PX + TAB_MAX_WIDTH_PX / 4;
+    const view = render(<TabBar bar={barState(tabs)} dropHover={cards(x)} />);
+    const dropped = cards(x, true);
+
+    view.rerender(<TabBar bar={barState(tabs)} dropHover={cards(x)} landing={dropped} />);
+    expect(commands.reportDropSlot).toHaveBeenCalledTimes(1);
+    expect(commands.reportDropSlot).toHaveBeenCalledWith(1);
+    // The room holds still until the tabs come.
+    expect(placeholder(view.container)).toHaveAttribute("data-tab-card-placeholder", "1");
+    for (const node of tabsShown()) expect(node.style.transition).toBe("");
+
+    // The state with the card's tab ends the gap in the same frame: nothing
+    // left to move.
+    const landed = barState([tab("a"), tab("n", "Mine", null, { card: "Jacket" }), tab("b"), tab("c")], { active_tab: "n" });
+    view.rerender(<TabBar bar={landed} dropHover={null} landing={dropped} />);
+    expect(placeholder(view.container)).toBeNull();
+    expect(tabsShown().map((node) => node.dataset.tabId)).toEqual(["a", "n", "b", "c"]);
+    expect(tabById("n")).toHaveAttribute("aria-selected", "true");
+    for (const node of tabsShown()) {
+      expect(transformOf(node)).toBe("");
+      expect(node.style.transition).toBe("");
+    }
+    expect(strip().style.transition).toBe("");
+    view.rerender(<TabBar bar={landed} dropHover={null} landing={null} />);
+    expect(commands.reportDropSlot).toHaveBeenCalledTimes(1);
+  });
+
+  // An answer to the drag in hand: the same in every mode (SPEC_MOTION_LEVELS.md,
+  // Р1, Т4).
+  it.each(["full", "minimal", "off"] as const)("opens the gap at %s as Перемещение, the same in every mode", (level) => {
+    setMotionLevel(level);
+    renderBar(barState([tab("a"), tab("b")]), cards(10));
+    expect(tabById("b").style.transition).toBe(CARD_GAP_TABS);
+    expect(strip().style.transition).toBe(CARD_GAP_STRIP);
+  });
+
+  it("moves the neighbours of a landing group to their places, widths too, and stands the rest of it", () => {
+    vi.useFakeTimers();
+    // What the row shows the moment the start places are laid out.
+    const atStart: Array<{ id: string | undefined; transform: string; width: string; transition: string }> = [];
+    let stripAtStart = "";
+    const startSpy = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      if (this.hasAttribute("data-tab-strip")) {
+        stripAtStart = this.style.width;
+        for (const node of Array.from(this.querySelectorAll<HTMLElement>("[role='tab']"))) {
+          atStart.push({ id: node.dataset.tabId, transform: node.style.transform, width: node.style.width, transition: node.style.transition });
+        }
+      }
+      return this.hasAttribute("data-tab-bar-new-tab-slot") ? NEW_TAB_SLOT_PX : 0;
+    });
+    try {
+      const tabs = [tab("a"), tab("b"), tab("c")];
+      const x = TAB_MAX_WIDTH_PX + TAB_MAX_WIDTH_PX / 4;
+      const dropped = cards(x, true);
+      const view = render(<TabBar bar={barState(tabs)} dropHover={cards(x)} />);
+      view.rerender(<TabBar bar={barState(tabs)} dropHover={cards(x)} landing={dropped} />);
+
+      // В, А, Б: the grabbed card's tab first, on the placeholder's slot.
+      const landed = barState(
+        [tab("a"), tab("v"), tab("a1"), tab("b1"), tab("b"), tab("c")],
+        { active_tab: "v" },
+      );
+      view.rerender(<TabBar bar={landed} dropHover={null} landing={dropped} />);
+
+      // Six tabs share the room now; before, four did (three and the gap).
+      const before = TAB_MAX_WIDTH_PX;
+      const after = Math.floor(available() / 6);
+      const start = new Map(atStart.map((entry) => [entry.id, entry]));
+      // b and c start where they stood, beside the gap, and keep their width.
+      expect(start.get("b")?.transform).toBe(`translateX(${2 * before - 4 * after}px)`);
+      expect(start.get("c")?.transform).toBe(`translateX(${3 * before - 5 * after}px)`);
+      expect(start.get("b")?.width).toBe(`${before}px`);
+      // The grabbed card's tab starts on the placeholder.
+      expect(start.get("v")?.transform).toBe(`translateX(${before - after}px)`);
+      // The rest of the group stand in their places from the start.
+      expect(start.get("a1")).toEqual({ id: "a1", transform: "", width: `${after}px`, transition: "" });
+      expect(stripAtStart).toBe(`${4 * before}px`);
+
+      // Then everything moves on to its place as Перемещение.
+      for (const id of ["a", "v", "b", "c"]) {
+        expect(tabById(id).style.transform).toBe("");
+        expect(tabById(id).style.width).toBe(`${after}px`);
+        expect(tabById(id).style.transition).toBe(CARD_GAP_TABS);
+      }
+      expect(tabById("b").className).toContain("z-10");
+      for (const id of ["a1", "b1"]) expect(tabById(id).style.transition).toBe("");
+      expect(strip().style.width).toBe(`${6 * after}px`);
+      expect(strip().style.transition).toBe(CARD_GAP_STRIP);
+
+      act(() => {
+        vi.advanceTimersByTime(MOTION_MOVE_MS);
+      });
+      for (const node of tabsShown()) expect(node.style.transition).toBe("");
+      expect(strip().style.transition).toBe("");
+    } finally {
+      startSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("moves the neighbours aside for a group asked about first, with no placeholder to start from", () => {
+    // Open N tabs? closed the room before the tabs came (В86, п. 6).
+    const tabs = [tab("a"), tab("b")];
+    const dropped = cards(10, true);
+    const view = render(<TabBar bar={barState(tabs)} dropHover={null} />);
+    view.rerender(<TabBar bar={barState(tabs)} dropHover={null} landing={dropped} />);
+    const group = Array.from({ length: 15 }, (_, index) => tab(`n${index}`));
+    view.rerender(<TabBar bar={barState([...group, ...tabs], { active_tab: "n0" })} dropHover={null} landing={dropped} />);
+    expect(tabById("a").style.transition).toBe(CARD_GAP_TABS);
+    expect(tabById("b").style.transition).toBe(CARD_GAP_TABS);
+    // The group's tabs, the grabbed card's too, stand in their places.
+    for (const node of group) expect(tabById(node.id).style.transition).toBe("");
+  });
+
+  it.each(["full", "minimal", "off"] as const)("moves a landing group at %s the same as at Full", (level) => {
+    setMotionLevel(level);
+    const tabs = [tab("a"), tab("b")];
+    const dropped = cards(10, true);
+    const view = render(<TabBar bar={barState(tabs)} dropHover={cards(10)} />);
+    view.rerender(<TabBar bar={barState(tabs)} dropHover={cards(10)} landing={dropped} />);
+    view.rerender(<TabBar bar={barState([tab("v"), tab("w"), ...tabs], { active_tab: "v" })} dropHover={null} landing={dropped} />);
+    expect(tabById("a").style.transition).toBe(CARD_GAP_TABS);
+  });
+
+  it("answers a drop after the question with the slot of the row as it stands", () => {
+    // Open N tabs? closed the room first (В86, п. 6).
+    const tabs = [tab("a"), tab("b")];
+    const view = render(<TabBar bar={barState(tabs)} dropHover={null} />);
+    view.rerender(<TabBar bar={barState(tabs)} dropHover={null} landing={cards(3 * TAB_MAX_WIDTH_PX, true)} />);
+    expect(placeholder(view.container)).toBeNull();
+    expect(commands.reportDropSlot).toHaveBeenCalledWith(2);
   });
 });
 

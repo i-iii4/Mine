@@ -33,3 +33,9 @@ export const DROP_MARKER_WIDTH_PX = 2;
 /** Pointer travel that turns a press into a drag: the chrome's threshold
  *  gesture (`DEFAULT_CHROME_DRAG_THRESHOLD_PX` in usePressDragGesture.ts, В60). */
 export const CHROME_DRAG_THRESHOLD_PX = 4;
+
+/** Cards dropped on the bar that open this many tabs or more ask first
+ *  (В86): Firefox asks at the same count before opening tabs together
+ *  (`browser.tabs.maxOpenBeforeWarn`, 15), and a 1440 px window holds about
+ *  16 tabs of `TAB_MIN_WIDTH_PX` before the strip scrolls. */
+export const CONFIRM_CARD_TABS_FROM = 15;

@@ -77,6 +77,7 @@ import {
   noteSaveDisposition,
   noteSaveErrorLine,
 } from "./noteEditMessages";
+import { focusReturnsFromMenuPanel } from "@/lib/menuPanelSource";
 
 /** The log lines of the session's quiet failures. */
 export const NOTE_CONFLICT_LOG = "The note changed outside the editor";
@@ -747,6 +748,10 @@ function EditorSession({
     // The window came back: a failed write is tried again, and the file is
     // asked whether it changed meanwhile (Л3.8, Л4.1).
     const onFocus = () => {
+      // The window taking the keyboard back from the card menu's panel left
+      // neither the app nor the disk (DESIGN_SYSTEM.md, «Меню карточки в
+      // отдельном окне: проба»).
+      if (focusReturnsFromMenuPanel()) return;
       queue.retry();
       checkDisk();
     };

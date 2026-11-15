@@ -125,26 +125,29 @@ export function getRuntimeCardKind(block: CardLayoutBlock): LightBlock["card_kin
   return block.url || block.block_type === "link" ? "link" : "article";
 }
 
+/// The steps of `stripMarkdown`, in order, each a global replace.
+const MARKDOWN_STEPS: readonly (readonly [RegExp, string])[] = [
+  [/^#{1,6}\s+/gm, ""],
+  [/\*\*(.+?)\*\*/g, "$1"],
+  [/\*(.+?)\*/g, "$1"],
+  [/`([^`]+)`/g, "$1"],
+  // Obsidian wikilink embeds (Phase 18.H.1): strip entirely — they are
+  // media references, not prose.
+  [/!\[\[[^\]]*\]\]/g, ""],
+  [/!\[[^\]]*\]\([^)]*\)/g, ""],
+  // Obsidian wikilink text links (no leading `!`): keep the display
+  // name if present after `|`, otherwise the target name.
+  [/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2"],
+  [/\[\[([^\]]+)\]\]/g, "$1"],
+  [/\[(.+?)\]\(.*?\)/g, "$1"],
+  [/^[-*+]\s+/gm, ""],
+  [/^>\s+/gm, ""],
+  [/^---+$/gm, ""],
+  [/\n{3,}/g, "\n\n"],
+];
+
 function stripMarkdown(text: string): string {
-  return text
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/\*\*(.+?)\*\*/g, "$1")
-    .replace(/\*(.+?)\*/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    // Obsidian wikilink embeds (Phase 18.H.1): strip entirely — they are
-    // media references, not prose.
-    .replace(/!\[\[[^\]]*\]\]/g, "")
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
-    // Obsidian wikilink text links (no leading `!`): keep the display
-    // name if present after `|`, otherwise the target name.
-    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2")
-    .replace(/\[\[([^\]]+)\]\]/g, "$1")
-    .replace(/\[(.+?)\]\(.*?\)/g, "$1")
-    .replace(/^[-*+]\s+/gm, "")
-    .replace(/^>\s+/gm, "")
-    .replace(/^---+$/gm, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return MARKDOWN_STEPS.reduce((current, [pattern, replacement]) => current.replace(pattern, replacement), text).trim();
 }
 
 /// Longest body slice a card previews when the index carries no preview text.
@@ -173,12 +176,105 @@ function stripFirstMarkdownH1(body: string): string {
   return out.join("\n").trimStart();
 }
 
+/// Whether a step of `stripMarkdown` found everything it matches in `text`,
+/// a start of the text it would see in the whole body, the same as in the
+/// whole: whether no attempt of it read up to the end of `text`, where the
+/// whole body goes on (`boundedBodyPreview`). `lastEnd` is where its last
+/// match in `text` ends. Only the steps whose classes run to a closing
+/// character can read that far; the others stop at the end of a line or at
+/// the letter the whole body has there.
+function stepStaysInside(step: number, text: string, lastEnd: number): boolean {
+  switch (step) {
+    case 3: {
+      // `[^`]+` runs to the next backtick: the last one must be matched.
+      return text.lastIndexOf("`") < lastEnd;
+    }
+    case 4: {
+      const open = text.lastIndexOf("![[");
+      return open < lastEnd || text.indexOf("]", open + 3) !== -1;
+    }
+    case 5: {
+      for (let open = text.indexOf("![", lastEnd); open !== -1; open = text.indexOf("![", open + 1)) {
+        const close = text.indexOf("]", open + 2);
+        if (close === -1) return false;
+        if (text[close + 1] === "(" && text.indexOf(")", close + 2) === -1) return false;
+      }
+      return true;
+    }
+    case 6:
+    case 7: {
+      const open = text.lastIndexOf("[[");
+      return open < lastEnd || text.indexOf("]", open + 2) !== -1;
+    }
+    default:
+      return true;
+  }
+}
+
+/// `stripMarkdown` of `text`, a start of a longer text cut where
+/// `boundedBodyPreview` cuts, before its final trim; null when a step might
+/// match past the cut in the whole text.
+function stripMarkdownStart(text: string): string | null {
+  let current = text;
+  for (const [index, [pattern, replacement]] of MARKDOWN_STEPS.entries()) {
+    // Where the step's last match in what it is given ends, found as its
+    // replace finds them: left to right, each after the one before.
+    let lastEnd = 0;
+    pattern.lastIndex = 0;
+    for (let match = pattern.exec(current); match !== null; match = pattern.exec(current)) {
+      lastEnd = match.index + match[0].length;
+      if (match[0].length === 0) pattern.lastIndex += 1;
+    }
+    if (!stepStaysInside(index, current, lastEnd)) return null;
+    current = current.replace(pattern, replacement);
+  }
+  return current;
+}
+
+/// How much of the body the preview reads first, and grows by doubling: a
+/// few times the preview, so a body of ordinary prose is read once.
+const BODY_PREVIEW_FIRST_READ_CHARS = 4 * BODY_PREVIEW_MAX_CHARS;
+
+/// The first line start at or after `from` whose line begins with a letter
+/// or a digit; the body's end when there is none. There no step of
+/// `stripMarkdown` can match across the cut: a match that reaches it stops
+/// at that letter in the whole body as at the end of the cut start, and no
+/// match begins with a letter.
+function previewCutAfter(body: string, from: number): number {
+  for (let newline = body.indexOf("\n", Math.max(0, from - 1)); newline !== -1; newline = body.indexOf("\n", newline + 1)) {
+    const cut = newline + 1;
+    if (cut < body.length && /[\p{L}\p{N}]/u.test(body[cut]!)) return cut;
+  }
+  return body.length;
+}
+
+/// `stripMarkdown(stripFirstMarkdownH1(body)).slice(0, BODY_PREVIEW_MAX_CHARS).trim()`,
+/// the same for every body, worked out from as short a start of the body as
+/// gives it (user's decision of 15.11.2026). Cleaning a body of megabytes
+/// for 400 signs kept the whole cleaned text alive under the slice. The
+/// start ends at a line beginning with a letter (`previewCutAfter`); it is
+/// enough once its cleaned text is longer than the preview and no step
+/// matched past it (`stripMarkdownStart`); else a start twice as long is
+/// read, up to the whole body.
+function boundedBodyPreview(body: string): string {
+  for (let from = BODY_PREVIEW_FIRST_READ_CHARS; ; from *= 2) {
+    const cut = previewCutAfter(body, from);
+    if (cut >= body.length) return stripMarkdown(stripFirstMarkdownH1(body)).slice(0, BODY_PREVIEW_MAX_CHARS).trim();
+    const head = stripFirstMarkdownH1(body.slice(0, cut));
+    // A start that is all space leaves the whole body's trim to read on.
+    if (head.length === 0) continue;
+    const cleaned = stripMarkdownStart(head);
+    if (cleaned === null) continue;
+    const text = cleaned.trim();
+    if (text.length >= BODY_PREVIEW_MAX_CHARS) return text.slice(0, BODY_PREVIEW_MAX_CHARS).trim();
+  }
+}
+
 /// A card's text under its title: the indexed preview, or the body's own words
 /// after its title when the index has none. One rule for every record whose
 /// body is its text.
 function contentPreviewText(block: CardLayoutBlock, indexedPreviewText: string): string {
-  return indexedPreviewText
-    || stripMarkdown(stripFirstMarkdownH1(block.body)).slice(0, BODY_PREVIEW_MAX_CHARS).trim();
+  return indexedPreviewText || boundedBodyPreview(block.body);
 }
 
 function isTwitterUrl(url: string): boolean {

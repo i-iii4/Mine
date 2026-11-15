@@ -1,6 +1,7 @@
 // The Connect menu of search results and the selection menu of the expanded
 // card in headless Chromium, on the fixture scripts/fixtures/selection-menu.*
-// (SPEC_SEARCH_OVERLAY.md). Starts and stops its own Vite.
+// (SPEC_SEARCH_OVERLAY.md); the card's selection is the editor's (SPEC_EDITING.md,
+// Л11.2). Starts and stops its own Vite.
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 import { COLD_START_MS, startAuditVite } from "./audit-vite.mjs";
@@ -41,14 +42,13 @@ try {
 
   await page.goto(`${url}?detail`);
   await page.waitForLoadState("networkidle");
-  await page.locator("[data-article-body] p").last().evaluate((paragraph) => {
-    const range = document.createRange();
-    range.selectNodeContents(paragraph);
-    const selection = getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange"));
-  });
+  // The open card shows its note in the editor (SPEC_EDITING.md, Л1); the
+  // editor's selection takes the same action bar (Л11.2). Select the second
+  // paragraph from the keyboard: the end of its line, then to its start.
+  const lastLine = page.locator(".cm-content .cm-line").filter({ hasText: "Author: @test" }).last();
+  await lastLine.click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Shift+Home");
   await page.getByRole("button", { name: "Create Element", exact: true }).click();
   await page.getByPlaceholder("Search collections...").fill("Channel 23");
   const target = page.getByRole("menuitem", { name: "Channel 23", exact: true });

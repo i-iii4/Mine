@@ -18,6 +18,8 @@ pub mod domain;
 #[cfg(feature = "desktop")]
 mod frame_context_menu;
 #[cfg(feature = "desktop")]
+mod menu_panel;
+#[cfg(feature = "desktop")]
 mod import;
 pub mod markdown_images;
 pub mod markdown_selection;
@@ -129,6 +131,7 @@ pub fn run() {
             commands::tabs::new_tab,
             commands::tabs::close_tab,
             commands::tabs::close_other_tabs,
+            commands::tabs::close_tabs_beside,
             commands::tabs::move_tab,
             commands::tabs::set_window_sidebar,
             commands::tabs::toggle_window_sidebar,
@@ -140,6 +143,8 @@ pub fn run() {
             commands::tabs::move_tab_to_new_window,
             commands::tabs::begin_tab_drag,
             commands::tabs::report_drop_slot,
+            commands::tabs::report_card_drag,
+            commands::tabs::drop_cards_on_tab_bar,
             #[cfg(feature = "article-audio")]
             commands::article_audio::get_article_audio_state,
             #[cfg(feature = "article-audio")]
@@ -243,6 +248,12 @@ pub fn run() {
             commands::source_video_download::start_source_video_download,
             commands::source_video_download::cancel_source_video_download,
             commands::source_video_download::source_video_download_status,
+            commands::menu_panel::menu_panel_prepare,
+            commands::menu_panel::menu_panel_ready,
+            commands::menu_panel::menu_panel_open,
+            commands::menu_panel::menu_panel_show,
+            commands::menu_panel::menu_panel_close,
+            commands::menu_panel::menu_panel_painted,
         ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -350,6 +361,10 @@ pub fn run() {
                 }
             }
             app.manage(tabs::TabShell::new(saved_windows_dir));
+            // TRIAL: the card menu's own window, made on the first page's
+            // request (DESIGN_SYSTEM.md, «Меню карточки в отдельном окне:
+            // проба»).
+            app.manage(menu_panel::MenuPanel::default());
             tabs::restore(app.handle())?;
             crate::util::append_startup_trace(app.handle(), "window", "created");
             // The clipper maintenance starts after the page's first frame;

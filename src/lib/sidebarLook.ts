@@ -11,6 +11,9 @@
 // its own width at once.
 
 import { sidebarCompactRowsBelowPx, sidebarRowsWidthPx } from "./appLayout";
+import { springMotion, type SpringMotion } from "./motion";
+import { lastInputIsKey } from "./motionInput";
+import { windowEdgeInHand } from "./windowLiveResize";
 
 /** The attribute the look stands in. */
 export const SIDEBAR_LOOK_ATTRIBUTE = "data-sidebar-look";
@@ -28,6 +31,30 @@ export function sidebarLookAt(width: number): SidebarLook {
  *  open, px (Sidebar.tsx). The list keeps that width's look for the whole
  *  motion (user's decision of 01.11.2026; sidebarListMorph.ts). */
 export const SIDEBAR_WIDTH_MOTION_ATTRIBUTE = "data-sidebar-width-motion";
+
+/** On the page's body from the press on the sidebar's edge to its release
+ *  (SidebarResizeHandle.tsx, useSidebarResize.ts); global.css holds the
+ *  resize cursor and the selection by it. */
+export const SIDEBAR_RESIZING_CLASS = "sidebar-resizing";
+
+/** Whether the person holds the sidebar's edge now: a width that changes is
+ *  the drag's. */
+export function sidebarEdgeInHand(): boolean {
+  return typeof document !== "undefined" && document.body.classList.contains(SIDEBAR_RESIZING_CLASS);
+}
+
+/** How the rows move across the compact threshold for the width that
+ *  changed now (SPEC_MOTION_LEVELS.md, С3, С4; user's decisions of
+ *  15.11.2026). Under the sidebar's edge in hand, or the window's
+ *  (windowLiveResize.ts), the move answers the drag and runs on its spring
+ *  on every level (Р1). Any other change of the width is a command's: at
+ *  once after a key, the separator's arrows and a native menu item among
+ *  them (Р4); else by the level, the spring in Full, Minimal's move, at once
+ *  at Off (Р2, Р3). */
+export function sidebarMorphMotion(): SpringMotion {
+  if (sidebarEdgeInHand() || windowEdgeInHand()) return springMotion({ answers: true });
+  return springMotion({ byKey: lastInputIsKey() });
+}
 
 /** The look of a list in a panel `panelWidth` wide, its scrollport keeping
  *  `gutter` of its box for itself (a scrollbar, its padding). */

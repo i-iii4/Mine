@@ -306,6 +306,23 @@ describe("MainSecondaryTopBar", () => {
     renderBar(BLOCK);
     expect(screen.queryByText("Collections:")).not.toBeInTheDocument();
   });
+
+  // The place's name before the half takes the row up to the feed's controls
+  // (user's decision of 15.11.2026): the half is never narrower than they
+  // are and 4 px before them, the open card's gap between its name and
+  // commands. The other layers lie over that one.
+  it("is never narrower than the feed's controls, 4 px before them", () => {
+    const { container } = renderBar(BLOCK);
+    const half = container.querySelector("[data-top-row-bar]")!;
+    expect(half).toHaveClass("min-w-min", "flex-1");
+    expect(half).not.toHaveClass("min-w-0");
+    const main = half.querySelector(":scope > [data-main-secondary-main-layer]")!;
+    expect(main).toHaveClass("flex-1", "pl-1");
+    expect(main).not.toHaveClass("absolute");
+    expect(main).toContainElement(container.querySelector("[data-main-view-mode-switcher]") as HTMLElement);
+    expect(half.querySelector(":scope > [data-secondary-selection-bar]")).toHaveClass("absolute", "inset-0");
+    expect(half.querySelector(":scope > [data-secondary-detail-top-menu]")).toHaveClass("absolute", "inset-0", "gap-1");
+  });
 });
 
 describe("Display options (SPEC_FEED_DISPLAY.md, Д1, Д4; SPEC_GRAPH_VIEW.md, «Панель графа»)", () => {

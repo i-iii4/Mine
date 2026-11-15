@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions for tab pages, tab bars and the settings window, matched by page label (SPEC_TABS.md, В24)",
+  "description": "enables the default permissions for tab pages, tab bars, the settings window and the card menu panel, matched by page label (SPEC_TABS.md, В24)",
   "webviews": [
     "tab-*",
     "tabbar-*",
-    "settings"
+    "settings",
+    "menu-panel"
   ],
   "permissions": [
     "core:default",

@@ -202,7 +202,7 @@ export function useSidebarKeyboardFocus({
   const rememberedRowRef = useRef<RememberedRow | null>(null);
   // The focus moved out of the field itself: its blur is not the user leaving it.
   const leavingFieldRef = useRef(false);
-  // The list comes back whole in the commit after Escape or ArrowRight, and a moved row
+  // The list comes back whole in the commit after Escape, and a moved row
   // stands in its new place in the commit after ⌘⇧↑↓: only then can the list scroll.
   const rowToShowRef = useRef<{ rowKey: string; scrollTop: number | null; moved?: true } | null>(null);
   // ArrowLeft found no row to stand on: the field takes the focus, once it is on the
@@ -299,26 +299,14 @@ export function useSidebarKeyboardFocus({
   }, []);
 
   // ArrowRight goes back to the current collection from any row, opening nothing and
-  // closing nothing (М4). It is the return to the initial state in one press, as
-  // Escape's two steps together: the query goes and the list stands whole, where it
-  // stood. A feed with no card leaves the focus here, and the query with it.
+  // closing nothing (М4). The query stays in the field and the list stays filtered,
+  // where it stands, and the row is forgotten, as when ⌃⌘S hides the sidebar during
+  // the focus: only Escape clears the query (user's decision of 15.11.2026). A feed
+  // with no card leaves the focus here.
   const go = useCallback(() => {
-    const {
-      rowKey: current,
-      currentRowKey: routeRow,
-      filterQuery: query,
-      setFilterQuery: setQuery,
-    } = latestRef.current;
+    const { rowKey: current } = latestRef.current;
     if (current === null || !giveBack()) return;
-    const remembered = rememberedRowRef.current;
     rememberedRowRef.current = null;
-    if (query.length > 0 || remembered !== null) {
-      setQuery("");
-      rowToShowRef.current = {
-        rowKey: remembered?.rowKey ?? routeRow ?? current,
-        scrollTop: remembered?.scrollTop ?? null,
-      };
-    }
     setFocus(null);
     endVisit();
   }, [endVisit, giveBack]);
@@ -507,7 +495,7 @@ export function useSidebarKeyboardFocus({
     if (held && current !== null) showFocusedSidebarRow(current);
   }, [held]);
 
-  // The way back after Escape or ArrowRight: this commit holds the whole list
+  // The way back after Escape: this commit holds the whole list
   // (SPEC_KEYBOARD.md, «Ввод текста в меню»), or after ⌘⇧↑↓ the row in its new place
   // (М11). A sidebar gone with it has nothing to scroll.
   useLayoutEffect(() => {

@@ -3,7 +3,7 @@
 // a height changes, and the writes of each frame. What the window does lives
 // in src/lib/hoverPreviewWindow.ts.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { HoverIntentHandle } from "@/hooks/useHoverIntent";
 import { useHoverPreviewOpener } from "@/hooks/useHoverPreviewOpener";
@@ -150,6 +150,7 @@ function round(value: number): number {
   return Math.round(value * 1e3) / 1e3;
 }
 
+/** The window holding cards: the open card's panel's and the graph's. */
 export function HoverPreviewWindowLayer<TTarget extends HoverPreviewTarget>({
   controller,
   vaultPath,
@@ -162,6 +163,35 @@ export function HoverPreviewWindowLayer<TTarget extends HoverPreviewTarget>({
   thumbsRootPath?: string;
   /** Rebuilt thumbnails' versions, where the surface keeps them. */
   thumbVersions?: ReadonlyMap<string, number>;
+  /** The surface's own name of the window, for its tests and audits. */
+  attribute: string;
+}) {
+  const renderCard = useCallback((card: LightBlock | IndexedBlock) => (
+    <ReadOnlyCardPreview
+      block={card}
+      vaultPath={vaultPath}
+      thumbsRootPath={thumbsRootPath}
+      thumbVersion={thumbVersions?.get(card.slug)}
+      width={HOVER_PREVIEW_WINDOW_WIDTH_PX}
+    />
+  ), [thumbVersions, thumbsRootPath, vaultPath]);
+  return <HoverPreviewWindowSurface controller={controller} renderCard={renderCard} attribute={attribute} />;
+}
+
+/**
+ * The window with any content: a card, or what the sidebar shows over a
+ * collection's name (SPEC_CARD_STATES.md, С7.12). The content is drawn by
+ * `renderCard` in a frame of the card's own (`data-feed-card-frame`, its
+ * corner read for the frame in pieces), `HOVER_PREVIEW_WINDOW_WIDTH_PX` wide;
+ * the window measures its height and waits for its pictures as for a card's.
+ */
+export function HoverPreviewWindowSurface<TTarget extends HoverPreviewTarget, TCard>({
+  controller,
+  renderCard,
+  attribute,
+}: {
+  controller: HoverPreviewWindow<TTarget, TCard>;
+  renderCard: (card: TCard) => ReactNode;
   /** The surface's own name of the window, for its tests and audits. */
   attribute: string;
 }) {
@@ -268,13 +298,7 @@ export function HoverPreviewWindowLayer<TTarget extends HoverPreviewTarget>({
               data-hover-preview-layer={layer.id}
               data-hover-preview-layer-role={layer.role}
             >
-              <ReadOnlyCardPreview
-                block={layer.card}
-                vaultPath={vaultPath}
-                thumbsRootPath={thumbsRootPath}
-                thumbVersion={thumbVersions?.get(layer.card.slug)}
-                width={HOVER_PREVIEW_WINDOW_WIDTH_PX}
-              />
+              {renderCard(layer.card)}
             </div>
           ))}
         </div>

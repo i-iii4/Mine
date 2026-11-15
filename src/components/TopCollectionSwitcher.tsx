@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { collectionNameRefusal } from "@/hooks/useCollectionNameRefusal";
 import { collectionRefLabel } from "@/lib/collections";
 import { cn } from "@/lib/utils";
@@ -11,6 +12,19 @@ import { ChromeNameField } from "./ChromeNameField";
 // card's file name is (`ChromeNameField`), by the sidebar's command and its
 // checks. Everything and an author's feed are named in plain text that
 // answers nothing.
+//
+// The name takes the row up to its neighbour on the right and ends in an
+// ellipsis only where it meets it (user's decision of 15.11.2026), as the
+// open card's name takes the room up to its commands: the slot shrinks, the
+// half over the feed keeps the width of the feed's controls
+// (MainSecondaryChrome.tsx). While a group selection's commands take the half
+// over the feed in this row (SPEC_FRONTEND.md, GroupSelectionCommands), the
+// name keeps to the other half; with the commands in a second row the first
+// row is the name's again (global.css, У10).
+
+/// The slot's width in the row's flow, written on the slot while it stands
+/// there and read once it leaves the flow (`overlay`).
+const PLACE_FLOW_WIDTH_PROPERTY = "--top-place-flow-width";
 
 interface TopCollectionSwitcherProps {
   /// False while the row names no place (topRowPath.ts): an open card's
@@ -33,6 +47,9 @@ interface TopCollectionSwitcherProps {
   /// Why a name typed for the collection `oldTag` would be refused, or null;
   /// writes nothing (`check_collection_name`, SPEC_DEEP_AUDIT.md, Е6.2).
   onCheckName?: (oldTag: string, name: string) => Promise<string | null>;
+  /// A group selection exists: its commands take the half of the row over the
+  /// feed, and the name keeps to the other half.
+  selectionActive?: boolean;
   /// The row goes on after it with no padding of its own: the feed's own
   /// controls at the far right. Outer padding stands only toward a boundary,
   /// the window's edge, the segment's line or the end of the row.
@@ -52,17 +69,38 @@ export function TopCollectionSwitcher({
   joinsNext = false,
   shown = true,
   overlay = false,
+  selectionActive = false,
 }: TopCollectionSwitcherProps) {
   const label = currentPlaceLabel(currentTag, currentAuthor);
   // An author's feed and Everything are no collection: nothing to rename.
   const collection = currentAuthor === undefined ? currentTag : undefined;
+  const slotRef = useRef<HTMLDivElement>(null);
+  // Out of the row's flow the slot has no neighbour to stop at: it keeps the
+  // width it had in the flow, so the name fades out where it stood and never
+  // over the feed's controls or the card's.
+  useEffect(() => {
+    const slot = slotRef.current;
+    if (!slot) return;
+    const observer = new ResizeObserver(() => {
+      if (slot.hasAttribute("data-overlay")) return;
+      slot.style.setProperty(PLACE_FLOW_WIDTH_PROPERTY, `${slot.getBoundingClientRect().width}px`);
+    });
+    observer.observe(slot);
+    return () => observer.disconnect();
+  }, []);
   return (
     <div
+      ref={slotRef}
       className={cn(
-        "flex h-full min-w-0 max-w-[50%] shrink-0",
-        overlay && "absolute inset-y-0 left-0",
+        "flex h-full min-w-0 shrink",
+        overlay
+          // Before the first measure, the half of the row it was capped by
+          // until 15.11.2026.
+          ? "absolute inset-y-0 left-0 max-w-[var(--top-place-flow-width,50%)]"
+          : selectionActive && "max-w-[50%]",
       )}
       data-top-collection-switcher-slot=""
+      data-overlay={overlay ? "" : undefined}
       data-top-row-fade=""
       data-entered={shown ? "true" : "false"}
       inert={!shown}

@@ -34,6 +34,7 @@ import {
   beginTabDrag,
   closeOtherTabs,
   closeTab,
+  closeTabsBeside,
   moveTab,
   moveTabToNewWindow,
   newTab,
@@ -89,6 +90,15 @@ import { roleEasing, roleMs } from "@/lib/motion";
  *  reach. */
 const TAB_SHIFT_TRANSITION = `transform ${roleMs("move", "enter", { answers: true })}ms ${roleEasing("move")}`;
 
+/** How the row opens and closes the gap for cards held over it (В86): the
+ *  same Перемещение as a dragged tab's neighbours (В60), an answer to the
+ *  drag in hand, so the same in every mode (SPEC_MOTION_LEVELS.md, Р1, Т4).
+ *  The neighbours move aside, and the strip, with `+` after it, grows by the
+ *  gap; when the tabs share the room, their widths follow on the same curve. */
+const CARD_GAP_MS = roleMs("move", "enter", { answers: true });
+const CARD_GAP_TAB_TRANSITION = `transform ${CARD_GAP_MS}ms ${roleEasing("move")}, width ${CARD_GAP_MS}ms ${roleEasing("move")}`;
+const CARD_GAP_STRIP_TRANSITION = `width ${CARD_GAP_MS}ms ${roleEasing("move")}`;
+
 export const NEW_TAB_LABEL = "New Tab";
 export const CLOSE_TAB_BUTTON_LABEL = "Close Tab";
 export const TAB_LIST_LABEL = "Tabs";
@@ -139,6 +149,29 @@ interface Reorder {
   offset: number;
 }
 
+/** Where a tab or the placeholder stands on screen: from the strip's start. */
+interface Placed {
+  left: number;
+  width: number;
+}
+
+/** The row as it stood in the last frame (В87). */
+interface RowGeometry {
+  ids: Set<TabId>;
+  tabs: Map<TabId, Placed>;
+  placeholder: Placed | null;
+  strip: number;
+}
+
+/** A group of cards landing: each tab that stood in the row moves from
+ *  `dx` off its new place and its old width; `running` once the end places
+ *  are set. */
+interface LandingMove {
+  from: Map<TabId, { dx: number; width: number }>;
+  strip: number;
+  running: boolean;
+}
+
 /** The order a drop just made, shown until the backend's next state. */
 interface LocalOrder {
   source: readonly TabBarTab[];
@@ -154,12 +187,17 @@ function orderedTabs(source: TabBarTab[], local: LocalOrder | null): TabBarTab[]
 
 interface TabBarProps {
   bar: TabBarState;
-  /** A tab from another window held over this bar (В63). */
+  /** A tab from another window held over this bar (В63), or cards dragged in
+   *  this window's visible tab (В86). */
   dropHover: DropHover | null;
+  /** Cards let go over this bar at their `x`, until the backend says the
+   *  drop is over (В86): the bar answers with the slot there once, and the
+   *  cards' tabs come with the next state, where the placeholder stood. */
+  landing?: DropHover | null;
 }
 
 /** The tab bar row with the window's tabs. */
-export function TabBar({ bar, dropHover }: TabBarProps) {
+export function TabBar({ bar, dropHover, landing = null }: TabBarProps) {
   const { tabs: sourceTabs, active_tab: activeTab, sidebar_shown: sidebarShown, fullscreen } = bar;
   const [localOrder, setLocalOrder] = useState<LocalOrder | null>(null);
   const tabs = useMemo(() => orderedTabs(sourceTabs, localOrder), [sourceTabs, localOrder]);
@@ -175,11 +213,19 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   const stripRef = useRef<HTMLDivElement>(null);
   const tabNodes = useRef(new Map<TabId, HTMLElement>());
 
+  // ── Cards held over the bar (В86) ────────────────────────────────────────
+  // The row makes room for one more tab, a placeholder with the held card's
+  // title, at the slot under the pointer.
+  const cardGap = dropHover !== null && dropHover.item.kind === "cards" && dropHover.x !== null
+    ? { x: dropHover.x, title: dropHover.item.title }
+    : null;
+  const layoutCount = count + (cardGap === null ? 0 : 1);
+
   // ── Widths (В48) ───────────────────────────────────────────────────────
   const [available, setAvailable] = useState(0);
   const [frozen, setFrozen] = useState<FrozenTabWidth | null>(null);
-  const width = effectiveTabWidth(available, count, frozen);
-  const stripWidth = Math.min(count * width, available);
+  const width = effectiveTabWidth(available, layoutCount, frozen);
+  const stripWidth = Math.min(layoutCount * width, available);
 
   useLayoutEffect(() => {
     const zone = zoneRef.current;
@@ -197,14 +243,17 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   const syncEdges = useCallback(() => {
     const strip = stripRef.current;
     if (!strip) return;
-    const next = hiddenEdges(strip.scrollLeft, stripWidth, count * width);
+    const next = hiddenEdges(strip.scrollLeft, stripWidth, layoutCount * width);
     setEdges((current) => (current.left === next.left && current.right === next.right ? current : next));
-  }, [count, stripWidth, width]);
+  }, [layoutCount, stripWidth, width]);
 
+  // While cards are held over the bar the strip stays where the pointer has
+  // it, scrolled by hand to reach a slot (В86).
+  const holdScroll = dropHover !== null && dropHover.item.kind === "cards";
   useLayoutEffect(() => {
     const strip = stripRef.current;
     if (!strip) return;
-    if (activeIndex >= 0) {
+    if (activeIndex >= 0 && !holdScroll) {
       const next = revealScrollLeft({
         index: activeIndex,
         count,
@@ -215,7 +264,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
       if (next !== strip.scrollLeft) strip.scrollLeft = next;
     }
     syncEdges();
-  }, [activeIndex, count, stripWidth, syncEdges, width]);
+  }, [activeIndex, count, holdScroll, stripWidth, syncEdges, width]);
 
   // Over the strip WebKit scrolls it; over the rest of the bar the horizontal
   // turn is passed to it, so the whole bar scrolls the tabs (SPEC_NARROW_WINDOW.md,
@@ -229,13 +278,13 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
         deltaY: event.deltaY,
         scrollLeft: strip.scrollLeft,
         viewport: stripWidth,
-        content: count * width,
+        content: layoutCount * width,
       });
       if (next === null || next === strip.scrollLeft) return;
       strip.scrollLeft = next;
       syncEdges();
     },
-    [count, stripWidth, syncEdges, width],
+    [layoutCount, stripWidth, syncEdges, width],
   );
 
   // ── Dev button styles (src/lib/buttonStyle.ts) ───────────────────────────
@@ -330,10 +379,14 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
       moveToNewWindow: (id) => run(moveTabToNewWindow(id), "move the tab to a new window"),
       close: (id) => run(closeTab(id), "close the tab"),
       closeOthers: (id) => run(closeOtherTabs(id), "close the other tabs"),
+      closeToTheLeft: (id) => run(closeTabsBeside(id, "left"), "close the tabs to the left"),
+      closeToTheRight: (id) => run(closeTabsBeside(id, "right"), "close the tabs to the right"),
     });
     const pending = menu.current;
+    const shown = latest.current.tabs;
+    const index = shown.findIndex((tab) => tab.id === tabId);
     pending
-      .then((built) => built.open(tabId, latest.current.tabs.length))
+      .then((built) => built.open(tabId, index, shown.length))
       .catch((error: unknown) => {
         // A menu that failed to build is built again on the next right click.
         if (menu.current === pending) menu.current = null;
@@ -513,24 +566,28 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   // ── A tab from another window over this bar (В63) ─────────────────────────
   // The backend attaches the tab at the slot reported last, so every change
   // is reported, the pointer leaving the bar too.
+  /** The slot of the bar's tabs as they stand, without a gap, for the
+   *  pointer at bar position `x`: before a tab over its left half, after it
+   *  over its right half, at the end over `+` and past the last tab. */
+  const slotAt = useCallback((x: number): number | null => {
+    const strip = stripRef.current;
+    if (strip === null) return null;
+    return dropSlot(
+      x,
+      tabCentres({
+        stripLeft: strip.getBoundingClientRect().left,
+        scrollLeft: strip.scrollLeft,
+        width,
+        count,
+      }),
+    );
+  }, [count, width]);
+
   const [incomingSlot, setIncomingSlot] = useState<number | null>(null);
   useLayoutEffect(() => {
-    const strip = stripRef.current;
-    const x = dropHover?.x ?? null;
-    setIncomingSlot(
-      strip === null || x === null
-        ? null
-        : dropSlot(
-            x,
-            tabCentres({
-              stripLeft: strip.getBoundingClientRect().left,
-              scrollLeft: strip.scrollLeft,
-              width,
-              count,
-            }),
-          ),
-    );
-  }, [count, dropHover, width]);
+    const x = dropHover !== null && dropHover.item.kind === "tab" ? dropHover.x : null;
+    setIncomingSlot(x === null ? null : slotAt(x));
+  }, [dropHover, slotAt]);
 
   const reportedSlot = useRef<number | null>(null);
   useEffect(() => {
@@ -539,6 +596,55 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
     run(reportDropSlot(incomingSlot), "move the tab");
   }, [incomingSlot]);
 
+  // ── Cards held over the bar (В86) ────────────────────────────────────────
+  // The placeholder follows the pointer over the tabs as they stand; the
+  // strip scrolls under a held pointer as it does for a tab from another
+  // window (В63), and the slot follows the scroll.
+  const cardGapX = cardGap?.x ?? null;
+  const [cardSlot, setCardSlot] = useState<number | null>(null);
+  const placeCardGap = useCallback(() => {
+    setCardSlot(cardGapX === null ? null : slotAt(cardGapX));
+  }, [cardGapX, slotAt]);
+  useLayoutEffect(placeCardGap, [placeCardGap]);
+  const handleStripScroll = useCallback(() => {
+    syncEdges();
+    if (cardGapX !== null) placeCardGap();
+  }, [cardGapX, placeCardGap, syncEdges]);
+
+  // Let go over the bar: the slot at the pointer goes back once, read at
+  // that moment with the row as it stands.
+  const landingSlot = useRef((x: number) => slotAt(x) ?? count);
+  useLayoutEffect(() => {
+    landingSlot.current = (x: number) => slotAt(x) ?? count;
+  });
+  useEffect(() => {
+    if (landing === null || landing.x === null) return;
+    run(reportDropSlot(landingSlot.current(landing.x)), "open the elements in new tabs");
+  }, [landing]);
+
+  // The gap closes on the same curve when the cards leave the bar or the
+  // drag ends elsewhere. Tabs that landed in it stand at once: the state
+  // that brings them ends the gap in the same frame (useTabBarState.ts).
+  const cardGapShown = cardGap !== null;
+  const landingNow = landing !== null;
+  const [cardGapClosing, setCardGapClosing] = useState(false);
+  const hadCardGap = useRef(false);
+  useLayoutEffect(() => {
+    if (cardGapShown) {
+      hadCardGap.current = true;
+      setCardGapClosing(false);
+      return;
+    }
+    if (!hadCardGap.current) return;
+    hadCardGap.current = false;
+    if (landingNow) return;
+    setCardGapClosing(true);
+    const timer = window.setTimeout(() => setCardGapClosing(false), CARD_GAP_MS);
+    return () => window.clearTimeout(timer);
+    // Only the gap's coming and going matters here, with the landing as it
+    // stood at that moment.
+  }, [cardGapShown]);
+
   // ── Rendering ────────────────────────────────────────────────────────────
   const reorderTargetIndex = reorder === null
     ? null
@@ -546,9 +652,16 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
   // Neighbours glide aside only while a tab is dragged: after a drop the
   // new order is laid out in place, with nothing to animate. They make room
   // as Перемещение, the same in every mode (В60; SPEC_MOTION_LEVELS.md, Т3).
-  const shiftTransition = reorder !== null ? TAB_SHIFT_TRANSITION : undefined;
+  // A gap for cards moves on its own curve until the cards land in it.
+  const cardGapMoving = (cardGap !== null && landing === null) || cardGapClosing;
+  const shiftTransition = reorder !== null
+    ? TAB_SHIFT_TRANSITION
+    : cardGapMoving ? CARD_GAP_TAB_TRANSITION : undefined;
 
   function tabShift(index: number, tabId: TabId): { offset: number; follows: boolean } {
+    if (reorder === null && cardGap !== null && cardSlot !== null) {
+      return { offset: index >= cardSlot ? width : 0, follows: false };
+    }
     if (reorder === null || reorderTargetIndex === null) return { offset: 0, follows: false };
     if (tabId === reorder.tabId) return { offset: reorder.offset, follows: true };
     return {
@@ -557,7 +670,59 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
     };
   }
 
-  const stripStyle: CSSProperties = { width: stripWidth, ...stripFadeMaskStyle(edges) };
+  // Where every tab and the placeholder stand on screen now, for the next
+  // state to move from (В87).
+  const geometry: RowGeometry = {
+    ids: new Set(tabs.map((tab) => tab.id)),
+    tabs: new Map(tabs.map((tab, index) => [tab.id, { left: index * width + tabShift(index, tab.id).offset, width }])),
+    placeholder: cardGap !== null && cardSlot !== null ? { left: cardSlot * width, width } : null,
+    strip: stripWidth,
+  };
+
+  // ── A group of cards lands (В87) ─────────────────────────────────────────
+  // The gap held one tab; the group brings more. The tabs that stood in the
+  // row, and the grabbed card's tab from the placeholder, move from where
+  // they stood to their new places, widths too, as Перемещение, the same in
+  // every mode: the drag in hand goes on (SPEC_MOTION_LEVELS.md, Р1, Т4). The
+  // rest of the group stand in their places from the first frame, uncovered
+  // as the neighbours move off them. One card lands without moving.
+  const shownGeometry = useRef<RowGeometry | null>(null);
+  const [landingMove, setLandingMove] = useState<LandingMove | null>(null);
+  useLayoutEffect(() => {
+    const before = shownGeometry.current;
+    if (before === null || landing === null) return;
+    const added = tabs.filter((tab) => !before.ids.has(tab.id)).length;
+    if (added < 2) return;
+    const from = new Map<TabId, { dx: number; width: number }>();
+    tabs.forEach((tab, index) => {
+      const stood = before.tabs.get(tab.id) ?? (tab.id === activeTab ? before.placeholder : null);
+      if (stood !== null && stood !== undefined) from.set(tab.id, { dx: stood.left - index * width, width: stood.width });
+    });
+    setLandingMove({ from, strip: before.strip, running: false });
+    // The state that brings the group's tabs starts the move, with the row
+    // as it stood just before.
+  }, [sourceTabs]);
+  useLayoutEffect(() => {
+    shownGeometry.current = landingMove === null ? geometry : shownGeometry.current;
+  });
+  useLayoutEffect(() => {
+    if (landingMove === null) return;
+    if (!landingMove.running) {
+      // The start places are laid out before the end ones are set, so the
+      // row moves from them.
+      void stripRef.current?.offsetWidth;
+      setLandingMove({ ...landingMove, running: true });
+      return;
+    }
+    const timer = window.setTimeout(() => setLandingMove(null), CARD_GAP_MS);
+    return () => window.clearTimeout(timer);
+  }, [landingMove]);
+
+  const stripStyle: CSSProperties = {
+    width: landingMove !== null && !landingMove.running ? landingMove.strip : stripWidth,
+    transition: cardGapMoving || landingMove?.running ? CARD_GAP_STRIP_TRANSITION : undefined,
+    ...stripFadeMaskStyle(edges),
+  };
 
   return (
     <ChromeRow
@@ -639,7 +804,7 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
             reorder !== null && "[&>[role=tab]]:pointer-events-none",
           )}
           style={stripStyle}
-          onScroll={syncEdges}
+          onScroll={handleStripScroll}
           onKeyDown={handleStripKeyDown}
           onPointerDown={handleStripPointerDown}
           onClickCapture={handleStripClickCapture}
@@ -648,6 +813,8 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
             const active = tab.id === activeTab;
             const label = tabLabel(tab);
             const { offset, follows } = tabShift(index, tab.id);
+            const landsFrom = landingMove?.from.get(tab.id);
+            const shiftPx = landsFrom !== undefined && !landingMove?.running ? landsFrom.dx : offset;
             return (
               <div
                 key={tab.id}
@@ -674,13 +841,15 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
                   active
                     ? "bg-chrome text-foreground"
                     : "text-muted-foreground hover:text-foreground hover:state-active",
-                  follows && "z-10",
-                  follows && !active && "bg-accent",
+                  (follows || landsFrom !== undefined) && "z-10",
+                  (follows || landsFrom !== undefined) && !active && "bg-accent",
                 )}
                 style={{
-                  width,
-                  transform: offset === 0 ? undefined : `translateX(${offset}px)`,
-                  transition: follows ? undefined : shiftTransition,
+                  width: landsFrom !== undefined && !landingMove?.running ? landsFrom.width : width,
+                  transform: shiftPx === 0 ? undefined : `translateX(${shiftPx}px)`,
+                  transition: follows
+                    ? undefined
+                    : landsFrom !== undefined && landingMove?.running ? CARD_GAP_TAB_TRANSITION : shiftTransition,
                 }}
                 // A click shows the tab and hands it the focus; the bar
                 // keeps focus only for keyboard work (В49).
@@ -738,6 +907,22 @@ export function TabBar({ bar, dropHover }: TabBarProps) {
               </div>
             );
           })}
+          {cardGap !== null && cardSlot !== null && (
+            // The tab the held card becomes, in the room the row made: the
+            // look of a tab that is not visible, its title muted (В47, В86).
+            <div
+              aria-hidden="true"
+              data-tab-card-placeholder={cardSlot}
+              className={cn(
+                "pointer-events-none absolute inset-y-0 left-0 flex items-center border-r border-border pr-1 pl-3 text-muted-foreground",
+                cardSlot === 0 && "border-l",
+              )}
+              // It moves with the neighbours as the slot changes.
+              style={{ width, transform: `translateX(${cardSlot * width}px)`, transition: shiftTransition }}
+            >
+              <FadeText text={cardGap.title} className="flex-1 font-mono text-sm leading-none" />
+            </div>
+          )}
           {incomingSlot !== null && (
             <div
               aria-hidden="true"

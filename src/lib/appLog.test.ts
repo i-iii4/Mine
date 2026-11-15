@@ -27,11 +27,11 @@ describe("logFailure", () => {
   });
 
   // The pages may write to the log only with the logger's permission.
-  it("is allowed to the tab pages, the tab bars and the settings window", () => {
+  it("is allowed to the tab pages, the tab bars, the settings window and the card menu panel", () => {
     const capability = JSON.parse(
       readFileSync(resolve(__dirname, "../../src-tauri/capabilities/default.json"), "utf8"),
     ) as { webviews: string[]; permissions: string[] };
     expect(capability.permissions).toContain("log:allow-log");
-    expect(capability.webviews).toEqual(["tab-*", "tabbar-*", "settings"]);
+    expect(capability.webviews).toEqual(["tab-*", "tabbar-*", "settings", "menu-panel"]);
   });
 });

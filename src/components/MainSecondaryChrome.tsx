@@ -140,7 +140,10 @@ export function MainSecondaryTopBar({
       // In the second row it stands from the sidebar's width, which does
       // not inherit (sidebarWidth.ts).
       ref={sidebarWidthHost}
-      className="relative flex h-full min-w-0 flex-1 items-center overflow-hidden"
+      // Never narrower than the feed's controls (`min-w-min`, the layer in
+      // the flow below): the place's name before it shrinks first and ends
+      // in an ellipsis where it meets them (user's decision of 15.11.2026).
+      className="relative flex h-full min-w-min flex-1 items-center overflow-hidden"
     >
       {/* The selection replaces this half's ordinary content, the view
           switch, not the whole row: its commands sit over the feed they act
@@ -157,8 +160,11 @@ export function MainSecondaryTopBar({
       >
         <div ref={selectionHostRef} className="h-full w-full" />
       </div>
+      {/* The one layer in the half's flow: the other layers lie over it, and
+          its width is the half's least. The 4 px before the controls are the
+          open card's between its name and its commands (`gap-1`, below). */}
       <div
-        className="main-secondary-bar-layer absolute inset-0"
+        className="main-secondary-bar-layer h-full min-w-0 flex-1 pl-1"
         data-entered={contentMainLayerEntered ? "true" : "false"}
         data-main-secondary-main-layer=""
       >

@@ -56,8 +56,23 @@ export const SEARCH_OVERLAY_RECENT_LIMIT = 20;
 /** Same live-typing debounce as the rest of surface search (SPEC_SEARCH.md). */
 const SEARCH_OVERLAY_DEBOUNCE_MS = 100;
 
-/** One typed character is too noisy for vault-wide body/hybrid search. */
+/** From two characters the query searches everything: text, names,
+ *  authors, addresses and meaning. */
 export const SEARCH_OVERLAY_MIN_QUERY_CHARS = 2;
+
+/** One letter or digit is searched too, by file names only (user's decision
+ *  of 15.11.2026, SPEC_SEARCH_OVERLAY.md, «Минимальная длина запроса»): the
+ *  backend narrows it. The class is Rust's `char::is_alphanumeric`, the one
+ *  the backend tests, so neither side searches what the other waits on. */
+const SEARCH_OVERLAY_INITIAL = /^[\p{Alphabetic}\p{Nd}\p{Nl}\p{No}]$/u;
+
+/** Whether the typed text is searched: from two characters, or one letter
+ *  or digit. Anything shorter is still being typed. */
+export function searchOverlayQueryReady(normalizedQuery: string): boolean {
+  const characters = Array.from(normalizedQuery);
+  return characters.length >= SEARCH_OVERLAY_MIN_QUERY_CHARS
+    || (characters.length === 1 && SEARCH_OVERLAY_INITIAL.test(normalizedQuery));
+}
 
 /**
  * The preview column's width, its left border and padding included
@@ -94,6 +109,10 @@ interface SearchOverlayProps {
   onCreateAndAssign?: (tag: string, blockSlug: string) => void | Promise<unknown>;
   onRequestRename?: (block: LightBlock) => void;
   onRequestDelete?: (slug: string) => void;
+  /** Opened from over the image preview by a press: the preview's scrim is
+   *  this one's, standing, and it does not come in again (user's decision
+   *  of 15.11.2026). Held for the whole opening. */
+  scrimHandedOver?: boolean;
 }
 
 export function SearchOverlay({
@@ -111,6 +130,7 @@ export function SearchOverlay({
   onCreateAndAssign,
   onRequestRename,
   onRequestDelete,
+  scrimHandedOver = false,
 }: SearchOverlayProps) {
   const [results, setResults] = useState<LightBlock[] | null>(null);
   const [resultHasMore, setResultHasMore] = useState(false);
@@ -161,10 +181,8 @@ export function SearchOverlay({
   }, []);
 
   const normalizedQuery = normalizeSurfaceSearchQuery(query);
-  const normalizedQueryLength = Array.from(normalizedQuery).length;
   const isRecentMode = normalizedQuery.length === 0;
-  const queryReadyForSearch =
-    isRecentMode || normalizedQueryLength >= SEARCH_OVERLAY_MIN_QUERY_CHARS;
+  const queryReadyForSearch = isRecentMode || searchOverlayQueryReady(normalizedQuery);
   const currentQuerySettled = settledQueryKey === normalizedQuery;
 
   // searchQuery === null → recent mode: the same grid contract without a
@@ -596,7 +614,9 @@ export function SearchOverlay({
         // stands at once from the button too, as a command palette has no
         // motion (SPEC_MOTION_LEVELS.md, М6; global.css). Its scrim is named
         // for that rule.
-        overlayProps={{ "data-search-overlay-scrim": "" }}
+        overlayProps={scrimHandedOver
+          ? { "data-search-overlay-scrim": "", "data-scrim-handed-over": "" }
+          : { "data-search-overlay-scrim": "" }}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           inputRef.current?.focus();

@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 import { chromium } from "playwright";
 import { PNG } from "pngjs";
+import { COLD_START_MS, startAuditVite } from "./audit-vite.mjs";
 
-const DEFAULT_AUDIT_URL = "http://127.0.0.1:1420/__feed-scroll-audit";
-const AUDIT_URL = process.env.MINE_FEED_SCROLL_AUDIT_URL ?? DEFAULT_AUDIT_URL;
+const AUDIT_ROUTE = "/__feed-scroll-audit";
+/** The route of a Vite the caller runs (browser-audits.mjs); without one the
+ *  audit starts and stops a Vite of its own (audit-vite.mjs), so a dev server
+ *  the person runs keeps its port and its cache. */
+const GIVEN_AUDIT_URL = process.env.MINE_FEED_SCROLL_AUDIT_URL;
+let AUDIT_URL = GIVEN_AUDIT_URL;
 const VIEWPORTS = [
   { name: "desktop", width: 1440, height: 1000 },
   { name: "narrow", width: 900, height: 900 },
@@ -18,7 +23,7 @@ const HEIGHT_DRIFT_TIMEOUT_MS = 2500;
 
 async function assertDevServerReady(url) {
   try {
-    const response = await fetch(url, { method: "HEAD" });
+    const response = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(COLD_START_MS) });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -26,7 +31,7 @@ async function assertDevServerReady(url) {
     throw new Error(
       [
         `Feed scroll audit route is not reachable: ${url}`,
-        "Start the existing dev app first, then rerun `bun run test:feed-scroll`.",
+        "The Vite that serves the route did not answer.",
         `Original error: ${error instanceof Error ? error.message : String(error)}`,
       ].join("\n"),
     );
@@ -656,10 +661,12 @@ async function runViewportAudit(browser, viewport) {
 }
 
 async function main() {
-  await assertDevServerReady(AUDIT_URL);
-
-  const browser = await chromium.launch({ headless: true });
+  const vite = GIVEN_AUDIT_URL ? null : await startAuditVite();
+  if (vite) AUDIT_URL = new URL(AUDIT_ROUTE, vite.origin).href;
+  let browser;
   try {
+    await assertDevServerReady(AUDIT_URL);
+    browser = await chromium.launch({ headless: true });
     const results = [];
     for (const viewport of VIEWPORTS) {
       results.push(await runViewportAudit(browser, viewport));
@@ -676,7 +683,8 @@ async function main() {
     }
     console.log("\nAll feed scroll audit checks passed.");
   } finally {
-    await browser.close();
+    await browser?.close();
+    await vite?.close();
   }
 }
 
