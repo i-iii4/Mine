@@ -1,5 +1,7 @@
 # SPEC_GROUP_SELECTION
 
+**Состояние:** реализовано, живая приёмка группового удаления за пользователем. Источник: строка «Status» ниже; PLAN.md, Phase 26 и Phase 45. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 Status: implemented. Полное групповое удаление из раздела «Batch Delete»

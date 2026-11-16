@@ -1,4 +1,5 @@
-import { useState, useEffect, useLayoutEffect, useMemo, useRef, memo, createContext, useContext, forwardRef, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, memo, createContext, useContext, forwardRef, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { holdScrollUnderCardPress } from "@/lib/cardPressScroll";
 import { useDraggable } from "@dnd-kit/core";
 import type { IndexedBlock, LightBlock } from "@/types";
 import {
@@ -50,6 +51,7 @@ import { EDGE_FADE_WIDTH, createLiftFadeMaskStyle } from "@/lib/edgeFade";
 import { useCollectionOrder } from "@/lib/cardCollections";
 import { FeedVideoSurface } from "./FeedVideoSurface";
 import { FeedVideoPoster } from "./FeedVideoPoster";
+import { usePreparedPicture } from "@/hooks/usePreparedPicture";
 import { PlayBadge } from "./PlayBadge";
 import { CloudBadge } from "./CloudBadge";
 
@@ -433,6 +435,9 @@ export const Card = memo(function Card({ block, vaultPath, thumbsRootPath, thumb
       // card only by its actions (Г4.7).
       aria-label={getNavigationLabel(block)}
       tabIndex={0}
+      // A card held at the feed's edge leaves the feed still: WebKit's own
+      // scroll of a pressed box is held off (src/lib/cardPressScroll.ts).
+      onMouseDown={holdScrollUnderCardPress}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       // The lift follows the bottom action row exactly: pointer hover while
@@ -1365,6 +1370,12 @@ function PreviewPicture({
   const source = sources[sourceIndex] ?? null;
   const currentSrc = source && retryCount > 0
     ? `${source}${source.includes("?") ? "&" : "?"}retry=${retryCount}` : source;
+  // A picture that does not load and one that cannot be decoded fail the same
+  // way: the next candidate, then the retries above.
+  const failSource = useCallback(() => {
+    setSourceIndex((i) => i + 1);
+  }, []);
+  const preparedPicture = usePreparedPicture(measurementMode ? null : currentSrc, failSource);
 
   if (measurementMode) return null;
   if (currentSrc === null) {
@@ -1388,15 +1399,14 @@ function PreviewPicture({
       // the next candidate. Without the key the browser would reuse the
       // failed request entry and never re-request.
       key={currentSrc}
+      ref={preparedPicture}
       src={currentSrc}
       alt=""
       className="absolute inset-0 h-full w-full object-cover"
       loading={imgLoading}
       decoding="async"
       draggable={false}
-      onError={() => {
-        setSourceIndex((i) => i + 1);
-      }}
+      onError={failSource}
     />
   );
 }
@@ -1453,6 +1463,9 @@ function GalleryTileImage({
     setFailed(false);
   }, [previewSrc]);
 
+  const failTile = useCallback(() => setFailed(true), []);
+  const preparedPicture = usePreparedPicture(failed ? null : previewSrc, failTile);
+
   if (!previewSrc || failed) {
     return previewState === "pending"
       ? <PreviewPendingFill />
@@ -1461,13 +1474,14 @@ function GalleryTileImage({
 
   return (
     <img
+      ref={preparedPicture}
       src={previewSrc}
       alt=""
       className="absolute inset-0 h-full w-full object-cover"
       loading={loading}
       decoding="async"
       draggable={false}
-      onError={() => setFailed(true)}
+      onError={failTile}
     />
   );
 }

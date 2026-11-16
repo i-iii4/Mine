@@ -613,7 +613,7 @@ async function measureEntry(browser, origin) {
 function runRustTest() {
   return new Promise((resolveRun) => {
     const child = spawn('node', ['scripts/run-with-disposable-home.mjs', 'cargo', 'test', '-p', 'mine', '--lib', '--features', 'tooling', '--locked',
-      'storage::note_edit::tests::a_save_of_a_note_of_100_kb_answers_within_its_limit', '--', '--nocapture'], {
+      'storage::note_edit::tests::a_save_of_a_note_of_100_kb_answers_within_its_limit', '--', '--ignored', '--nocapture'], {
       cwd: root,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
@@ -621,7 +621,6 @@ function runRustTest() {
         CARGO_TARGET_DIR: join(root, 'target/editing-perf'),
         CARGO_PROFILE_DEV_OPT_LEVEL: '3',
         CARGO_PROFILE_TEST_OPT_LEVEL: '3',
-        MINE_SAVE_TIMING: 'assert',
       },
     });
     let output = '';

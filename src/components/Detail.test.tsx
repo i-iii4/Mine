@@ -2670,6 +2670,24 @@ describe("Detail", () => {
       expect(sources[0]).toContain("video 1");
       expect(sources[1]).toContain("video 2");
     });
+
+    // SPEC_READING_MODE.md, Ч0.5: what the body holds besides the lead video
+    // is read from the tree the article draws, so whatever the article would
+    // show under the player counts: a note's card, a formula, a footnote's
+    // number. A body of the video alone shows no article.
+    it.each([
+      ["a note's card", "![[Other note]]", true],
+      ["a formula", "$x^2$", true],
+      ["a formula on its own lines", "$$\nx^2\n$$", true],
+      ["a footnote's number", "[^1]\n\n[^1]: The note.", true],
+      ["code", "`code`", true],
+      ["nothing", "", false],
+      ["an HTML comment", "<!-- nothing to show -->", false],
+    ])("shows the body under the lead video when it holds %s", (_what, rest, shown) => {
+      const { container } = renderPost(`![[Post (video 1).mp4]]\n\n${rest}`, ["Media/Post (video 1).mp4"]);
+      expect(screen.getAllByTestId("video-from-blob")).toHaveLength(1);
+      expect(container.querySelector("[data-article-body]") !== null).toBe(shown);
+    });
   });
 
   it("keeps the ellipsis off a video and opens its menu only on right click", async () => {

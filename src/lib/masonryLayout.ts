@@ -71,15 +71,48 @@ export function getMasonryColumnWidth(
  * What every feed looks like: the first item stands in the first column, and
  * no column is empty with an item to its right (SPEC_GRID.md, «Форма ленты»).
  * Placing each item into the shortest column always gives this; only the
- * columns remembered for items whose neighbours left can break it.
+ * columns remembered for items whose neighbours left can break it. A column
+ * holds an item exactly when its running height is above 0: every item is at
+ * least 1 px tall.
  */
-function holdsFeedShape(positions: readonly MasonryPosition[]): boolean {
+function holdsFeedShape(
+  positions: readonly MasonryPosition[],
+  columnHeights: readonly number[],
+): boolean {
   if (positions.length === 0) return true;
   if (positions[0]!.column !== 0) return false;
-  const used = new Set(positions.map((position) => position.column));
+  let used = 0;
   let rightmost = 0;
-  for (const column of used) rightmost = Math.max(rightmost, column);
-  return rightmost === used.size - 1;
+  columnHeights.forEach((height, column) => {
+    if (height <= 0) return;
+    used += 1;
+    rightmost = column;
+  });
+  return rightmost === used - 1;
+}
+
+/**
+ * A layout to go on from (SPEC_GRID.md, «Кэш при карточке и продолжение
+ * раскладки»).
+ */
+export interface MasonryContinuation {
+  /**
+   * A layout `computeMasonryLayout` made for the same container width,
+   * minimum column width and gap.
+   */
+  layout: MasonryLayout;
+  /**
+   * How many leading items stand in `layout` exactly where this call would
+   * put them: each has the height it has there, and `columnOf` names for each
+   * the column it takes there. They are not placed again: the columns go on
+   * from the heights they have in `layout` after these items.
+   */
+  keep: number;
+  /**
+   * The layout whose position objects are taken over for the items that come
+   * out where they stand in it; `layout` when absent.
+   */
+  reuse?: MasonryLayout;
 }
 
 /**
@@ -90,13 +123,21 @@ function holdsFeedShape(positions: readonly MasonryPosition[]): boolean {
  * does not name, or names past the column count, takes the shortest column.
  * When the remembered columns would break the feed's shape, they are dropped
  * and the items are laid out anew.
+ *
+ * `continued` gives the same result with less work: the items it vouches for
+ * are taken from its layout as they are. An item that comes out where it
+ * stands in the layout to reuse keeps that position object, and when every
+ * item does, the positions are that layout's own array: a caller tells a feed
+ * that did not move by the array, and a card that did not move by its
+ * position. The layout object itself is always a new one.
  */
 export function computeMasonryLayout(
-  itemHeights: number[],
+  itemHeights: readonly number[],
   containerWidth: number,
   minColumnWidth: number,
   gap: number,
   columnOf?: (index: number) => number | undefined,
+  continued?: MasonryContinuation,
 ): MasonryLayout {
   const columnCount = getMasonryColumnCount(containerWidth, minColumnWidth, gap);
   const safeGap = clampPositive(gap);
@@ -114,12 +155,32 @@ export function computeMasonryLayout(
   const columnLeft = (column: number) => column * (columnWidth + safeGap) + Math.min(column, widenedColumns);
   const widthOf = (column: number) => columnWidth + (column < widenedColumns ? 1 : 0);
 
-  const place = (memory?: (index: number) => number | undefined) => {
-    const columnHeights = new Array<number>(columnCount).fill(0);
-    const positions: MasonryPosition[] = [];
+  const count = itemHeights.length;
+  const base = continued
+    && continued.layout.columnCount === columnCount
+    && continued.layout.columnWidth === columnWidth
+    ? continued.layout
+    : null;
+  const kept = base === null
+    ? 0
+    : Math.max(0, Math.min(continued?.keep ?? 0, base.positions.length, count));
+  const reused = (continued?.reuse ?? continued?.layout)?.positions ?? [];
 
-    itemHeights.forEach((rawHeight, index) => {
-      const height = Math.max(1, rawHeight);
+  const place = (memory: ((index: number) => number | undefined) | undefined, from: number) => {
+    const columnHeights = new Array<number>(columnCount).fill(0);
+    const positions: MasonryPosition[] = from > 0 && base !== null ? base.positions.slice(0, from) : [];
+    // The columns after the kept items: each ends under the last kept item
+    // that stands in it.
+    let unseen = columnCount;
+    for (let index = positions.length - 1; index >= 0 && unseen > 0; index -= 1) {
+      const position = positions[index]!;
+      if (columnHeights[position.column] !== 0) continue;
+      columnHeights[position.column] = position.bottom + safeGap;
+      unseen -= 1;
+    }
+
+    for (let index = positions.length; index < count; index += 1) {
+      const height = Math.max(1, itemHeights[index]!);
       let targetColumn = 0;
 
       const remembered = memory?.(index);
@@ -135,36 +196,42 @@ export function computeMasonryLayout(
 
       const top = columnHeights[targetColumn]!;
       const left = columnLeft(targetColumn);
+      const width = widthOf(targetColumn);
       const bottom = top + height;
+      const held = reused[index];
 
-      positions.push({
-        index,
-        top,
-        left,
-        width: widthOf(targetColumn),
-        height,
-        bottom,
-        column: targetColumn,
-      });
+      positions.push(
+        held !== undefined
+          && held.index === index
+          && held.top === top
+          && held.left === left
+          && held.width === width
+          && held.height === height
+          && held.column === targetColumn
+          ? held
+          : { index, top, left, width, height, bottom, column: targetColumn },
+      );
 
       columnHeights[targetColumn] = bottom + safeGap;
-    });
+    }
 
     return { columnHeights, positions };
   };
 
-  const remembered = place(columnOf);
-  const { columnHeights, positions } = columnOf === undefined || holdsFeedShape(remembered.positions)
+  const remembered = place(columnOf, kept);
+  const { columnHeights, positions } = columnOf === undefined
+    || holdsFeedShape(remembered.positions, remembered.columnHeights)
     ? remembered
-    : place();
+    : place(undefined, 0);
 
   const totalHeight = Math.max(0, ...columnHeights.map((height) => (height > 0 ? height - safeGap : 0)));
+  const unmoved = reused.length === count && positions.every((position, index) => position === reused[index]);
 
   return {
     columnCount,
     columnWidth,
     totalHeight,
-    positions,
+    positions: unmoved ? reused : positions,
   };
 }
 
@@ -216,7 +283,7 @@ export interface VisibilityIndex {
  *                      balance for 240-wide cards at typical screen heights.
  */
 export function createVisibilityIndex(
-  layout: MasonryLayout,
+  layout: Pick<MasonryLayout, "positions" | "totalHeight">,
   bucketHeight: number = DEFAULT_BUCKET_HEIGHT,
 ): VisibilityIndex {
   const safeBucket = Math.max(1, bucketHeight);

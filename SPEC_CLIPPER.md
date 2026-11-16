@@ -1,5 +1,7 @@
 # Specification: Web Clipper (Browser Extension)
 
+**Состояние:** частично: реализовано для Chromium (Chrome, Dia); у Safari есть только заготовка без моста к помощнику; живая приёмка части разделов открыта. Источник: PLAN.md, Phase 8, Phase 12 «Редизайн расширения» и Phase 43; разделы «Один путь файла со страницы» и «Manifest (Safari)» ниже. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 ## Исправление целостности захвата и восстановления
 
 Этот контракт уточняет прежние правила восстановления и выбора пространства.
@@ -4300,7 +4302,7 @@ Native host читает путь к vault из файла конфигурац�
 | Card name taken at publication | Карточка под следующим свободным именем, ответ называет его `slug` (Е4.14) |
 | Link/video thumbnail download failed | Блок может быть создан без thumbnail; media failure для preview не ломает сохранение самой ссылки/видео |
 | Video tool missing, blocked, timed out or failed | `code:"video_tool_failed"` с `reason`; остальные запросы обслуживаются; пост X сохраняется без видео со строкой о причине (раздел 3d, В1–В5) |
-| Screenshot upload failed | Popup показывает inline error в `StatusBar` и сохраняет preview/tags/display heading для retry |
+| Screenshot upload failed | Popup показывает inline error и сохраняет preview/tags/display heading для retry |
 | Screenshot upload succeeded but `save_block` failed | Pin id/payload/binding, lookup исходного save; нет отдельного слепого screenshot retry и удаления неизвестного staging |
 | SQLite locked | Source `.md`/media commit сохраняется; derived update best-effort, watcher/startup scan догоняют индекс |
 | Previous save at same URL | Отдельный recovery UI; старый receipt никогда не отмечает новый клип Saved; подтверждённая запись не показывается |
@@ -4321,11 +4323,14 @@ extension/
 │   ├── popup-layout.css    # @import global.css + popup-размеры (360x600)
 │   ├── PopupApp.tsx        # Корневой компонент (loading/error/main)
 │   ├── components/
-│   │   ├── PreviewCard.tsx  # Thumbnail + display heading input
+│   │   ├── VaultSelect.tsx  # Выбор пространства
 │   │   ├── TypeSwitcher.tsx # Content / Link переключатель
+│   │   ├── ScreenshotPreview.tsx # Кадр снимка экрана, Retake и Crop
 │   │   ├── ChannelList.tsx  # Поиск + список каналов
 │   │   ├── SaveButton.tsx   # Кнопка сохранения
-│   │   └── StatusBar.tsx    # Статус (success/error)
+│   │   ├── ClipperOverflowMenu.tsx # Меню «…» в шапке клиппера (О3), переключатели кнопок Mine на X и в Instagram (Р11)
+│   │   ├── StandaloneSetup.tsx # Восстановление связи и доступ к папке без приложения
+│   │   └── FolderSetupPage.tsx # Страница настройки папки
 │   ├── hooks/
 │   │   └── useClipperState.ts  # Вся бизнес-логика попапа
 │   └── lib/

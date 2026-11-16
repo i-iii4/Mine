@@ -1,5 +1,7 @@
 # Онбординг: от установки до первой ценности
 
+**Состояние:** частично: SC1 по SC5 реализованы; системный выбор папки и полный путь сохранения в Dia и Chrome не приняты; Web Store ID, подпись поставки и Safari отложены; импорт Are.na отменён (О17). Источник: абзац «О1–О7 актуализированы 31.08.2026» и пункт О17 ниже. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [AUDIT_ACTIVATION.md](AUDIT_ACTIVATION.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md)
 
 Основание: [AUDIT_ACTIVATION.md](AUDIT_ACTIVATION.md). Решения приняты в

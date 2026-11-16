@@ -3,7 +3,7 @@ import { act } from "@testing-library/react";
 import { CARD_VIEW_STORAGE_KEY, getCardView, offersPeekCollapse, openCardView, reloadCardView, setCardView } from "./cardView";
 import { peekAreaHoldsWindow } from "./cardPeek";
 
-/// TRIAL (SPEC_CARD_PEEK.md, О1): the open card's view.
+/// SPEC_CARD_PEEK.md, О1: the open card's view.
 describe("cardView", () => {
   afterEach(() => {
     localStorage.removeItem(CARD_VIEW_STORAGE_KEY);

@@ -1,5 +1,7 @@
 # Feed Video Specification
 
+**Состояние:** реализовано, приёмка на настоящем пространстве открыта. Источник: PLAN.md, строка C5 (MANUAL QA). **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md)
 
 ## Goal

@@ -1,5 +1,7 @@
 # SPEC: Grid Layout Readiness
 
+**Состояние:** реализовано (Phase C8); в продукте раскладку ведёт детерминированная раскладка Phase 11, документ остаётся контрактом приёмки и диагностики. Источник: строка «Status» ниже. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [AUDIT_PERFORMANCE.md](AUDIT_PERFORMANCE.md)
 
 Status: implemented as Phase C8 and superseded in production by Phase 11
@@ -12,7 +14,8 @@ The feed must not show white or empty viewport states during fast scroll or
 deep scroll jumps just because Grid is still measuring skipped cards above the
 current viewport.
 
-C7 solved media readiness: previews can be fetched and decoded ahead of DOM.
+C7 covers media readiness: since 15.11.2026 a card's picture is prepared as
+soon as the card is mounted (SPEC_FEED_SCROLL_PERFORMANCE.md).
 C8 solved the adjacent layout-readiness layer: cards in the current viewport
 were prioritized before prefix catch-up work. Phase 11 completed the migration:
 current production cards render from deterministic height envelopes, and exact
@@ -194,15 +197,18 @@ generation-safe prefix model entirely.
 
 C7 media readiness remains a separate system:
 
-- render/priority/preload windows are still computed from viewport and scroll
+- render and priority windows are still computed from viewport and scroll
   velocity;
-- media preload remains preview-only and bounded;
+- a card's picture is prepared by the card itself as soon as it is mounted;
+  the separate media preload window and its counters were removed on
+  15.11.2026 (SPEC_FEED_SCROLL_PERFORMANCE.md, «Подготовка картинки
+  карточки»);
 - C8 publishes layout diagnostics into the same
   `window.__MINE_FEED_SCROLL_DEBUG__` object, so real runs can distinguish
-  layout backlog from media backlog.
+  layout backlog from late pictures.
 
 C7 cannot mask C8 failures. If `viewportUnmeasuredCount > 0`, the problem is
-layout readiness even when media preload stats look healthy.
+layout readiness whatever `bun run test:feed-images` shows for pictures.
 
 ## Interaction Contracts
 
@@ -221,16 +227,13 @@ Development builds expose:
 
 ```ts
 window.__MINE_FEED_SCROLL_DEBUG__ = {
-  enabled: boolean;
   layoutGenerationKey: string;
   scrollDirection: "forward" | "backward" | "idle";
   scrollVelocityPxMs: number;
   isFastScrolling: boolean;
-  stats: FeedMediaPreloadStats;
   mountedGridItems: number;
   renderWindowPx: { forward: number; backward: number };
   priorityWindowPx: { forward: number; backward: number };
-  preloadWindowPx: { forward: number; backward: number };
   layout: {
     layoutGenerationKey: string;
     committedEndIndex: number;
@@ -373,4 +376,4 @@ Real-vault acceptance:
 - Do not reintroduce scroll anchoring; previous masonry anchoring created a
   feedback loop.
 - Do not solve unrelated IPC payload or mutation cascade problems here.
-- Do not increase media preload budgets to hide layout backlog.
+- Do not prepare pictures earlier or wider to hide layout backlog.

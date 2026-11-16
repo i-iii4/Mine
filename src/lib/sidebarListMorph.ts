@@ -4,9 +4,8 @@
 // move from the List's step to the table's, each name riding with its row,
 // never changing its size or its place across; the lines, the column guides,
 // the strips and the counts show over the move's second half, and going back
-// they fade within its first third while the rows gather. The open
-// collection's dot and the Contents leader, the List's own marks, do the
-// mirror. One spring, the compact stack's (channelIcon.ts, through
+// they fade within its first third while the rows gather. The List's own
+// marks, its dotted leader and its count, do the mirror. One spring, the compact stack's (channelIcon.ts, through
 // `morphSpring`); a crossing back mid-move turns it round from where it is,
 // at the speed it had.
 //
@@ -31,11 +30,10 @@
 //
 // Going to the table the List's places are read in the frame that crosses,
 // where it is still laid out, and the table's once it takes its look. Going
-// back the table's are read where it stands, and the List's are kept from
-// a frame that laid it out: Plain's rows do not wrap, so its places do not
-// change with the width, and any change to the rows or to the probes drops
-// what was kept. Where nothing is kept, or for Contents, whose names wrap
-// by the width, the List is laid out for the read alone. The frames of the
+// back the table's are read where it stands, and the List is laid out for
+// the read alone: its names wrap by the width (List style Contents, fixed by
+// the user's decision of 15.11.2026), so no places of it hold for another
+// width. The frames of the
 // move read nothing. Only the rows the move shows move: those whose way
 // passes through the scrollport. Every part moves by `transform` alone and
 // fades by `opacity` alone, by WAAPI. The frame that crosses only writes
@@ -46,16 +44,16 @@
 // is read keyframe by keyframe in the style pass that takes it.
 //
 // A name's visible end is part of the move too (user's decisions of 01.11.2026
-// and 05.11.2026): the landing lifts no cut and lays down no line. In Contents,
-// where the List wraps a name, its cell is laid out as the List lays it out for
+// and 05.11.2026): the landing lifts no cut and lays down no line. The List
+// wraps a name, so its cell is laid out as the List lays it out for
 // the whole move; a drag going on that changes a name's lines is the one thing
 // the frames of the move read for, on the names that slide.
 
 import { SIDEBAR_PREVIEW_TILE_GAP_PX, SIDEBAR_PREVIEW_TILE_PX, sidebarBesideMinWidthPx, sidebarCompactRowsBelowPx, sidebarNameColumnPx, sidebarPanelWidthPx, sidebarRowsWidthPx } from "./appLayout";
 import { CHANNEL_ICON_SPRING_MS, SPRING_SAMPLES } from "./channelIcon";
-import { getListStyle, getSidebarStyle } from "./compactStack";
+import { getSidebarStyle } from "./compactStack";
 import { MOTION_SPRING_MOVE_MS, type SpringMotion } from "./motion";
-import { SIDEBAR_LOOK_ATTRIBUTE, SIDEBAR_WIDTH_MOTION_ATTRIBUTE, setSidebarLook, sidebarContentWidth, sidebarLookAt, sidebarLookOfPanel, sidebarMorphMotion } from "./sidebarLook";
+import { SIDEBAR_LOOK_ATTRIBUTE, SIDEBAR_WIDTH_MOTION_ATTRIBUTE, type SidebarLook, setSidebarLook, sidebarContentWidth, sidebarLookAt, sidebarLookOfPanel, sidebarMorphMotion } from "./sidebarLook";
 import { animatesPseudoElements, morphMove, morphSpring, type MorphSpring } from "./sidebarRowsMorph";
 import { holdStripWidths } from "./sidebarStripWidth";
 
@@ -201,7 +199,7 @@ export function rowsOnTheWay(table: RowsLayout, offsets: number[], tableScroll: 
   return shown;
 }
 
-/** How the List stands a Contents row by its name's height, px from the
+/** How the List stands a row by its name's height, px from the
  *  row's top: the row's height, the middle of its first line, the top of its
  *  count. A row of one line is as the List lays it out (`one`); of more, its
  *  lines and its padding. */
@@ -272,24 +270,36 @@ const FADE_ATTRIBUTE = "data-sidebar-rows-fade";
  *  its first frame, the strips with their whole count (SPEC_SIDEBAR_STRIP.md,
  *  ЛМ2). */
 const BARE_ATTRIBUTE = "data-sidebar-rows-bare";
+/** On the scrollport in the frame the look changes at once, with no move
+ *  (Off, a key, a step past the limit, a collapse or an opening): the rows'
+ *  text takes its new colour in that frame, with no transition of its own
+ *  (global.css). Taken off in the next frame, when nothing is left to
+ *  transition. */
+export const LOOK_SWITCHING_ATTRIBUTE = "data-sidebar-look-switching";
 
 const ROW_SELECTOR = "[data-sidebar-rows] [data-sidebar-row-surface]";
 /** What a row's place is the place of: its name's text, or a field's input. */
 const ANCHOR_SELECTOR = "[data-sidebar-name-text], [data-sidebar-editable-row-body] input";
-/** Connect, Disconnect and Connected: plates in Plain's List and in the
- *  table, words in Contents' List. In Plain they ride; in Contents the
- *  plates are the table's alone. */
+/** Connect, Disconnect and Connected: plates in the table, words in the
+ *  List; the plates are the table's alone. */
 const LINK_SELECTOR = ":scope > [data-sidebar-link-action], :scope > [data-sidebar-row-connected-pill][data-state='on']";
 const COUNT_SELECTOR = "[data-sidebar-meta-count]";
 const BODY_SELECTOR = "[data-sidebar-row-body]";
-/** Where the Contents list's count stands on a row while it moves: its
+/** The List's marks while the rows move: empty elements of the row body as
+ *  large as the body (Sidebar.tsx), the leader's and the count's (global.css).
+ *  Their place properties change them alone: on the body they changed every
+ *  element inside it, a style recalculation of the whole list in the frame
+ *  that crossed; and they fade as elements, not as the body's
+ *  pseudo-elements. */
+const LIST_LEADER_SELECTOR = ':scope > [data-sidebar-list-mark="leader"]';
+const LIST_COUNT_MARK_SELECTOR = ':scope > [data-sidebar-list-mark="count"]';
+/** Where the List's count stands on a row while it moves: its
  *  place in the List from the row body's top and right edge, and its type.
  *  The table's count, another part, is the count element itself. */
 const LIST_COUNT_TOP_PROPERTY = "--sidebar-list-count-top";
 const LIST_COUNT_RIGHT_PROPERTY = "--sidebar-list-count-right";
 const LIST_COUNT_FONT_PROPERTY = "--sidebar-list-count-font";
-/** On the body of each row the move shows in Contents: the List's count
- *  stands on it. */
+/** On the marks of each row the move shows: the List's count stands on them. */
 const LIST_COUNT_ATTRIBUTE = "data-sidebar-list-count";
 /** The strips' cells. */
 const RAIL_SELECTOR = "[data-sidebar-preview-rail]";
@@ -304,40 +314,33 @@ const NAME_SLIDE_ATTRIBUTE = "data-sidebar-name-slide";
 const NAME_WHOLE_ATTRIBUTE = "data-sidebar-name-whole";
 /** How far the List's name cell stops short of the panel's width, px. */
 const NAME_LIST_INSET_PROPERTY = "--sidebar-name-list-inset";
-/** How far the table's name cell stops short of it, without the previews, px. */
-const NAME_TABLE_INSET_PROPERTY = "--sidebar-name-table-inset";
-/** In Contents, how tall the name's cell is in the List, px. */
+/** How tall the name's cell is in the List, px. */
 const NAME_LIST_HEIGHT_PROPERTY = "--sidebar-name-list-h";
 /** The mask's end in each look, as CSS. */
 const NAME_EDGE_TABLE_PROPERTY = "--sidebar-name-edge-table";
 const NAME_EDGE_LIST_PROPERTY = "--sidebar-name-edge-list";
 /** List-ness of the name's visible end: 0 the table's, 1 the List's. */
 const NAME_Q_PROPERTY = "--sidebar-name-q";
-/** Cells the List does not show, whose content changes with the width. */
-const UNSHOWN_IN_LIST_SELECTOR = "[data-sidebar-preview-rail], [data-sidebar-compact-stack]";
 /** The column guides, also the element the run's clock runs on: it has no
  *  content of its own. */
 const GUIDES_SELECTOR = "[data-sidebar-guidelines]";
 
-/** A part of both looks that rides with its row and goes from its place in
- *  one to its place in the other: at List-ness 1 it is moved by `x`, `y`
- *  from where the table lays it out. */
+/** A row that goes from its place in one look to its place in the other:
+ *  at List-ness 1 it is moved by `x`, `y` from where the table lays it out.
+ *  Its start for the frame that crossed is its own `translate`, which
+ *  nothing else sets. */
 interface Mover {
   element: HTMLElement;
   x: number;
   y: number;
-  /** The property its start is written in for the frame that crossed: a
-   *  row's own `translate`, which nothing else sets; a plate's `transform`,
-   *  its `translate` centring it on its row. */
-  still: "translate" | "transform";
   animation: Animation | null;
 }
 
 /** A name's cell whose visible end slides between the two looks' ends:
  *  where it stands in each, at the scrollport's width `port` the move
- *  started at; its clear tail and dissolve; whether each look cuts it, as
- *  its mask's ends say now. `row` is its row's index in the episode's rows,
- *  and `wraps` says the List wraps it (Contents) instead of cutting it. */
+ *  started at; its clear tail and dissolve; whether the table cuts it, as
+ *  its mask's end says now (the List wraps it and cuts nothing). `row` is
+ *  its row's index in the episode's rows. */
 interface Slide {
   cell: HTMLElement;
   list: NamePlace;
@@ -345,10 +348,8 @@ interface Slide {
   port: number;
   tail: number;
   dissolve: number;
-  listCuts: boolean | null;
   tableCuts: boolean | null;
   row: number;
-  wraps: boolean;
   animation: Animation | null;
 }
 
@@ -371,7 +372,7 @@ interface Episode {
   movers: Mover[];
   fades: Fade[];
   slides: Slide[];
-  /** In Contents, how the List stands a row by its name's height. */
+  /** How the List stands a row by its name's height. */
   listRows: ListRowModel | null;
   /** The shares the parts of each look had when the run began. */
   tableFrom: number;
@@ -413,14 +414,11 @@ interface NamePlace {
   textHeight: number;
 }
 
-/** The places of one layout, and where the riding parts stand in it: x from
- *  the scrollport's right edge, which every one of them keeps its place to,
- *  y in the content. In Contents, each row's body and count, top in the
+/** The places of one layout, and each row's body and count, top in the
  *  content and right edge on screen. */
 interface ReadLayout {
   rows: HTMLElement[];
   layout: RowsLayout;
-  riders: Map<Element, { x: number; y: number }>;
   boxes: Map<Element, { top: number; right: number }>;
   /** Each name's cell: its left edge from the scrollport's, its right
    *  edge's distance to the scrollport's (which a wider or narrower List
@@ -428,9 +426,7 @@ interface ReadLayout {
   names: Map<HTMLElement, NamePlace>;
   /** The scrollport's box width. */
   portWidth: number;
-  /** The content's height: the layout scrolls by it less the scrollport's. */
-  contentHeight: number;
-  /** Read in Contents' List: how it stands a row by its name's height. */
+  /** Read in the List: how it stands a row by its name's height. */
   listRows: ListRowModel | null;
 }
 
@@ -467,6 +463,19 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
   // `--sidebar-name-q`); without them it changes with the layout.
   const animatesProperties = typeof CSS !== "undefined" && typeof CSS.registerProperty === "function";
   let previous: number | null = null;
+  let switchingFrame = 0;
+  /** The look the width or the open width gives, at once: `land` ends a move
+   *  under way first. The frame that changes it marks the scrollport. */
+  const switchAtOnce = (look: SidebarLook, land: boolean) => {
+    if (nav.getAttribute(SIDEBAR_LOOK_ATTRIBUTE) !== look || (land && episode)) {
+      nav.setAttribute(LOOK_SWITCHING_ATTRIBUTE, "");
+      cancelAnimationFrame(switchingFrame);
+      switchingFrame = requestAnimationFrame(() => nav.removeAttribute(LOOK_SWITCHING_ATTRIBUTE));
+    }
+    if (land && episode) finish(episode, 0);
+    nav.removeAttribute(BARE_ATTRIBUTE);
+    setSidebarLook(nav, look);
+  };
   let episode: Episode | null = null;
   /** What of the scrollport's box its content does not take (a scrollbar,
    *  padding), from the last layout: the open width's look counts it. */
@@ -475,26 +484,16 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
   let held = false;
   /** The scroll this module last set: its scroll event is not a person's. */
   let ownScroll: number | null = null;
-  /** The List's places from a frame that laid it out; `null` once anything
-   *  that could move them changed. */
-  let kept: ReadLayout | null = null;
 
   const setScroll = (value: number) => {
     nav.scrollTop = value;
     ownScroll = nav.scrollTop;
   };
 
-  const contents = () => getListStyle() === "contents";
-  /** The parts of both looks that ride: Plain's Connect and Connected. */
-  const riderSelector = () => (contents() ? null : LINK_SELECTOR);
-
   const readLayout = (): ReadLayout => {
     const port = nav.getBoundingClientRect();
     const origin = port.top + nav.clientTop - nav.scrollTop;
     const rows = Array.from(nav.querySelectorAll<HTMLElement>(ROW_SELECTOR));
-    const selector = riderSelector();
-    const toc = contents();
-    const riders: ReadLayout["riders"] = new Map();
     const boxes: ReadLayout["boxes"] = new Map();
     const names: ReadLayout["names"] = new Map();
     const keepBox = (element: Element | null) => {
@@ -504,19 +503,11 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
     };
     const places = rows.map((row) => {
       const box = row.getBoundingClientRect();
-      // The text's first line: a Contents name wraps in the List, and its
-      // first line is the one that rides.
+      // The text's first line: a name wraps in the List, and its first line
+      // is the one that rides.
       const named = row.querySelector(ANCHOR_SELECTOR)?.getClientRects()[0] ?? box;
-      for (const rider of selector ? row.querySelectorAll(selector) : []) {
-        const rect = rider.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) {
-          riders.set(rider, { x: rect.left + rect.width / 2 - port.right, y: rect.top + rect.height / 2 - origin });
-        }
-      }
-      if (toc) {
-        keepBox(row.querySelector(BODY_SELECTOR));
-        keepBox(row.querySelector(COUNT_SELECTOR));
-      }
+      keepBox(row.querySelector(BODY_SELECTOR));
+      keepBox(row.querySelector(COUNT_SELECTOR));
       const cell = row.querySelector<HTMLElement>(NAME_CELL_SELECTOR);
       const text = cell?.querySelector(NAME_TEXT_SELECTOR)?.getBoundingClientRect();
       if (cell && text && text.width > 0) {
@@ -525,12 +516,11 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
       }
       return { top: box.top - origin, bottom: box.bottom - origin, anchor: named.top + named.height / 2 - origin };
     });
-    const contentHeight = nav.scrollHeight;
-    const listRows = toc && nav.getAttribute(SIDEBAR_LOOK_ATTRIBUTE) === "compact" ? readListRows(rows, places, boxes, names, origin) : null;
-    return { rows, layout: { rows: places, maxScroll: contentHeight - nav.clientHeight }, riders, boxes, names, portWidth: port.width, contentHeight, listRows };
+    const listRows = nav.getAttribute(SIDEBAR_LOOK_ATTRIBUTE) === "compact" ? readListRows(rows, places, boxes, names, origin) : null;
+    return { rows, layout: { rows: places, maxScroll: nav.scrollHeight - nav.clientHeight }, boxes, names, portWidth: port.width, listRows };
   };
 
-  /** How Contents' List, laid out now, stands a row: from its row with the
+  /** How the List, laid out now, stands a row: from its row with the
    *  shortest name, one line where any row has one. */
   const readListRows = (rows: HTMLElement[], places: RowPlace[], boxes: ReadLayout["boxes"], names: ReadLayout["names"], origin: number): ListRowModel | null => {
     let shortest = -1;
@@ -557,65 +547,18 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
     };
   };
 
-  /** Keeps the List's places, laid out now, for the next crossing. Contents
-   *  wraps by the width: nothing is kept for it. */
-  const keepList = () => {
-    kept = contents() ? null : readLayout();
-  };
-  /** The List kept, if it still holds: the same rows, the scroll it can
-   *  take from the scrollport's height now. */
-  const keptList = (rows: HTMLElement[]): ReadLayout | null => {
-    if (!kept || contents() || kept.rows.length !== rows.length || kept.rows.some((row, index) => row !== rows[index])) return null;
-    return { ...kept, layout: { ...kept.layout, maxScroll: kept.contentHeight - nav.clientHeight } };
-  };
-
-  // Whatever can move the List's places drops them: rows added, removed or
-  // renamed, a row's field, Connect appearing, a probe, a font arriving. The
-  // strips' tiles and the stack's cards come and go with the width, inside
-  // cells the List does not show.
-  const drop = () => {
-    kept = null;
-  };
-  const rowsWatch = new MutationObserver((records) => {
-    const moves = records.some((record) => {
-      const element = record.target instanceof Element ? record.target : record.target.parentElement;
-      return !element?.closest(UNSHOWN_IN_LIST_SELECTOR);
-    });
-    if (moves) drop();
-  });
-  rowsWatch.observe(nav, {
-    subtree: true,
-    childList: true,
-    characterData: true,
-    attributes: true,
-    attributeFilter: ["data-sidebar-row-editing", "data-sidebar-link-editor-mode", "data-state"],
-  });
-  // The root's style carries the sidebar's width, written in every frame of
-  // a drag; its marks carry the probes and the font.
-  const rootWatch = new MutationObserver((records) => {
-    if (records.some((record) => record.attributeName !== "style")) drop();
-  });
-  rootWatch.observe(document.documentElement, { attributes: true });
-  document.fonts?.addEventListener?.("loadingdone", drop);
-
-  /** The sidebar's previews are hidden: the table's name cell takes what the
-   *  meta zone leaves it, not its column. */
-  const previewsHidden = () => document.documentElement.hasAttribute("data-sidebar-hide-previews");
-
   /** The names on the rows the move shows whose visible end slides: those a
    *  look cuts at the width now, where the engine animates a registered
    *  property (`--sidebar-name-q`). The cell, laid out by the table, gets the
    *  List's end in its own terms, as an inset from the panel's width, which a
    *  drag going on keeps; and its mask's end in each look: the look's edge
    *  where it cuts the name, past the text's end and its dissolve where it
-   *  does not. In Contents it gets the List's height too: it wraps as the
-   *  List wraps it, and the List does not cut it. Going to the List, a name
+   *  does not. It gets the List's height too: it wraps as the List wraps
+   *  it, and the List does not cut it. Going to the List, a name
    *  that fits now but that a narrower width would cut stays whole, with no
    *  animation: it lands whole. */
   const slidingNames = (shown: number[], list: ReadLayout, table: ReadLayout, toTable: boolean): Slide[] => {
     if (!animatesProperties) return [];
-    const wraps = contents();
-    const hidden = previewsHidden();
     const narrowest = sidebarRowsWidthPx(sidebarBesideMinWidthPx());
     const slides: Slide[] = [];
     shown.forEach((index, row) => {
@@ -630,10 +573,8 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
         port: table.portWidth,
         tail: Number(cell.getAttribute("data-sidebar-title-protected-width")) || 0,
         dissolve: Number(cell.getAttribute("data-sidebar-title-fade-width")) || 0,
-        listCuts: null,
         tableCuts: null,
         row,
-        wraps,
         animation: null,
       };
       if (!cutsAt(slide, table.portWidth)) {
@@ -641,8 +582,10 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
         return;
       }
       cell.style.setProperty(NAME_LIST_INSET_PROPERTY, `${sidebarPanelWidthPx(inList.rightInset + inTable.left)}px`);
-      if (hidden) cell.style.setProperty(NAME_TABLE_INSET_PROPERTY, `${sidebarPanelWidthPx(inTable.rightInset + inTable.left)}px`);
-      if (wraps) cell.style.setProperty(NAME_LIST_HEIGHT_PROPERTY, `${inList.height}px`);
+      cell.style.setProperty(NAME_LIST_HEIGHT_PROPERTY, `${inList.height}px`);
+      // The List wraps the name and ends a line anywhere up to its edge: its
+      // end lies past that edge and the dissolve.
+      cell.style.setProperty(NAME_EDGE_LIST_PROPERTY, `calc(var(--sidebar-name-list-w) + ${slide.tail + slide.dissolve}px)`);
       fitEnds(slide, table.portWidth);
       cell.setAttribute(NAME_SLIDE_ATTRIBUTE, "");
       slides.push(slide);
@@ -650,41 +593,23 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
     return slides;
   };
 
-  /** Whether a look cuts the name with the scrollport `port` wide: by the
-   *  rule textClip.ts keeps the cell's dissolve by, the List's cell as wide
-   *  as that scrollport gives it, the table's as its name column, or without
-   *  the previews by the width it gains. A List that wraps cuts nothing. */
-  const cuts = (slide: Slide, port: number) => {
-    const over = (textEnd: number, width: number) => textEnd > width - slide.tail + 0.5;
-    const listWidth = port - slide.list.left - slide.list.rightInset;
-    const gain = previewsHidden() ? port - slide.port : sidebarNameColumnPx(port) - sidebarNameColumnPx(slide.port);
-    return { list: !slide.wraps && over(slide.list.textEnd, listWidth), table: over(slide.table.textEnd, slide.table.width + gain) };
-  };
+  /** Whether the table cuts the name with the scrollport `port` wide: by
+   *  the rule textClip.ts keeps the cell's dissolve by, the table's cell as
+   *  wide as its name column. The List wraps it and cuts nothing. */
   const cutsAt = (slide: Slide, port: number) => {
-    const { list, table } = cuts(slide, port);
-    return list || table;
+    const gain = sidebarNameColumnPx(port) - sidebarNameColumnPx(slide.port);
+    return slide.table.textEnd > slide.table.width + gain - slide.tail + 0.5;
   };
-  /** Gives the mask its end in each look for the scrollport `port` wide:
-   *  the look's edge where it cuts the name, past the text's end and its
+  /** Gives the mask its end in the table for the scrollport `port` wide:
+   *  the table's edge where it cuts the name, past the text's end and its
    *  dissolve where it does not. Written only when that changes, in the
    *  frames of a drag that goes on through the move. */
   const fitEnds = (slide: Slide, port: number) => {
-    const { list, table } = cuts(slide, port);
-    const clear = slide.tail + slide.dissolve;
-    const past = `${slide.table.textEnd + clear}px`;
-    if (table !== slide.tableCuts) {
-      slide.tableCuts = table;
-      slide.cell.style.setProperty(NAME_EDGE_TABLE_PROPERTY, table ? "var(--sidebar-name-table-w)" : `max(var(--sidebar-name-table-w), ${past})`);
-    }
-    if (list !== slide.listCuts) {
-      slide.listCuts = list;
-      // A List that wraps ends a line anywhere up to its edge: its end lies
-      // past that edge and the dissolve.
-      slide.cell.style.setProperty(
-        NAME_EDGE_LIST_PROPERTY,
-        list ? "var(--sidebar-name-list-w)" : slide.wraps ? `calc(var(--sidebar-name-list-w) + ${clear}px)` : `max(var(--sidebar-name-list-w), ${past})`,
-      );
-    }
+    const table = cutsAt(slide, port);
+    if (table === slide.tableCuts) return;
+    slide.tableCuts = table;
+    const past = `${slide.table.textEnd + slide.tail + slide.dissolve}px`;
+    slide.cell.style.setProperty(NAME_EDGE_TABLE_PROPERTY, table ? "var(--sidebar-name-table-w)" : `max(var(--sidebar-name-table-w), ${past})`);
   };
 
   /** The parts of the rows the move shows, with their ends. */
@@ -692,62 +617,51 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
     const movers: Mover[] = [];
     const fades: Fade[] = [];
     const slides = slidingNames(shown, list, table, toTable);
-    const toc = contents();
-    const selector = riderSelector();
-    const linkEditor = nav.getAttribute("data-sidebar-link-editor-mode") === "true";
     const fade = (element: Element | null, look: Fade["look"], pseudoElement?: Fade["pseudoElement"], own = 1) => {
       if (element) fades.push({ element, pseudoElement, look, own, animation: null });
     };
-    const placed: { body: HTMLElement; top: number; right: number; font: string }[] = [];
+    const placed: { leader: HTMLElement | null; mark: HTMLElement; top: number; right: number; font: string }[] = [];
     fade(nav.querySelector(GUIDES_SELECTOR), "table");
     for (const index of shown) {
       const row = table.rows[index]!;
       const offset = offsets[index]!;
-      if (Math.abs(offset) > 0.01) movers.push({ element: row, x: 0, y: offset, still: "translate", animation: null });
-      for (const rider of selector ? row.querySelectorAll<HTMLElement>(selector) : []) {
-        const inList = list.riders.get(rider);
-        const inTable = table.riders.get(rider);
-        if (!inList || !inTable) continue;
-        const x = inList.x - inTable.x;
-        const y = (inList.y - list.layout.rows[index]!.anchor) - (inTable.y - table.layout.rows[index]!.anchor);
-        if (Math.abs(x) > 0.01 || Math.abs(y) > 0.01) movers.push({ element: rider, x, y, still: "transform", animation: null });
-      }
+      if (Math.abs(offset) > 0.01) movers.push({ element: row, x: 0, y: offset, animation: null });
       if (pseudo) fade(row, "table", "::after");
       fade(row.querySelector(RAIL_SELECTOR), "table");
       fade(row.querySelector("[data-sidebar-editable-row-guideline]"), "table");
-      // The table's count, and in Contents its plates.
+      // The table's count and its plates.
       const count = row.querySelector(COUNT_SELECTOR);
-      const own = toc ? [count, ...row.querySelectorAll(LINK_SELECTOR)] : [count];
-      for (const element of own) if (element) fade(element, "table", undefined, ownOpacity(element));
+      for (const element of [count, ...row.querySelectorAll(LINK_SELECTOR)]) if (element) fade(element, "table", undefined, ownOpacity(element));
       if (!pseudo) continue;
-      if (!toc) {
-        if (!linkEditor && row.getAttribute("data-sidebar-row-active") === "true") fade(row.querySelector("[data-sidebar-name-cell]"), "list", "::after");
-        continue;
-      }
-      // The Contents list's leader and its count, the count at its place in
+      // The List's leader and its count, the count at its place in
       // the List, in its own type: a part of its own, not the table's count
       // moved.
       const body = row.querySelector<HTMLElement>(BODY_SELECTOR);
-      fade(body, "list", "::before");
+      const leader = body?.querySelector<HTMLElement>(LIST_LEADER_SELECTOR) ?? null;
+      const mark = body?.querySelector<HTMLElement>(LIST_COUNT_MARK_SELECTOR) ?? null;
+      fade(leader, "list");
       const anchorList = list.layout.rows[index]!.anchor;
       const anchorTable = table.layout.rows[index]!.anchor;
       const countList = count ? list.boxes.get(count) : undefined;
       const bodyList = body ? list.boxes.get(body) : undefined;
       const bodyTable = body ? table.boxes.get(body) : undefined;
-      if (!body || !count || !countList || !bodyList || !bodyTable) continue;
+      if (!mark || !count || !countList || !bodyList || !bodyTable) continue;
       placed.push({
-        body,
+        leader,
+        mark,
         top: (countList.top - anchorList) - (bodyTable.top - anchorTable),
         right: bodyList.right - countList.right,
         font: getComputedStyle(count).fontFamily,
       });
-      fade(body, "list", "::after");
+      fade(mark, "list");
     }
-    for (const { body, top, right, font } of placed) {
-      body.setAttribute(LIST_COUNT_ATTRIBUTE, "");
-      body.style.setProperty(LIST_COUNT_TOP_PROPERTY, `${top}px`);
-      body.style.setProperty(LIST_COUNT_RIGHT_PROPERTY, `${right}px`);
-      body.style.setProperty(LIST_COUNT_FONT_PROPERTY, font);
+    for (const { leader, mark, top, right, font } of placed) {
+      leader?.setAttribute(LIST_COUNT_ATTRIBUTE, "");
+      leader?.style.setProperty(LIST_COUNT_TOP_PROPERTY, `${top}px`);
+      mark.setAttribute(LIST_COUNT_ATTRIBUTE, "");
+      mark.style.setProperty(LIST_COUNT_TOP_PROPERTY, `${top}px`);
+      mark.style.setProperty(LIST_COUNT_RIGHT_PROPERTY, `${right}px`);
+      mark.style.setProperty(LIST_COUNT_FONT_PROPERTY, font);
     }
     return { movers, fades, slides };
   };
@@ -775,14 +689,11 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
    *  row's `transform` (SPEC_SIDEBAR_STRIP.md, ЛМ5). */
   const place = (current: Episode) => {
     const q = current.segment.q0;
-    for (const mover of current.movers) {
-      if (mover.still === "translate") mover.element.style.translate = `${mover.x * q}px ${mover.y * q}px`;
-      else mover.element.style.transform = `translate(${mover.x * q}px, ${mover.y * q}px)`;
-    }
+    for (const mover of current.movers) mover.element.style.translate = `${mover.x * q}px ${mover.y * q}px`;
     for (const slide of current.slides) slide.cell.style.setProperty(NAME_Q_PROPERTY, String(q));
   };
   const unplace = (current: Episode) => {
-    for (const mover of current.movers) mover.element.style.removeProperty(mover.still);
+    for (const mover of current.movers) mover.element.style.removeProperty("translate");
     for (const slide of current.slides) slide.cell.style.removeProperty(NAME_Q_PROPERTY);
   };
 
@@ -809,21 +720,21 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
     nav.removeAttribute(MARKS_ATTRIBUTE);
     for (const row of current.rows) {
       row.querySelector(NAME_CELL_SELECTOR)?.removeAttribute(NAME_WHOLE_ATTRIBUTE);
-      const body = row.querySelector<HTMLElement>(BODY_SELECTOR);
-      if (!body?.hasAttribute(LIST_COUNT_ATTRIBUTE)) continue;
-      body.removeAttribute(LIST_COUNT_ATTRIBUTE);
-      for (const property of [LIST_COUNT_TOP_PROPERTY, LIST_COUNT_RIGHT_PROPERTY, LIST_COUNT_FONT_PROPERTY]) body.style.removeProperty(property);
+      const body = row.querySelector(BODY_SELECTOR);
+      for (const mark of [body?.querySelector<HTMLElement>(LIST_LEADER_SELECTOR), body?.querySelector<HTMLElement>(LIST_COUNT_MARK_SELECTOR)]) {
+        if (!mark?.hasAttribute(LIST_COUNT_ATTRIBUTE)) continue;
+        mark.removeAttribute(LIST_COUNT_ATTRIBUTE);
+        for (const property of [LIST_COUNT_TOP_PROPERTY, LIST_COUNT_RIGHT_PROPERTY, LIST_COUNT_FONT_PROPERTY]) mark.style.removeProperty(property);
+      }
     }
     for (const { cell } of current.slides) {
       cell.removeAttribute(NAME_SLIDE_ATTRIBUTE);
-      for (const property of [NAME_LIST_INSET_PROPERTY, NAME_TABLE_INSET_PROPERTY, NAME_LIST_HEIGHT_PROPERTY, NAME_EDGE_TABLE_PROPERTY, NAME_EDGE_LIST_PROPERTY]) cell.style.removeProperty(property);
+      for (const property of [NAME_LIST_INSET_PROPERTY, NAME_LIST_HEIGHT_PROPERTY, NAME_EDGE_TABLE_PROPERTY, NAME_EDGE_LIST_PROPERTY]) cell.style.removeProperty(property);
     }
     nav.removeAttribute(BARE_ATTRIBUTE);
     if (current.toTable) return;
     setSidebarLook(nav, "compact");
     setScroll(current.listScroll + scrolled);
-    // The scroll laid the List out: its places are kept for the move back.
-    keepList();
   };
 
   /** On whole device pixels, so a part's text is sharp and at its last place
@@ -855,17 +766,33 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
     unplace(current);
   };
 
-  /** Makes the run's fades, started at `time`, or now. */
+  /** Makes the run's fades, started at `time`, or now. Every effect is
+   *  made before any of them plays: an effect on a pseudo-element made while
+   *  the page's style is not settled recalculates it, and each animation
+   *  that plays unsettles it, so making and playing them in turn cost a
+   *  recalculation for every fade on a pseudo-element (Chromium's trace,
+   *  15.11.2026). */
   const makeFades = (current: Episode, time: number | null) => {
-    for (const fade of current.fades) {
+    const keyframes = current.fades.map((fade) => {
       const tableLook = fade.look === "table";
       const track = fadeTrack(tableLook === current.toTable ? "in" : "out", tableLook ? current.tableFrom : current.listFrom, current.settleMs);
-      fade.animation = fade.element.animate(
-        track.frames.map((frame) => ({ offset: frame.offset, opacity: frame.share * fade.own })),
-        { duration: track.durationMs, easing: "linear", fill: "both", pseudoElement: fade.pseudoElement },
-      );
-      if (time !== null) fade.animation.startTime = time;
+      const options: KeyframeEffectOptions = { duration: track.durationMs, easing: "linear", fill: "both", pseudoElement: fade.pseudoElement };
+      return { frames: track.frames.map((frame) => ({ offset: frame.offset, opacity: frame.share * fade.own })), options };
+    });
+    if (typeof KeyframeEffect === "undefined" || typeof Animation === "undefined") {
+      current.fades.forEach((fade, index) => {
+        fade.animation = fade.element.animate(keyframes[index]!.frames, keyframes[index]!.options);
+        if (time !== null) fade.animation.startTime = time;
+      });
+      return;
     }
+    const effects = current.fades.map((fade, index) => new KeyframeEffect(fade.element, keyframes[index]!.frames, keyframes[index]!.options));
+    current.fades.forEach((fade, index) => {
+      const animation = new Animation(effects[index], document.timeline);
+      if (time !== null) animation.startTime = time;
+      else animation.play();
+      fade.animation = animation;
+    });
   };
 
   /** A drag going on through the move changes the width the List wraps at.
@@ -881,14 +808,13 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
       if (Math.abs(by) < 0.01) return;
       let mover = current.movers.find((candidate) => candidate.element === row);
       if (!mover) {
-        mover = { element: row, x: 0, y: 0, still: "translate", animation: null };
+        mover = { element: row, x: 0, y: 0, animation: null };
         current.movers.push(mover);
       }
       mover.y += by;
       moved.add(mover);
     };
     for (const slide of current.slides) {
-      if (!slide.wraps) continue;
       const height = slide.cell.querySelector(NAME_TEXT_SELECTOR)?.getBoundingClientRect().height;
       if (height === undefined) continue;
       const lines = height - slide.list.textHeight;
@@ -900,9 +826,11 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
       slide.cell.style.setProperty(NAME_LIST_HEIGHT_PROPERTY, `${slide.list.height}px`);
       const row = current.rows[slide.row];
       if (!row) continue;
-      const body = row.querySelector<HTMLElement>(BODY_SELECTOR);
-      const top = parseFloat(body?.style.getPropertyValue(LIST_COUNT_TOP_PROPERTY) ?? "");
-      if (body && Number.isFinite(top)) body.style.setProperty(LIST_COUNT_TOP_PROPERTY, `${top + (now.count - now.anchor) - (was.count - was.anchor)}px`);
+      const body = row.querySelector(BODY_SELECTOR);
+      for (const mark of [body?.querySelector<HTMLElement>(LIST_LEADER_SELECTOR), body?.querySelector<HTMLElement>(LIST_COUNT_MARK_SELECTOR)]) {
+        const top = parseFloat(mark?.style.getPropertyValue(LIST_COUNT_TOP_PROPERTY) ?? "");
+        if (mark && Number.isFinite(top)) mark.style.setProperty(LIST_COUNT_TOP_PROPERTY, `${top + (now.count - now.anchor) - (was.count - was.anchor)}px`);
+      }
       moveRow(row, now.anchor - was.anchor);
       for (const below of current.rows.slice(slide.row + 1)) moveRow(below, now.height - was.height);
     }
@@ -974,25 +902,23 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
       // its strips transparent: their tiles wait (`STRIP_TILES_FRAME`).
       list = readLayout();
       heldStrips = holdStripWidths();
+      // The move's own marks come with the look, which the read of the
+      // table's places settles: one recalculation of the list's style, not
+      // a second for them after the read. They change no place.
       setSidebarLook(nav, "table");
+      nav.setAttribute(FADE_ATTRIBUTE, "table");
+      nav.toggleAttribute(MARKS_ATTRIBUTE, pseudo);
       table = readLayout();
       setScroll(anchoredScroll(list.layout, table.layout, scroll));
     } else {
       // The look keeps the table: its places are read where it stands.
       table = readLayout();
-      const known = keptList(table.rows);
-      if (known) {
-        list = known;
-        const pixel = 1 / (window.devicePixelRatio || 1);
-        listScroll = Math.round(anchoredScroll(table.layout, list.layout, scroll) / pixel) * pixel;
-      } else {
-        // The List laid out for the read alone, with the scroll it takes.
-        setSidebarLook(nav, "compact");
-        list = readLayout();
-        nav.scrollTop = anchoredScroll(table.layout, list.layout, scroll);
-        listScroll = nav.scrollTop;
-        setSidebarLook(nav, "table");
-      }
+      // The List laid out for the read alone, with the scroll it takes.
+      setSidebarLook(nav, "compact");
+      list = readLayout();
+      nav.scrollTop = anchoredScroll(table.layout, list.layout, scroll);
+      listScroll = nav.scrollTop;
+      setSidebarLook(nav, "table");
       setScroll(scroll);
     }
     const tableScroll = nav.scrollTop;
@@ -1062,15 +988,14 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
     switch (step) {
       case "idle":
       case "instant":
-        if (episode) finish(episode, 0);
-        nav.removeAttribute(BARE_ATTRIBUTE);
-        if (width > 0) setSidebarLook(nav, sidebarLookAt(width));
+        if (width > 0) switchAtOnce(sidebarLookAt(width), true);
+        else {
+          if (episode) finish(episode, 0);
+          nav.removeAttribute(BARE_ATTRIBUTE);
+        }
         return;
       case "rest":
-        setSidebarLook(nav, sidebarLookAt(width));
-        // The List laid out at rest: its places are kept, read from this
-        // frame's layout, once until something drops them.
-        if (width < threshold && !kept) keepList();
+        switchAtOnce(sidebarLookAt(width), false);
         return;
       case "start":
         // A start is only ever active: the drag or the level moves it.
@@ -1082,8 +1007,8 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
         turn(episode!);
         return;
       case "go-on":
-        // The ends follow the width; a name's cut can come or go, a Contents
-        // name's lines change.
+        // The ends follow the width; a name's cut can come or go, its lines
+        // in the List change.
         if (!episode) return;
         for (const slide of episode.slides) fitEnds(slide, width + gutter);
         followLines(episode);
@@ -1101,9 +1026,7 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
     if (open > 0) {
       held = true;
       previous = null;
-      if (episode) finish(episode, 0);
-      nav.removeAttribute(BARE_ATTRIBUTE);
-      setSidebarLook(nav, sidebarLookOfPanel(open, gutter));
+      switchAtOnce(sidebarLookOfPanel(open, gutter), true);
       return;
     }
     if (!held) return;
@@ -1134,11 +1057,10 @@ export function observeSidebarListMorph(nav: HTMLElement): () => void {
   return () => {
     observer.disconnect();
     motionWatch.disconnect();
-    rowsWatch.disconnect();
-    rootWatch.disconnect();
-    document.fonts?.removeEventListener?.("loadingdone", drop);
     nav.removeEventListener("scroll", onScroll);
     if (episode) finish(episode, 0);
     nav.removeAttribute(BARE_ATTRIBUTE);
+    cancelAnimationFrame(switchingFrame);
+    nav.removeAttribute(LOOK_SWITCHING_ATTRIBUTE);
   };
 }

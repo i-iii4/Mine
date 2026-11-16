@@ -20,7 +20,8 @@ export const MENU_LIST_PADDING_Y_PX: Record<MenuListPadding, number> = {
   default: 8,
 };
 
-const DEFAULT_MAX_VISIBLE_ROWS = 8;
+/** The most rows a menu's list shows before it scrolls. */
+export const MENU_MAX_VISIBLE_ROWS = 8;
 const MIN_VISIBLE_ROWS = 1;
 
 interface QuantizedMenuListHeightInput {
@@ -111,7 +112,7 @@ export function QuantizedMenuScrollArea({
   children,
   rowSize = "default",
   paddingY = "default",
-  maxRows = DEFAULT_MAX_VISIBLE_ROWS,
+  maxRows = MENU_MAX_VISIBLE_ROWS,
   className,
   innerClassName,
 }: QuantizedMenuScrollAreaProps) {

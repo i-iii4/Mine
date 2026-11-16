@@ -1,4 +1,4 @@
-// TRIAL (SPEC_CARD_PEEK.md, О10, О11, О14): where a card and its picture
+// SPEC_CARD_PEEK.md, О10, О11, О14: where a card and its picture
 // stand on screen, read from the page for the open card's window (CardPeek.tsx).
 // The feed's cards are read from their frames (Card.tsx); the graph's from
 // the graph itself (cardPeek.ts, `registerPeekGraphSource`). The open card's

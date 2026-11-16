@@ -90,6 +90,27 @@ async function settle(ms = 0) {
   });
 }
 
+/** Gives `button` the reach the Contents list's stylesheet gives it
+ *  (global.css, `--sidebar-link-reach` and its `::after`): jsdom resolves
+ *  neither a custom property's length nor a pseudo-element. */
+function withReach(button: HTMLElement, reach: number) {
+  const real = window.getComputedStyle;
+  vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) => {
+    const style = real(element, pseudo);
+    if (element !== button) return style;
+    return new Proxy(style, {
+      get(target, property) {
+        if (property === "getPropertyValue") {
+          return (name: string) => (name === "--sidebar-link-reach" ? `${reach}px` : target.getPropertyValue(name));
+        }
+        if (property === "width" && pseudo === "::after") return `${reach}px`;
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  });
+}
+
 let pointerX = 20;
 /** The pointer's own movement onto `target`, resting there: two reports at
  *  different points, then the speed settles (С7.5, С7.2). */
@@ -118,6 +139,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe.each<MotionLevel>(["full", "minimal", "off"])("the window over a collection's name at %s (Р1)", (level) => {
@@ -200,6 +222,30 @@ describe.each<MotionLevel>(["full", "minimal", "off"])("the window over a collec
     expect(theWindow()).toBeNull();
     // Off the button, over the name: the collection's window.
     restOn(name);
+    await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 200);
+    expect(collectionShown()).toHaveAttribute("data-collection-preview", "tag:alpha");
+  });
+
+  it("stops at the button's area as far left as its word will step, the edge its mark answers at (user's decision of 15.11.2026)", async () => {
+    const { container } = render(tree({ linkedBlockSlug: "open-card", linkedTags: ["alpha"], onToggleLinkedTag: vi.fn() }));
+    const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]')!;
+    const button = row.querySelector<HTMLElement>("[data-sidebar-link-action]")!;
+    box(button, { left: 200, top: 0, width: 80, height: 32 });
+    // The Contents list's reach, as global.css gives it: 16 px left of the box.
+    withReach(button, 16);
+    const name = nameOf(container, "tag:alpha");
+    // In the reach, left of the box: the button answers, and no window.
+    fireEvent.pointerMove(name, { clientX: 188, clientY: 10 });
+    fireEvent.pointerMove(name, { clientX: 189, clientY: 10 });
+    expect(button).toHaveAttribute("data-sidebar-link-pointer");
+    act(() => { vi.advanceTimersByTime(HOVER_INTENT.velocityWindowMs + 10); });
+    await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 200);
+    expect(theWindow()).toBeNull();
+    // Just left of the reach: the name answers, and the collection's window comes.
+    fireEvent.pointerMove(name, { clientX: 182, clientY: 10 });
+    fireEvent.pointerMove(name, { clientX: 183, clientY: 10 });
+    expect(button).not.toHaveAttribute("data-sidebar-link-pointer");
+    act(() => { vi.advanceTimersByTime(HOVER_INTENT.velocityWindowMs + 10); });
     await settle(HOVER_PREVIEW_COLD_OPEN_DELAY_MS + 200);
     expect(collectionShown()).toHaveAttribute("data-collection-preview", "tag:alpha");
   });

@@ -896,14 +896,13 @@
       ],
       "requirement": "SPEC_SAVE_CORE.md### Приёмка результата",
       "tests": [
-        "scripts/native-capture-smoke.mjs"
+        "scripts/disposable-app-home.test.mjs"
       ],
-      "command": "test:native-capture"
+      "command": "test:scripts"
     },
     {
       "paths": [
         "scripts/clipper-native-lifecycle.mjs",
-        "scripts/clipper-native-relay.mjs",
         "scripts/clipper-card-render.mjs"
       ],
       "requirement": "SPEC_CLIPPER.md#### Журнал операции Save и базовый протокол",
@@ -1769,7 +1768,6 @@
         "src/lib/blockIdentity.test.ts",
         "src/lib/blockDrag.test.ts",
         "src/lib/cardHeightDrift.test.ts",
-        "src/lib/feedMediaCandidates.test.ts",
         "src/lib/searchResultRow.test.ts",
         "src/components/Grid.gridItemMemo.test.tsx"
       ],
@@ -1778,7 +1776,6 @@
         "src/lib/blockIdentity.test.ts",
         "src/lib/blockDrag.test.ts",
         "src/lib/cardHeightDrift.test.ts",
-        "src/lib/feedMediaCandidates.test.ts",
         "src/lib/searchResultRow.test.ts",
         "src/components/Grid.gridItemMemo.test.tsx"
       ],
@@ -3135,9 +3132,9 @@
       ],
       "requirement": "SPEC_SYSTEM_RELIABILITY.md#### INV-01. Реестр проверок",
       "tests": [
-        "scripts/reliability-source-guard.mjs"
+        "scripts/reliability-registry-check.test.mjs"
       ],
-      "command": "test:reliability-source"
+      "command": "test:reliability"
     },
     {
       "paths": [
@@ -3179,13 +3176,11 @@
     },
     {
       "paths": [
-        "scripts/build-extension.mjs",
-        "scripts/build-identity.mjs"
+        "scripts/build-extension.mjs"
       ],
       "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-08. Защита от потерянного обновления",
       "tests": [
-        "scripts/build-extension.mjs",
-        "scripts/build-identity.mjs"
+        "scripts/build-extension.mjs"
       ],
       "command": "test:clipper-worker"
     },
@@ -3273,7 +3268,8 @@
     },
     {
       "paths": [
-        "scripts/clipper-native-relay.test.mjs"
+        "scripts/clipper-native-relay.test.mjs",
+        "scripts/clipper-native-relay.mjs"
       ],
       "requirement": "SPEC_CLIPPER.md#### Журнал операции Save и базовый протокол",
       "tests": [
@@ -3303,17 +3299,8 @@
     },
     {
       "paths": [
+        "scripts/clipper-extension-payload.test.mjs",
         "scripts/clipper-extension-payload.mjs"
-      ],
-      "requirement": "SPEC_GRID_LAYOUT_READINESS.md### Колонка карточки",
-      "tests": [
-        "scripts/clipper-extension-payload.mjs"
-      ],
-      "command": "test:clipper-worker"
-    },
-    {
-      "paths": [
-        "scripts/clipper-extension-payload.test.mjs"
       ],
       "requirement": "SPEC_GRID_LAYOUT_READINESS.md### Колонка карточки",
       "tests": [
@@ -3475,7 +3462,6 @@
     },
     {
       "paths": [
-        "mine-core/tests/save-fixtures.json",
         "scripts/clipper-worker-smoke.mjs"
       ],
       "requirement": "SPEC_COLLECTIONS_OBSIDIAN_LINKS.md### Коллекция существует только как страница (решение 10.10.2026)",
@@ -3528,17 +3514,6 @@
     },
     {
       "paths": [
-        "src/lib/feedMediaPreloadQueue.ts",
-        "src/lib/feedMediaPreloadQueue.test.ts"
-      ],
-      "requirement": "SPEC_FEED_SCROLL_PERFORMANCE.md### Preload Scheduler",
-      "tests": [
-        "src/lib/feedMediaPreloadQueue.test.ts"
-      ],
-      "command": "test:frontend"
-    },
-    {
-      "paths": [
         "src/lib/themeMode.ts",
         "src/lib/themeMode.test.ts",
         "src/main.tsx",
@@ -3577,8 +3552,7 @@
     },
     {
       "paths": [
-        "scripts/clipper-worker-smoke.mjs",
-        "mine-core/tests/save-fixtures.json"
+        "scripts/clipper-worker-smoke.mjs"
       ],
       "requirement": "SPEC_DEEP_AUDIT.md### Контракты",
       "tests": [
@@ -3630,17 +3604,6 @@
     },
     {
       "paths": [
-        "scripts/detail-image-geometry-audit.mjs",
-        "scripts/audit-vite.mjs"
-      ],
-      "requirement": "SPEC_CARD_MEDIA_GEOMETRY.md#### Развёрнутое изображение: стабильная замена превью оригиналом",
-      "tests": [
-        "scripts/detail-image-geometry-audit.mjs"
-      ],
-      "command": "test:detail-image-geometry"
-    },
-    {
-      "paths": [
         "src/lib/detailLayout.ts",
         "src/lib/detailLayout.test.ts"
       ],
@@ -3649,17 +3612,6 @@
         "src/lib/detailLayout.test.ts"
       ],
       "command": "test:frontend"
-    },
-    {
-      "paths": [
-        "scripts/detail-image-geometry-audit.mjs",
-        "scripts/audit-vite.mjs"
-      ],
-      "requirement": "SPEC_FRONTEND.md##### Раскладка открытой карточки",
-      "tests": [
-        "scripts/detail-image-geometry-audit.mjs"
-      ],
-      "command": "test:detail-image-geometry"
     },
     {
       "paths": [
@@ -3903,8 +3855,7 @@
         "scripts/narrow-window-audit.mjs",
         "src/components/SidebarOverlay.tsx",
         "src/hooks/useSidebarOverlay.ts",
-        "src/components/FadeScrollRow.tsx",
-        "src/lib/sidebarColumnLayout.ts"
+        "src/components/FadeScrollRow.tsx"
       ],
       "requirement": "SPEC_NARROW_WINDOW.md### Правила",
       "tests": [
@@ -3980,6 +3931,27 @@
     },
     {
       "paths": [
+        "scripts/card-drag-scroll-audit.mjs"
+      ],
+      "requirement": "SPEC_FRONTEND.md##### Лента не прокручивается под перетаскиванием карточки",
+      "tests": [
+        "scripts/card-drag-scroll-audit.mjs"
+      ],
+      "command": "test:card-drag-scroll"
+    },
+    {
+      "paths": [
+        "src/lib/cardPressScroll.ts",
+        "src/lib/cardPressScroll.test.tsx"
+      ],
+      "requirement": "SPEC_FRONTEND.md##### Лента не прокручивается под перетаскиванием карточки",
+      "tests": [
+        "src/lib/cardPressScroll.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
         "scripts/paste-feed-audit.mjs"
       ],
       "requirement": "SPEC_KEYBOARD.md#### Вставка в ленту",
@@ -4013,17 +3985,11 @@
     },
     {
       "paths": [
-        "src/lib/sidebarColumnLayout.ts",
-        "src/lib/sidebarColumnLayout.test.ts",
-        "src/components/SidebarColumnsMenu.tsx",
-        "src/components/SidebarColumnsMenu.test.tsx",
         "src/components/DisplayMenu.tsx",
         "src/components/FeedDisplayMenu.test.tsx"
       ],
-      "requirement": "SPEC_NARROW_WINDOW.md### Правила",
+      "requirement": "SPEC_FRONTEND.md#### Столбцы и вид List",
       "tests": [
-        "src/lib/sidebarColumnLayout.test.ts",
-        "src/components/SidebarColumnsMenu.test.tsx",
         "src/components/FeedDisplayMenu.test.tsx"
       ],
       "command": "test:frontend"
@@ -4272,7 +4238,7 @@
     {
       "paths": [
         "scripts/feed-scroll-audit.mjs",
-        "scripts/audit-vite.mjs"
+        "src/dev/FeedScrollAuditRoute.tsx"
       ],
       "requirement": "SPEC_FEED_SCROLL_PERFORMANCE.md### Diagnostics",
       "tests": [
@@ -4862,8 +4828,7 @@
     },
     {
       "paths": [
-        "scripts/clipper-worker-smoke.mjs",
-        "extension/lib/shopifyDawnProduct.fixtures.html"
+        "scripts/clipper-worker-smoke.mjs"
       ],
       "requirement": "SPEC_CLIPPER.md###### Слой обрезки и CSS страницы",
       "tests": [
@@ -5049,9 +5014,9 @@
       ],
       "requirement": "SPEC_CLIPPER.md### Один путь файла со страницы (05.11.2026)",
       "tests": [
-        "scripts/build-identity.mjs"
+        "src-tauri/build.rs"
       ],
-      "command": "test:clipper-worker"
+      "command": "test:rust"
     },
     {
       "paths": [
@@ -5243,37 +5208,38 @@
     },
     {
       "paths": [
-        "src/lib/tooltipGlide.ts",
-        "src/lib/tooltipGlide.test.ts",
+        "src/components/ui/tooltip.tsx",
         "src/components/ui/tooltip.test.tsx"
       ],
-      "requirement": "SPEC_MOTION_LEVELS.md### Подсказка едет за курсором",
+      "requirement": "SPEC_MOTION_LEVELS.md### Следующая подсказка сразу",
       "tests": [
-        "src/lib/tooltipGlide.test.ts",
-        "src/components/ui/tooltip.test.tsx"
+        "src/components/ui/tooltip.test.tsx",
+        "src/components/VaultSwitcher.test.tsx"
       ],
       "command": "test:frontend"
     },
     {
       "paths": [
-        "scripts/tooltip-glide-audit.mjs"
+        "scripts/tooltip-motion-audit.mjs"
       ],
-      "requirement": "SPEC_MOTION_LEVELS.md### Подсказка едет за курсором",
+      "requirement": "SPEC_MOTION_LEVELS.md### Следующая подсказка сразу",
       "tests": [
-        "scripts/tooltip-glide-audit.mjs"
+        "scripts/tooltip-motion-audit.mjs"
       ],
-      "command": "test:tooltip-glide"
+      "command": "test:tooltip-motion"
     },
     {
       "paths": [
         "src/components/CollectionHoverPreview.tsx",
         "src/components/CollectionHoverPreview.test.tsx",
-        "src/components/SidebarCollectionPreview.test.tsx"
+        "src/components/SidebarCollectionPreview.test.tsx",
+        "src/components/sidebarLinkAction.test.ts"
       ],
       "requirement": "SPEC_CARD_STATES.md#### С7. Тишина при движении курсора",
       "tests": [
         "src/components/CollectionHoverPreview.test.tsx",
-        "src/components/SidebarCollectionPreview.test.tsx"
+        "src/components/SidebarCollectionPreview.test.tsx",
+        "src/components/sidebarLinkAction.test.ts"
       ],
       "command": "test:frontend"
     },
@@ -5429,8 +5395,13 @@
     },
     {
       "paths": [
-        "src/lib/menuPanelGeometry.ts",
-        "src/lib/menuPanelGeometry.test.ts",
+        "src/lib/menuSpec.ts",
+        "src/lib/menuSpec.test.ts",
+        "src/lib/cardMenuEntries.test.ts",
+        "src/components/MenuSpecView.tsx",
+        "src/components/MenuSpecView.test.tsx",
+        "src/hooks/usePanelMenu.ts",
+        "src/hooks/usePanelMenu.test.tsx",
         "src/lib/menuPanelProtocol.ts",
         "src/lib/menuPanelProtocol.test.ts",
         "src/lib/menuPanelSource.ts",
@@ -5446,32 +5417,226 @@
         "src/menuPanel/menuPanel.css",
         "menu-panel.html",
         "src/components/CardMenuPanel.test.tsx",
+        "src/components/Grid.menuPanel.test.tsx",
         "src/tabbar/settingsMenu.test.ts"
       ],
       "requirement": "DESIGN_SYSTEM.md#### Меню карточки в отдельном окне: проба",
       "tests": [
-        "src/lib/menuPanelGeometry.test.ts",
+        "src/lib/menuSpec.test.ts",
+        "src/lib/cardMenuEntries.test.ts",
+        "src/components/MenuSpecView.test.tsx",
+        "src/hooks/usePanelMenu.test.tsx",
         "src/lib/menuPanelProtocol.test.ts",
         "src/lib/menuPanelSource.test.ts",
         "src/menuPanel/MenuPanelApp.test.tsx",
         "src/menuPanel/main.test.tsx",
         "src/components/CardMenuPanel.test.tsx",
+        "src/components/Grid.menuPanel.test.tsx",
         "src/tabbar/settingsMenu.test.ts"
       ],
       "command": "test:frontend"
     },
     {
       "paths": [
-        "src-tauri/src/menu_panel.rs",
+        "src/components/QuantizedMenuScrollArea.tsx",
+        "src/components/QuantizedMenuScrollArea.test.tsx"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#### Высота Scrollable Menu",
+      "tests": [
+        "src/components/QuantizedMenuScrollArea.test.tsx",
+        "src/lib/menuSpec.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src-tauri/src/menu_panel/mod.rs",
+        "src-tauri/src/menu_panel/geometry.rs",
+        "src-tauri/src/menu_panel/native.rs",
+        "src-tauri/src/menu_panel/spec.rs",
         "src-tauri/src/commands/menu_panel.rs"
       ],
       "requirement": "DESIGN_SYSTEM.md#### Меню карточки в отдельном окне: проба",
       "tests": [
-        "src-tauri/src/menu_panel.rs",
+        "src-tauri/src/menu_panel/mod.rs",
+        "src-tauri/src/menu_panel/geometry.rs",
+        "src-tauri/src/menu_panel/native.rs",
+        "src-tauri/src/menu_panel/spec.rs",
         "src-tauri/src/commands/effects.rs",
         "src-tauri/src/lib.rs"
       ],
       "command": "test:rust"
+    },
+    {
+      "paths": [
+        "scripts/menu-panel-audit.mjs",
+        "menu-panel.html",
+        "src/lib/menuSpec.ts"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#### Меню карточки в отдельном окне: проба",
+      "tests": [
+        "scripts/menu-panel-audit.mjs"
+      ],
+      "command": "test:menu-panel"
+    },
+    {
+      "paths": [
+        "scripts/build-identity.mjs"
+      ],
+      "requirement": "SPEC_SYSTEM_RELIABILITY.md#### UPD-08. Защита от потерянного обновления",
+      "tests": [
+        "scripts/build-identity.test.mjs"
+      ],
+      "command": "test:reliability"
+    },
+    {
+      "paths": [
+        "scripts/verify-commands.mjs",
+        "scripts/verify-commands.test.mjs"
+      ],
+      "requirement": "AUDIT_CODE_QUALITY.md### 8. Обман",
+      "tests": [
+        "scripts/verify-commands.test.mjs"
+      ],
+      "command": "test:scripts"
+    },
+    {
+      "paths": [
+        "scripts/script-imports.mjs",
+        "scripts/script-imports.test.mjs",
+        "scripts/import-arena.ts"
+      ],
+      "requirement": "AUDIT_CODE_QUALITY.md### 8. Обман",
+      "tests": [
+        "scripts/script-imports.test.mjs"
+      ],
+      "command": "test:scripts"
+    },
+    {
+      "paths": [
+        "scripts/audit-production-page.mjs"
+      ],
+      "requirement": "AUDIT_PERFORMANCE.md### 8. Замечания к проверкам",
+      "tests": [
+        "scripts/graph-view-audit.mjs"
+      ],
+      "command": "test:graph"
+    },
+    {
+      "paths": [
+        "scripts/cold-space-browser-audit.mjs",
+        "scripts/audit-production-page.mjs"
+      ],
+      "requirement": "AUDIT_PERFORMANCE.md### 8. Замечания к проверкам",
+      "tests": [
+        "scripts/cold-space-browser-audit.mjs"
+      ],
+      "command": "test:cold-space"
+    },
+    {
+      "paths": [
+        "scripts/feed-images-audit.mjs",
+        "src/dev/FeedImagesAuditRoute.tsx"
+      ],
+      "requirement": "SPEC_FEED_SCROLL_PERFORMANCE.md### Проверка картинок при прокрутке",
+      "tests": [
+        "scripts/feed-images-audit.mjs"
+      ],
+      "command": "test:feed-images"
+    },
+    {
+      "paths": [
+        "src/hooks/usePreparedPicture.ts",
+        "src/hooks/usePreparedPicture.test.tsx",
+        "src/components/FeedVideoPoster.tsx",
+        "src/components/FeedVideoPoster.test.tsx",
+        "src/test/pictureDecode.ts"
+      ],
+      "requirement": "SPEC_FEED_SCROLL_PERFORMANCE.md### Подготовка картинки карточки",
+      "tests": [
+        "src/hooks/usePreparedPicture.test.tsx",
+        "src/components/FeedVideoPoster.test.tsx"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "src/lib/feedScrollReadiness.ts",
+        "src/lib/feedScrollReadiness.test.ts"
+      ],
+      "requirement": "SPEC_FEED_SCROLL_PERFORMANCE.md### Adaptive Windows",
+      "tests": [
+        "src/lib/feedScrollReadiness.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/detail-image-geometry-audit.mjs",
+        "scripts/audit-vite.mjs"
+      ],
+      "requirement": "SPEC_CARD_MEDIA_GEOMETRY.md#### Развёрнутое изображение: стабильная замена превью оригиналом",
+      "tests": [
+        "scripts/detail-image-geometry-audit.mjs"
+      ],
+      "command": "test:detail-image-geometry"
+    },
+    {
+      "paths": [
+        "scripts/detail-image-geometry-audit.mjs",
+        "scripts/audit-vite.mjs"
+      ],
+      "requirement": "SPEC_FRONTEND.md##### Раскладка открытой карточки",
+      "tests": [
+        "scripts/detail-image-geometry-audit.mjs"
+      ],
+      "command": "test:detail-image-geometry"
+    },
+    {
+      "paths": [
+        "src/lib/reading/renderedTree.ts",
+        "src/lib/reading/renderedTree.test.ts",
+        "src/lib/reading/tree.ts",
+        "src/lib/reading/tree.test.ts",
+        "src/components/reading/keptTree.test.tsx",
+        "src/components/Detail.openParse.test.tsx",
+        "src/dev/cardOpenArticle.ts",
+        "src/dev/cardOpenArticle.test.ts"
+      ],
+      "requirement": "SPEC_READING_MODE.md### Ч0. Конвейер чтения",
+      "tests": [
+        "src/lib/reading/renderedTree.test.ts",
+        "src/lib/reading/tree.test.ts",
+        "src/components/reading/keptTree.test.tsx",
+        "src/components/Detail.openParse.test.tsx",
+        "src/dev/cardOpenArticle.test.ts"
+      ],
+      "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/card-open-audit.mjs",
+        "src/dev/CardOpenAuditRoute.tsx"
+      ],
+      "requirement": "SPEC_READING_MODE.md### Ч14. Проверки",
+      "tests": [
+        "scripts/card-open-audit.mjs"
+      ],
+      "command": "test:card-open"
+    },
+    {
+      "paths": [
+        "src/components/grid/feedLayout.ts",
+        "src/components/grid/feedLayout.test.ts",
+        "src/components/grid/wordMetrics.ts",
+        "src/components/grid/wordMetrics.test.ts"
+      ],
+      "requirement": "SPEC_GRID.md### Кэш при карточке и продолжение раскладки (15.11.2026)",
+      "tests": [
+        "src/components/grid/feedLayout.test.ts",
+        "src/components/grid/wordMetrics.test.ts"
+      ],
+      "command": "test:frontend"
     }
   ],
   "release": null

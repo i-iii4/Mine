@@ -1,6 +1,29 @@
 import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 
+// The names scripts/ may use without declaring them, listed by hand: a name
+// outside these lists is a misprint until someone adds it here.
+/**
+ * @param {string[]} names
+ * @returns {Record<string, "readonly">}
+ */
+const readonlyGlobals = (names) => Object.fromEntries(names.map((name) => [name, "readonly"]));
+// Node, where the scripts run.
+const NODE_GLOBALS = readonlyGlobals([
+  "AbortSignal", "Blob", "Buffer", "TextEncoder", "URL", "URLSearchParams", "clearInterval", "clearTimeout",
+  "console", "crypto", "fetch", "performance", "process", "setImmediate", "setInterval", "setTimeout",
+]);
+// The browser: a function an audit hands to Playwright runs in the page.
+const PAGE_GLOBALS = readonlyGlobals([
+  "CanvasRenderingContext2D", "DOMMatrixReadOnly", "Element", "Event", "HTMLCanvasElement", "HTMLElement",
+  "HTMLImageElement", "Image", "KeyboardEvent", "MessageChannel", "MouseEvent", "MutationObserver", "Node",
+  "NodeFilter", "OffscreenCanvas", "PerformanceObserver", "ResizeObserver", "XMLHttpRequest",
+  "cancelAnimationFrame", "createImageBitmap", "devicePixelRatio", "document", "getComputedStyle", "indexedDB",
+  "innerWidth", "localStorage", "location", "navigator", "requestAnimationFrame", "window",
+]);
+// The clipper's worker and pages, where the clipper's checks run their functions.
+const CLIPPER_GLOBALS = readonlyGlobals(["chrome", "handleContextMenuClick", "openClipperUi", "sendNativeMessage"]);
+
 export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
@@ -16,7 +39,6 @@ export default tseslint.config(
       // Vendored Defuddle release, one minified third-party UMD bundle.
       "extension/lib/defuddle.js",
       "safari-extension/",
-      "scripts/",
       "target/",
       "output/playwright/",
       // Any sibling cargo target dir: diagnostic or profiling builds land
@@ -67,6 +89,14 @@ export default tseslint.config(
     files: ["extension/**/*.js"],
     languageOptions: { sourceType: "script" },
     rules: { "no-undef": "off" },
+  },
+  {
+    // The scripts, the checks among them, are code like the rest
+    // (AUDIT_CODE_QUALITY.md, О4). No compiler reads them, so no-undef stays
+    // on here and the lists above name what Node, the page and the clipper
+    // give them.
+    files: ["scripts/**/*.{mjs,ts,jsx}"],
+    languageOptions: { globals: { ...NODE_GLOBALS, ...PAGE_GLOBALS, ...CLIPPER_GLOBALS } },
   },
   {
     // Tab pages and tab bars are child pages of a window (SPEC_TABS.md, В22).

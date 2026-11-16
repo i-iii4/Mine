@@ -8,10 +8,12 @@ import { MenuIconSlot } from "@/components/ui/menu-icon-slot"
 import {
   FLOATING_LAYER_EDGE_PX,
   MENU_PLATE_GAP_PX,
+  MENU_POINT_OFFSET_PX,
   menuPlateOf,
   menuPlateOffsets,
   type FloatingMenuWidth,
   type MenuAlign,
+  type MenuAnchor,
   type MenuPlateOffsets,
   type MenuSide,
 } from "@/lib/floatingLayer"
@@ -135,10 +137,17 @@ function useMenuPlateOffsets(
 // The width is the role's: `action` unless the menu is a list under a search
 // field (src/lib/floatingLayer.ts). A call site never sets it in pixels, nor
 // the menu's distance from its button: it names the edge (`align`) alone.
+//
+// A menu a right click opened stands at the point of the click, not off a
+// button (`anchor="point"`, the trigger a box of no size on the point): its
+// corner on the point with no offset, turned to the point's left where the
+// right has no room and moved up off the page's bottom
+// (SPEC_MENU_WINDOW.md, МО10 to МО12, МО69).
 function DropdownMenuContent({
   className,
   side = "bottom",
   align = "start",
+  anchor = "plate",
   collisionPadding = FLOATING_LAYER_EDGE_PX,
   widthRole = "action",
   plateOf,
@@ -152,6 +161,8 @@ function DropdownMenuContent({
 > & {
   side?: MenuSide
   align?: MenuAlign
+  /** What the menu stands at: its button's plate, or the point of a click. */
+  anchor?: MenuAnchor
   widthRole?: FloatingMenuWidth
   /** The plate the menu comes out of, when it is not the trigger's own: a
    *  stable function; `null` from it falls back to the trigger. */
@@ -169,17 +180,18 @@ function DropdownMenuContent({
     [keyRef]
   )
   const surface = useMenuSurface("dropdown", ownRef, { onPointerDownOutside, onCloseAutoFocus })
-  const offsets = useMenuPlateOffsets(surfaceNode, side, align, plateOf)
+  const plate = useMenuPlateOffsets(surfaceNode, side, align, plateOf)
+  const atPoint = anchor === "point"
   return (
     <DropdownMenuPortal>
       <DropdownMenuPrimitive.Content
         ref={surface.ref}
         data-slot="dropdown-menu-content"
         data-floating-menu={widthRole}
-        side={side}
-        align={align}
-        sideOffset={offsets.sideOffset}
-        alignOffset={offsets.alignOffset}
+        side={atPoint ? "right" : side}
+        align={atPoint ? "start" : align}
+        sideOffset={atPoint ? MENU_POINT_OFFSET_PX : plate.sideOffset}
+        alignOffset={atPoint ? 0 : plate.alignOffset}
         collisionPadding={collisionPadding}
         onPointerDownOutside={surface.onPointerDownOutside}
         onCloseAutoFocus={surface.onCloseAutoFocus}

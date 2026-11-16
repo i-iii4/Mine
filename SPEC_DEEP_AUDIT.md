@@ -1,5 +1,7 @@
 # Исправления по глубокому аудиту 12.10.2026
 
+**Состояние:** реализовано, живая приёмка за пользователем. Источник: PLAN.md, Phase 46 (срезы DONE, строка 46.11 открыта); раздел «Статус» ниже. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_TABS.md](SPEC_TABS.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_SYSTEM_RELIABILITY.md](SPEC_SYSTEM_RELIABILITY.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_AUDIT_FIXES.md](SPEC_AUDIT_FIXES.md)
 
 ## Статус

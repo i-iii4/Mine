@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { usePreparedPicture } from "@/hooks/usePreparedPicture";
 
 interface FeedVideoPosterProps {
   candidateUrls: string[];
@@ -35,31 +36,33 @@ export function FeedVideoPoster({
     setExhausted(candidates.length === 0);
   }, [candidates]);
 
-  if (exhausted) {
-    return fallback;
-  }
+  const src = exhausted ? null : candidates[index] ?? null;
+  // A poster that does not load and one that cannot be decoded fail the same
+  // way: the next candidate, then the fallback.
+  const failCandidate = useCallback(() => {
+    const next = index + 1;
+    if (next < candidates.length) {
+      setIndex(next);
+      return;
+    }
+    setExhausted(true);
+  }, [candidates.length, index]);
+  const preparedPicture = usePreparedPicture(src, failCandidate);
 
-  const src = candidates[index];
-  if (!src) {
+  if (src === null) {
     return fallback;
   }
 
   return (
     <img
+      ref={preparedPicture}
       data-feed-video-poster="true"
       src={src}
       alt={alt}
       className={className}
       loading={loading}
       draggable={false}
-      onError={() => {
-        const next = index + 1;
-        if (next < candidates.length) {
-          setIndex(next);
-          return;
-        }
-        setExhausted(true);
-      }}
+      onError={failCandidate}
     />
   );
 }

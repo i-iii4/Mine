@@ -1,14 +1,27 @@
 #!/usr/bin/env node
+import { createReadStream, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { extname, join, normalize, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { PNG } from "pngjs";
-import { COLD_START_MS, startAuditVite } from "./audit-vite.mjs";
+import { build } from "vite";
 
+/** How long the first page of the run may take to show. */
+const COLD_START_MS = 120_000;
 const AUDIT_ROUTE = "/__feed-scroll-audit";
-/** The route of a Vite the caller runs (browser-audits.mjs); without one the
- *  audit starts and stops a Vite of its own (audit-vite.mjs), so a dev server
- *  the person runs keeps its port and its cache. */
+/** A page the caller serves instead, to measure it (a dev server's
+ *  `/__feed-scroll-audit`, React's development build): by default the audit
+ *  builds the route for production and serves it itself, as test:sidebar-strip
+ *  and test:editing-perf do, so a frame is the app's, not the development
+ *  build's (its checks, StrictMode's second render of every component, its
+ *  performance tracks: over three times the work of a jump). */
 const GIVEN_AUDIT_URL = process.env.MINE_FEED_SCROLL_AUDIT_URL;
 let AUDIT_URL = GIVEN_AUDIT_URL;
+const root = fileURLToPath(new URL("..", import.meta.url));
+const ENTRY = "virtual:feed-scroll-audit-entry";
+const RESOLVED_ENTRY = `\0${ENTRY}`;
 const VIEWPORTS = [
   { name: "desktop", width: 1440, height: 1000 },
   { name: "narrow", width: 900, height: 900 },
@@ -34,6 +47,7 @@ async function assertDevServerReady(url) {
         "The Vite that serves the route did not answer.",
         `Original error: ${error instanceof Error ? error.message : String(error)}`,
       ].join("\n"),
+      { cause: error },
     );
   }
 }
@@ -660,9 +674,173 @@ async function runViewportAudit(browser, viewport) {
   };
 }
 
+// ─── The page ───────────────────────────────────────────────────────────────
+
+/** The route alone, as the app's entry sets the page up before it (main.tsx):
+ *  the stored theme, motion level, corners, spacing and fonts, the audit's
+ *  stand-in for the asset protocol, StrictMode and the tooltip provider. */
+const entryPlugin = {
+  name: "feed-scroll-audit-entry",
+  config(config) {
+    config.build ??= {};
+    config.build.rollupOptions = { ...(config.build.rollupOptions ?? {}), input: { feed: ENTRY } };
+  },
+  resolveId(id) { return id === ENTRY ? RESOLVED_ENTRY : undefined; },
+  load(id) {
+    if (id !== RESOLVED_ENTRY) return undefined;
+    return `
+      import React from "react";
+      import { createRoot } from "react-dom/client";
+      import "/src/styles/global.css";
+      import { TooltipProvider } from "/src/components/ui/tooltip.tsx";
+      import { applyTheme, getStoredTheme } from "/src/lib/themeMode.ts";
+      import { installMotionLevel } from "/src/lib/motion.ts";
+      import { applyCardRadius, getStoredCardRadius } from "/src/lib/cardRadius.ts";
+      import { applyDensity, getStoredDensity } from "/src/lib/density.ts";
+      import { applyContentFont, applyInterfaceFont, getStoredContentFont, getStoredInterfaceFont } from "/src/lib/fontChoice.ts";
+      import { FeedScrollAuditRoute } from "/src/dev/FeedScrollAuditRoute.tsx";
+      applyTheme(getStoredTheme());
+      installMotionLevel();
+      applyCardRadius(getStoredCardRadius());
+      applyDensity(getStoredDensity());
+      applyInterfaceFont(getStoredInterfaceFont());
+      applyContentFont(getStoredContentFont());
+      // The route's pictures are the public folder's (main.tsx, installAuditTauriMocks).
+      window.__TAURI_INTERNALS__ = { convertFileSrc: (filePath, protocol = "asset") => {
+        const path = filePath.startsWith("//") ? filePath.slice(1) : filePath;
+        return path.startsWith("/feed-scroll-audit/") ? path : protocol + "://localhost/" + encodeURIComponent(path);
+      } };
+      createRoot(document.getElementById("root")).render(
+        React.createElement(React.StrictMode, null,
+          React.createElement(TooltipProvider, null, React.createElement(FeedScrollAuditRoute))));`;
+  },
+};
+
+const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".svg": "image/svg+xml", ".png": "image/png", ".wasm": "application/wasm" };
+
+/** Builds the route for production into a folder of the run and serves it
+ *  at AUDIT_ROUTE; resolves to its address and its teardown. */
+async function servePage() {
+  const folder = mkdtempSync(join(tmpdir(), "mine-feed-scroll-"));
+  try {
+    await build({
+      root,
+      configFile: join(root, "vite.config.ts"),
+      mode: "production",
+      logLevel: "warn",
+      plugins: [entryPlugin],
+      build: { outDir: folder, emptyOutDir: true, manifest: true, reportCompressedSize: false, chunkSizeWarningLimit: 100_000 },
+    });
+    const manifest = JSON.parse(readFileSync(join(folder, ".vite/manifest.json"), "utf8"));
+    const chunk = Object.values(manifest).find((item) => item.isEntry);
+    if (!chunk) throw new Error("The build has no entry");
+    writeFileSync(join(folder, "feed.html"), `<!doctype html><html><head><meta charset="utf-8">${(chunk.css ?? []).map((css) => `<link rel="stylesheet" href="/${css}">`).join("")}</head>`
+      + `<body><div id="root"></div><script type="module" src="/${chunk.file}"></script></body></html>`);
+  } catch (error) {
+    rmSync(folder, { recursive: true, force: true });
+    throw error;
+  }
+  const server = createServer((request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const name = url.pathname === AUDIT_ROUTE ? "/feed.html" : decodeURIComponent(url.pathname);
+    const path = normalize(join(folder, name));
+    if (!path.startsWith(`${folder}${sep}`) || !existsSync(path) || !statSync(path).isFile()) {
+      response.writeHead(404);
+      response.end();
+      return;
+    }
+    response.writeHead(200, { "Content-Type": TYPES[extname(path)] ?? "application/octet-stream" });
+    createReadStream(path).pipe(response);
+  });
+  await new Promise((resolveServer) => server.listen(0, "127.0.0.1", resolveServer));
+  return {
+    url: `http://127.0.0.1:${server.address().port}${AUDIT_ROUTE}`,
+    close: async () => {
+      await new Promise((done) => server.close(done));
+      rmSync(folder, { recursive: true, force: true });
+    },
+  };
+}
+
+/** The feed's layout at Spacing 8 and 2 (user's decision of 15.11.2026;
+ *  SPEC_FEED_DISPLAY.md, Д17): the gaps between cards, the feed's edges and
+ *  the number of columns are the token, in the production build. */
+const SPACING_STEPS = [8, 2];
+async function runSpacingAudit(browser, step) {
+  const viewport = VIEWPORTS[0];
+  const page = await browser.newPage({ viewport: { width: viewport.width, height: viewport.height }, deviceScaleFactor: 1 });
+  await page.addInitScript((value) => {
+    localStorage.setItem("mine.spacing", String(value));
+    localStorage.setItem("mine.spacing.steps", "32-24-16-8-2");
+  }, step);
+  const failures = [];
+  try {
+    await page.goto(AUDIT_URL, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-grid-scroll] [data-feed-grid-item-live="true"]');
+    await waitForViewportPaint(page);
+    // The feed settled: the same cards in the same places over ten frames.
+    await page.evaluate(() => new Promise((resolve) => {
+      let last = "";
+      let same = 0;
+      const tick = () => {
+        const now = [...document.querySelectorAll('[data-grid-scroll] [data-feed-grid-item-live="true"]')]
+          .map((node) => { const rect = node.getBoundingClientRect(); return `${Math.round(rect.left)},${Math.round(rect.top)}`; }).join(";");
+        same = now === last ? same + 1 : 0;
+        last = now;
+        if (same >= 10) resolve();
+        else requestAnimationFrame(tick);
+      };
+      tick();
+    }));
+    const read = await page.evaluate(() => {
+      const scroll = document.querySelector("[data-grid-scroll]");
+      const box = scroll.getBoundingClientRect();
+      const style = getComputedStyle(scroll);
+      const items = [...scroll.querySelectorAll('[data-feed-grid-item-live="true"]')]
+        .map((node) => node.getBoundingClientRect())
+        .filter((rect) => rect.bottom > box.top && rect.top < box.bottom)
+        .map((rect) => ({ left: rect.left - box.left, right: rect.right - box.left, top: rect.top, bottom: rect.bottom }));
+      return {
+        token: getComputedStyle(document.documentElement).getPropertyValue("--edge-rhythm").trim(),
+        padding: [style.paddingLeft, style.paddingRight],
+        clientWidth: scroll.clientWidth,
+        items,
+      };
+    });
+    if (read.token !== `${step}px`) failures.push(`--edge-rhythm is ${read.token}, not ${step}px`);
+    if (read.padding.some((value) => value !== `${step}px`)) failures.push(`the feed's edges are ${read.padding.join(" and ")}, not ${step}px`);
+    const lefts = [...new Set(read.items.map((item) => Math.round(item.left)))].sort((a, b) => a - b);
+    const content = read.clientWidth - 2 * step;
+    const expected = Math.max(2, Math.floor((content + step) / (220 + step)));
+    if (lefts.length !== expected) failures.push(`${lefts.length} columns on screen, not ${expected}`);
+    if (lefts[0] !== step) failures.push(`the first column starts ${lefts[0]} px in, not ${step}`);
+    const rightmost = Math.max(...read.items.map((item) => Math.round(item.right)));
+    if (rightmost !== read.clientWidth - step) failures.push(`the last column ends ${read.clientWidth - rightmost} px before the edge, not ${step}`);
+    const byColumn = new Map();
+    for (const item of read.items) {
+      const left = Math.round(item.left);
+      byColumn.set(left, [...(byColumn.get(left) ?? []), item].sort((a, b) => a.top - b.top));
+    }
+    const ordered = [...byColumn.entries()].sort(([a], [b]) => a - b);
+    for (let index = 1; index < ordered.length; index += 1) {
+      const gap = ordered[index][0] - Math.round(ordered[index - 1][1][0].right);
+      if (gap !== step) failures.push(`${gap} px between columns ${index} and ${index + 1}, not ${step}`);
+    }
+    for (const [left, cards] of ordered) {
+      for (let index = 1; index < cards.length; index += 1) {
+        const gap = Math.round(cards[index].top - cards[index - 1].bottom);
+        if (gap !== step) failures.push(`${gap} px between two cards of the column at ${left}, not ${step}`);
+      }
+    }
+    return { viewport: `${viewport.name} at Spacing ${step}`, columns: lefts.length, cardsOnScreen: read.items.length, failures };
+  } finally {
+    await page.close();
+  }
+}
+
 async function main() {
-  const vite = GIVEN_AUDIT_URL ? null : await startAuditVite();
-  if (vite) AUDIT_URL = new URL(AUDIT_ROUTE, vite.origin).href;
+  const page = GIVEN_AUDIT_URL ? null : await servePage();
+  if (page) AUDIT_URL = page.url;
   let browser;
   try {
     await assertDevServerReady(AUDIT_URL);
@@ -670,6 +848,9 @@ async function main() {
     const results = [];
     for (const viewport of VIEWPORTS) {
       results.push(await runViewportAudit(browser, viewport));
+    }
+    for (const step of SPACING_STEPS) {
+      results.push(await runSpacingAudit(browser, step));
     }
 
     const failures = results.flatMap((result) =>
@@ -684,7 +865,7 @@ async function main() {
     console.log("\nAll feed scroll audit checks passed.");
   } finally {
     await browser?.close();
-    await vite?.close();
+    await page?.close();
   }
 }
 

@@ -19,8 +19,6 @@ export interface FeedScrollReadinessWindows {
   renderAfterPx: number;
   priorityBeforePx: number;
   priorityAfterPx: number;
-  preloadBeforePx: number;
-  preloadAfterPx: number;
   commitLookaheadBlocks: number;
 }
 
@@ -133,28 +131,19 @@ export function computeFeedScrollReadinessWindows({
     3200,
     8000,
   );
-  // priorityBackward (1.1 * vh) and preloadBackward (1.5 * vh) already sit above
-  // the 0.5 * vh backward floor, so the render window is the only one that
-  // needed raising to satisfy the linger contract consistently.
+  // priorityBackward (1.1 * vh) already sits above the 0.5 * vh backward
+  // floor, so the render window is the only one that needed raising to satisfy
+  // the linger contract consistently.
   const priorityBackwardPx = clamp(vh * 1.1, 800, 2400);
-  const preloadForwardPx = clamp(
-    vh * 4 + quantizeVelocityContribution(velocity * 600),
-    4800,
-    14000,
-  );
-  const preloadBackwardPx = clamp(vh * 1.5, 1600, 3600);
 
   const render = orientWindow(scrollDirection, renderBackwardPx, renderForwardPx);
   const priority = orientWindow(scrollDirection, priorityBackwardPx, priorityForwardPx);
-  const preload = orientWindow(scrollDirection, preloadBackwardPx, preloadForwardPx);
 
   return {
     renderBeforePx: Math.round(render.beforePx),
     renderAfterPx: Math.round(render.afterPx),
     priorityBeforePx: Math.round(priority.beforePx),
     priorityAfterPx: Math.round(priority.afterPx),
-    preloadBeforePx: Math.round(preload.beforePx),
-    preloadAfterPx: Math.round(preload.afterPx),
     commitLookaheadBlocks: Math.max(48, Math.max(0, visibleItemCount) * 2),
   };
 }

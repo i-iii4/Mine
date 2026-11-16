@@ -10,7 +10,7 @@ use ab_glyph::{FontArc, PxScale};
 use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView, RgbImage, Rgba, RgbaImage};
 use imageproc::drawing::draw_text_mut;
-use mine_core::domain::media_type::{sniff_image_type, ImageType};
+use mine_core::domain::media_type::{sniff_image_type, ImageType, IMAGE_HEAD_LEN};
 use std::io::Write as _;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -40,10 +40,15 @@ const JPEG_QUALITY: u8 = 85;
 /// a partial file and concurrent writers cannot leave a half-encoded
 /// JPEG/PNG behind if both call sites race to regenerate the same slug.
 ///
-/// Used by every path that produces a thumb on disk (single-image,
-/// composite, text, video). `save_thumb` already has its own atomic
-/// rename path because it predates this helper; both patterns are
-/// equivalent.
+/// Used by every path that produces a file of the preview cache: the
+/// generators here (single-image, composite, text, video) and, through
+/// [`write_preview_bytes`], the pictures the browser decodes and the tile
+/// copied from a primary preview.
+///
+/// The file is handed to the system ([`flush_to_system`]), not waited onto
+/// the disk, and its folder is not flushed (SPEC_THUMBNAILS.md, П10): the
+/// cache is rebuilt from the space, and a preview a power loss cut short is
+/// no preview ([`preview_origin`]) and is built again.
 fn write_thumb_atomically<F>(dest: &Path, write_fn: F) -> Result<()>
 where
     F: FnOnce(&mut std::io::BufWriter<std::fs::File>) -> Result<()>,
@@ -90,7 +95,7 @@ where
             e.error()
         )
     })?;
-    if let Err(err) = file.sync_all() {
+    if let Err(err) = flush_to_system(&file) {
         let _ = std::fs::remove_file(&tmp);
         return Err(anyhow::Error::from(err)
             .context(format!("failed to fsync temp thumb {}", tmp.display())));
@@ -107,8 +112,41 @@ where
         let _ = std::fs::remove_file(&tmp);
         return Err(error);
     }
-    files::sync_parent_directory(dest)?;
     Ok(())
+}
+
+/// Hand the bytes of a cache file to the system: `fsync(2)`. On macOS
+/// `File::sync_all` and `File::sync_data` are both `F_FULLFSYNC`, the wait
+/// for the disk itself, about 8 ms a file against 0,15 ms here; three files a
+/// card made the first preview pass of a space wait for the disk 26 ms of
+/// every 34 (AUDIT_PERFORMANCE.md, Б5). The notes and media of the space keep
+/// the full flush (`files::write_atomically`): they are the person's data.
+#[cfg(unix)]
+fn flush_to_system(file: &std::fs::File) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    // SAFETY: `file` owns an open descriptor for the whole call, and `fsync`
+    // reads nothing but the descriptor.
+    if unsafe { libc::fsync(file.as_raw_fd()) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(unix))]
+fn flush_to_system(file: &std::fs::File) -> std::io::Result<()> {
+    file.sync_data()
+}
+
+/// Write the finished bytes of a preview to `dest`, as every file of the
+/// preview cache is written ([`write_thumb_atomically`]): a picture the
+/// browser decoded, or a tile copied from a primary preview.
+pub fn write_preview_bytes(dest: &Path, bytes: &[u8]) -> Result<()> {
+    write_thumb_atomically(dest, |writer| {
+        writer
+            .write_all(bytes)
+            .with_context(|| format!("failed to write preview: {}", dest.display()))
+    })
 }
 
 // ─── Freshness check ────────────────────────────────────────────────────────
@@ -406,16 +444,58 @@ pub fn is_thumb_fresh_with_resolver(
     }
 }
 
-/// Classify the actual thumb content on disk.
+/// Classify the actual thumb content on disk. A thumb cut short is invalid
+/// (SPEC_THUMBNAILS.md, П10): the sweep makes it again.
 pub fn thumb_disk_state(thumb_path: &Path) -> ThumbDiskState {
     if !thumb_path.exists() {
         return ThumbDiskState::Missing;
     }
-    match files::image_type(thumb_path) {
+    let whole = read_preview_ends(thumb_path)
+        .ok()
+        .and_then(|(head, end)| whole_preview_type(&head, &end));
+    match whole {
         Some(ImageType::Jpeg) => ThumbDiskState::Jpeg,
         Some(ImageType::Png) => ThumbDiskState::Png,
         _ => ThumbDiskState::Invalid,
     }
+}
+
+// ─── Wholeness ──────────────────────────────────────────────────────────────
+
+/// How a whole JPEG ends: its end-of-image marker.
+const JPEG_END: &[u8] = &[0xFF, 0xD9];
+
+/// How a whole PNG ends: its `IEND` chunk, an empty chunk with its checksum.
+const PNG_END: &[u8] = &[0, 0, 0, 0, b'I', b'E', b'N', b'D', 0xAE, 0x42, 0x60, 0x82];
+
+/// The format of a preview that is all there (SPEC_THUMBNAILS.md, П10): `head`
+/// starts as a JPEG or a PNG does and `end`, the last bytes of the file, ends
+/// as that format ends. `None` for a file a power loss emptied or cut short:
+/// files of the preview cache are not waited onto the disk
+/// ([`write_thumb_atomically`]).
+fn whole_preview_type(head: &[u8], end: &[u8]) -> Option<ImageType> {
+    match sniff_image_type(head)? {
+        ImageType::Jpeg if end.ends_with(JPEG_END) => Some(ImageType::Jpeg),
+        ImageType::Png if end.ends_with(PNG_END) => Some(ImageType::Png),
+        _ => None,
+    }
+}
+
+/// The first `IMAGE_HEAD_LEN` bytes of a preview file and its last
+/// `PNG_END.len()` bytes, each shorter when the file is: what
+/// [`whole_preview_type`] and the placeholder record are read from.
+fn read_preview_ends(path: &Path) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path)?;
+    let mut head = Vec::with_capacity(IMAGE_HEAD_LEN);
+    (&mut file)
+        .take(IMAGE_HEAD_LEN as u64)
+        .read_to_end(&mut head)?;
+    let length = file.seek(SeekFrom::End(0))?;
+    file.seek(SeekFrom::Start(length.saturating_sub(PNG_END.len() as u64)))?;
+    let mut end = Vec::with_capacity(PNG_END.len());
+    file.read_to_end(&mut end)?;
+    Ok((head, end))
 }
 
 // ─── Provenance ─────────────────────────────────────────────────────────────
@@ -445,25 +525,30 @@ const PLACEHOLDER_RECORD: &[u8] = b"Mine\0text-placeholder";
 const PLACEHOLDER_RECORD_OFFSET: usize = 33;
 
 /// The provenance of the preview at `path`; `None` when there is no preview
-/// there: the file is missing, unreadable, or neither JPEG nor PNG.
+/// there: the file is missing, unreadable, neither JPEG nor PNG, or cut short
+/// (П10).
 pub fn preview_origin(path: &Path) -> Option<PreviewOrigin> {
-    preview_origin_of(&files::read_media_head(path).ok()?)
+    let (head, end) = read_preview_ends(path).ok()?;
+    origin_of(&head, &end)
 }
 
-/// [`preview_origin`] for the first bytes of a preview.
-pub fn preview_origin_of(head: &[u8]) -> Option<PreviewOrigin> {
-    match sniff_image_type(head)? {
-        ImageType::Jpeg => Some(PreviewOrigin::Picture),
+/// [`preview_origin`] for all the bytes of a preview.
+pub fn preview_origin_of(bytes: &[u8]) -> Option<PreviewOrigin> {
+    origin_of(bytes, bytes)
+}
+
+fn origin_of(head: &[u8], end: &[u8]) -> Option<PreviewOrigin> {
+    match whole_preview_type(head, end)? {
         ImageType::Png if carries_placeholder_record(head) => Some(PreviewOrigin::TextPlaceholder),
-        ImageType::Png => Some(PreviewOrigin::Picture),
-        _ => None,
+        _ => Some(PreviewOrigin::Picture),
     }
 }
 
 /// How far the preview at a path is from done (SPEC_THUMBNAILS.md, П7, П8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreviewReadiness {
-    /// Nothing to draw: the file is missing, unreadable, or neither JPEG nor PNG.
+    /// Nothing to draw: the file is missing, unreadable, neither JPEG nor PNG,
+    /// or cut short (П10).
     Absent,
     /// The text placeholder, waiting for a picture of the card's media.
     Placeholder,
@@ -1498,6 +1583,11 @@ pub fn ensure_thumb_levels(vault: &VaultLayout, slug: &str) -> bool {
 /// forever; `levels_dropped_alpha` is what tells them apart from levels that
 /// are merely already done.
 ///
+/// And it makes again a level that is not whole (П10): files of the cache are
+/// not waited onto the disk, so a power loss may leave one empty or cut
+/// short. The check reads the first and the last bytes of each level, two
+/// small reads a level on every launch, beside the header read above.
+///
 /// Returns how many thumbnails gained levels.
 pub fn backfill_thumb_levels(vault: &VaultLayout) -> usize {
     let root = vault.thumbs_dir();
@@ -1537,7 +1627,12 @@ pub fn backfill_thumb_levels(vault: &VaultLayout) -> usize {
                 continue;
             };
             let micro = vault.thumb_level_path(slug, ThumbLevel::Micro);
-            if micro.is_file() && !levels_dropped_alpha(&path, &micro) {
+            // A level a power loss cut short is no level (П10): this pass
+            // makes it again, like one that is missing.
+            let levels_whole = ThumbLevel::ALL
+                .iter()
+                .all(|level| preview_origin(&vault.thumb_level_path(slug, *level)).is_some());
+            if levels_whole && !levels_dropped_alpha(&path, &micro) {
                 continue;
             }
             generate_thumb_levels(vault, slug);
@@ -2286,6 +2381,44 @@ mod tests {
         );
     }
 
+    /// SPEC_THUMBNAILS.md, П10: a level a power loss emptied, cut short or
+    /// left without its last bytes is made again on launch from the full
+    /// thumbnail, which is whole.
+    #[test]
+    fn a_level_cut_short_is_made_again_on_launch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vault = make_vault(tmp.path());
+        write_source_jpeg(&vault.thumb_path("Card"), 640, 480);
+        generate_thumb_levels(&vault, "Card");
+        assert_eq!(backfill_thumb_levels(&vault), 0);
+
+        for level in ThumbLevel::ALL {
+            let path = vault.thumb_level_path("Card", level);
+            let whole = std::fs::read(&path).unwrap();
+            let mut without_end = whole.clone();
+            let end = without_end.len() - 2;
+            without_end[end..].fill(0);
+            let damaged = [0, 20, whole.len() / 2, whole.len() - 1]
+                .map(|kept| whole[..kept].to_vec())
+                .into_iter()
+                .chain([without_end]);
+            for bytes in damaged {
+                std::fs::write(&path, &bytes).unwrap();
+
+                assert_eq!(
+                    backfill_thumb_levels(&vault),
+                    1,
+                    "{} with {} of {} bytes",
+                    level.suffix(),
+                    bytes.len(),
+                    whole.len()
+                );
+                assert_eq!(std::fs::read(&path).unwrap(), whole);
+            }
+        }
+        assert_eq!(backfill_thumb_levels(&vault), 0, "whole levels are left alone");
+    }
+
     #[test]
     fn removing_levels_leaves_the_full_thumbnail_alone() {
         let tmp = tempfile::tempdir().unwrap();
@@ -3030,6 +3163,78 @@ mod tests {
         assert_eq!(preview_origin(&gif), None);
         assert_eq!(preview_origin(&dir.path().join("missing.jpg")), None);
         assert!(!is_finished_picture(&dir.path().join("missing.jpg"), GeneratorEpoch::AllCurrent));
+    }
+
+    /// SPEC_THUMBNAILS.md, П10: a preview a power loss emptied, cut short,
+    /// in its header or after it, or left at its full length without its
+    /// last bytes is no preview, whatever wrote it; the sweep finds it
+    /// invalid. The same bytes whole are the preview again.
+    #[test]
+    fn a_preview_cut_short_is_no_preview() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.png");
+        create_test_image(&source, 200, 120);
+        let picture = dir.path().join("picture.jpg");
+        generate_thumbnail(&source, &picture, 64).unwrap();
+        let transparent = dir.path().join("transparent.jpg");
+        image::RgbaImage::from_pixel(32, 32, image::Rgba([10, 20, 30, 0]))
+            .save_with_format(&source, image::ImageFormat::Png)
+            .unwrap();
+        generate_thumbnail(&source, &transparent, 64).unwrap();
+        let placeholder = dir.path().join("placeholder.jpg");
+        generate_text_thumbnail(Some("Note"), "Body text", &placeholder).unwrap();
+
+        for (path, origin, state) in [
+            (&picture, PreviewOrigin::Picture, ThumbDiskState::Jpeg),
+            (&transparent, PreviewOrigin::Picture, ThumbDiskState::Png),
+            (&placeholder, PreviewOrigin::TextPlaceholder, ThumbDiskState::Png),
+        ] {
+            let whole = std::fs::read(path).unwrap();
+            assert_eq!(preview_origin(path), Some(origin));
+            assert_eq!(preview_origin_of(&whole), Some(origin));
+            for kept in [0, 2, 20, 60, whole.len() / 2, whole.len() - 1] {
+                std::fs::write(path, &whole[..kept]).unwrap();
+                let name = format!("{} with {kept} of {} bytes", path.display(), whole.len());
+                assert_eq!(preview_origin(path), None, "{name}");
+                assert_eq!(preview_origin_of(&whole[..kept]), None, "{name}");
+                assert_eq!(
+                    preview_readiness(path, GeneratorEpoch::AllCurrent),
+                    PreviewReadiness::Absent,
+                    "{name}"
+                );
+                assert_eq!(thumb_disk_state(path), ThumbDiskState::Invalid, "{name}");
+            }
+            for lost in [2, 64] {
+                let mut bytes = whole.clone();
+                let kept = bytes.len() - lost.min(bytes.len());
+                bytes[kept..].fill(0);
+                std::fs::write(path, &bytes).unwrap();
+                let name = format!("{} without its last {lost} bytes", path.display());
+                assert_eq!(preview_origin(path), None, "{name}");
+                assert_eq!(preview_origin_of(&bytes), None, "{name}");
+                assert_eq!(thumb_disk_state(path), ThumbDiskState::Invalid, "{name}");
+            }
+            std::fs::write(path, &whole).unwrap();
+            assert_eq!(preview_origin(path), Some(origin));
+            assert_eq!(thumb_disk_state(path), state);
+        }
+    }
+
+    /// A file of the cache is written whole or not at all, and leaves no
+    /// temporary file beside it.
+    #[test]
+    fn preview_bytes_are_written_in_place_of_what_was_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("Cards").join("thumb.jpg");
+        write_preview_bytes(&dest, b"first").unwrap();
+        write_preview_bytes(&dest, b"second and longer").unwrap();
+
+        assert_eq!(std::fs::read(&dest).unwrap(), b"second and longer");
+        let names: Vec<_> = std::fs::read_dir(dest.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["thumb.jpg"]);
     }
 
     /// The record is the standard checksum PNG readers verify.

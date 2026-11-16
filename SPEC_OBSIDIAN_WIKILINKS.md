@@ -1,5 +1,7 @@
 # Obsidian Wikilinks Specification
 
+**Состояние:** реализовано. Источник: PLAN.md, Phase 18.H. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 ## Goal

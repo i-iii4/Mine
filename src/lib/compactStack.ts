@@ -1,8 +1,7 @@
 // TRIAL (PLAN 50.38, user's requests of 22.10.2026): the compact sidebar
 // item's stack in the Display panel: its cards' edge, Shadow (today's
 // `shadow-sm`) or Ring (no shadow, a 1px ring of the item's fill outside the
-// buttons' edge). Its side follows the sidebar's columns: before the name when the
-// previews stand before it (sidebarColumnLayout.ts). Each kept between
+// buttons' edge), at the right of the name. Each kept between
 // launches in its own localStorage key; every tab applies them and hears
 // `settings-changed`. Once the user decides, this module either goes or the
 // chosen stack becomes the rule.
@@ -94,37 +93,6 @@ export const setSidebarStyle = look.set;
 export const reloadSidebarStyle = look.reload;
 export const useSidebarStyle = look.use;
 
-/** The List look's row step on trial: Tight (24px, today's) or Table (the
- *  table's step, as if its lines were taken away). */
-export type ListSpacing = "tight" | "table";
-export const LIST_SPACINGS: readonly ListSpacing[] = ["tight", "table"];
-export const LIST_SPACING_STORAGE_KEY = "mine.sidebar.listSpacing";
-/** What the Display panel calls each step. */
-export const LIST_SPACING_LABELS: Record<ListSpacing, string> = { tight: "Tight", table: "Table" };
-
-// The root's mark gives the List look the table's step (global.css, «List sidebar»).
-const listSpacing = trialChoice<ListSpacing>(LIST_SPACING_STORAGE_KEY, "tight", LIST_SPACINGS, (value) =>
-  rootFlag("data-sidebar-list-roomy", value === "table"));
-
-export const getListSpacing = listSpacing.get;
-export const setListSpacing = listSpacing.set;
-export const reloadListSpacing = listSpacing.reload;
-export const useListSpacing = listSpacing.use;
-
-/** The List look's style on trial: Plain (today's) or Contents (after a
- *  book's table of contents: a bullet, the name, a dotted leader and the
- *  count in small mono capitals). */
-export type ListStyle = "plain" | "contents";
-export const LIST_STYLES: readonly ListStyle[] = ["plain", "contents"];
-export const LIST_STYLE_STORAGE_KEY = "mine.sidebar.listStyle";
-/** What the Display panel calls each style. */
-export const LIST_STYLE_LABELS: Record<ListStyle, string> = { plain: "Plain", contents: "Contents" };
-
-// The root's mark gives the List look the table of contents (global.css, «List sidebar»).
-const listStyle = trialChoice<ListStyle>(LIST_STYLE_STORAGE_KEY, "plain", LIST_STYLES, (value) =>
-  rootFlag("data-sidebar-list-toc", value === "contents"));
-
-export const getListStyle = listStyle.get;
-export const setListStyle = listStyle.set;
-export const reloadListStyle = listStyle.reload;
-export const useListStyle = listStyle.use;
+// List spacing and List style are fixed, Tight and Contents (user's decision
+// of 15.11.2026): the List steps 24px and reads as a table of contents
+// (global.css, «List sidebar»). Their stored choices are no longer read.

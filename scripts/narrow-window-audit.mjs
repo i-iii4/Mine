@@ -36,8 +36,6 @@ const vite = await startAuditVite([{
       import {Sidebar} from "/src/components/Sidebar.tsx";
       import {SidebarOverlay} from "/src/components/SidebarOverlay.tsx";
       import {FadeScrollRow} from "/src/components/FadeScrollRow.tsx";
-      import {setSidebarColumnOrder, setSidebarColumnShown} from "/src/lib/sidebarColumnLayout.ts";
-      window.auditColumns={order:setSidebarColumnOrder,shown:setSidebarColumnShown};
       import {TooltipProvider} from "/src/components/ui/tooltip.tsx";
       import {useSidebarOverlay} from "/src/hooks/useSidebarOverlay.ts";
       import {useSidebarResize} from "/src/hooks/useSidebarResize.ts";
@@ -545,16 +543,14 @@ try {
   assert.equal(bar.row.fadeLeft, "true", "390: after scrolling the left edge dissolves too");
   console.log("PASS 390: the bottom bar's commands at the left in one row that scrolls, its edges dissolving");
 
-  // TRIAL (PLAN 47.6): the sidebar rows' columns in another order or hidden.
-  // The rows follow at once; the shown columns share the row, nothing is cut,
-  // a guideline stands between each two of them, and every column keeps the
-  // insets it has in the default order wherever it stands: the row's inset
-  // is the name's own (DESIGN_SYSTEM.md, «Строка боковой панели: три зоны»).
-  // A zone runs from the row's edge or a guideline's far edge to the next
-  // guideline or the row's other edge; each inset is measured in its zone.
-  // The trial orders the three zones of the wide rows: the sidebar, still
-  // collapsed above, opens, and since one of 360 is compact (narrower than
-  // 380, PLAN 50.36) the trial is read at 420.
+  // The sidebar rows' columns, fixed: the name, the previews, the count, a
+  // guideline between each two (user's decision of 15.11.2026). Every column
+  // keeps its insets: the row's inset is the name's own (DESIGN_SYSTEM.md,
+  // «Строка боковой панели: три зоны»). A zone runs from the row's edge or a
+  // guideline's far edge to the next guideline or the row's other edge; each
+  // inset is measured in its zone. The sidebar, still collapsed above, opens,
+  // and since one of 360 is compact (narrower than 380, PLAN 50.36) the rows
+  // are read at 420.
   await resize(1200);
   await toggle();
   await settle();
@@ -567,7 +563,7 @@ try {
     // Twenty placeholder tiles: more than any zone holds, so the strip is cut.
     const frame = aside.querySelector("[data-sidebar-row-key='tag:Collection 20']");
     const row = frame.querySelector("a");
-    // Rendered: neither it nor a parent hidden (a hidden column hides its cells).
+    // Rendered: neither it nor a parent hidden.
     const shown = (element) => !!element && element.checkVisibility();
     const box = (element) => {
       if (!shown(element)) return null;
@@ -629,70 +625,18 @@ try {
       overflow: nav.scrollWidth - nav.clientWidth,
     };
   });
-  const setColumns = (order, hidden = []) => page.evaluate(([columnOrder, hiddenColumns]) => {
-    window.auditColumns.order(columnOrder);
-    for (const column of ["name", "previews", "meta"]) window.auditColumns.shown(column, true);
-    for (const column of hiddenColumns) window.auditColumns.shown(column, false);
-  }, [order, hidden]);
-  const columnsBefore = await readColumns();
-  assert.equal(columnsBefore.guides.length, 2, "default: two guidelines");
-  assert.deepEqual(columnsBefore.order, ["name", "previews", "meta"], "default: the name, the previews, the count");
-  assert.equal(columnsBefore.name.text, 17, "default: the name 17 px into its zone (the row's inset and the optical pixel)");
-  assert.equal(columnsBefore.previews.start, 4, "default: the previews 4 px after their guideline");
-  assert.equal(columnsBefore.meta.count, 17, "default: the count 17 px before the row's end");
-  assert.equal(columnsBefore.meta.pill.start, 8, "default: Connected 8 px after the guideline");
-  assert.equal(columnsBefore.meta.pill.end, 8, "default: Connected 8 px before the row's end");
-  assert.equal(columnsBefore.tilesOnGuides, 0, "default: no thumbnail on a guideline");
-  assert.equal(columnsBefore.overflow, 0, "default: nothing wider than the list");
-
-  const ORDERS = [
-    ["name", "previews", "meta"], ["name", "meta", "previews"], ["previews", "name", "meta"],
-    ["previews", "meta", "name"], ["meta", "name", "previews"], ["meta", "previews", "name"],
-  ];
-  const HIDDEN = [["name"], ["previews"], ["meta"], ["name", "previews"], ["name", "meta"], ["previews", "meta"]];
-  for (const order of ORDERS) {
-    for (const hidden of [[], ...HIDDEN]) {
-      await setColumns(order, hidden);
-      await settle();
-      const columns = await readColumns();
-      const label = `${order.join(", ")}${hidden.length ? ` without ${hidden.join(", ")}` : ""}`;
-      const expected = order.filter((column) => !hidden.includes(column));
-      assert.deepEqual(columns.order, expected, `${label}: the columns in their order`);
-      assert.equal(columns.guides.length, expected.length - 1, `${label}: a guideline between each two columns`);
-      assert.equal(columns.zones, expected.length, `${label}: a zone per column`);
-      if (expected.includes("name")) {
-        assert.equal(typeof columns.name, "object", `${label}: the name in its zone`);
-        assert.equal(columns.name.text, columnsBefore.name.text, `${label}: the name's text as far from its guideline or edge as in the default`);
-        assert.equal(columns.name.end, columnsBefore.name.end, `${label}: the name's dissolve as far from the next guideline or edge as in the default`);
-      }
-      if (expected.includes("previews")) {
-        assert.equal(typeof columns.previews, "object", `${label}: the previews in their zone`);
-        assert.deepEqual(columns.previews, columnsBefore.previews, `${label}: the previews' air at both ends as in the default`);
-        assert.equal(columns.tilesOnGuides, 0, `${label}: no thumbnail on a guideline`);
-        assert.equal(columns.tilesOutside, 0, `${label}: every thumbnail inside the previews' zone`);
-      }
-      if (expected.includes("meta")) {
-        assert.equal(typeof columns.meta, "object", `${label}: the count in its zone`);
-        if (expected.length > 1) {
-          assert.deepEqual(columns.meta, columnsBefore.meta, `${label}: the count and Connected where they stand in the default zone`);
-        } else {
-          // Alone, the meta zone is the whole row (the shown columns share
-          // it): the count and Connected stand at its end as in the default,
-          // Connected as wide as ever.
-          assert.equal(columns.meta.count, columnsBefore.meta.count, `${label}: the count at the row's end`);
-          assert.equal(columns.meta.pill.end, columnsBefore.meta.pill.end, `${label}: Connected at the row's end`);
-          assert.equal(columns.meta.pill.width, columnsBefore.meta.pill.width, `${label}: Connected as wide as in the default`);
-        }
-      }
-      assert.equal(columns.overflow, 0, `${label}: nothing wider than the list`);
-    }
-  }
-
-  await setColumns(["name", "previews", "meta"]);
-  await settle();
   const columns = await readColumns();
-  assert.deepEqual(columns, columnsBefore, "back to the default: the rows as they were");
-  console.log("PASS 1200, sidebar 420: the sidebar rows follow the six orders and hidden columns, every column keeping its insets, and come back as they were");
+  assert.equal(columns.guides.length, 2, "two guidelines");
+  assert.deepEqual(columns.order, ["name", "previews", "meta"], "the name, the previews, the count");
+  assert.equal(columns.name.text, 17, "the name 17 px into its zone (the row's inset and the optical pixel)");
+  assert.equal(columns.previews.start, 4, "the previews 4 px after their guideline");
+  assert.equal(columns.meta.count, 17, "the count 17 px before the row's end");
+  assert.equal(columns.meta.pill.start, 8, "Connected 8 px after the guideline");
+  assert.equal(columns.meta.pill.end, 8, "Connected 8 px before the row's end");
+  assert.equal(columns.tilesOnGuides, 0, "no thumbnail on a guideline");
+  assert.equal(columns.overflow, 0, "nothing wider than the list");
+
+  console.log("PASS 1200, sidebar 420: the sidebar rows' three columns in their order, every column keeping its insets");
 
   assert.deepEqual(errors, []);
 

@@ -61,7 +61,7 @@ const VARIANTS = {
   lf: fixtureBody,
   crlf: fixtureBody.replace(/\n/g, '\r\n'),
   mixed: fixtureBody.split('\n').map((line, index) => (index % 2 === 0 ? `${line}\r` : line)).join('\n'),
-  bom: `﻿${fixtureBody}`,
+  bom: `\uFEFF${fixtureBody}`,
   'no-final-newline': fixtureBody.replace(/\n+$/, ''),
 };
 
@@ -340,7 +340,7 @@ async function byteExact(label, theme, variant) {
   const { page, errors } = await open(theme, WIDE, variant === 'lf' ? '' : `&body=${variant}`);
   const original = VARIANTS[variant];
   await page.waitForTimeout(400);
-  check(label, `${variant}: the note is the file, nothing written on opening`, (await writes(page)) === 0 && (await body(page)) === original && (await docText(page)) === original.replace(/^﻿/, ''));
+  check(label, `${variant}: the note is the file, nothing written on opening`, (await writes(page)) === 0 && (await body(page)) === original && (await docText(page)) === original.replace(/^\uFEFF/, ''));
   for (const edit of EDITS) {
     if (edit.widget) await pressWidget(page, edit.widget, edit.widgetText);
     await caretAfter(page, edit.after);

@@ -2237,9 +2237,6 @@ mod tests {
     /// set.
     const PREVIEW_READ_LIMIT: std::time::Duration = std::time::Duration::from_millis(PREVIEW_READ_LIMIT_MS);
     const PREVIEW_READ_LIMIT_MS: u64 = 100;
-    /// Set to `assert` by the strip's check (`scripts/sidebar-strip-audit.mjs`),
-    /// which builds the tests optimised as the app is: the limit is asserted.
-    const PREVIEW_TIMING_ENV: &str = "MINE_SIDEBAR_PREVIEW_TIMING";
     /// A copy of a real space's index to time the same read on (приёмка 5):
     /// its numbers are said, the limit is the large set's.
     const PREVIEW_SPACE_INDEX_ENV: &str = "MINE_SIDEBAR_PREVIEW_SPACE_INDEX";
@@ -2261,10 +2258,10 @@ mod tests {
 
     /// ЛМВ1: the full preview read of a large space, the read and the JSON
     /// that crosses the IPC, answers within `PREVIEW_READ_LIMIT`. The limit is
-    /// the app's, an optimised build's: the strip's check builds the tests so
-    /// and asserts it through `PREVIEW_TIMING_ENV`; an unoptimised build reads
-    /// and says its numbers.
+    /// the app's, an optimised build's: a speed test, run by `test:rust-speed`
+    /// and by the strip's check (ARCHITECTURE.md, «Тесты скорости Rust»).
     #[test]
+    #[ignore = "asserts a speed limit of an optimised build: bun run test:rust-speed"]
     fn a_full_preview_read_of_a_large_space_answers_within_its_limit() {
         let conn = db::open_memory().unwrap();
         let names: Vec<String> = (0..TIMED_COLLECTIONS).map(|index| format!("Collection {index:03}")).collect();
@@ -2292,14 +2289,10 @@ mod tests {
                 previews.len(),
             );
         }
-        let asserted = std::env::var(PREVIEW_TIMING_ENV).is_ok_and(|value| value == "assert");
         eprintln!(
-            "list_channel_previews, {TIMED_CARDS} cards, {TIMED_COLLECTIONS}×{} members, {bytes} B: median {median:?}, slowest {slowest:?}, limit {PREVIEW_READ_LIMIT:?}{}",
+            "list_channel_previews, {TIMED_CARDS} cards, {TIMED_COLLECTIONS}×{} members, {bytes} B: median {median:?}, slowest {slowest:?}, limit {PREVIEW_READ_LIMIT:?}, asserted",
             TIMED_CARDS * TIMED_MEMBERSHIPS / TIMED_COLLECTIONS,
-            if asserted { ", asserted" } else { ", reported" },
         );
-        if asserted {
-            assert!(slowest <= PREVIEW_READ_LIMIT, "list_channel_previews {slowest:?} over {PREVIEW_READ_LIMIT:?} (median {median:?})");
-        }
+        assert!(slowest <= PREVIEW_READ_LIMIT, "list_channel_previews {slowest:?} over {PREVIEW_READ_LIMIT:?} (median {median:?})");
     }
 }

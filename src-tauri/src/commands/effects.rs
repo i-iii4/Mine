@@ -167,10 +167,13 @@ pub const COMMAND_EFFECTS: &[(&str, Effect)] = &[
     ("report_card_drag", Effect::Reads),
     ("drop_cards_on_tab_bar", Effect::Reads),
     ("menu_panel_prepare", Effect::Reads),
+    ("menu_panel_dispose", Effect::Reads),
     ("menu_panel_ready", Effect::Reads),
     ("menu_panel_open", Effect::Reads),
-    ("menu_panel_show", Effect::Reads),
+    ("menu_panel_update", Effect::Reads),
+    ("menu_panel_answer", Effect::Reads),
     ("menu_panel_close", Effect::Reads),
+    ("menu_panel_request", Effect::Reads),
     ("menu_panel_painted", Effect::Reads),
 ];
 
@@ -235,10 +238,13 @@ pub const MAIN_THREAD_COMMANDS: &[(&str, &str)] = &[
     // отдельном окне: проба»): AppKit's windows are moved and read on the
     // main thread, and an opening waits for no pool.
     ("menu_panel_prepare", "creates the menu panel's window"),
-    ("menu_panel_ready", "the menu panel in memory and its window"),
-    ("menu_panel_open", "reads the page's place on the screen"),
-    ("menu_panel_show", "moves and shows the menu panel"),
+    ("menu_panel_dispose", "takes the menu panel's window away"),
+    ("menu_panel_ready", "checks the menu panel's window for clearness"),
+    ("menu_panel_open", "reads the page's place on the screen, moves and shows the menu panel"),
+    ("menu_panel_update", "an event to the menu panel's page, in the order the main thread sets"),
+    ("menu_panel_answer", "an event to the menu panel's page, in the order the main thread sets"),
     ("menu_panel_close", "hides the menu panel and gives the keyboard back"),
+    ("menu_panel_request", "an event to the menu's page, hides the menu panel and gives the keyboard back"),
     ("menu_panel_painted", "reads the windows' state for the log"),
 ];
 

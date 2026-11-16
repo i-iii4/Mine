@@ -1,6 +1,5 @@
-// TRIAL (SPEC_CARD_PEEK.md, О1; user's requests of 23.10.2026): «Card view»
-// in the Display panel, Full page or Peek (src/lib/cardView.ts). Once the
-// user decides, this group either goes or the chosen view becomes the rule.
+// «Card view» in the Display panel, Full page or Peek (SPEC_CARD_PEEK.md,
+// О1; user's requests of 23.10.2026; src/lib/cardView.ts).
 
 import {
   CARD_VIEWS,
@@ -17,7 +16,7 @@ import {
 import { broadcastSettingsChange } from "@/lib/settingsChanged";
 import { TrialRadios } from "./CompactStackMenu";
 
-/** The trial group of the open card's view, named by its caption. */
+/** The group of the open card's view, named by its caption. */
 export function CardViewMenu() {
   const cardView = useCardView();
   const peekWidth = usePeekWidth();

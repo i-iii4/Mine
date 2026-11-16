@@ -2,8 +2,9 @@
 // replaces the preview without moving or resizing the frame, both layers fill
 // it, and a smaller window keeps the proportion (SPEC_CARD_MEDIA_GEOMETRY.md).
 // The layout (SPEC_FRONTEND.md, «Раскладка открытой карточки»): beside a
-// sidebar the content stands centred between it and the panel, the view
-// stacks when both margins reach the inset, the stacked panel cards are no
+// sidebar the content stands centred between it and the panel's column
+// (the line before the panel, Р2), the view stacks when both margins reach
+// the inset, the stacked panel cards are no
 // wider than the reading column and centred, body media stand centred in the
 // article's column, a video's box is its frame, a panel taller than the
 // window scrolls to its last card, a link's page picture stands in the one
@@ -19,8 +20,9 @@ const entry='/detail-image-geometry-entry.js';
 // The sidebar beside the open card in the layout pages, and the window height
 // (85 % of it, 680, is the media height limit). The reading column,
 // `DETAIL_CONTENT_MAX_WIDTH_PX` (user's decision of 16.10.2026: 680 instead
-// of 768). A window too short for the panel's cards.
-const SIDEBAR=240,HEIGHT=800,LIMIT=0.85*HEIGHT,COLUMN=680,SHORT=400;
+// of 768). A window too short for the panel's cards. The line before the
+// panel, `DETAIL_RAIL_LINE_PX` (user's decisions of 24.10.2026).
+const SIDEBAR=240,HEIGHT=800,LIMIT=0.85*HEIGHT,COLUMN=680,SHORT=400,RAIL_LINE=1;
 const vite=await startAuditVite([{
     name:'detail-image-geometry-audit',
     resolveId(id){if(id===entry)return `\0${entry}`;},
@@ -81,10 +83,11 @@ async function measure(page){
   });
 }
 
-/** Beside the panel: `content` centred between the sidebar and the panel. */
+/** Beside the panel: `content` centred between the sidebar and the panel's
+ *  column, which starts with its line an inset before the panel (Р2). */
 function assertCentredBesidePanel(geometry,content,label){
   assert.equal(geometry.mode,'rail',`${label}: beside the panel`);
-  const left=content.left-geometry.main.left,right=geometry.panel.left-content.right;
+  const left=content.left-geometry.main.left,right=geometry.panel.left-geometry.pad-RAIL_LINE-content.right;
   near(left,right,`${label}: equal margins`);
   assert(Math.min(left,right)>=geometry.pad-1,`${label}: margins under the inset`);
   near(geometry.panel.right,geometry.main.right-geometry.pad,`${label}: panel an inset off the right edge`);
@@ -148,9 +151,9 @@ try{
   }
 
   // The layout. Each card at window widths round its threshold
-  // 3 × pad + W + 320 + sidebar (pad 32): the reading column 680 (1336),
-  // a picture 880 × 1100 at 544 (1200), a portrait video 1080 × 1920 at 383
-  // (1039).
+  // 4 × pad + W + 321 + sidebar (Р3; pad 32): the reading column 680
+  // (1369), a picture 880 × 1100 at 544 (1233), a portrait video
+  // 1080 × 1920 at 382.5 (1072).
   const images={'photo.png':[880,1100],'small.png':[600,300],'link.jpg':[400,300],'wide.png':[1920,1080]};
   async function openCard(card,width,height=HEIGHT){
     const page=await browser.newPage({viewport:{width,height}});
@@ -171,15 +174,15 @@ try{
 
   {
     const {page,errors,resize}=await openCard('article',1600);
-    for(const width of [1600,1336,1335,900]){
+    for(const width of [1600,1369,1368,900]){
       const geometry=await resize(width);
       const label=`article at ${width}`;
-      if(width>=1336){
+      if(width>=1369){
         const margin=assertCentredBesidePanel(geometry,geometry.column,label);
-        if(width===1336)near(margin,geometry.pad,`${label}: margins at the inset on the last width beside the panel`);
+        if(width===1369)near(margin,geometry.pad,`${label}: margins at the inset on the last width beside the panel`);
       }else{
-        // Stacked at 1335 the area is wider than the column, at 900 not.
-        assert.equal(assertStacked(geometry,geometry.column,label),width===1335,`${label}: panel cards held by the reading column`);
+        // Stacked at 1368 the area is wider than the column, at 900 not.
+        assert.equal(assertStacked(geometry,geometry.column,label),width===1368,`${label}: panel cards held by the reading column`);
       }
       assert.equal(geometry.bodyMedia.length,2,`${label}: both body media`);
       for(const media of geometry.bodyMedia)near(media.left-geometry.column.left,geometry.column.right-media.right,`${label}: body media centred in the column`);
@@ -188,45 +191,45 @@ try{
       near(geometry.videos[0].frame.height,LIMIT,`${label}: portrait body video at the height limit`);
     }
     assert.deepEqual(errors,[]);
-    console.log('PASS article: centred beside the panel at 1600 and 1336, stacked at 1335 with panel cards 680 wide and centred and at 900 across the width between the insets, body media centred, body video box is its frame');
+    console.log('PASS article: centred beside the panel at 1600 and 1369, stacked at 1368 with panel cards 680 wide and centred and at 900 across the width between the insets, body media centred, body video box is its frame');
     await page.close();
   }
 
   {
     const {page,errors,resize}=await openCard('image',1600);
-    for(const width of [1600,1200,1199]){
+    for(const width of [1600,1233,1232]){
       const geometry=await resize(width);
       const label=`picture at ${width}`;
       near(geometry.image.width,544,`${label}: frame width at the height limit`);
-      if(width>=1200){
+      if(width>=1233){
         const margin=assertCentredBesidePanel(geometry,geometry.image,label);
-        if(width===1200)near(margin,geometry.pad,`${label}: margins at the inset`);
+        if(width===1233)near(margin,geometry.pad,`${label}: margins at the inset`);
       }else{
         assert(assertStacked(geometry,geometry.image,label),`${label}: panel cards held by the reading column`);
       }
     }
     assert.deepEqual(errors,[]);
-    console.log('PASS picture: centred beside the panel at 1600 and 1200, stacked at 1199 with panel cards 680 wide and centred');
+    console.log('PASS picture: centred beside the panel at 1600 and 1233, stacked at 1232 with panel cards 680 wide and centred');
     await page.close();
   }
 
   {
     const {page,errors,resize}=await openCard('video',1600);
-    for(const width of [1600,1039,1038]){
+    for(const width of [1600,1072,1071]){
       const geometry=await resize(width);
       const label=`video at ${width}`;
       assert.equal(geometry.videos.length,1,`${label}: the card's video`);
       const [video]=geometry.videos;
       assertVideoFillsFrame(video,1080/1920,label);
-      if(width>=1039){
+      if(width>=1072){
         const margin=assertCentredBesidePanel(geometry,video.frame,label);
-        if(width===1039)near(margin,geometry.pad,`${label}: margins at the inset`);
+        if(width===1072)near(margin,geometry.pad,`${label}: margins at the inset`);
       }else{
         assert(assertStacked(geometry,video.frame,label),`${label}: panel cards held by the reading column`);
       }
     }
     assert.deepEqual(errors,[]);
-    console.log('PASS video: box is its frame, centred beside the panel at 1600 and 1039, stacked at 1038 with panel cards 680 wide and centred');
+    console.log('PASS video: box is its frame, centred beside the panel at 1600 and 1072, stacked at 1071 with panel cards 680 wide and centred');
     await page.close();
   }
 

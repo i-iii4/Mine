@@ -325,4 +325,35 @@ describe("getVisibleItemsFromIndex — matches brute force filter", () => {
     const visible = getVisibleItemsFromIndex(index, layout.totalHeight + 1000, 500, 0, 0);
     expect(visible.length).toBe(0);
   });
+
+  // Spacing 8 and 2 (user's decision of 15.11.2026): the gap and the edges
+  // stay the token, cards never touch, and a column comes in only where its
+  // minimum width and one more gap fit.
+  describe.each([8, 2])("at Spacing %i", (gap) => {
+    it.each([390, 470, 850, 1200, 1800])("lays a feed of %i px out with gaps of exactly the token", (feed) => {
+      const width = feed - 2 * gap;
+      const heights = Array.from({ length: 24 }, (_, index) => 80 + ((index * 53) % 170));
+      const layout = computeMasonryLayout(heights, width, MIN_COL, gap);
+      expect(layout.columnCount).toBe(Math.max(2, Math.floor((width + gap) / (MIN_COL + gap))));
+      const byColumn = new Map<number, typeof layout.positions>();
+      for (const position of layout.positions) {
+        expect(position.left).toBeGreaterThanOrEqual(0);
+        expect(position.left + position.width).toBeLessThanOrEqual(width);
+        byColumn.set(position.column, [...(byColumn.get(position.column) ?? []), position]);
+      }
+      const columns = [...byColumn.keys()].sort((a, b) => a - b);
+      // The last column ends at the edge: the space at both edges is the inset alone.
+      const last = byColumn.get(columns.at(-1)!)![0]!;
+      expect(last.left + last.width).toBe(width);
+      for (const [index, column] of columns.entries()) {
+        const cards = byColumn.get(column)!;
+        for (let i = 1; i < cards.length; i += 1) expect(cards[i]!.top - cards[i - 1]!.bottom).toBe(gap);
+        if (index > 0) {
+          const before = byColumn.get(columns[index - 1]!)![0]!;
+          expect(cards[0]!.left - (before.left + before.width)).toBe(gap);
+        }
+      }
+    });
+  });
 });
+

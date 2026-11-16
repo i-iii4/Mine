@@ -42,6 +42,7 @@ function searchMatchEqual(
  * rendering, so the previous object can be reused to preserve identity.
  */
 export function lightBlockContentEqual(a: LightBlock, b: LightBlock): boolean {
+  if (a === b) return true;
   return (
     a.id === b.id &&
     a.slug === b.slug &&
@@ -94,14 +95,20 @@ export function reconcileBlocks(
 ): LightBlock[] {
   if (prev.length === 0) return next;
 
-  const prevById = new Map<number, LightBlock>();
-  for (const block of prev) {
-    prevById.set(block.id, block);
-  }
+  // A card is looked up by id only once one is not at the place it had: a
+  // list read again in the same order, or with one row replaced, is matched
+  // place by place.
+  let prevById: Map<number, LightBlock> | null = null;
+  const previousOf = (block: LightBlock, index: number): LightBlock | undefined => {
+    const samePlace = prev[index];
+    if (samePlace !== undefined && samePlace.id === block.id) return samePlace;
+    prevById ??= new Map(prev.map((held) => [held.id, held]));
+    return prevById.get(block.id);
+  };
 
   let changed = next.length !== prev.length;
   const result = next.map((block, index) => {
-    const previous = prevById.get(block.id);
+    const previous = previousOf(block, index);
     if (previous && lightBlockContentEqual(previous, block)) {
       if (previous !== prev[index]) changed = true;
       return previous;

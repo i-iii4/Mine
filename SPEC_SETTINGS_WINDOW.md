@@ -1,5 +1,7 @@
 # Settings Window — отдельное окно настроек
 
+**Состояние:** реализовано. Источник: PLAN.md, Phase 29. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ## Shortcuts

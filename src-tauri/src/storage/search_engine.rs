@@ -2884,15 +2884,15 @@ mod tests {
     /// The speed of a one-character search on a large space: 10 000 cards
     /// whose names start with the same few letters, so the letter matches
     /// thousands of them. The limit is the search's (SPEC_SEARCH.md,
-    /// Performance Contract: first results under 100 ms on a warm index),
-    /// asserted in an optimised build through `INITIAL_TIMING_ENV`; an
-    /// unoptimised build says its numbers.
+    /// Performance Contract: first results under 100 ms on a warm index), an
+    /// optimised build's: a speed test, run by `test:rust-speed` alone
+    /// (ARCHITECTURE.md, «Тесты скорости Rust»).
     #[test]
-    fn a_one_character_search_of_a_large_space_answers_within_the_search_limit() {
+    #[ignore = "asserts a speed limit of an optimised build: bun run test:rust-speed"]
+    fn a_one_character_search_of_a_large_space_answers_within_its_limit() {
         const CARDS: usize = 10_000;
         const READS: usize = 12;
         const LIMIT: std::time::Duration = std::time::Duration::from_millis(100);
-        const INITIAL_TIMING_ENV: &str = "MINE_SEARCH_INITIAL_TIMING";
         let words = ["город", "дом", "сад", "Garden", "house", "street", "мост", "река"];
         let conn = test_conn();
         conn.execute_batch("BEGIN").unwrap();
@@ -2920,14 +2920,10 @@ mod tests {
         let (median, slowest, found) = time("г");
         assert_eq!(found, (200, true));
         let (two_median, two_slowest, _) = time("го");
-        let asserted = std::env::var(INITIAL_TIMING_ENV).is_ok_and(|value| value == "assert");
         eprintln!(
-            "one-character search, {CARDS} cards: median {median:?}, slowest {slowest:?}; two characters: median {two_median:?}, slowest {two_slowest:?}; limit {LIMIT:?}{}",
-            if asserted { ", asserted" } else { ", reported" },
+            "one-character search, {CARDS} cards: median {median:?}, slowest {slowest:?}; two characters: median {two_median:?}, slowest {two_slowest:?}; limit {LIMIT:?}, asserted",
         );
-        if asserted {
-            assert!(slowest <= LIMIT, "one-character search {slowest:?} over {LIMIT:?} (median {median:?})");
-        }
+        assert!(slowest <= LIMIT, "one-character search {slowest:?} over {LIMIT:?} (median {median:?})");
     }
 
     #[test]

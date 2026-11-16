@@ -119,7 +119,7 @@ const near = (first, second, by = 2) => first.every((channel, index) => Math.abs
  * themes (SPEC_KEYBOARD.md, М5). Where the words stand bare (Contents) what masks the
  * dotted leader takes the colour of the ground under it: the plate under the keyboard's
  * focus, the panel otherwise, and the dots still stop before the word. Where they stand
- * on a real button (Plain, the table) its face stands as far from the plate as from the
+ * on a real button (the table) its face stands as far from the plate as from the
  * panel. Every sample is reported as it fails.
  */
 /** A first character typed on a row, in the engine the app runs on (SPEC_KEYBOARD.md,
@@ -189,7 +189,6 @@ async function eitherPart() {
   const opened = async (look, width, query) => {
     const page = await engine.newPage({ viewport: { width: 1000, height: 700 } });
     await page.addInitScript({ content: `
-      localStorage.setItem("mine.sidebar.listStyle", ${JSON.stringify(look === "contents" ? "contents" : "plain")});
       window.shownLabel = ${shownLabel.toString()};
     ` });
     await page.goto(new URL(`${route}?width=${width}${query}`, vite.origin).href);
@@ -232,7 +231,7 @@ async function eitherPart() {
     return read(page, key);
   };
   try {
-    for (const [look, width] of [["contents", 320], ["plain", 320], ["table", 600]]) {
+    for (const [look, width] of [["contents", 320], ["table", 600]]) {
       // A card open: alpha current and connected, gamma connected, beta neither.
       const page = await opened(look, width, "");
       const rest = {
@@ -337,6 +336,55 @@ async function eitherPart() {
       shows(await seen(selection, "tag:beta"), quiet, "Connect", "none of the selection, over the right part");
       await selection.close();
       console.log(`PASS ${look}: the name or the button answers, never both, under the pointer, the keyboard and a selection`);
+
+      // Every row's button answers as far left as its word will step, stepped
+      // or not (user's decision of 15.11.2026; SPEC_CARD_STATES.md, С7.10): a
+      // pointer going straight down or up through the words lights each row's
+      // word in turn, a press there reaches the button, and the edge does not
+      // flip under a pointer that crosses it slowly.
+      for (const query of ["", "&feed&selection"]) {
+        const page = await opened(look, width, query);
+        const where = query ? "a selection" : "a card open";
+        const rows = await page.evaluate(() => [...document.querySelectorAll("[data-sidebar-row]")]
+          .filter((row) => row.querySelector("[data-sidebar-link-action]"))
+          .map((row) => {
+            const button = row.querySelector("[data-sidebar-link-action]");
+            const box = button.getBoundingClientRect();
+            const reach = getComputedStyle(button).getPropertyValue("--sidebar-link-reach").trim() === ""
+              ? 0
+              : Number.parseFloat(getComputedStyle(button, "::after").width);
+            return { key: row.dataset.sidebarRowKey, left: box.left, top: box.top, bottom: box.bottom, reach };
+          }));
+        assert(rows.length >= 3, `${look}, ${where}: rows with a button (${rows.length})`);
+        if (look === "contents") assert(rows.every((row) => row.reach > 0), `${look}, ${where}: every row's button reaches left`);
+        else assert(rows.every((row) => row.reach === 0), `${look}, ${where}: the table's buttons do not step`);
+        // Where the stepped word's first letter stands: the far left of the
+        // reach, the same for every row whose words end at the row's edge.
+        const x = Math.max(...rows.map((row) => row.left - row.reach)) + 2;
+        for (const order of [rows, [...rows].reverse()]) {
+          for (const row of order) {
+            await page.mouse.move(x, (row.top + row.bottom) / 2, { steps: 4 });
+            const marked = await page.evaluate(() => [...document.querySelectorAll("[data-sidebar-link-pointer]")]
+              .map((button) => button.closest("[data-sidebar-row]")?.dataset.sidebarRowKey));
+            assert.deepEqual(marked, [row.key], `${look}, ${where}: going ${order === rows ? "down" : "up"} through the words, ${row.key}'s button answers`);
+            const pressed = await page.evaluate(([px, py]) => document.elementFromPoint(px, py)?.closest("[data-sidebar-row]")?.querySelector("[data-sidebar-link-action]") === document.elementFromPoint(px, py)?.closest("[data-sidebar-link-action]"), [x, (row.top + row.bottom) / 2]);
+            assert(pressed, `${look}, ${where}: a press at ${row.key}'s word reaches its button`);
+          }
+        }
+        // Across the edge a pixel at a time, both ways: the answer changes
+        // once, at the same place.
+        const row = rows[1];
+        const edge = row.left - row.reach;
+        const y = (row.top + row.bottom) / 2;
+        const answers = [];
+        for (const dx of [-3, -2, -1, 0, 1, 2, 3, 2, 1, 0, -1, -2, -3]) {
+          await page.mouse.move(edge + dx + 0.5, y);
+          answers.push([dx, await page.evaluate((key) => document.querySelector(`[data-sidebar-row-key="${key}"] [data-sidebar-link-action]`).hasAttribute("data-sidebar-link-pointer"), row.key)]);
+        }
+        for (const [dx, marked] of answers) assert.equal(marked, dx >= 0, `${look}, ${where}: ${dx} px from the edge, the button ${marked ? "answers" : "does not"}`);
+        await page.close();
+      }
+      console.log(`PASS ${look}: every row's button answers as far left as its word will step, down and up through the words, a press there reaches it, the edge holds both ways`);
     }
   } finally {
     await engine.close();
@@ -351,7 +399,6 @@ async function keyboardAtOnce() {
   const opened = async (look, query) => {
     const page = await engine.newPage({ viewport: { width: 1000, height: 700 } });
     await page.addInitScript({ content: `
-      localStorage.setItem("mine.sidebar.listStyle", ${JSON.stringify(look === "contents" ? "contents" : "plain")});
       window.shownLabel = ${shownLabel.toString()};
       /** What a row shows, and what still runs on its name, its button and all inside it. */
       window.readRow = (key) => {
@@ -387,11 +434,11 @@ async function keyboardAtOnce() {
   };
   const step = (page, key, rows) => page.evaluate(([keyName, rowKeys]) => window.firstFrame(keyName, rowKeys), [key, rows]);
   try {
-    for (const look of ["contents", "plain", "table"]) {
+    for (const look of ["contents", "table"]) {
       // A card open: the button answers at once, and the name stays quiet.
       const page = await opened(look, "");
       const rest = await page.evaluate(() => ["tag:alpha", "tag:beta", "tag:gamma"].map((key) => window.readRow(key)));
-      const [bright, muted] = [rest[0].name, rest[1].name];
+      const muted = rest[1].name;
       const still = (seen, what) => {
         for (const [rowKey, row] of Object.entries(seen)) {
           assert.deepEqual(row.running, [], `${look}: ${rowKey} runs nothing in the first frame, ${what}`);
@@ -490,10 +537,9 @@ async function pixelsAroundTheWord() {
   const failures = [];
   try {
     for (const theme of ["dark", "light"]) {
-      for (const [look, width] of [["contents", 320], ["plain", 320], ["table", 600]]) {
+      for (const [look, width] of [["contents", 320], ["table", 600]]) {
         const page = await engine.newPage({ viewport: { width: 1000, height: 700 } });
         await page.addInitScript({ content: `
-          localStorage.setItem("mine.sidebar.listStyle", ${JSON.stringify(look === "contents" ? "contents" : "plain")});
           window.shownLabel = ${shownLabel.toString()};
         ` });
         await page.goto(new URL(`${route}?theme=${theme}&width=${width}`, vite.origin).href);
@@ -604,7 +650,7 @@ async function pixelsAroundTheWord() {
         }
         await page.close();
       }
-      console.log(`PASS ${theme}: pixels around the words sampled in Contents, Plain and the table`);
+      console.log(`PASS ${theme}: pixels around the words sampled in Contents and the table`);
     }
   } finally {
     await engine.close();

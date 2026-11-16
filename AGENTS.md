@@ -31,8 +31,7 @@
 - `SPEC_GRID.md` — спецификация zero-jank masonry grid: Canvas measureText precomputation, dual-path (native grid-lanes + virtualized JS), детерминистические высоты
 - `SPEC_THUMBNAILS.md` — спецификация thumbnail pipeline: two-phase (Rust instant placeholder + WebView async upgrade), event-driven sidebar, виртуализация, поддержка всех форматов расширения через native decoder
 - [SPEC_FEED_DISPLAY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_FEED_DISPLAY.md>): настройки отображения ленты: кнопка Display, порядок, вид карточек (Media and Text, Text on Hover, Media Only), расстояние; реализовано 30.09.2026, третий вид и новые названия 11.11.2026
-- `SPEC_DISPLAY_MODES.md` — спецификация display modes: архитектура переключения между masonry/grid/table/columns, принцип изоляции (display mode = только рендеринг), единый интерфейс `DisplayModeProps`
-- `SPEC_FEED_SCROLL_PERFORMANCE.md` — контракт canvas-feel бесконечной ленты: velocity-aware render runway, media preload/decode windows, лимиты, диагностика
+- `SPEC_FEED_SCROLL_PERFORMANCE.md` — контракт canvas-feel бесконечной ленты: velocity-aware render runway, окно приоритета, подготовка картинки карточки сразу после монтирования (15.11.2026, предзагрузчик снят), диагностика, проверка `test:feed-images`
 - `SPEC_GRID_LAYOUT_READINESS.md` — deterministic live geometry: render-ready gate, committed prefix, skeleton envelope, deep fast-scroll acceptance
 - `SPEC_CARD_MEDIA_GEOMETRY.md` — геометрия медиа-карточки: размеры артефакта пишет генератор превью, размеры источника остаются у autoplay/Resolution, кламп пропорции как единственная точка обрезки; видеокарточка с 30.09.2026 тоже берёт форму постера
 - `SPEC_FEED_VIDEO.md` — desktop feed video contract: четыре surfaces, `feed_playback` descriptor, autoplay gating standard/heavy
@@ -193,7 +192,6 @@ local-arena/
 │   │       ├── blocks.rs       # → вызывает domain + storage
 │   │       ├── channels.rs     # list/create/delete/reorder channels
 │   │       ├── conflicts.rs    # Vault conflict resolution
-│   │       ├── clipper_recovery.rs # Recovery pending uploads расширения
 │   │       ├── clipper_setup.rs # Установка помощника клиппера и его самопочинка во время работы
 │   │       ├── icloud_progress.rs # Процент загрузки файла из iCloud (Swift-помощник)
 │   │       ├── cloud_recommendation.rs # Состояние и закрытие рекомендации Keep Downloaded
@@ -285,7 +283,7 @@ local-arena/
 │       └── main.rs             # Генерация Swift bindings
 ├── ios/                        # iOS-приложение (SwiftUI)
 │   ├── Mine.xcodeproj
-│   ├── LocalArena/
+│   ├── Mine/
 │   │   ├── MineApp.swift # @main, WindowGroup, VaultViewModel
 │   │   ├── ContentView.swift   # Корневой ZStack, сидинг тестовых данных
 │   │   ├── GridView.swift      # Masonry 2 колонки, @State навигация (без NavigationStack)

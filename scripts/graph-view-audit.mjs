@@ -1,9 +1,15 @@
 #!/usr/bin/env node
 import { chromium } from "playwright";
 import { PNG } from "pngjs";
+import { routeEntry, serveProductionPage } from "./audit-production-page.mjs";
 
-const DEFAULT_AUDIT_URL = "http://127.0.0.1:1420/__graph-audit";
-const AUDIT_URL = process.env.MINE_GRAPH_AUDIT_URL ?? DEFAULT_AUDIT_URL;
+const AUDIT_ROUTE = "/__graph-audit";
+/** A page the caller serves instead, to measure it (a dev server's
+ *  `/__graph-audit`, React's development build): by default the audit builds
+ *  the route for production and serves it itself, so its first paint, frames
+ *  and long tasks are the app's (AUDIT_PERFORMANCE.md, Пр3). */
+const GIVEN_AUDIT_URL = process.env.MINE_GRAPH_AUDIT_URL;
+let AUDIT_URL = GIVEN_AUDIT_URL;
 const FIRST_PAINT_BUDGET_MS = 1_000;
 const PAINT_WAIT_TIMEOUT_MS = 3_000;
 const MAX_UNIQUE_IMAGE_REQUESTS = 48;
@@ -20,9 +26,9 @@ async function assertDevServerReady() {
   } catch (error) {
     throw new Error([
       `Graph audit route is not reachable: ${AUDIT_URL}`,
-      "Start the existing dev app first, then rerun `bun run test:graph`.",
+      "The server of the route did not answer.",
       `Original error: ${error instanceof Error ? error.message : String(error)}`,
-    ].join("\n"));
+    ].join("\n"), { cause: error });
   }
 }
 
@@ -85,6 +91,7 @@ async function waitForGraphPaint(page, requireSettledFrame = false) {
     throw new Error(
       `Graph paint timed out: ${JSON.stringify(diagnostics)}\n`
       + `${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
     );
   }
 }
@@ -525,9 +532,11 @@ async function verifyCollectionHoverDimming(page) {
     throw new Error(`Collection pills were not painted: ${JSON.stringify(labels)}`);
   }
   const expected = await page.evaluate(async () => {
-    // The share comes from the colour law itself, served by the dev server,
-    // not from what the graph happens to draw.
-    const { GRAPH_CONTEXT_OPACITY } = await import("/src/lib/colorLaw.ts");
+    // The share comes from the colour law itself, not from what the graph
+    // happens to draw: the audit's own page publishes it, a dev server
+    // serves the module.
+    const GRAPH_CONTEXT_OPACITY = window.__MINE_GRAPH_CONTEXT_OPACITY__
+      ?? (await import("/src/lib/colorLaw.ts")).GRAPH_CONTEXT_OPACITY;
     const probe = document.createElement("span");
     document.body.appendChild(probe);
     probe.style.backgroundColor = "var(--background)";
@@ -789,14 +798,36 @@ async function runTheme(browser, theme) {
   };
 }
 
-await assertDevServerReady();
-const browser = await chromium.launch({ headless: true });
+/** The route's pictures are the public folder's, as src/main.tsx maps them
+ *  for the dev route (installAuditTauriMocks). */
+function graphAssetAddress(path) {
+  if (path.startsWith("/feed-scroll-audit/")) return path;
+  const card = path.match(/\/graph-audit\/thumbs\/graph-card-(\d+)(?:\.(?:micro|zoom|preview-\d+))?\.jpg$/);
+  return card ? `/feed-scroll-audit/audit-${Number(card[1]) % 6}.svg` : null;
+}
+
+const served = GIVEN_AUDIT_URL ? null : await serveProductionPage({
+  name: "graph-audit",
+  route: AUDIT_ROUTE,
+  entry: routeEntry({
+    module: "/src/dev/GraphAuditRoute.tsx",
+    name: "GraphAuditRoute",
+    assetAddress: graphAssetAddress,
+    setup: `import { GRAPH_CONTEXT_OPACITY } from "/src/lib/colorLaw.ts";
+      window.__MINE_GRAPH_CONTEXT_OPACITY__ = GRAPH_CONTEXT_OPACITY;`,
+  }),
+});
+if (served) AUDIT_URL = served.url;
+let browser;
 try {
+  await assertDevServerReady();
+  browser = await chromium.launch({ headless: true });
   const results = [];
   for (const theme of ["dark", "light"]) {
     results.push(await runTheme(browser, theme));
   }
   console.log(JSON.stringify({ ok: true, url: AUDIT_URL, results }, null, 2));
 } finally {
-  await browser.close();
+  await browser?.close();
+  await served?.close();
 }

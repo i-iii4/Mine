@@ -158,18 +158,14 @@ async function main() {
   const port = await reserveFreePort();
   const origin = `http://${HOST}:${port}`;
   const logs = [];
+  // The dev server of the audits that check behaviour, not time: the
+  // sidebar reorder and the edge states.
   const server = spawn(
     "bun",
     ["run", "dev", "--", "--host", HOST, "--port", String(port), "--strictPort"],
     {
       cwd: process.cwd(),
-      env: {
-        ...process.env,
-        MINE_COLD_SPACE_SNAPSHOT_PATH: coldPayload,
-        MINE_COLD_SPACE_ASSET_ROOT: fs.realpathSync(
-          path.join(coldDerived, "cycle-1", "cache", "thumbs"),
-        ),
-      },
+      env: process.env,
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -201,15 +197,21 @@ async function main() {
   process.once("SIGTERM", terminate);
 
   try {
-    await waitForServer(`${origin}/__feed-scroll-audit`, server, () => logs.join(""));
-    await runAudit("scripts/feed-scroll-audit.mjs", {
-      MINE_FEED_SCROLL_AUDIT_URL: `${origin}/__feed-scroll-audit`,
-    }, onAuditChildChange);
-    await runAudit("scripts/graph-view-audit.mjs", {
-      MINE_GRAPH_AUDIT_URL: `${origin}/__graph-audit`,
-    }, onAuditChildChange);
+    await waitForServer(`${origin}/__sidebar-reorder-audit`, server, () => logs.join(""));
+    // Builds its page for production and serves it itself: its frames are
+    // the app's React, not the development build's.
+    await runAudit("scripts/feed-scroll-audit.mjs", {}, onAuditChildChange);
+    // WebKit, a recording of the page: pictures that are late while the feed
+    // scrolls, which Chromium never shows.
+    await runAudit("scripts/feed-images-audit.mjs", {}, onAuditChildChange);
+    // Build their pages for production too: the graph's first paint, frames
+    // and long tasks and the cold feed are the app's (AUDIT_PERFORMANCE.md, Пр3).
+    await runAudit("scripts/graph-view-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/cold-space-browser-audit.mjs", {
-      MINE_COLD_SPACE_AUDIT_URL: `${origin}/__cold-space-audit`,
+      MINE_COLD_SPACE_SNAPSHOT_PATH: coldPayload,
+      MINE_COLD_SPACE_ASSET_ROOT: fs.realpathSync(
+        path.join(coldDerived, "cycle-1", "cache", "thumbs"),
+      ),
     }, onAuditChildChange);
     await runAudit("scripts/sidebar-reorder-audit.mjs", {
       MINE_SIDEBAR_REORDER_AUDIT_URL: `${origin}/__sidebar-reorder-audit`,
@@ -218,6 +220,13 @@ async function main() {
       MINE_EDGE_STATES_AUDIT_URL: `${origin}/edge-states.html`,
     }, onAuditChildChange);
     // Start and stop a Vite of their own (audit-vite.mjs).
+    await runAudit("scripts/selection-menu-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/sidebar-action-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/top-row-wrap-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/detail-image-geometry-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/settings-menu-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/card-drag-scroll-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/menu-panel-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/narrow-window-audit.mjs", {}, onAuditChildChange);
     // Builds its page for production; the Rust test of the full read builds
     // the tests optimised and runs with `bun run test:sidebar-strip`.
@@ -228,7 +237,8 @@ async function main() {
     await runAudit("scripts/paste-feed-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/image-preview-motion-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/card-peek-motion-audit.mjs", {}, onAuditChildChange);
-    await runAudit("scripts/tooltip-glide-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/card-open-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/tooltip-motion-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/swipe-scroller-audit.mjs", {}, onAuditChildChange);
     // The browser's measures only: the Rust test of the save's time builds
     // the tests optimised and runs with `bun run test:editing-perf`.

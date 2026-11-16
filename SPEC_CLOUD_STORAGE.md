@@ -1,5 +1,7 @@
 # Хранилище в облаке: неблокирующий интерфейс
 
+**Состояние:** реализовано, живая приёмка первого открытия пространства из облака за пользователем. Источник: PLAN.md, строки R5, V2, V3, V6 и Phase 42. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_TABS.md](SPEC_TABS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
 
 Решения приняты в рабочей сессии 14.08.2026 после исследования отраслевой

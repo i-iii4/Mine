@@ -200,6 +200,48 @@ test('a command runs only the tests it selects', () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+// AUDIT_CODE_QUALITY.md, О1: a check counts as run when a combined command
+// does what it does, not when its name merely resembles one.
+test('one command covers another when it starts it or does each of its steps', () => {
+  const root = fixture();
+  try {
+    const scripts = {
+      whole: 'bun run test:node && bun run test:audit && node scripts/tool.mjs --strict && vitest run',
+      'test:node': 'node --test scripts/tool.test.mjs',
+      'test:audit': 'node scripts/audit.mjs',
+      'test:step': 'node scripts/step.mjs',
+      'test:step-strict': 'node scripts/step.mjs --strict',
+      'test:tool': 'node scripts/tool.mjs',
+      'test:tool-strict': 'node scripts/tool.mjs --strict',
+      'test:cli': 'node scripts/cli.mjs',
+      'test:node-again': 'node --test scripts/tool.test.mjs',
+      'test:both': 'bun run test:step && bun run test:node-again',
+      'test:mixed': 'bun run test:step && bun run test:cli',
+      'test:front-one': 'vitest run src/a.test.ts',
+      'test:front-filter': 'vitest run src/a',
+      'test:rust-named': 'cargo test -p demo --lib only_this',
+    };
+    const reach = createReach(root, new Map([['package.json', JSON.stringify({ scripts })]]));
+    const covered = name => reach.covers('whole', name);
+    // Started by name, itself included.
+    for (const name of ['whole', 'test:node', 'test:audit']) assert.equal(covered(name), true, name);
+    // A script the command's script launches, the same step word for word,
+    // the same test files, and a command made of such steps.
+    for (const name of ['test:step', 'test:tool-strict', 'test:node-again', 'test:both', 'test:front-one']) assert.equal(covered(name), true, name);
+    // Other arguments are another check: with them when the launcher's are
+    // not read, without them when the command passes some.
+    assert.equal(covered('test:step-strict'), false);
+    assert.equal(covered('test:tool'), false);
+    // A script nothing starts, a command with one such step, a filter that
+    // is not a file, a Cargo test picked by name.
+    for (const name of ['test:cli', 'test:mixed', 'test:front-filter', 'test:rust-named']) assert.equal(covered(name), false, name);
+    assert.throws(() => covered('missing'), /No package.json script/);
+    // The text given for a file stands in for the file on the disk.
+    const without = createReach(root, new Map([['package.json', JSON.stringify({ scripts })], ['scripts/audit.mjs', 'console.log(1);\n']]));
+    assert.equal(without.covers('whole', 'test:step'), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('the tests that execute a file are found for a failing registry check', () => {
   const root = fixture();
   try {

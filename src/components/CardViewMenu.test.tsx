@@ -25,7 +25,7 @@ async function openMenu() {
   return user;
 }
 
-/// TRIAL (SPEC_CARD_PEEK.md, О1): «Card view» in the Display panel.
+/// SPEC_CARD_PEEK.md, О1: «Card view» in the Display panel.
 describe("CardViewMenu", () => {
   afterEach(() => {
     localStorage.removeItem(CARD_VIEW_STORAGE_KEY);

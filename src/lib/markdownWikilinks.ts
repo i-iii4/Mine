@@ -10,8 +10,8 @@
 // rest. Encoding is isolated to the render boundary; the `.md` file on
 // disk stays human-readable in Obsidian and Finder.
 
-import { fromMarkdown } from "mdast-util-from-markdown";
 import type { Nodes, Root } from "mdast";
+import { assembleRenderedTree } from "@/lib/reading/renderedTree";
 import { parseReadingSyntax } from "@/lib/reading/syntax";
 // The feed decodes local addresses too and must not take this module, which
 // holds the reading parser, into the first screen's bundle.
@@ -73,9 +73,8 @@ const VERBATIM_NODE_TYPES: ReadonlySet<string> = new Set([
   "html",
 ]);
 
-/** The ranges of code, math and HTML in `body`, ascending, from one parse
- *  with the pipeline's own syntax. */
-function verbatimRanges(body: string): Array<[number, number]> {
+/** The ranges of code, math and HTML of `tree`, ascending. */
+function verbatimRanges(tree: Root): Array<[number, number]> {
   const ranges: Array<[number, number]> = [];
   function visit(node: Nodes) {
     if (VERBATIM_NODE_TYPES.has(node.type)) {
@@ -86,7 +85,7 @@ function verbatimRanges(body: string): Array<[number, number]> {
     }
     if ("children" in node) node.children.forEach(visit);
   }
-  visit(parseReadingSyntax(body));
+  visit(tree);
   return ranges.sort((left, right) => left[0] - right[0]);
 }
 
@@ -123,9 +122,22 @@ export function wikilinkHref(name: string): string {
  *  Л9.12). */
 const WIKILINK_OPENER = "[[";
 
-function computePreprocessedBody(body: string): PreprocessedBody {
-  if (!body.includes(WIKILINK_OPENER)) return { text: body, rewrites: [] };
-  const verbatim = verbatimRanges(body);
+/** A body's pre-processing with the tree it parsed, the body's own as
+ *  written, kept until the rendered text's tree is made of it
+ *  (`parseRenderedBody`); `null` for a body that was not parsed, and once
+ *  the tree is taken. */
+interface KeptPreprocessing {
+  body: string;
+  rendered: PreprocessedBody;
+  sourceTree: Root | null;
+}
+
+function computePreprocessedBody(body: string): KeptPreprocessing {
+  if (!body.includes(WIKILINK_OPENER)) return { body, rendered: { text: body, rewrites: [] }, sourceTree: null };
+  // One parse with the pipeline's own syntax: it tells where code, math and
+  // HTML stand, and the rendered text's tree is made of it (Ч0.5).
+  const sourceTree = parseReadingSyntax(body);
+  const verbatim = verbatimRanges(sourceTree);
   const found: Array<{ start: number; end: number; replacement: string }> = [];
   for (const match of body.matchAll(WIKILINK_EMBED)) {
     const end = match.index + match[0].length;
@@ -154,7 +166,7 @@ function computePreprocessedBody(body: string): PreprocessedBody {
     sourceCursor = end;
   }
   text += body.slice(sourceCursor);
-  return { text, rewrites };
+  return { body, rendered: { text, rewrites }, sourceTree };
 }
 
 /** Texts whose pre-processing and Markdown tree are kept: the open card's
@@ -165,37 +177,72 @@ export const PARSED_TEXT_CACHE_LIMIT = 8;
 
 /** A small cache of what a text gave, the latest last; a text is looked up by
  *  its value, as a body arrives anew with every read of its card. */
-class TextCache<Value> {
+export class TextCache<Value> {
   private readonly entries = new Map<string, Value>();
 
+  /** What `text` gave, made by `compute` when it is not kept. */
   get(text: string, compute: (text: string) => Value): Value {
-    const found = this.entries.get(text);
-    if (found !== undefined) {
-      this.entries.delete(text);
-      this.entries.set(text, found);
-      return found;
-    }
+    const found = this.peek(text);
+    if (found !== undefined) return found;
     const value = compute(text);
+    this.set(text, value);
+    return value;
+  }
+
+  /** What `text` gave, when it is kept. */
+  peek(text: string): Value | undefined {
+    const found = this.entries.get(text);
+    if (found === undefined) return undefined;
+    this.entries.delete(text);
+    this.entries.set(text, found);
+    return found;
+  }
+
+  /** Keeps `value` for `text`, the oldest texts going when there are too many. */
+  set(text: string, value: Value): void {
+    this.entries.delete(text);
     this.entries.set(text, value);
     while (this.entries.size > PARSED_TEXT_CACHE_LIMIT) {
       const oldest = this.entries.keys().next().value;
       if (oldest === undefined) break;
       this.entries.delete(oldest);
     }
-    return value;
   }
 }
 
 // The body is drawn, measured and mapped back many times: the selection
 // handle asks for offsets on every change of the selection, and the body
 // parses once.
-const preprocessed = new TextCache<PreprocessedBody>();
-const renderedTrees = new TextCache<Root>();
+const preprocessed = new TextCache<KeptPreprocessing>();
+// The same pre-processings by the text they rendered: the pipeline is given
+// the rendered text and asks for the tree made with it.
+const preprocessedByText = new TextCache<KeptPreprocessing>();
 
-/** The Markdown tree of `processedBody`, a body after `preprocessWikilinks`,
- *  parsed once while it is kept (SPEC_EDITING.md, Л14). */
-export function renderedMarkdownTree(processedBody: string): Root {
-  return renderedTrees.get(processedBody, (text) => fromMarkdown(text));
+function keptPreprocessing(body: string): KeptPreprocessing {
+  return preprocessed.get(body, (written) => {
+    const kept = computePreprocessedBody(written);
+    if (kept.sourceTree) preprocessedByText.set(kept.rendered.text, kept);
+    return kept;
+  });
+}
+
+/**
+ * The syntax tree of `processedBody`, a body after `preprocessWikilinks`, as
+ * the reading pipeline parses it, before its transforms (Ч0.5). The body is
+ * parsed once on its way to the page: where the pre-processing's own parse
+ * of the body as written is kept, the tree is made of it, the blocks that
+ * hold a rewritten wikilink read again and the rest moved to their places in
+ * the rendered text (`assembleRenderedTree`); otherwise, and where that
+ * cannot be told to give the same tree, the rendered text is parsed. The
+ * kept parse is used up: a second call parses.
+ */
+export function parseRenderedBody(processedBody: string): Root {
+  const kept = preprocessedByText.peek(processedBody);
+  const source = kept?.sourceTree;
+  if (!kept || !source) return parseReadingSyntax(processedBody);
+  kept.sourceTree = null;
+  const { text, rewrites } = kept.rendered;
+  return assembleRenderedTree(source, kept.body, text, rewrites) ?? parseReadingSyntax(processedBody);
 }
 
 /**
@@ -219,7 +266,7 @@ export function renderedMarkdownTree(processedBody: string): Root {
  * as they are.
  */
 export function preprocessWikilinksWithMap(body: string): PreprocessedBody {
-  return preprocessed.get(body, computePreprocessedBody);
+  return keptPreprocessing(body).rendered;
 }
 
 /** The rendered Markdown of `body` (`preprocessWikilinksWithMap`). */
@@ -281,26 +328,4 @@ export function inlineMediaOccurrenceIndex(body: string, renderedOffset: number)
     count += 1;
   }
   return count;
-}
-
-/**
- * Where the first image whose destination `matches` starts in
- * `processedBody`, the body react-markdown renders; `null` when there is
- * none. Images are visited in document order, as the reader sees them.
- */
-export function firstImageOffset(
-  processedBody: string,
-  matches: (url: string) => boolean,
-): number | null {
-  let found: number | null = null;
-  function visit(node: Nodes) {
-    if (found !== null) return;
-    if (node.type === "image") {
-      if (matches(node.url)) found = node.position?.start.offset ?? null;
-      return;
-    }
-    if ("children" in node) node.children.forEach(visit);
-  }
-  visit(renderedMarkdownTree(processedBody));
-  return found;
 }

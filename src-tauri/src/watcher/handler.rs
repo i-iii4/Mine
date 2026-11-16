@@ -704,7 +704,7 @@ mod preview_queue {
 
     fn make(vault: &VaultLayout, app: Option<&AppHandle>, slug: &str, job: Job) {
         #[cfg(test)]
-        super::preview_hooks::run(super::preview_hooks::Moment::Before, slug);
+        super::preview_hooks::run(super::preview_hooks::Moment::Before, vault.root(), slug);
         match job {
             Job::Card {
                 block,
@@ -722,7 +722,7 @@ mod preview_queue {
             }
         }
         #[cfg(test)]
-        super::preview_hooks::run(super::preview_hooks::Moment::After, slug);
+        super::preview_hooks::run(super::preview_hooks::Moment::After, vault.root(), slug);
     }
 
     fn make_card_preview(vault: &VaultLayout, app: Option<&AppHandle>, block: &Block) {
@@ -1703,10 +1703,14 @@ fn emit_article_audio_updated(app: &AppHandle, vault: &VaultLayout, slug: &str) 
 // storage::thumbnails as the single source of truth.
 
 /// Moments of a watcher preview a test holds or watches: before the preview
-/// of a card is made and after it is written.
+/// of a card is made and after it is written. A hook belongs to one space,
+/// the space of its test: the previews of other tests' spaces, which run at
+/// the same time, never reach it.
 #[cfg(test)]
 pub(crate) mod preview_hooks {
-    use std::sync::{Arc, Mutex, PoisonError};
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(crate) enum Moment {
@@ -1716,21 +1720,33 @@ pub(crate) mod preview_hooks {
 
     type Hook = Arc<dyn Fn(Moment, &str) + Send + Sync>;
 
-    static HOOK: Mutex<Option<Hook>> = Mutex::new(None);
+    static HOOKS: LazyLock<Mutex<HashMap<PathBuf, Hook>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
 
-    /// Run `hook` at every moment of every watcher preview, until `clear`.
-    pub(crate) fn set(hook: impl Fn(Moment, &str) + Send + Sync + 'static) {
-        *HOOK.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(hook));
+    /// Run `hook` at every moment of every watcher preview of the space at
+    /// `root`, until `clear`.
+    pub(crate) fn set(root: &Path, hook: impl Fn(Moment, &str) + Send + Sync + 'static) {
+        HOOKS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(root.to_path_buf(), Arc::new(hook));
     }
 
-    pub(crate) fn clear() {
-        *HOOK.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    pub(crate) fn clear(root: &Path) {
+        HOOKS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(root);
     }
 
-    pub(crate) fn run(moment: Moment, slug: &str) {
+    pub(crate) fn run(moment: Moment, root: &Path, slug: &str) {
         // The hook runs outside the lock: it may hold its preview while
         // another one runs.
-        let hook = HOOK.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        let hook = HOOKS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(root)
+            .cloned();
         if let Some(hook) = hook {
             hook(moment, slug);
         }
@@ -1773,10 +1789,7 @@ mod tests {
         let started_tx = Mutex::new(started_tx);
         let (after_tx, after_rx) = mpsc::channel::<()>();
         let after_tx = Mutex::new(after_tx);
-        preview_hooks::set(move |moment, slug| {
-            if slug != "Late preview" {
-                return;
-            }
+        preview_hooks::set(vault.root(), move |moment, _slug| {
             match moment {
                 // The first preview of the card is slow: it says it started
                 // and waits for `go`.
@@ -1806,7 +1819,7 @@ mod tests {
         for _ in 0..expected {
             after_rx.recv_timeout(Duration::from_secs(30)).expect("the previews finish");
         }
-        preview_hooks::clear();
+        preview_hooks::clear(vault.root());
 
         let preview = image::open(vault.thumb_path("Late preview")).unwrap().to_rgb8();
         let center = preview.get_pixel(preview.width() / 2, preview.height() / 2);
@@ -2659,6 +2672,23 @@ mod tests {
         assert_ne!(remade, b"preview of the first media");
     }
 
+    /// When the watcher's own preview of an edited card lands, relative to
+    /// the preview pass the same event queues for the card. The watcher's
+    /// preview is the card's thumbnail, with the thumbnail's size stamped
+    /// into the manifest (`preview_queue`, `index::sync_thumb_metadata`); the
+    /// pass makes the same thumbnail and the tiles, then publishes
+    /// (`schedule_preview_reconcile`). In the application the two run on two
+    /// threads, in any of these orders.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum WatcherPreview {
+        BeforeThePass,
+        /// After the pass read the card's plan and made its pictures, before
+        /// it publishes: the order of an edited card with tiles, whose pass
+        /// has more pictures to make than the watcher.
+        WhileThePassPublishes,
+        AfterThePass,
+    }
+
     /// SPEC_THUMBNAILS.md, «Свои записи Mine» (решение пользователя
     /// 09.11.2026): an edit made outside Mine that drops a picture reaches
     /// the feed at once too. The watcher indexes the note with its source
@@ -2666,11 +2696,18 @@ mod tests {
     /// card from the pictures it still shows. Before, the row moved without
     /// the stamp, the pass saw nothing new and published the old tiles at
     /// their new places.
-    #[test]
-    fn an_outside_edit_that_drops_a_picture_redraws_the_card_at_once() {
+    ///
+    /// SPEC_STORAGE.md, «Публикация сверяет план, а не байты манифеста»: the
+    /// card is ready with the sizes of its files whenever the watcher's own
+    /// preview lands. Until 15.11.2026 the size it stamped while the pass
+    /// made the tiles refused the publish of the pass («preview inputs
+    /// changed while publishing»), and the card stayed `stale`.
+    fn assert_an_outside_edit_that_drops_a_picture_redraws_the_card(order: WatcherPreview) {
         use crate::storage::derived_preview::fixtures::{
             drawn_tiles, picture, preview_state, Colour,
         };
+        use crate::storage::derived_preview::{publish_hooks, reconcile_preview_for_slug};
+        use std::sync::mpsc;
         let root = tempfile::tempdir().unwrap();
         let derived = tempfile::tempdir().unwrap();
         let vault =
@@ -2685,25 +2722,139 @@ mod tests {
         crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
         crate::storage::derived_preview::reconcile_all_previews(&conn, &vault).unwrap();
 
+        // The watcher's preview waits for `go` and says when it is written.
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let go_rx = Mutex::new(go_rx);
+        let (written_tx, written_rx) = mpsc::channel::<()>();
+        let written_tx = Mutex::new(written_tx);
+        preview_hooks::set(vault.root(), move |moment, _slug| match moment {
+            preview_hooks::Moment::Before => {
+                let _ = go_rx.lock().unwrap().recv();
+            }
+            preview_hooks::Moment::After => {
+                let _ = written_tx.lock().unwrap().send(());
+            }
+        });
+        let primary_size = {
+            let index_path = vault.index_db_path();
+            move || -> (Option<u32>, Option<u32>) {
+                let raw: String = crate::storage::db::open_or_create(&index_path)
+                    .unwrap()
+                    .query_row(
+                        "SELECT preview_manifest FROM blocks WHERE slug = 'Gallery'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                let manifest: index::FeedPreviewManifest = serde_json::from_str(&raw).unwrap();
+                (manifest.preview_width, manifest.preview_height)
+            }
+        };
+        let make_the_watchers_preview = move || {
+            go_tx.send(()).unwrap();
+            written_rx
+                .recv_timeout(Duration::from_secs(30))
+                .expect("the watcher's preview of the edited card is written");
+        };
+
         std::fs::write(&path, format!("{front}![[green.jpg]]\n\n![[blue.jpg]]\n")).unwrap();
         handle_event(&conn, &vault, &VaultEvent::BlockChanged(path), None).unwrap();
+        assert_eq!(primary_size(), (None, None), "{order:?}: the edit gave the card a new plan");
         // The pass the watcher queues for the card (`schedule_preview_reconcile`).
-        crate::storage::derived_preview::reconcile_preview_for_slug(&conn, &vault, "Gallery")
-            .unwrap();
+        let pass = || reconcile_preview_for_slug(&conn, &vault, "Gallery");
+        let published = match order {
+            WatcherPreview::BeforeThePass => {
+                make_the_watchers_preview();
+                pass()
+            }
+            WatcherPreview::WhileThePassPublishes => {
+                let primary_size = primary_size.clone();
+                publish_hooks::before_next_publish(move |_slug| {
+                    make_the_watchers_preview();
+                    assert_ne!(
+                        primary_size(),
+                        (None, None),
+                        "the watcher stamped its thumbnail's size before the pass published"
+                    );
+                });
+                pass()
+            }
+            WatcherPreview::AfterThePass => {
+                let published = pass();
+                make_the_watchers_preview();
+                published
+            }
+        };
+        preview_hooks::clear(vault.root());
 
+        let outcome = published
+            .unwrap_or_else(|error| panic!("{order:?}: the pass refused to publish: {error:#}"))
+            .expect("the card has a preview to reconcile");
+        assert_eq!(
+            outcome.state,
+            crate::storage::derived_preview::DerivedPreviewState::Ready,
+            "{order:?}"
+        );
         assert_eq!(
             drawn_tiles(&conn, &vault, "Gallery"),
             [
                 ("green.jpg".to_string(), Colour::Green),
                 ("blue.jpg".to_string(), Colour::Blue),
             ],
+            "{order:?}"
         );
-        assert_eq!(preview_state(&conn, "Gallery"), "ready");
+        assert_eq!(preview_state(&conn, "Gallery"), "ready", "{order:?}");
+        // The size the manifest holds for every picture is the size of its
+        // file: the feed shapes the card from it.
+        let raw: String = conn
+            .query_row(
+                "SELECT preview_manifest FROM blocks WHERE slug = 'Gallery'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let manifest: index::FeedPreviewManifest = serde_json::from_str(&raw).unwrap();
+        let on_disk = |relative: &str| {
+            let (width, height) =
+                image::image_dimensions(vault.thumbs_dir().join(relative)).unwrap();
+            (Some(width), Some(height))
+        };
+        let primary = manifest.primary_preview_path.as_deref().unwrap();
+        assert_eq!(
+            (manifest.preview_width, manifest.preview_height),
+            on_disk(primary),
+            "{order:?}: {primary}"
+        );
+        for tile in &manifest.tiles {
+            let preview = tile.preview_path.as_deref().unwrap();
+            assert_eq!(
+                (tile.preview_width, tile.preview_height),
+                on_disk(preview),
+                "{order:?}: {preview}"
+            );
+        }
         let pass = crate::storage::reconcile::reconcile_vault(&conn, &vault).unwrap();
         assert!(
             pass.upserted.is_empty() && pass.dependency_changed.is_empty(),
-            "the index and the source stamp already hold the edited note: {pass:?}",
+            "{order:?}: the index and the source stamp already hold the edited note: {pass:?}",
         );
+    }
+
+    #[test]
+    fn an_outside_edit_that_drops_a_picture_redraws_the_card_at_once() {
+        assert_an_outside_edit_that_drops_a_picture_redraws_the_card(
+            WatcherPreview::WhileThePassPublishes,
+        );
+    }
+
+    #[test]
+    fn an_outside_edit_redraws_the_card_when_the_watchers_preview_lands_before_the_pass() {
+        assert_an_outside_edit_that_drops_a_picture_redraws_the_card(WatcherPreview::BeforeThePass);
+    }
+
+    #[test]
+    fn an_outside_edit_redraws_the_card_when_the_watchers_preview_lands_after_the_pass() {
+        assert_an_outside_edit_that_drops_a_picture_redraws_the_card(WatcherPreview::AfterThePass);
     }
 
     /// Г2.3: media deleted from `Media/`: the preview of the card that showed

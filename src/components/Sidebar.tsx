@@ -1,4 +1,5 @@
 import { scrollBehavior, springMotion, useMotionLevel } from "@/lib/motion";
+import { holdScrollUnderCardPress } from "@/lib/cardPressScroll";
 import { lastInputIsKey } from "@/lib/motionInput";
 import { tagRowSortTransition } from "@/lib/tagRowDragOverlay";
 import {
@@ -161,12 +162,11 @@ const SIDEBAR_ROW_ACTION_BUTTON_GAP = SIDEBAR_ROW_ACTION_GAP_PX;
 ///
 /// The plate belongs to the cell, not to the count's text alignment.
 const SIDEBAR_ROW_ACTION_BUTTON_INSET = SIDEBAR_ROW_ACTION_BUTTON_GAP;
-/// Where Connect and Connected stand from the row's right edge: the inset
-/// from the meta zone's edge, the zone moved by a trial order of the columns
-/// (`--sidebar-meta-right`, sidebarColumnLayout.ts, PLAN 47.6; 0 by default).
-/// A compact item stands them as shadcn stands `SidebarMenuAction`, `right-1`
-/// (`--sidebar-action-inset`, global.css, «Compact rows»).
-const SIDEBAR_ROW_META_ACTION_RIGHT = `calc(var(--sidebar-meta-right, 0px) + var(--sidebar-action-inset, ${SIDEBAR_ROW_ACTION_BUTTON_INSET}px))`;
+/// Where Connect and Connected stand from the row's right edge, the meta
+/// zone's edge. A compact item stands them as shadcn stands
+/// `SidebarMenuAction`, `right-1` (`--sidebar-action-inset`, global.css,
+/// «Compact rows»).
+const SIDEBAR_ROW_META_ACTION_RIGHT = `var(--sidebar-action-inset, ${SIDEBAR_ROW_ACTION_BUTTON_INSET}px)`;
 const SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 /// The air between the previews and the right guideline, set by the theme:
@@ -175,9 +175,8 @@ const SIDEBAR_PREVIEW_MASK_FADE_WIDTH = EDGE_FADE_WIDTH;
 /// «Previews' right edge»; user's decision of 07.10.2026).
 const SIDEBAR_PREVIEW_EDGE_GAP = `var(--preview-edge-gap, ${SIDEBAR_PREVIEW_DIVIDER_GAP}px)`;
 /// The previews' inset after the guideline before them, with that
-/// guideline's pixel, which their cell owns: none when a trial order puts them
-/// first (`--sidebar-previews-lead`, sidebarColumnLayout.ts, PLAN 47.6).
-const SIDEBAR_PREVIEW_LEAD_GAP = `calc(var(--sidebar-previews-lead, 1px) + ${SIDEBAR_PREVIEW_DIVIDER_GAP}px)`;
+/// guideline's pixel, which their cell owns.
+const SIDEBAR_PREVIEW_LEAD_GAP = `${1 + SIDEBAR_PREVIEW_DIVIDER_GAP}px`;
 /** A row's `Connected` that only reports. It is the bottom bar's reference
  *  key, built the same way (ActionButton with `readOnly`): the `reference`
  *  body, mono regular type, muted colour, no hover. Only its height follows
@@ -216,9 +215,9 @@ const SIDEBAR_ROW_ACTION_BUTTON_CLASS = CONNECT_ACTION_BUTTON_CLASS;
 /// inset (DESIGN_SYSTEM.md, «оптический сдвиг»), as the bottom bar's first
 /// plate under it expects.
 const SIDEBAR_NAME_OPTICAL_SHIFT_PX = 1;
-/// Where a name's text starts in its cell: the column's lead, the row's inset
-/// and the optical shift. The name at rest and the name being edited alike.
-const SIDEBAR_NAME_CELL_PAD = `calc(var(--sidebar-name-lead, 0px) + var(--sidebar-row-pad-x) + ${SIDEBAR_NAME_OPTICAL_SHIFT_PX}px)`;
+/// Where a name's text starts in its cell: the row's inset and the optical
+/// shift. The name at rest and the name being edited alike.
+const SIDEBAR_NAME_CELL_PAD = `calc(var(--sidebar-row-pad-x) + ${SIDEBAR_NAME_OPTICAL_SHIFT_PX}px)`;
 /// The clear air between a name's dissolve and the guideline after it: the
 /// divider gap, less the optical shift the name's text already took. The cell
 /// ends on the guideline (the next column owns its pixel), so the tail stays
@@ -823,14 +822,11 @@ const SidebarCore = memo(function SidebarCore({
   const [keyboardWalked, setKeyboardWalked] = useState(false);
   const markLinkActionUnderPointer = useCallback((row: HTMLElement | null, x: number, y: number, instant: boolean) => {
     const button = row?.querySelector<HTMLElement>("[data-sidebar-link-action]") ?? null;
-    const rect = button?.getBoundingClientRect();
     const previous = linkActionPointerRef.current;
-    // Once the word has stepped left for its mark, it answers where it
-    // stands: its box reaches as far left as the word went (global.css).
-    const reach = button && button === previous ? linkWordStep(button) : 0;
-    const over = button && rect && x >= rect.left - reach && x < rect.right && y >= rect.top && y < rect.bottom
-      ? button
-      : null;
+    // Every row's control answers as far left as its word will step, stepped
+    // or not: one edge for the mark, the press and the collection's window
+    // (linkActionContains).
+    const over = button && linkActionContains(button, x, y) ? button : null;
     // Whether the word, stepped left for its mark, would stand over the
     // name's last line: only then a fade comes before it (global.css). The
     // state may change under a resting pointer (a click connects), so it is
@@ -1104,11 +1100,8 @@ const SidebarCore = memo(function SidebarCore({
               aria-hidden="true"
               data-sidebar-guideline="left"
               className="absolute inset-y-0 w-px bg-sidebar-border"
-              // A trial may reorder or hide the columns (sidebarColumnLayout.ts,
-              // PLAN 47.6); without it the guideline stands where it always did.
               style={{
-                left: "var(--sidebar-guide-1-left, calc(var(--sidebar-row-pad-x) + var(--sidebar-name-col)))",
-                display: "var(--sidebar-guide-1-display, block)",
+                left: "calc(var(--sidebar-row-pad-x) + var(--sidebar-name-col))",
                 ...widthSource.style,
               }}
             />
@@ -1116,11 +1109,7 @@ const SidebarCore = memo(function SidebarCore({
               aria-hidden="true"
               data-sidebar-guideline="right"
               className="absolute inset-y-0 w-px bg-sidebar-border"
-              style={{
-                left: "var(--sidebar-guide-2-left, auto)",
-                right: "var(--sidebar-guide-2-right, var(--sidebar-zone))",
-                display: "var(--sidebar-guide-2-display, block)",
-              }}
+              style={{ right: "var(--sidebar-zone)" }}
             />
           </div>
 
@@ -1255,7 +1244,8 @@ function previewTargetUnder(target: EventTarget): SidebarPreviewWindowTarget | n
 /// Everything, in the part of the row the name answers (С7.10). Over the
 /// row's button the button answers (`overButton`, the pointer's mark,
 /// `data-sidebar-link-pointer`), and so does a button the pointer passes
-/// through before its row lights: its box decides, as the mark's does. A
+/// through before its row lights: its area decides, the mark's own
+/// (`linkActionContains`), reaching as far left as its word will step. A
 /// row whose name is being typed shows no window. The window stands by the
 /// row.
 function collectionTargetUnder(
@@ -1270,7 +1260,7 @@ function collectionTargetUnder(
   if (!rowKey || (rowKey !== "all" && !rowKey.startsWith("tag:"))) return null;
   if (row.hasAttribute("data-sidebar-row-editing")) return null;
   const button = row.querySelector<HTMLElement>("[data-sidebar-link-action]");
-  if (button && (button === overButton || pointIsInsideRect({ x, y }, button.getBoundingClientRect()))) return null;
+  if (button && (button === overButton || linkActionContains(button, x, y))) return null;
   const key = `${COLLECTION_PREVIEW_PREFIX}${rowKey}`;
   return { key, rowKey, slug: key, element: row };
 }
@@ -1375,12 +1365,9 @@ const SidebarRowFrame = forwardRef<HTMLDivElement, SidebarRowFrameProps>(functio
   );
 });
 
-/// The name's cell: the name's whole zone, the row's inset included, and,
-/// after another column, the guideline's pixel before it (`--sidebar-name-lead`,
-/// sidebarColumnLayout.ts, PLAN 47.6; none by default, where the name comes
-/// first). The inset belongs to the name's zone, not to the row
-/// (DESIGN_SYSTEM.md, «Строка боковой панели: три зоны»), so a trial order
-/// keeps it, and the dissolve ends inside the zone wherever it stands.
+/// The name's cell: the name's whole zone, the row's inset included. The
+/// inset belongs to the name's zone, not to the row (DESIGN_SYSTEM.md,
+/// «Строка боковой панели: три зоны»), and the dissolve ends inside the zone.
 function SidebarRowTitleCell({
   children,
   className,
@@ -1409,7 +1396,7 @@ function SidebarRowTitleCell({
       data-sidebar-title-fade-width={String(SIDEBAR_ROW_TEXT_MASK_FADE_WIDTH)}
       data-sidebar-title-protected-width={String(SIDEBAR_NAME_CLEAR_TAIL)}
       className={cn(
-        "w-[calc(var(--sidebar-name-lead,0px)+var(--sidebar-row-pad-x)+var(--sidebar-name-col))] shrink-0 overflow-hidden whitespace-nowrap",
+        "w-[calc(var(--sidebar-row-pad-x)+var(--sidebar-name-col))] shrink-0 overflow-hidden whitespace-nowrap",
         className,
       )}
       style={{
@@ -1418,7 +1405,7 @@ function SidebarRowTitleCell({
         ...widthSource.style,
       }}
     >
-      {/* The name's own text: the Contents list covers its leader with it (global.css). */}
+      {/* The name's own text: the List covers its leader with it (global.css). */}
       <span data-sidebar-name-text="">{children}</span>
     </span>
   );
@@ -1438,8 +1425,7 @@ function SidebarPreviewRail({ children, meta }: { children: ReactNode; meta?: Re
         className="relative min-w-[var(--sidebar-col-floor)] flex-1"
         data-sidebar-preview-rail
         // Measured from the far edge of the guideline before the previews,
-        // whose pixel the cell owns (`--sidebar-previews-lead`, none when a
-        // trial order puts them first). Before the next guideline the theme
+        // whose pixel the cell owns. Before the next guideline the theme
         // decides: the light theme's previews run to it and are cut by the
         // cell's edge, the dark theme's keep the gap of air they dissolve in
         // (global.css, --preview-edge-gap).
@@ -1456,7 +1442,7 @@ function SidebarPreviewRail({ children, meta }: { children: ReactNode; meta?: Re
 }
 
 /// The meta zone's cell, the count and Connect, with the guideline's pixel
-/// before it (`--sidebar-meta-lead`, none when a trial order puts it first).
+/// before it (`--sidebar-meta-lead`, none in a compact item, global.css).
 /// It holds nothing in the flow (the count and the buttons are placed over
 /// it); it is here so the previews' cell ends on the guideline. A compact
 /// item shows its stack of mini-cards here, at its right end (`children`).
@@ -1608,7 +1594,7 @@ function SidebarRowBody({
         onDoubleClick={handleNavLinkDoubleClick}
         // The row's 16px of inner padding belongs to its columns, not to the
         // row: the name's cell starts with it, the count stands it in from
-        // the meta zone's edge, so a trial order of the columns keeps both.
+        // the meta zone's edge.
         className={cn(
           SIDEBAR_ROW_BOX_CLASS,
           // Its focus look is the focused row's, its words brightened
@@ -1616,10 +1602,10 @@ function SidebarRowBody({
           "font-sans text-base text-muted-foreground outline-none",
         )}
         data-sidebar-row-body=""
-        // The count the Contents list stands on the table while the rows
-        // move from it or to it (global.css, «List and table»).
-        data-sidebar-count={count ?? undefined}
       >
+        {/* The List's leader while the rows move, under the name, as the
+            List's count's companion above (global.css, «List and table»). */}
+        <span aria-hidden="true" data-sidebar-list-mark="leader" />
         <SidebarRowTitleCell>
           {label}
         </SidebarRowTitleCell>
@@ -1644,7 +1630,7 @@ function SidebarRowBody({
         </SidebarPreviewRail>
         <span
           className={cn(
-            "absolute inset-y-0 right-[calc(var(--sidebar-meta-right,0px)+var(--sidebar-row-pad-x))] flex w-8 items-center justify-end text-right text-sm font-mono text-muted-foreground",
+            "absolute inset-y-0 right-[var(--sidebar-row-pad-x)] flex w-8 items-center justify-end text-right text-sm font-mono text-muted-foreground",
             "-translate-x-px",
             metaAnswerClass,
           )}
@@ -1657,6 +1643,11 @@ function SidebarRowBody({
           {count ?? ""}
           {count === null ? null : <SidebarCountNoun count={count} />}
         </span>
+        {/* The List's count while the rows move from it or to it, drawn on
+            the table over the row (global.css, «List and table»;
+            sidebarListMorph.ts): an element of its own, so placing it
+            changes nothing else in the row. */}
+        <span aria-hidden="true" data-sidebar-list-mark="count" data-sidebar-count={count ?? undefined} />
       </NavLink>
       {/* Always mounted: pill and count cross-fade in place instead of
           popping in and out (С7.6). */}
@@ -1731,7 +1722,7 @@ function SidebarRowBody({
             "Connect"
           )}
           </span>
-          {/* The Contents list's hover mark (global.css): a plus that turns
+          {/* The List's hover mark (global.css): a plus that turns
               into a cross once the collection can be disconnected. */}
           <Plus
             aria-hidden="true"
@@ -1746,7 +1737,7 @@ function SidebarRowBody({
 }
 
 /// Whether a row's name, on its last line, reaches under its Connect word
-/// once the word steps left for its mark (the Contents list, global.css):
+/// once the word steps left for its mark (the List, global.css):
 /// the name's last line against the word's place at rest less the mark's
 /// room, the mark's width and the label's own inset.
 function nameRunsUnderLinkWord(row: HTMLElement, button: HTMLElement): boolean {
@@ -1760,17 +1751,30 @@ function nameRunsUnderLinkWord(row: HTMLElement, button: HTMLElement): boolean {
   if (!last) return false;
   const nameEnd = Math.max(...lines.filter((line) => Math.abs(line.bottom - last.bottom) < 1).map((line) => line.right));
   const labelAtRest = button.getBoundingClientRect().left + label.offsetLeft;
-  return nameEnd > labelAtRest - linkWordStep(button);
+  return nameEnd > labelAtRest - linkActionReach(button);
 }
 
-/// How far a Connect word steps left for its mark under the pointer: the
-/// mark's own width and the label's inset (the cross is the plus turned, and
-/// a turned box measures wider than the room the word steps aside for).
-function linkWordStep(button: HTMLElement): number {
-  const label = button.querySelector<HTMLElement>("[data-sidebar-link-label]");
-  const mark = button.querySelector<SVGElement>("[data-sidebar-link-icon]");
-  if (!label || !mark) return 0;
-  return Number.parseFloat(getComputedStyle(mark).width) + Number.parseFloat(getComputedStyle(label).paddingLeft);
+/// How far left of its box a row's control answers: as far as its word will
+/// step for its mark, in the look where it steps (the List,
+/// global.css, `--sidebar-link-reach` and the box `::after` gives it), and
+/// at every row, whether its word has stepped or not (user's decision of
+/// 15.11.2026; SPEC_CARD_STATES.md, С7.10). Each control's own word decides:
+/// the reach is read from the control itself. None where the word does not
+/// step (the table).
+export function linkActionReach(button: HTMLElement): number {
+  if (getComputedStyle(button).getPropertyValue("--sidebar-link-reach").trim() === "") return 0;
+  const width = Number.parseFloat(getComputedStyle(button, "::after").width);
+  return Number.isFinite(width) ? width : 0;
+}
+
+/// Whether a point lies in a row's control's answering area: its box and its
+/// reach to the left. The pointer's mark (`data-sidebar-link-pointer`), the
+/// press, which the control's `::after` takes, and the collection's window
+/// over the name (С7.12) all stop at this edge. It is fixed: the same before
+/// and after the word steps, so a pointer resting on it never flips.
+export function linkActionContains(button: HTMLElement, x: number, y: number): boolean {
+  const rect = button.getBoundingClientRect();
+  return x >= rect.left - linkActionReach(button) && x < rect.right && y >= rect.top && y < rect.bottom;
 }
 
 /// The reason a typed name is refused, right under the row being named: the
@@ -1800,8 +1804,7 @@ function SidebarNameNotice({
 /// decision of 05.11.2026): the row's body and the name's cell are the rest
 /// row's own (`data-sidebar-row-body`, `data-sidebar-name-cell`, global.css), so
 /// entering and leaving the edit moves nothing. The cell runs on to the submit
-/// button; a trial order that puts other columns before the name keeps their
-/// room (`--sidebar-name-left`). In the Contents list a row's height comes from
+/// button. In the List a row's height comes from
 /// the name's lines and the count beside it: unseen copies of them keep it
 /// (`data-sidebar-editable-row-ghost`), the field on the first line.
 function SidebarEditableRowBody({
@@ -1847,7 +1850,7 @@ function SidebarEditableRowBody({
         <span
           data-sidebar-name-cell=""
           className="min-w-0 flex-1 overflow-hidden whitespace-nowrap"
-          style={{ paddingLeft: SIDEBAR_NAME_CELL_PAD, marginLeft: "var(--sidebar-name-left, 0px)" }}
+          style={{ paddingLeft: SIDEBAR_NAME_CELL_PAD }}
         >
           <InlineChannelNameEditor
             defaultValue={defaultValue}
@@ -2267,10 +2270,9 @@ function SidebarCreateChannelRowBody({
     <div
       className={cn(
         SIDEBAR_ROW_BOX_CLASS,
-        // The label starts where a name starts (`--sidebar-name-left`, a trial
-        // order's columns before the name) and runs to the plus: the row's
-        // inset, then the plus's 32px.
-        "pl-[calc(var(--sidebar-name-left,0px)+var(--sidebar-name-lead,0px)+var(--sidebar-row-pad-x))] pr-[calc(var(--sidebar-row-pad-x)+2rem)] font-sans text-base text-muted-foreground",
+        // The label starts where a name starts and runs to the plus: the
+        // row's inset, then the plus's 32px.
+        "pl-[var(--sidebar-row-pad-x)] pr-[calc(var(--sidebar-row-pad-x)+2rem)] font-sans text-base text-muted-foreground",
         // A slow pointer lights it like any row (С7.10); the keyboard at once.
         !isEditing && "group-focus-within:text-foreground",
       )}
@@ -2452,6 +2454,10 @@ const SidebarPreviewThumbnail = memo(function SidebarPreviewThumbnail({
         event.stopPropagation();
         onPreviewContextMenu(target, { x: event.clientX, y: event.clientY });
       }}
+      // A thumbnail held at the list's edge scrolls it only as the drag
+      // library does, near its edges: WebKit's own scroll of a pressed box is
+      // held off, as for a feed card (src/lib/cardPressScroll.ts).
+      onMouseDown={holdScrollUnderCardPress}
       onPointerDown={(event) => {
         if (!dragBound) flushSync(() => setDragBound(true));
         dragPointerListenerRef.current?.(event);
@@ -2898,7 +2904,7 @@ export function SidebarTagRowDragPreview({
           <SidebarPreviewStrip {...strip} />
         </SidebarPreviewRail>
         <span
-          className="absolute inset-y-0 right-[calc(var(--sidebar-meta-right,0px)+var(--sidebar-row-pad-x))] flex w-8 -translate-x-px items-center justify-end text-right font-mono text-sm"
+          className="absolute inset-y-0 right-[var(--sidebar-row-pad-x)] flex w-8 -translate-x-px items-center justify-end text-right font-mono text-sm"
           data-sidebar-row-text=""
           data-sidebar-meta-count=""
           ref={trackTextClip}

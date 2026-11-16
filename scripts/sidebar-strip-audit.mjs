@@ -12,7 +12,7 @@
 // and the last one reaches the strip's right edge, read in that frame after
 // the strips' own update by an observer made after theirs; no frame over
 // 16.7 ms by Chromium's trace (a frame: the main thread's tasks since the
-// last rendering update and the update that paints them), frames over it in a control run with the thumbnail column hidden
+// last rendering update and the update that paints them), frames over it in a control run with the strips taken out of the page
 // reported apart and not counted against the strips; on the second pass of a
 // variant no picture asked of the server; at rest at the widest as many
 // tiles as the rows hold.
@@ -102,7 +102,6 @@ const entryPlugin = {
       import {TooltipProvider} from "/src/components/ui/tooltip.tsx";
       import {useSidebarResize} from "/src/hooks/useSidebarResize.ts";
       import {useChannelPreviewsEvents} from "/src/hooks/useChannelPreviewsEvents.ts";
-      import {setSidebarColumnShown} from "/src/lib/sidebarColumnLayout.ts";
       import {sidebarStripTileCount, APP_MAIN_MIN_WIDTH_PX} from "/src/lib/appLayout.ts";
       import {installMotionLevel} from "/src/lib/motion.ts";
       import {installMotionInput} from "/src/lib/motionInput.ts";
@@ -159,7 +158,12 @@ const entryPlugin = {
       window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{}};
       // The window's edge in hand, as the app's entry follows it.
       followWindowLiveResize();
-      window.auditColumns={shown:setSidebarColumnShown};
+      // The control's strips: taken out of the page by a rule of the audit's
+      // own, the rows laid out as they are (the sidebar's columns are fixed,
+      // user's decision of 15.11.2026).
+      const hideStrips=document.createElement("style");
+      hideStrips.textContent="[data-sidebar-thumbnail-strip]{display:none!important}";
+      window.auditStrips={shown:(on)=>{ if(on) hideStrips.remove(); else document.head.appendChild(hideStrips); }};
       const tags=names.map((name)=>({tag:name,count:lists[name].length}));
       function Fixture(){
         const resize=useSidebarResize(null,false);
@@ -514,7 +518,9 @@ async function morphSeen(page) {
     const seen = window.__morph;
     window.__morph = null;
     seen.stop();
-    const { stop, ...result } = seen;
+    // What was seen, without the watch's teardown, which does not cross to Node.
+    const result = { ...seen };
+    delete result.stop;
     return { ...result, lookAfter: document.querySelector("[data-sidebar-look]").getAttribute("data-sidebar-look") };
   });
 }
@@ -619,7 +625,7 @@ async function morphPass(browser, level, errors) {
 function runRustTest() {
   return new Promise((resolveRun) => {
     const child = spawn("node", ["scripts/run-with-disposable-home.mjs", "cargo", "test", "-p", "mine", "--lib", "--features", "tooling", "--locked",
-      "commands::channels::tests::a_full_preview_read_of_a_large_space_answers_within_its_limit", "--", "--nocapture"], {
+      "commands::channels::tests::a_full_preview_read_of_a_large_space_answers_within_its_limit", "--", "--ignored", "--nocapture"], {
       cwd: root,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
@@ -627,7 +633,6 @@ function runRustTest() {
         CARGO_TARGET_DIR: join(root, "target/sidebar-strip"),
         CARGO_PROFILE_DEV_OPT_LEVEL: "3",
         CARGO_PROFILE_TEST_OPT_LEVEL: "3",
-        MINE_SIDEBAR_PREVIEW_TIMING: "assert",
       },
     });
     let output = "";
@@ -683,12 +688,12 @@ try {
         await page.keyboard.press("Home");
         await page.locator("[data-audit-feed]").click();
         await page.evaluate(frameDrawn);
-        // The control: the same drag with the thumbnail column hidden. A
+        // The control: the same drag with the strips taken out. A
         // frame over the limit there at the same place is not the strips'.
-        await page.evaluate(() => window.auditColumns.shown("previews", false));
+        await page.evaluate(() => window.auditStrips.shown(false));
         await page.evaluate(frameDrawn);
         const control = await drag(browser, page, step, { count: 0 });
-        await page.evaluate(() => window.auditColumns.shown("previews", true));
+        await page.evaluate(() => window.auditStrips.shown(true));
         await page.evaluate(frameDrawn);
         passes.push({ run, control });
         // The frames of the move from the List to the table: the crossing,

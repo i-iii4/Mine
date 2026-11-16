@@ -1,5 +1,7 @@
 # Настройки отображения ленты
 
+**Состояние:** реализовано 30.09.2026. Источник: раздел «Статус» ниже. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
 
 ## Статус
@@ -279,8 +281,9 @@ SPEC_CARD_STATES.md).
 
 ## Spacing
 
-**Д17.** Расстояние между карточками: `32`, `24` или `16` пикселей, по
-умолчанию `32`. Это существующая настройка `Spacing` (`mine.spacing`,
+**Д17.** Расстояние между карточками: `32`, `24`, `16`, `8` или `2` пикселя, в
+этом порядке, по умолчанию `32` (`8` и `2` добавлены решением пользователя
+15.11.2026). Это существующая настройка `Spacing` (`mine.spacing`,
 [src/lib/density.ts](src/lib/density.ts)): она переезжает в панель из
 Settings → Appearance, где её строка убирается (решение 1, принято 30.09.2026).
 Действие прежнее: она меняет и расстояние между карточками, и отступы ленты от
@@ -407,7 +410,8 @@ Settings → Appearance, где её строка убирается (решен
 ## Решения пользователя
 
 1. **Spacing.** Принято 30.09.2026: существующая настройка переезжает из
-   Settings → Appearance в панель (Д17).
+   Settings → Appearance в панель (Д17). Решение 15.11.2026: в группе ещё значения `8`
+   и `2`, после `16`; значение по умолчанию и сохранённый выбор прежние.
 2. **Ссылки в `Media`** (сейчас `Text on Hover`). Принято 30.09.2026: ссылки
    идут по общему правилу, картинка страницы считается медиа (Д14).
 3. **Graph.** Принято 30.09.2026: в режиме Graph кнопки нет (Д4). Заменено

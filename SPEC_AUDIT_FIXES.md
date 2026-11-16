@@ -1,5 +1,7 @@
 # Исправления по повторному аудиту 29.09.2026
 
+**Состояние:** реализовано (этапы 1 по 12), живая приёмка за пользователем. Источник: раздел «Статус» ниже. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_PRODUCT_EXTRACTION.md](SPEC_PRODUCT_EXTRACTION.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md)
 
 ## Статус

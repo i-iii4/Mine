@@ -1,5 +1,7 @@
 # SPEC: integration layer (watcher + commands)
 
+**Состояние:** реализовано. Источник: строка «Status» ниже; PLAN.md, Phase 4. **Сверка с кодом:** 15.11.2026, существование названных файлов; имена команд держит тест `src/lib/commandArguments.test.ts`.
+
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md)
 
 Связующий слой: file watcher отслеживает изменения в vault, Tauri commands предоставляют API для фронтенда. Оркестрация файл → парсинг → индексация → thumbnail.
@@ -143,7 +145,7 @@ route-facing snapshots.
 | `block:renamed` | `{ old_slug: string, new_slug: string }` | watcher external rename path и `rename_block_file` |
 | `thumb:updated` | `{ slug: string }` | `save_thumb` command и фоновая генерация |
 | `thumb:upgrade-requested` | `{ slug: string, media_path: string, kind: "image" \| "video" }` | `index_md_file` когда Rust cascade дал text placeholder для block с embedded media |
-| `vault-conflicts-changed` | `{ count: number, check_error: string \| null }` (`VaultConflictsChanged`) | вкладкам пространства: проход проверки конфликтов iCloud, изменивший множество путей или не прошедший (`check_error`, SPEC_DEEP_AUDIT.md, Е5.11); `list_vault_conflicts`, убравший путь; каждый `resolve_vault_conflict` (раздел «Конфликты iCloud») |
+| `vault-conflicts-changed` | `{ count: number }` (`VaultConflictsChanged`) | вкладкам пространства: проход проверки конфликтов iCloud, изменивший множество путей; `list_vault_conflicts`, убравший путь; каждый `resolve_vault_conflict` (раздел «Конфликты iCloud»). Сбой проверки пишется в журнал, поля сбоя в событии нет (решение пользователя 14.10.2026, SPEC_ICLOUD_CONFLICTS.md) |
 | `vault-freshness-changed` | `{ vault_path, generation, state, …, error_count, error_files }` | координатор свежести после прохода: `error_files` перечисляет заметки, которые проход не прочитал или не спроецировал, с видом ошибки и причиной; индекс готов без них (SPEC_DEEP_AUDIT.md, Н6, Е5.1). Уведомление в интерфейсе входит в Е6.17 |
 
 ## commands/freshness coordinator
@@ -235,6 +237,20 @@ walk.
 
 ---
 
+## Перечень команд
+
+Зарегистрированные команды перечисляет `generate_handler!` в
+[lib.rs](src-tauri/src/lib.rs). Типы их запросов, ответов и ошибок выводятся
+из Rust в [generated.ts](src/types/generated.ts) (раздел «Generated IPC
+contract»). Страница вызывает команды только через
+[commands.ts](src/lib/commands.ts). Своего перечня команд и их сигнатур этот
+документ не держит: разделы ниже описывают поведение отдельных команд.
+
+Тест «the commands SPEC_INTEGRATION.md names» в
+[commandArguments.test.ts](src/lib/commandArguments.test.ts) роняется, если
+документ называет команду, которая не зарегистрирована, или имя бэкенда,
+которого нет в коде.
+
 ## Команды вне главного потока
 
 Синхронная команда Tauri (`pub fn` с `#[tauri::command]`) выполняется в
@@ -310,11 +326,6 @@ enum CommandError {
 
 ## commands/vault
 
-```rust
-#[tauri::command] select_vault(app, state, path: String) -> Result<VaultOpenResult, CommandError>
-#[tauri::command] get_vault_path(state) -> Result<Option<String>, CommandError>
-```
-
 ### Поведение select_vault
 
 1. Resolve `.mine/vault-id`, migrate known legacy `.arena` identity once and
@@ -337,36 +348,7 @@ enum CommandError {
 
 ## commands/blocks
 
-```rust
-#[tauri::command] list_grid_blocks(state, current_tag: Option<String>, offset: Option<usize>, limit: Option<usize>) -> Result<GridSnapshot, CommandError>
-#[tauri::command] get_block(state, slug: String) -> Result<Option<IndexedBlock>, CommandError>
-#[tauri::command] create_block(state, params: CreateBlockParams) -> Result<IndexedBlock, CommandError>
-#[tauri::command] create_media_asset_card(state, params: CreateMediaAssetCardParams) -> Result<IndexedBlock, MediaAssetActionError>
-#[tauri::command] rename_media_asset(state, params: RenameMediaAssetParams) -> Result<MediaAssetMutationResult, MediaAssetActionError>
-#[tauri::command] remove_media_asset_from_card(state, params: RemoveMediaAssetFromCardParams) -> Result<MediaAssetMutationResult, MediaAssetActionError>
-#[tauri::command] extract_text_selection(state, params: ExtractTextSelectionParams) -> Result<IndexedBlock, TextSelectionExtractError>
-#[tauri::command] delete_text_selection(state, params: DeleteTextSelectionParams) -> Result<IndexedBlock, TextSelectionExtractError>
-#[tauri::command] prepare_delete_block(state, slug: String) -> Result<DeleteBlockPlan, CommandError>
-#[tauri::command] delete_block(state, slug: String, delete_unused_media: Option<bool>) -> Result<DeleteBlockOutcome, CommandError>
-#[tauri::command] prepare_delete_blocks(state, slugs: Vec<String>) -> Result<DeleteBlocksPlan, CommandError>
-#[tauri::command] delete_blocks(state, slugs: Vec<String>, delete_unused_media: bool) -> Result<DeleteBlocksOutcome, CommandError>
-#[tauri::command] merge_blocks(state, ordered_slugs: Vec<String>) -> Result<MergeBlocksResult, MergeBlocksError>
-#[tauri::command] rename_block_file(state, old_slug: String, new_stem: String) -> Result<RenameBlockResult, RenameBlockError>
-#[tauri::command] toggle_task_item(state, params: ToggleTaskItemParams) -> Result<IndexedBlock, TaskToggleError>
-#[tauri::command] suggest_note_links(state, source_slug: String, query: NoteLinkQuery) -> Result<Vec<NoteLinkSuggestion>, CommandError>
-```
-
 ### commands/note_edit, commands/edit_sessions, commands/edit_menu
-
-```rust
-#[tauri::command] begin_note_edit(state, slug: String) -> Result<IndexedBlock, NoteEditError>
-#[tauri::command] save_note_body(state, params: SaveNoteBodyParams) -> Result<SavedNoteBody, NoteSaveError>
-#[tauri::command] note_body_state(state, slug: String) -> Result<NoteBodyState, NoteEditError>
-#[tauri::command] report_note_edits(state, slug: String, unsaved: bool)
-#[tauri::command] end_note_edit(state, slug: String)
-#[tauri::command] report_edits_flushed(state, request_id: String)
-#[tauri::command] report_focused_editor(state, focused: bool, can_undo: bool, can_redo: bool)
-```
 
 События: `note-changed { slug, body_hash }`, `flush-edits { request_id }` (ответ `report_edits_flushed` в пределах 3000 мс), `edit-menu-command`. Контракт: [SPEC_EDITING.md](SPEC_EDITING.md), Л2, Л3, Л4, Л10, Л12. Точные типы в `src/types/generated.ts`.
 
@@ -393,12 +375,6 @@ enum CommandError {
 [SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md). Конфликт это заметка с
 неразрешёнными версиями `NSFileVersion`, а не имя файла: угадывания по имени
 нет, файл с любым именем индексируется как обычная заметка (ВК1).
-
-```rust
-#[tauri::command] list_vault_conflict_paths(state) -> Result<Vec<String>, CommandError>
-#[tauri::command] list_vault_conflicts(state) -> Result<Vec<VaultConflict>, VaultConflictError>
-#[tauri::command] resolve_vault_conflict(state, path: String, choice: ConflictChoice, expected_tokens: Vec<String>) -> Result<(), VaultConflictError>
-```
 
 1. `list_vault_conflict_paths` отдаёт пути пространства вкладки из таблицы
    `vault_conflicts`, новые первыми, без запуска помощника: по ним считает
@@ -522,7 +498,7 @@ targets:
 1. `prepare_delete_block` строит `DeleteBlockPlan` только из индекса: строка карточки (`get_block`) и для каждой другой заметки её `media_file`, `thumbnail` и тело (`block_queries::list_note_file_mentions`). Заметки с диска не читаются (`build_delete_block_plan_from_index`); читаются только холсты Obsidian (`.canvas`), которых индекс не знает: файл, который показывает холст, используется и к удалению не предлагается, `referenced_by` называет холст его путём от корня (SPEC_DEEP_AUDIT.md, Е5.6; разбор холста в SPEC_MEDIA_ASSET_ACTIONS.md, «Холсты Obsidian»). Медиа карточки, ссылки других заметок и холстов разрешает один `MediaResolver`, поэтому список файлов пространства обходится не больше одного раза. Ссылки заметки разрешаются, только если среди них есть имя одного из файлов карточки (та же сверка имён, что у `media_users_on_disk`).
 2. Media refs резолвятся через общий backend resolver (`frontmatter.file`, `thumbnail`, `![[...]]`, `![](...)`, nested/relative/Obsidian basename lookup). Заметка пользуется файлом, если на него указывает любая форма ссылки, которую читает Obsidian (`iter_file_references`, SPEC_AUDIT_FIXES.md, Г1.1).
 3. Фронтенд открывает окно, когда пришёл план или ошибка; до этого окна нет. Ширина задаётся сразу: `content`, если в плане есть медиа к удалению, иначе `question`. Закрытое окно хранит свой план до следующего запроса и уходит в той же ширине.
-4. `delete_block(..., delete_unused_media=true)` строит план заново (`build_delete_block_plan`): индекс сначала приводится к файлам (`bring_index_up_to_files`, сверка читает только заметки, изменившиеся после прошлой, и не читает заметку, содержимое которой в iCloud: она остаётся фоновому проходу, SPEC_CLOUD_STORAGE.md, Х12), затем план из индекса, затем каждый файл, который индекс считает неиспользуемым, сверяется с заметками на диске и холстами (`media_users_on_disk`). С диска читаются только кандидаты: заметки, у которых в индексе `media_file`, `thumbnail` или ссылка тела содержат имя одного из файлов, и страницы коллекций (`notes_that_may_name`, SPEC_DEEP_AUDIT.md, Н5, Е5.5). Заметка вне кандидатов не читается: выгруженная из iCloud не скачивается, нечитаемая ничего не останавливает. Живой случай 13.10.2026: `mine card delete … --delete-unused-media` на пространстве «Тест» минутами читал чужую выгруженную заметку. Файл, которым пользуется другая заметка (индекс отстал), не удаляется и переходит в shared media. Удаляются `.md` и только оставшиеся unused media. Окно передаёт `offered_media`, пути файлов, которые оно предложило удалить (`unused_media` своего плана), и удаление берёт ровно их (решение пользователя 13.10.2026, SPEC_DEEP_AUDIT.md, Е1.12). Файл, ставший ненужным, пока окно было открыто (заметка, которая им пользовалась, его отпустила), остаётся на месте, его покажет раздел Orphans. Показанный файл, которым за это время стала пользоваться другая заметка, остаётся и попадает в `kept_media`, окно говорит о нём уведомлением `Media kept`. Показанный файл, о котором свежий план уже не знает (карточка перестала на него ссылаться), тоже остаётся. Отказа нет: отказ `media_plan_changed` (Е1.10) удалён. Без `offered_media` (CLI) удаление идёт по свежему плану.
+4. `delete_block(..., delete_unused_media=true)` строит план заново (`build_delete_block_plan`): индекс сначала приводится к файлам (`bring_index_up_to_files`, сверка читает только заметки, изменившиеся после прошлой, и не читает заметку, содержимое которой в iCloud: она остаётся фоновому проходу, SPEC_CLOUD_STORAGE.md, Х12), затем план из индекса, затем каждый файл, который индекс считает неиспользуемым, сверяется с заметками на диске и холстами (`media_users_on_disk`). С диска читаются только кандидаты: заметки, у которых в индексе `media_file`, `thumbnail` или ссылка тела содержат имя одного из файлов, и страницы коллекций (`notes_that_may_name`, SPEC_DEEP_AUDIT.md, Н5, Е5.5). Заметка вне кандидатов не читается: выгруженная из iCloud не скачивается, нечитаемая ничего не останавливает. Живой случай 13.10.2026: `mine card delete … --delete-unused-media` на пространстве «Тест» минутами читал чужую выгруженную заметку. Файл, которым пользуется другая заметка (индекс отстал), не удаляется и переходит в shared media. Удаляются `.md` и только оставшиеся unused media. Окно передаёт `offered_media`, пути файлов, которые оно предложило удалить (`unused_media` своего плана), и удаление берёт ровно их (решение пользователя 13.10.2026, SPEC_DEEP_AUDIT.md, Е1.12). Файл, ставший ненужным, пока окно было открыто (заметка, которая им пользовалась, его отпустила), остаётся на месте, его покажет раздел Orphans. Показанный файл, которым за это время стала пользоваться другая заметка, остаётся и попадает в `kept_media`, окно говорит о нём уведомлением `Media kept`. Показанный файл, о котором свежий план уже не знает (карточка перестала на него ссылаться), тоже остаётся. Отказа при этом нет. Без `offered_media` (CLI) удаление идёт по свежему плану.
 5. `delete_block` возвращает `DeleteBlockOutcome { removed, kept_media }`. `kept_media` перечисляет медиа карточки, которые остались, потому что ими пользуется другая заметка; список заполняется только при `delete_unused_media=true`.
 6. Фронтенд сверяет `kept_media` с файлами, которые окно предлагало удалить (`unused_media` плана окна). Если такой файл остался, лента показывает уведомление `NotificationCard` в правом нижнем углу, как остальные уведомления ленты (DESIGN_SYSTEM.md, «Уведомления»): заголовок `Media kept`, текст `photo.jpg is used by another element and stayed in the space.` для одного файла и `N media files are used by other elements and stayed in the space.` для нескольких. Уведомление закрывается кнопкой и сбрасывается при новом запросе удаления или смене пространства. Файлы, о которых окно уже сказало, что они останутся, в уведомлении не упоминаются.
 7. `delete_block(..., delete_unused_media=false)` удаляет только `.md` и derived artifacts.
@@ -624,12 +600,6 @@ Boundary:
 
 ## commands/tags
 
-```rust
-#[tauri::command] add_tag(state, slug: String, tag: String) -> Result<(), CommandError>
-#[tauri::command] remove_tag(state, slug: String, tag: String) -> Result<(), CommandError>
-#[tauri::command] set_blocks_membership(state, slugs: Vec<String>, tag: String, connected: bool) -> Result<(), CommandError>
-```
-
 ### Поведение set_blocks_membership
 
 Групповое присоединение и отсоединение (SPEC_DEEP_AUDIT.md, Е6.1,
@@ -662,11 +632,7 @@ Boundary:
 
 ## commands/search
 
-```rust
-#[tauri::command] search_grid_blocks(state, current_tag: Option<String>, query: String, limit: Option<usize>, cursor: Option<SearchPageToken>) -> Result<SearchSnapshot, CommandError>
-```
-
-Команды `search` нет с 13.10.2026 (срез 46.10): интерфейс её не вызывал.
+Поиск карточек идёт одной командой `search_grid_blocks`.
 Пользовательский Surface Search не должен восстанавливать отдельный Search
 frontend или `Cmd+K` command palette:
 Search Overlay идёт через `search_grid_blocks` и возвращает `SearchSnapshot`,
@@ -676,19 +642,6 @@ Search Overlay идёт через `search_grid_blocks` и возвращает 
 fusion/rerank реализуются внутри backend SearchEngine, без нового frontend route
 или отдельной command palette. Cursor, чей projection/search revision или
 query fingerprint устарел, сбрасывается на offset zero.
-
-## Команды, удалённые как мёртвые (13.10.2026)
-
-Срез 46.10 (SPEC_DEEP_AUDIT.md, Е8.2, правило Н14): `rebuild_index`
-(индекс восстанавливается сам, поколения и пересборка при порче),
-`search` (`search_grid_blocks`), `extract_inline_media`
-(`create_media_asset_card`, SPEC_MEDIA_ASSET_ACTIONS.md),
-`organize_vault_layout` (раздел настроек `New files`), `list_blocks`
-(`list_grid_blocks`), `list_tags` и `list_channels`
-(`list_taxonomy_snapshot`), `rename_tag` (`rename_channel`),
-`set_sidebar_menu_collapsed` (заголовок пункта View ставит бэкенд,
-`window_chrome::reflect_sidebar`), `get_vault_stats` (счётчика в интерфейсе
-нет). У `create_channel` нет параметра `title`.
 
 ## Generated IPC contract
 
@@ -716,12 +669,6 @@ CommandError>` удаляла только `.md` выбранных карточ
 разбираются, одиночное удаление с `Keep media` идёт тем же путём.
 
 ## commands/channels
-
-```rust
-#[tauri::command] list_taxonomy_snapshot(state) -> Result<TaxonomySnapshot, CommandError> // collections, counts, total
-#[tauri::command] create_channel(state, tag: String) -> Result<ChannelDto, CommandError>
-#[tauri::command] delete_channel(state, tag: String) -> Result<bool, CommandError>
-```
 
 `ChannelDto` — сериализуемая версия `Channel` для фронтенда. В DTO нет
 отдельного `title`: отображаемое имя коллекции выводится из Markdown

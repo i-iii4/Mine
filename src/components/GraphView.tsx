@@ -1056,7 +1056,7 @@ export const GraphView = forwardRef<GraphViewHandle, GraphViewProps>(function Gr
     closePreview();
   }, [closePreview]);
 
-  // TRIAL (SPEC_CARD_PEEK.md, О14): the card the open card's window grew
+  // SPEC_CARD_PEEK.md, О14: the card the open card's window grew
   // out of leaves its place empty while the window stands for it.
   const peekHiddenSlug = usePeekHiddenSlug();
   // Where a card's node stands and what it draws, for the open card's window

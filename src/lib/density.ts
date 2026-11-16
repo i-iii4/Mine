@@ -11,11 +11,20 @@
 
 import { useSyncExternalStore } from "react";
 
-export type DensityStep = 32 | 24 | 16;
+/// The steps of the Display panel, in its order (user's decision of
+/// 15.11.2026: 8 and 2 after 32, 24 and 16).
+export type DensityStep = 32 | 24 | 16 | 8 | 2;
 
-export const DENSITY_STEPS: readonly DensityStep[] = [32, 24, 16];
+export const DENSITY_STEPS: readonly DensityStep[] = [32, 24, 16, 8, 2];
 
 export const DENSITY_STORAGE_KEY = "mine.spacing";
+
+/// Written with every choice from 15.11.2026 on. A stored 2 without it is
+/// the 2px step retired on 24.09.2026, which has read as 16 since: it keeps
+/// reading so, and the first choice written (every window writes the read
+/// value at its start) carries the mark, so a 2 chosen now is 2.
+export const DENSITY_STEPS_MARK_KEY = "mine.spacing.steps";
+const DENSITY_STEPS_MARK = "32-24-16-8-2";
 
 const DEFAULT_STEP: DensityStep = 32;
 
@@ -28,12 +37,13 @@ function isStep(value: number): value is DensityStep {
 export function getStoredDensity(): DensityStep {
   if (typeof window === "undefined") return DEFAULT_STEP;
   const raw = Number(window.localStorage.getItem(DENSITY_STORAGE_KEY));
-  if (raw === 2) return 16;
+  if (raw === 2 && window.localStorage.getItem(DENSITY_STEPS_MARK_KEY) !== DENSITY_STEPS_MARK) return 16;
   return isStep(raw) ? raw : DEFAULT_STEP;
 }
 
 export function applyDensity(step: DensityStep) {
   localStorage.setItem(DENSITY_STORAGE_KEY, String(step));
+  localStorage.setItem(DENSITY_STEPS_MARK_KEY, DENSITY_STEPS_MARK);
   document.documentElement.style.setProperty(SPACING_VAR, `${step}px`);
 }
 

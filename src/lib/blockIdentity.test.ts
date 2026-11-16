@@ -189,3 +189,132 @@ describe("lightBlockContentEqual and a card's collections (02.10.2026)", () => {
   });
 });
 
+
+// The feed keeps a card's signature, content and height by the card's row
+// object (SPEC_GRID.md, «Кэш при карточке и продолжение раскладки»). That is
+// right only while a card that did not change stays the same object and a
+// card that changed is a new one, whatever of the row changed.
+describe("the condition of the cache kept by the card's row (15.11.2026)", () => {
+  // Every field of a row, each with a value: a field added to `LightBlock`
+  // has to be named here, or this file does not type-check.
+  const ROW: Required<LightBlock> = {
+    id: 7,
+    slug: "row",
+    block_type: "article",
+    card_kind: "article",
+    title: "Title",
+    content_heading: "Heading",
+    display_title: "Display",
+    fallback_label: "Row",
+    url: "https://example.test/row",
+    media_file: "row.jpg",
+    thumbnail: "row.thumb.jpg",
+    saved_at: "2026-01-01T00:00:00Z",
+    width: 800,
+    height: 600,
+    author: "Author",
+    body: "Body",
+    preview_text: "Preview",
+    first_image: "first.jpg",
+    media_urls: '["row.jpg"]',
+    media_dimensions: '{"row.jpg":[800,600]}',
+    preview_manifest: '{"kind":"image","preview_width":640,"preview_height":480}',
+    feed_playback: '{"profile":"standard"}',
+    content_in_cloud: false,
+    preview_unreadable: false,
+    collections: ["one", "two"],
+    search_match: {
+      field: "title",
+      kind: "exact",
+      excerpt: "Title",
+      ranges: [{ start: 0, end: 5 }],
+      score: 1,
+      explanation: "why",
+    },
+  };
+  // The same fields, each with another value.
+  const CHANGED: Required<LightBlock> = {
+    id: 8,
+    slug: "row-renamed",
+    block_type: "link",
+    card_kind: "link",
+    title: "Another title",
+    content_heading: "Another heading",
+    display_title: "Another display",
+    fallback_label: "Another row",
+    url: "https://example.test/another",
+    media_file: "another.jpg",
+    thumbnail: "another.thumb.jpg",
+    saved_at: "2026-02-02T00:00:00Z",
+    width: 801,
+    height: 601,
+    author: "Another author",
+    body: "Another body",
+    preview_text: "Another preview",
+    first_image: "another-first.jpg",
+    media_urls: '["another.jpg"]',
+    media_dimensions: '{"another.jpg":[801,601]}',
+    preview_manifest: '{"kind":"image","preview_width":640,"preview_height":360}',
+    feed_playback: '{"profile":"heavy"}',
+    content_in_cloud: true,
+    preview_unreadable: true,
+    collections: ["two", "one"],
+    search_match: null,
+  };
+  const row = (): Required<LightBlock> => structuredClone(ROW);
+  const fields = Object.keys(ROW) as (keyof LightBlock)[];
+
+  it("names every field of a row", () => {
+    expect(fields.sort()).toEqual((Object.keys(CHANGED) as (keyof LightBlock)[]).sort());
+    for (const field of fields) expect(CHANGED[field]).not.toEqual(ROW[field]);
+  });
+
+  it("keeps the object of a row read again without a change", () => {
+    const held = [row(), { ...row(), id: 9, slug: "other" }];
+    const again = structuredClone(held);
+    const result = reconcileBlocks(held, again);
+    expect(result).toBe(held);
+    expect(result[0]).toBe(held[0]);
+    expect(result[1]).toBe(held[1]);
+  });
+
+  it.each(fields)("gives a row whose %s changed a new object", (field) => {
+    const held = row();
+    const arrived = { ...row(), [field]: CHANGED[field] };
+    const result = reconcileBlocks([held], [arrived]);
+    expect(lightBlockContentEqual(held, arrived)).toBe(false);
+    expect(result[0]).toBe(arrived);
+    expect(result[0]).not.toBe(held);
+  });
+
+  it.each([
+    ["field", "body"],
+    ["kind", "prefix"],
+    ["excerpt", "Titles"],
+    ["ranges", [{ start: 0, end: 4 }]],
+    ["ranges", [{ start: 0, end: 5 }, { start: 6, end: 7 }]],
+    ["score", 2],
+    ["explanation", null],
+  ] as const)("gives a row whose search match changed its %s a new object", (part, value) => {
+    const held = row();
+    const arrived = { ...row(), search_match: { ...row().search_match!, [part]: value } };
+    expect(reconcileBlocks([held], [arrived])[0]).toBe(arrived);
+  });
+
+  it("gives a row one more collection, one fewer, or another one a new object", () => {
+    for (const collections of [["one", "two", "three"], ["one"], ["one", "other"]]) {
+      const held = row();
+      const arrived = { ...row(), collections };
+      expect(reconcileBlocks([held], [arrived])[0]).toBe(arrived);
+    }
+  });
+
+  it("matches a card that changed places by its id, and keeps the object it had", () => {
+    const held = [row(), { ...row(), id: 9, slug: "other" }, { ...row(), id: 10, slug: "third" }];
+    const again = structuredClone([held[2]!, held[0]!, { ...held[1]!, title: "Edited" }]);
+    const result = reconcileBlocks(held, again);
+    expect(result[0]).toBe(held[2]);
+    expect(result[1]).toBe(held[0]);
+    expect(result[2]).toBe(again[2]);
+  });
+});

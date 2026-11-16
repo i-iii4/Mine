@@ -2,7 +2,8 @@
 // and a future editor (SPEC_READING_MODE.md, Ч0.1, Ч13):
 //
 // 1. `preprocessWikilinks` (markdownWikilinks.ts), outside code, math and HTML;
-// 2. remark: the syntax (`syntax.ts`), then the callouts and the note embeds;
+// 2. remark: the syntax (`syntax.ts`), then the callouts and the note embeds,
+//    made once and kept as the tree the article draws (`tree.ts`, Ч0.5);
 // 3. remark-rehype with raw HTML kept and no clobber prefix of its own;
 // 4. rehype: `rehype-raw`, then `rehype-sanitize` with the schema below;
 // 5. the elements of `ArticleMarkdown`;
@@ -32,11 +33,18 @@ import {
 } from "./remarkNoteEmbeds";
 import { READING_SYNTAX_PLUGINS } from "./syntax";
 
-/** The remark plugins: the syntax, then the transforms of the tree. */
-export const READING_REMARK_PLUGINS: PluggableList = [
-  ...READING_SYNTAX_PLUGINS,
+/** The transforms of the parsed tree, in their order. */
+export const READING_TREE_TRANSFORMS: PluggableList = [
   remarkObsidianCallouts,
   remarkNoteEmbeds,
+];
+
+/** The remark plugins: the syntax, then the transforms of the tree. The
+ *  article draws the tree they give through `readingTree` (`tree.ts`), which
+ *  keeps it. */
+export const READING_REMARK_PLUGINS: PluggableList = [
+  ...READING_SYNTAX_PLUGINS,
+  ...READING_TREE_TRANSFORMS,
 ];
 
 /** remark-rehype: raw HTML reaches `rehype-raw` (Ч4); no clobber prefix,

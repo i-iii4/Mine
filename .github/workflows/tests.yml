@@ -65,6 +65,11 @@ jobs:
           node --test scripts/reliability-registry-check.test.mjs scripts/test-reach.test.mjs
       - name: Lint
         run: bun run lint
+      # The scripts' own tests: every check of package.json is run by a
+      # combined command or has its reason, and every import of a script
+      # names a file (AUDIT_CODE_QUALITY.md, О1 and О4).
+      - name: Script tests
+        run: bun run test:scripts
       # The app pages, the clipper (its scripts with JSDoc included) and the
       # tests in one program, then the pages and the clipper each against the
       # globals of where they run.

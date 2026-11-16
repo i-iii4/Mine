@@ -1,5 +1,7 @@
 # SPEC: Display Modes
 
+**Состояние:** не реализовано. Документ описывает замысел, а не действующее устройство: `GridSwitch`, `useLayoutMode`, `DisplayModeProps`, `MasonryGrid.tsx`, `DenseGrid.tsx`, `TableView.tsx` и `ColumnView.tsx` в коде нет. Ленту рисует один компонент `src/components/Grid.tsx` ([SPEC_GRID.md](SPEC_GRID.md), [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md)), граф `src/components/GraphView.tsx`. Источник: код. **Сверка с кодом:** 15.11.2026, названные файлы и компоненты.
+
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [PRINCIPLES.md](PRINCIPLES.md)
 
 ## Overview

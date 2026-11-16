@@ -2,7 +2,7 @@ import { scrollBehavior } from "@/lib/motion";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { LightBlock } from "@/types";
 import type { WordWidths } from "@/types/fontMetrics";
-import type { MasonryLayout, MasonryPosition } from "@/lib/masonryLayout";
+import type { MasonryLayout, MasonryPosition, VisibilityIndex } from "@/lib/masonryLayout";
 import { blockHasExactDeterministicHeight } from "@/lib/gridLayoutReadiness";
 import type { FeedShow } from "@/lib/feedDisplay";
 
@@ -60,6 +60,11 @@ export type ScrollAnchorSnapshot = {
   parentWidth: number;
   blocks: readonly LightBlock[];
   positions: readonly MasonryPosition[];
+  /** The layout the positions are of: a new object whenever the feed was
+   *  laid out anew, with the same positions or not. */
+  layout: MasonryLayout;
+  /** The positions by where they stand, to find the cards on screen. */
+  visibility: VisibilityIndex;
 };
 export type PendingScrollAnchor = {
   routeKey: string;
@@ -101,6 +106,9 @@ export function findPositionForSlug(
 ): MasonryPosition | null {
   const blockIndex = blocks.findIndex((block) => block.slug === slug);
   if (blockIndex < 0) return null;
+  // A layout holds its positions in the list's order.
+  const sameOrder = positions[blockIndex];
+  if (sameOrder?.index === blockIndex) return sameOrder;
   return positions.find((position) => position.index === blockIndex) ?? null;
 }
 
@@ -242,10 +250,18 @@ export function firstVisibleSlug(
   return best ? blocks[best.index]?.slug ?? null : null;
 }
 
+/**
+ * The card that holds the viewport while the feed around it changes: of the
+ * cards of `positions` still in the feed, the one on screen nearest the
+ * reference line, else the nearest one off screen. A card on screen always
+ * comes before one off screen, so `positions` may be the cards on screen
+ * alone, in the list's order: the answer is then the whole list's, or null
+ * when none of them is still in the feed.
+ */
 export function findViewportPreservationAnchor(
   positions: readonly MasonryPosition[],
   blocks: readonly LightBlock[],
-  currentSlugs: ReadonlySet<string>,
+  currentSlugs: { has(slug: string): boolean },
   scrollTop: number,
   viewportHeight: number,
   topInset: number,

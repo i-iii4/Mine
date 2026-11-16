@@ -296,6 +296,34 @@ describe("DropdownMenu off its button's plate", () => {
     }
   });
 
+  // SPEC_MENU_WINDOW.md, МО10, МО69 (user's decision of 15.11.2026): a menu
+  // a right click opened stands with its corner on the point of the click,
+  // right of it and with no offset, as the menu in the menu panel does.
+  it("stands with its corner on the point of a click, with no offset", async () => {
+    const rect = placeBoxes((element) => (
+      element.getAttribute("data-slot") === "dropdown-menu-trigger" ? { top: 200, right: 300, bottom: 200, left: 300 } : null
+    ));
+    try {
+      render(
+        <DropdownMenu open modal={false}>
+          <DropdownMenuTrigger asChild>
+            <button type="button" aria-hidden="true" tabIndex={-1} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent anchor="point" align="end">
+            <DropdownMenuItem>Action item</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>,
+      );
+      await waitFor(() => expect(menuPosition()).toEqual({ x: 300, y: 200 }));
+      // Right of the point, its top on it, whatever edge the call site names
+      // for a button's menu.
+      const surface = document.querySelector("[data-slot='dropdown-menu-content']");
+      expect([surface?.getAttribute("data-side"), surface?.getAttribute("data-align")]).toEqual(["right", "start"]);
+    } finally {
+      rect.mockRestore();
+    }
+  });
+
   it("opens 4px over a plate inside a taller box when it opens upward", async () => {
     const rect = placeBoxes((element) => {
       if (element.hasAttribute("data-chrome-plate")) return { top: 508, right: 224, bottom: 532, left: 200 };

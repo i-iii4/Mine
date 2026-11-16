@@ -20,7 +20,7 @@ use crate::storage::media_refs::MediaResolver;
 use crate::storage::preview_plan::{
     resolve_upgrade_media_with, PreviewMediaKind, ResolvedPreviewMedia,
 };
-use crate::storage::{db, files, index, thumbnails};
+use crate::storage::{db, index, thumbnails};
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -184,7 +184,7 @@ pub fn save_thumb(
             .map_err(|e| CommandError::Internal(format!("create thumbs dir: {}", e)))?;
     }
 
-    files::write_atomically(&thumb_path, &bytes)
+    thumbnails::write_preview_bytes(&thumb_path, &bytes)
         .map_err(|e| CommandError::Internal(format!("write decoded thumb: {e:#}")))?;
 
     // The WebView upgrade replaces the full thumbnail, so the reduced levels
@@ -343,7 +343,7 @@ pub fn save_tile_poster(
     std::fs::create_dir_all(dest_dir)
         .map_err(|e| CommandError::Internal(format!("create thumbs dir: {e}")))?;
 
-    files::write_atomically(&dest, &bytes)
+    thumbnails::write_preview_bytes(&dest, &bytes)
         .map_err(|e| CommandError::Internal(format!("write decoded tile poster: {e:#}")))?;
     schedule_preview_reconcile(&app, vault.clone(), [slug.clone()], false)?;
 
@@ -591,6 +591,16 @@ mod tests {
     }
     use crate::storage::{db, files, index, thumbnails};
 
+    /// The fewest bytes of a whole JPEG picture: how one starts and how one
+    /// ends (SPEC_THUMBNAILS.md, П10).
+    const JPEG: [u8; 6] = [0xFF, 0xD8, 0xFF, 0x00, 0xFF, 0xD9];
+    /// The fewest bytes of a whole PNG picture: its signature and its `IEND`
+    /// chunk.
+    const PNG: [u8; 20] = [
+        0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0, b'I', b'E', b'N', b'D', 0xAE,
+        0x42, 0x60, 0x82,
+    ];
+
     fn make_vault(path: &std::path::Path) -> VaultLayout {
         let vault = VaultLayout::new(path.to_path_buf());
         std::fs::create_dir_all(vault.thumbs_dir()).unwrap();
@@ -804,6 +814,55 @@ mod tests {
         };
 
         assert!(!needs_upgrade(&vault, &block));
+    }
+
+    /// SPEC_THUMBNAILS.md, П10: a picture the browser wrote and a power loss
+    /// cut short is no picture: the browser is asked for it again.
+    #[test]
+    fn a_browser_picture_cut_short_waits_for_the_browser_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = make_vault(dir.path());
+        std::fs::write(dir.path().join("poster.avif"), b"fake avif").unwrap();
+        let decoded = dir.path().join("decoded.png");
+        create_test_image(&decoded, 100, 100);
+        let thumb = vault.thumb_path("poster");
+        thumbnails::generate_thumbnail(&decoded, &thumb, 240).unwrap();
+        let block = index::PendingThumbUpgradeBlock {
+            slug: "poster".into(),
+            media_file: Some("poster.avif".into()),
+            thumbnail: None,
+            first_image: None,
+            media_urls: None,
+            preview_manifest: None,
+        };
+        assert!(!needs_upgrade(&vault, &block));
+
+        let whole = std::fs::read(&thumb).unwrap();
+        for kept in [0, 20, whole.len() / 2, whole.len() - 1] {
+            std::fs::write(&thumb, &whole[..kept]).unwrap();
+            assert!(needs_upgrade(&vault, &block), "{kept} of {} bytes", whole.len());
+        }
+    }
+
+    /// П10: bytes that do not end as a whole picture ends are not written.
+    #[test]
+    fn a_picture_cut_short_is_refused() {
+        for (format, extension) in [(image::ImageFormat::Jpeg, "jpg"), (image::ImageFormat::Png, "png")] {
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            image::RgbImage::from_pixel(32, 24, image::Rgb([120, 180, 200]))
+                .write_to(&mut bytes, format)
+                .unwrap();
+            let bytes = bytes.into_inner();
+            assert!(validate_thumb_write_request("slug", &bytes).is_ok(), "{extension}");
+            assert!(validate_tile_poster_request("slug.preview-1.jpg", &bytes).is_ok(), "{extension}");
+            for kept in [20, bytes.len() / 2, bytes.len() - 1] {
+                assert!(validate_thumb_write_request("slug", &bytes[..kept]).is_err(), "{extension} {kept}");
+                assert!(
+                    validate_tile_poster_request("slug.preview-1.jpg", &bytes[..kept]).is_err(),
+                    "{extension} {kept}"
+                );
+            }
+        }
     }
 
     /// A screenshot with rounded, transparent corners legitimately produces a
@@ -1021,35 +1080,35 @@ mod tests {
     #[test]
     fn validate_thumb_write_request_accepts_human_readable_slug() {
         let slug = "Announcing USVC AngelList exists to power the innovation economy. To date, we";
-        assert!(validate_thumb_write_request(slug, &[0xFF, 0xD8, 0xFF, 0x00]).is_ok());
+        assert!(validate_thumb_write_request(slug, &JPEG).is_ok());
     }
 
     #[test]
     fn validate_thumb_write_request_accepts_unicode_slug() {
         assert!(
-            validate_thumb_write_request("続きを描いてます", &[0xFF, 0xD8, 0xFF, 0x00]).is_ok()
+            validate_thumb_write_request("続きを描いてます", &JPEG).is_ok()
         );
     }
 
     #[test]
     fn validate_thumb_write_request_rejects_path_traversal_and_separators() {
-        assert!(validate_thumb_write_request("foo/bar", &[0xFF, 0xD8, 0xFF, 0x00]).is_ok());
+        assert!(validate_thumb_write_request("foo/bar", &JPEG).is_ok());
         for slug in ["foo//bar", "foo\\bar", "..", "../x", ""] {
-            assert!(validate_thumb_write_request(slug, &[0xFF, 0xD8, 0xFF, 0x00]).is_err());
+            assert!(validate_thumb_write_request(slug, &JPEG).is_err());
         }
     }
 
     #[test]
     fn validate_thumb_write_request_rejects_nul_byte() {
-        assert!(validate_thumb_write_request("foo\0bar", &[0xFF, 0xD8, 0xFF, 0x00]).is_err());
+        assert!(validate_thumb_write_request("foo\0bar", &JPEG).is_err());
     }
 
     /// JPEG and PNG are both pictures, each recognised by its own signature.
     /// A truncated signature, another format and the text placeholder are not.
     #[test]
     fn validate_thumb_write_request_takes_a_jpeg_or_png_picture_only() {
-        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13];
-        assert!(validate_thumb_write_request("valid slug", &[0xFF, 0xD8, 0xFF, 0x00]).is_ok());
+        let png = PNG;
+        assert!(validate_thumb_write_request("valid slug", &JPEG).is_ok());
         assert!(validate_thumb_write_request("valid slug", &png).is_ok());
         assert!(validate_thumb_write_request("valid slug", &[0x89, 0x50, 0x4E]).is_err());
         assert!(validate_thumb_write_request("valid slug", b"GIF89a\x01\x00").is_err());
@@ -1115,7 +1174,7 @@ mod tests {
     #[test]
     fn validate_tile_poster_request_accepts_media_filename() {
         assert!(
-            validate_tile_poster_request("clip (video 1).jpg", &[0xFF, 0xD8, 0xFF, 0x00]).is_ok()
+            validate_tile_poster_request("clip (video 1).jpg", &JPEG).is_ok()
         );
     }
 
@@ -1126,7 +1185,7 @@ mod tests {
         // stays refused — see the test below.
         for name in ["../x.jpg", "a\\b.jpg", "x.png", "", "foo\0.jpg"] {
             assert!(
-                validate_tile_poster_request(name, &[0xFF, 0xD8, 0xFF, 0x00]).is_err(),
+                validate_tile_poster_request(name, &JPEG).is_err(),
                 "should reject {name:?}"
             );
         }
@@ -1137,7 +1196,7 @@ mod tests {
     /// A transparent picture in a gallery is PNG, like any other (rule П6).
     #[test]
     fn validate_tile_poster_request_accepts_a_png_picture() {
-        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13];
+        let png = PNG;
         assert!(validate_tile_poster_request("Cards/Note.preview-1.jpg", &png).is_ok());
     }
 
@@ -1146,14 +1205,14 @@ mod tests {
         // Every card in a laid-out vault has a slug like `Cards/Note`, so its
         // tile destination has a folder in it. Rejecting the separator here
         // meant a gallery card in a subfolder never got its tiles.
-        let jpeg = [0xFF, 0xD8, 0xFF, 0x00];
+        let jpeg = JPEG;
         assert!(validate_tile_poster_request("Cards/Note.preview-1.jpg", &jpeg).is_ok());
         assert!(validate_tile_poster_request("Note.preview-1.jpg", &jpeg).is_ok());
     }
 
     #[test]
     fn still_refuses_a_poster_name_that_escapes_the_thumbs_directory() {
-        let jpeg = [0xFF, 0xD8, 0xFF, 0x00];
+        let jpeg = JPEG;
         for unsafe_name in [
             "../outside.jpg",
             "Cards/../../outside.jpg",

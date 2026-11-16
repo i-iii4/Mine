@@ -1,5 +1,7 @@
 # Связи карточек: автор, сайт, адрес
 
+**Состояние:** реализовано 07.10.2026, живая приёмка за пользователем. Источник: строка «Статус» ниже; PLAN.md, Phase 41. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_TABS.md](SPEC_TABS.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
 
 Статус: правила утверждены пользователем 07.10.2026; реализовано 07.10.2026

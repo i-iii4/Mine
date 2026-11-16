@@ -27,7 +27,9 @@ import { useDetailFrame } from "./detailFrame";
 import { TooltipProvider } from "./ui/tooltip";
 import { ViewToggleIcon } from "./ViewToggleIcon";
 
-const block = { slug: "Cards/One", id: 1 } as unknown as LightBlock;
+// The card's collections are there as on every card the backend sends: its
+// menu's description names them the moment the menu opens.
+const block = { slug: "Cards/One", id: 1, collections: [] } as unknown as LightBlock;
 
 function peek(props: Partial<CardPeekProps> & { block: LightBlock | null }) {
   const area = document.createElement("main");
@@ -143,7 +145,7 @@ function forgetMotions() {
   delete (HTMLElement.prototype as { animate?: unknown }).animate;
 }
 
-/// TRIAL (SPEC_CARD_PEEK.md): the open card's window.
+/// SPEC_CARD_PEEK.md: the open card's window.
 describe("CardPeek", () => {
   it("draws nothing with no card", () => {
     const { container } = peek({ block: null });
@@ -1729,7 +1731,7 @@ describe("CardPeek", () => {
   });
 });
 
-/// TRIAL (SPEC_CARD_PEEK.md, О3, О16): the right part tells the page its
+/// SPEC_CARD_PEEK.md, О3, О16: the right part tells the page its
 /// width as it places itself, the feed's width with the sidebar beside it or
 /// over it.
 describe("CardPeekArea", () => {
@@ -1784,7 +1786,7 @@ describe("ViewToggleIcon", () => {
   });
 });
 
-/// TRIAL (SPEC_CARD_PEEK.md, О9): the window's plate.
+/// SPEC_CARD_PEEK.md, О9: the window's plate.
 describe("CardPeekPlate", () => {
   function plate(sequence: number, onExpand = vi.fn(), onClose = vi.fn()) {
     return (

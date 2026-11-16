@@ -1,5 +1,7 @@
 # Use Cases: Mine
 
+**Состояние:** по источникам не установлено: документ описывает сценарии продукта, отметки о реализации в нём нет, а PLAN.md (Phase 0) отмечает только, что документ написан. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 ## Референсы

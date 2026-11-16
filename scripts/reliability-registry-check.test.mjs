@@ -81,6 +81,11 @@ test('every change coverage claim holds: the command runs the test and the test 
     [value => { frontend(value).paths.push('src/no-such-module.ts'); }, /path does not exist: src\/no-such-module\.ts/],
     [value => { frontend(value).tests.push('src/no-such-module.test.ts'); }, /test does not exist: src\/no-such-module\.test\.ts/],
     [value => { frontend(value).command = 'no-such-script'; }, /no package\.json script no-such-script/],
+    // Runs the same tests, and no combined command runs it (AUDIT_CODE_QUALITY.md, О5).
+    [value => { frontend(value).command = 'test:watch'; }, /neither verify nor verify:built-app runs test:watch/],
+    // The check of the built clipper reads the fixture, yet only its own scripts are bound through verify:built-app.
+    [value => { value.changeCoverage.find(entry => entry.command === 'test:clipper-worker').paths.push('mine-core/tests/save-fixtures.json'); },
+      /mine-core\/tests\/save-fixtures\.json is bound through verify:built-app, which binds only the scripts it runs/],
     [value => { frontend(value).requirement = 'SPEC_SYSTEM_RELIABILITY.md#INV-01'; }, /Requirement heading missing/],
     [value => { frontend(value).paths = []; }, /no paths/],
     [value => { frontend(value).tests = []; }, /no tests/],
@@ -102,8 +107,8 @@ test('the reliability fixture is bound to a test that checks every required case
     value.changeCoverage = value.changeCoverage.filter(entry => entry.paths.length > 0);
     return value;
   };
-  // Read by a test that has no branch per case: the hash guard of the source.
-  const readOnly = unbind(await registry(), entry => entry.tests.includes('scripts/reliability-source-guard.mjs'));
+  // Read by a test that has no branch per case: the registry's own test.
+  const readOnly = unbind(await registry(), entry => entry.tests.length === 1 && entry.tests[0] === 'scripts/reliability-registry-check.test.mjs');
   await assert.rejects(check(readOnly), /Fixture cases no test bound to scripts\/fixtures\/reliability\/source-v1\.json checks in a branch of their own .*plain-markdown/);
   await assert.rejects(check(unbind(await registry(), () => false)), /bound to no test that reads it/);
 });

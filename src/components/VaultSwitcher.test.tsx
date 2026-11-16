@@ -5,7 +5,6 @@ import { VaultSwitcher } from "./VaultSwitcher";
 import { MOTION_LEVELS, MOTION_MENU_BLINK_MS } from "@/lib/motion";
 import { MENU_BLINK_ATTRIBUTE, setMenuBlinkMsForTests } from "@/lib/menuBlink";
 import { setMotionLevel } from "@/test/motionLevel";
-import { TOOLTIP_GLIDING_ATTRIBUTE } from "@/lib/tooltipGlide";
 import type { SpaceEntry } from "@/types";
 
 it.each(["pointer", "keyboard"])("refreshes externally added spaces when opened by %s", async (input) => {
@@ -539,44 +538,38 @@ describe("VaultSwitcher", () => {
       expect(button).toHaveAttribute("aria-label", label);
     });
 
-    // The row's buttons are one group: the tooltip glides from one to the
-    // next instead of going and coming again (src/lib/tooltipGlide.ts).
-    it("glides the one tooltip from Reveal in Finder to Remove from the list", async () => {
+    // The next tooltip stands at once, with no appearance, and the one before
+    // goes in that frame (SPEC_MOTION_LEVELS.md, М3; user's decision of
+    // 15.11.2026): one tooltip at a time, each button's one.
+    it("puts Remove from the list's tooltip at once in Reveal in Finder's place", async () => {
       // jsdom runs no animation: the names Radix waits for, as global.css and
       // tw-animate-css give them (src/components/ui/tooltip.test.tsx).
       const animations = document.createElement("style");
       animations.textContent = `
         [data-slot="tooltip-content"] { animation-name: enter; }
         [data-slot="tooltip-content"][data-state="closed"] { animation-name: exit; }
-        [data-slot="tooltip-content"][data-tooltip-handoff]:not([data-state="closed"]) { animation-name: none; }
+        [data-slot="tooltip-content"][data-state="instant-open"]:not([data-tooltip-message]) { animation-name: none; }
       `;
       document.head.append(animations);
       onTestFinished(() => animations.remove());
       await openTabSwitcher(vi.fn());
-      const place = (element: Element, left: number, width = 24) => {
-        element.getBoundingClientRect = () => DOMRect.fromRect({ x: left, y: 0, width, height: 24 });
-      };
       const reveal = screen.getByRole("button", { name: "Reveal Тест in Finder" });
       const remove = screen.getByRole("button", { name: "Remove Тест from the list" });
-      place(reveal.closest("[data-vault-switcher-row-actions]")!, 0, 80);
-      place(screen.getByRole("button", { name: "Open Тест in New Tab" }), 0);
-      place(reveal, 28);
-      place(remove, 56);
       const contents = () => Array.from(document.querySelectorAll<HTMLElement>("[data-slot='tooltip-content']"));
-      const seen = () => contents().filter((content) => content.style.visibility !== "hidden");
+      const seen = () => contents().filter((content) => !content.hasAttribute("data-tooltip-replaced"));
       fireEvent.pointerMove(reveal, { clientX: 40, clientY: 12 });
       expect(await screen.findByRole("tooltip")).toHaveTextContent("Reveal in Finder");
       fireEvent.pointerLeave(reveal, { clientX: 54, clientY: 12 });
       fireEvent.pointerMove(reveal.closest("[data-vault-switcher-row-actions]")!, { clientX: 54, clientY: 12 });
       await act(async () => undefined);
       fireEvent.pointerMove(remove, { clientX: 68, clientY: 12 });
-      await act(async () => undefined);
       await act(async () => {
         for (let index = 0; index < 3; index += 1) await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       });
       expect(seen()).toHaveLength(1);
-      expect(seen()[0]).toHaveAttribute(TOOLTIP_GLIDING_ATTRIBUTE);
-      expect(seen()[0]!.querySelector("[data-tooltip-text]")).toHaveTextContent("Remove from the list — files stay on disk");
+      expect(seen()[0]).toHaveAttribute("data-state", "instant-open");
+      expect(seen()[0]).toHaveTextContent("Remove from the list — files stay on disk");
+      expect(getComputedStyle(seen()[0]!).animationName).toBe("none");
     });
 
     it("has no new tab on a page that is not a tab: ⌘-click switches as before", async () => {

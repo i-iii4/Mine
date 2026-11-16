@@ -1,5 +1,7 @@
 # SPEC: domain/block
 
+**Состояние:** реализовано; остаток: `block_type` в типах IPC и мосте iOS. Источник: PLAN.md, Phase 1; абзацы «Статус реализации (27.08.2026)» и «Остаток» ниже. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md)
 
 Эталонный модуль. Все последующие модули следуют его паттернам качества, тестирования и документирования.

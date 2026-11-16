@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { DisplayMenu } from "./DisplayMenu";
 import { FeedDisplayMenu } from "./FeedDisplayMenu";
 import { getFeedDisplay, reloadFeedDisplay } from "@/lib/feedDisplay";
 import { applyDensity } from "@/lib/density";
@@ -47,8 +48,8 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
 
   it("offers Sort, Show and Spacing as radio groups, each marking the current choice", async () => {
     await openMenu();
-    // The trial section of the sidebar's columns follows the feed's groups
-    // (PLAN 47.6, SidebarColumnsMenu.test.tsx).
+    // The open card's view follows the feed's groups (SPEC_CARD_PEEK.md, О1); its
+    // group carries the mark of the shared radio group it is drawn by (`TrialRadios`).
     const groups = screen.getAllByRole("group").filter((group) => !group.hasAttribute("data-display-trial"));
     expect(screen.getAllByRole("group").at(-1)).toHaveAttribute("data-display-trial");
     // Each group is named by the caption above it, in this order (Д2); media
@@ -59,18 +60,43 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     expect(groups.map((group) => group.textContent)).toEqual([
       "Newest firstOldest first",
       "Media and TextText on HoverMedia Only",
-      "322416",
+      // 8 and 2 after 32, 24 and 16 (user's decision of 15.11.2026).
+      "32241682",
     ]);
     expect(checkedIn("Sort")).toEqual(["Newest first"]);
     expect(checkedIn("Show")).toEqual(["Media and Text"]);
     expect(checkedIn("Spacing")).toEqual(["32"]);
-    // Two between the feed's groups, one before each of the three trial
-    // sections and one inside the compact sidebar's while its table choices
-    // are put aside (PLAN 50.38); the third section is the open card's view
-    // (SPEC_CARD_PEEK.md, О1), and it ends the panel.
-    expect(screen.getAllByRole("separator")).toHaveLength(6);
+    // Two between the feed's groups and one before the open card's view,
+    // which ends the panel.
+    expect(screen.getAllByRole("separator")).toHaveLength(3);
     expect(screen.getByRole("menu").lastElementChild).toHaveAttribute("data-card-view-menu");
   });
+
+  it.each(["feed", "graph"] as const)(
+    "holds no choice of the sidebar's columns, List spacing or List style in the %s panel (SPEC_FRONTEND.md, «Столбцы и вид List»)",
+    async (panel) => {
+      // Choices stored before the user's decision of 15.11.2026 change nothing on the root.
+      window.localStorage.setItem("mine.sidebar.columns", JSON.stringify({ order: ["count", "previews", "name"], hidden: ["previews"] }));
+      window.localStorage.setItem("mine.sidebar.listSpacing", "table");
+      window.localStorage.setItem("mine.sidebar.listStyle", "plain");
+      const user = userEvent.setup();
+      render(<DisplayMenu panel={panel}>{null}</DisplayMenu>);
+      await user.click(screen.getByRole("button", { name: "Display options" }));
+      for (const caption of ["Sidebar columns", "List spacing", "List style", "Sidebar style", "Compact stack edge"]) {
+        expect(screen.queryByRole("group", { name: caption })).toBeNull();
+      }
+      expect(screen.queryByText("Sidebar columns")).toBeNull();
+      expect(screen.queryByRole("menuitemcheckbox")).toBeNull();
+      // What the panel holds of its own: the open card's view alone, after its separator.
+      expect(screen.getAllByRole("separator")).toHaveLength(1);
+      expect(screen.getByRole("menu").lastElementChild).toHaveAttribute("data-card-view-menu");
+      const root = document.documentElement;
+      for (const attribute of root.getAttributeNames()) {
+        expect(attribute).not.toMatch(/^data-sidebar-(list-roomy|list-toc|hide-|stack-left)/);
+      }
+      expect(root.getAttribute("style") ?? "").not.toMatch(/--sidebar-(name-left|guide-|meta-right|(name|previews|count)-(order|lead))/);
+    },
+  );
 
   it.each([
     ["cards", "Media and Text"],
@@ -125,6 +151,15 @@ describe("Display menu (SPEC_FEED_DISPLAY.md, Д1 to Д3)", () => {
     expect(checkedIn("Sort")).toEqual(["Oldest first"]);
     expect(checkedIn("Show")).toEqual(["Text on Hover"]);
     expect(checkedIn("Spacing")).toEqual(["24"]);
+  });
+
+  it.each(["8", "2"])("applies Spacing %s like the other steps", async (step) => {
+    const user = await openMenu();
+    await user.click(screen.getByRole("menuitemradio", { name: step }));
+    expect(window.localStorage.getItem("mine.spacing")).toBe(step);
+    expect(document.documentElement.style.getPropertyValue("--edge-rhythm")).toBe(`${step}px`);
+    expect(checkedIn("Spacing")).toEqual([step]);
+    expect(vi.mocked(emit)).toHaveBeenCalledWith("settings-changed", expect.objectContaining({ key: "mine.spacing" }));
   });
 
   it("works from the keyboard and returns focus to the button on Escape", async () => {

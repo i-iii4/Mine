@@ -1,10 +1,15 @@
 # SPEC: Feed Scroll Performance
 
+**Состояние:** частично: Phase C7 реализована, правка картинок ленты идёт строкой 51.1. Источник: строка «Status» ниже; PLAN.md, Phase C7 и строка 51.1. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [AUDIT_PERFORMANCE.md](AUDIT_PERFORMANCE.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
 
 Status: implemented as Phase C7; insufficient alone for the final canvas-feel
 target. Phase C8 continues the layout-readiness layer in
-[SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md).
+[SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md). С 15.11.2026
+картинки ленты готовятся по разделу «Подготовка картинки карточки»:
+отдельный предзагрузчик картинок снят по
+[AUDIT_FEED_IMAGES.md](AUDIT_FEED_IMAGES.md).
 
 ## Goal
 
@@ -24,15 +29,10 @@ decoded-media readiness are separate concerns with separate budgets.
   local preview exists.
 - The hot scroll path uses preview/poster/thumbnail assets only. Original source
   media is not part of feed readiness.
-- Image-карточки рисуют прогретый derived-тумб (manifest primary preview, иначе
-  `<slug>.jpg`) базовым слоем первым кадром; полноразмерный оригинал грузится
-  поверх и появляется fade-in по `load`. Так прогретый тумб становится реально
-  отрисованным пикселем, а не только декодированным в кэше — закрыт decode-miss
-  source-first рендера. Базовый слой размонтируется после загрузки оригинала
-  (`showBase && !primaryLoaded`), а не остаётся под ним: иначе у прозрачных PNG
-  сквозь оригинал просвечивал бы непрозрачный JPEG-тумб.
-- The solution must remain bounded in DOM nodes, image decode concurrency and
-  memory pressure.
+- Картинка карточки это её превью: лента запрашивает только превью, оригинал
+  не запрашивает.
+- The solution must remain bounded in DOM nodes and memory pressure: a picture
+  is loaded and decoded only for a mounted card.
 - The feed must degrade predictably: if preview assets are missing, Grid keeps a
   stable placeholder and schedules preview-pipeline work elsewhere; it does not
   spin on broken URLs or pull heavy originals into fast scroll.
@@ -60,11 +60,13 @@ the defect belongs to the layout-readiness layer specified in
 
 ## Core Principle
 
-**DOM readiness and media readiness must be independent.**
+**Картинка карточки готовится сразу после монтирования карточки.**
 
-The render window is intentionally smaller than the media preparation window.
-Grid should mount enough cards to avoid blank geometry, but should prepare media
-farther ahead without adding DOM nodes.
+Отдельной загрузки и декодирования картинок вне карточек нет. Лента
+запрашивает каждую картинку один раз за проход. Окно отрисовки решает, какие
+карточки смонтированы; картинка смонтированной карточки загружается и
+декодируется сразу, не дожидаясь входа карточки в видимую область (раздел
+«Подготовка картинки карточки»).
 
 ## Architecture Overview
 
@@ -76,10 +78,8 @@ scroll container
   -> RAF scroll signal sampler
   -> adaptive window calculator
   -> layout-position range query
-  -> derived preview candidate resolver
-  -> bounded decode queue
-  -> browser image decode cache
   -> normal Card render path
+  -> picture preparation of every mounted card
 ```
 
 Each stage has one owner:
@@ -88,14 +88,13 @@ Each stage has one owner:
 |---|---|---|
 | Scroll visibility runtime | `useGridScroll` | Keep mounted `GridItem`s aligned with the real scrollport; use RAF for normal changes and a bounded sync commit only when the current viewport would otherwise be empty |
 | Scroll sampling | Grid hook | Read `scrollTop`, direction and velocity at animation-frame cadence |
-| Window calculation | Pure helper | Convert viewport + velocity into render, priority and preload windows |
+| Window calculation | Pure helper | Convert viewport + velocity into render and priority windows |
 | Layout range query | Grid | Use existing `layout.positions`; do not query DOM rectangles |
-| Candidate extraction | `feedMediaCandidatesForBlock` | Produce only derived preview/poster/thumbnail URLs |
-| Decode scheduling | `FeedMediaPreloadQueue` | Decode with bounded concurrency, queue size, timeout and generation cancellation |
-| Visual rendering | Existing `Card` path | Render normally; no preload-only DOM nodes |
+| Visual rendering | Existing `Card` path | Render normally; the card owns its picture addresses and their fallback |
+| Picture preparation | `usePreparedPicture` in the card's `<img>` | Ask the engine to decode the picture of a mounted card at once |
 
-This keeps the responsibility split inspectable: Grid owns geometry, the
-candidate resolver owns media URL policy, and the queue owns backpressure.
+This keeps the responsibility split inspectable: Grid owns geometry, the card
+owns its pictures.
 
 ## Non-negotiable Invariants
 
@@ -106,14 +105,13 @@ candidate resolver owns media URL policy, and the queue owns backpressure.
   currently mounted item. Ordinary scroll remains RAF-coalesced.
 - No implementation may make the whole route visible in DOM to make scrolling
   feel smoother.
-- No implementation may preload original source media as part of the fast scroll
+- No implementation may load original source media as part of the fast scroll
   path.
-- No implementation may duplicate `Card` media URL fallback logic inside the
-  preloader.
-- Preload completion must never mutate layout, card order, selection state,
+- No implementation may load or decode a picture outside the card that shows
+  it: a second request for the same address is a defect
+  (`bun run test:feed-images`).
+- Picture preparation must never mutate layout, card order, selection state,
   hover ownership or keyboard focus.
-- A route/query/vault/layout generation change must make stale preload work
-  harmless.
 - Debug text must never be visible in the feed. Diagnostics are developer-only.
 
 ## Runtime Signals
@@ -160,7 +158,7 @@ linger-контракт: за курсором скролла остаётся �
 (blank) регион. `800px` cap держит backward DOM bounded; при этом floor
 `>= 0.5 * vh` выполняется для всех `vh <= 1600` — весь реалистичный desktop-диапазон.
 
-Velocity-вклады (`v * 80` в render, `v * 350` в priority, `v * 600` в preload)
+Velocity-вклады (`v * 80` в render, `v * 350` в priority)
 квантуются ВВЕРХ шагом `FEED_SCROLL_WINDOW_VELOCITY_QUANTUM_PX` (`= 200`) через
 `quantizeVelocityContribution`. Округление вверх (никогда вниз) гарантирует, что
 квантованное окно не уже неквантованного, а стабильная identity окна между
@@ -176,8 +174,9 @@ commitLookaheadBlocks = Math.max(48, visibleItemCount * 2)
 
 Rationale: render overscan is deliberately small. Grid mounts only the current
 viewport plus a short runway, because deep jumps otherwise create large React
-mount bursts and long tasks. The wider forward preparation belongs to priority
-loading and media preload, not to mounted `GridItem` DOM. Blank geometry is
+mount bursts and long tasks. A wider render window does not make pictures
+arrive earlier either: with 1800–4500 px instead of 720–1800 px the share of
+late pictures stayed the same (AUDIT_FEED_IMAGES.md, раздел 5.3). Blank geometry is
 handled by the anti-blank commit below, not by keeping several screens of cards
 mounted.
 
@@ -242,202 +241,61 @@ priorityForwardPx = clamp(vh * 3 + quantizeVelocityContribution(v * 350), 3200, 
 priorityBackwardPx = clamp(vh * 1.1, 800, 2400)
 ```
 
-Rationale: eager loading is useful for near-future mounted cards, but it is not
-the full media-readiness solution. The decode preloader below prepares farther
-ahead without mounting cards.
+Rationale: the priority window is wider than the render window, so every
+mounted picture loads eagerly. Eager loading starts the request; decoding is
+the business of the next section.
 
-### 3. Media Preload / Decode Window
+## Подготовка картинки карточки
 
-The media readiness window prepares preview media ahead of the viewport without
-mounting extra `GridItem`s.
+Картинка карточки готовится сразу после монтирования её элемента `<img>`:
+карточка вызывает стандартный `HTMLImageElement.decode()`
+(`src/hooks/usePreparedPicture.ts`). Движок загружает и декодирует картинку
+вне главного потока и держит её готовой к первому рисованию.
 
-Target formula:
+Зачем. WebKit рисует слой карточки в первый раз у самого края видимой области
+и в этом первом рисовании декодирует картинку, которую ещё не рисовал,
+асинхронно: слой выходит без картинки и перерисовывается после декодирования.
+Картинка, декодированная заранее, попадает в первое рисование. Причины и
+замеры: [AUDIT_FEED_IMAGES.md](AUDIT_FEED_IMAGES.md), разделы 5 и 6.
 
-```ts
-mediaPreloadForwardPx = clamp(vh * 4 + quantizeVelocityContribution(v * 600), 4800, 14000)
-mediaPreloadBackwardPx = clamp(vh * 1.5, 1600, 3600)
-```
+Правила:
 
-Operational limits:
+- Готовятся все три вида картинок карточки: превью карточки
+  (`PreviewPicture`), плитка (`GalleryTileImage`) и постер видео
+  (`FeedVideoPoster`). Все три это `<img>` в слое карточки, и первое рисование
+  слоя идёт без каждой из них одинаково.
+- Картинка готовится заново, когда тот же элемент получает другой адрес
+  (новая версия превью).
+- `decode()` загрузку не начинает: картинку с `loading="lazy"` движок
+  декодирует после того, как сам её загрузит. В ленте таких нет: все
+  смонтированные карточки лежат внутри окна приоритета.
+- `decoding="async"`, слой композиции карточки, окно отрисовки и окно
+  приоритета подготовка не меняет.
+- Где метода `decode()` нет, подготовка ничего не делает. Так в jsdom: тесты
+  подготовки ставят метод сами (`src/test/pictureDecode.ts`).
+- Отказ `decode()` разбирается по состоянию элемента. Элемент убран или
+  показывает другой адрес: карточка ушла или картинку заменили, делать нечего.
+  Картинка не загрузилась: элемент сам сообщает событием `error` после отказа
+  (проверено в WebKit 26.4 и Chromium 148 на отсутствующем файле и на файле не
+  картинки), и карточка идёт своим путём повторной загрузки: следующий адрес,
+  затем повторы через 250 и 1000 мс. Картинка загрузилась, но не декодируется:
+  события `error` элемент не даёт, поэтому карточка отправляет её в тот же путь
+  сама. Обрезанный JPEG к этому случаю не относится: оба движка декодируют его
+  частично и отказа не дают.
 
-```ts
-MEDIA_PRELOAD_MAX_CONCURRENCY = 4
-MEDIA_PRELOAD_CACHE_LIMIT = 400
-MEDIA_PRELOAD_QUEUE_LIMIT = 160
-MEDIA_PRELOAD_DECODE_TIMEOUT_MS = 3000
-```
-
-Rationale: fast flick-scroll needs a wider forward preparation window than slow
-reading, but the window still has a hard upper bound. The correct architecture is
-adaptive and capped, not a single fixed overscan/preload constant.
-
-## Preview Candidate Ownership
-
-Preview URL extraction must be centralized. The media preloader must not
-reimplement a parallel version of `Card` rendering logic.
-
-Expected module boundary:
-
-```ts
-// src/lib/feedMediaCandidates.ts
-export interface FeedMediaCandidate {
-  url: string;
-  role: "primary-preview" | "tile-preview" | "poster-preview" | "thumbnail";
-  source: "derived";
-  width: number | null;
-  height: number | null;
-}
-
-export function feedMediaCandidatesForBlock(args: {
-  block: LightBlock;
-  thumbsRootPath: string;
-}): FeedMediaCandidate[];
-```
-
-Candidate order:
-
-1. `feed_playback.poster_preview_path` for video poster surfaces;
-2. `preview_manifest.primary_preview_path`;
-3. tile-level `preview_path`;
-4. block thumbnail `<slug>.jpg`.
-
-Source media rule:
-
-- The preloader must not schedule original `media_file`, raw inline
-  `source_path`, remote URL or `vaultPath` media fallback.
-- Existing `Card` fallback behavior may remain for visible correctness, but it
-  is not considered feed readiness.
-- If no derived preview candidate exists, the preloader records `no-preview`
-  for diagnostics and does no work for that block.
-
-This rule protects fast scroll from accidentally reading large originals or
-remote resources.
-
-### Per-block candidate memoization
-
-`feedMediaCandidatesForBlock` мемоизирует результат на блок через `WeakMap`
-(`src/lib/feedMediaCandidates.ts`); ключ инвалидации — `preview_manifest`,
-`feed_playback`, `slug`, `width`, `height`, `thumbsRootPath`. Возвращаемый массив
-`readonly`. Preloader пересчитывает preload-окно на каждом rAF-коалесцированном
-кадре скролла (до ~120/с) и для каждого блока в окне вызывает эту функцию, которая
-парсит `preview_manifest` и `feed_playback` JSON; без кэша это сотни `JSON.parse`
-на секунду скролла — чистое давление на GC. `WeakMap` ключуется на identity блока,
-поэтому не течёт при замене массива блоков, а хранение полного набора входов
-деривации гарантирует пересчёт при мутации контента переиспользованного объекта.
-
-## Preload Scheduler
-
-Expected module boundary:
-
-```ts
-// src/lib/feedMediaPreloadQueue.ts
-export interface FeedMediaPreloadStats {
-  queued: number;
-  active: number;
-  decoded: number;
-  failed: number;
-  skippedLru: number;
-  skippedNoPreview: number;
-  generation: string;
-}
-
-export interface FeedMediaPreloadQueue {
-  update(input: FeedMediaPreloadInput): FeedMediaPreloadStats;
-  reset(generation: string): void;
-  dispose(): void;
-}
-```
-
-Scheduling rules:
-
-- Queue keys are `(generation, url)`.
-- A generation changes when route, query, vault, thumbs root or
-  `layoutGenerationKey` changes. `layoutGenerationKey` строится по точной
-  геометрии колонок (`cw` = columnWidth, `cc` = columnCount), а не по сырому
-  пикселю ресайза, поэтому generation reset срабатывает только при реальной смене
-  поколения раскладки; sub-column resize (drag сайдбара, gutter скроллбара) не
-  сбрасывает поколение и не churn'ит preload-очередь.
-- Stale decode work may finish, but its result is ignored if generation changed.
-- Active decode count never exceeds `4`.
-- Queue length never exceeds `160`; farthest candidates are dropped first.
-- Successful URLs go into an LRU set capped at `400`.
-- Failed URLs go into a per-generation failed set and are not retried in the
-  same generation.
-- Candidate priority is sorted by:
-  1. direction-aware distance to viewport;
-  2. candidate role priority (`primary/poster` before tile before thumbnail);
-  3. visual item index for stable ordering.
-
-Decode protocol:
-
-```ts
-const image = new Image();
-image.decoding = "async";
-image.src = candidate.url;
-await Promise.race([
-  image.decode?.() ?? imageLoadedOrErrored(image),
-  timeout(MEDIA_PRELOAD_DECODE_TIMEOUT_MS),
-]);
-```
-
-Decode failure is not surfaced to the user. It only affects diagnostics and
-retry suppression.
-
-## Readiness State Machine
-
-The scheduler tracks URL state per generation:
-
-```text
-unknown -> queued -> active -> decoded
-                   -> failed
-                   -> timed-out
-```
-
-Rules:
-
-- `decoded` URLs remain in the LRU until evicted.
-- `failed` and `timed-out` URLs are not retried in the same generation.
-- `queued` candidates can be dropped when the queue cap is exceeded.
-- `active` work is not cancelled through browser APIs; completion is ignored when
-  generation no longer matches.
-- `no-preview` is a diagnostic skip state, not an error.
-
-This avoids retry storms and prevents async decode completion from becoming a
-source of UI mutation.
+Память. Декодированными держатся только картинки смонтированных карточек:
+их число ограничено окном отрисовки.
 
 ## Grid Integration
-
-Expected hook boundary:
-
-```ts
-// src/hooks/useFeedMediaPreloader.ts
-export function useFeedMediaPreloader(args: {
-  enabled: boolean;
-  blocks: readonly LightBlock[];
-  layout: MasonryLayout;
-  visibilityIndex: VisibilityIndex;
-  scrollTop: number;
-  viewportHeight: number;
-  scrollDirection: ScrollDirection;
-  scrollVelocityPxMs: number;
-  generationKey: LayoutGenerationKey;
-  thumbsRootPath: string | null;
-}): FeedMediaPreloadStats;
-```
 
 Grid responsibilities:
 
 - Keep the current virtualized render path as the only DOM owner.
 - Compute render items from the render window.
-- Compute preload items from the media preload window.
-- Pass only derived preview candidates to the preloader.
-- Reset preload work on generation changes.
-- Keep the preloader disabled until `thumbsRootPath` and `viewportHeight` are
-  known.
+- Mark the cards of the priority window, so their pictures load eagerly.
+- Publish the diagnostics object (раздел «Diagnostics»).
 
-The hook must not set React state on every scroll pixel. It may store scheduler
-state in refs and publish diagnostics at animation-frame cadence only when
-values change.
+Grid не загружает и не декодирует картинки сам: это делает карточка.
 
 ## Fast Scroll Mode
 
@@ -445,16 +303,15 @@ Fast scroll mode is a scheduling policy, not a visual state.
 
 When `isFastScrolling` is true:
 
-- media preload window expands through the adaptive formula;
+- the render and priority windows expand through the adaptive formulas;
 - no new heavy `feed_playback` candidate should start if it is outside the real
   viewport;
 - existing poster surfaces remain stable;
 - hover affordances remain passive until real pointer movement resumes pointer
-  ownership;
-- source-media fallback must not be promoted into preload work.
+  ownership.
 
-When scroll velocity drops below the hysteresis threshold, the scheduler returns
-to normal window sizes without clearing already decoded LRU entries.
+When scroll velocity drops below the hysteresis threshold, the windows return
+to their normal sizes.
 
 ## Tuning Protocol
 
@@ -464,25 +321,23 @@ through evidence, not taste.
 Before changing a constant:
 
 1. Capture baseline diagnostics on a real `Everything` route:
-   `mountedGridItems`, render/priority/preload windows, queue length, active
-   decode count, decoded/failed/skipped counters.
+   `mountedGridItems`, render and priority windows; and the numbers of
+   `bun run test:feed-images`.
 2. Identify the observed failure mode:
-   blank geometry, late preview decode, too much CPU, memory pressure, queue
-   churn, or missing preview assets.
-3. Change one budget family at a time:
-   render window, priority window, media preload window or queue limits.
-4. Re-run the same manual scroll pass and compare diagnostics.
+   blank geometry, late pictures, too much CPU, memory pressure or missing
+   preview assets.
+3. Change one budget family at a time: render window or priority window.
+4. Re-run the same manual scroll pass and `bun run test:feed-images`, and
+   compare.
 
 Guardrails:
 
-- Increasing render caps is allowed only for blank geometry, not late image
-  decode.
-- Increasing preload caps is allowed only when queue and decode limits remain
-  stable.
-- Increasing decode concurrency above `4` requires explicit CPU evidence.
+- Increasing render caps is allowed only for blank geometry, not late
+  pictures: a wider render window does not make a picture arrive earlier
+  (AUDIT_FEED_IMAGES.md, раздел 5.3).
 - Missing preview assets must be fixed in the thumbnail/preview pipeline, not by
   loading original source media in the feed.
-- Product fixes must preserve bounded DOM and bounded decode work.
+- Product fixes must preserve bounded DOM.
 
 ## Diagnostics
 
@@ -492,21 +347,24 @@ Recommended surface:
 
 ```ts
 window.__MINE_FEED_SCROLL_DEBUG__ = {
-  enabled: boolean;
-  stats: FeedMediaPreloadStats;
+  layoutGenerationKey: string;
+  scrollDirection: "forward" | "backward" | "idle";
+  scrollVelocityPxMs: number;
+  isFastScrolling: boolean;
   mountedGridItems: number;
   renderWindowPx: { forward: number; backward: number };
   priorityWindowPx: { forward: number; backward: number };
-  preloadWindowPx: { forward: number; backward: number };
   layout?: GridLayoutReadinessDiagnostics;
   viewport?: GridViewportPaintDiagnostics;
+  heightDrift?: CardHeightDriftReport;
 };
 ```
 
-`layout` belongs to C8 layout readiness. `viewport` belongs to the paint-layer
-blank detector and compares layout positions with mounted `[data-feed-grid-item]`
-DOM wrappers in the active scrollport. If `viewport.blankViewportRisk` is true,
-the defect is a virtual-window/commit gap, not a media-preload miss.
+Объект создаёт и убирает `Grid`. `layout` belongs to C8 layout readiness.
+`viewport` belongs to the paint-layer blank detector and compares layout
+positions with mounted `[data-feed-grid-item]` DOM wrappers in the active
+scrollport. If `viewport.blankViewportRisk` is true, the defect is a
+virtual-window/commit gap, not a late picture.
 
 Diagnostics may also log compact console lines in development builds. They must
 never render visible service text in the app.
@@ -517,7 +375,16 @@ The layout/paint layer has an automated browser gate:
 bun run test:feed-scroll
 ```
 
-It opens the dev-only `/__feed-scroll-audit` route, performs deterministic deep
+It builds the `/__feed-scroll-audit` route for production and serves it
+itself (since 15.11.2026, as `test:sidebar-strip` and `test:editing-perf`
+do): the frames, settle times and long tasks are measured for the React the
+app ships. On a dev server's page, React's development build (its checks,
+StrictMode's second render of every component, its performance tracks) made
+each deep jump several times longer: at 7363 px in the 1440 px window the
+first frame after the jump came after 650 to 1500 ms with long tasks of 132
+to 148 ms, against at most 57 ms and no long task in production.
+`MINE_FEED_SCROLL_AUDIT_URL` still measures a page the caller serves. It
+performs deterministic deep
 scroll jumps in Playwright and samples the DOM synchronously in the native
 scroll handler plus the first following animation frame before any settle wait.
 It fails on blank viewport, skeleton-only viewport, browser asset errors,
@@ -532,6 +399,117 @@ product acceptance remains a separate human-facing check because the synthetic
 route intentionally avoids source media and Tauri IPC; the C8.16 `Everything`
 check passed at the current product level.
 
+## Проверка картинок при прокрутке
+
+`bun run test:feed-images`: сценарий `scripts/feed-images-audit.mjs`, страница
+`src/dev/FeedImagesAuditRoute.tsx`. Проверка входит в `bun run test:browser`.
+
+- **Движок.** WebKit без окна (Playwright), сборка для продакшена, свой сервер.
+  Chromium для этой проверки не годится: в нём картинки не опаздывают и при
+  коде до 15.11.2026, поэтому `test:feed-scroll` дефекта не видит.
+- **Страница.** Настоящий `Grid`, 800 карточек. В каждом десятке шесть
+  карточек-картинок пяти форм, две статьи с картинкой, одна статья с плиткой
+  из четырёх картинок и одна текстовая карточка. У каждой картинки свой адрес:
+  движок хранит картинку по адресу, и лента из нескольких общих картинок
+  готовит каждую один раз. Сервер отдаёт под каждым адресом один из шести
+  светлых файлов JPEG из `scripts/fixtures/feed-images` (длинная сторона
+  640 px, плитка 320 px). Окно 1440×900, плотность 2, тёмная тема: слот без
+  картинки отличается от слота с картинкой по яркости.
+- **Прокрутка.** События колеса каждые 8 мс без ожидания ответа страницы:
+  прокрутку ведёт поток прокрутки движка, как от трекпада. Три сценария:
+  «6 px/мс» (4 с с постоянной скоростью), «броски» (три броска с пиком
+  14 px/мс и затуханием 450 мс), «с места» (шесть бросков по 0,7 с с пиком
+  8 px/мс и паузой 1,8 с).
+- **Первая величина.** Доля картинок, которые хотя бы в одном кадре записи
+  экрана страницы стояли в видимой области тёмным прямоугольником. Запись
+  ведёт Playwright, кадры достаёт `ffmpeg` из его же поставки. Снимки экрана
+  не годятся: для снимка WebKit декодирует все картинки сразу и показывает
+  ленту, которой на экране не было. В содержимое ленты добавлена линейка,
+  которая двоичным узором кодирует позицию прокрутки: по ней каждый кадр
+  записи знает, какие слоты картинок в нём видны. В каждом видимом слоте
+  берутся девять точек; слот тёмный, если семь из девяти темнее порога
+  яркости. Запись даёт 25 кадров в секунду, поэтому доля это оценка снизу.
+- **Вторая величина.** Число адресов картинок, которые страница запросила у
+  сервера больше одного раза за проход вперёд.
+- **Без порога** проверка сообщает число запросов картинок, число кадров
+  страницы дольше 25 и 50 мс и нагрузку машины.
+- **Когда проверка не судит.** Если линейка читается меньше чем в 90 % кадров
+  записи, сценарий измеряется заново, до трёх раз; после третьего раза
+  проверка падает с сообщением, что машина слишком нагружена для записи.
+  Так было при нагрузке машины 180–300 в аудите.
+- **Чего проверка не ловит.** Поведение системного WebKit в приложении,
+  настоящий трекпад и экран 120 Гц, время ответа протокола `asset`, постер
+  видео (в ленте проверки видео нет).
+
+Пороги выведены из замеров 15.11.2026 (WebKit 26.4, средняя нагрузка машины
+за минуту от 3 до 15 на 14 ядрах, одновременно работали другие проверки):
+
+| Сценарий | Порог | С подготовкой картинки | Без подготовки |
+|---|---|---|---|
+| 6 px/мс | 30 % | 12–25 %, 16 прогонов | 36–44 %, 11 прогонов |
+| Броски | 30 % | 10–27 %, 17 прогонов | 32–47 %, 10 прогонов |
+| С места | 19 % | 4–13 %, 16 прогонов | 25–35 %, 10 прогонов |
+
+- «Без подготовки» это лента до 15.11.2026 и лента после удаления
+  предзагрузчика: доля у них одна.
+- Порог стоит посередине между худшим прогоном с подготовкой и лучшим
+  прогоном без неё. Проверка падает и на ленте до 15.11.2026, и при потере
+  подготовки картинки.
+- Сценарий, превысивший порог, измеряется заново, до трёх раз, и падает,
+  только если порог превышен во всех трёх. Основание: посторонняя работа на
+  машине делает картинки позже, а не раньше. Худшие прогоны с подготовкой шли
+  подряд: два соседних прогона дали 20 и 25 % при 6 px/мс и 22 и 23 % в
+  бросках при нагрузке 6, два прогона при нагрузке 9–12 дали 18 и 19 % и
+  25–27 %. Остальные 12 прогонов дали 12–15 % и 10–21 %.
+- В бросках зазор между состояниями узкий: 27 против 32 %. Возврат дефекта
+  надёжно ловят сценарии «6 px/мс» и «с места», где зазор 11 и 12 пунктов.
+- Адреса, запрошенные дважды: порог 0. С предзагрузчиком их было от 97 до 344
+  в каждом из 16 прогонов. Без него в 62 прогонах из 63 их нет, в одном
+  прогоне «с места» дважды запрошены 2 адреса из 325; причина не выяснена.
+  Поэтому превышение этого порога тоже измеряется заново по тому же правилу.
+- Порог 2 % из раздела 11 [AUDIT_FEED_IMAGES.md](AUDIT_FEED_IMAGES.md)
+  рассчитан на вариант с анимацией и к этой ленте не относится.
+
+## Решение 15.11.2026
+
+[AUDIT_FEED_IMAGES.md](AUDIT_FEED_IMAGES.md) рекомендовал держать слои
+смонтированных карточек нарисованными: контейнер карточек несёт непрерывную
+анимацию `transform` без видимого изменения, и WebKit рисует слой карточки при
+монтировании. В стенде аудита это давало 0 % тёмных картинок.
+
+Пользователь 15.11.2026 решил сначала пройти путь без этой анимации: она
+опирается на внутреннее правило движка. Путь состоит из трёх шагов: проверка
+`test:feed-images`, удаление предзагрузчика, подготовка картинки карточки
+стандартным `decode()`. Вариант с анимацией отложен: пользователь решит о нём
+отдельно, после оценки результата.
+
+Доля картинок, бывших тёмными, по шагам (`bun run test:feed-images`):
+
+| Сценарий | До правок | Без предзагрузчика | С подготовкой картинки |
+|---|---|---|---|
+| 6 px/мс | 36–44 %, 6 прогонов | 37–43 %, 5 прогонов | 12–25 %, 16 прогонов |
+| Броски | 32–47 %, 5 прогонов | 39–46 %, 5 прогонов | 10–27 %, 17 прогонов |
+| С места | 25–34 %, 5 прогонов | 29–35 %, 5 прогонов | 4–13 %, 16 прогонов |
+
+- Запросы картинок за проход: 1008–1119 при 6 px/мс до правок, 577–581 без
+  предзагрузчика; в бросках 804–886 и 438–440; с места 548–618 и 324–328.
+  Запросов стало меньше на 40–50 %.
+- Кадры страницы при 6 px/мс, пять пар прогонов друг за другом в стенде
+  аудита при нагрузке машины 7–16: дольше 25 мс 18–42 из 345 без подготовки и
+  25–61 с ней, дольше 50 мс 0–4 и 0–2. В прогонах проверки: дольше 25 мс
+  15–57 до правок и 9–46 с подготовкой. Подготовка идёт вне главного потока,
+  роста длительности кадров нет.
+- Память, стенд аудита, по два прогона. В покое процесс страницы 147–149 МБ
+  до правок и 138–151 МБ с подготовкой, процесс графики 118 и 114–121 МБ. При
+  прокрутке 6 px/мс, один замер на прогон: страница 300–486 МБ до правок и
+  433–504 МБ с подготовкой, графика 428 и 388–409 МБ. Различие не выходит за
+  разброс между двумя прогонами одного состояния.
+- Остаток. Картинка, опоздавшая к входу, темна один или два кадра записи, то
+  есть 40–80 мс. Это причина П2 аудита: прокрутка идёт в отдельном потоке и
+  обгоняет страницу, слой карточки не успевает нарисоваться к входу. Подготовка
+  картинки готовит картинку, но не слой. Остаток убирает только вариант с
+  анимацией.
+
 ## Acceptance Criteria
 
 Functional:
@@ -540,14 +518,13 @@ Functional:
   states.
 - Pagination boundaries remain invisible: first paint is not blocked by page
   two, and fast scroll cannot catch the loaded tail before the next page starts.
-- DOM node count remains bounded by the render window, not by the media preload
-  window.
-- Image decode concurrency never exceeds `4`.
-- Queue length never exceeds `160`.
-- Route switch, search query change, vault switch and layout generation change
-  invalidate stale preload work.
-- Missing preview assets do not cause repeated decode loops.
-- Preloader never schedules original source media.
+- DOM node count remains bounded by the render window.
+- Каждая картинка запрашивается один раз за проход вперёд, и доля картинок,
+  опоздавших к входу в видимую область, не выше порогов раздела «Проверка
+  картинок при прокрутке».
+- A picture that does not load or cannot be decoded goes through the card's
+  bounded retries and never loops.
+- The feed never requests original source media.
 - Existing keyboard focus, group selection, drag stack, context menu and
   feed-video poster behavior remain unchanged.
 
@@ -555,9 +532,8 @@ Performance:
 
 - Scrolling inside the current render overscan window must not force a React
   re-render unless visible item identity changes.
-- Media preloader scheduling must be `requestAnimationFrame`-coalesced.
+- No work per scroll frame is spent on pictures outside the mounted cards.
 - No synchronous filesystem or IPC call is allowed in the scroll handler.
-- The preloader must not increase route snapshot payload.
 
 Manual:
 
@@ -568,36 +544,36 @@ Manual:
 
 ## Test Plan
 
-- Unit tests for `feedMediaCandidatesForBlock`:
-  - candidate order;
-  - preview-only rule;
-  - video poster candidate;
-  - no-preview result.
+- Unit tests for picture preparation (`usePreparedPicture`):
+  - `decode()` once per mounted picture and again for a new address;
+  - a rejection by the element's state: gone, replaced, not loaded, not
+    decodable.
+- Card tests: a picture, a tile and a video poster that cannot be decoded take
+  the same failure path as one that does not load.
 - Unit tests for adaptive window calculations:
   - slow scroll;
   - fast scroll;
   - minimum and maximum clamps;
   - backward direction mirroring.
-- Unit tests for `FeedMediaPreloadQueue`:
-  - concurrency cap;
-  - queue cap and farthest-drop behavior;
-  - LRU skip;
-  - failed URL suppression;
-  - generation reset.
 - Focused Grid tests where practical:
-  - preloader receives wider window than visible render;
-  - no extra GridItems are mounted for preload-only items.
+  - the diagnostics object is published by Grid;
+  - only the render window is mounted.
+- `bun run test:feed-images`: late pictures and repeated requests in WebKit
+  (раздел «Проверка картинок при прокрутке»).
 - Product acceptance on the real `Everything` vault is required because the
   defect is perceptual; it passed after the C8.16 layout-readiness retune.
 
 ## Implementation Phases
 
-1. Shared candidate resolver.
+1. Shared candidate resolver. Снят 15.11.2026 вместе с предзагрузчиком.
 2. Adaptive window calculation helpers and tests.
-3. Bounded preload queue and tests.
-4. Grid hook integration with diagnostics.
+3. Bounded preload queue and tests. Снята 15.11.2026.
+4. Grid hook integration with diagnostics. Хук предзагрузчика снят
+   15.11.2026, объект диагностики создаёт `Grid`.
 5. Retune render/priority windows.
 6. Manual acceptance on `Everything`.
+7. 15.11.2026: проверка `test:feed-images`, удаление предзагрузчика,
+   подготовка картинки карточки (раздел «Решение 15.11.2026»).
 
 ## Non-goals
 
@@ -617,10 +593,10 @@ suite would not catch.
 - **Grid keeps a velocity `scrollTop` in `useState`.** Beyond `useGridScroll`
   (which keeps `scrollTop` in a ref and re-renders only when the visible set
   changes), `Grid` runs a second RAF-coalesced scroll listener that writes
-  `scrollTop` into React state to drive velocity sampling, priority bounds,
-  autoplay selection and the media preload window. This re-renders `Grid` once
+  `scrollTop` into React state to drive velocity sampling, priority bounds
+  and autoplay selection. This re-renders `Grid` once
   per scroll frame during active scrolling. It is RAF-coalesced (not per-pixel)
-  and required by the velocity-aware preload contract, so it is accepted as a
+  and required by the velocity-aware windows, so it is accepted as a
   deliberate deviation from SPEC_GRID invariant #3 rather than reworked into the
   ref+tick path. Второй полный ререндер Grid на том же кадре скролла устранён:
   эффект `getVisibleItems` в `useGridScroll` байлаутит по `samePositions`, поэтому
@@ -630,7 +606,7 @@ suite would not catch.
   `top = 0` while the grid is rendered with a `marginTop` of
   `GRID_TOP_INSET_PX` (32px). Exact viewport checks add the inset to
   `position.top`, but `getVisibleItemsFromIndex` compares the raw `scrollTop`
-  against un-inset positions, so the visible/priority/preload windows are
+  against un-inset positions, so the visible and priority windows are
   offset by 32px. The render window (≥640px) absorbs this, so no blank or
   missing card results; normalizing it risks shifting the visible window
   without scroll-edge test coverage, so it is left as a documented residual.

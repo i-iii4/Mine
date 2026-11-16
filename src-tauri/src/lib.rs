@@ -249,10 +249,13 @@ pub fn run() {
             commands::source_video_download::cancel_source_video_download,
             commands::source_video_download::source_video_download_status,
             commands::menu_panel::menu_panel_prepare,
+            commands::menu_panel::menu_panel_dispose,
             commands::menu_panel::menu_panel_ready,
             commands::menu_panel::menu_panel_open,
-            commands::menu_panel::menu_panel_show,
+            commands::menu_panel::menu_panel_update,
+            commands::menu_panel::menu_panel_answer,
             commands::menu_panel::menu_panel_close,
+            commands::menu_panel::menu_panel_request,
             commands::menu_panel::menu_panel_painted,
         ])
         .plugin(tauri_plugin_dialog::init())
@@ -532,6 +535,12 @@ fn on_menu_event(app: &tauri::AppHandle, id: &str) {
     // system (SPEC_EDITING.md, Л12).
     if let Some(command) = domain::edit_menu::EditMenuCommand::from_menu_id(id) {
         commands::edit_menu::run(app, command);
+        return;
+    }
+    // A command of the menu bar that comes while a menu is up in the menu
+    // panel only closes the menu (SPEC_MENU_WINDOW.md, МО52). The commands
+    // of text editing above still reach the field of the menu's search.
+    if menu_panel::closes_for_command(app) {
         return;
     }
     match id {

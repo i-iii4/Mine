@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use fs2::FileExt;
 use mine_core::links::{LinkIndex, LinkResolution, LinkSyntax};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
@@ -232,10 +232,15 @@ fn read_or_adopt_manifest(vault: &VaultLayout) -> Result<Manifest> {
     Ok(adopted)
 }
 
-#[cfg(unix)]
 fn key_for(path: &Path) -> Result<FileKey> {
+    key_of(&std::fs::symlink_metadata(path)?)
+}
+
+/// The key of the file whose own attributes, not those of a link's target,
+/// `metadata` is.
+#[cfg(unix)]
+fn key_of(metadata: &std::fs::Metadata) -> Result<FileKey> {
     use std::os::unix::fs::MetadataExt;
-    let metadata = std::fs::symlink_metadata(path)?;
     anyhow::ensure!(
         metadata.is_file() && !metadata.file_type().is_symlink(),
         "not a regular file"
@@ -252,11 +257,63 @@ fn key_for(path: &Path) -> Result<FileKey> {
 }
 
 #[cfg(not(unix))]
-fn key_for(_path: &Path) -> Result<FileKey> {
+fn key_of(_metadata: &std::fs::Metadata) -> Result<FileKey> {
     anyhow::bail!("native filesystem identity is unavailable on this platform")
 }
 
+/// Folders of the space listed at once. A pass over a space is mostly reads
+/// of file attributes, and the layout of three folders splits them between
+/// `Cards` and `Media`; the rest of the reads share the remaining lists.
+const INVENTORY_LISTS: usize = 4;
+
+/// Every file of the space under `root`, in no order. The folders of the
+/// root are listed side by side, each with everything under it.
+fn inventory_space(root: &Path) -> Result<Vec<FileEntry>> {
+    let mut found = Vec::new();
+    let folders = list_folder(root, root, &mut found)?;
+    if folders.len() < 2 {
+        for folder in &folders {
+            inventory(folder, root, &mut found)?;
+        }
+        return Ok(found);
+    }
+    let lists = std::thread::scope(|scope| {
+        let listing = (0..INVENTORY_LISTS.min(folders.len()))
+            .map(|list| {
+                let folders = &folders;
+                scope.spawn(move || {
+                    let mut found = Vec::new();
+                    for folder in folders.iter().skip(list).step_by(INVENTORY_LISTS) {
+                        inventory(folder, root, &mut found)?;
+                    }
+                    Ok(found)
+                })
+            })
+            .collect::<Vec<_>>();
+        listing
+            .into_iter()
+            .map(|list| {
+                list.join()
+                    .map_err(|_| anyhow::anyhow!("listing the files of the space panicked"))?
+            })
+            .collect::<Result<Vec<Vec<FileEntry>>>>()
+    })?;
+    found.extend(lists.into_iter().flatten());
+    Ok(found)
+}
+
+/// The files of `dir` and of every folder under it.
 fn inventory(dir: &Path, root: &Path, output: &mut Vec<FileEntry>) -> Result<()> {
+    for folder in list_folder(dir, root, output)? {
+        inventory(&folder, root, output)?;
+    }
+    Ok(())
+}
+
+/// The files of `dir` itself into `output`; returns the folders in it that
+/// belong to the space.
+fn list_folder(dir: &Path, root: &Path, output: &mut Vec<FileEntry>) -> Result<Vec<PathBuf>> {
+    let mut folders = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -268,13 +325,15 @@ fn inventory(dir: &Path, root: &Path, output: &mut Vec<FileEntry>) -> Result<()>
             if files::is_ignored_vault_dir(&path) {
                 continue;
             }
-            inventory(&path, root, output)?;
+            folders.push(path);
         } else if kind.is_file() {
             let relative = path
                 .strip_prefix(root)?
                 .to_string_lossy()
                 .replace('\\', "/");
-            let metadata = std::fs::metadata(&path)?;
+            // One read of the file's own attributes gives its key, size and
+            // time: a pass over a space is mostly these reads.
+            let metadata = entry.metadata()?;
             let mtime_ns = metadata
                 .modified()?
                 .duration_since(std::time::UNIX_EPOCH)?
@@ -282,13 +341,13 @@ fn inventory(dir: &Path, root: &Path, output: &mut Vec<FileEntry>) -> Result<()>
             output.push(FileEntry {
                 id: String::new(),
                 path: relative,
-                key: key_for(&path)?,
+                key: key_of(&metadata)?,
                 size: metadata.len(),
                 mtime_ns,
             });
         }
     }
-    Ok(())
+    Ok(folders)
 }
 
 fn new_id() -> Result<String> {
@@ -364,8 +423,167 @@ fn enroll_capture(vault: &VaultLayout, required_markdown: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Rows of one list of the history, kept in the order of that list and found
+/// through their group (the source note of a reference, or a pending id
+/// itself) without a pass over the whole list. Until 15.11.2026 every lookup
+/// and every `Vec::retain` walked all the rows for every reference of every
+/// note: the first reconcile of a large space grew with the square of its
+/// size (AUDIT_PERFORMANCE.md, Б4). The rows and their order are what
+/// `Vec::retain` and `Vec::push` on the list give. A row taken out stays in
+/// its place, marked: the list as it was given is still there to tell
+/// whether the pass changed it, with no copy of the history kept for that.
+struct Grouped<T> {
+    rows: Vec<Row<T>>,
+    /// How many rows the list was given with: the first of `rows`.
+    given: usize,
+    places: HashMap<String, Vec<usize>>,
+    group_of: fn(&T) -> &str,
+}
+
+struct Row<T> {
+    value: T,
+    /// Whether the row is in the list as it stands.
+    kept: bool,
+}
+
+impl<T: Clone + PartialEq> Grouped<T> {
+    fn new(list: Vec<T>, group_of: fn(&T) -> &str) -> Self {
+        let mut places = HashMap::<String, Vec<usize>>::new();
+        for (place, row) in list.iter().enumerate() {
+            let group = group_of(row);
+            match places.get_mut(group) {
+                Some(of_group) => of_group.push(place),
+                None => {
+                    places.insert(group.to_string(), vec![place]);
+                }
+            }
+        }
+        Self {
+            given: list.len(),
+            rows: list
+                .into_iter()
+                .map(|value| Row { value, kept: true })
+                .collect(),
+            places,
+            group_of,
+        }
+    }
+
+    /// The rows of `group`, in the order of the list.
+    fn of<'a>(&'a self, group: &str) -> impl Iterator<Item = &'a T> + 'a {
+        self.places
+            .get(group)
+            .into_iter()
+            .flatten()
+            .map(|place| &self.rows[*place].value)
+    }
+
+    fn contains(&self, row: &T) -> bool {
+        self.of((self.group_of)(row)).any(|other| other == row)
+    }
+
+    fn push(&mut self, row: T) {
+        self.places
+            .entry((self.group_of)(&row).to_string())
+            .or_default()
+            .push(self.rows.len());
+        self.rows.push(Row {
+            value: row,
+            kept: true,
+        });
+    }
+
+    /// `Vec::retain` for the rows of `group`; the rows of other groups stay.
+    fn retain_in(&mut self, group: &str, mut keep: impl FnMut(&T) -> bool) {
+        let Some(places) = self.places.get_mut(group) else {
+            return;
+        };
+        let rows = &mut self.rows;
+        places.retain(|place| {
+            let row = &mut rows[*place];
+            row.kept = keep(&row.value);
+            row.kept
+        });
+    }
+
+    /// The list as it stands.
+    fn list(&self) -> impl Iterator<Item = &T> {
+        self.rows.iter().filter(|row| row.kept).map(|row| &row.value)
+    }
+
+    /// Whether the list stands as it was given: the same rows in the same
+    /// order.
+    fn unchanged(&self) -> bool {
+        self.list()
+            .eq(self.rows[..self.given].iter().map(|row| &row.value))
+    }
+
+    fn to_vec(&self) -> Vec<T> {
+        self.list().cloned().collect()
+    }
+
+    fn into_vec(self) -> Vec<T> {
+        self.rows
+            .into_iter()
+            .filter(|row| row.kept)
+            .map(|row| row.value)
+            .collect()
+    }
+}
+
+fn source_of_binding(binding: &Binding) -> &str {
+    &binding.source_id
+}
+
+fn source_of_unresolved(reference: &Unresolved) -> &str {
+    &reference.source_id
+}
+
+/// The key, the size and the time a note has after the pass rewrote it, and
+/// its place in the list of files.
+type Rewritten = (usize, FileKey, u64, u128);
+
+fn apply_rewritten(files: &mut [FileEntry], rewritten: &[Rewritten]) {
+    for (place, key, size, mtime_ns) in rewritten {
+        let entry = &mut files[*place];
+        entry.key = key.clone();
+        entry.size = *size;
+        entry.mtime_ns = *mtime_ns;
+    }
+}
+
+/// The history as a pass has it so far, to publish it before the pass ends:
+/// `manifest` carries its version and its revisions, the rest is what the
+/// pass keeps beside it.
+fn history_so_far(
+    manifest: &Manifest,
+    files: &[FileEntry],
+    rewritten: &[Rewritten],
+    bindings: &Grouped<Binding>,
+    unresolved: &Grouped<Unresolved>,
+    pending: &Grouped<String>,
+) -> Manifest {
+    let mut files = files.to_vec();
+    apply_rewritten(&mut files, rewritten);
+    Manifest {
+        version: manifest.version,
+        files,
+        bindings: bindings.to_vec(),
+        unresolved: unresolved.to_vec(),
+        pending_source_ids: pending.to_vec(),
+        pending_revisions: manifest.pending_revisions.clone(),
+    }
+}
+
 fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
-    let (mut manifest, persist_history) = match read_or_adopt_manifest(vault) {
+    // The files of the space are listed while the history is read: neither
+    // needs the other, and together they are half of a pass that finds
+    // nothing changed.
+    let (history, observed) = std::thread::scope(|scope| {
+        let listing = scope.spawn(|| inventory_space(vault.root()));
+        (read_or_adopt_manifest(vault), listing.join())
+    });
+    let (mut manifest, persist_history) = match history {
         Ok(manifest) => (manifest, true),
         Err(error) if error.downcast_ref::<serde_json::Error>().is_some() => {
             // A malformed history cannot establish identity. Current unique
@@ -379,35 +597,42 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
         .pending_source_ids
         .iter()
         .cloned()
-        .collect::<BTreeSet<_>>();
-    let original = manifest.clone();
-    let mut observed = Vec::new();
-    inventory(vault.root(), vault.root(), &mut observed)?;
+        .collect::<HashSet<_>>();
+    // The files and the revisions of the history as it was read, to tell at
+    // the end whether the pass changed it; its lists keep theirs
+    // ([`Grouped::unchanged`]).
+    let old_files = std::mem::take(&mut manifest.files);
+    let old_revisions = manifest.pending_revisions.clone();
+    let mut observed = observed
+        .map_err(|_| anyhow::anyhow!("listing the files of the space panicked"))??;
     observed.sort_by(|a, b| a.path.cmp(&b.path));
 
-    let old_files = manifest.files.clone();
-    let mut by_key = BTreeMap::<(u64, u64, u128), Vec<&FileEntry>>::new();
-    let mut by_path = BTreeMap::<&str, &FileEntry>::new();
+    // Every map and set of this pass is asked, never walked: nothing the
+    // pass writes takes its order from one of them.
+    //
+    // A key, one of the files of the history that carry it, and how many do.
+    let mut by_key = HashMap::<(u64, u64, u128), (&FileEntry, usize)>::new();
+    let mut by_path = HashMap::<&str, &FileEntry>::new();
     for entry in &old_files {
         by_key
             .entry((entry.key.device, entry.key.inode, entry.key.created_ns))
-            .or_default()
-            .push(entry);
+            .or_insert((entry, 0))
+            .1 += 1;
         by_path.insert(&entry.path, entry);
     }
-    let mut claimed = BTreeSet::new();
+    let mut claimed = HashSet::new();
     let observed_keys = observed
         .iter()
         .map(|entry| (entry.key.device, entry.key.inode, entry.key.created_ns))
-        .collect::<BTreeSet<_>>();
+        .collect::<HashSet<_>>();
     let mut next = Vec::with_capacity(observed.len());
     let mut moves = IdentityRefresh::default();
     for mut current in observed {
         let path = current.path.clone();
         let key = current.key.clone();
         let exact = by_key.get(&(key.device, key.inode, key.created_ns));
-        let previous = match exact.map(Vec::as_slice) {
-            Some([entry]) => Some(*entry),
+        let previous = match exact {
+            Some((entry, 1)) => Some(*entry),
             Some(_) => None,
             None => by_path.get(path.as_str()).copied().filter(|entry| {
                 if !path.ends_with(".md")
@@ -450,19 +675,33 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
         current.id = id;
         next.push(current);
     }
-    manifest.files = next;
+    // The files of the history after this pass. A note the pass rewrites
+    // gets its new key, size and time when the pass ends (`rewritten`): the
+    // pass itself reads every file as the inventory found it.
+    let mut current_files = next;
+    let mut rewritten = Vec::<Rewritten>::new();
     let old_by_id = old_files
         .iter()
         .map(|entry| (entry.id.as_str(), entry))
-        .collect::<BTreeMap<_, _>>();
-    let current_files = manifest.files.clone();
+        .collect::<HashMap<_, _>>();
     let current_links = LinkIndex::new(current_files.iter().map(|entry| entry.path.as_str()));
     let current_by_id = current_files
         .iter()
         .map(|entry| (entry.id.as_str(), entry))
-        .collect::<BTreeMap<_, _>>();
-    let moved_ids = manifest
-        .files
+        .collect::<HashMap<_, _>>();
+    // The files of this pass by path and by name. A path names one file: the
+    // inventory lists every file of the space once.
+    let current_by_path = current_files
+        .iter()
+        .map(|entry| (entry.path.as_str(), entry))
+        .collect::<HashMap<_, _>>();
+    let mut files_named = HashMap::<Option<&std::ffi::OsStr>, usize>::new();
+    for entry in &current_files {
+        *files_named
+            .entry(Path::new(&entry.path).file_name())
+            .or_default() += 1;
+    }
+    let moved_ids = current_files
         .iter()
         .filter(|entry| {
             old_by_id
@@ -470,15 +709,13 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
                 .is_some_and(|old| old.path != entry.path)
         })
         .map(|entry| entry.id.clone())
-        .collect::<BTreeSet<_>>();
-    let new_ids = manifest
-        .files
+        .collect::<HashSet<_>>();
+    let new_ids = current_files
         .iter()
         .filter(|entry| !old_by_id.contains_key(entry.id.as_str()))
         .map(|entry| entry.id.as_str())
-        .collect::<BTreeSet<_>>();
-    let new_names = manifest
-        .files
+        .collect::<HashSet<_>>();
+    let new_names = current_files
         .iter()
         .filter(|entry| new_ids.contains(entry.id.as_str()))
         .filter_map(|entry| {
@@ -487,12 +724,16 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
                 .and_then(|name| name.to_str())
                 .map(str::to_string)
         })
-        .collect::<BTreeSet<_>>();
+        .collect::<HashSet<_>>();
     let reference_may_match_new_name = |source_id: &str, raw: &str, syntax: ReferenceSyntax| {
-        if new_names.iter().any(|name| {
-            let raw = raw.split(['|', '#', '?']).next().unwrap_or("");
-            !raw.contains('/') && (raw == name || format!("{raw}.md") == *name)
-        }) {
+        // No new file: no name and no target to match.
+        if new_ids.is_empty() {
+            return false;
+        }
+        let name = raw.split(['|', '#', '?']).next().unwrap_or("");
+        if !name.contains('/')
+            && (new_names.contains(name) || new_names.contains(&format!("{name}.md")))
+        {
             return true;
         }
         let Some(source) = current_by_id.get(source_id) else {
@@ -504,7 +745,7 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
             start: 0,
             end: 0,
         };
-        resolve_first_observation(&manifest.files, &current_links, &source.path, &reference)
+        resolve_first_observation(&current_by_path, &current_links, &source.path, &reference)
             .is_some_and(|target| new_ids.contains(target.id.as_str()))
     };
     let mut affected_sources = manifest
@@ -519,7 +760,7 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
                 )
         })
         .map(|binding| binding.source_id.clone())
-        .collect::<BTreeSet<_>>();
+        .collect::<HashSet<_>>();
     let legacy_binding_sources = manifest
         .bindings
         .iter()
@@ -554,7 +795,7 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
             )
         })
         .map(|binding| binding.source_id.clone())
-        .collect::<BTreeSet<_>>();
+        .collect::<HashSet<_>>();
     affected_sources.extend(legacy_binding_sources.iter().cloned());
     affected_sources.extend(
         manifest
@@ -570,10 +811,14 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
             .map(|reference| reference.source_id.clone()),
     );
 
+    let mut pending = Grouped::new(
+        std::mem::take(&mut manifest.pending_source_ids),
+        String::as_str,
+    );
+
     // Publish paths before changing documents. A crash leaves bindings that
     // can be replayed against the current source bytes on the next pass.
-    for source in manifest
-        .files
+    for source in current_files
         .iter()
         .filter(|entry| entry.path.ends_with(".md"))
     {
@@ -581,258 +826,265 @@ fn reconcile_locked(vault: &VaultLayout) -> Result<IdentityRefresh> {
             old.size == source.size && old.mtime_ns == source.mtime_ns && old.path == source.path
         });
         if (!unchanged || affected_sources.contains(source.id.as_str()))
-            && !manifest.pending_source_ids.contains(&source.id)
+            && !pending.contains(&source.id)
         {
-            manifest.pending_source_ids.push(source.id.clone());
+            pending.push(source.id.clone());
         }
     }
-    moves.affected_markdown = manifest
-        .files
+    moves.affected_markdown = current_files
         .iter()
-        .filter(|entry| {
-            manifest.pending_source_ids.contains(&entry.id) && entry.path.ends_with(".md")
-        })
+        .filter(|entry| entry.path.ends_with(".md") && pending.contains(&entry.id))
         .map(|entry| entry.path.trim_end_matches(".md").to_string())
         .collect();
-    for source in manifest
-        .files
-        .clone()
-        .into_iter()
-        .filter(|entry| entry.path.ends_with(".md"))
-    {
-        if !manifest.pending_source_ids.contains(&source.id) {
-            continue;
-        }
-        let path = vault.root().join(&source.path);
-        // A note iCloud keeps off this Mac is brought down by this read:
-        // tests count it (`cloud_files::test_seam`).
-        #[cfg(debug_assertions)]
-        crate::storage::cloud_files::test_seam::note_read(&path);
-        let content = match std::fs::read_to_string(&path) {
-            Ok(content) => content,
-            Err(error) => {
-                moves.read_errors.push((path, error.to_string()));
+    // The references are regrouped only for a pass that has notes to read: a
+    // pass over an unchanged space leaves them as they were read.
+    let mut references_changed = false;
+    if pending.list().next().is_some() {
+        let mut bindings =
+            Grouped::new(std::mem::take(&mut manifest.bindings), source_of_binding);
+        let mut unresolved =
+            Grouped::new(std::mem::take(&mut manifest.unresolved), source_of_unresolved);
+        for (place, source) in current_files
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.path.ends_with(".md"))
+        {
+            if !pending.contains(&source.id) {
                 continue;
             }
-        };
-        let source_bytes_unchanged = old_by_id.get(source.id.as_str()).is_some_and(|old| {
-            old.size == source.size && old.mtime_ns == source.mtime_ns && old.key == source.key
-        });
-        let replay_source_unchanged =
-            replay_pending.contains(source.id.as_str()) && source_bytes_unchanged;
-        let references = references_in(&content);
-        let mut edits = Vec::new();
-        for reference in references {
-            let bound = manifest
-                .bindings
-                .iter()
-                .find(|binding| {
-                    binding.source_id == source.id
-                        && binding.reference == reference.raw
-                        && binding.syntax == reference.syntax
-                })
-                .cloned();
-            // A link that currently resolves is authoritative even when an
-            // older binding says otherwise. History only repairs a missing
-            // destination after a confirmed native move.
-            let syntax = match reference.syntax {
-                ReferenceSyntax::Wikilink | ReferenceSyntax::FrontmatterMedia => {
-                    LinkSyntax::Obsidian
-                }
-                ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink => {
-                    LinkSyntax::Markdown
+            let path = vault.root().join(&source.path);
+            // A note iCloud keeps off this Mac is brought down by this read:
+            // tests count it (`cloud_files::test_seam`).
+            #[cfg(debug_assertions)]
+            crate::storage::cloud_files::test_seam::note_read(&path);
+            let content = match std::fs::read_to_string(&path) {
+                Ok(content) => content,
+                Err(error) => {
+                    moves.read_errors.push((path, error.to_string()));
+                    continue;
                 }
             };
-            let current_resolution = current_links.resolve(&source.path, &reference.raw, syntax);
-            let strict_resolution =
-                current_links.resolve_strict(&source.path, &reference.raw, syntax);
-            let current_target = match &current_resolution {
-                LinkResolution::Resolved(path) => {
-                    manifest.files.iter().find(|entry| &entry.path == path)
-                }
-                LinkResolution::Missing | LinkResolution::Ambiguous(_) => None,
-            };
-            let historic_moved = bound
-                .as_ref()
-                .and_then(|binding| {
-                    manifest
-                        .files
-                        .iter()
-                        .find(|entry| entry.id == binding.target_id)
-                })
-                .filter(|entry| {
-                    moved_ids.contains(entry.id.as_str())
-                        || replay_source_unchanged
-                        || (legacy_binding_sources.contains(source.id.as_str())
-                            && source_bytes_unchanged
-                            && !matches!(&strict_resolution, LinkResolution::Resolved(_)))
-                });
-            let current_exact = match &strict_resolution {
-                LinkResolution::Resolved(path) => {
-                    manifest.files.iter().find(|entry| &entry.path == path)
-                }
-                LinkResolution::Missing | LinkResolution::Ambiguous(_) => None,
-            };
-            let target = current_exact.or(historic_moved).or(current_target);
-            let Some(target) = target else {
-                let unresolved = Unresolved {
-                    source_id: source.id.clone(),
-                    reference: reference.raw.clone(),
-                    syntax: reference.syntax,
-                };
-                if bound.is_none() && !manifest.unresolved.contains(&unresolved) {
-                    manifest.unresolved.push(unresolved);
-                }
-                continue;
-            };
-            manifest.unresolved.retain(|entry| {
-                !(entry.source_id == source.id
-                    && entry.reference == reference.raw
-                    && entry.syntax == reference.syntax)
+            let source_bytes_unchanged = old_by_id.get(source.id.as_str()).is_some_and(|old| {
+                old.size == source.size && old.mtime_ns == source.mtime_ns && old.key == source.key
             });
-            if bound
-                .as_ref()
-                .is_none_or(|binding| binding.target_id != target.id)
-            {
-                manifest.bindings.retain(|binding| {
-                    !(binding.source_id == source.id
-                        && binding.reference == reference.raw
-                        && binding.syntax == reference.syntax)
-                });
-                manifest.bindings.push(Binding {
-                    source_id: source.id.clone(),
-                    reference: reference.raw.clone(),
-                    syntax: reference.syntax,
-                    target_id: target.id.clone(),
-                });
-            }
-            let (old_target, _) = split_reference(&reference);
-            let target_moved = moved_ids.contains(target.id.as_str());
-            let source_moved = moved_ids.contains(source.id.as_str());
-            let basename_ambiguous = !old_target.contains('/')
-                && current_by_id
-                    .values()
-                    .filter(|entry| {
-                        Path::new(&entry.path).file_name() == Path::new(&target.path).file_name()
-                    })
-                    .count()
-                    > 1;
-            let stale_reference = !matches!(
-                &strict_resolution,
-                LinkResolution::Resolved(path) if path == &target.path
-            );
-            let relative_link = matches!(
-                reference.syntax,
-                ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink
-            );
-            let new_target = if target_moved
-                || basename_ambiguous
-                || stale_reference
-                || (source_moved && relative_link)
-            {
-                match reference.syntax {
+            let replay_source_unchanged =
+                replay_pending.contains(source.id.as_str()) && source_bytes_unchanged;
+            let references = references_in(&content);
+            let mut edits = Vec::new();
+            for reference in references {
+                let names_reference = |raw: &str, syntax: ReferenceSyntax| {
+                    raw == reference.raw && syntax == reference.syntax
+                };
+                let bound = bindings
+                    .of(&source.id)
+                    .find(|binding| names_reference(&binding.reference, binding.syntax))
+                    .cloned();
+                // A link that currently resolves is authoritative even when an
+                // older binding says otherwise. History only repairs a missing
+                // destination after a confirmed native move.
+                let syntax = match reference.syntax {
                     ReferenceSyntax::Wikilink | ReferenceSyntax::FrontmatterMedia => {
-                        display_target(&current_links, &target.path, !old_target.ends_with(".md"))
+                        LinkSyntax::Obsidian
                     }
                     ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink => {
-                        let path = relative_from_source(&source.path, &target.path);
-                        // `[text](Foo)` keeps naming its note without the extension.
-                        match path.strip_suffix(".md") {
-                            Some(stem) if !old_target.to_ascii_lowercase().ends_with(".md") => {
-                                stem.to_string()
+                        LinkSyntax::Markdown
+                    }
+                };
+                let current_resolution = current_links.resolve(&source.path, &reference.raw, syntax);
+                let strict_resolution =
+                    current_links.resolve_strict(&source.path, &reference.raw, syntax);
+                let current_target = match &current_resolution {
+                    LinkResolution::Resolved(path) => current_by_path.get(path.as_str()).copied(),
+                    LinkResolution::Missing | LinkResolution::Ambiguous(_) => None,
+                };
+                let historic_moved = bound
+                    .as_ref()
+                    .and_then(|binding| current_by_id.get(binding.target_id.as_str()).copied())
+                    .filter(|entry| {
+                        moved_ids.contains(entry.id.as_str())
+                            || replay_source_unchanged
+                            || (legacy_binding_sources.contains(source.id.as_str())
+                                && source_bytes_unchanged
+                                && !matches!(&strict_resolution, LinkResolution::Resolved(_)))
+                    });
+                let current_exact = match &strict_resolution {
+                    LinkResolution::Resolved(path) => current_by_path.get(path.as_str()).copied(),
+                    LinkResolution::Missing | LinkResolution::Ambiguous(_) => None,
+                };
+                let target = current_exact.or(historic_moved).or(current_target);
+                let Some(target) = target else {
+                    let missing = Unresolved {
+                        source_id: source.id.clone(),
+                        reference: reference.raw.clone(),
+                        syntax: reference.syntax,
+                    };
+                    if bound.is_none() && !unresolved.contains(&missing) {
+                        unresolved.push(missing);
+                    }
+                    continue;
+                };
+                unresolved.retain_in(&source.id, |entry| {
+                    !names_reference(&entry.reference, entry.syntax)
+                });
+                if bound
+                    .as_ref()
+                    .is_none_or(|binding| binding.target_id != target.id)
+                {
+                    bindings.retain_in(&source.id, |binding| {
+                        !names_reference(&binding.reference, binding.syntax)
+                    });
+                    bindings.push(Binding {
+                        source_id: source.id.clone(),
+                        reference: reference.raw.clone(),
+                        syntax: reference.syntax,
+                        target_id: target.id.clone(),
+                    });
+                }
+                let (old_target, _) = split_reference(&reference);
+                let target_moved = moved_ids.contains(target.id.as_str());
+                let source_moved = moved_ids.contains(source.id.as_str());
+                let basename_ambiguous = !old_target.contains('/')
+                    && files_named
+                        .get(&Path::new(&target.path).file_name())
+                        .is_some_and(|files| *files > 1);
+                let stale_reference = !matches!(
+                    &strict_resolution,
+                    LinkResolution::Resolved(path) if path == &target.path
+                );
+                let relative_link = matches!(
+                    reference.syntax,
+                    ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink
+                );
+                let new_target = if target_moved
+                    || basename_ambiguous
+                    || stale_reference
+                    || (source_moved && relative_link)
+                {
+                    match reference.syntax {
+                        ReferenceSyntax::Wikilink | ReferenceSyntax::FrontmatterMedia => {
+                            display_target(&current_links, &target.path, !old_target.ends_with(".md"))
+                        }
+                        ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink => {
+                            let path = relative_from_source(&source.path, &target.path);
+                            // `[text](Foo)` keeps naming its note without the extension.
+                            match path.strip_suffix(".md") {
+                                Some(stem) if !old_target.to_ascii_lowercase().ends_with(".md") => {
+                                    stem.to_string()
+                                }
+                                _ => path,
                             }
-                            _ => path,
+                        }
+                    }
+                } else {
+                    old_target.to_string()
+                };
+                if old_target != new_target {
+                    let replacement = replacement_for(&reference, &new_target);
+                    edits.push((reference.start, reference.end, replacement.clone()));
+                    let rebound = bindings
+                        .of(&source.id)
+                        .find(|binding| names_reference(&binding.reference, binding.syntax))
+                        .map(|binding| Binding {
+                            source_id: binding.source_id.clone(),
+                            reference: replacement,
+                            syntax: binding.syntax,
+                            target_id: binding.target_id.clone(),
+                        });
+                    if let Some(rebound) = rebound {
+                        if !bindings.contains(&rebound) {
+                            bindings.push(rebound);
                         }
                     }
                 }
-            } else {
-                old_target.to_string()
-            };
-            if old_target != new_target {
-                let replacement = replacement_for(&reference, &new_target);
-                edits.push((reference.start, reference.end, replacement.clone()));
-                if let Some(binding) = manifest.bindings.iter_mut().find(|binding| {
-                    binding.source_id == source.id
-                        && binding.reference == reference.raw
-                        && binding.syntax == reference.syntax
-                }) {
-                    let new_binding = Binding {
-                        source_id: binding.source_id.clone(),
-                        reference: replacement,
-                        syntax: binding.syntax,
-                        target_id: binding.target_id.clone(),
-                    };
-                    if !manifest.bindings.contains(&new_binding) {
-                        manifest.bindings.push(new_binding);
-                    }
+            }
+            let mut revised = content.clone();
+            edits.sort_by(|a, b| b.0.cmp(&a.0));
+            for (start, end, replacement) in edits {
+                revised.replace_range(start..end, &replacement);
+            }
+            if revised != content {
+                files::validate_vault_write_target(vault, &path)?;
+                manifest.pending_revisions.insert(
+                    source.id.clone(),
+                    crate::storage::save_operations::sha256_bytes(revised.as_bytes()),
+                );
+                // Persist both old and new bindings before source publication.
+                if persist_history {
+                    write_manifest(
+                        vault,
+                        &history_so_far(
+                            &manifest,
+                            &current_files,
+                            &rewritten,
+                            &bindings,
+                            &unresolved,
+                            &pending,
+                        ),
+                    )?;
                 }
-            }
-        }
-        let mut revised = content.clone();
-        edits.sort_by(|a, b| b.0.cmp(&a.0));
-        for (start, end, replacement) in edits {
-            revised.replace_range(start..end, &replacement);
-        }
-        if revised != content {
-            files::validate_vault_write_target(vault, &path)?;
-            manifest.pending_revisions.insert(
-                source.id.clone(),
-                crate::storage::save_operations::sha256_bytes(revised.as_bytes()),
-            );
-            // Persist both old and new bindings before source publication.
-            if persist_history {
-                write_manifest(vault, &manifest)?;
-            }
-            files::write_atomically_if_unchanged(
-                &path,
-                content.as_bytes(),
-                revised.as_bytes(),
-                &vault.mine_dir().join("link-repair-conflicts"),
-            )?;
-            if let Some(entry) = manifest
-                .files
-                .iter_mut()
-                .find(|entry| entry.id == source.id)
-            {
-                entry.key = key_for(&path)?;
+                files::write_atomically_if_unchanged(
+                    &path,
+                    content.as_bytes(),
+                    revised.as_bytes(),
+                    &vault.mine_dir().join("link-repair-conflicts"),
+                )?;
+                let key = key_for(&path)?;
                 let metadata = std::fs::metadata(&path)?;
-                entry.size = metadata.len();
-                entry.mtime_ns = metadata
+                let mtime_ns = metadata
                     .modified()?
                     .duration_since(std::time::UNIX_EPOCH)?
                     .as_nanos();
+                rewritten.push((place, key, metadata.len(), mtime_ns));
             }
-        }
-        let live_references = references_in(&revised)
-            .into_iter()
-            .map(|reference| (reference.syntax, reference.raw))
-            .collect::<Vec<_>>();
-        manifest.bindings.retain(|binding| {
-            binding.source_id != source.id
-                || live_references
+            let live_references = references_in(&revised)
+                .into_iter()
+                .map(|reference| (reference.syntax, reference.raw))
+                .collect::<Vec<_>>();
+            bindings.retain_in(&source.id, |binding| {
+                live_references
                     .iter()
                     .any(|(syntax, raw)| *syntax == binding.syntax && *raw == binding.reference)
-        });
-        manifest.unresolved.retain(|unresolved| {
-            unresolved.source_id != source.id
-                || live_references.iter().any(|(syntax, raw)| {
-                    *syntax == unresolved.syntax && *raw == unresolved.reference
-                })
-        });
-        manifest.pending_revisions.remove(&source.id);
-        manifest.pending_source_ids.retain(|id| id != &source.id);
-        if revised != content && persist_history {
-            write_manifest(vault, &manifest)?;
+            });
+            unresolved.retain_in(&source.id, |entry| {
+                live_references
+                    .iter()
+                    .any(|(syntax, raw)| *syntax == entry.syntax && *raw == entry.reference)
+            });
+            manifest.pending_revisions.remove(&source.id);
+            pending.retain_in(&source.id, |_| false);
+            if revised != content && persist_history {
+                write_manifest(
+                    vault,
+                    &history_so_far(
+                        &manifest,
+                        &current_files,
+                        &rewritten,
+                        &bindings,
+                        &unresolved,
+                        &pending,
+                    ),
+                )?;
+            }
         }
+        references_changed = !bindings.unchanged() || !unresolved.unchanged();
+        manifest.bindings = bindings.into_vec();
+        manifest.unresolved = unresolved.into_vec();
     }
-    if manifest != original && persist_history {
+    apply_rewritten(&mut current_files, &rewritten);
+    let changed = current_files != old_files
+        || manifest.pending_revisions != old_revisions
+        || references_changed
+        || !pending.unchanged();
+    if changed && persist_history {
+        manifest.files = current_files;
+        manifest.pending_source_ids = pending.into_vec();
         write_manifest(vault, &manifest)?;
     }
     Ok(moves)
 }
 
 fn resolve_first_observation<'a>(
-    files: &'a [FileEntry],
+    files_by_path: &HashMap<&str, &'a FileEntry>,
     index: &LinkIndex,
     source: &str,
     reference: &Reference,
@@ -842,7 +1094,7 @@ fn resolve_first_observation<'a>(
         ReferenceSyntax::MarkdownImage | ReferenceSyntax::MarkdownLink => LinkSyntax::Markdown,
     };
     match index.resolve(source, &reference.raw, syntax) {
-        LinkResolution::Resolved(path) => files.iter().find(|entry| entry.path == path),
+        LinkResolution::Resolved(path) => files_by_path.get(path.as_str()).copied(),
         LinkResolution::Missing | LinkResolution::Ambiguous(_) => None,
     }
 }
@@ -1413,5 +1665,173 @@ mod tests {
         std::fs::rename(directory.path().join("Nested/Design.md"), directory.path().join("Nested/Renamed.md")).unwrap();
         reconcile(&vault).unwrap();
         assert_eq!(std::fs::read_to_string(&source).unwrap(), "---\ntype: article\n---\n[[Design]]");
+    }
+
+    /// The folders of the root are listed side by side, more of them than
+    /// lists: every file of the space is found once, by its path from the
+    /// root, and what does not belong to the space is left out.
+    #[test]
+    fn the_files_of_many_folders_are_all_listed_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let mut expected = vec!["Root note.md".to_string()];
+        std::fs::write(root.join("Root note.md"), "A note.").unwrap();
+        for folder in 0..INVENTORY_LISTS * 2 + 1 {
+            std::fs::create_dir_all(root.join(format!("Folder {folder}/Deeper"))).unwrap();
+            for file in 0..3 {
+                for path in [
+                    format!("Folder {folder}/Note {file}.md"),
+                    format!("Folder {folder}/Deeper/Picture {file}.jpg"),
+                ] {
+                    std::fs::write(root.join(&path), "bytes").unwrap();
+                    expected.push(path);
+                }
+            }
+        }
+        std::fs::create_dir_all(root.join(".mine")).unwrap();
+        std::fs::write(root.join(".mine/layout.json"), "{}").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("Root note.md"), root.join("Folder 0/Link.md")).unwrap();
+        expected.sort();
+
+        let mut listed = inventory_space(root).unwrap();
+        listed.sort_by(|a, b| a.path.cmp(&b.path));
+
+        assert_eq!(
+            listed.iter().map(|entry| entry.path.as_str()).collect::<Vec<_>>(),
+            expected
+        );
+        for entry in &listed {
+            let path = root.join(&entry.path);
+            assert_eq!(entry.key, key_for(&path).unwrap(), "{}", entry.path);
+            assert_eq!(entry.size, std::fs::metadata(&path).unwrap().len(), "{}", entry.path);
+        }
+    }
+
+    /// The set of the reconcile's limits (AUDIT_PERFORMANCE.md, Б4): 10 000
+    /// notes of about 3 KB of prose, 30 MB in all, in the layout of three
+    /// folders. Half are picture cards with a file of their own, a quarter
+    /// links with a thumbnail, the rest articles, every third of them with a
+    /// picture in its text; a note is in up to three of 100 collections.
+    const TIMED_NOTES: usize = 10_000;
+    const TIMED_COLLECTIONS: usize = 100;
+    const TIMED_NOTE_PROSE_BYTES: usize = 3_000;
+    /// Reconciles of the unchanged space timed; the limit holds for their
+    /// median. A reconcile lists the folders of the space on threads of its
+    /// own, and on a machine busy with other work one of five may wait for a
+    /// core: the slowest of them times the machine, the median the reconcile.
+    const TIMED_REPEATS: usize = 5;
+    const FIRST_RECONCILE_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
+    const REPEATED_RECONCILE_LIMIT: std::time::Duration = std::time::Duration::from_millis(100);
+
+    /// Writes the timed set under `root`; returns its files and its
+    /// references.
+    fn write_timed_space(root: &Path) -> (usize, usize) {
+        for folder in ["Collections", "Cards", "Media"] {
+            std::fs::create_dir_all(root.join(folder)).unwrap();
+        }
+        for collection in 0..TIMED_COLLECTIONS {
+            std::fs::write(
+                root.join(format!("Collections/Collection {collection:03}.md")),
+                "---\ntype: channel\n---\n",
+            )
+            .unwrap();
+        }
+        let sentence = "Город стоит на реке, и дома вдоль набережной смотрят в воду. A plain sentence of prose follows it. ";
+        let prose = sentence.repeat(TIMED_NOTE_PROSE_BYTES / sentence.len());
+        let (mut files, mut references) = (TIMED_COLLECTIONS, 0);
+        for note in 0..TIMED_NOTES {
+            let mut front = String::from("---\n");
+            let mut body = format!("# Note {note:05}\n\n");
+            match note % 4 {
+                0 | 1 => {
+                    std::fs::write(root.join(format!("Media/picture-{note:05}.jpg")), b"picture").unwrap();
+                    front.push_str(&format!("type: image\nfile: \"[[picture-{note:05}.jpg]]\"\n"));
+                    files += 1;
+                    references += 1;
+                }
+                2 => {
+                    std::fs::write(root.join(format!("Media/thumbnail-{note:05}.png")), b"thumbnail").unwrap();
+                    front.push_str(&format!("type: link\nthumbnail: \"[[thumbnail-{note:05}.png]]\"\n"));
+                    files += 1;
+                    references += 1;
+                }
+                _ => {
+                    front.push_str("type: article\n");
+                    if note % 3 == 0 {
+                        std::fs::write(root.join(format!("Media/inline-{note:05}.jpg")), b"inline").unwrap();
+                        body.push_str(&format!("![[inline-{note:05}.jpg]]\n\n"));
+                        files += 1;
+                        references += 1;
+                    }
+                }
+            }
+            let collections = note % 4;
+            if collections > 0 {
+                front.push_str("Mine Collections:\n");
+                for offset in 0..collections {
+                    front.push_str(&format!(
+                        "  - \"[[Collection {:03}]]\"\n",
+                        (note * 7 + offset * 31) % TIMED_COLLECTIONS
+                    ));
+                }
+                references += collections;
+            }
+            front.push_str("---\n");
+            std::fs::write(
+                root.join(format!("Cards/Note {note:05}.md")),
+                format!("{front}{body}{prose}\n"),
+            )
+            .unwrap();
+            files += 1;
+        }
+        (files, references)
+    }
+
+    /// Б4: the first reconcile of a large space, which reads every note and
+    /// binds every reference, answers within `FIRST_RECONCILE_LIMIT`, and a
+    /// reconcile of the unchanged space within `REPEATED_RECONCILE_LIMIT`.
+    /// The limits are an optimised build's: a speed test, run by
+    /// `test:rust-speed` alone (ARCHITECTURE.md, «Тесты скорости Rust»).
+    #[test]
+    #[ignore = "asserts a speed limit of an optimised build: bun run test:rust-speed"]
+    fn a_reconcile_of_10_000_notes_answers_within_its_limit() {
+        let (directory, derived) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let vault = VaultLayout::with_derived_root(
+            directory.path().to_path_buf(),
+            derived.path().to_path_buf(),
+        );
+        let (files, references) = write_timed_space(directory.path());
+
+        let started = std::time::Instant::now();
+        let refresh = reconcile_locked(&vault).unwrap();
+        let first = started.elapsed();
+        assert!(refresh.read_errors.is_empty());
+        assert_eq!(refresh.affected_markdown.len(), TIMED_NOTES + TIMED_COLLECTIONS);
+        let history = std::fs::read(manifest_path(&vault)).unwrap();
+        let manifest = read_manifest(&vault).unwrap();
+        assert_eq!(manifest.files.len(), files);
+        assert_eq!(manifest.bindings.len(), references);
+        assert!(manifest.unresolved.is_empty() && manifest.pending_source_ids.is_empty());
+
+        let mut repeats = Vec::with_capacity(TIMED_REPEATS);
+        for _ in 0..TIMED_REPEATS {
+            let started = std::time::Instant::now();
+            let refresh = reconcile_locked(&vault).unwrap();
+            repeats.push(started.elapsed());
+            assert!(refresh.affected_markdown.is_empty() && refresh.moved_markdown.is_empty());
+        }
+        assert_eq!(std::fs::read(manifest_path(&vault)).unwrap(), history);
+        repeats.sort();
+        let (median, slowest) = (repeats[TIMED_REPEATS / 2], repeats[TIMED_REPEATS - 1]);
+        eprintln!(
+            "file identity reconcile, {TIMED_NOTES} notes, {files} files, {references} references, history {} B: first {first:?}, limit {FIRST_RECONCILE_LIMIT:?}; repeated: median {median:?}, slowest {slowest:?}, limit {REPEATED_RECONCILE_LIMIT:?}, asserted",
+            history.len(),
+        );
+        assert!(first <= FIRST_RECONCILE_LIMIT, "first reconcile {first:?} over {FIRST_RECONCILE_LIMIT:?}");
+        assert!(
+            median <= REPEATED_RECONCILE_LIMIT,
+            "repeated reconcile {median:?} over {REPEATED_RECONCILE_LIMIT:?} (slowest {slowest:?})"
+        );
     }
 }

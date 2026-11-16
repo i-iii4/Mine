@@ -442,7 +442,7 @@ describe("Sidebar", () => {
       const { container } = renderSidebar({ ...defaultProps });
       const row = container.querySelector('[data-sidebar-row-key="tag:alpha"]') as HTMLElement;
       const inset = (row.querySelector("[data-sidebar-name-cell]") as HTMLElement).style.paddingLeft;
-      expect(inset).toContain("--sidebar-name-lead");
+      expect(inset).toBe("calc(var(--sidebar-row-pad-x) + 1px)");
 
       fireEvent.doubleClick(screen.getByRole("link", { name: /alpha/ }));
 
@@ -451,7 +451,7 @@ describe("Sidebar", () => {
       const cell = input.closest<HTMLElement>("[data-sidebar-name-cell]");
       expect(cell).not.toBeNull();
       expect(cell!.style.paddingLeft).toBe(inset);
-      expect(cell!.style.marginLeft).toBe("var(--sidebar-name-left, 0px)");
+      expect(cell!.style.marginLeft).toBe("");
       expect(input.closest("[data-sidebar-row-body]")).not.toBeNull();
       // No inset or shift of the field's own beside the cell's.
       expect(input.closest("[data-sidebar-row-body]")!.className).not.toContain("pl-[");
@@ -480,7 +480,8 @@ describe("Sidebar", () => {
       const input = within(container.querySelector("[data-sidebar-new-channel-row]") as HTMLElement).getByRole("textbox");
       const cell = input.closest<HTMLElement>("[data-sidebar-name-cell]");
       expect(cell).not.toBeNull();
-      expect(cell!.style.marginLeft).toBe("var(--sidebar-name-left, 0px)");
+      expect(cell!.style.paddingLeft).toBe("calc(var(--sidebar-row-pad-x) + 1px)");
+      expect(cell!.style.marginLeft).toBe("");
       expect(input.closest("[data-sidebar-row-body]")).not.toBeNull();
     });
   });
@@ -682,9 +683,9 @@ describe("Sidebar", () => {
 
     const everythingLink = screen.getByRole("link", { name: /Everything/ });
     expect(everythingLink).not.toHaveClass("px-3");
-    // The name's optical pixel is part of its cell's inset (a cell that ends
-    // on the guideline in any order of the columns, PLAN 47.6).
-    expect(screen.getByText("Everything").closest<HTMLElement>("[data-sidebar-name-cell]")!.style.paddingLeft).toBe("calc(var(--sidebar-name-lead, 0px) + var(--sidebar-row-pad-x) + 1px)");
+    // The name's optical pixel is part of its cell's inset, a cell that ends
+    // on the guideline.
+    expect(screen.getByText("Everything").closest<HTMLElement>("[data-sidebar-name-cell]")!.style.paddingLeft).toBe("calc(var(--sidebar-row-pad-x) + 1px)");
     expect(screen.getByText("17")).toHaveClass("font-mono");
     expect(screen.getByText("17")).toHaveClass("-translate-x-px");
     expect(screen.getByText("10")).toHaveClass("font-mono");
@@ -904,10 +905,10 @@ describe("Sidebar", () => {
     // All states fill the same cell minus two equal 8px fields.
     expect(alphaAction).toHaveStyle({ width: "calc(var(--sidebar-zone) - 16px)" });
     expect(betaAction).toHaveStyle({ width: "calc(var(--sidebar-zone) - 16px)" });
-    // 8px from the meta zone, which a trial order may move (PLAN 47.6).
-    expect(betaAction.style.right).toBe("calc(var(--sidebar-meta-right, 0px) + var(--sidebar-action-inset, 8px))");
+    // 8px from the meta zone, the row's right edge.
+    expect(betaAction.style.right).toBe("var(--sidebar-action-inset, 8px)");
     expect(alphaAction).toHaveClass("absolute");
-    expect(alphaAction.style.right).toBe("calc(var(--sidebar-meta-right, 0px) + var(--sidebar-action-inset, 8px))");
+    expect(alphaAction.style.right).toBe("var(--sidebar-action-inset, 8px)");
     expect(alphaAction.closest("a")).toBeNull();
     expect(screen.getByText("5")).not.toHaveClass("opacity-0");
     expect(betaAction).toHaveClass("opacity-0");
@@ -1651,26 +1652,23 @@ describe("Sidebar", () => {
     const rightDivider = rows.querySelector('[data-sidebar-guideline="right"]') as HTMLSpanElement;
 
     expect(leftDivider).toHaveClass("bg-sidebar-border");
-    // Where it always stood unless a trial order of the columns moves it
-    // (PLAN 47.6).
-    expect(leftDivider.style.left).toBe("var(--sidebar-guide-1-left, calc(var(--sidebar-row-pad-x) + var(--sidebar-name-col)))");
+    // The columns stand Name, Previews, Count (user's decision of 15.11.2026).
+    expect(leftDivider.style.left).toBe("calc(var(--sidebar-row-pad-x) + var(--sidebar-name-col))");
     expect(title).toHaveAttribute("data-sidebar-title-fade-width", "24");
     // The cell is the name's whole zone and ends on the guideline, whose
     // pixel is the next column's: three clear pixels before it, as the cell
     // nudged a pixel right with four kept before.
     expect(title).toHaveAttribute("data-sidebar-title-protected-width", "3");
-    // The row's inset is the name's own (DESIGN_SYSTEM.md, «три зоны»), so a
-    // trial order of the columns keeps it (PLAN 47.6); the text 17 px in,
-    // the inset and the optical pixel.
-    expect(title).toHaveClass("w-[calc(var(--sidebar-name-lead,0px)+var(--sidebar-row-pad-x)+var(--sidebar-name-col))]");
-    expect(title.style.paddingLeft).toBe("calc(var(--sidebar-name-lead, 0px) + var(--sidebar-row-pad-x) + 1px)");
+    // The row's inset is the name's own (DESIGN_SYSTEM.md, «три зоны»): the
+    // text 17 px in, the inset and the optical pixel.
+    expect(title).toHaveClass("w-[calc(var(--sidebar-row-pad-x)+var(--sidebar-name-col))]");
+    expect(title.style.paddingLeft).toBe("calc(var(--sidebar-row-pad-x) + 1px)");
     expect(title).not.toHaveClass("translate-x-px");
     expect(row.querySelector("a")).not.toHaveClass("pl-[var(--sidebar-row-pad-x)]");
     expect(title).toHaveClass("shrink-0");
     expect(title).not.toHaveClass("truncate");
-    // Four clear pixels after the guideline, which owns the pixel before them
-    // (none when a trial order puts the previews first).
-    expect(rail.style.paddingLeft).toBe("calc(var(--sidebar-previews-lead, 1px) + 4px)");
+    // Four clear pixels after the guideline, which owns the pixel before them.
+    expect(rail.style.paddingLeft).toBe("5px");
     expect(rightDivider).toHaveClass("bg-sidebar-border");
     // The column that holds the Connect button follows the row's own inset:
     // the button is placed from it, and a guideline measured from the panel
@@ -1681,7 +1679,7 @@ describe("Sidebar", () => {
     // The right guideline stands on the zone boundary, not on the button's
     // own field: zones are what the eye compares, and the button lives inside
     // the meta zone with its fields around it.
-    expect(rightDivider.style.right).toBe("var(--sidebar-guide-2-right, var(--sidebar-zone))");
+    expect(rightDivider.style.right).toBe("var(--sidebar-zone)");
     expect(strip).toHaveAttribute("data-sidebar-preview-fade-width", "24");
     // The previews' cell is its own (07.10.2026): the next cell, with the
     // right guideline's pixel, stands in the row's flow, so the previews'

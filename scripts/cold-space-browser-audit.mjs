@@ -1,9 +1,22 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
+import { extname, resolve, sep } from "node:path";
 import { chromium } from "playwright";
 import { PNG } from "pngjs";
+import { routeEntry, serveProductionPage } from "./audit-production-page.mjs";
 
-const AUDIT_URL = process.env.MINE_COLD_SPACE_AUDIT_URL
-  ?? "http://127.0.0.1:1420/__cold-space-audit";
+const AUDIT_ROUTE = "/__cold-space-audit";
+/** A page the caller serves instead, with the snapshot and the previews
+ *  behind it (a dev server's `/__cold-space-audit`, vite.config.ts). By
+ *  default the audit builds the route for production and serves it itself
+ *  with the snapshot `cold-space-audit --browser-output` wrote
+ *  (MINE_COLD_SPACE_SNAPSHOT_PATH) and the previews of its derived folder
+ *  (MINE_COLD_SPACE_ASSET_ROOT), as `bun run test:browser` passes them:
+ *  the page under check is the app's build (AUDIT_PERFORMANCE.md, Пр3). */
+const GIVEN_AUDIT_URL = process.env.MINE_COLD_SPACE_AUDIT_URL;
+const SNAPSHOT_PATH = process.env.MINE_COLD_SPACE_SNAPSHOT_PATH;
+const ASSET_ROOT = process.env.MINE_COLD_SPACE_ASSET_ROOT;
+let AUDIT_URL = GIVEN_AUDIT_URL;
 const MIN_VISIBLE_PIXEL_RATIO = 0.003;
 
 function nonBackgroundRatio(buffer) {
@@ -66,13 +79,69 @@ async function screenshotGrid(page) {
   return grid.screenshot({ animations: "disabled" });
 }
 
-async function main() {
-  const response = await fetch(AUDIT_URL, { method: "HEAD" }).catch(() => null);
-  if (!response?.ok) {
-    throw new Error(`Cold-space audit route is not reachable: ${AUDIT_URL}`);
+/** A preview of the derived folder, where the page's asset protocol would
+ *  read it (the same address the dev route uses). */
+function coldSpaceAssetAddress(path) {
+  return path.startsWith("/feed-scroll-audit/") ? path : `/__cold-space-asset?path=${encodeURIComponent(path)}`;
+}
+
+const ASSET_TYPES = { ".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg", ".jpeg": "image/jpeg" };
+
+/** The snapshot and the previews, as vite.config.ts serves them for the dev
+ *  route: nothing outside the derived folder is given out. */
+function respondWithColdSpace(url, response) {
+  if (url.pathname === "/__cold-space-snapshot") {
+    response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    response.end(readFileSync(SNAPSHOT_PATH));
+    return true;
   }
-  const browser = await chromium.launch({ headless: true });
+  if (url.pathname !== "/__cold-space-asset") return false;
+  const allowed = resolve(ASSET_ROOT);
+  const requested = url.searchParams.get("path");
+  const path = requested ? resolve(requested) : null;
+  if (!path || (path !== allowed && !path.startsWith(`${allowed}${sep}`))) {
+    response.writeHead(requested ? 403 : 404);
+    response.end();
+    return true;
+  }
   try {
+    const bytes = readFileSync(path);
+    response.writeHead(200, { "Content-Type": ASSET_TYPES[extname(path).toLowerCase()] ?? "image/jpeg" });
+    response.end(bytes);
+  } catch {
+    // A preview that is not made yet: the page shows the card without it.
+    response.writeHead(404);
+    response.end();
+  }
+  return true;
+}
+
+async function servePage() {
+  if (!SNAPSHOT_PATH || !ASSET_ROOT) {
+    throw new Error([
+      "The cold-space audit has no snapshot to show.",
+      "`bun run test:browser` builds the fixture space and passes MINE_COLD_SPACE_SNAPSHOT_PATH and MINE_COLD_SPACE_ASSET_ROOT;",
+      "to check a page served elsewhere, pass MINE_COLD_SPACE_AUDIT_URL.",
+    ].join("\n"));
+  }
+  return serveProductionPage({
+    name: "cold-space-audit",
+    route: AUDIT_ROUTE,
+    entry: routeEntry({ module: "/src/dev/ColdSpaceAuditRoute.tsx", name: "ColdSpaceAuditRoute", assetAddress: coldSpaceAssetAddress }),
+    respond: respondWithColdSpace,
+  });
+}
+
+async function main() {
+  const served = GIVEN_AUDIT_URL ? null : await servePage();
+  if (served) AUDIT_URL = served.url;
+  let browser;
+  try {
+    const response = await fetch(AUDIT_URL, { method: "HEAD" }).catch(() => null);
+    if (!response?.ok) {
+      throw new Error(`Cold-space audit route is not reachable: ${AUDIT_URL}`);
+    }
+    browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({
       viewport: { width: 1280, height: 900 },
       deviceScaleFactor: 1,
@@ -173,7 +242,8 @@ async function main() {
     }
     await page.close();
   } finally {
-    await browser.close();
+    await browser?.close();
+    await served?.close();
   }
 }
 

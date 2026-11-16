@@ -2,12 +2,11 @@
 // Import channels from Are.na into Local Arena vault.
 // Usage: bun run scripts/import-arena.ts <vault_path>
 
-import { writeFileSync, mkdirSync, existsSync } from "fs";
+import { writeFileSync } from "fs";
 import { join } from "path";
 
 const VAULT_PATH = process.argv[2] || "/Users/i_iii/Desktop/Тест";
 const ARENA_API = "https://api.are.na/v2";
-const THUMB_MAX = 240;
 
 // Channels to import (slug -> title)
 const CHANNELS: Record<string, string> = {
@@ -84,7 +83,9 @@ function getExtFromUrl(url: string): string {
     const pathname = new URL(url).pathname;
     const ext = pathname.split(".").pop()?.toLowerCase();
     if (ext && ext.length <= 5 && ext.match(/^[a-z0-9]+$/)) return ext;
-  } catch {}
+  } catch {
+    // Not an address with a path: the default extension stands.
+  }
   return "jpg";
 }
 

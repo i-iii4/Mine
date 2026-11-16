@@ -1,4 +1,4 @@
-// TRIAL (SPEC_CARD_PEEK.md, О12): the open card's window moves without the
+// SPEC_CARD_PEEK.md, О12: the open card's window moves without the
 // card's own work landing in the middle of the motion. While the window
 // moves, what the open card learns late (its whole file, its editor's
 // session, its pictures' own sizes, its associations) waits and lands once

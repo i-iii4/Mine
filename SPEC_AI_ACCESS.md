@@ -1,5 +1,7 @@
 # SPEC_AI_ACCESS
 
+**Состояние:** реализовано. Источник: строка «Статус» ниже (читающее ядро, CLI `mine` с мутациями, MCP-адаптер, 27.08.2026). **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md)
 
 Доступ AI-агентов к материалам пространства — чтение и безопасные мутации.

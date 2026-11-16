@@ -23,6 +23,7 @@ import type { WordWidths } from "@/types/fontMetrics";
 import { lightBlock } from "@/test/blocks";
 import { MOTION_ENTER_MS, MOTION_EXIT_MS, MOTION_LEVELS, type MotionLevel } from "@/lib/motion";
 import { setMotionLevel } from "@/test/motionLevel";
+import { installPictureDecode } from "@/test/pictureDecode";
 
 vi.mock("@/lib/commands", () => ({
   getBlock: vi.fn(async () => ({ tags: [] })),
@@ -71,6 +72,85 @@ it("retries a transient preview failure with a new URL and stops after two retri
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(container.querySelector("img")).toBeNull();
   } finally { unmount(); vi.useRealTimers(); }
+});
+
+/// SPEC_FEED_SCROLL_PERFORMANCE.md, «Подготовка картинки карточки».
+describe("preparing a card's pictures", () => {
+  const picture = () => block({ block_type: "image", url: null, media_file: "photo.jpg",
+    preview_manifest: JSON.stringify({ kind: "image", primary_preview_path: "preview.jpg",
+      preview_width: 480, preview_height: 640, tiles: [], overflow_count: 0 }) });
+  const gallery = () => block({ block_type: "article", title: "Gallery", url: null, body: "Three pictures",
+    preview_manifest: JSON.stringify({ kind: "composite", primary_preview_path: "gallery.jpg", width: 1, height: 1,
+      tiles: ["a", "b", "c"].map((name) => ({ source_path: `Media/${name}.jpg`, preview_path: `${name}.jpg`,
+        width: 800, height: 600, is_video: false, is_video_poster: false })),
+      overflow_count: 0 }) });
+  const video = () => block({ block_type: "video", url: null, title: "Clip", media_file: "Media/clip.mp4",
+    preview_manifest: JSON.stringify({ kind: "video_poster", primary_preview_path: "clip.jpg", width: 1280, height: 720,
+      preview_width: 640, preview_height: 360,
+      tiles: [{ source_path: "Media/clip.mp4", preview_path: "clip.preview-1.jpg", width: 1280, height: 720,
+        preview_width: 640, preview_height: 360, is_video: true, is_video_poster: true }],
+      overflow_count: 0 }) });
+  const renderInFeed = (value: LightBlock) =>
+    render(<Card block={value} vaultPath="/vault" thumbsRootPath="/thumbs" priority onClick={vi.fn()} />);
+  /// Every decode() fails; the element says its bytes arrived. `asked` lists
+  /// the sources decode() was called for.
+  const undecodable = () => {
+    const asked: Array<string | null> = [];
+    const decode = installPictureDecode(function decode(this: HTMLImageElement) {
+      asked.push(this.getAttribute("src"));
+      return Promise.reject(new DOMException("The source image cannot be decoded.", "EncodingError"));
+    });
+    const complete = vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(true);
+    const naturalWidth = vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(640);
+    return { asked, restore: () => { decode.restore(); complete.mockRestore(); naturalWidth.mockRestore(); } };
+  };
+
+  it("asks the engine to decode the picture, every tile and the video poster as they mount", () => {
+    const { decode, restore } = installPictureDecode();
+    try {
+      for (const [value, selector, count] of [
+        [picture(), "[data-card-graphic-surface] img", 1],
+        [gallery(), "[data-card-media-tile] img", 3],
+        [video(), "[data-feed-video-poster]", 1],
+      ] as const) {
+        decode.mockClear();
+        const { container, unmount } = renderInFeed(value);
+        const images = Array.from(container.querySelectorAll(selector));
+        expect(images).toHaveLength(count);
+        expect(decode.mock.contexts).toEqual(images);
+        unmount();
+      }
+    } finally { restore(); }
+  });
+
+  it("sends a picture that cannot be decoded through the retries of one that did not load", async () => {
+    vi.useFakeTimers();
+    const { asked, restore } = undecodable();
+    const { container, unmount } = renderInFeed(picture());
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(asked).toHaveLength(3);
+      expect(asked[0]).not.toContain("retry=");
+      expect(asked[1]).toContain("retry=1");
+      expect(asked[2]).toContain("retry=2");
+      expect(container.querySelector("img")).toBeNull();
+    } finally { unmount(); restore(); vi.useRealTimers(); }
+  });
+
+  it("drops a tile and a video poster that cannot be decoded, as ones that did not load", async () => {
+    const { restore } = undecodable();
+    try {
+      const tiles = renderInFeed(gallery());
+      await waitFor(() => expect(tiles.container.querySelector("[data-card-media-tile] img")).toBeNull());
+      expect(tiles.container.querySelectorAll("[data-preview-unavailable]")).toHaveLength(3);
+      tiles.unmount();
+      const poster = renderInFeed(video());
+      await waitFor(() => expect(poster.container.querySelector("[data-feed-video-poster]")).toBeNull());
+      poster.unmount();
+    } finally { restore(); }
+  });
 });
 
 function block(overrides: Partial<LightBlock> = {}): LightBlock {

@@ -1,5 +1,7 @@
 # Distribution, Updates, and Telemetry Specification
 
+**Состояние:** отложено решением 10.07.2026; локальная установка компонентов ведётся по SPEC_SYSTEM_RELIABILITY.md. Источник: раздел «Status» ниже. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md)
 
 ## Status

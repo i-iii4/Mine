@@ -98,7 +98,7 @@ import { createPreviewRowQueue } from "@/lib/previewRowQueue";
 import { APP_MAIN_MIN_WIDTH_PX, APP_MIN_WIDTH_PX } from "@/lib/appLayout";
 import { sidebarWidthHost } from "@/lib/sidebarWidth";
 import { topRowCard, topRowShowsPlace, type TopRowCardView } from "@/lib/topRowPath";
-import { CARD_VIEW_STORAGE_KEY, PEEK_WIDTH_STORAGE_KEY, getCardView, offersPeekCollapse, openCardView, reloadCardView, reloadPeekWidth, setCardView, useCardView, type CardView } from "@/lib/cardView";
+import { CARD_VIEW_STORAGE_KEY, PEEK_WIDTH_STORAGE_KEY, getCardView, offersPeekCollapse, openCardView, reloadCardView, reloadPeekWidth, setCardView, type CardView } from "@/lib/cardView";
 import { lastPeekInput, peekAreaHoldsWindow, peekOpeningFrom, type CardPeekExit } from "@/lib/cardPeek";
 import { listenPeekInput } from "@/lib/cardPeekSource";
 import { nativeMenuCommandIsKey, noteNativeMenuCommand, notePointerCommand } from "@/lib/motionInput";
@@ -154,7 +154,7 @@ import type { ChromeNameFieldHandle } from "@/components/ChromeNameField";
 import { afterMenuCloses } from "@/lib/openMenus";
 import { MainSecondaryTopBar } from "@/components/MainSecondaryChrome";
 import { CardPeek, CardPeekArea, CardPeekPlate, type CardPeekOpening } from "@/components/CardPeek";
-import { DetailView, preloadDetail } from "@/components/DetailView";
+import { DetailView, useDetailPreload } from "@/components/DetailView";
 
 type CardActionsMenuTarget = {
   block: LightBlock | IndexedBlock;
@@ -354,15 +354,10 @@ import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useSidebarOverlay } from "@/hooks/useSidebarOverlay";
 import { useSidebarKeyboardFocus, type FeedKeyboardFocus } from "@/hooks/useSidebarKeyboardFocus";
 import { MOVED_BY_KEY_STATE, focusOpenCardRoot, sidebarEnterLabel } from "@/lib/sidebarKeyboardFocus";
-import { SIDEBAR_COLUMNS_STORAGE_KEY, reloadSidebarColumnLayout } from "@/lib/sidebarColumnLayout";
 import {
   COMPACT_STACK_EDGE_STORAGE_KEY,
-  LIST_SPACING_STORAGE_KEY,
-  LIST_STYLE_STORAGE_KEY,
   SIDEBAR_STYLE_STORAGE_KEY,
   reloadCompactStackEdge,
-  reloadListSpacing,
-  reloadListStyle,
   reloadSidebarStyle,
 } from "@/lib/compactStack";
 import { useTopRowWrap } from "@/hooks/useTopRowWrap";
@@ -1206,7 +1201,7 @@ export function AppWithVault({
   const [selectedBlock, setSelectedBlock] = useState<LightBlock | IndexedBlock | null>(null);
   const selectedBlockRef = useRef(selectedBlock);
   selectedBlockRef.current = selectedBlock;
-  // TRIAL (SPEC_CARD_PEEK.md, О1, О9, О16): the «Card view» the open card
+  // SPEC_CARD_PEEK.md, О1, О9, О16: the «Card view» the open card
   // stands by, Full page or Peek: the one chosen when it opened, or the one
   // its own button chose since; whether the right part holds the window.
   // From them the view it stands in (`openCardView`); how its window's
@@ -1225,7 +1220,7 @@ export function AppWithVault({
   detailViewRef.current = detailView;
   const [peekOpening, setPeekOpening] = useState<CardPeekOpening | null>(null);
   const [peekExit, setPeekExit] = useState<CardPeekExit>("return");
-  // TRIAL (SPEC_CARD_PEEK.md, О17): the open card handed between its window
+  // SPEC_CARD_PEEK.md, О17: the open card handed between its window
   // and the full page. On the way to the full page (`toFull`) the full page
   // is laid out unseen while the window's edges go to the right part's, and
   // shows in the frame the window hands it over; back to the window
@@ -1238,11 +1233,9 @@ export function AppWithVault({
   const peekAreaRef = useRef<HTMLDivElement>(null);
   // With the window the chosen view, the open card's module is loaded after
   // the first frame, before any card opens (О12).
-  const chosenCardView = useCardView();
-  useEffect(() => {
-    if (chosenCardView !== "peek") return;
-    preloadDetail().catch((error: unknown) => console.error("Could not load the open card:", error));
-  }, [chosenCardView]);
+  // The open card's parts of the build load after the first cards, whatever
+  // view the card opens in (SPEC_READING_MODE.md, Ч0.6).
+  useDetailPreload();
   const [cardActionsMenuTarget, setCardActionsMenuTarget] =
     useState<CardActionsMenuTarget | null>(null);
   const [selectedBlockAnchor, setSelectedBlockAnchor] = useState<string | null>(null);
@@ -3460,26 +3453,17 @@ export function AppWithVault({
         // Sort and Show chosen in another tab (SPEC_DEEP_AUDIT.md, Е6.7).
         reloadFeedDisplay();
       } else if (key === CARD_VIEW_STORAGE_KEY) {
-        // TRIAL (SPEC_CARD_PEEK.md, О1): the open card's view chosen in another tab.
+        // SPEC_CARD_PEEK.md, О1: the open card's view chosen in another tab.
         reloadCardView();
       } else if (key === PEEK_WIDTH_STORAGE_KEY) {
-        // TRIAL (SPEC_CARD_PEEK.md, О3): the Peek window's width chosen in another tab.
+        // SPEC_CARD_PEEK.md, О3: the Peek window's width chosen in another tab.
         reloadPeekWidth();
-      } else if (key === SIDEBAR_COLUMNS_STORAGE_KEY) {
-        // TRIAL (PLAN 47.6): the sidebar rows' columns set in another tab.
-        reloadSidebarColumnLayout();
       } else if (key === COMPACT_STACK_EDGE_STORAGE_KEY) {
         // TRIAL (PLAN 50.38): the compact stack's edge chosen in another tab.
         reloadCompactStackEdge();
       } else if (key === SIDEBAR_STYLE_STORAGE_KEY) {
         // TRIAL (PLAN 50.38): the sidebar's look chosen in another tab.
         reloadSidebarStyle();
-      } else if (key === LIST_SPACING_STORAGE_KEY) {
-        // TRIAL (PLAN 50.38): the List look's row step chosen in another tab.
-        reloadListSpacing();
-      } else if (key === LIST_STYLE_STORAGE_KEY) {
-        // TRIAL (PLAN 50.38): the List look's style chosen in another tab.
-        reloadListStyle();
       } else if (key === CONTENT_FONT_STORAGE_KEY) {
         applyContentFont(getStoredContentFont());
       } else if (key === INTERFACE_FONT_STORAGE_KEY) {
@@ -3626,7 +3610,7 @@ export function AppWithVault({
   ]);
   handleDetailCloseRef.current = handleDetailClose;
 
-  // TRIAL (SPEC_CARD_PEEK.md, О5): over the card's window the top row's view
+  // SPEC_CARD_PEEK.md, О5: over the card's window the top row's view
   // switch works as with no card open; the window closes with it and fades
   // down over the other view (О11).
   const handleTopRowViewModeChange = useCallback((next: MainViewMode) => {
@@ -3636,7 +3620,7 @@ export function AppWithVault({
     handleMainViewModeChange(next);
   }, [handleDetailClose, handleMainViewModeChange]);
 
-  // TRIAL (SPEC_CARD_PEEK.md, О9, О16): the open card goes back to its
+  // SPEC_CARD_PEEK.md, О9, О16: the open card goes back to its
   // window, which stands at its place at once.
   const givePeekBack = useCallback((slug: string) => {
     peekOpeningSequenceRef.current += 1;
@@ -3645,7 +3629,7 @@ export function AppWithVault({
     setCardHandover("toWindow");
   }, []);
 
-  // TRIAL (SPEC_CARD_PEEK.md, О17): the window's way to the full page, by
+  // SPEC_CARD_PEEK.md, О17: the window's way to the full page, by
   // its button or the right part's width.
   const sendPeekToFull = useCallback(() => {
     setPeekExit("expand");
@@ -3671,7 +3655,7 @@ export function AppWithVault({
     if (!selectedBlock) setCardHandover(null);
   }, [selectedBlock]);
 
-  // TRIAL (SPEC_CARD_PEEK.md, О1, О9; user's decision of 30.10.2026): the
+  // SPEC_CARD_PEEK.md, О1, О9 (user's decision of 30.10.2026): the
   // open card's buttons choose «Card view» as the Display panel does, stored
   // and told to every tab and window, and this card follows it at once.
   const chooseOpenCardView = useCallback((next: CardView) => {
@@ -3680,7 +3664,7 @@ export function AppWithVault({
     setDetailCardView(next);
   }, []);
 
-  // TRIAL (SPEC_CARD_PEEK.md, О9, О16, О17): Full page chosen; the window
+  // SPEC_CARD_PEEK.md, О9, О16, О17: Full page chosen; the window
   // goes to the full page, its edges to the right part's, and the same card
   // stands full page at any width of the right part.
   const handlePeekExpand = useCallback(() => {
@@ -3688,7 +3672,7 @@ export function AppWithVault({
     chooseOpenCardView("full");
   }, [chooseOpenCardView, sendPeekToFull]);
 
-  // TRIAL (SPEC_CARD_PEEK.md, О9, О16): Peek chosen; the full page gives the
+  // SPEC_CARD_PEEK.md, О9, О16: Peek chosen; the full page gives the
   // card to its window, and the right part's width decides from now on.
   const handlePeekCollapse = useCallback(() => {
     const open = selectedBlockRef.current;
@@ -3697,7 +3681,7 @@ export function AppWithVault({
     chooseOpenCardView("peek");
   }, [chooseOpenCardView, givePeekBack]);
 
-  // TRIAL (SPEC_CARD_PEEK.md, О16; user's decision of 30.10.2026): the
+  // SPEC_CARD_PEEK.md, О16 (user's decision of 30.10.2026): the
   // right part's width alone decides whether a card standing by Peek is in
   // its window or full page, live, both ways. Heard as the right part places
   // itself, in the frame its width changes.
@@ -3717,7 +3701,7 @@ export function AppWithVault({
     setDetailAreaHolds(holds);
   }, [givePeekBack, sendPeekToFull]);
 
-  // TRIAL (SPEC_CARD_PEEK.md, О10): the input that opened a card decides how
+  // SPEC_CARD_PEEK.md, О10: the input that opened a card decides how
   // its window comes.
   useEffect(() => listenPeekInput(), []);
 
@@ -6015,7 +5999,7 @@ export function AppWithVault({
       ) : null}
     </div>{/* end body */}
 
-        {/* TRIAL (SPEC_CARD_PEEK.md): the card in its window over the right
+        {/* SPEC_CARD_PEEK.md: the card in its window over the right
             part, from the top rows' top to the bottom bar beside the sidebar
             (user's decision of 23.10.2026). It outlives its card while it
             leaves. */}

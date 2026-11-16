@@ -1,5 +1,7 @@
 # SPEC: domain layer (collection, tag, channel, vault, search)
 
+**Состояние:** реализовано. Источник: PLAN.md, Phase 2. **Сверка с кодом:** 15.11.2026, раздел `domain/vault` и существование названных файлов.
+
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md)
 
 Чистые `block/collection/channel/markdown/search/tag/article_audio` находятся
@@ -203,34 +205,47 @@ enum ChannelError {
 
 ```rust
 struct VaultLayout {
-    root: PathBuf,
+    root: PathBuf,          // папка пространства
+    derived_root: PathBuf,  // производный каталог этого Мака, вне пространства
+    write_layout: VaultWriteLayout,
+    index_path: Option<PathBuf>,
 }
 ```
+
+Производный каталог (индекс, миниатюры, звук статей) лежит вне пространства:
+приложение открывает пространство через `with_derived_root` с каталогом
+`~/Library/Application Support/com.mine.app/vaults/<vault-id>/`. В самом
+пространстве остаётся только синхронизируемая папка `.mine/` (`vault-id`,
+`layout.json`). `VaultLayout::new(root)` без производного каталога кладёт его
+в `root/.mine`. Папка `.arena/` прежних версий читается только для переноса
+(`legacy_arena_dir`, `legacy_index_db_path`, `legacy_thumbs_dir`).
 
 ### Функции
 
 ```rust
 VaultLayout::new(root: PathBuf) -> Self
+VaultLayout::with_derived_root(root: PathBuf, derived_root: PathBuf) -> Self
 VaultLayout::root(&self) -> &Path
 VaultLayout::block_path(&self, slug: &str) -> PathBuf       // root/slug.md
-VaultLayout::media_path(&self, slug: &str, ext: &str) -> PathBuf  // root/slug.ext
-VaultLayout::arena_dir(&self) -> PathBuf                     // root/.arena/
-VaultLayout::index_db_path(&self) -> PathBuf                 // root/.arena/index.db
-VaultLayout::thumbs_dir(&self) -> PathBuf                    // root/.arena/cache/thumbs/
-VaultLayout::thumb_path(&self, slug: &str) -> PathBuf        // root/.arena/cache/thumbs/slug.webp
+VaultLayout::media_path(&self, slug: &str, ext: &str) -> PathBuf  // <папка медиа>/<имя карточки>.ext; в плоском пространстве root/slug.ext
+VaultLayout::mine_dir(&self) -> PathBuf                      // root/.mine/
+VaultLayout::derived_root(&self) -> &Path                    // производный каталог
+VaultLayout::index_db_path(&self) -> PathBuf                 // <derived_root>/indexes/<поколение>/index.db
+VaultLayout::thumbs_dir(&self) -> PathBuf                    // <derived_root>/cache/thumbs/
+VaultLayout::thumb_path(&self, slug: &str) -> PathBuf        // <derived_root>/cache/thumbs/slug.jpg
 
 // Валидация slug для безопасного использования в путях
 validate_slug(slug: &str) -> Result<(), VaultError>
 
 // Чистое разрешение конфликтов slug (без FS)
-resolve_slug_conflict(slug: &str, existing: &HashSet<String>) -> String
+resolve_slug_conflict(slug: &str, existing: &HashSet<String>) -> Result<String, VaultError>
 ```
 
 ### Поведение resolve_slug_conflict
 
 - Если `slug` нет в `existing` -> `slug`
-- Если есть -> `slug-2`, если и он есть -> `slug-3`, и так далее
-- Максимум 1000 попыток, затем паника (невозможная ситуация)
+- Если есть -> `slug (2)`, если и он есть -> `slug (3)`, и так далее
+- После `slug (1000)` возвращается `VaultError::SlugConflictExhausted`
 
 ### Имя новой карточки: resolve_card_name_conflict
 
@@ -258,13 +273,13 @@ resolve_slug_conflict(slug: &str, existing: &HashSet<String>) -> String
 | # | Случай | Ожидание |
 |---|---|---|
 | V1 | `block_path("sunset-tokyo")` | `root/sunset-tokyo.md` |
-| V2 | `media_path("sunset-tokyo", "jpg")` | `root/sunset-tokyo.jpg` |
-| V3 | `arena_dir()` | `root/.arena/` |
-| V4 | `thumb_path("sunset-tokyo")` | `root/.arena/cache/thumbs/sunset-tokyo.webp` |
+| V2 | `media_path("sunset-tokyo", "jpg")` в плоском пространстве | `root/sunset-tokyo.jpg` |
+| V3 | `mine_dir()` | `root/.mine/` |
+| V4 | `thumb_path("sunset-tokyo")` | `<derived_root>/cache/thumbs/sunset-tokyo.jpg` |
 | V5 | `resolve_slug_conflict("slug", {})` | `"slug"` |
-| V6 | `resolve_slug_conflict("slug", {"slug"})` | `"slug-2"` |
-| V7 | `resolve_slug_conflict("slug", {"slug", "slug-2"})` | `"slug-3"` |
-| V8 | `resolve_slug_conflict("slug", {"slug", "slug-3"})` | `"slug-2"` (пропуск дыр) |
+| V6 | `resolve_slug_conflict("slug", {"slug"})` | `"slug (2)"` |
+| V7 | `resolve_slug_conflict("slug", {"slug", "slug (2)"})` | `"slug (3)"` |
+| V8 | `resolve_slug_conflict("slug", {"slug", "slug (3)"})` | `"slug (2)"` (пропуск дыр) |
 
 ---
 

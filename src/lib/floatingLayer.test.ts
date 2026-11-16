@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { MENU_PLATE_GAP_PX, menuPlateOf, menuPlateOffsets } from "./floatingLayer";
+import { MENU_PLATE_GAP_PX, menuPlateOf, menuPlateOffsets, plateSideOffset } from "./floatingLayer";
 
 const css = readFileSync(path.join(process.cwd(), "src/styles/global.css"), "utf8");
 
@@ -49,5 +49,38 @@ describe("a menu's place off its button's plate", () => {
     const plain = document.createElement("button");
     plain.append(document.createElement("span"));
     expect(menuPlateOf(plain)).toBe(plain);
+  });
+});
+
+// The menus' rule, the tooltips' too (user's decision of 15.11.2026;
+// DESIGN_SYSTEM.md, «Отступ от кнопки», «Подсказки»).
+describe("a tooltip's place off its button's plate", () => {
+  it("stands 4 px off a chrome button's 24 px plate in a 40 px row, below and flipped above", () => {
+    const row = { top: 0, right: 124, bottom: 39, left: 100 };
+    const plate = { top: 7.5, right: 124, bottom: 31.5, left: 100 };
+    expect(plateSideOffset(row, plate, "bottom")).toBe(-3.5);
+    expect(plateSideOffset(row, plate, "top")).toBe(-3.5);
+    // Counted from the box, the old 4 left 7.5 + 4 = 11.5 px under the plate.
+    expect(row.bottom + plateSideOffset(row, plate, "bottom") - plate.bottom).toBe(MENU_PLATE_GAP_PX);
+  });
+
+  it("stands 4 px off the plate in a 30 px row", () => {
+    const row = { top: 0, right: 24, bottom: 30, left: 0 };
+    const plate = { top: 3, right: 24, bottom: 27, left: 0 };
+    expect(plateSideOffset(row, plate, "bottom")).toBe(1);
+    expect(row.bottom + plateSideOffset(row, plate, "bottom") - plate.bottom).toBe(MENU_PLATE_GAP_PX);
+  });
+
+  it("keeps the plain 4 px for a button that is its own plate, on every side", () => {
+    const button = { top: 10, right: 42, bottom: 34, left: 18 };
+    for (const side of ["top", "right", "bottom", "left"] as const) {
+      expect(plateSideOffset(button, button, side)).toBe(MENU_PLATE_GAP_PX);
+    }
+  });
+
+  it("gives a menu the same gap", () => {
+    const row = { top: 0, right: 124, bottom: 39, left: 100 };
+    const plate = { top: 7.5, right: 124, bottom: 31.5, left: 100 };
+    expect(menuPlateOffsets(row, plate, "bottom", "start").sideOffset).toBe(plateSideOffset(row, plate, "bottom"));
   });
 });

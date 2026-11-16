@@ -1,5 +1,7 @@
 # Display Title and Heading Model
 
+**Состояние:** реализовано. Источник: раздел «Status» ниже. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md)
 
 ## Status

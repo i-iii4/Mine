@@ -692,6 +692,85 @@ export type MediaFailure =
 { kind: "address"; refusal: AddressRefusal }
 
 /**
+ * A choice made in a menu, for the page it came from to carry out (МО23).
+ */
+export type MenuAction =
+/**
+ * The item `id` was chosen.
+ */
+{ kind: "run"; id: string } |
+/**
+ * The widget `id` asks.
+ */
+{ kind: "widget"; id: string; action: MenuWidgetAction }
+
+export type MenuAlign = "start" | "end"
+
+/**
+ * The page's answer to a choice that needs one (МО25).
+ */
+export type MenuAnswer = { kind: "done" } |
+/**
+ * A membership change was made (true), refused (false) or not known.
+ */
+{ kind: "membership"; made: boolean | null } |
+/**
+ * Why a typed collection name would be refused, or none.
+ */
+{ kind: "name_refusal"; reason: string | null }
+
+/**
+ * A collection in a picker, with the count of its cards.
+ */
+export type MenuCollection = { name: string; count: number }
+
+/**
+ * One entry of a menu. An entry a choice may name has an `id`, the only
+ * one of its menu, the same while the menu is open (МО18).
+ */
+export type MenuEntry =
+/**
+ * A command: choosing it closes the menu.
+ */
+{ kind: "item"; id: string; label: string; icon: MenuIcon | null; variant: MenuItemVariant; truncate: boolean } | { kind: "separator" } |
+/**
+ * A row that opens a menu beside it. Its content holds no submenu
+ * (МО15).
+ */
+{ kind: "submenu"; id: string; label: string; icon: MenuIcon | null; content: MenuSpec } | { kind: "widget"; id: string; widget: MenuWidget }
+
+/**
+ * The icons a menu's row may carry: a closed set, drawn by the page.
+ */
+export type MenuIcon = "plus" | "external" | "unlink" | "trash"
+
+/**
+ * How a command's row reads: an ordinary one, one that breaks a link and
+ * keeps the content, one that deletes for good.
+ */
+export type MenuItemVariant = "default" | "detach" | "destructive"
+
+/**
+ * What opened the menu: a button's plate, the menu below or above it and
+ * flush with one of its edges, or the pointer of a right click.
+ */
+export type MenuOpener = { kind: "plate"; align: MenuAlign } | { kind: "point" }
+
+/**
+ * What a tab's closing of its menu came to.
+ */
+export type MenuPanelCloseOutcome = {
+/**
+ * The menu was open and closed now; false when it had closed already or
+ * never opened.
+ */
+closed: boolean;
+/**
+ * The backend gave the keyboard back to the tab's window (МО47).
+ */
+key_returned: boolean }
+
+/**
  * Why a menu closed.
  */
 export type MenuPanelCloseReason =
@@ -704,103 +783,262 @@ export type MenuPanelCloseReason =
  */
 "escape" |
 /**
- * A press outside it, here, in another window, in another app, or the
- * app left.
+ * A press outside it, here, in another window, in another app, the
+ * app's menu bar, another desktop, or the app left.
  */
 "outside" |
 /**
- * The tab closed it, or another menu took the panel.
+ * The tab closed it, another menu took the panel, or the panel went.
  */
 "source" |
 /**
- * The panel did not show it in time.
+ * The panel's page drew nothing in time: the tab opens it on the page.
  */
 "unresponsive" |
 /**
- * The panel could not draw or show it.
+ * The panel could not draw it: the tab opens it on the page.
  */
 "failed"
 
 /**
- * The menu closed: to the tab and to the panel.
+ * One opening laid out: where the panel goes, and where in its page Radix
+ * anchors the menu so it lands on its place exactly.
  */
-export type MenuPanelClosed = { menu: number; reason: MenuPanelCloseReason }
+export type MenuPanelLayout = {
+/**
+ * The menu on the screen, at the height it is drawn.
+ */
+menu: ScreenRect;
+/**
+ * The panel's top left corner on the screen.
+ */
+origin: ScreenPoint;
+/**
+ * The panel's size for this opening (МО29). Its page draws the menu
+ * once its own area is this size (МО30).
+ */
+frame: MenuPanelSize;
+/**
+ * A trigger of no size in the panel's page; the dropdown wrapper sets
+ * its menu `PLATE_GAP_PX` off it.
+ */
+anchor: ScreenPoint; side: MenuSide; align: MenuAlign;
+/**
+ * The height the menu is held to when the screen has less room.
+ */
+max_height: number | null;
+/**
+ * Whether the menu's submenus open to its right; true with none.
+ */
+submenu_right: boolean }
 
 /**
- * A tab asks for its card menu in the panel.
+ * A page asks for its menu in the panel.
  */
 export type MenuPanelOpenRequest = {
 /**
- * The anchor in the tab's page: the plate of the button, or the point
- * of a right click as a rectangle of no size.
+ * The page's load: a page loaded anew counts its menus from one again.
  */
-anchor: ScreenRect;
+page: string;
 /**
- * What the panel draws, JSON the backend passes on unread
- * (src/lib/menuPanelProtocol.ts).
+ * The menu's number, the page's own count of its openings (МО34).
  */
-payload: string;
+menu: number;
 /**
- * When the input that opened the menu came, epoch milliseconds.
+ * The anchor in the page: the plate of the button, or the point of a
+ * right click as a rectangle of no size.
  */
-event_at: number }
+anchor: ScreenRect; opener: MenuOpener;
+/**
+ * The menu as data: what the panel's page draws (МО16).
+ */
+spec: MenuSpec;
+/**
+ * A key opened the menu: it lands at once and lights its first row
+ * (SPEC_MOTION_LEVELS.md, УД4).
+ */
+by_key: boolean;
+/**
+ * The dev button style of the window the menu came from
+ * (src/lib/buttonStyle.ts).
+ */
+buttons: string | null;
+/**
+ * The main menu's size as the page counts it from the description
+ * (src/lib/menuSpec.ts): the backend places the panel by it before the
+ * panel's page has drawn anything (МО28).
+ */
+size: MenuPanelSize;
+/**
+ * Each submenu's size and the row it opens off.
+ */
+submenus: SubmenuSize[];
+/**
+ * When the input that opened the menu came, epoch milliseconds; none
+ * when no input's event was at hand, and the measure starts at `sent_at`.
+ */
+event_at: number | null;
+/**
+ * When the tab sent this request.
+ */
+sent_at: number }
 
 /**
- * What the panel's page hears to draw a menu.
+ * One message to the panel's page: the menu by the page it came from and
+ * its number there, `seq` from one for each menu.
  */
-export type MenuPanelOpening = { menu: number;
-/**
- * The tab that opened it: the panel sends it every choice.
- */
-source: string;
-/**
- * The anchor on the screen.
- */
-anchor: ScreenRect;
-/**
- * The visible frame of the screen the anchor is on: without the menu
- * bar and the Dock.
- */
-screen: ScreenRect; payload: string; event_at: number }
+export type MenuPanelPageMessage = { source: string; menu: number; seq: number; body: MenuPanelToPage }
 
 /**
- * The panel's page drew its first frame of the menu.
+ * What the panel's page asks of the menu it draws: a choice for the tab to
+ * carry out, its own closing, or both at once, the choice first (МО24).
  */
-export type MenuPanelPaint = { menu: number;
+export type MenuPanelPageRequest = { source: string; menu: number;
 /**
- * The time of that frame, epoch milliseconds.
+ * The page's count of its requests for this menu, from one: they are
+ * carried out in this order (МО36).
+ */
+request: number;
+/**
+ * A choice made in the menu.
+ */
+action: MenuAction | null;
+/**
+ * The menu closes after the choice, or with none: an item was chosen,
+ * Escape, a press on the panel's clear part.
+ */
+close: MenuPanelCloseReason | null }
+
+/**
+ * The panel's page drew the menu: when each of its steps came, epoch
+ * milliseconds, and the menu as it measured it.
+ */
+export type MenuPanelPaint = { source: string; menu: number;
+/**
+ * The page heard the opening.
+ */
+received_at: number;
+/**
+ * The page's area had the frame's size: at once, or after the change
+ * of size it waited for (МО30).
+ */
+sized_at: number;
+/**
+ * React drew the menu into the page.
+ */
+drawn_at: number;
+/**
+ * The first frame with the menu (`requestAnimationFrame`).
  */
 frame_at: number;
 /**
- * `plate` or `point`.
+ * The menu as the page laid it out.
  */
-opener: string }
+measured: MenuPanelSize }
 
 /**
- * Why a menu does not open or show in the panel: the tab then opens it on
- * its page.
+ * Why a menu does not open in the panel: the tab then opens it on its page.
  */
-export type MenuPanelRefusal = { kind: "not_ready" } | { kind: "app_inactive" } | { kind: "not_a_tab" } | { kind: "no_geometry" } | { kind: "not_open" } | { kind: "not_main_thread" } | { kind: "show_failed" }
+export type MenuPanelRefusal = { kind: "not_ready" } | { kind: "app_inactive" } | { kind: "not_a_source" } | { kind: "no_geometry" } | { kind: "bad_menu" } | { kind: "not_main_thread" } | { kind: "show_failed" } | { kind: "superseded" }
 
 /**
- * The panel showed the menu.
- */
-export type MenuPanelShown = { menu: number }
-
-/**
- * The panel's size in points, the page's one source of it.
+ * A size in points.
  */
 export type MenuPanelSize = { width: number; height: number }
 
 /**
- * Whether the panel's page listens: until then a menu opens on its page.
+ * One message to the page a menu came from: `seq` counts them from one for
+ * each menu, and the page takes them in that order (МО36).
+ */
+export type MenuPanelSourceMessage = { menu: number; seq: number; body: MenuPanelToSource }
+
+/**
+ * Whether the panel's page listens and its window was found clear: until
+ * then a menu opens on its page.
  */
 export type MenuPanelStatus = { ready: boolean }
 
 /**
- * The menu's number: every later message names it.
+ * What the panel's page hears of a menu.
  */
-export type MenuPanelTicket = { menu: number }
+export type MenuPanelToPage =
+/**
+ * Draw the menu: the panel already stands at its place, in the frame
+ * the layout names.
+ */
+{ kind: "open"; layout: MenuPanelLayout; size: MenuPanelSize; spec: MenuSpec; by_key: boolean; buttons: string | null } |
+/**
+ * What changed in the menu while it is open: the whole of it again.
+ */
+{ kind: "update"; spec: MenuSpec } |
+/**
+ * The page's answer to the panel's request `request`.
+ */
+{ kind: "answer"; request: number; answer: MenuAnswer } |
+/**
+ * The menu closed: the last message of the menu.
+ */
+{ kind: "closed"; reason: MenuPanelCloseReason }
+
+/**
+ * What the page a menu came from hears of it.
+ */
+export type MenuPanelToSource =
+/**
+ * A choice made in the panel; the page answers one that needs an
+ * answer by `request` (МО25).
+ */
+{ kind: "action"; request: number; action: MenuAction } |
+/**
+ * The menu closed: the last message of the menu (МО38). `key_returned`
+ * says the backend gave the keyboard back to the page's window, so the
+ * window's next focus is no return to the app (МО47, МО48).
+ */
+{ kind: "closed"; reason: MenuPanelCloseReason; key_returned: boolean }
+
+export type MenuSide = "top" | "bottom" | "left" | "right"
+
+/**
+ * A menu as data: what the page draws.
+ */
+export type MenuSpec = { role: MenuWidthRole; entries: MenuEntry[] }
+
+/**
+ * Content that is more than rows (МО27): a component of the page's that
+ * takes its data from here and keeps what lives only while the menu is
+ * open, the query of its search field among it.
+ */
+export type MenuWidget =
+/**
+ * The collections of one card: a search field, every collection of the
+ * space with the card's own ticked, a row to create one.
+ */
+{ kind: "collection_picker"; card: string; selected: string[]; collections: MenuCollection[]; current: string | null }
+
+/**
+ * What a widget asks of the page its menu came from.
+ */
+export type MenuWidgetAction =
+/**
+ * Connect the card to `collection`, or disconnect it when `connected`
+ * says it is in it now. Answered with `MenuAnswer::Membership`.
+ */
+{ kind: "toggle_collection"; collection: string; connected: boolean } |
+/**
+ * Create the collection `name` and connect the card to it.
+ */
+{ kind: "create_collection"; name: string } |
+/**
+ * Why `name` would be refused as a new collection's. Answered with
+ * `MenuAnswer::NameRefusal`.
+ */
+{ kind: "check_collection_name"; name: string }
+
+/**
+ * What sets a menu's width (МО5): a menu of commands, or a list under a
+ * search field, which fills its surface with no inset of the surface's.
+ */
+export type MenuWidthRole = "action" | "search"
 
 export type MergeBlocksError = { kind: "no_vault" } | { kind: "too_few_cards" } | { kind: "duplicate_slug"; slug: string } | { kind: "block_not_found"; slug: string } | { kind: "block_not_mergeable"; slug: string; block_type: string } | { kind: "invalid_slug"; slug: string; reason: string } | { kind: "reference_rewrite_failed"; path: string; message: string } |
 /**
@@ -1272,13 +1510,12 @@ indexed: number;
 errors: number }
 
 /**
- * A point on the screen, from the top left corner of the main screen.
+ * A point in points.
  */
 export type ScreenPoint = { x: number; y: number }
 
 /**
- * A rectangle in points. On the page: from the page's top left corner. On
- * the screen: from the top left corner of the main screen, y down.
+ * A rectangle in points.
  */
 export type ScreenRect = { x: number; y: number; width: number; height: number }
 
@@ -1401,6 +1638,16 @@ export type SpaceStats = { file_count: number; markdown_count: number; media_cou
  * been opened (no vault-id / no index) or the index predates `card_kind`.
  */
 element_count: number | null }
+
+/**
+ * A submenu of the menu being opened, as its page counts it from the
+ * menu's description (МО28): the largest it gets while the menu is open.
+ */
+export type SubmenuSize = {
+/**
+ * How far below the menu's top the submenu's trigger row starts.
+ */
+row_top: number; width: number; height: number }
 
 /**
  * What one window's tab bar shows (`tabbar-state`).

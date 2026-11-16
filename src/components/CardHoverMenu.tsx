@@ -1,6 +1,5 @@
 import { commandById } from "@/lib/commandRegistry";
 import {
-  Fragment,
   memo,
   useCallback,
   useContext,
@@ -10,51 +9,41 @@ import {
   useState,
   useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
-  type ReactNode,
-  type Ref,
 } from "react";
 import type { ComponentProps } from "react";
-import { MoreHorizontal, Plus, ExternalLink, Trash2, Unlink } from "lucide-react";
+import { MoreHorizontal, Plus, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
 import { useCommandOverrides } from "@/hooks/useCommandOverrides";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubTrigger,
-  DropdownMenuSubContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import type { IndexedBlock, LightBlock, TagCount } from "@/types";
+import type { IndexedBlock, LightBlock, MenuAction, MenuAnswer, MenuOpener, MenuSpec, MenuWidgetAction, TagCount } from "@/types";
 import { collectionRefLabel } from "@/lib/collections";
 import { isSafeUrl } from "@/lib/assets";
-import { MenuIconSlot } from "@/components/ui/menu-icon-slot";
-import {
-  COLLECTION_PICKER_CONTENT_CLASS,
-  CollectionPicker,
-} from "./CollectionPicker";
+import { MenuSpecView, menuSurfaceClass, type MenuDispatch, type MenuKit } from "./MenuSpecView";
 import { openLinkInBrowser } from "@/lib/systemActions";
 import { useCardMembership } from "@/hooks/useCardMembership";
-import { useCollectionNameCheck } from "@/hooks/useCollectionNameRefusal";
+import { useCollectionNameCheck, type CollectionNameCheck } from "@/hooks/useCollectionNameRefusal";
 import { CardCollectionsContext } from "@/lib/cardCollections";
 import { EDGE_FADE_WIDTH, createRightFadeMaskStyle } from "@/lib/edgeFade";
 import { noFocusBackAfterPress, onPointerOffMenus, pointerIsOnMenu, useContextMenuPresence } from "@/lib/openMenus";
 import { editorTableMenu, subscribeEditorTableMenu } from "@/lib/editorTableMenu";
 import {
-  cardMenuEntries,
+  cardConnectSpec,
+  cardMenuItemId,
+  cardMenuSpec,
+  cardMenuTableCommand,
   runCardMenuItem,
-  type CardMenuEntry,
-  type CardMenuItemId,
   type CardMenuTableCommand,
 } from "@/lib/cardMenuEntries";
 import { menuPlateOf } from "@/lib/floatingLayer";
 import { lastInputIsKey } from "@/lib/motionInput";
-import type { CardMenuOpenerKind, CardMenuPayload, MenuPanelAction, MenuPanelAnswer } from "@/lib/menuPanelProtocol";
-import { menuPanelUsable, openMenuPanel, openingInputAt, type MenuPanelSession } from "@/lib/menuPanelSource";
+import { currentInputAt, openMenuPanel, type MenuPanelSession } from "@/lib/menuPanelSource";
+import { usePanelMenu } from "@/hooks/usePanelMenu";
 
 interface CardMenuActionsProps<TBlock extends LightBlock | IndexedBlock> {
   block: TBlock;
@@ -96,6 +85,8 @@ interface CardPointMenuProps<TBlock extends LightBlock | IndexedBlock> extends C
 interface CardMenuDropdownContentProps<TBlock extends LightBlock | IndexedBlock>
   extends CardMenuActionsProps<TBlock> {
   menuOpen: boolean;
+  /** The menu stands at a point, its corner on it, not off a button's plate. */
+  anchor?: ComponentProps<typeof DropdownMenuContent>["anchor"];
   onCloseAutoFocus?: ComponentProps<typeof DropdownMenuContent>["onCloseAutoFocus"];
   plateOf?: ComponentProps<typeof DropdownMenuContent>["plateOf"];
   onKeyDownCapture?: (event: ReactKeyboardEvent) => void;
@@ -225,6 +216,282 @@ function isCommandK(event: ReactKeyboardEvent): boolean {
   return commandById("element-menu").matches?.(event.nativeEvent) ?? false;
 }
 
+/** The feed card's `···` and ⌘K menus stand flush with their plate's right
+ *  edge (`align="end"`). */
+const PLATE_END_OPENER: MenuOpener = { kind: "plate", align: "end" };
+const POINT_OPENER: MenuOpener = { kind: "point" };
+
+/** The right click's opener, for the feed's handler. */
+export const CARD_POINT_OPENER = POINT_OPENER;
+
+/** What a card menu acts on: the card's own menu props and the app's check
+ *  of a new collection's name. */
+export type CardPanelCard<TBlock extends LightBlock | IndexedBlock> = CardMenuActionsProps<TBlock> & {
+  checkName: CollectionNameCheck | undefined;
+};
+
+/** What Connect's picker acts on: the card and its collections' handlers. */
+type CardPickerTarget = Pick<CardPanelCard<LightBlock | IndexedBlock>, "block" | "onToggleTag" | "onCreateAndAssign" | "checkName">;
+
+/** Which of the card's menus: the whole menu of `More`, the right click and
+ *  ⌘K, or Connect's picker alone, the card's `+`. */
+type CardMenuKind = "menu" | "connect";
+
+/** The commands of no table: one empty list, so the menu's description
+ *  keeps its identity while no table is active. */
+const NO_TABLE_COMMANDS: readonly CardMenuTableCommand[] = [];
+
+function knownMembership(block: LightBlock | IndexedBlock): string[] {
+  return "tags" in block ? block.tags : block.collections;
+}
+
+function activeTableCommands(slug: string): readonly CardMenuTableCommand[] {
+  const table = editorTableMenu();
+  return table?.slug === slug ? table.commands : NO_TABLE_COMMANDS;
+}
+
+/** The description of a card's menu (src/lib/cardMenuEntries.ts): the one
+ *  the page's menu and the panel's draw. */
+function cardSpec(
+  kind: CardMenuKind,
+  { block, tags, currentTag }: Pick<CardMenuActionsProps<LightBlock | IndexedBlock>, "block" | "tags" | "currentTag">,
+  selectedTags: readonly string[],
+  tableCommands: readonly CardMenuTableCommand[],
+): MenuSpec {
+  const picker = { card: block.slug, selected: selectedTags, tags, currentTag: currentTag ?? null };
+  if (kind === "connect") return cardConnectSpec(picker);
+  const disconnectFrom = currentTag && selectedTags.includes(currentTag) ? currentTag : null;
+  return cardMenuSpec({ hasUrl: block.url != null && isSafeUrl(block.url), disconnectFrom, tableCommands, picker });
+}
+
+/** Carry out what Connect's picker asks with the card's own handlers. */
+async function actOnPicker({ block, onToggleTag, onCreateAndAssign, checkName }: CardPickerTarget, action: MenuWidgetAction): Promise<MenuAnswer> {
+  switch (action.kind) {
+    case "toggle_collection": {
+      // The feed's handler answers whether the change was made, as the
+      // picker hears it.
+      const made: unknown = await (onToggleTag(block.slug, action.collection, action.connected) as unknown);
+      return { kind: "membership", made: typeof made === "boolean" ? made : null };
+    }
+    case "create_collection":
+      await onCreateAndAssign(action.name, block.slug);
+      return { kind: "done" };
+    case "check_collection_name":
+      return { kind: "name_refusal", reason: checkName ? await checkName(action.name) : null };
+  }
+}
+
+/** Carry out a choice made in a card's menu with the card's own handlers:
+ *  the menu on the page and the menu in the panel both come here. */
+async function actOnCard<TBlock extends LightBlock | IndexedBlock>(card: CardPanelCard<TBlock>, action: MenuAction): Promise<MenuAnswer> {
+  const { block } = card;
+  if (action.kind === "run") {
+    const tableCommand = cardMenuTableCommand(action.id);
+    if (tableCommand !== null) {
+      const table = editorTableMenu();
+      if (table?.slug === block.slug) table.run(tableCommand);
+      return { kind: "done" };
+    }
+    const item = cardMenuItemId(action.id);
+    if (item !== null) {
+      runCardMenuItem(item, {
+        block,
+        url: block.url != null && isSafeUrl(block.url) ? block.url : null,
+        filePath: `${card.vaultPath}/${block.slug}.md`,
+        currentTag: card.currentTag,
+        onToggleTag: card.onToggleTag,
+        onRequestRename: card.onRequestRename,
+        onRequestDelete: card.onRequestDelete,
+      });
+    }
+    return { kind: "done" };
+  }
+  return actOnPicker(card, action.action);
+}
+
+/**
+ * TRIAL (SPEC_MENU_WINDOW.md; DESIGN_SYSTEM.md, «Меню карточки в отдельном
+ * окне: проба»): open `card`'s menu in the menu panel now, from the input's
+ * own handler. The panel draws the description the page's menu draws, with
+ * the collections the feed knows; `CardMenuPanelUpdates` sends what the file
+ * says once it is read. Each choice runs with the card's handlers as they
+ * stand when it comes. The caller owns the menu it gets (МО41).
+ */
+export function startCardMenuPanel<TBlock extends LightBlock | IndexedBlock>(
+  card: () => CardPanelCard<TBlock>,
+  opening: {
+    anchor: { x: number; y: number; width: number; height: number };
+    opener: MenuOpener;
+    byKey: boolean;
+    /** When the input came, or null with no input's event at hand. */
+    eventAt: number | null;
+    contextMenu: boolean;
+  },
+  on: { onClosed: () => void; onRefused: () => void },
+): MenuPanelSession {
+  const now = card();
+  const { x, y, width, height } = opening.anchor;
+  return openMenuPanel(
+    { x, y, width, height },
+    opening.opener,
+    { spec: cardSpec("menu", now, knownMembership(now.block), activeTableCommands(now.block.slug)), byKey: opening.byKey },
+    { onAction: (action) => actOnCard(card(), action), onClosed: on.onClosed, onRefused: on.onRefused },
+    { contextMenu: opening.contextMenu, eventAt: opening.eventAt },
+  );
+}
+
+/** The description of a card's menu as it stands now, following the card.
+ *  While `open`, the card's file is read for its collections (Е6.12). */
+function useCardSpec(
+  kind: CardMenuKind,
+  { block, tags, currentTag }: Pick<CardMenuActionsProps<LightBlock | IndexedBlock>, "block" | "tags" | "currentTag">,
+  open: boolean,
+): MenuSpec {
+  // The collections the feed knows, then what the file says (Е6.12).
+  const selectedTags = useCardMembership(block, open);
+  // The commands of the table active in the card's editor (SPEC_EDITING.md,
+  // Л9.8, Л16).
+  const tableMenu = useSyncExternalStore(subscribeEditorTableMenu, editorTableMenu, () => null);
+  const tableCommands = tableMenu?.slug === block.slug ? tableMenu.commands : NO_TABLE_COMMANDS;
+  return useMemo(
+    () => cardSpec(kind, { block, tags, currentTag }, selectedTags, tableCommands),
+    [kind, block, tags, currentTag, selectedTags, tableCommands],
+  );
+}
+
+/**
+ * The card's menu in the panel follows the card: what the file says of its
+ * collections once read (Е6.12), the editor's table coming or going. It
+ * draws nothing on the page, and it does not own the menu: it only sends
+ * what changed (МО42).
+ */
+function CardMenuPanelUpdates({
+  session,
+  kind,
+  block,
+  tags,
+  currentTag,
+}: { session: MenuPanelSession; kind: CardMenuKind } & Pick<CardMenuActionsProps<LightBlock | IndexedBlock>, "block" | "tags" | "currentTag">) {
+  const spec = useCardSpec(kind, { block, tags, currentTag }, true);
+  const first = useRef(true);
+  useEffect(() => {
+    // The opening carried the first state already.
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    session.update(spec);
+  }, [session, spec]);
+  return null;
+}
+
+/**
+ * TRIAL: the feed card's right click menu, opened in the menu panel by the
+ * click's own handler (`startCardMenuPanel`). While it is there this follows
+ * the card; when the panel could not show it, the card's point menu opens on
+ * the page at the same point.
+ *
+ * It does not own the menu and never closes it: the feed opened it, holds
+ * its handle and closes it where it takes the menu away and when it unmounts
+ * (SPEC_MENU_WINDOW.md, МО41, МО42). This component is there because the
+ * menu is open, and React runs an effect's cleanup once on mount in
+ * StrictMode: a closing in a cleanup here closed the menu the moment it
+ * opened.
+ */
+export function CardPanelPointMenu<TBlock extends LightBlock | IndexedBlock>({
+  session,
+  onPage,
+  x,
+  y,
+  onClose,
+  ...actions
+}: CardMenuActionsProps<TBlock> & { session: MenuPanelSession; onPage: boolean; x: number; y: number; onClose: () => void }) {
+  if (onPage) {
+    return (
+      <CardPointMenu
+        {...actions}
+        x={x}
+        y={y}
+        openRequestSequence={1}
+        onOpenChange={(open) => {
+          if (!open) onClose();
+        }}
+      />
+    );
+  }
+  return <CardMenuPanelUpdates session={session} kind="menu" block={actions.block} tags={actions.tags} currentTag={actions.currentTag} />;
+}
+
+/**
+ * The card menu's entries on the page, to stand in a menu's surface: the
+ * description the panel draws (`MenuSpecView`), its choices run with the
+ * card's own handlers. `kit` is the surface's primitives: a dropdown's, or a
+ * context menu's for the feed's right click.
+ */
+export function CardMenuRows<TBlock extends LightBlock | IndexedBlock>({
+  menuOpen,
+  kit,
+  onKeyDownCapture,
+  onTableCommand,
+  ...card
+}: CardMenuActionsProps<TBlock> & {
+  menuOpen: boolean;
+  kit?: MenuKit;
+  onKeyDownCapture?: (event: ReactKeyboardEvent) => void;
+  /** A command of the editor's table was chosen. */
+  onTableCommand?: () => void;
+}) {
+  const spec = useCardSpec("menu", card, menuOpen);
+  const checkName = useCollectionNameCheck(undefined);
+  // What a choice acts on when it comes: the props as they stand.
+  const cardRef = useRef<CardPanelCard<TBlock>>({ ...card, checkName });
+  cardRef.current = { ...card, checkName };
+  const onTableCommandRef = useRef(onTableCommand);
+  onTableCommandRef.current = onTableCommand;
+  const dispatch = useCallback<MenuDispatch>((action) => {
+    if (action.kind === "run" && cardMenuTableCommand(action.id) !== null) onTableCommandRef.current?.();
+    return actOnCard(cardRef.current, action);
+  }, []);
+  return <MenuSpecView spec={spec} dispatch={dispatch} open={menuOpen} kit={kit} onKeyDownCapture={onKeyDownCapture} />;
+}
+
+/** A card's menu on the page: the surface of a dropdown with the card
+ *  menu's entries in it. */
+function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
+  menuOpen,
+  onCloseAutoFocus,
+  onKeyDownCapture,
+  plateOf,
+  anchor,
+  ...card
+}: CardMenuDropdownContentProps<TBlock>) {
+  // After a command of the editor's table the editor keeps the focus it
+  // takes (SPEC_EDITING.md, Л9.8).
+  const tableCommandRan = useRef(false);
+  const noteTableCommand = useCallback(() => {
+    tableCommandRan.current = true;
+  }, []);
+
+  return (
+    <DropdownMenuContent
+      align="end"
+      anchor={anchor}
+      plateOf={plateOf}
+      onCloseAutoFocus={(event) => {
+        if (tableCommandRan.current) {
+          tableCommandRan.current = false;
+          event.preventDefault();
+          return;
+        }
+        onCloseAutoFocus?.(event);
+      }}
+      onKeyDownCapture={onKeyDownCapture}
+    >
+      <CardMenuRows {...card} menuOpen={menuOpen} onKeyDownCapture={onKeyDownCapture} onTableCommand={noteTableCommand} />
+    </DropdownMenuContent>
+  );
+}
+
 export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
   block,
   vaultPath,
@@ -248,28 +515,41 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
   const [menuOpen, setMenuOpen] = useState(false);
   const menuOpenRef = useRef(false);
   const lastOpenRequestSequenceRef = useRef(0);
-  // The opening drawn in the menu panel, with the time of the input that
-  // opened it; null while the menu is on the page or closed.
-  const [inPanel, setInPanel] = useState<{ eventAt: number; byKey: boolean } | null>(null);
+  // The button owns the menu it opens in the menu panel (МО41).
+  const panel = usePanelMenu();
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const checkName = useCollectionNameCheck(undefined);
+  // What the panel's choices act on when they come: the props as they stand.
+  const cardRef = useRef<CardPanelCard<TBlock>>({ block, vaultPath, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete, checkName });
+  cardRef.current = { block, vaultPath, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete, checkName };
+  const plateOfRef = useRef(plateOf);
+  plateOfRef.current = plateOf;
+  const closeRef = useRef<() => void>(() => undefined);
 
   const updateMenuOpen = useCallback((open: boolean) => {
-    if (open && !menuOpenRef.current && panelMenu && menuPanelUsable()) {
-      setInPanel({ eventAt: openingInputAt(), byKey: lastInputIsKey() });
+    if (open && !menuOpenRef.current && panelMenu && triggerRef.current !== null) {
+      // The request leaves now, in the input's handler, before React draws
+      // (SPEC_MENU_WINDOW.md, МО19). When the panel takes no menu now, the
+      // page's own opens below.
+      const trigger = triggerRef.current;
+      const card = cardRef.current;
+      panel.open({
+        anchor: (plateOfRef.current?.(trigger) ?? menuPlateOf(trigger)).getBoundingClientRect(),
+        opener: PLATE_END_OPENER,
+        menu: { spec: cardSpec("menu", card, knownMembership(card.block), activeTableCommands(card.block.slug)), byKey: lastInputIsKey() },
+        onAction: (action) => actOnCard(cardRef.current, action),
+        onClosed: () => closeRef.current(),
+        contextMenu: false,
+        eventAt: currentInputAt(),
+      });
     } else if (!open) {
-      setInPanel(null);
+      panel.close();
     }
     menuOpenRef.current = open;
     setMenuOpen(open);
     onOpenChange?.(open);
-  }, [onOpenChange, panelMenu]);
-
-  // The button's plate, or the plate the menu comes out of, on the page.
-  const panelAnchor = useCallback(() => {
-    const trigger = triggerRef.current;
-    if (trigger === null) return null;
-    return (plateOf?.(trigger) ?? menuPlateOf(trigger)).getBoundingClientRect();
-  }, [plateOf]);
+  }, [onOpenChange, panel, panelMenu]);
+  closeRef.current = () => updateMenuOpen(false);
 
   const topChromeTrigger = useTopChromeTriggerInteraction({
     dragDisabled: !topChromeInteraction,
@@ -290,9 +570,10 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
     updateMenuOpen(!menuOpenRef.current);
   }, [openRequestSequence, updateMenuOpen]);
 
+  const inPanel = menuOpen && panel.session !== null;
   return (
     <DropdownMenu
-      open={menuOpen && inPanel === null}
+      open={menuOpen && panel.session === null}
       onOpenChange={updateMenuOpen}
       modal={false}
     >
@@ -306,7 +587,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
           {...(topChromeInteraction ? topChromeTrigger.triggerProps : { ref: triggerRef })}
           // The menu is open in the panel: the button looks as it does with
           // its menu open on the page.
-          {...(menuOpen && inPanel !== null ? { "data-state": "open", "aria-expanded": true } : {})}
+          {...(inPanel ? { "data-state": "open", "aria-expanded": true } : {})}
         >
           <MoreHorizontal />
         </Button>
@@ -316,7 +597,7 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
         vaultPath={vaultPath}
         tags={tags}
         currentTag={currentTag}
-        menuOpen={menuOpen && inPanel === null}
+        menuOpen={menuOpen && panel.session === null}
         onToggleTag={onToggleTag}
         onCreateAndAssign={onCreateAndAssign}
         onRequestRename={onRequestRename}
@@ -325,402 +606,10 @@ export function CardMoreMenu<TBlock extends LightBlock | IndexedBlock>({
         onKeyDownCapture={handleMenuKeyDownCapture}
         plateOf={plateOf}
       />
-      {menuOpen && inPanel !== null && (
-        <CardMenuPanelBridge
-          block={block}
-          vaultPath={vaultPath}
-          tags={tags}
-          currentTag={currentTag}
-          onToggleTag={onToggleTag}
-          onCreateAndAssign={onCreateAndAssign}
-          onRequestRename={onRequestRename}
-          onRequestDelete={onRequestDelete}
-          opener={PLATE_END_OPENER}
-          anchor={panelAnchor}
-          eventAt={inPanel.eventAt}
-          byKey={inPanel.byKey}
-          contextMenu={false}
-          onClosed={() => updateMenuOpen(false)}
-          // The panel could not show it: the menu opens on the page, as
-          // before the trial.
-          onRefused={() => setInPanel(null)}
-        />
+      {inPanel && panel.session !== null && (
+        <CardMenuPanelUpdates session={panel.session} kind="menu" block={block} tags={tags} currentTag={currentTag} />
       )}
     </DropdownMenu>
-  );
-}
-
-/** The feed card's `···` and ⌘K menus stand flush with their plate's right
- *  edge (`align="end"`). */
-const PLATE_END_OPENER: CardMenuOpenerKind = { kind: "plate", align: "end" };
-const POINT_OPENER: CardMenuOpenerKind = { kind: "point" };
-
-interface CardMenuPanelBridgeProps<TBlock extends LightBlock | IndexedBlock> extends CardMenuActionsProps<TBlock> {
-  opener: CardMenuOpenerKind;
-  /** The anchor on the page when the menu opens: the plate, or the point as
-   *  a rectangle of no size. */
-  anchor: () => { x: number; y: number; width: number; height: number } | null;
-  eventAt: number;
-  byKey: boolean;
-  contextMenu: boolean;
-  onClosed: () => void;
-  onRefused: () => void;
-}
-
-/**
- * TRIAL (DESIGN_SYSTEM.md, «Меню карточки в отдельном окне: проба»): the
- * card menu drawn in the menu panel. It draws nothing on the page: it sends
- * the panel the same list the page's menu draws, sends it again whenever it
- * changes (the file's collections arrive, the editor's table goes), and runs
- * each choice made in the panel with the handlers the page's menu runs.
- */
-function CardMenuPanelBridge<TBlock extends LightBlock | IndexedBlock>({
-  block,
-  vaultPath,
-  tags,
-  currentTag,
-  onToggleTag,
-  onCreateAndAssign,
-  onRequestRename,
-  onRequestDelete,
-  opener,
-  anchor,
-  eventAt,
-  byKey,
-  contextMenu,
-  onClosed,
-  onRefused,
-}: CardMenuPanelBridgeProps<TBlock>) {
-  // The collections the feed knows, then what the file says (Е6.12).
-  const selectedTags = useCardMembership(block, true);
-  const { entries, run, tableMenu } = useCardMenuModel(
-    { block, vaultPath, currentTag, onToggleTag, onRequestRename, onRequestDelete },
-    selectedTags,
-  );
-  const checkName = useCollectionNameCheck(undefined);
-  const payload = useMemo<CardMenuPayload>(() => ({
-    opener,
-    byKey,
-    buttons: document.documentElement.getAttribute("data-buttons"),
-    entries,
-    picker: { blockSlug: block.slug, selectedTags, tags, currentTag: currentTag ?? null },
-  }), [opener, byKey, entries, block.slug, selectedTags, tags, currentTag]);
-
-  const latest = useRef({ payload, run, tableMenu, checkName, onToggleTag, onCreateAndAssign, onClosed, onRefused, slug: block.slug });
-  latest.current = { payload, run, tableMenu, checkName, onToggleTag, onCreateAndAssign, onClosed, onRefused, slug: block.slug };
-  const sessionRef = useRef<MenuPanelSession | null>(null);
-
-  useEffect(() => {
-    // The opening waits a microtask: React's development double run of the
-    // effect cancels the first before anything reaches the backend.
-    let cancelled = false;
-    let session: MenuPanelSession | null = null;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      session = openNow();
-      sessionRef.current = session;
-    });
-    return () => {
-      cancelled = true;
-      sessionRef.current = null;
-      session?.close("source");
-    };
-    // One opening per mount: what changes later goes by `update`.
-  }, []);
-
-  function openNow(): MenuPanelSession | null {
-    const rect = anchor();
-    if (rect === null) {
-      latest.current.onRefused();
-      return null;
-    }
-    const act = async (action: MenuPanelAction): Promise<MenuPanelAnswer> => {
-      const now = latest.current;
-      switch (action.kind) {
-        case "run":
-          now.run(action.id);
-          return { kind: "done" };
-        case "table":
-          now.tableMenu?.run(action.id);
-          return { kind: "done" };
-        case "toggle": {
-          // The feed's handler answers whether the change was made, as the
-          // picker on the page hears it.
-          const made: unknown = await (now.onToggleTag(now.slug, action.tag, action.hasTag) as unknown);
-          return { kind: "membership", made: typeof made === "boolean" ? made : null };
-        }
-        case "create":
-          await now.onCreateAndAssign(action.tag, now.slug);
-          return { kind: "done" };
-        case "check":
-          return { kind: "refusal", reason: now.checkName ? await now.checkName(action.name) : null };
-      }
-    };
-    return openMenuPanel(
-      { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-      latest.current.payload,
-      {
-        onAction: act,
-        onClosed: () => latest.current.onClosed(),
-        onRefused: () => latest.current.onRefused(),
-      },
-      { contextMenu, eventAt },
-    );
-  }
-
-  useEffect(() => {
-    sessionRef.current?.update(payload);
-  }, [payload]);
-
-  return null;
-}
-
-/**
- * TRIAL: the feed card's right click menu in the menu panel, at the point of
- * the click. When the panel cannot show it, the card's point menu opens on
- * the page at the same point.
- */
-export function CardPanelPointMenu<TBlock extends LightBlock | IndexedBlock>({
-  x,
-  y,
-  eventAt,
-  onClose,
-  ...actions
-}: CardMenuActionsProps<TBlock> & { x: number; y: number; eventAt: number; onClose: () => void }) {
-  const [onPage, setOnPage] = useState(false);
-  const anchor = useCallback(() => ({ x, y, width: 0, height: 0 }), [x, y]);
-  if (onPage) {
-    return (
-      <CardPointMenu
-        {...actions}
-        x={x}
-        y={y}
-        openRequestSequence={1}
-        onOpenChange={(open) => {
-          if (!open) onClose();
-        }}
-      />
-    );
-  }
-  return (
-    <CardMenuPanelBridge
-      {...actions}
-      opener={POINT_OPENER}
-      anchor={anchor}
-      eventAt={eventAt}
-      byKey={false}
-      contextMenu
-      onClosed={onClose}
-      onRefused={() => setOnPage(true)}
-    />
-  );
-}
-
-/** The commands of no table: one empty list, so the entries keep their
- *  identity while no table is active. */
-const NO_TABLE_COMMANDS: readonly CardMenuTableCommand[] = [];
-
-/** The card menu's list (src/lib/cardMenuEntries.ts) and how its commands
- *  run, from the props every opening of the menu shares. */
-function useCardMenuModel<TBlock extends LightBlock | IndexedBlock>(
-  {
-    block,
-    vaultPath,
-    currentTag,
-    onToggleTag,
-    onRequestRename,
-    onRequestDelete,
-  }: Pick<CardMenuActionsProps<TBlock>, "block" | "vaultPath" | "currentTag" | "onToggleTag" | "onRequestRename" | "onRequestDelete">,
-  selectedTags: readonly string[],
-) {
-  const url = block.url != null && isSafeUrl(block.url) ? block.url : null;
-  const filePath = `${vaultPath}/${block.slug}.md`;
-  // The commands of the table active in the card's editor (SPEC_EDITING.md,
-  // Л9.8, Л16); after one the editor keeps the focus it takes.
-  const tableMenu = useSyncExternalStore(subscribeEditorTableMenu, editorTableMenu, () => null);
-  const tableCommands = tableMenu?.slug === block.slug ? tableMenu.commands : NO_TABLE_COMMANDS;
-  const disconnectFrom = currentTag && selectedTags.includes(currentTag) ? currentTag : null;
-  const entries = useMemo(
-    () => cardMenuEntries({ hasUrl: url !== null, disconnectFrom, tableCommands }),
-    [url, disconnectFrom, tableCommands],
-  );
-  const run = useCallback(
-    (id: CardMenuItemId) => runCardMenuItem(id, { block, url, filePath, currentTag, onToggleTag, onRequestRename, onRequestDelete }),
-    [block, url, filePath, currentTag, onToggleTag, onRequestRename, onRequestDelete],
-  );
-  return { entries, run, tableMenu };
-}
-
-const CARD_MENU_ICONS = {
-  external: ExternalLink,
-  unlink: Unlink,
-  trash: Trash2,
-} as const;
-
-/**
- * The card menu's rows inside a `DropdownMenuContent`: the menu on the page
- * and the menu in the panel draw the same rows with the same primitives
- * (DESIGN_SYSTEM.md, «Меню карточки в отдельном окне: проба»). `connect`
- * holds the Connect submenu's state and its picker; `collisionPadding` is
- * the submenus' distance from the edges, the wrappers' own unless given.
- */
-export function CardMenuEntriesView({
-  entries,
-  onRun,
-  onTableCommand,
-  connect,
-  onKeyDownCapture,
-  collisionPadding,
-}: {
-  entries: readonly CardMenuEntry[];
-  onRun: (id: CardMenuItemId) => void;
-  onTableCommand: (id: string) => void;
-  connect: {
-    open: boolean;
-    onOpenChange: (open: boolean) => void;
-    triggerRef?: Ref<HTMLDivElement>;
-    picker: ReactNode;
-  };
-  onKeyDownCapture?: (event: ReactKeyboardEvent) => void;
-  collisionPadding?: number;
-}) {
-  return entries.map((entry) => {
-    switch (entry.kind) {
-      case "connect":
-        return (
-          <DropdownMenuSub key="connect" open={connect.open} onOpenChange={connect.onOpenChange}>
-            <DropdownMenuSubTrigger ref={connect.triggerRef}>
-              <MenuIconSlot>
-                <Plus className="size-[13px]" />
-              </MenuIconSlot>
-              Connect
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent
-              widthRole="search"
-              className={COLLECTION_PICKER_CONTENT_CLASS}
-              collisionPadding={collisionPadding}
-              onKeyDownCapture={onKeyDownCapture}
-            >
-              {connect.picker}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        );
-      case "table":
-        return (
-          <DropdownMenuSub key="table">
-            <DropdownMenuSubTrigger>
-              <MenuIconSlot />
-              Table
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent collisionPadding={collisionPadding} onKeyDownCapture={onKeyDownCapture}>
-              {entry.commands.map((command) => (
-                <Fragment key={command.id}>
-                  {command.separatorBefore && <DropdownMenuSeparator />}
-                  <DropdownMenuItem
-                    variant={command.destructive ? "destructive" : "default"}
-                    onSelect={() => onTableCommand(command.id)}
-                  >
-                    <MenuIconSlot />
-                    {command.label}
-                  </DropdownMenuItem>
-                </Fragment>
-              ))}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        );
-      case "separator":
-        return <DropdownMenuSeparator key={`separator-${entry.key}`} />;
-      case "item": {
-        const Icon = entry.icon === null ? null : CARD_MENU_ICONS[entry.icon];
-        return (
-          <DropdownMenuItem key={entry.id} variant={entry.variant} onSelect={() => onRun(entry.id)}>
-            {Icon === null ? (
-              <MenuIconSlot />
-            ) : (
-              <MenuIconSlot>
-                <Icon className="size-[13px]" />
-              </MenuIconSlot>
-            )}
-            {entry.truncate ? <span className="min-w-0 truncate">{entry.label}</span> : entry.label}
-          </DropdownMenuItem>
-        );
-      }
-    }
-  });
-}
-
-function CardMenuDropdownContent<TBlock extends LightBlock | IndexedBlock>({
-  block,
-  vaultPath,
-  tags,
-  currentTag,
-  menuOpen,
-  onToggleTag,
-  onCreateAndAssign,
-  onRequestRename,
-  onRequestDelete,
-  onCloseAutoFocus,
-  onKeyDownCapture,
-  plateOf,
-}: CardMenuDropdownContentProps<TBlock>) {
-  const [connectSubmenuOpen, setConnectSubmenuOpen] = useState(false);
-  // The collections the feed knows, then what the file says (Е6.12).
-  const selectedTags = useCardMembership(block, menuOpen);
-  const connectTriggerRef = useRef<HTMLDivElement>(null);
-  const { entries, run, tableMenu } = useCardMenuModel(
-    { block, vaultPath, currentTag, onToggleTag, onRequestRename, onRequestDelete },
-    selectedTags,
-  );
-  const tableCommandRan = useRef(false);
-
-  useEffect(() => {
-    if (!menuOpen) setConnectSubmenuOpen(false);
-  }, [menuOpen]);
-
-  return (
-    <DropdownMenuContent
-      align="end"
-      plateOf={plateOf}
-      onCloseAutoFocus={(event) => {
-        if (tableCommandRan.current) {
-          tableCommandRan.current = false;
-          event.preventDefault();
-          return;
-        }
-        onCloseAutoFocus?.(event);
-      }}
-      onKeyDownCapture={onKeyDownCapture}
-    >
-      <CardMenuEntriesView
-        entries={entries}
-        onRun={run}
-        onTableCommand={(id) => {
-          tableCommandRan.current = true;
-          tableMenu?.run(id);
-        }}
-        onKeyDownCapture={onKeyDownCapture}
-        connect={{
-          open: connectSubmenuOpen,
-          onOpenChange: setConnectSubmenuOpen,
-          triggerRef: connectTriggerRef,
-          picker: (
-            <CollectionPicker
-              blockSlug={block.slug}
-              selectedTags={selectedTags}
-              tags={tags}
-              currentTag={currentTag}
-              onToggleTag={onToggleTag}
-              onCreateAndAssign={onCreateAndAssign}
-              stopKeyPropagation
-              onRequestClose={() => {
-                setConnectSubmenuOpen(false);
-                requestAnimationFrame(() => connectTriggerRef.current?.focus());
-              }}
-            />
-          ),
-        }}
-      />
-    </DropdownMenuContent>
   );
 }
 
@@ -753,9 +642,12 @@ export function CardPointMenu<TBlock extends LightBlock | IndexedBlock>({
   // press outside only closes it, as every menu's (src/lib/openMenus.ts).
   useContextMenuPresence(menuOpen);
 
+  // The menu's corner stands on the point of the click, with no offset, and
+  // turns left at the page's right edge (SPEC_MENU_WINDOW.md, МО10, МО11,
+  // МО69): the anchor is the point itself, a box of no size.
   return (
     <div
-      className="fixed z-50 size-px"
+      className="fixed z-50 size-0"
       style={{ left: x, top: y }}
       data-card-point-menu-anchor=""
     >
@@ -765,7 +657,7 @@ export function CardPointMenu<TBlock extends LightBlock | IndexedBlock>({
             type="button"
             aria-hidden="true"
             tabIndex={-1}
-            className="size-px min-h-0 min-w-0 border-0 bg-transparent p-0 opacity-0"
+            className="block size-0 min-h-0 min-w-0 border-0 bg-transparent p-0 opacity-0"
             data-card-point-menu-trigger=""
           />
         </DropdownMenuTrigger>
@@ -775,6 +667,7 @@ export function CardPointMenu<TBlock extends LightBlock | IndexedBlock>({
           tags={tags}
           currentTag={currentTag}
           menuOpen={menuOpen}
+          anchor="point"
           onToggleTag={onToggleTag}
           onCreateAndAssign={onCreateAndAssign}
           onRequestRename={onRequestRename}
@@ -971,6 +864,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
               onToggleTag={onToggleTag}
               onCreateAndAssign={onCreateAndAssign}
               className="ml-auto"
+              panelMenu
               onCloseAutoFocus={noFocusBackAfterPress}
               onOpenChange={(open) => {
                 if (open) onInteractionStart?.();
@@ -1006,6 +900,7 @@ export const CardHoverMenu = memo(function CardHoverMenu({
             currentTag={currentTag}
             onToggleTag={onToggleTag}
             onCreateAndAssign={onCreateAndAssign}
+            panelMenu
             onCloseAutoFocus={noFocusBackAfterPress}
             onOpenChange={(open) => {
               if (open) onInteractionStart?.();
@@ -1051,53 +946,89 @@ export function CardConnectMenu({
   className,
   onOpenChange,
   onCloseAutoFocus,
+  panelMenu = false,
 }: Pick<CardMenuActionsProps<LightBlock | IndexedBlock>, "block" | "tags" | "currentTag" | "onToggleTag" | "onCreateAndAssign"> & {
   className?: string;
   onOpenChange?: (open: boolean) => void;
   /** Where focus goes when the picker closes; the plus by default. */
   onCloseAutoFocus?: ComponentProps<typeof DropdownMenuContent>["onCloseAutoFocus"];
+  /** TRIAL: the picker opens in the menu panel when the menu mode is
+   *  `window` (SPEC_MENU_WINDOW.md). */
+  panelMenu?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const openRef = useRef(false);
+  // The plus owns the menu it opens in the menu panel (МО41).
+  const panel = usePanelMenu();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const checkName = useCollectionNameCheck(undefined);
+  // What the picker's choices act on when they come: the props as they stand.
+  const targetRef = useRef<CardPickerTarget & Pick<CardMenuActionsProps<LightBlock | IndexedBlock>, "tags" | "currentTag">>({ block, tags, currentTag, onToggleTag, onCreateAndAssign, checkName });
+  targetRef.current = { block, tags, currentTag, onToggleTag, onCreateAndAssign, checkName };
+  const closeRef = useRef<() => void>(() => undefined);
+  const onPage = open && panel.session === null;
   // The picker shows the card's collections ticked: the feed's, then what
   // the file says when it opens (Е6.12).
-  const selectedTags = useCardMembership(block, open);
+  const spec = useCardSpec("connect", { block, tags, currentTag }, onPage);
+  // The picker is the whole menu: its widget's asks are its only choices.
+  const act = useCallback(
+    (action: MenuAction): Promise<MenuAnswer> =>
+      action.kind === "widget" ? actOnPicker(targetRef.current, action.action) : Promise.resolve({ kind: "done" }),
+    [],
+  );
 
+  const updateOpen = useCallback((next: boolean) => {
+    if (next && !openRef.current && panelMenu && triggerRef.current !== null) {
+      // Asked for now, in the input's handler (SPEC_MENU_WINDOW.md, МО19).
+      // When the panel takes no menu now, the page's own opens below.
+      const target = targetRef.current;
+      panel.open({
+        anchor: menuPlateOf(triggerRef.current).getBoundingClientRect(),
+        opener: PLATE_END_OPENER,
+        menu: { spec: cardSpec("connect", target, knownMembership(target.block), NO_TABLE_COMMANDS), byKey: lastInputIsKey() },
+        onAction: act,
+        onClosed: () => closeRef.current(),
+        contextMenu: false,
+        eventAt: currentInputAt(),
+      });
+    } else if (!next) {
+      panel.close();
+    }
+    openRef.current = next;
+    setOpen(next);
+    onOpenChange?.(next);
+  }, [act, onOpenChange, panel, panelMenu]);
+  closeRef.current = () => updateOpen(false);
+
+  const inPanel = open && panel.session !== null;
   return (
-    <DropdownMenu
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        onOpenChange?.(next);
-      }}
-      modal={false}
-    >
+    <DropdownMenu open={onPage} onOpenChange={updateOpen} modal={false}>
       <DropdownMenuTrigger asChild>
         <Button
+          ref={triggerRef}
           variant="raised"
           size="icon-xs"
           aria-label="Connect"
           className={className}
           data-card-hover-connect=""
+          // The picker is open in the panel: the plus looks as it does with
+          // its picker open on the page.
+          {...(inPanel ? { "data-state": "open", "aria-expanded": true } : {})}
         >
           <Plus aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
-        widthRole="search"
-        className={COLLECTION_PICKER_CONTENT_CLASS}
+        widthRole={spec.role}
+        className={menuSurfaceClass(spec.role)}
         align="end"
         onCloseAutoFocus={onCloseAutoFocus}
       >
-        <CollectionPicker
-          blockSlug={block.slug}
-          selectedTags={selectedTags}
-          tags={tags}
-          currentTag={currentTag}
-          onToggleTag={onToggleTag}
-          onCreateAndAssign={onCreateAndAssign}
-          stopKeyPropagation
-        />
+        <MenuSpecView spec={spec} dispatch={act} open={onPage} />
       </DropdownMenuContent>
+      {inPanel && panel.session !== null && (
+        <CardMenuPanelUpdates session={panel.session} kind="connect" block={block} tags={tags} currentTag={currentTag} />
+      )}
     </DropdownMenu>
   );
 }

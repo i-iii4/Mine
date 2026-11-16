@@ -1,41 +1,61 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
-import { emitTo } from "@tauri-apps/api/event";
-import { cardMenuEntries } from "@/lib/cardMenuEntries";
-import {
-  MENU_PANEL_ACTION_EVENT,
-  MENU_PANEL_CLOSED_EVENT,
-  MENU_PANEL_OPEN_EVENT,
-  encodeCardMenuPayload,
-  type CardMenuPayload,
-} from "@/lib/menuPanelProtocol";
-import { MENU_PANEL_SIZE, MENU_SHADOW_FIELD_PX } from "@/lib/menuPanelGeometry";
-import type { MenuPanelOpening } from "@/types";
+import { cardConnectSpec, cardMenuSpec, type CardMenuPicker } from "@/lib/cardMenuEntries";
+import { MENU_PANEL_TO_PAGE_EVENT } from "@/lib/menuPanelProtocol";
+import { MENU_SHADOW_FIELD_PX, menuSpecSize } from "@/lib/menuSpec";
+import type { MenuPanelPageRequest, MenuPanelToPage, MenuSpec } from "@/types";
 import { MenuPanelApp } from "./MenuPanelApp";
 
-const PAYLOAD: CardMenuPayload = {
-  opener: { kind: "plate", align: "end" },
-  byKey: false,
-  buttons: null,
-  entries: cardMenuEntries({ hasUrl: false, disconnectFrom: null, tableCommands: [] }),
-  picker: { blockSlug: "card", selectedTags: [], tags: [{ tag: "Web", count: 1 }], currentTag: null },
-};
+const PICKER: CardMenuPicker = { card: "card", selected: [], tags: [{ tag: "Web", count: 1 }], currentTag: null };
+const SPEC: MenuSpec = cardMenuSpec({ hasUrl: false, disconnectFrom: null, tableCommands: [], picker: PICKER });
+const WITH_LINK: MenuSpec = cardMenuSpec({ hasUrl: true, disconnectFrom: null, tableCommands: [], picker: PICKER });
 
-function opening(menu: number, payload: string = encodeCardMenuPayload(PAYLOAD)): MenuPanelOpening {
+const SOURCE = "tab-source";
+
+/** The frame the backend sets for a menu with no submenu room: the menu and
+ *  the shadow's field round it. */
+function frameOf(spec: MenuSpec) {
+  const { size } = menuSpecSize(spec);
+  return { width: size.width + 2 * MENU_SHADOW_FIELD_PX, height: size.height + 2 * MENU_SHADOW_FIELD_PX };
+}
+
+function opening(spec: MenuSpec = SPEC, byKey = false): MenuPanelToPage {
+  const { size } = menuSpecSize(spec);
   return {
-    menu,
-    source: "tab-source",
-    anchor: { x: 700, y: 200, width: 24, height: 24 },
-    screen: { x: 0, y: 25, width: 1440, height: 875 },
-    payload,
-    event_at: 1000,
+    kind: "open",
+    size,
+    spec,
+    by_key: byKey,
+    buttons: null,
+    // What the backend lays out for a menu below a button.
+    layout: {
+      menu: { x: 12, y: 12, ...size },
+      origin: { x: 600, y: 300 },
+      frame: frameOf(spec),
+      anchor: { x: 252, y: 8 },
+      side: "bottom",
+      align: "end",
+      max_height: null,
+      submenu_right: true,
+    },
   };
 }
 
-function backend(event: string, payload: unknown) {
+/** The page's area takes a size, as the panel's window gives it. */
+function resizeTo(size: { width: number; height: number }) {
   act(() => {
-    window.dispatchEvent(new CustomEvent(event, { detail: { event, payload } }));
+    window.innerWidth = size.width;
+    window.innerHeight = size.height;
+    window.dispatchEvent(new Event("resize"));
+  });
+}
+
+/** The backend's message number `seq` of the menu `menu` of a page. */
+function toPage(menu: number, seq: number, body: MenuPanelToPage, source = SOURCE) {
+  act(() => {
+    const payload = { source, menu, seq, body };
+    window.dispatchEvent(new CustomEvent(MENU_PANEL_TO_PAGE_EVENT, { detail: { event: MENU_PANEL_TO_PAGE_EVENT, payload } }));
   });
 }
 
@@ -43,95 +63,165 @@ function invokes(name: string) {
   return vi.mocked(invoke).mock.calls.filter(([command]) => command === name).map(([, args]) => args);
 }
 
+/** What the page asked of the backend, in the order it asked. */
+function requests(): MenuPanelPageRequest[] {
+  return (invokes("menu_panel_request") as { request: MenuPanelPageRequest }[]).map(({ request }) => request);
+}
+
+const original = { width: window.innerWidth, height: window.innerHeight };
+
 beforeEach(() => {
   vi.mocked(invoke).mockReset();
   vi.mocked(invoke).mockResolvedValue(null);
-  vi.mocked(emitTo).mockClear();
-  document.documentElement.setAttribute("data-menu-panel-hidden", "");
+  // The panel's window stands in the frame of the menu the tests open.
+  window.innerWidth = frameOf(SPEC).width;
+  window.innerHeight = frameOf(SPEC).height;
 });
 
 afterEach(() => {
-  document.documentElement.removeAttribute("data-menu-panel-hidden");
+  window.innerWidth = original.width;
+  window.innerHeight = original.height;
 });
 
 describe("the menu panel's page", () => {
-  it("tells the backend it listens, then shows a menu where it laid it out", async () => {
+  it("tells the backend it is ready once it drew its rest", async () => {
     render(<MenuPanelApp />);
     await waitFor(() => expect(invokes("menu_panel_ready")).toHaveLength(1));
-    backend(MENU_PANEL_OPEN_EVENT, opening(1));
-    await waitFor(() => expect(invokes("menu_panel_show")).toHaveLength(1));
-    const [args] = invokes("menu_panel_show");
-    // jsdom measures the menu as 0 × 0: it stands at the plate's right edge,
-    // under it, and the panel holds it the shadow's field off its left edge.
-    expect(args).toEqual({ menu: 1, origin: { x: 724 - MENU_SHADOW_FIELD_PX, y: expect.any(Number) } });
-    expect(screen.getByText("Reveal in Finder")).toBeTruthy();
-    await waitFor(() => expect(document.documentElement.hasAttribute("data-menu-panel-hidden")).toBe(false));
-    await waitFor(() => expect(invokes("menu_panel_painted")).toHaveLength(1));
-    expect(invokes("menu_panel_painted")[0]).toMatchObject({ paint: { menu: 1, opener: "plate" } });
-    expect(MENU_PANEL_SIZE.width).toBeGreaterThan(0);
   });
 
-  it("sends a chosen item to the tab and closes the menu as chosen", async () => {
+  it("draws a menu at once where the backend laid it out, and reports each step's time", async () => {
     render(<MenuPanelApp />);
-    backend(MENU_PANEL_OPEN_EVENT, opening(2));
-    await waitFor(() => expect(invokes("menu_panel_show")).toHaveLength(1));
+    toPage(1, 1, opening());
+    // Drawn within the event's own task: no second round with the backend.
+    expect(screen.getByText("Reveal in Finder")).toBeTruthy();
+    await waitFor(() => expect(invokes("menu_panel_painted")).toHaveLength(1));
+    const [{ paint }] = invokes("menu_panel_painted") as [{ paint: { source: string; menu: number; received_at: number; sized_at: number; drawn_at: number; frame_at: number } }];
+    expect([paint.source, paint.menu]).toEqual([SOURCE, 1]);
+    expect(paint.received_at).toBeLessThanOrEqual(paint.sized_at);
+    expect(paint.sized_at).toBeLessThanOrEqual(paint.drawn_at);
+    expect(paint.drawn_at).toBeLessThanOrEqual(paint.frame_at);
+    expect(requests()).toEqual([]);
+  });
+
+  it("draws a menu only once its area is the frame the backend set for it", async () => {
+    render(<MenuPanelApp />);
+    // The panel still stands in the frame of the menu before.
+    window.innerWidth = 564;
+    toPage(1, 1, opening());
+    expect(screen.queryByText("Reveal in Finder")).toBeNull();
+    // Another size on the way is not the frame.
+    resizeTo({ width: 300, height: 300 });
+    expect(screen.queryByText("Reveal in Finder")).toBeNull();
+    resizeTo(frameOf(SPEC));
+    expect(screen.getByText("Reveal in Finder")).toBeTruthy();
+    await waitFor(() => expect(invokes("menu_panel_painted")).toHaveLength(1));
+    // Drawn once: a later change of size draws nothing again.
+    resizeTo(frameOf(SPEC));
+    expect(invokes("menu_panel_painted")).toHaveLength(1);
+  });
+
+  it("never draws a menu that closed while it waited for its frame", () => {
+    render(<MenuPanelApp />);
+    window.innerWidth = 564;
+    toPage(1, 1, opening());
+    toPage(1, 2, { kind: "closed", reason: "source" });
+    resizeTo(frameOf(SPEC));
+    expect(screen.queryByText("Reveal in Finder")).toBeNull();
+    expect(invokes("menu_panel_painted")).toEqual([]);
+  });
+
+  it("asks for a chosen item and the menu's closing in one request, the choice first", async () => {
+    render(<MenuPanelApp />);
+    toPage(2, 1, opening());
     fireEvent.click(screen.getByText("Copy Path"));
-    await waitFor(() => expect(invokes("menu_panel_close")).toEqual([{ menu: 2, reason: "chosen" }]));
-    expect(emitTo).toHaveBeenCalledWith("tab-source", MENU_PANEL_ACTION_EVENT, {
-      menu: 2,
-      request: expect.any(Number),
-      action: { kind: "run", id: "copy-path" },
-    });
+    await waitFor(() => expect(requests()).toHaveLength(1));
+    // One request: the backend passes the choice to the page, then closes.
+    expect(requests()).toEqual([
+      { source: SOURCE, menu: 2, request: 1, action: { kind: "run", id: "copy-path" }, close: "chosen" },
+    ]);
+    await waitFor(() => expect(screen.queryByText("Copy Path")).toBeNull());
+    expect(requests()).toHaveLength(1);
   });
 
   it("closes as escaped on Escape", async () => {
     render(<MenuPanelApp />);
-    backend(MENU_PANEL_OPEN_EVENT, opening(3));
-    await waitFor(() => expect(invokes("menu_panel_show")).toHaveLength(1));
+    toPage(3, 1, opening());
     fireEvent.keyDown(screen.getByText("Rename…"), { key: "Escape" });
-    await waitFor(() => expect(invokes("menu_panel_close")).toEqual([{ menu: 3, reason: "escape" }]));
-  });
-
-  // The card's context menu drawn here (a right click in the Window trial):
-  // Escape in Connect climbs one layer at a time, as on the page
-  // (CardContextMenu.tsx; user's decision of 15.11.2026).
-  it("clears the query, then closes Connect alone with the focus on it, then the menu, in a context menu", async () => {
-    render(<MenuPanelApp />);
-    const point = encodeCardMenuPayload({ ...PAYLOAD, opener: { kind: "point" } });
-    backend(MENU_PANEL_OPEN_EVENT, opening(6, point));
-    await waitFor(() => expect(invokes("menu_panel_show")).toHaveLength(1));
-    const connect = screen.getByRole("menuitem", { name: "Connect" });
-    fireEvent.keyDown(connect, { key: "ArrowRight" });
-    const field = (await screen.findByPlaceholderText("Search collections...")) as HTMLInputElement;
-    fireEvent.change(field, { target: { value: "We" } });
-
-    fireEvent.keyDown(field, { key: "Escape" });
-    expect(field.value).toBe("");
-    expect(invokes("menu_panel_close")).toEqual([]);
-
-    fireEvent.keyDown(field, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByPlaceholderText("Search collections...")).toBeNull());
-    expect(screen.getByText("Copy Path")).toBeTruthy();
-    expect(invokes("menu_panel_close")).toEqual([]);
-    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Connect" })).toHaveFocus());
-
-    fireEvent.keyDown(screen.getByRole("menuitem", { name: "Connect" }), { key: "Escape" });
-    await waitFor(() => expect(invokes("menu_panel_close")).toEqual([{ menu: 6, reason: "escape" }]));
+    await waitFor(() => expect(requests()).toEqual([{ source: SOURCE, menu: 3, request: 1, action: null, close: "escape" }]));
   });
 
   it("closes a menu the backend closed without asking again", async () => {
     render(<MenuPanelApp />);
-    backend(MENU_PANEL_OPEN_EVENT, opening(4));
-    await waitFor(() => expect(invokes("menu_panel_show")).toHaveLength(1));
-    backend(MENU_PANEL_CLOSED_EVENT, { menu: 4, reason: "outside" });
+    toPage(4, 1, opening());
+    toPage(4, 2, { kind: "closed", reason: "outside" });
     await waitFor(() => expect(screen.queryByText("Copy Path")).toBeNull());
-    expect(invokes("menu_panel_close")).toEqual([]);
+    expect(requests()).toEqual([]);
   });
 
-  it("draws nothing and closes as failed when the tab sent no menu", async () => {
+  it("takes the backend's messages of a menu in the order of their count", async () => {
     render(<MenuPanelApp />);
-    backend(MENU_PANEL_OPEN_EVENT, opening(5, "{\"entries\":3}"));
-    await waitFor(() => expect(invokes("menu_panel_close")).toEqual([{ menu: 5, reason: "failed" }]));
-    expect(invokes("menu_panel_show")).toEqual([]);
+    // The change is the second message and came before the opening.
+    toPage(6, 2, { kind: "update", spec: WITH_LINK });
+    expect(screen.queryByText("Reveal in Finder")).toBeNull();
+    toPage(6, 1, opening());
+    expect(screen.getByText("Copy Link")).toBeTruthy();
+    // The same message again is dropped, and so is one of another menu.
+    toPage(6, 2, { kind: "update", spec: SPEC });
+    toPage(9, 2, { kind: "closed", reason: "outside" });
+    expect(screen.getByText("Copy Link")).toBeTruthy();
+  });
+
+  it("counts its requests for a menu from one, and starts again with the next menu", async () => {
+    render(<MenuPanelApp />);
+    toPage(7, 1, opening());
+    fireEvent.keyDown(screen.getByText("Rename…"), { key: "Escape" });
+    await waitFor(() => expect(requests()).toHaveLength(1));
+    toPage(7, 2, { kind: "closed", reason: "escape" });
+    // Another page's menu with the same number is another menu.
+    toPage(7, 1, opening(), "tab-other");
+    fireEvent.click(await screen.findByText("Copy Path"));
+    await waitFor(() => expect(requests()).toHaveLength(2));
+    expect(requests()[1]).toMatchObject({ source: "tab-other", menu: 7, request: 1, close: "chosen" });
+  });
+
+  it("asks nothing more of a menu it has asked to close", async () => {
+    render(<MenuPanelApp />);
+    toPage(8, 1, opening());
+    fireEvent.click(screen.getByText("Copy Path"));
+    await waitFor(() => expect(requests()).toHaveLength(1));
+    // The backend's word of the closing asks for nothing either.
+    toPage(8, 2, { kind: "closed", reason: "chosen" });
+    await waitFor(() => expect(screen.queryByText("Copy Path")).toBeNull());
+    expect(requests()).toHaveLength(1);
+  });
+
+  it("draws a list under a search field as a menu, and sends its choices without closing", async () => {
+    const picker = cardConnectSpec({ ...PICKER, tags: [{ tag: "Web", count: 1 }, { tag: "Read", count: 4 }] });
+    window.innerWidth = frameOf(picker).width;
+    window.innerHeight = frameOf(picker).height;
+    render(<MenuPanelApp />);
+    toPage(9, 1, opening(picker));
+    expect(screen.getByPlaceholderText("Search collections...")).toBeTruthy();
+    // The surface is the list's: the width's role and no inset of its own.
+    const surface = document.querySelector("[data-menu-panel-surface]");
+    expect(surface?.getAttribute("data-floating-menu")).toBe("search");
+    fireEvent.click(screen.getByText("Read"));
+    await waitFor(() => expect(requests()).toHaveLength(1));
+    expect(requests()[0]).toEqual({
+      source: SOURCE,
+      menu: 9,
+      request: 1,
+      action: { kind: "widget", id: "connect.picker", action: { kind: "toggle_collection", collection: "Read", connected: false } },
+      close: null,
+    });
+    // The page's answer comes back by the request's number.
+    toPage(9, 2, { kind: "answer", request: 1, answer: { kind: "membership", made: true } });
+    expect(screen.getByText("Read")).toBeTruthy();
+  });
+
+  it("lights the first row of a menu a key opened", () => {
+    render(<MenuPanelApp />);
+    toPage(10, 1, opening(SPEC, true));
+    expect(document.activeElement?.textContent).toContain("Connect");
   });
 });

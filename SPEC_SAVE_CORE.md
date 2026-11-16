@@ -1,5 +1,7 @@
 # Общее ядро Mine: правила и сценарии сохранения
 
+**Состояние:** частично: код реализован, ручная приёмка SC3, SC4 и SC6 открыта. Источник: PLAN.md, «Общее ядро сохранения»; раздел «Приёмка результата» ниже. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md)
 
 ## Статус и границы решения

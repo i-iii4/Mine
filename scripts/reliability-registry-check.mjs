@@ -1,8 +1,14 @@
 // Registry check (SPEC_SYSTEM_RELIABILITY.md, INV-01): compares the
 // reliability registry with the sources. It runs no test. It checks that every
-// requirement heading exists, that every named command runs the tests it is
-// named with, that every test imports, reads or launches each path bound to it
+// requirement heading exists, that every named command is one a combined
+// command runs (scripts/verify-commands.mjs) and runs the tests it is named
+// with, that every test imports, reads or launches each path bound to it
 // (scripts/test-reach.mjs), and that every changed file is bound that way.
+// The combined command is `verify`. `verify:built-app` is accepted for one
+// kind of file only: a script that `verify:built-app` itself runs, the
+// checks of the built clipper and app and the build they start with, which
+// nothing in `verify` executes. A file of the product or a fixture is bound
+// to a test `verify` runs (AUDIT_CODE_QUALITY.md, О5).
 // Whether the tests pass is the business of their own commands.
 import { existsSync, readFileSync } from 'node:fs';
 import { lstat, mkdtemp, readFile, readdir, readlink, realpath, rm, writeFile } from 'node:fs/promises';
@@ -13,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { sha256, fixturePath } from './reliability-source-guard.mjs';
 import { prepareUpdateChannel } from './prepare-update-channel.mjs';
 import { createReach } from './test-reach.mjs';
+import { BUILT_APP, VERIFY, runBy } from './verify-commands.mjs';
 import { SAFARI_MIRRORS, verifyExtensionMirrors } from './verify-extension-mirrors.mjs';
 
 export const repository = fileURLToPath(new URL('../', import.meta.url));
@@ -108,10 +115,12 @@ export function isBehaviorPath(path) {
 }
 
 /**
- * Every claim of the change coverage holds: the command runs each test, and
- * each path is imported, read or launched by one of the tests itself. A path
- * cannot be covered by naming it next to a test that never touches it, and a
- * directory cannot cover files added to it later.
+ * Every claim of the change coverage holds: a combined command runs the
+ * command, the command runs each test, and each path is imported, read or
+ * launched by one of the tests itself. A path cannot be covered by a command
+ * nobody runs (AUDIT_CODE_QUALITY.md, О5), nor by naming it next to a test
+ * that never touches it, and a directory cannot cover files added to it later.
+ * Through `verify:built-app` only the scripts that command runs are bound.
  */
 async function validateChangeCoverage(registry, root, packageJson, reach) {
   requireCondition(registry.changeCoverage?.length > 0, 'No contract coverage for changes');
@@ -119,13 +128,15 @@ async function validateChangeCoverage(registry, root, packageJson, reach) {
   for (const [index, coverage] of registry.changeCoverage.entries()) {
     const label = `changeCoverage[${index}] ${coverage.requirement}`;
     try { await validateReference(root, coverage.requirement); } catch (error) { problems.push(`${label}: ${error.message}`); }
+    const by = packageJson.scripts[coverage.command] ? runBy(reach, coverage.command) : null;
     if (!packageJson.scripts[coverage.command]) problems.push(`${label}: no package.json script ${coverage.command}`);
+    else if (!by) problems.push(`${label}: neither ${VERIFY} nor ${BUILT_APP} runs ${coverage.command}`);
     if (!(coverage.paths?.length > 0)) problems.push(`${label}: no paths`);
     if (!(coverage.tests?.length > 0)) problems.push(`${label}: no tests`);
     const running = [];
     for (const test of coverage.tests ?? []) {
       try { await localFile(root, test); } catch { problems.push(`${label}: test does not exist: ${test}`); continue; }
-      let runs = false;
+      let runs;
       try { runs = packageJson.scripts[coverage.command] !== undefined && reach.commandRuns(coverage.command, test); } catch (error) { problems.push(`${label}: ${error.message}`); continue; }
       if (runs) running.push(test);
       else problems.push(`${label}: ${coverage.command} does not run ${test}`);
@@ -133,6 +144,9 @@ async function validateChangeCoverage(registry, root, packageJson, reach) {
     for (const path of coverage.paths ?? []) {
       if (path.endsWith('/')) { problems.push(`${label}: a directory would cover files no test touches: ${path}`); continue; }
       try { await localFile(root, path); } catch { problems.push(`${label}: path does not exist: ${path}`); continue; }
+      if (by === BUILT_APP && !reach.commandRuns(BUILT_APP, path)) {
+        problems.push(`${label}: ${path} is bound through ${BUILT_APP}, which binds only the scripts it runs; bind it to a test ${VERIFY} runs`);
+      }
       if (!running.some(test => reach.executes(test, path))) problems.push(`${label}: no test of the entry imports, reads or launches ${path}`);
     }
   }

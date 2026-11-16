@@ -1,5 +1,7 @@
 # SPEC: storage layer
 
+**Состояние:** реализовано. Источник: PLAN.md, Phase 3; абзац «Перечисленные правила реализованы в Rust» ниже. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md)
 
 Персистентный слой: SQLite-индекс, файловые операции, thumbnail-генерация.
@@ -626,7 +628,9 @@ Rules:
   non-composite single-media manifest may be materialized atomically from its
   valid primary preview.
 - Backfill is resumable and idempotent. It updates SQLite only after all files
-  for one manifest are durably renamed into place.
+  for one manifest are renamed into place. Files of the preview cache are
+  not waited onto the disk; a file a power loss cut short is no preview and
+  is built again (SPEC_THUMBNAILS.md, П10).
 - Encoding failures preserve the last complete manifest when safe, publish a
   typed retryable/non-retryable error and never expose partial files.
 - Grid/Card/measurement code consumes only `Ready` derived paths. Original
@@ -1354,7 +1358,7 @@ is_video_ext(ext: &str) -> bool
 ### Поведение — is_thumb_fresh (проверка свежести)
 
 - Сравнивает mtime миниатюры и исходного файла
-- **Дополнительно валидирует magic bytes** thumb-файла: первые 3 байта должны матчить `FF D8 FF` (JPEG) или `89 50 4E` (PNG). Файлы с другим content считаются не fresh и force regenerate — защита от legacy state, где text PNG оставались под `.jpg` расширением forever
+- **Дополнительно валидирует magic bytes** thumb-файла: первые 3 байта должны матчить `FF D8 FF` (JPEG) или `89 50 4E` (PNG), а конец файла должен быть концом целой картинки этого формата (`thumb_disk_state`; SPEC_THUMBNAILS.md, П10). Файлы с другим content считаются не fresh и force regenerate — защита от legacy state, где text PNG оставались под `.jpg` расширением forever
 - Возвращает `true` если миниатюра существует, свежая по mtime, и имеет валидное image content
 - Используется в `full_scan` и `index_md_file` для пропуска избыточной генерации
 

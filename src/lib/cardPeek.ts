@@ -1,4 +1,4 @@
-// TRIAL (SPEC_CARD_PEEK.md; user's requests of 23.10.2026): the open card's
+// SPEC_CARD_PEEK.md (user's requests of 23.10.2026): the open card's
 // window over the right part, the rules its motion keeps. The component
 // (CardPeek.tsx) measures and writes; these functions decide: where the window
 // and the card's picture stand at a point of the motion, how the spring

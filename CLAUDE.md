@@ -4,14 +4,19 @@
 
 ## Required reading
 
-- [SPEC_SYSTEM_RELIABILITY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SYSTEM_RELIABILITY.md>): требования к индексам, проверкам принципов и доставке обновлений; локальная реализация подготовлена, публичная приёмка открыта.
-
-- [Извлечение товарных страниц](/Users/i_iii/Проекты/Личные%20проекты/local-arena/SPEC_PRODUCT_EXTRACTION.md): обработчик подтверждённых товаров Shopify, галереи изображений, ограничения и проверки.
+### Всегда
 
 - `PRINCIPLES.md` — **читать первым.** Инженерные принципы, антипаттерны, чеклист
 - `ARCHITECTURE.md` — архитектура, компоненты, ключевые решения
 - `PLAN.md` — план реализации по фазам
 - `DEVLOG.md` — история изменений и принятые решения
+
+### По теме работы
+
+Читать документы, к теме которых относится задача. Первая строка под заголовком каждой `SPEC_*.md` называет её состояние (реализовано, частично, не реализовано, отменено, отложено) и дату последней сверки с кодом. `SPEC_DISPLAY_MODES.md` в список не входит: она не реализована, `GridSwitch`, `useLayoutMode` и `DisplayModeProps` в коде нет.
+
+- [SPEC_SYSTEM_RELIABILITY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SYSTEM_RELIABILITY.md>): требования к индексам, проверкам принципов и доставке обновлений; локальная реализация подготовлена, публичная приёмка открыта.
+- [Извлечение товарных страниц](/Users/i_iii/Проекты/Личные%20проекты/local-arena/SPEC_PRODUCT_EXTRACTION.md): обработчик подтверждённых товаров Shopify, галереи изображений, ограничения и проверки.
 - `SPEC_PRD.md` — PRD: модель данных, типы блоков, интерфейс
 - `SPEC_USECASES.md` — юзкейсы и сценарии использования
 - `SPEC_BLOCK.md` — спецификация domain/block (эталонный модуль)
@@ -28,8 +33,7 @@
 - `SPEC_THUMBNAILS.md` — спецификация thumbnail pipeline: two-phase (Rust instant placeholder + WebView async upgrade), event-driven sidebar, виртуализация, поддержка всех форматов расширения через native decoder
 - [SPEC_SIDEBAR_STRIP.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SIDEBAR_STRIP.md>): лента миниатюр строки бокового меню по ширине: полный список карточек коллекции без предела 20, число плиток по ширине ленты плюс одна обрезанная, дорисовка из известного списка без чтения, уровень `micro` 64 px; требования 24.10.2026, реализация в PLAN 50.41
 - [SPEC_FEED_DISPLAY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_FEED_DISPLAY.md>): настройки отображения ленты: кнопка Display, порядок, вид карточек (Media and Text, Text on Hover, Media Only), расстояние; реализовано 30.09.2026, третий вид и новые названия 11.11.2026
-- `SPEC_DISPLAY_MODES.md` — спецификация display modes: архитектура переключения между masonry/grid/table/columns, принцип изоляции (display mode = только рендеринг), единый интерфейс `DisplayModeProps`
-- `SPEC_FEED_SCROLL_PERFORMANCE.md` — контракт canvas-feel бесконечной ленты: velocity-aware render runway, media preload/decode windows, лимиты, диагностика
+- `SPEC_FEED_SCROLL_PERFORMANCE.md` — контракт canvas-feel бесконечной ленты: velocity-aware render runway, окно приоритета, подготовка картинки карточки сразу после монтирования (15.11.2026, предзагрузчик снят), диагностика, проверка `test:feed-images`
 - `SPEC_GRID_LAYOUT_READINESS.md` — deterministic live geometry: render-ready gate, committed prefix, skeleton envelope, deep fast-scroll acceptance
 - `SPEC_CARD_MEDIA_GEOMETRY.md` — геометрия медиа-карточки: размеры артефакта пишет генератор превью, размеры источника остаются у autoplay/Resolution, кламп пропорции как единственная точка обрезки; видеокарточка с 30.09.2026 тоже берёт форму постера
 - `SPEC_FEED_VIDEO.md` — desktop feed video contract: четыре surfaces, `feed_playback` descriptor, autoplay gating standard/heavy
@@ -61,7 +65,7 @@
 - `SPEC_ONBOARDING.md` — онбординг: расширение как самостоятельная точка входа, установка расширения без терминала, первый запуск, пустая лента, импорт Are.na
 - `SPEC_VAULT_LIFECYCLE.md` — жизненный цикл пространства: раскладка трёх папок и настраиваемые целевые папки, детерминированное правило дублей, перемещения, недоступное пространство, удаление и уборка
 - [SPEC_NARROW_WINDOW.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_NARROW_WINDOW.md>): узкое окно и выдвижное боковое меню: лента сужается первой, потом меню, потом меню ложится поверх ленты с полосой 40 px, наименьшая ширина окна равна наименьшей ширине меню плюс 40 px, возврат к ширине последнего перетаскивания; требования 15.10.2026, реализация в Phase 47
-- [SPEC_CARD_PEEK.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_PEEK.md>): окно открытой карточки над правой частью (проба «Card view: Peek»): размытие ленты под окном, поля 40 px, плашка по наведению, рост окна из карточки и сжатие обратно на пружине стопки, содержимое как в полном виде; требования 23.10.2026
+- [SPEC_CARD_PEEK.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_PEEK.md>): окно открытой карточки над правой частью (вид «Peek» группы «Card view»): размытие ленты под окном, поля 40 px, плашка по наведению, рост окна из карточки и сжатие обратно на пружине стопки, содержимое как в полном виде; требования 23.10.2026, функция продукта по решению пользователя 15.11.2026
 - [SPEC_KEYBOARD.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_KEYBOARD.md>): полная карта клавиатурных команд Mine.
 - [SPEC_MOTION_LEVELS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MOTION_LEVELS.md>): уровни движения Full, Minimal и Off: строка `Motion` в `Appearance`, ключ `mine.motion`, системная настройка выбирает Minimal, с клавиатуры всё сразу на всех уровнях, поведение каждой анимации по уровням, окно карточки и просмотр в Minimal, граф и клиппер вне настройки; роли движения (Отклик, Поверхность, Перемещение, Пружина) и их токены, единственный источник времени и кривой; мигание выбранного пункта меню; требования 11.11.2026, решения 12.11.2026 и 13.11.2026, реализация в PLAN 50.86 и 50.88
 - [SPEC_TABS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_TABS.md>): вкладки пространств: своя полоса и отдельная страница на вкладку, несколько открытых пространств в одном процессе, сессия между запусками, перестановка и отрыв в новое окно; реализовано 03.10.2026 (этапы Э0 по Э4), живая приёмка за пользователем
@@ -71,7 +75,11 @@
 - [SPEC_DEEP_AUDIT.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_DEEP_AUDIT.md>): исправления по глубокому аудиту 12.10.2026: почему ошибки повторяются, контракты Н1 по Н14, каталог 130 находок Е1 по Е8, порядок работ, что не делаем; Phase 46, клиппер на X исправлен 13.10.2026, остальное по порядку
 - `AUDIT_ACTIVATION.md` — аудит активации: юзер-джорни первой сессии до первой ценности, работы пользователя, вердикты и рекомендации (12.08.2026)
 - `AUDIT_VAULT_RESILIENCE.md` — аудит устойчивости хранилищ: полный перебор сценариев структуры/конфликтов/потерь, «сейчас/проблема/целевое» (12.08.2026)
-- `AUDIT_PERFORMANCE.md` — аудит производительности и план оптимизации
+- `AUDIT_PERFORMANCE.md` — аудит производительности всего приложения: 27 проблем в восьми областях, решение по каждой, план исправлений из 13 пунктов и решения пользователя по плану; заменяет аудит 16.04.2026 (15.11.2026)
+- `AUDIT_FEED_IMAGES.md` — аудит картинок ленты, которые не успевают появиться при прокрутке: замеры в WebKit, причины, варианты исправления, проверка `test:feed-images` (15.11.2026)
+- `AUDIT_CODE_QUALITY.md` — аудит техлида по архитектуре и коду: 28 находок (архитектура, код, минимализм, костыли, обман, документы и проверки), план из 20 пунктов и решения пользователя по плану (15.11.2026)
+- [SPEC_MENU_WINDOW.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MENU_WINDOW.md>): все меню в отдельном окне с правилами расположения macOS: перечень 22 меню, правила расположения по решениям пользователя 15.11.2026, общий механизм (описание меню данными, действия и ответы через бэкенд), порядок сообщений по номеру меню вместо таймеров, владелец меню, клавиатура и фокус, закрытые методы, отказ на страницу, приёмка и план по этапам; требования 15.11.2026, этап 1 (дефекты пробы и правила расположения) и общий механизм этапа 2 реализованы 15.11.2026
+- `AUDIT_MENU_PLACEMENT.md` — исследование правил расположения меню на macOS и рекомендации для Mine, решения за пользователем (15.11.2026)
 - `AUDIT_MOTION_LEVELS.md` — аудит анимации для уровней движения Full, Minimal и Off: опись 55 анимаций, набор Minimal, устройство настройки, решения за пользователем (11.11.2026)
 - `AUDIT.md` — результаты аудитов кодовой базы (01.03.2026 — первый, 03.03.2026 — повторный), план доработки — Phase 9 в PLAN.md
 - `DESIGN_SYSTEM.md` — дизайн-система: токены скруглений, отступов, типографики, правила поведения
@@ -120,16 +128,16 @@
 | src/lib/motionInput.ts + motionClasses.ts + sortableMotion.ts | Клавиша или указатель начали движение (`data-motion-key`, пункт нативного меню как клавиша); классы ролей для переходов по состоянию; перестановка списков dnd-kit как Перемещение |
 | src/lib/windowLiveResize.ts + src-tauri/src/tabs/live_resize.rs | Край окна в руке: живое изменение размера AppKit событием `window-live-resize` страницам вкладок окна; переход бокового меню через порог идёт тогда на пружине на всех уровнях (SPEC_MOTION_LEVELS.md, С3) |
 | src/lib/menuBlink.ts | Мигание выбранного пункта меню 150 мс на всех уровнях перед закрытием меню и командой, ровно один раз (решение 13.11.2026; `DropdownMenuItem`, `ContextMenuItem`, `staysOpen`); строки меню пространств с полем поиска через `useMenuRowBlink` (решение 15.11.2026) |
-| src/lib/tooltipGlide.ts + src/lib/pointerLeftPage.ts | Подсказка переезжает к соседней кнопке своей группы на пружине окна превью, одинаково на всех уровнях; подсказка, открытая указателем, уходит, когда указатель покинул страницу (SPEC_MOTION_LEVELS.md, «Подсказка едет за курсором») |
+| src/lib/pointerLeftPage.ts | Указатель покинул страницу: подсказка, открытая указателем, уходит, как бы быстро он ни ушёл (SPEC_MOTION_LEVELS.md, «Подсказка уходит, когда курсор покинул окно») |
 | src/components/CollectionHoverPreview.tsx | Второй вид содержимого окна превью: над названием коллекции в боковом меню сетка до девяти миниатюр, название целиком и число элементов (SPEC_CARD_STATES.md, С7.12) |
 | src/hooks/useImagePreviewCommands.ts | Команды при открытом просмотре изображения: какая команда закрывает картинку и в каком порядке идёт движение, передача подложки поиску (SPEC_MEDIA_ASSET_ACTIONS.md, «Команды при открытом просмотре») |
 | src/lib/cardTabDrop.ts + src/hooks/useCardDragToTabBar.ts + src/components/OpenCardTabsDialog.tsx | Бросок карточки в полосу вкладок создаёт вкладку с этой карточкой; группа карточек, подтверждение от 15 вкладок (SPEC_TABS.md, В86, В87) |
 | src/lib/mergeTiming.ts + src-tauri/src/commands/merge_timing.rs | Замер слияния карточек: одна строка журнала с длительностью каждого шага (SPEC_CARD_MERGE.md, «Замер слияния») |
-| src/lib/menuPanel*.ts + src/menuPanel/ + src-tauri/src/menu_panel.rs | Проба: меню карточки в отдельном прозрачном окне, которое выходит за край окна приложения; переключатель `Menus: Web / Window` в меню логотипа, по умолчанию `Web` (DESIGN_SYSTEM.md, «Меню карточки в отдельном окне: проба»; ARCHITECTURE.md, 072) |
+| src/lib/menuPanel*.ts + src/lib/menuSpec.ts + src/components/MenuSpecView.tsx + src/hooks/usePanelMenu.ts + src/menuPanel/ + src-tauri/src/menu_panel/ | Проба: меню в отдельном прозрачном окне, которое выходит за край окна приложения; переключатель `Menus: Web / Window` в меню логотипа, по умолчанию `Web`; расположение по правилам macOS, порядок сообщений по номеру меню, меню как данные (`MenuSpec` из Rust) и один компонент отрисовки для окна и страницы; в окне пока меню карточки ленты (SPEC_MENU_WINDOW.md, этапы 1 и 2; DESIGN_SYSTEM.md, «Меню карточки в отдельном окне: проба»; ARCHITECTURE.md, 072) |
 | src/styles/motionRoles.test.ts | Проверка ролей движения (SPEC_MOTION_LEVELS.md, РД8): ни одного числа времени и кривой вне токенов ролей и исключений, правила уровня только в блоке токенов и местах РД6, токены CSS равны постоянным `motion.ts` |
 | src/styles/motionSystem.test.ts | Отношения между значениями движения (SPEC_MOTION_LEVELS.md, «Отношения системы»): по кривой и времени считает долю пути за первый кадр и время основной части пути, сверяет порядок времён, читаемость и `Minimal` не медленнее `Full` |
 | src/lib/feedDisplay.ts | Параметры ленты: порядок и вид карточек (`cards`, `media`, `media-only`), хранение между запусками |
-| ESLint 10 + typescript-eslint | Линтинг фронтенда (TypeScript) |
+| ESLint 10 + typescript-eslint | Линтинг фронтенда, клиппера и сценариев `scripts/` |
 | Vitest + Testing Library | Frontend-тесты (`bun run test:frontend`) |
 | Playwright + pngjs | Browser acceptance gates: Feed, Graph, cold-space, sidebar reorder |
 | AVFoundation + native Swift helper | Desktop article audio: генерация через `AVSpeechSynthesizer.write`. Не собирается: feature `article-audio` выключена |
@@ -252,7 +260,6 @@ local-arena/
 │   │       ├── card_associations.rs # list_card_associations: связи открытой карточки
 │   │       ├── channels.rs     # list/create/delete/reorder channels
 │   │       ├── conflicts.rs    # Конфликты iCloud: list_vault_conflict_paths, list_vault_conflicts, resolve_vault_conflict, проверки в фоне, событие vault-conflicts-changed
-│   │       ├── clipper_recovery.rs # Recovery pending uploads расширения
 │   │       ├── clipper_setup.rs # Установка помощника клиппера и его самопочинка во время работы
 │   │       ├── icloud_progress.rs # Процент загрузки файла из iCloud (Swift-помощник)
 │   │       ├── cloud_recommendation.rs # Состояние и закрытие рекомендации Keep Downloaded
@@ -304,10 +311,10 @@ local-arena/
 │   │   ├── CardRow.tsx         # Карточка одной строкой списка: строки поиска и Related notes; команды строки в CardRowActions.tsx
 │   │   ├── Sidebar.tsx         # Каналы, счётчики, навигация
 │   │   ├── Detail.tsx          # Lightbox: просмотр, коллекции, навигация стрелками
-│   │   ├── DetailView.tsx      # Открытая карточка отдельной частью сборки: загрузка до первого открытия при виде Peek (SPEC_CARD_PEEK.md, О12)
-│   │   ├── CardPeek.tsx        # Проба «Card view: Peek»: окно открытой карточки над правой частью, размытие вокруг, рост из карточки на пружине (SPEC_CARD_PEEK.md); правила движения в src/lib/cardPeek.ts, места карточек в src/lib/cardPeekSource.ts
+│   │   ├── DetailView.tsx      # Открытая карточка отдельной частью сборки: она и часть редактора грузятся после первых карточек ленты при любом виде карточки (SPEC_READING_MODE.md, Ч0.6)
+│   │   ├── CardPeek.tsx        # Вид «Peek» группы «Card view»: окно открытой карточки над правой частью, размытие вокруг, рост из карточки на пружине (SPEC_CARD_PEEK.md); правила движения в src/lib/cardPeek.ts, места карточек в src/lib/cardPeekSource.ts
 │   │   ├── detailFrame.ts, detailMotionGate.ts # Окно карточки для Detail: раскладка по месту окна (О3, О8) и отложенная работа карточки на время движения окна (О12)
-│   │   ├── CardViewMenu.tsx    # Проба (SPEC_CARD_PEEK.md, О1): группа «Card view» панели Display, Full page или Peek и ширина окна; состояние в src/lib/cardView.ts
+│   │   ├── CardViewMenu.tsx    # Группа «Card view» (SPEC_CARD_PEEK.md, О1): панели Display, Full page или Peek и ширина окна; состояние в src/lib/cardView.ts
 │   │   ├── VaultPicker.tsx     # Выбор vault через нативный диалог
 │   │   ├── DropZone.tsx        # Drag-and-drop файлов для создания блоков
 │   │   ├── CardContextMenu.tsx # Контекстное меню карточки: коллекции, удаление
@@ -316,8 +323,7 @@ local-arena/
 │   │   ├── SidebarResizeHandle.tsx # Линия между меню и лентой как ручка ширины (вид рельса shadcn SidebarRail)
 │   │   ├── SidebarOverlay.tsx  # Меню поверх ленты в узком окне: подложка с полосой 40 px, панель-диалог, Escape, фокус, движение (SPEC_NARROW_WINDOW.md, У4 по У7)
 │   │   ├── FadeScrollRow.tsx   # Ряд с горизонтальной прокруткой и растворением скрытых краёв маской полосы вкладок: нижняя панель узкого окна (SPEC_NARROW_WINDOW.md, У13)
-│   │   ├── SidebarColumnsMenu.tsx # Проба (PLAN 47.6): раздел «Sidebar columns» панели Display, порядок и показ столбцов строк меню; состояние в src/lib/sidebarColumnLayout.ts
-│   │   ├── CompactStackMenu.tsx # Проба (PLAN 50.38): группы панели Display List spacing и List style; Sidebar style и Compact stack edge скрыты, пока компактная таблица отложена (`COMPACT_TABLE_POSTPONED`); состояние в src/lib/compactStack.ts
+│   │   ├── CompactStackMenu.tsx # Проба (PLAN 50.38): группы панели Display Sidebar style и Compact stack edge, скрыты, пока компактная таблица отложена (`COMPACT_TABLE_POSTPONED`); состояние в src/lib/compactStack.ts
 │   │   ├── NotificationCard.tsx # Единый вид уведомления: правый нижний угол, bg-popover
 │   │   ├── FirstCardMarker.tsx # Одноразовая пометка первой карточки (О19)
 │   │   ├── CloudRecommendation.tsx # Рекомендация Keep Downloaded по журналу ожиданий
@@ -333,25 +339,30 @@ local-arena/
 │   │   └── EdgeStatesSection.tsx # Витрина краевых состояний (гейт test:edge-states)
 │   ├── hooks/                  # useSidebarKeyboardFocus (где клавиатурный фокус: строка бокового меню или страница, SPEC_KEYBOARD.md, «Sidebar»), useSidebarResize (ширина последнего перетаскивания, сжатие окном в CSS), useHiddenEdges (какие края прокручиваемого ряда скрывают содержимое: нижняя панель узкого окна и таблицы статьи, DESIGN_SYSTEM.md, «Растворение кромок»), useSidebarOverlay (открытость меню поверх ленты у страницы, команды бэкенда, зеркало для полосы и View, SPEC_NARROW_WINDOW.md, У4 по У8), useTopRowWrap (действия выделения во втором ряду, когда верхний ряд их не вмещает, SPEC_NARROW_WINDOW.md, У10), useImagePreviewCommands (команды страницы при открытом просмотре изображения: картинка уходит до команды, положение бокового меню ждёт её растворения, SPEC_MEDIA_ASSET_ACTIONS.md, «Команды при открытом просмотре»), useGridScroll, useChannelPreviewsEvents, useProjectionRevisionOwner, useThumbnailUpgrade, usePreviewFileRetry (нет файла превью: заливка вместо битой картинки, повтор по thumb:updated) и др.
 │   ├── types/                  # generated.ts from Rust/Specta + frontend-owned index.ts
-│   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()), pageEvents.ts (события своей страницы), tabPage.ts (память вкладки), tabVisibility.ts (показ и пауза медиа), chromeHeight.ts (высота хрома окна, резерв светофоров), channelIcon.ts (геометрия и пружина стопки мини-карточек компактного меню), compactStack.ts (пробы меню PLAN 50.38: шаг и вид List, отложенные вид меню и край стопки), sidebarWidth.ts (ширина меню ненаследуемой переменной на корне и на элементах, которые по ней раскладываются), sidebarStripWidth.ts и stripPictures.ts (число плиток ленты миниатюр по её ширине в том же кадре, кэш её картинок, SPEC_SIDEBAR_STRIP.md), sidebarRowsMorph.ts (переход строк таблицы в узкие, отложен), cardView.ts (проба вида открытой карточки, SPEC_CARD_PEEK.md), textClip.ts (растворение края только у не помещающегося текста), controlCharGuard.ts, floatingLayer.ts (ширина меню, зазор от плашки кнопки), deleteFailure.ts (уведомления о сбое удаления), actionFailures.ts (уведомления о сбоях действий вкладки), createElements.ts (очередь новых элементов из броска и ⌘V), systemActions.ts (ссылка в браузер, файл в Finder), tabBarFailure.ts (сбой полосы вкладок видимой вкладке), errorMessage.ts (слова ошибки), sidebarPlacement.ts (меню рядом с лентой, сжатое или поверх неё по ширине окна, пределы перетаскивания), sidebarKeyboardFocus.ts (ходьба по строкам меню и действия над строкой под клавиатурным фокусом), topRowFit.ts (обрезает ли верхний ряд действия выделения), topRowPath.ts (одно название в верхнем ряду: место или открытая карточка по положению меню и виду карточки), detailLayout.ts (раскладка открытой карточки и рамка её медиа, один предел высоты), imagePreviewMotion.ts (путь картинки просмотра из рамки медиа и обратно, SPEC_MEDIA_ASSET_ACTIONS.md) и др.
+│   ├── lib/                    # commands.ts (IPC), masonryLayout.ts, cardLayout.ts, cardHeight.ts, cardAspect.ts (политика обрезки), assets.ts, clipboard.ts, utils.ts (cn()), pageEvents.ts (события своей страницы), tabPage.ts (память вкладки), tabVisibility.ts (показ и пауза медиа), channelIcon.ts (геометрия и пружина стопки мини-карточек компактного меню), compactStack.ts (пробы меню PLAN 50.38: шаг и вид List, отложенные вид меню и край стопки), sidebarWidth.ts (ширина меню ненаследуемой переменной на корне и на элементах, которые по ней раскладываются), sidebarStripWidth.ts и stripPictures.ts (число плиток ленты миниатюр по её ширине в том же кадре, кэш её картинок, SPEC_SIDEBAR_STRIP.md), sidebarRowsMorph.ts (переход строк таблицы в узкие, отложен), cardView.ts (выбор вида открытой карточки: полный вид или окно, SPEC_CARD_PEEK.md), textClip.ts (растворение края только у не помещающегося текста), controlCharGuard.ts, floatingLayer.ts (ширина меню, зазор от плашки кнопки), deleteFailure.ts (уведомления о сбое удаления), actionFailures.ts (уведомления о сбоях действий вкладки), createElements.ts (очередь новых элементов из броска и ⌘V), systemActions.ts (ссылка в браузер, файл в Finder), tabBarFailure.ts (сбой полосы вкладок видимой вкладке), errorMessage.ts (слова ошибки), sidebarPlacement.ts (меню рядом с лентой, сжатое или поверх неё по ширине окна, пределы перетаскивания), sidebarKeyboardFocus.ts (ходьба по строкам меню и действия над строкой под клавиатурным фокусом), topRowFit.ts (обрезает ли верхний ряд действия выделения), topRowPath.ts (одно название в верхнем ряду: место или открытая карточка по положению меню и виду карточки), detailLayout.ts (раскладка открытой карточки и рамка её медиа, один предел высоты), imagePreviewMotion.ts (путь картинки просмотра из рамки медиа и обратно, SPEC_MEDIA_ASSET_ACTIONS.md) и др.
 │   ├── workers/                # fontMetrics.worker.ts (Canvas measureText), thumbWorker.ts
 │   ├── dev/                    # Dev-only Feed, Graph, ColdSpace and SidebarReorder acceptance routes; страницы сравнения на dev-сервере: /__buttons (кнопки shadcn), /__cloud-open (первое открытие пространства из облака), /__onboarding (онбординг по экранам), /__popups (модальные окна приложения по кнопкам)
 │   ├── components/reading/     # Элементы статьи (SPEC_READING_MODE.md, Ч13): ArticleMarkdown, CodeBlock, MermaidDiagram, MathView, Callout, Disclosure, NoteEmbed, TaskCheckbox, ArticleTable
-│   ├── lib/reading/            # Конвейер чтения без React и Tauri (правило ESLint): pipeline.ts, syntax.ts, remarkMark.ts, remarkObsidianInlineMath.ts, remarkObsidianCallouts.ts, remarkNoteEmbeds.ts, callouts.ts, tableLayout.ts, highlight.ts, math.ts, mermaid.ts, hast.ts, anchors.ts (место после `#` ссылки по правилам Obsidian)
+│   ├── lib/reading/            # Конвейер чтения без React и Tauri (правило ESLint): pipeline.ts, syntax.ts, remarkMark.ts, remarkObsidianInlineMath.ts, remarkObsidianCallouts.ts, remarkNoteEmbeds.ts, callouts.ts, tableLayout.ts, highlight.ts, math.ts, mermaid.ts, hast.ts, anchors.ts (место после `#` ссылки по правилам Obsidian), tree.ts (хранимое дерево чтения: одно дерево тела для конвейера и для открытой карточки) и renderedTree.ts (дерево переписанного текста из разбора исходного тела, SPEC_READING_MODE.md, Ч0.5)
 │   ├── components/editing/     # Редактор заметки (SPEC_EDITING.md): NoteEditor, EditorWidgets (блоки через элементы чтения), TableEditor, сообщения правки
 │   ├── lib/editing/            # Модули редактора без React: переводы строк и BOM, синтаксис Obsidian на Lezer, блоки, показ разметки, живой просмотр, списки, очередь записи, внешние изменения, ссылки и меню `[[`, модель и редактор таблиц, правило «в правке или в чтении» (noteSurface)
 │   ├── test/                   # Vitest setup, readingPipeline.ts (деревья конвейера чтения для тестов), sidebarStrip.ts (ширина лент миниатюр в JSDOM)
 │   └── styles/                 # global.css (токены единственной палитры, SPEC_COLOR_RULES.md), buttons.css (лицо кнопки и три стиля краёв: macOS, Retro, Linear) и article.css (стили статьи по классу mine-article, SPEC_READING_MODE.md)
 ├── scripts/
-│   ├── browser-audits.mjs      # Оркестратор browser gates: свой Vite, все аудиты, teardown
+│   ├── browser-audits.mjs      # Оркестратор test:browser: фикстура холодного пространства, свой Vite, браузерные проверки по списку, teardown
+│   ├── verify-commands.mjs     # Какие проверки запускает verify и verify:built-app; список проверок вне сводных команд с причиной (NOT_RUN)
+│   ├── script-imports.mjs      # Импорты сценариев scripts/: каждый называет существующий файл или объявленный пакет
+│   ├── audit-production-page.mjs # Страница браузерной проверки, собранная для продакшена и розданная самой проверкой
 │   ├── feed-scroll-audit.mjs   # Playwright Grid scroll/source-request acceptance
+│   ├── feed-images-audit.mjs   # WebKit: картинки ленты при прокрутке по записи экрана страницы, повторные запросы картинок
 │   ├── sidebar-reorder-audit.mjs # Playwright sidebar collection reorder gesture acceptance
 │   ├── graph-view-audit.mjs    # Dark/light Canvas pixel/interaction/performance acceptance
 │   ├── cold-space-browser-audit.mjs # First/settled/deep cold Grid acceptance
 │   ├── edge-states-audit.mjs   # Витрина краевых состояний: варианты, контексты, обрезка, невидимый текст
 │   ├── audit-vite.mjs          # Свой Vite браузерной проверки: свободный порт, кэш зависимостей во временной папке
-│   ├── selection-menu-audit.mjs, sidebar-action-audit.mjs, detail-image-geometry-audit.mjs, top-row-wrap-audit.mjs, narrow-window-audit.mjs, reading-mode-audit.mjs, paste-feed-audit.mjs # Самостоятельные браузерные проверки на audit-vite.mjs
+│   ├── selection-menu-audit.mjs, sidebar-action-audit.mjs, detail-image-geometry-audit.mjs, top-row-wrap-audit.mjs, narrow-window-audit.mjs, reading-mode-audit.mjs, paste-feed-audit.mjs, card-drag-scroll-audit.mjs # Самостоятельные браузерные проверки на audit-vite.mjs
 │   ├── sidebar-strip-audit.mjs # Лента миниатюр меню: своя сборка для продакшена, перетаскивание края, полное чтение (SPEC_SIDEBAR_STRIP.md)
+│   ├── card-open-audit.mjs     # Открытие карточки со статьёй 100 КБ в WebKit: страница src/dev/CardOpenAuditRoute.tsx, собранная для продакшена, время от щелчка до кадра с целой статьёй (SPEC_READING_MODE.md, Ч14)
 │   ├── fixtures/reading-mode.md # Заметка проверки режима чтения: код, Mermaid, таблицы, выноски, формулы, HTML, сноски, вставки, задачи
 │   ├── fixtures/list-of-images.md, fixtures/media-shapes.md, picture-rows.mjs # Заметки картинок (тело карточки клиппера байт в байт; картинки в списках, абзацах, цитатах) и их замеры для test:reading-mode и test:editing (SPEC_READING_MODE.md, Ч15)
 │   ├── x-thread-smoke.mjs      # Собранное расширение: цепочка автора X во временном Chromium, сеть перехвачена
@@ -386,7 +397,7 @@ local-arena/
 │       └── main.rs             # Генерация Swift bindings
 ├── ios/                        # iOS-приложение (SwiftUI)
 │   ├── Mine.xcodeproj
-│   ├── LocalArena/
+│   ├── Mine/
 │   │   ├── MineApp.swift # @main, WindowGroup, VaultViewModel
 │   │   ├── ContentView.swift   # Корневой ZStack, сидинг тестовых данных
 │   │   ├── GridView.swift      # Masonry 2 колонки, @State навигация (без NavigationStack)
@@ -516,17 +527,19 @@ bun run build:extension        # Обязательная отдельная с�
 bun run pack:extension         # Упаковка расширения в архив
 bun run clipper:install-host   # Установка/обновление native host бинарника
 bun run cli:install            # Сборка release и установка CLI как ~/.local/bin/mine
-bun run lint                   # Линтинг фронтенда, клиппера и тестов
+bun run lint                   # Линтинг фронтенда, клиппера, тестов и сценариев scripts/
 bunx tsc --noEmit              # Типы: приложение, клиппер с его JavaScript и тесты одной программой
 bun run typecheck              # То же, плюс приложение и клиппер каждый по глобалам своей среды (CI, build)
 bun run test                   # Полная проверка: Vitest + Rust workspace tests
 bun run test:frontend          # Сборка actual WASM + Vitest
 bun run test:save-core         # Native/WASM byte/error/recovery parity
-bun run test:rust              # Только Rust workspace tests
-bun run test:scripts           # Тесты скриптов Node (свой HOME для прогонов помощника)
-bun run test:feed-scroll       # Browser Grid acceptance (свой Vite; MINE_FEED_SCROLL_AUDIT_URL — чужой)
-bun run test:graph             # Browser Graph Canvas acceptance (requires running dev server)
-bun run test:cold-space        # Browser cold first/settled/deep Grid acceptance (requires running dev server)
+bun run test:rust              # Только Rust workspace tests; тесты скорости пропущены (ignored)
+bun run test:rust-speed        # Тесты скорости Rust (`…_within_its_limit`) в сборке с opt-level 3, каталог target/sidebar-strip: по одному, предел времени утверждается всегда (ARCHITECTURE.md, 073)
+bun run test:scripts           # Тесты сценариев Node: свой HOME для прогонов помощника; каждая проверка package.json входит в verify или verify:built-app либо названа с причиной в scripts/verify-commands.mjs; каждый импорт в scripts/ разрешается; кадры сообщений помощника; payload расширения
+bun run test:feed-scroll       # Browser Grid acceptance (своя сборка для продакшена; MINE_FEED_SCROLL_AUDIT_URL — чужая страница)
+bun run test:feed-images       # WebKit без окна: доля картинок ленты, которые при прокрутке стояли в видимой области тёмными (6 px/мс, броски, с места), и адреса картинок, запрошенные дважды (своя сборка для продакшена, запись экрана страницы)
+bun run test:graph             # Browser Graph Canvas acceptance (своя сборка для продакшена; MINE_GRAPH_AUDIT_URL — чужая страница)
+bun run test:cold-space        # Browser cold first/settled/deep Grid acceptance (своя сборка для продакшена; снимок и превью передаёт test:browser в MINE_COLD_SPACE_SNAPSHOT_PATH и MINE_COLD_SPACE_ASSET_ROOT; MINE_COLD_SPACE_AUDIT_URL — чужая страница)
 bun run test:edge-states       # Browser edge-states showcase acceptance (requires running dev server)
 bun run test:sidebar-reorder   # Browser sidebar collection reorder gesture acceptance (requires running dev server)
 bun run test:selection-menu    # Меню Connect поиска и меню выделения Detail в Chromium без окна (свой Vite)
@@ -537,20 +550,24 @@ bun run test:sidebar-strip     # Лента миниатюр меню: край 
 bun run test:detail-image-geometry # Рамка изображения Detail: подмена превью оригиналом, contain, resize; раскладка открытой карточки: содержимое по центру между меню и панелью, переход в мобильный вид, панель в нём не шире колонки чтения по центру, медиа в теле по центру, коробка видео равна рамке, своя прокрутка панели до последней карточки (свой Vite)
 bun run test:x-thread          # Сборка расширения и цепочка автора X во временном Chromium, сеть перехвачена
 bun run test:reading-mode      # Режим чтения статьи: фикстура scripts/fixtures/reading-mode.md в Detail, обе темы, 1600 и 900 в ширину, перенос, код, маркер, HTML, таблицы, Mermaid, выноски, KaTeX, сноски, вставки, флажки, без сетевых запросов (свой Vite)
-bun run test:browser           # Сам поднимает Vite и запускает все browser gates
+bun run test:browser           # Сам собирает фикстуру холодного пространства, поднимает Vite и запускает браузерные проверки по списку scripts/browser-audits.mjs: все test:* с браузером
 bun run test:focus-ring        # WebKit: ни одной рамки фокуса браузера в главном окне (свой Vite)
 bun run test:paste-feed        # WebKit: настоящий ⌘V над лентой вставляет один раз в каждом её состоянии, в поле, меню, оверлее и при открытой карточке не вставляет (свой Vite)
+bun run test:card-drag-scroll  # WebKit: карточка у верхнего и нижнего края ленты и за ними ленту не прокручивает, список бокового меню у своего края прокручивается, нажатие отдаёт карточке фокус (свой Vite)
 bun run test:image-preview     # WebKit: движение просмотра изображения покадрово: первый и последний кадр на источнике, разворот, клавиатура, Off и Minimal (`mine.motion`, системная настройка без ключа), ввод во время движения, оригинал ещё в загрузке; с IMAGE_PREVIEW_STRIP_DIR пишет полосы кадров (свой Vite)
 bun run test:card-peek-motion  # WebKit: окно карточки на трёх уровнях движения покадрово: подъём и уход Minimal, подсказка закрытия на прямой ухода (ОУ4), Off сразу, Full из карточки и обратно, переход в полный вид и обратно на трёх уровнях (О17, ОУ7), уровень на корне до первого рендера (свой Vite)
-bun run test:tooltip-glide     # WebKit: подсказка едет к соседней кнопке группы покадрово на трёх уровнях: в каждом кадре одна подсказка, место и ширина по пружине стопки, поворот к третьей кнопке без скачка, уход из группы как прежде, другая группа и Tab без переезда (свой Vite)
+bun run test:card-open         # WebKit: открытие карточки со статьёй 100 КБ на заново загруженной странице: части сборки открытой карточки загружены до щелчка, время от щелчка до кадра с целой статьёй (предел 100 мс, известное исключение с потолком в 1,3 наибольшего замера, сейчас 340 мс, SPEC_READING_MODE.md, Ч14); своя сборка для продакшена
+bun run test:tooltip-motion    # WebKit: подсказки ряда кнопок покадрово на трёх уровнях: первая после задержки со своим появлением, следующая сразу целиком на своём месте, прежняя уходит в том же кадре, никогда двух, текст в каждом кадре внутри подложки, уход с кнопок и из окна своим уходом, Tab сразу, зазор 4 px от видимой плашки кнопки в рядах 40 и 30 и после переворота (свой Vite)
 bun run test:swipe-scroller    # WebKit: жест над элементом с горизонтальной прокруткой: ответ страницы и настоящее колесо над таблицей статьи и блоком кода, в том числе на краю (свой Vite)
 bun run test:native-shell      # Packaged macOS WKWebView + real Tauri invoke smoke
 bun run test:clipper-worker    # Собранное расширение/CSP/WASM и цепочка X (x-thread-smoke) в отдельном headless Chromium
 bun run bindings:generate      # Обновить committed Rust/Specta TypeScript bindings
 bun run bindings:check         # Проверить bindings на drift
-bun run verify:core            # Bindings + lint + frontend/Rust tests
-bun run verify                 # Полный contract, включая Feed, Graph и cold-space browser gates
-bun run verify:release         # Полный contract + clipper-worker + native-shell smoke
+bun run verify:core            # Сверка реестра, test:reliability, test:save-core, bindings:check, lint, build и test (Vitest, Rust, упаковка запуска, сценарии); браузерных проверок нет
+bun run verify                 # verify:core, test:rust-speed и test:browser
+bun run verify:built-app       # Проверки собранного расширения и приложения: test:clipper-worker, test:clipper-native-release, test:native-shell, verify:bundle-binaries
+bun run check:reliability-registry # Сверка реестра надёжности, тестов не запускает: команда записи должна входить в verify; через verify:built-app привязываются только сценарии, которые она сама запускает (проверки собранного расширения и приложения и их сборка)
+bun run verify:release         # check:release-evidence, verify и verify:built-app; первый шаг отказывает, пока выпуск не принят
 bunx shadcn info               # Проверить CLI/config/base без изменения файлов
 bunx shadcn add button --diff  # Read-only upstream diff; не перезаписывает компонент
 cargo run -p mine --bin localize-remote-media --features tooling -- --dry-run <vault> # Найти медиа, оставшееся удалённой ссылкой
@@ -646,4 +663,6 @@ Capture больше не требует рабочего SQLite до запис
 | PLAN.md | Task started/completed, new tasks discovered, scope changed, phase status changed |
 | DEVLOG.md | After every git push. One entry = one work session |
 
-When creating a feature specification, create `SPEC_<feature>.md` in the project root and add a link to "Required reading" section above and to "Related documents" line in ARCHITECTURE.md.
+When creating a feature specification, create `SPEC_<feature>.md` in the project root and add a link to "Required reading" section above (группа «По теме работы») and to "Related documents" line in ARCHITECTURE.md.
+
+Первая строка под заголовком каждой `SPEC_*.md` начинается с `**Состояние:**` и называет состояние (реализовано, частично, не реализовано, отменено, отложено), его источник и дату последней сверки с кодом. Строку обновляет тот, кто меняет спецификацию или код по ней.

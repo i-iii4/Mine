@@ -1,4 +1,4 @@
-// TRIAL (SPEC_CARD_PEEK.md; user's requests of 23.10.2026): the open card's
+// SPEC_CARD_PEEK.md (user's requests of 23.10.2026): the open card's
 // window over the right part, the view «Peek» of the Display panel's «Card
 // view» (src/lib/cardView.ts). The page decides which card is open and how
 // the next closing goes; this component owns the window's motion.

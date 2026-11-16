@@ -36,7 +36,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.exit(2);
   }
   const run = mkdtempSync(join(tmpdir(), 'mine-test-home-'));
-  let status = 1;
+  let status;
   try {
     const result = spawnSync(command, args, { stdio: 'inherit', env: disposableTestEnvironment(run) });
     if (result.error) throw result.error;

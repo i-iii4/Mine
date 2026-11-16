@@ -133,26 +133,67 @@ export async function markerRows(page, root, name) {
       return image && item ? { frame: image.closest('[data-detail-media-action-frame]'), item } : null;
     };
     // The editor draws only what is near the view: walk the note to it.
-    let found = locate();
-    for (let top = 0; !found && top <= scroller.scrollHeight + scroller.clientHeight; top += scroller.clientHeight / 2) {
-      scroller.scrollTop = top;
-      await frame();
-      await frame();
-      found = locate();
+    const seek = async () => {
+      let found = locate();
+      for (let top = 0; !found && top <= scroller.scrollHeight + scroller.clientHeight; top += scroller.clientHeight / 2) {
+        scroller.scrollTop = top;
+        await frame();
+        await frame();
+        found = locate();
+      }
+      return found;
+    };
+    let settled = await seek();
+    if (!settled) return null;
+    // At once, never by the page's smooth scroll. A jump draws the part of
+    // the note it lands in, and what is drawn there takes its height later:
+    // a picture when its file arrives, the editor's lines when it measures
+    // them. On a busy machine that comes after the jump and pushes the
+    // wanted picture out of the window, or the editor moves the view and
+    // stops drawing it. So the picture is found again and brought back to
+    // the middle until every picture the browser has asked for has its file
+    // and the wanted one has stood in one place for SETTLED_MS. Chromium
+    // asks for a lazy picture within LAZY_REACH_PX of the window; one
+    // further up waits, and changes nothing meanwhile.
+    const SETTLED_MS = 150;
+    const SETTLE_LIMIT_MS = 10_000;
+    const LAZY_REACH_PX = 1250;
+    const started = performance.now();
+    let place = null;
+    let since = started;
+    let rested = false;
+    while (!rested && performance.now() - started < SETTLE_LIMIT_MS) {
+      const drawn = await seek();
+      if (drawn) {
+        settled = drawn;
+        settled.frame.scrollIntoView({ block: 'center', behavior: 'instant' });
+        await frame();
+        await frame();
+      }
+      const box = settled.frame.getBoundingClientRect();
+      const now = `${Math.round(box.top)} ${Math.round(box.height)} ${Math.round(scroller.scrollTop)}`;
+      const loaded = [...document.querySelectorAll(`${css} img`)].every((image) => {
+        const at = image.getBoundingClientRect();
+        return image.complete || at.bottom < -LAZY_REACH_PX || at.top > window.innerHeight;
+      });
+      if (!drawn || !settled.frame.isConnected || !loaded || now !== place) {
+        place = now;
+        since = performance.now();
+      } else {
+        rested = performance.now() - since >= SETTLED_MS;
+      }
+      if (!rested) await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    if (!found) return null;
-    // At once, never by the page's smooth scroll; the box is read once the
-    // view has settled.
-    found.frame.scrollIntoView({ block: 'center', behavior: 'instant' });
-    await frame();
-    await frame();
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    const settled = locate() ?? found;
     const picture = settled.frame.getBoundingClientRect();
     const itemBox = settled.item.getBoundingClientRect();
-    return { x: Math.max(0, itemBox.left - 24), y: picture.top, width: 22, height: Math.min(picture.height, window.innerHeight - picture.top) };
+    const height = Math.min(picture.height, window.innerHeight - picture.top);
+    if (!rested || picture.top < 0 || height <= 0) {
+      return { unsettled: `top ${Math.round(picture.top)}, height ${Math.round(picture.height)} in a window ${window.innerHeight} tall, scrolled to ${Math.round(scroller.scrollTop)} of ${scroller.scrollHeight}` };
+    }
+    return { x: Math.max(0, itemBox.left - 24), y: picture.top, width: 22, height };
   }, [root, name]);
   if (!clip) return null;
+  if (clip.unsettled) throw new Error(`The picture ${name} did not come to rest in the window within 10 s: ${clip.unsettled}`);
   const png = PNG.sync.read(await page.screenshot({ clip }));
   const ground = [png.data[0], png.data[1], png.data[2]];
   const rows = [];

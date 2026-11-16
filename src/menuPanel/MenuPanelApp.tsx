@@ -1,245 +1,261 @@
-// TRIAL (DESIGN_SYSTEM.md, «Меню карточки в отдельном окне: проба»): the menu
-// panel's page draws the card menu a tab opened, with the components the
-// tab's own menu draws (`CardMenuEntriesView`, `CollectionPicker`), and sends
-// every choice back to the tab (src/lib/menuPanelProtocol.ts).
+// TRIAL (SPEC_MENU_WINDOW.md; DESIGN_SYSTEM.md, «Меню карточки в отдельном
+// окне: проба»): the menu panel's page draws the menu a page of the app
+// opened, from the menu's description (`MenuSpec`) with the one component
+// that draws it on a page too (`MenuSpecView`), and asks the backend for
+// every choice to be carried out by the page the menu came from.
 //
-// An opening goes in three steps within one task: the menu is drawn unseen
-// and measured, laid out on the screen by Radix's rules
-// (src/lib/menuPanelGeometry.ts), and drawn again at its place; the backend
-// then moves the panel there and gives it the keyboard, and the page shows.
+// The backend has laid the menu out and moved the panel to it before the page
+// hears of it (src-tauri/src/menu_panel/geometry.rs): the page draws the menu
+// at the point the layout gives, in one synchronous render, and reports its
+// first frame with the time of each step. The backend sets the panel's frame
+// for each opening and names its size: the page draws once its own area is
+// that size (SPEC_MENU_WINDOW.md, МО29, МО30). At rest the page draws
+// nothing at all: the backend checks that, pixel by pixel, before the panel
+// may be seen.
+//
+// A menu is named by the page it came from and its number there. The
+// backend's messages of a menu are counted, and the page takes them in that
+// order; the page counts its own requests, and the backend carries them out
+// in that order: a choice the person made before closing the menu reaches
+// the page it came from before the closing does, by number and not by time
+// (SPEC_MENU_WINDOW.md, section 5).
 
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { flushSync } from "react-dom";
-import { emitTo } from "@tauri-apps/api/event";
-import { CardMenuEntriesView } from "@/components/CardHoverMenu";
-import { CollectionPicker } from "@/components/CollectionPicker";
+import { MenuSpecView, menuSurfaceClass, type MenuDispatch } from "@/components/MenuSpecView";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { CollectionNameCheckContext, type CollectionNameCheck } from "@/hooks/useCollectionNameRefusal";
 import { logFailure } from "@/lib/appLog";
-import type { CardMenuItemId } from "@/lib/cardMenuEntries";
 import { commandById } from "@/lib/commandRegistry";
-import { MENU_PLATE_GAP_PX } from "@/lib/floatingLayer";
-import {
-  MENU_ACTION_WIDTH_PX,
-  MENU_SHADOW_FIELD_PX,
-  fitsPanel,
-  layoutPanel,
-  type MenuOpener,
-  type MenuSide,
-  type ScreenPoint,
-} from "@/lib/menuPanelGeometry";
-import {
-  closeMenuPanel,
-  reportMenuPanelPainted,
-  reportMenuPanelReady,
-  showMenuPanel,
-} from "@/lib/menuPanelCommands";
-import {
-  decodeCardMenuPayload,
-  MENU_PANEL_ACTION_EVENT,
-  MENU_PANEL_ANSWER_EVENT,
-  MENU_PANEL_CLOSED_EVENT,
-  MENU_PANEL_OPEN_EVENT,
-  MENU_PANEL_UPDATE_EVENT,
-  parseAnswerMessage,
-  parseUpdateMessage,
-  type CardMenuPayload,
-  type MenuPanelAction,
-  type MenuPanelActionMessage,
-  type MenuPanelAnswer,
-} from "@/lib/menuPanelProtocol";
+import { MENU_SHADOW_FIELD_PX } from "@/lib/menuSpec";
+import { reportMenuPanelPainted, reportMenuPanelReady, requestOfMenuPanel } from "@/lib/menuPanelCommands";
+import { MENU_PANEL_TO_PAGE_EVENT, MessageRow } from "@/lib/menuPanelProtocol";
 import { notePointerCommand, noteNativeMenuCommand } from "@/lib/motionInput";
 import { listenPage } from "@/lib/pageEvents";
 import { SETTINGS_CHANGED_EVENT, adoptSettingsChange, type SettingsChangedPayload } from "@/lib/settingsChanged";
-import type { MenuPanelCloseReason, MenuPanelClosed, MenuPanelOpening } from "@/types";
+import type { MenuAction, MenuAnswer, MenuPanelCloseReason, MenuPanelLayout, MenuPanelPageMessage, MenuPanelSize, MenuPanelToPage, MenuSpec } from "@/types";
 import { applyMenuPanelAppearance, applyMenuPanelButtons } from "./appearance";
 
-const LOG = "Card menu panel";
-const HIDDEN_ATTRIBUTE = "data-menu-panel-hidden";
+const LOG = "Menu panel";
 const SURFACE_ATTRIBUTE = "data-menu-panel-surface";
-/** A tab answers a choice within this, or the choice counts as not made. */
-const ANSWER_DEADLINE_MS = 10_000;
 
-interface Drawn {
-  menu: number;
+/** A menu: the page it came from and its number there. */
+interface MenuName {
   source: string;
-  payload: CardMenuPayload;
+  menu: number;
+}
+
+interface Drawn extends MenuName {
+  spec: MenuSpec;
   /** Where Radix anchors the menu in this page, the side and edge it keeps. */
-  anchor: ScreenPoint;
-  side: MenuSide;
-  align: "start" | "end";
-  maxHeight: number | null;
+  layout: MenuPanelLayout;
 }
 
-/** Before the layout: a place in the panel where any menu it holds fits,
- *  the shadow's field off its top left corner. */
-const MEASURE_ANCHOR: ScreenPoint = {
-  x: MENU_SHADOW_FIELD_PX + MENU_ACTION_WIDTH_PX,
-  y: MENU_SHADOW_FIELD_PX - MENU_PLATE_GAP_PX,
-};
+type Opening = Extract<MenuPanelToPage, { kind: "open" }>;
 
-function setHidden(hidden: boolean): void {
-  document.documentElement.toggleAttribute(HIDDEN_ATTRIBUTE, hidden);
+function now(): number {
+  return performance.timeOrigin + performance.now();
 }
 
-function openerOf(opening: MenuPanelOpening, payload: CardMenuPayload): MenuOpener {
-  if (payload.opener.kind === "point") return { kind: "point", point: { x: opening.anchor.x, y: opening.anchor.y } };
-  return { kind: "plate", plate: opening.anchor, align: payload.opener.align };
+/** After two frames the page has drawn its rest: what the backend checks. */
+function afterTwoFrames(run: () => void): void {
+  requestAnimationFrame(() => requestAnimationFrame(run));
+}
+
+/** Whether this page's area is the frame the backend set for a menu. */
+function areaIs(frame: MenuPanelSize): boolean {
+  return Math.abs(window.innerWidth - frame.width) < 1 && Math.abs(window.innerHeight - frame.height) < 1;
 }
 
 export function MenuPanelApp() {
   const [drawn, setDrawn] = useState<Drawn | null>(null);
   const [open, setOpen] = useState(false);
-  const [connectOpen, setConnectOpen] = useState(false);
   const drawnRef = useRef<Drawn | null>(null);
   drawnRef.current = drawn;
   const openRef = useRef(false);
   openRef.current = open;
   // Why the menu is closing, for the backend: an item, Escape, or a press.
   const closeReasonRef = useRef<MenuPanelCloseReason>("outside");
+  // The page's count of its requests for the menu it draws: the backend
+  // carries them out in this order.
   const requestRef = useRef(0);
-  const pendingRef = useRef(new Map<number, (answer: MenuPanelAnswer | null) => void>());
-  const connectTriggerRef = useRef<HTMLDivElement>(null);
+  // The menu this page has asked to close, or heard closed: nothing more
+  // is asked of it.
+  const overRef = useRef(false);
+  const pendingRef = useRef(new Map<number, (answer: MenuAnswer | null) => void>());
+  // The backend's messages of each menu, in the order of their count.
+  const rowsRef = useRef(new Map<string, MessageRow<MenuPanelToPage>>());
+  // A menu whose frame this page's area has not taken yet: it is drawn when
+  // the area changes to it (МО30).
+  const awaitingFrameRef = useRef<{ frame: MenuPanelSize; draw: () => void } | null>(null);
 
-  const ask = useCallback((action: MenuPanelAction): Promise<MenuPanelAnswer | null> => {
-    const current = drawnRef.current;
-    if (current === null) return Promise.resolve(null);
+  /** Ask the backend of `name`: a choice for the page the menu came from,
+   *  the menu's closing, or both, the choice first. */
+  const request = useCallback((name: MenuName, action: MenuAction | null, close: MenuPanelCloseReason | null): number => {
     requestRef.current += 1;
-    const request = requestRef.current;
-    const message: MenuPanelActionMessage = { menu: current.menu, request, action };
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        pendingRef.current.delete(request);
-        resolve(null);
-      }, ANSWER_DEADLINE_MS);
-      pendingRef.current.set(request, (answer) => {
-        clearTimeout(timer);
-        resolve(answer);
-      });
-      void emitTo(current.source, MENU_PANEL_ACTION_EVENT, message).catch((error: unknown) => {
-        logFailure(`${LOG}: a choice did not reach the tab`, error);
-        pendingRef.current.delete(request);
-        clearTimeout(timer);
-        resolve(null);
-      });
+    const number = requestRef.current;
+    if (close !== null) overRef.current = true;
+    void requestOfMenuPanel({ source: name.source, menu: name.menu, request: number, action, close }).catch((error: unknown) => {
+      logFailure(`${LOG}: a request did not reach the backend`, error);
+      const resolve = pendingRef.current.get(number);
+      pendingRef.current.delete(number);
+      resolve?.(null);
     });
+    return number;
+  }, []);
+
+  /** Send a choice to the page the menu came from; its answer, or null when
+   *  the menu closes first. The choice of an item closes the menu: one
+   *  request carries both, and the page hears the choice, then the closing
+   *  (SPEC_MENU_WINDOW.md, МО24). */
+  const ask = useCallback<MenuDispatch>((action) => {
+    const current = drawnRef.current;
+    if (current === null || overRef.current) return Promise.resolve(null);
+    const closes = action.kind === "run";
+    if (closes) closeReasonRef.current = "chosen";
+    return new Promise((resolve) => {
+      const number = request(current, action, closes ? "chosen" : null);
+      pendingRef.current.set(number, resolve);
+    });
+  }, [request]);
+
+  /** Every choice still waiting for its answer has none: the menu is over. */
+  const dropPending = useCallback(() => {
+    const waiting = [...pendingRef.current.values()];
+    pendingRef.current.clear();
+    for (const resolve of waiting) resolve(null);
   }, []);
 
   /** The menu closed here: Escape, an item, a press in the panel. */
   const closeHere = useCallback((reason: MenuPanelCloseReason) => {
     const current = drawnRef.current;
     setOpen(false);
-    setConnectOpen(false);
-    if (current !== null) void closeMenuPanel(current.menu, reason).catch((error: unknown) => logFailure(`${LOG}: close`, error));
-  }, []);
+    // A choice that closes the menu has said so already.
+    if (current !== null && !overRef.current) request(current, null, reason);
+  }, [request]);
 
-  const showOpening = useCallback(async (opening: MenuPanelOpening) => {
-    const payload = decodeCardMenuPayload(opening.payload);
-    if (payload === null) {
-      logFailure(`${LOG}: the tab sent no menu`, opening.payload.slice(0, 200));
-      void closeMenuPanel(opening.menu, "failed").catch(() => undefined);
-      return;
-    }
-    setHidden(true);
-    applyMenuPanelButtons(payload.buttons);
+  /** Draw the menu `name` now: the page's area is its frame's. */
+  const draw = useCallback((name: MenuName, opening: Opening, receivedAt: number) => {
+    const sizedAt = now();
+    applyMenuPanelButtons(opening.buttons);
     // A menu a key opened lands at once, the pointer's moves by the level
-    // (SPEC_MOTION_LEVELS.md, УД4): the tab's input stands for this page's.
-    if (payload.byKey) noteNativeMenuCommand();
+    // (SPEC_MOTION_LEVELS.md, УД4): the other page's input stands for this
+    // page's.
+    if (opening.by_key) noteNativeMenuCommand();
     else notePointerCommand();
     closeReasonRef.current = "outside";
-    const measuring: Drawn = {
-      menu: opening.menu,
-      source: opening.source,
-      payload,
-      anchor: MEASURE_ANCHOR,
-      side: "bottom",
-      align: "end",
-      maxHeight: null,
-    };
     flushSync(() => {
-      setDrawn(measuring);
-      setConnectOpen(false);
+      setDrawn({ ...name, spec: opening.spec, layout: opening.layout });
       setOpen(true);
     });
+    const drawnAt = now();
     const surface = document.querySelector<HTMLElement>(`[${SURFACE_ATTRIBUTE}]`);
-    const size = surface ? { width: surface.offsetWidth, height: surface.offsetHeight } : null;
-    if (size === null || !fitsPanel(size)) {
-      logFailure(`${LOG}: the menu does not fit the panel`, JSON.stringify(size));
+    if (surface === null) {
+      logFailure(`${LOG}: the menu was not drawn`, `menu ${name.menu} of ${name.source}`);
       flushSync(() => setOpen(false));
-      void closeMenuPanel(opening.menu, "failed").catch(() => undefined);
+      request(name, null, "failed");
       return;
     }
-    const layout = layoutPanel(openerOf(opening, payload), size, opening.screen);
-    flushSync(() => {
-      setDrawn({
-        ...measuring,
-        anchor: layout.anchor,
-        side: layout.placement.side,
-        align: layout.placement.align,
-        maxHeight: layout.placement.maxHeight,
-      });
-    });
     // A key opened it: the first row takes the highlight, as Radix gives it
     // on the page when a key opens a menu. Radix has focused the menu by now:
     // the effects of a synchronous render ran with it.
-    if (payload.byKey) {
-      document.querySelector<HTMLElement>(`[${SURFACE_ATTRIBUTE}] [role="menuitem"]`)?.focus({ preventScroll: true });
-    }
-    try {
-      await showMenuPanel(opening.menu, layout.origin);
-    } catch (error) {
-      // The backend closed it and told the tab, which opens its own menu.
-      logFailure(`${LOG}: not shown`, error);
-      if (drawnRef.current?.menu === opening.menu) flushSync(() => setOpen(false));
-      return;
-    }
-    if (drawnRef.current?.menu !== opening.menu || !openRef.current) return;
-    setHidden(false);
+    if (opening.by_key) surface.querySelector<HTMLElement>('[role="menuitem"]')?.focus({ preventScroll: true });
+    // The layout's own measure, against the size the other page counted: the
+    // backend logs both.
+    const measured = { width: surface.offsetWidth, height: surface.offsetHeight };
     requestAnimationFrame((frame) => {
       void reportMenuPanelPainted({
-        menu: opening.menu,
+        source: name.source,
+        menu: name.menu,
+        received_at: receivedAt,
+        sized_at: sizedAt,
+        drawn_at: drawnAt,
         frame_at: performance.timeOrigin + frame,
-        opener: payload.opener.kind,
+        measured,
       }).catch(() => undefined);
     });
-  }, []);
+  }, [request]);
+
+  /** A menu to draw: at once when the page's area is its frame's, else when
+   *  the area changes to it. No time ends that wait: the backend's deadline
+   *  for the first frame does (МО40). */
+  const showOpening = useCallback((name: MenuName, opening: Opening) => {
+    const receivedAt = now();
+    dropPending();
+    requestRef.current = 0;
+    overRef.current = false;
+    awaitingFrameRef.current = null;
+    const drawNow = () => {
+      try {
+        draw(name, opening, receivedAt);
+      } catch (error) {
+        logFailure(`${LOG}: the menu could not be drawn`, error);
+        if (!overRef.current) request(name, null, "failed");
+      }
+    };
+    if (areaIs(opening.layout.frame)) drawNow();
+    else awaitingFrameRef.current = { frame: opening.layout.frame, draw: drawNow };
+  }, [draw, dropPending, request]);
+
+  /** One message of the backend's about the menu `name`, its turn come. */
+  const apply = useCallback((name: MenuName, body: MenuPanelToPage) => {
+    const current = drawnRef.current;
+    const isDrawn = current !== null && current.source === name.source && current.menu === name.menu;
+    switch (body.kind) {
+      case "open":
+        showOpening(name, body);
+        return;
+      case "update":
+        if (isDrawn) setDrawn({ ...current, spec: body.spec });
+        return;
+      case "answer": {
+        if (!isDrawn) return;
+        const resolve = pendingRef.current.get(body.request);
+        pendingRef.current.delete(body.request);
+        resolve?.(body.answer);
+        return;
+      }
+      case "closed":
+        // A menu still waiting for its frame is never drawn.
+        awaitingFrameRef.current = null;
+        if (!isDrawn) return;
+        overRef.current = true;
+        dropPending();
+        setOpen(false);
+    }
+  }, [dropPending, showOpening]);
 
   useEffect(() => {
+    const rows = rowsRef.current;
     const subscriptions = [
-      listenPage<MenuPanelOpening>(MENU_PANEL_OPEN_EVENT, (event) => {
-        void showOpening(event.payload).catch((error: unknown) => {
-          logFailure(`${LOG}: the menu could not be drawn`, error);
-          void closeMenuPanel(event.payload.menu, "failed").catch(() => undefined);
-        });
-      }),
-      listenPage<MenuPanelClosed>(MENU_PANEL_CLOSED_EVENT, (event) => {
-        if (drawnRef.current?.menu !== event.payload.menu) return;
-        setOpen(false);
-        setConnectOpen(false);
-      }),
-      listenPage<unknown>(MENU_PANEL_UPDATE_EVENT, (event) => {
-        const message = parseUpdateMessage(event.payload);
-        const current = drawnRef.current;
-        if (message === null || current === null || current.menu !== message.menu) return;
-        setDrawn({ ...current, payload: message.payload });
-      }),
-      listenPage<unknown>(MENU_PANEL_ANSWER_EVENT, (event) => {
-        const message = parseAnswerMessage(event.payload);
-        if (message === null || drawnRef.current?.menu !== message.menu) return;
-        const resolve = pendingRef.current.get(message.request);
-        pendingRef.current.delete(message.request);
-        resolve?.(message.answer);
+      listenPage<MenuPanelPageMessage>(MENU_PANEL_TO_PAGE_EVENT, (event) => {
+        const { source, menu, seq, body } = event.payload;
+        const key = `${source}#${menu}`;
+        const row = rows.get(key) ?? new MessageRow<MenuPanelToPage>();
+        rows.set(key, row);
+        for (const due of row.take(seq, body)) {
+          // The closing is the last message of a menu: its row goes.
+          if (due.kind === "closed") rows.delete(key);
+          apply({ source, menu }, due);
+        }
       }),
       listenPage<SettingsChangedPayload>(SETTINGS_CHANGED_EVENT, (event) => {
         adoptSettingsChange(event.payload);
         applyMenuPanelAppearance();
       }),
     ];
-    // Every subscription stands before the backend hears the page is ready.
+    // Every subscription stands, and the page has drawn its rest, before the
+    // backend hears it is ready and checks the panel for clearness.
     void Promise.all(subscriptions).then(
-      () => reportMenuPanelReady(),
+      () => afterTwoFrames(() => void reportMenuPanelReady().catch((error: unknown) => logFailure(`${LOG}: ready`, error))),
       (error: unknown) => logFailure(`${LOG}: the page could not listen`, error),
-    ).catch((error: unknown) => logFailure(`${LOG}: ready`, error));
+    );
+    // The page's area changed: a menu waiting for this frame is drawn.
+    const resized = () => {
+      const awaiting = awaitingFrameRef.current;
+      if (awaiting === null || !areaIs(awaiting.frame)) return;
+      awaitingFrameRef.current = null;
+      awaiting.draw();
+    };
     // A failure while a menu is up gives the clicks back at once.
     const fail = (event: ErrorEvent | PromiseRejectionEvent) => {
       const current = drawnRef.current;
@@ -247,19 +263,16 @@ export function MenuPanelApp() {
       logFailure(`${LOG}: the page failed with a menu open`, "reason" in event ? event.reason : event.error);
       closeHere("failed");
     };
+    window.addEventListener("resize", resized);
     window.addEventListener("error", fail);
     window.addEventListener("unhandledrejection", fail);
     return () => {
+      window.removeEventListener("resize", resized);
       window.removeEventListener("error", fail);
       window.removeEventListener("unhandledrejection", fail);
       for (const subscription of subscriptions) void subscription.then((unlisten) => unlisten(), () => undefined);
     };
-  }, [closeHere, showOpening]);
-
-  const checkName = useCallback<CollectionNameCheck>(
-    (name) => ask({ kind: "check", name }).then((answer) => (answer?.kind === "refusal" ? answer.reason : null)),
-    [ask],
-  );
+  }, [apply, closeHere]);
 
   const handleKeyDownCapture = useCallback((event: ReactKeyboardEvent) => {
     // The chord that opened the menu closes it, as on the page.
@@ -270,87 +283,54 @@ export function MenuPanelApp() {
     closeHere("escape");
   }, [closeHere]);
 
-  const run = useCallback((id: CardMenuItemId) => {
-    closeReasonRef.current = "chosen";
-    void ask({ kind: "run", id });
-  }, [ask]);
-
-  const runTable = useCallback((id: string) => {
-    closeReasonRef.current = "chosen";
-    void ask({ kind: "table", id });
-  }, [ask]);
-
-  const picker = useMemo(() => {
-    if (drawn === null) return null;
-    const { blockSlug, selectedTags, tags, currentTag } = drawn.payload.picker;
-    return (
-      <CollectionPicker
-        blockSlug={blockSlug}
-        selectedTags={selectedTags}
-        tags={tags}
-        currentTag={currentTag ?? undefined}
-        onToggleTag={(_slug, tag, hasTag) =>
-          ask({ kind: "toggle", tag, hasTag }).then((answer) =>
-            answer?.kind === "membership" && answer.made !== null ? answer.made : answer === null ? false : undefined)}
-        onCreateAndAssign={(tag) => ask({ kind: "create", tag })}
-        stopKeyPropagation
-        onRequestClose={() => {
-          setConnectOpen(false);
-          requestAnimationFrame(() => connectTriggerRef.current?.focus());
-        }}
-      />
-    );
-  }, [ask, drawn]);
-
   if (drawn === null) return null;
   return (
-    <CollectionNameCheckContext.Provider value={checkName}>
-      <DropdownMenu
-        open={open}
-        onOpenChange={(next) => {
-          if (next || !openRef.current) return;
-          closeHere(closeReasonRef.current);
-        }}
-        modal={false}
+    <DropdownMenu
+      open={open}
+      onOpenChange={(next) => {
+        if (next || !openRef.current) return;
+        closeHere(closeReasonRef.current);
+      }}
+      modal={false}
+    >
+      <div
+        className="pointer-events-none fixed size-0"
+        style={{ left: drawn.layout.anchor.x, top: drawn.layout.anchor.y }}
       >
-        <div
-          className="pointer-events-none fixed size-0"
-          style={{ left: drawn.anchor.x, top: drawn.anchor.y }}
-        >
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-hidden="true"
-              tabIndex={-1}
-              className="block size-0 min-h-0 min-w-0 border-0 bg-transparent p-0 opacity-0"
-            />
-          </DropdownMenuTrigger>
-        </div>
-        {/* The page draws the menu's shadow, the menu's own on a page; Radix
-            keeps it inside the panel by the shadow's field
-            (src/lib/menuPanelGeometry.ts). The window has no shadow. */}
-        <DropdownMenuContent
-          side={drawn.side}
-          align={drawn.align}
-          collisionPadding={MENU_SHADOW_FIELD_PX}
-          style={drawn.maxHeight === null ? undefined : { maxHeight: drawn.maxHeight }}
-          data-menu-panel-surface=""
-          onEscapeKeyDown={() => {
-            closeReasonRef.current = "escape";
-          }}
-          onCloseAutoFocus={(event) => event.preventDefault()}
-          onKeyDownCapture={handleKeyDownCapture}
-        >
-          <CardMenuEntriesView
-            entries={drawn.payload.entries}
-            onRun={run}
-            onTableCommand={runTable}
-            onKeyDownCapture={handleKeyDownCapture}
-            collisionPadding={MENU_SHADOW_FIELD_PX}
-            connect={{ open: connectOpen, onOpenChange: setConnectOpen, triggerRef: connectTriggerRef, picker }}
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-hidden="true"
+            tabIndex={-1}
+            className="block size-0 min-h-0 min-w-0 border-0 bg-transparent p-0 opacity-0"
           />
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </CollectionNameCheckContext.Provider>
+        </DropdownMenuTrigger>
+      </div>
+      {/* The page draws the menu's shadow, the menu's own on a page; Radix
+          keeps it inside the panel by the shadow's field
+          (src/lib/menuSpec.ts). The window has no shadow. */}
+      <DropdownMenuContent
+        side={drawn.layout.side}
+        align={drawn.layout.align}
+        collisionPadding={MENU_SHADOW_FIELD_PX}
+        widthRole={drawn.spec.role}
+        className={menuSurfaceClass(drawn.spec.role)}
+        style={drawn.layout.max_height === null ? undefined : { maxHeight: drawn.layout.max_height }}
+        data-menu-panel-surface=""
+        onEscapeKeyDown={() => {
+          closeReasonRef.current = "escape";
+        }}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+        onKeyDownCapture={handleKeyDownCapture}
+      >
+        <MenuSpecView
+          spec={drawn.spec}
+          dispatch={ask}
+          open={open}
+          collisionPadding={MENU_SHADOW_FIELD_PX}
+          onKeyDownCapture={handleKeyDownCapture}
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

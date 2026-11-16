@@ -93,7 +93,8 @@ import type {
   MediaAssetRef,
   TagCount,
 } from "@/types";
-import { preprocessWikilinks, inlineMediaOccurrenceIndex, markdownSourceByteOffset, markdownSourceOffset, firstImageOffset, renderedMarkdownTree } from "@/lib/markdownWikilinks";
+import { preprocessWikilinks, inlineMediaOccurrenceIndex, markdownSourceByteOffset, markdownSourceOffset } from "@/lib/markdownWikilinks";
+import { firstImageOffset, readingTree } from "@/lib/reading/tree";
 import { decodeLocalMarkdownUrl } from "@/lib/markdownWikilinks";
 import {
   thumbnailUrl,
@@ -1778,11 +1779,19 @@ function localBodyVideoReferences(body: string, manifest: ReturnType<typeof norm
     }
     if ("children" in node) node.children.forEach(visit);
   }
-  visit(renderedMarkdownTree(preprocessWikilinks(body)));
+  visit(readingTree(preprocessWikilinks(body)));
   return sources;
 }
 
-/** Whether the body holds anything besides one embed of `source`: text, or other media. */
+/** The nodes of the article's tree that hold text of their own to show:
+ *  text, code, a formula. */
+const TEXT_NODE_TYPES: ReadonlySet<string> = new Set(["text", "inlineCode", "code", "inlineMath", "math"]);
+/** The nodes that show something with no text of their own in the tree: a
+ *  note's card, a footnote's number. */
+const SHOWN_NODE_TYPES: ReadonlySet<string> = new Set(["noteEmbed", "footnoteReference"]);
+
+/** Whether the body holds anything besides one embed of `source`: text, or
+ *  other media, as the article's own tree has them (Ч0.5). */
 function bodyHasMoreThanEmbed(
   body: string,
   manifest: ReturnType<typeof normalizeDetailPreviewManifest>,
@@ -1802,13 +1811,13 @@ function bodyHasMoreThanEmbed(
       }
       return;
     }
-    if ((node.type === "text" || node.type === "inlineCode" || node.type === "code") && node.value.trim()) {
+    if (SHOWN_NODE_TYPES.has(node.type) || (TEXT_NODE_TYPES.has(node.type) && "value" in node && node.value.trim())) {
       more = true;
       return;
     }
     if ("children" in node) node.children.forEach(visit);
   }
-  visit(renderedMarkdownTree(preprocessWikilinks(body)));
+  visit(readingTree(preprocessWikilinks(body)));
   return more;
 }
 

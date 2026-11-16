@@ -29,8 +29,9 @@ import { Card, CardSkeleton } from "./Card";
 import { EmptySpaceOnboarding } from "./EmptySpaceOnboarding";
 import { MeasureCard } from "./MeasureCard";
 import { CardTagMenu } from "./CardContextMenu";
-import { CardPanelPointMenu } from "./CardHoverMenu";
-import { menuPanelUsable } from "@/lib/menuPanelSource";
+import { CARD_POINT_OPENER, CardPanelPointMenu, startCardMenuPanel, type CardPanelCard } from "./CardHoverMenu";
+import { menuPanelUsable, type MenuPanelSession } from "@/lib/menuPanelSource";
+import { useCollectionNameCheck } from "@/hooks/useCollectionNameRefusal";
 import { createPortal } from "react-dom";
 import { GroupSelectionCommands } from "./GroupSelectionCommands";
 import type { MembershipAnswer } from "./CollectionPicker";
@@ -44,7 +45,6 @@ import {
 import { roleEasing, roleMs } from "@/lib/motion";
 import { MergeCardsDialog } from "./MergeCardsDialog";
 import {
-  computeMasonryLayout,
   createVisibilityIndex,
   getMasonryColumnCount,
   getMasonryColumnWidth,
@@ -55,13 +55,14 @@ import {
 import { FEED_COLUMN_MIN_WIDTH_PX, computeCardHeight } from "@/lib/cardHeight";
 import { computeFeedPlaybackSurfaceEnvelope } from "@/lib/cardHeight";
 import { LayoutCache } from "@/lib/layoutCache";
-import { createFontMetricsCacheIdentity, fetchWordWidths, measureTopFirst } from "@/lib/fontMetrics";
+import { fetchWordWidths, measureTopFirst } from "@/lib/fontMetrics";
 import { useGridScroll } from "@/hooks/useGridScroll";
-import { useFeedMediaPreloader } from "@/hooks/useFeedMediaPreloader";
 import type { FeedKeyboardFocus } from "@/hooks/useSidebarKeyboardFocus";
 import type { WordWidths } from "@/types/fontMetrics";
 import {
+  buildFeedSignature,
   buildLayoutGenerationKey,
+  type FeedSignature,
   type LayoutGenerationKey,
 } from "@/lib/layoutGeneration";
 import { normalizeFeedPlayback } from "@/lib/feedPlayback";
@@ -70,6 +71,7 @@ import {
   computeFeedScrollReadinessWindows,
   sampleFeedScrollSignal,
   shouldPrefetchNextFeedPage,
+  type FeedScrollDirection,
   type FeedScrollSignal,
   type FeedScrollSignalSample,
 } from "@/lib/feedScrollReadiness";
@@ -78,9 +80,12 @@ import {
   computeCommittedEndIndex,
   createGridLayoutReadinessDiagnostics,
   blockHasExactDeterministicHeight,
-  generationHasExactDeterministicHeights,
+  type GridLayoutReadinessDiagnostics,
 } from "@/lib/gridLayoutReadiness";
-import { createGridViewportPaintDiagnostics } from "@/lib/gridViewportDiagnostics";
+import {
+  createGridViewportPaintDiagnostics,
+  type GridViewportPaintDiagnostics,
+} from "@/lib/gridViewportDiagnostics";
 import {
   createCardHeightDriftReport,
   type CardHeightDriftObservation,
@@ -130,11 +135,52 @@ import {
   type PendingScrollAnchor,
   type ScrollAnchorSnapshot,
 } from "./grid/interaction";
+import {
+  columnsKept,
+  everyHeightIsExact,
+  layFeedOut,
+  rememberedColumns,
+  rememberedPositionAt,
+  type ColumnMemory,
+} from "./grid/feedLayout";
+import {
+  createWordMetricsLedger,
+  planWordMetrics,
+  recordWordMetrics,
+  type WordMetricsLedger,
+} from "./grid/wordMetrics";
+
+/// The feed's scroll diagnostics for developers and the browser audits
+/// (SPEC_FEED_SCROLL_PERFORMANCE.md, «Diagnostics»): never shown in the app.
+interface FeedScrollDebug {
+  layoutGenerationKey: string;
+  scrollDirection: FeedScrollDirection;
+  scrollVelocityPxMs: number;
+  isFastScrolling: boolean;
+  mountedGridItems: number;
+  renderWindowPx: { forward: number; backward: number };
+  priorityWindowPx: { forward: number; backward: number };
+  layout?: GridLayoutReadinessDiagnostics;
+  viewport?: GridViewportPaintDiagnostics;
+  heightDrift?: CardHeightDriftReport;
+}
 
 declare global {
   interface Window {
     __MINE_REQUEST_HEIGHT_DRIFT_AUDIT__?: () => void;
+    __MINE_FEED_SCROLL_DEBUG__?: FeedScrollDebug;
   }
+}
+
+/// A window's two sides named by the direction of travel.
+function windowByDirection(
+  direction: FeedScrollDirection,
+  beforePx: number,
+  afterPx: number,
+): { forward: number; backward: number } {
+  return direction === "backward"
+    ? { forward: beforePx, backward: afterPx }
+    : { forward: afterPx, backward: beforePx };
 }
 
 // ─── Layout constants ───────────────────────────────────────────────────────
@@ -142,6 +188,8 @@ declare global {
 // One number with the card's narrow text (SPEC_NARROW_WINDOW.md, У14).
 const COLUMN_MIN_WIDTH = FEED_COLUMN_MIN_WIDTH_PX;
 const EMPTY_WORD_WIDTHS: ReadonlyMap<number, WordWidths> = new Map();
+const NO_SELECTED_BLOCKS: LightBlock[] = [];
+const NO_BLOCK_IDS: ReadonlySet<number> = new Set();
 // Card gap and container insets both follow the app-wide spacing setting; they
 // used to be design-variant constants baked into the alt design. See
 // src/lib/density.ts.
@@ -368,90 +416,12 @@ function cancelIdleTask(handle: number): void {
   window.clearTimeout(handle);
 }
 
-function buildLayout(
-  blocks: LightBlock[],
-  parentWidth: number,
-  wordWidthsMap: Map<number, WordWidths>,
-  gap: number,
-  show: FeedShow,
-  columnOf?: (index: number) => number | undefined,
-): MasonryLayout {
-  const columnWidth = deriveColumnWidth(parentWidth, gap);
-
-  const heights = blocks.map((block) => {
-    return computeCardHeight(block, columnWidth, wordWidthsMap.get(block.id) ?? null, show);
-  });
-
-  return computeMasonryLayout(
-    heights,
-    parentWidth,
-    COLUMN_MIN_WIDTH,
-    gap,
-    columnOf,
-  );
-}
-
-/** The columns of the last layout shown, and the view they belong to. */
-interface ColumnMemory {
-  /** The route these cards are from. Null while a new route's list is on its
-   *  way and the feed still holds the previous route's cards: their columns
-   *  are no memory of the new route (SPEC_GRID.md, «Форма ленты»). */
-  routeKey: string | null;
-  parentWidth: number;
-  show: FeedShow;
-  /** The cards in the order they were laid out. */
-  order: string[];
-  column: Map<string, number>;
-  /** Where each card stood, to move the ones that shifted (К3). */
-  top: Map<string, number>;
-  /** Every height was exact. Columns of a layout made on the worst-case
-   *  text heights that stand in while fonts load are not kept: the first
-   *  exact layout balances the columns anew. */
-  exact: boolean;
-}
-
 /** The feed's side insets follow a new Spacing as Перемещение (Л5;
  *  SPEC_MOTION_LEVELS.md, РД1): the role's tokens, Off at once by them. */
 const FEED_INSET_TRANSITION =
   "padding-left var(--motion-move) var(--motion-move-ease), padding-right var(--motion-move) var(--motion-move-ease)";
 /** At most this many cards move smoothly at once; past it they jump. */
 const CARD_MOVE_LIMIT = 120;
-
-/**
- * Where each card stood on the last layout, when the view is the same one:
- * the same route, width and presentation, and the cards that remain in the
- * order they had (SPEC_GRID_LAYOUT_READINESS.md, К1, К2). Null when the view
- * changed: the feed is then laid out anew.
- */
-function rememberedColumns(
-  memory: ColumnMemory | null,
-  blocks: readonly LightBlock[],
-  routeKey: string,
-  parentWidth: number,
-  show: FeedShow,
-): ((index: number) => number | undefined) | null {
-  if (
-    memory === null
-    || !memory.exact
-    || memory.routeKey !== routeKey
-    || Math.abs(memory.parentWidth - parentWidth) > 0.5
-    || memory.show !== show
-  ) {
-    return null;
-  }
-  const present = new Set(blocks.map((block) => block.slug));
-  const kept = memory.order.filter((slug) => present.has(slug));
-  let next = 0;
-  for (const block of blocks) {
-    if (!memory.column.has(block.slug)) continue;
-    if (kept[next] !== block.slug) return null;
-    next += 1;
-  }
-  return (index) => {
-    const slug = blocks[index]?.slug;
-    return slug === undefined ? undefined : memory.column.get(slug);
-  };
-}
 
 // ─── Heavy autoplay pool arbitration ───────────────────────────────────────
 
@@ -635,15 +605,31 @@ export function Grid({
   /// clicked card and the selection are both known.
   const [contextMenuScope, setContextMenuScope] = useState<"card" | "selection">("card");
   /// TRIAL: a card's right click menu in the menu panel (DESIGN_SYSTEM.md,
-  /// «Меню карточки в отдельном окне: проба»); each click a new opening.
+  /// «Меню карточки в отдельном окне: проба»), opened by the click's own
+  /// handler; `onPage` once the panel could not show it.
   const [panelPointMenu, setPanelPointMenu] = useState<{
     block: LightBlock;
+    session: MenuPanelSession;
     x: number;
     y: number;
-    eventAt: number;
+    onPage: boolean;
     sequence: number;
   } | null>(null);
   const panelPointSequenceRef = useRef(0);
+  /// The feed opened that menu and owns it: it holds the menu's handle and
+  /// closes the menu when it unmounts (SPEC_MENU_WINDOW.md, МО41, МО42). The
+  /// effect has no dependencies: in StrictMode its cleanup runs once on
+  /// mount, when no menu is open yet.
+  const panelPointSessionRef = useRef<MenuPanelSession | null>(null);
+  useEffect(() => () => panelPointSessionRef.current?.close("source"), []);
+  const checkCollectionName = useCollectionNameCheck(undefined);
+  /// What the panel's choices act on when they come.
+  const panelCardRef = useRef<Omit<CardPanelCard<LightBlock>, "block">>({
+    vaultPath, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete, checkName: checkCollectionName,
+  });
+  panelCardRef.current = {
+    vaultPath, tags, currentTag, onToggleTag, onCreateAndAssign, onRequestRename, onRequestDelete, checkName: checkCollectionName,
+  };
   /// The group delete window: the request it answers, and whether it is open.
   /// A closed window keeps its request while it leaves.
   const [deleteSelection, setDeleteSelection] = useState<{
@@ -721,11 +707,11 @@ export function Grid({
   const [wordWidthsMap, setWordWidthsMap] = useState<Map<number, WordWidths>>(new Map());
   const [wordMetricsSettled, setWordMetricsSettled] = useState(blocks.length === 0);
   const [heightDriftAuditBatch, setHeightDriftAuditBatch] = useState<LightBlock[]>([]);
-  // Font-metrics cache identity (createFontMetricsCacheIdentity.cacheKey) per
-  // block id, tracking exactly which measured text each map entry was computed
-  // for. Lets the metrics effect fetch only genuinely new or edited blocks
-  // instead of clearing every word width on each blocks identity change.
-  const wordWidthsIdentityRef = useRef<Map<number, string>>(new Map());
+  // Which measured text each entry of the map was computed for, and which
+  // cards still wait for theirs (src/components/grid/wordMetrics.ts). Lets the
+  // metrics effect ask only for genuinely new or edited blocks, and look only
+  // at the cards that are new objects.
+  const wordMetricsLedgerRef = useRef<WordMetricsLedger | null>(null);
 
   const readGridScrollMetrics = useCallback((
     element: HTMLElement,
@@ -847,42 +833,28 @@ export function Grid({
     // (cacheKey mismatch after an in-place edit). Blocks whose widths are still
     // valid keep their exact height and stay rendered — no map reset, no
     // skeleton flash, no O(N) IndexedDB re-query on every pagination page.
-    const identityByBlockId = new Map<number, string>();
-    const needsCompute: LightBlock[] = [];
-    for (const block of blocks) {
-      const identity = createFontMetricsCacheIdentity(block);
-      identityByBlockId.set(block.id, identity.cacheKey);
-      if (wordWidthsIdentityRef.current.get(block.id) !== identity.cacheKey) {
-        needsCompute.push(block);
-      }
-    }
+    const ledger = (wordMetricsLedgerRef.current ??= createWordMetricsLedger());
+    const plan = planWordMetrics(ledger, blocks);
 
-    // Prune metrics that no longer apply, before the early return so a
-    // removal-only change still frees the entries. An id absent from the current
-    // block set has left the feed (channel switch, pagination reset); an id whose
-    // recorded cacheKey no longer matches was edited in place. Dropping the stale
-    // entry makes the edited block fall back to the skeleton until its recomputed
-    // widths arrive instead of being laid out at its pre-edit height, and bounds
-    // both structures to the live block set across a long session.
-    for (const id of [...wordWidthsIdentityRef.current.keys()]) {
-      const currentKey = identityByBlockId.get(id);
-      if (currentKey === undefined || wordWidthsIdentityRef.current.get(id) !== currentKey) {
-        wordWidthsIdentityRef.current.delete(id);
-      }
-    }
-    setWordWidthsMap((prev) => {
-      let changed = false;
-      const next = new Map(prev);
-      for (const id of prev.keys()) {
-        if (!wordWidthsIdentityRef.current.has(id)) {
+    // Drop the widths that no longer apply, before the early return so a
+    // removal-only change still frees the entries: the card left the feed
+    // (channel switch, pagination reset) or was edited in place. Dropping the
+    // stale entry makes the edited block fall back to the skeleton until its
+    // recomputed widths arrive instead of being laid out at its pre-edit
+    // height, and bounds the map to the live block set across a long session.
+    if (plan.dropped.length > 0) {
+      setWordWidthsMap((prev) => {
+        let next: Map<number, WordWidths> | null = null;
+        for (const id of plan.dropped) {
+          if (!prev.has(id)) continue;
+          next ??= new Map(prev);
           next.delete(id);
-          changed = true;
         }
-      }
-      return changed ? next : prev;
-    });
+        return next ?? prev;
+      });
+    }
 
-    if (needsCompute.length === 0) {
+    if (plan.needsCompute.length === 0) {
       setWordMetricsSettled(true);
       return () => {
         cancelled = true;
@@ -894,12 +866,7 @@ export function Grid({
     setWordMetricsSettled(false);
     const publish = (computed: Map<number, WordWidths>) => {
       if (cancelled || computed.size === 0) return;
-      for (const id of computed.keys()) {
-        const cacheKey = identityByBlockId.get(id);
-        if (cacheKey !== undefined) {
-          wordWidthsIdentityRef.current.set(id, cacheKey);
-        }
-      }
+      recordWordMetrics(ledger, plan, computed.keys());
       setWordWidthsMap((prev) => {
         const next = new Map(prev);
         for (const [id, widths] of computed) {
@@ -908,7 +875,7 @@ export function Grid({
         return next;
       });
     };
-    void measureTopFirst(needsCompute, fetchWordWidths, publish, () => cancelled)
+    void measureTopFirst(plan.needsCompute, fetchWordWidths, publish, () => cancelled)
       .finally(() => {
         if (!cancelled) {
           setWordMetricsSettled(true);
@@ -932,9 +899,19 @@ export function Grid({
     () => getMasonryColumnCount(parentWidth, COLUMN_MIN_WIDTH, layoutGap),
     [layoutGap, parentWidth],
   );
+  // The cards' signatures folded in order, continued from the list before:
+  // a page added to the end hashes its own cards alone, and a new width
+  // hashes none (SPEC_GRID.md, «Кэш при карточке и продолжение раскладки»).
+  const feedSignatureRef = useRef<FeedSignature | null>(null);
+  const feedSignature = useMemo(
+    () => buildFeedSignature(blocks, feedSignatureRef.current),
+    [blocks],
+  );
+  feedSignatureRef.current = feedSignature;
   const generationKey = useMemo<LayoutGenerationKey>(
     () => buildLayoutGenerationKey({
       blocks,
+      signature: feedSignature,
       routeKey,
       columnWidth,
       columnCount,
@@ -943,30 +920,23 @@ export function Grid({
       layoutGap,
       show,
     }),
-    [blocks, columnCount, columnWidth, routeKey, layoutGap, show],
+    [blocks, columnCount, columnWidth, feedSignature, routeKey, layoutGap, show],
   );
-  const heightDriftBlocksById = useMemo(() => {
-    const map = new Map<number, LightBlock>();
-    for (const block of blocks) {
-      map.set(block.id, block);
-    }
-    return map;
-  }, [blocks]);
   const heightDriftContextRef = useRef<{
-    blocksById: ReadonlyMap<number, LightBlock>;
+    blocks: readonly LightBlock[];
     generationKey: LayoutGenerationKey;
     parentWidth: number;
     wordWidthsMap: Map<number, WordWidths>;
     show: FeedShow;
   }>({
-    blocksById: heightDriftBlocksById,
+    blocks,
     generationKey,
     parentWidth,
     wordWidthsMap,
     show,
   });
   heightDriftContextRef.current = {
-    blocksById: heightDriftBlocksById,
+    blocks,
     generationKey,
     parentWidth,
     wordWidthsMap,
@@ -985,20 +955,40 @@ export function Grid({
     [thumbsRootPath, vaultPath],
   );
 
-  const renderReadyBlockIds = useMemo(() => {
+  // Exactness is stricter than "settled": after the metrics promise resolves,
+  // every block becomes render-ready (fallback heights keep the feed usable),
+  // but a generation is only cacheable when no block sits on the worst-clamped
+  // text fallback — otherwise the oversized fallback layout gets pinned in the
+  // module-level cache and survives the later arrival of exact word widths.
+  const allBlocksHaveExactHeights = useMemo(
+    () => everyHeightIsExact(blocks, wordWidthsMap, show),
+    [blocks, show, wordWidthsMap],
+  );
+
+  // Every card of the feed. While all of them can render it is the set of
+  // the render-ready ones itself, the same object whatever else changes.
+  const allBlockIds = useMemo(() => {
     const ids = new Set<number>();
-    if (parentWidth <= 0) return ids;
+    for (const block of blocks) ids.add(block.id);
+    return ids;
+  }, [blocks]);
+  const renderReadyBlockIds = useMemo(() => {
+    if (parentWidth <= 0) return NO_BLOCK_IDS;
+    if (wordMetricsSettled || allBlocksHaveExactHeights) return allBlockIds;
+    const ids = new Set<number>();
     for (const block of blocks) {
       if (blockCanRenderFromDeterministicHeight(block, wordWidthsMap, wordMetricsSettled, show)) {
         ids.add(block.id);
       }
     }
     return ids;
-  }, [blocks, parentWidth, show, wordMetricsSettled, wordWidthsMap]);
+  }, [allBlockIds, allBlocksHaveExactHeights, blocks, parentWidth, show, wordMetricsSettled, wordWidthsMap]);
 
   const committedEndIndex = useMemo(
-    () => computeCommittedEndIndex(blocks, renderReadyBlockIds, parentWidth > 0),
-    [blocks, parentWidth, renderReadyBlockIds],
+    () => (parentWidth > 0 && renderReadyBlockIds === allBlockIds
+      ? blocks.length - 1
+      : computeCommittedEndIndex(blocks, renderReadyBlockIds, parentWidth > 0)),
+    [allBlockIds, blocks, parentWidth, renderReadyBlockIds],
   );
 
   // The first real cards on screen: the startup milestone waits for them,
@@ -1012,16 +1002,6 @@ export function Grid({
     if (!hasRenderedCards || typeof window === "undefined") return;
     return scheduleAfterNextPaint(reportCardsRendered);
   }, [hasRenderedCards]);
-
-  // Exactness is stricter than "settled": after the metrics promise resolves,
-  // every block becomes render-ready (fallback heights keep the feed usable),
-  // but a generation is only cacheable when no block sits on the worst-clamped
-  // text fallback — otherwise the oversized fallback layout gets pinned in the
-  // module-level cache and survives the later arrival of exact word widths.
-  const allBlocksHaveExactHeights = useMemo(
-    () => generationHasExactDeterministicHeights(blocks, wordWidthsMap, show),
-    [blocks, show, wordWidthsMap],
-  );
 
   const allCurrentGenerationDeterministic =
     wordMetricsSettled &&
@@ -1052,8 +1032,9 @@ export function Grid({
           // guaranteed to have been built with the current layoutGap.
           const columnWidth = deriveColumnWidth(driftContext.parentWidth, layoutGap);
           const observations: CardHeightDriftObservation[] = [];
+          const blocksById = new Map(driftContext.blocks.map((block) => [block.id, block]));
           for (const result of measuredResults) {
-            const block = driftContext.blocksById.get(result.id);
+            const block = blocksById.get(result.id);
             if (!block) continue;
             const wordWidths = driftContext.wordWidthsMap.get(result.id) ?? null;
             const wordMetricsRequired = !blockHasExactDeterministicHeight(block, EMPTY_WORD_WIDTHS, driftContext.show);
@@ -1084,10 +1065,13 @@ export function Grid({
   // The columns of the layout on screen: a card keeps its column while the
   // view is the same, so a height change moves only its own column (К1).
   const columnMemoryRef = useRef<ColumnMemory | null>(null);
-  const columnOf = useMemo(
+  const columns = useMemo(
     () => rememberedColumns(columnMemoryRef.current, blocks, routeKey, parentWidth, show),
     [blocks, parentWidth, routeKey, show],
   );
+  // The layout made last: a card that comes out where it stands in it keeps
+  // its position object, so it is not drawn again.
+  const lastLayoutRef = useRef<MasonryLayout | null>(null);
   // The visible layout always belongs to the current generation. Production
   // heights come from deterministic card geometry only; measured DOM heights
   // are never fed back into layout because that feedback loop is what caused
@@ -1105,88 +1089,98 @@ export function Grid({
       };
     }
 
+    const layFeed = () => layFeedOut({
+      blocks,
+      parentWidth,
+      layoutGap,
+      show,
+      wordWidths: wordWidthsMap,
+      columns,
+      last: lastLayoutRef.current,
+    });
     if (!allCurrentGenerationDeterministic) {
-      return buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show, columnOf ?? undefined);
+      return layFeed();
     }
 
     const cached = layoutCache.get(generationKey);
     if (cached) return cached;
 
-    const fresh = buildLayout(blocks, parentWidth, wordWidthsMap, layoutGap, show, columnOf ?? undefined);
+    const fresh = layFeed();
     layoutCache.set(generationKey, fresh);
     return fresh;
-  }, [allCurrentGenerationDeterministic, blocks, columnCount, columnOf, columnWidth, generationKey, layoutGap, parentWidth, show, wordWidthsMap]);
+  }, [allCurrentGenerationDeterministic, blocks, columnCount, columns, columnWidth, generationKey, layoutGap, parentWidth, show, wordWidthsMap]);
+  lastLayoutRef.current = layout;
   // A layout of the same view moves the mounted cards that shifted over
   // 200ms, each from where it stood; a new view stands at once (К3). Only
   // those cards are touched: switching a transition on for the whole feed
   // made every change restyle every card, and cost the scroll its frames.
-  const layoutMovesSmoothly = columnOf !== null;
+  const layoutMovesSmoothly = columns !== null;
   useLayoutEffect(() => {
     const previous = columnMemoryRef.current;
-    // A card that changed its column means the feed was laid out anew in spite
-    // of the memory: it stands at once, like any new view (SPEC_GRID.md,
-    // «Форма ленты»).
-    const columnsKept = layoutMovesSmoothly && layout.positions.every((position) => {
-      const slug = blocks[position.index]?.slug;
-      const was = slug === undefined ? undefined : previous?.column.get(slug);
-      return was === undefined || was === position.column;
-    });
-    const column = new Map<string, number>();
-    const top = new Map<string, number>();
     const scrollElement = parentRef.current;
     // A card moves to its new place as Перемещение (К3, Л4), by the level
     // whoever changed the data, a key included: the same move comes of an
     // outside edit, which has no key (УД4, п. 6).
     const moveMs = roleMs("move", "enter");
-    const moveEasing = roleEasing("move");
-    let moving = 0;
-    for (const position of layout.positions) {
-      const slug = blocks[position.index]?.slug;
-      if (slug === undefined) continue;
-      column.set(slug, position.column);
-      top.set(slug, position.top);
-      const was = previous?.top.get(slug);
-      if (
-        !columnsKept
-        || was === undefined
-        || was === position.top
-        || scrollElement === null
-        || moving >= CARD_MOVE_LIMIT
-        || moveMs === 0
-      ) {
-        continue;
+    // The same array of positions: no card moved.
+    if (
+      previous !== null
+      && layoutMovesSmoothly
+      && scrollElement !== null
+      && moveMs > 0
+      && previous.layout.positions !== layout.positions
+    ) {
+      const moveEasing = roleEasing("move");
+      // Only a card on the page can move before the eyes: the shown cards,
+      // in the feed's order.
+      const shown = [...scrollElement.querySelectorAll<HTMLElement>("[data-feed-grid-item-slug]")]
+        .map((element) => ({ element, index: Number(element.dataset.feedGridItemIndex) }))
+        .sort((first, second) => first.index - second.index);
+      // A card that changed its column means the feed was laid out anew in
+      // spite of the memory: it stands at once, like any new view (SPEC_GRID.md,
+      // «Форма ленты»). Asked once, when the first shown card has moved.
+      let kept: boolean | null = null;
+      let moving = 0;
+      for (const { element, index } of shown) {
+        if (moving >= CARD_MOVE_LIMIT) break;
+        const position = layout.positions[index];
+        if (position === undefined) continue;
+        const was = rememberedPositionAt(previous, columns, blocks, index)?.top;
+        if (was === undefined || was === position.top) continue;
+        kept ??= columnsKept(previous, columns, blocks, layout);
+        if (!kept) break;
+        if (typeof element.animate !== "function") continue;
+        moving += 1;
+        element.animate(
+          [
+            { transform: `translate3d(${position.left}px, ${was}px, 0)` },
+            { transform: `translate3d(${position.left}px, ${position.top}px, 0)` },
+          ],
+          { duration: moveMs, easing: moveEasing },
+        );
       }
-      const element = scrollElement.querySelector<HTMLElement>(
-        `[data-feed-grid-item-slug="${CSS.escape(slug)}"]`,
-      );
-      if (element === null || typeof element.animate !== "function") continue;
-      moving += 1;
-      element.animate(
-        [
-          { transform: `translate3d(${position.left}px, ${was}px, 0)` },
-          { transform: `translate3d(${position.left}px, ${position.top}px, 0)` },
-        ],
-        { duration: moveMs, easing: moveEasing },
-      );
     }
     columnMemoryRef.current = {
       routeKey: routeSnapshotReady ? routeKey : null,
       parentWidth,
+      layoutGap,
       show,
-      order: blocks.map((block) => block.slug),
-      column,
-      top,
+      blocks,
+      layout,
       exact: allCurrentGenerationDeterministic,
     };
-  }, [allCurrentGenerationDeterministic, blocks, layout, layoutMovesSmoothly, parentWidth, routeKey, routeSnapshotReady, show]);
+  }, [allCurrentGenerationDeterministic, blocks, columns, layout, layoutGap, layoutMovesSmoothly, parentWidth, routeKey, routeSnapshotReady, show]);
 
   useEffect(() => {
     onColumnCountChange?.(layout.columnCount);
   }, [layout.columnCount, onColumnCountChange]);
 
+  // By the positions, not by the layout object: a layout made anew whose
+  // cards did not move keeps its array of positions.
+  const { positions: layoutPositions, totalHeight: layoutTotalHeight } = layout;
   const visibilityIndex = useMemo(
-    () => createVisibilityIndex(layout),
-    [layout],
+    () => createVisibilityIndex({ positions: layoutPositions, totalHeight: layoutTotalHeight }),
+    [layoutPositions, layoutTotalHeight],
   );
   const scrollReadinessWindows = useMemo(
     () => computeFeedScrollReadinessWindows({
@@ -1341,6 +1335,14 @@ export function Grid({
     spaceOnboardingOwed === false,
   );
 
+  const blocksBySlug = useMemo(() => {
+    const bySlug = new Map<string, LightBlock>();
+    for (const block of blocks) bySlug.set(block.slug, block);
+    return bySlug;
+  }, [blocks]);
+  const blocksBySlugRef = useRef(blocksBySlug);
+  blocksBySlugRef.current = blocksBySlug;
+
   useLayoutEffect(() => {
     const scrollElement = parentRef.current;
     const previous = scrollAnchorSnapshotRef.current;
@@ -1357,21 +1359,39 @@ export function Grid({
       // the viewport. Away from the top this guard is inactive and
       // anchoring keeps the first visible card fixed when content above it moves.
       latestScrollTopRef.current > TOP_OF_FEED_SCROLL_EPSILON_PX &&
-      // The layout object changes identity only when positions actually change
-      // (blocks added/removed, or a block's height changed after a preview
-      // upgrade). Re-anchoring on every layout change — not just removals —
-      // keeps the first visible card fixed when content above the viewport
-      // grows or shrinks. When nothing above shifted, the anchor resolves to
-      // the current scrollTop and the apply step below is a no-op.
-      previous.positions !== layout.positions
+      // The layout object is a new one whenever the layout is made anew
+      // (blocks added/removed, a block's height changed after a preview
+      // upgrade, word widths arrived). Re-anchoring on every layout made — not
+      // just removals — keeps the first visible card fixed when content above
+      // the viewport grows or shrinks. When nothing above shifted, the anchor
+      // resolves to the current scrollTop and the apply step below is a no-op.
+      previous.layout !== layout
     ) {
-      const currentSlugs = new Set(blocks.map((block) => block.slug));
+      const scrollTopNow = latestScrollTopRef.current;
+      const viewportNow = scrollElement.clientHeight || viewportHeight;
+      // The anchor is a card on screen whenever one of them is still in the
+      // feed: every such card comes before any card off screen. Only without
+      // one is the whole previous layout read.
+      const onScreen = getVisibleItemsFromIndex(
+        previous.visibility,
+        scrollTopNow - gridTopInset,
+        viewportNow,
+        0,
+        0,
+      ).sort((first, second) => first.index - second.index);
       const anchor = findViewportPreservationAnchor(
+        onScreen,
+        previous.blocks,
+        blocksBySlug,
+        scrollTopNow,
+        viewportNow,
+        gridTopInset,
+      ) ?? findViewportPreservationAnchor(
         previous.positions,
         previous.blocks,
-        currentSlugs,
-        latestScrollTopRef.current,
-        scrollElement.clientHeight || viewportHeight,
+        blocksBySlug,
+        scrollTopNow,
+        viewportNow,
         gridTopInset,
       );
       if (anchor) {
@@ -1412,15 +1432,19 @@ export function Grid({
       parentWidth,
       blocks,
       positions: layout.positions,
+      layout,
+      visibility: visibilityIndex,
     };
   }, [
     blocks,
+    blocksBySlug,
     routeKey,
     focusedSlug,
     layout,
     parentWidth,
     renderReadyBlockIds,
     viewportHeight,
+    visibilityIndex,
   ]);
 
   // Where the feed stands, for the tab's memory. The reader works from the
@@ -1495,30 +1519,46 @@ export function Grid({
     scrollTop,
     viewportHeight,
   ]);
-  const feedMediaPreloadStats = useFeedMediaPreloader({
-    enabled: blocks.length > 0 && parentWidth > 0,
-    blocks,
-    layout,
-    visibilityIndex,
-    scrollTop,
-    viewportHeight,
-    scrollDirection: feedScrollSignal.scrollDirection,
-    scrollVelocityPxMs: feedScrollSignal.scrollVelocityPxMs,
-    isFastScrolling: feedScrollSignal.isFastScrolling,
-    generationKey,
-    thumbsRootPath: resolvedThumbsRootPath,
-    mountedGridItems: visibleItems.length,
-    windows: scrollReadinessWindows,
-  });
-  void feedMediaPreloadStats;
+
+  // The diagnostics object lives as long as the feed does. The parts the
+  // effects below publish (layout, viewport, height drift) stay on it when the
+  // scroll signal replaces the rest.
+  useEffect(() => {
+    return () => {
+      delete window.__MINE_FEED_SCROLL_DEBUG__;
+    };
+  }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const debug = window.__MINE_FEED_SCROLL_DEBUG__;
-    if (debug && heightDriftReportRef.current) {
-      debug.heightDrift = heightDriftReportRef.current;
-    }
-  }, [feedMediaPreloadStats, generationKey]);
+    const previous = window.__MINE_FEED_SCROLL_DEBUG__;
+    window.__MINE_FEED_SCROLL_DEBUG__ = {
+      layoutGenerationKey: generationKey,
+      scrollDirection: feedScrollSignal.scrollDirection,
+      scrollVelocityPxMs: feedScrollSignal.scrollVelocityPxMs,
+      isFastScrolling: feedScrollSignal.isFastScrolling,
+      mountedGridItems: visibleItems.length,
+      renderWindowPx: windowByDirection(
+        feedScrollSignal.scrollDirection,
+        scrollReadinessWindows.renderBeforePx,
+        scrollReadinessWindows.renderAfterPx,
+      ),
+      priorityWindowPx: windowByDirection(
+        feedScrollSignal.scrollDirection,
+        scrollReadinessWindows.priorityBeforePx,
+        scrollReadinessWindows.priorityAfterPx,
+      ),
+      layout: previous?.layout,
+      viewport: previous?.viewport,
+      heightDrift: heightDriftReportRef.current ?? previous?.heightDrift,
+    };
+  }, [
+    feedScrollSignal.isFastScrolling,
+    feedScrollSignal.scrollDirection,
+    feedScrollSignal.scrollVelocityPxMs,
+    generationKey,
+    scrollReadinessWindows,
+    visibleItems.length,
+  ]);
 
   const layoutReadinessDiagnostics = useMemo(
     () => createGridLayoutReadinessDiagnostics({
@@ -1617,13 +1657,6 @@ export function Grid({
     };
   }, [publishViewportPaintDiagnostics]);
 
-  const blocksBySlug = useMemo(
-    () => new Map(blocks.map((block) => [block.slug, block])),
-    [blocks],
-  );
-  const blocksBySlugRef = useRef(blocksBySlug);
-  blocksBySlugRef.current = blocksBySlug;
-
   useEffect(() => {
     suppressedFocusedScrollSlugRef.current = null;
     sidebarReturnSlugRef.current = null;
@@ -1693,7 +1726,8 @@ export function Grid({
       scrollPositionIntoView(scrollElement, position, gridTopInset);
     });
     return () => cancelAnimationFrame(rafId);
-  }, [blocks, feedInteractionMode, focusedSlug, layout.positions]);
+    // By the layout object, a new one whenever the layout is made anew.
+  }, [blocks, feedInteractionMode, focusedSlug, layout]);
 
   const handleGridItemPointerMove = useCallback((
     slug: string,
@@ -1756,8 +1790,10 @@ export function Grid({
     setMarqueeSelection(null);
   }, []);
 
+  // Without a selection the list is the same empty one: a change of the feed
+  // then reaches no card through it.
   const selectedBlocks = useMemo(
-    () => blocks.filter((block) => selectedSlugs.has(block.slug)),
+    () => (selectedSlugs.size === 0 ? NO_SELECTED_BLOCKS : blocks.filter((block) => selectedSlugs.has(block.slug))),
     [blocks, selectedSlugs],
   );
 
@@ -2465,16 +2501,27 @@ export function Grid({
       }
       const block = blocksBySlug.get(slug);
       if (block && menuPanelUsable()) {
-        // The menu opens in the panel: the page's context menu does not.
+        // The menu opens in the panel, asked for here, before React draws:
+        // the page's context menu does not open.
         e.preventDefault();
         panelPointSequenceRef.current += 1;
-        setPanelPointMenu({
-          block,
-          x: e.clientX,
-          y: e.clientY,
-          eventAt: performance.timeOrigin + e.timeStamp,
-          sequence: panelPointSequenceRef.current,
-        });
+        const sequence = panelPointSequenceRef.current;
+        const session = startCardMenuPanel(
+          () => ({ ...panelCardRef.current, block }),
+          {
+            anchor: { x: e.clientX, y: e.clientY, width: 0, height: 0 },
+            opener: CARD_POINT_OPENER,
+            byKey: false,
+            eventAt: performance.timeOrigin + e.timeStamp,
+            contextMenu: true,
+          },
+          {
+            onClosed: () => setPanelPointMenu((menu) => (menu?.sequence === sequence ? null : menu)),
+            onRefused: () => setPanelPointMenu((menu) => (menu?.sequence === sequence ? { ...menu, onPage: true } : menu)),
+          },
+        );
+        panelPointSessionRef.current = session;
+        setPanelPointMenu({ block, session, x: e.clientX, y: e.clientY, onPage: false, sequence });
       } else if (block) {
         setContextMenuScope("card");
         setMenuBlock(block);
@@ -2783,9 +2830,10 @@ export function Grid({
         onCreateAndAssign={onCreateAndAssign}
         onRequestRename={onRequestRename}
         onRequestDelete={onRequestDelete}
+        session={panelPointMenu.session}
+        onPage={panelPointMenu.onPage}
         x={panelPointMenu.x}
         y={panelPointMenu.y}
-        eventAt={panelPointMenu.eventAt}
         onClose={() => setPanelPointMenu(null)}
       />
     )}

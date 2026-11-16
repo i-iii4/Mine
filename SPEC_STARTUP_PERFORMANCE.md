@@ -1,5 +1,7 @@
 # Startup Performance Specification
 
+**Состояние:** реализовано 08.09.2026; остаётся ручная проверка после перезагрузки macOS. Источник: раздел «Статус» ниже; PLAN.md, Phase 33. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_TABS.md](SPEC_TABS.md)
 
 ## Статус

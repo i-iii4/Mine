@@ -35,6 +35,7 @@ async function assertDevServerReady(url) {
         "Start the dev server first, then rerun this audit.",
         `Original error: ${error instanceof Error ? error.message : String(error)}`,
       ].join("\n"),
+      { cause: error },
     );
   }
 }

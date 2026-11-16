@@ -11,10 +11,10 @@ vi.mock("@/lib/reading/syntax", async (importOriginal) => {
   return { ...original, parseReadingSyntax: vi.fn(original.parseReadingSyntax) };
 });
 
+import { firstImageOffset } from "@/lib/reading/tree";
 import {
   decodeLocalMarkdownUrl as reexportedDecode,
   decodeWikilinkHref,
-  firstImageOffset,
   inlineMediaOccurrenceIndex,
   preprocessWikilinks,
   preprocessWikilinksWithMap,

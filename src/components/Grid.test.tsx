@@ -596,7 +596,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(reported).toEqual([2]);
   });
 
-  it("preloads media through a wider readiness window without mounting preload-only GridItems", async () => {
+  it("publishes the scroll diagnostics and mounts only the render window", async () => {
     vi.useFakeTimers();
 
     const blocks = Array.from({ length: 20 }, (_, index) => {
@@ -642,7 +642,7 @@ describe("Grid — no collapse after add / revisit", () => {
     expect(debug?.mountedGridItems).toBe(mountedItems);
     expect(debug?.viewport?.mountedDomItemCount).toBe(mountedItems);
     expect(debug?.viewport?.blankViewportRisk).toBe(false);
-    expect(debug?.preloadWindowPx.forward).toBeGreaterThan(
+    expect(debug?.priorityWindowPx.forward).toBeGreaterThan(
       debug?.renderWindowPx.forward ?? 0,
     );
     expect(mountedItems).toBeLessThan(blocks.length);

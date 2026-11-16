@@ -30,13 +30,14 @@ it("applies the stored look before the first render and renders the panel into #
   expect(firstRender.theme).toBe("dark");
 }, 30_000);
 
-it("is a clear page hidden until its menu stands in place, and a page of the build", () => {
+it("is a clear page, its root by the root's own id, and a page of the build", () => {
   const html = readFileSync("menu-panel.html", "utf8");
-  expect(html).toContain("data-menu-panel data-menu-panel-hidden");
+  expect(html).toContain('<html lang="en" data-menu-panel>');
   expect(html).toContain('src="/src/menuPanel/main.tsx"');
   const css = readFileSync("src/menuPanel/menuPanel.css", "utf8");
-  expect(css).toMatch(/html\[data-menu-panel\] body \{\s*background: transparent;/);
-  expect(css).toMatch(/html\[data-menu-panel-hidden\] body \{\s*opacity: 0;/);
+  // global.css paints `#root` by its id: the panel's rule names the id too
+  // (the browser check holds the pixels, scripts/menu-panel-audit.mjs).
+  expect(css).toMatch(/html\[data-menu-panel\],\s*html\[data-menu-panel\] body,\s*html\[data-menu-panel\] #root \{\s*background: transparent;/);
   expect(readFileSync("vite.config.ts", "utf8")).toContain('menuPanel: path.resolve(__dirname, "menu-panel.html")');
   const capabilities = JSON.parse(readFileSync("src-tauri/capabilities/default.json", "utf8")) as { webviews: string[] };
   expect(capabilities.webviews).toContain("menu-panel");

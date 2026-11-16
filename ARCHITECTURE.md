@@ -1,6 +1,6 @@
 # Architecture: Mine
 
-Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_X_THREADS.md](SPEC_X_THREADS.md) | [SPEC_AUDIT_FIXES.md](SPEC_AUDIT_FIXES.md) | [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md) | [SPEC_TABS.md](SPEC_TABS.md) | [SPEC_CLIPPER_DRAFTS_REMOVAL.md](SPEC_CLIPPER_DRAFTS_REMOVAL.md) | [SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md) | [SPEC_CARD_UNIFIED.md](SPEC_CARD_UNIFIED.md) | [SPEC_CARD_ASSOCIATIONS.md](SPEC_CARD_ASSOCIATIONS.md) | [SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md) | [SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md) | [SPEC_NARROW_WINDOW.md](SPEC_NARROW_WINDOW.md) | [SPEC_KEYBOARD.md](SPEC_KEYBOARD.md) | [SPEC_READING_MODE.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_READING_MODE.md>) | [SPEC_EDITING.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_EDITING.md>) | [SPEC_CARD_PEEK.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_PEEK.md>) | [SPEC_SIDEBAR_STRIP.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SIDEBAR_STRIP.md>) | [SPEC_MOTION_LEVELS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MOTION_LEVELS.md>)
+Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [PLAN.md](PLAN.md) | [DEVLOG.md](DEVLOG.md) | [CLAUDE.md](CLAUDE.md) | [SPEC_PRD.md](SPEC_PRD.md) | [SPEC_USECASES.md](SPEC_USECASES.md) | [SPEC_BLOCK.md](SPEC_BLOCK.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_SEARCH.md](SPEC_SEARCH.md) | [SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_CARD_MERGE.md](SPEC_CARD_MERGE.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_DISTRIBUTION.md](SPEC_DISTRIBUTION.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_MODES.md](SPEC_DISPLAY_MODES.md) | [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md) | [SPEC_FEED_VIDEO.md](SPEC_FEED_VIDEO.md) | [SPEC_ARTICLE_AUDIO.md](SPEC_ARTICLE_AUDIO.md) | [SPEC_MEDIA_ASSET_ACTIONS.md](SPEC_MEDIA_ASSET_ACTIONS.md) | [SPEC_INLINE_MEDIA_EXTRACTION.md](SPEC_INLINE_MEDIA_EXTRACTION.md) | [SPEC_TEXT_SELECTION_EXTRACTION.md](SPEC_TEXT_SELECTION_EXTRACTION.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_OBSIDIAN_WIKILINKS.md](SPEC_OBSIDIAN_WIKILINKS.md) | [SPEC_OBSIDIAN_MARKDOWN_COMPAT.md](SPEC_OBSIDIAN_MARKDOWN_COMPAT.md) | [SPEC_COLLECTIONS_OBSIDIAN_LINKS.md](SPEC_COLLECTIONS_OBSIDIAN_LINKS.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | [DESIGN_SYSTEM_IOS.md](DESIGN_SYSTEM_IOS.md) | [SPEC_SAVE_CORE.md](SPEC_SAVE_CORE.md) | [SPEC_X_THREADS.md](SPEC_X_THREADS.md) | [SPEC_AUDIT_FIXES.md](SPEC_AUDIT_FIXES.md) | [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md) | [SPEC_TABS.md](SPEC_TABS.md) | [SPEC_CLIPPER_DRAFTS_REMOVAL.md](SPEC_CLIPPER_DRAFTS_REMOVAL.md) | [SPEC_COLOR_RULES.md](SPEC_COLOR_RULES.md) | [SPEC_CARD_UNIFIED.md](SPEC_CARD_UNIFIED.md) | [SPEC_CARD_ASSOCIATIONS.md](SPEC_CARD_ASSOCIATIONS.md) | [SPEC_ICLOUD_CONFLICTS.md](SPEC_ICLOUD_CONFLICTS.md) | [SPEC_DEEP_AUDIT.md](SPEC_DEEP_AUDIT.md) | [SPEC_NARROW_WINDOW.md](SPEC_NARROW_WINDOW.md) | [SPEC_KEYBOARD.md](SPEC_KEYBOARD.md) | [SPEC_READING_MODE.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_READING_MODE.md>) | [SPEC_EDITING.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_EDITING.md>) | [SPEC_CARD_PEEK.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_PEEK.md>) | [SPEC_SIDEBAR_STRIP.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_SIDEBAR_STRIP.md>) | [SPEC_MOTION_LEVELS.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MOTION_LEVELS.md>) | [AUDIT_FEED_IMAGES.md](</Users/i_iii/Проекты/Личные проекты/local-arena/AUDIT_FEED_IMAGES.md>) | [AUDIT_MENU_PLACEMENT.md](</Users/i_iii/Проекты/Личные проекты/local-arena/AUDIT_MENU_PLACEMENT.md>) | [AUDIT_CODE_QUALITY.md](</Users/i_iii/Проекты/Личные проекты/local-arena/AUDIT_CODE_QUALITY.md>) | [SPEC_MENU_WINDOW.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_MENU_WINDOW.md>)
 
 ## Context
 
@@ -414,7 +414,7 @@ Frontend feed-video runtime теперь использует единый poste
 │  │   React Frontend  │◄──►│     Rust Backend       │  │
 │  │                    │    │                        │  │
 │  │  Grid / Cards      │    │  Commands (IPC)        │  │
-│  │  Tag Sidebar       │    │  ├── blocks.rs         │  │
+│  │  Sidebar           │    │  ├── blocks.rs         │  │
 │  │  Detail View       │    │  ├── tags.rs           │  │
 │  │  Channel View      │    │  ├── search.rs         │  │
 │  │  Batch Actions     │    │  ├── thumbnails.rs     │  │
@@ -669,10 +669,31 @@ iOS UI contract:
   pipeline, а отсутствующие targets не материализуются как узлы или edges.
   Полный контракт:
   [SPEC_GRAPH_VIEW.md](SPEC_GRAPH_VIEW.md).
-- `bun run verify` является self-contained gate: один orchestration script
-  резервирует свободный localhost port, поднимает Vite, запускает Feed и Graph
-  Playwright audits, затем завершает audit/server process groups при success,
-  failure, `SIGINT` или `SIGTERM`.
+- `bun run verify` это `verify:core`, затем `test:browser`. Состав задают
+  `package.json` и `scripts/browser-audits.mjs`; ниже он записан по ним на
+  15.11.2026.
+  - `verify:core` запускает по порядку `check:reliability-registry`,
+    `test:reliability`, `test:save-core`, `bindings:check`, `lint`, `build` и
+    `test`. `test` это `test:frontend`, `test:rust`, `test:startup-packaging`
+    и `test:scripts`. Браузерных проверок в `verify:core` нет.
+  - `test:browser` это один сценарий `scripts/browser-audits.mjs`. Он строит
+    холодное пространство (`cold-space-audit`), резервирует свободный порт
+    localhost, поднимает Vite и по очереди запускает 25 проверок
+    `scripts/<имя>-audit.mjs`: `feed-scroll`, `feed-images`, `graph-view`,
+    `cold-space-browser`, `sidebar-reorder`, `edge-states`, `selection-menu`,
+    `sidebar-action`, `top-row-wrap`, `detail-image-geometry`, `settings-menu`,
+    `card-drag-scroll`, `menu-panel`, `narrow-window`, `sidebar-strip`,
+    `reading-mode`, `editing`, `focus-ring`, `paste-feed`,
+    `image-preview-motion`, `card-peek-motion`, `card-open`, `tooltip-motion`,
+    `swipe-scroller`, `editing-perf`. Группы процессов
+    проверки и сервера завершаются при успехе, сбое, `SIGINT` и `SIGTERM`.
+  - Проверки, которым нужно собранное приложение, запускает
+    `verify:built-app`. `verify:release` это `check:release-evidence`,
+    `verify` и `verify:built-app`.
+  - Тест `scripts/verify-commands.test.mjs` (входит в `test:scripts`)
+    роняется, если команду `test:*`, `check:*` или `verify:*` из
+    `package.json` не запускает ни `verify`, ни `verify:built-app` и её нет в
+    списке исключений с причиной (`NOT_RUN` в `scripts/verify-commands.mjs`).
 
 ### Persistence, IPC and composition boundaries
 
@@ -691,7 +712,7 @@ iOS UI contract:
   Это дешевле полной переиндексации и не трогает уже корректные записи.
 - Backend request/response DTO и все command errors выводятся из Rust/Specta.
   `src-tauri/src/tooling/export_bindings.rs` генерирует committed
-  `src/types/generated.ts`; `bindings:check` является первой частью
+  `src/types/generated.ts`; `bindings:check` входит в
   `verify:core`. Общий tagged `CommandError` проходит через один frontend
   invoke-adapter в читаемый `Error`, а feature-specific unions сохраняют
   `kind`. `src/types/index.ts` содержит только frontend-owned shapes.
@@ -736,8 +757,9 @@ iOS UI contract:
   (`COMPACT_TABLE_POSTPONED`, решение пользователя 23.10.2026): ниже порога
   компактных строк меню всегда в виде List, группы Sidebar style и Compact
   stack edge скрыты, код таблицы, края стопки и перехода строк
-  (`sidebarRowsMorph.ts`) остаётся вне работы до возвращения к ней. Виды List
-  выбирают пробы List spacing (Tight, Table) и List style (Plain, Contents). Обводку миниатюр меню рисует CSS по атрибуту
+  (`sidebarRowsMorph.ts`) остаётся вне работы до возвращения к ней. Вид List
+  постоянный: шаг 24 px и оглавление; столбцы строк всегда Name, Previews,
+  Count (решение пользователя 15.11.2026). Обводку миниатюр меню рисует CSS по атрибуту
   `data-thumb-edge`, граф рисует ту же обводку на холсте цветами
   `cardOutline` и `cardHoverOutline` темы холста.
 - Что называет верхний ряд, решает одна функция `topRowShowsPlace`
@@ -794,9 +816,11 @@ iOS UI contract:
 - **Direction-aware overscan**: при скролле вниз forward-overscan 2200px, backward 600px. При скролле вверх — зеркально. Это предзагружает больше карточек по направлению scroll'а, уменьшая «пустые зоны» при быстром скролле.
 - **Priority bounds**: зона ±1400px по направлению scroll'а, внутри которой карточки получают `priority=true`. Слот медиа карточки (`CardMediaSlot`) использует `loading="eager"` вместо `"lazy"` — картинки начинают fetch до того как пользователь до них доскроллит.
 - Feed scroll readiness splits this into adaptive budgets instead of solving
-  canvas feel by DOM inflation: a velocity-aware bounded render runway, a near
-  image priority window and a wider preview-only media preload/decode window
-  driven by viewport height and scroll velocity. `useGridScroll` keeps normal
+  canvas feel by DOM inflation: a velocity-aware bounded render runway and a
+  near image priority window driven by viewport height and scroll velocity. A
+  card prepares its picture with `HTMLImageElement.decode()` as soon as it is
+  mounted (`usePreparedPicture`); the separate preview preloader was removed on
+  15.11.2026 ([AUDIT_FEED_IMAGES.md](AUDIT_FEED_IMAGES.md)). `useGridScroll` keeps normal
   scroll RAF-coalesced, but has a two-stage anti-blank commit when a native
   flick/jump would otherwise leave the real viewport with zero mounted items:
   viewport + `128px` mounts synchronously, then regular adaptive overscan is
@@ -1702,6 +1726,16 @@ machine, non-negotiable invariants and a tuning protocol so performance work is
 evidence-based instead of a sequence of magic constants. This gives the feed the
 intended infinite-canvas feel without turning virtualization back into "render
 more cards". Full contract: [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md).
+
+Пересмотр 15.11.2026. Замер в WebKit ([AUDIT_FEED_IMAGES.md](AUDIT_FEED_IMAGES.md))
+показал, что отдельный предзагрузчик не готовит картинку для карточки: он
+декодирует свой `Image`, а первое рисование слоя карточки всё равно идёт без
+картинки, а от трети до половины адресов запрашивается дважды. Предзагрузчик, его
+очередь и окно предзагрузки сняты. Картинку готовит сама карточка сразу после
+монтирования стандартным `decode()` своего `<img>`; окна отрисовки и
+приоритета остались. Решение пользователя: сначала этот путь без приёмов,
+которые опираются на внутренние правила движка; вариант с непрерывной
+анимацией `transform` на контейнере карточек отложен до оценки результата.
 
 ### 022: Grid layout readiness uses deterministic live geometry
 
@@ -2854,6 +2888,16 @@ iCloud и реализация 11.10.2026 в Phase 45 ([PLAN.md](PLAN.md), эт�
 4. **Один набор элементов на все статьи.** Элементы читают тело и данные
    из контекста, поэтому новое тело (после записи флажка) не пересоздаёт
    статью, а состояние раскрытий и подсветки сохраняется.
+5. **Одно дерево тела, один разбор** (15.11.2026, SPEC_READING_MODE.md,
+   Ч0.5). Дерево, которое рисует конвейер, хранится по переписанному тексту
+   (`readingTree` в `src/lib/reading/tree.ts`); react-markdown получает его
+   вместо своего разбора (`remarkKeptReadingTree`), а открытая карточка
+   читает из него видео тела и ведущее видео. Предобработка вики-ссылок
+   разбирает тело как написано, и дерево переписанного текста собирается из
+   этого разбора (`assembleRenderedTree` в `renderedTree.ts`): блоки с
+   заменами разбираются заново, остальные сдвигаются. Собранное дерево
+   равно разобранному узел в узел или не собирается, и тогда переписанный
+   текст разбирается целиком. Хранимое дерево не меняется после сборки.
 
 | Вариант | Результат выбора |
 |---|---|
@@ -2897,7 +2941,8 @@ Phase 50 в [PLAN.md](PLAN.md). Источник требований: конт�
 
 Требования пользователя 23.10.2026 и 24.10.2026. Контракт:
 [SPEC_CARD_PEEK.md](</Users/i_iii/Проекты/Личные проекты/local-arena/SPEC_CARD_PEEK.md>), О1 по О16.
-Проба «Card view: Peek» панели Display рядом с полным видом. Код:
+Вид «Peek» группы «Card view» панели Display рядом с полным видом; функция
+продукта по решению пользователя 15.11.2026 (до него проба). Код:
 `src/components/CardPeek.tsx` (замеры и запись в DOM), `src/lib/cardPeek.ts`
 (правила движения), `src/lib/cardPeekSource.ts` (где стоят карточка и её
 картинка в ленте и на графе), `src/components/detailFrame.ts` и
@@ -2921,8 +2966,10 @@ Phase 50 в [PLAN.md](PLAN.md). Источник требований: конт�
 4. **Работа карточки не попадает в движение** (`detailMotionGate.ts`): то,
    что открытая карточка узнаёт поздно (файл целиком, сеанс правки, размеры
    картинок, связи), ждёт покоя окна; до старта окно немного ждёт эту
-   работу. `DetailView.tsx` грузит часть сборки карточки заранее, когда
-   выбран Peek, чтобы первое окно сеанса не росло вокруг пустой карточки.
+   работу. `DetailView.tsx` грузит часть сборки карточки и часть редактора
+   заранее, чтобы первое окно сеанса не росло вокруг пустой карточки: с
+   15.11.2026 после первых карточек ленты при любом виде карточки
+   (SPEC_READING_MODE.md, Ч0.6), прежде только когда выбран Peek.
 5. **Раскладку карточки решает место окна** (`detailFrame.ts`): карточка
    сообщает окну ширину содержимого, окно сообщает карточке раскладку, и
    окно сужается до содержимого, когда панель уходит под него. Вне окна
@@ -3155,26 +3202,71 @@ SPEC_MOTION_LEVELS.md, «Решение пользователя 13.11.2026»).
 Схема согласована с пользователем 15.11.2026, запись о пробе:
 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), «Меню карточки в отдельном окне:
 проба». Переключатель `Menus: Web / Window` в меню логотипа, по умолчанию
-`Web`.
+`Web`. В тот же день пользователь решил перевести в отдельное окно все
+меню: требования и план в [SPEC_MENU_WINDOW.md](SPEC_MENU_WINDOW.md), этап 1
+(дефекты пробы и правила расположения) и общий механизм этапа 2 реализованы
+15.11.2026, пункты ниже описывают состояние после них.
 
 1. **Одно окно на приложение.** Прозрачное окно без рамки `menu-panel`
-   ([menu_panel.rs](src-tauri/src/menu_panel.rs)) создаётся один раз в
-   размере главного меню с подменю и в покое пропускает щелчки. При открытии
-   оно ставится к меню и становится ключевым, но не главным: подмена
-   `canBecomeMainWindow` у класса окон tao отвечает «нет» только для панели.
-2. **Вкладка владеет меню.** Состав меню описан данными
-   ([cardMenuEntries.ts](src/lib/cardMenuEntries.ts)), страница панели
+   ([menu_panel](src-tauri/src/menu_panel/mod.rs)) создаётся один раз и в
+   покое пропускает щелчки. Его рамку бэкенд ставит на каждое открытие,
+   пока страница пуста: меню, место под подменю и поле под тень (МО29).
+   Видимым оно становится только после проверки своей прозрачности
+   по флагам окна и снимку страницы WebKit. При открытии оно становится
+   ключевым, но не главным: у панели свой класс окна, наследник класса окон
+   tao, созданный публичными функциями среды Objective-C. Он никогда не
+   главный и ключевой, только пока меню открыто; остальные окна не
+   затронуты (МО62). Режим `Web` убирает окно.
+2. **Открытие за один шаг.** Вкладка просит открыть меню из обработчика
+   ввода и передаёт описание меню и размер, посчитанный по описанию
+   ([menuSpec.ts](src/lib/menuSpec.ts)). Бэкенд ставит
+   меню на экране по правилам настольного приложения (SPEC_MENU_WINDOW.md,
+   раздел 3: граница это экран якоря без Dock, строки меню и выреза камеры,
+   поля до границы нет, угол меню по правому щелчку в точке щелчка;
+   [geometry.rs](src-tauri/src/menu_panel/geometry.rs)), двигает окно и
+   отдаёт ему клавиатуру в том же вызове, страница панели рисует меню одним
+   проходом. Подменю Radix ставит само внутри панели, края которой за
+   вычетом поля под тень (12 px) стоят на краях экрана там, где подменю их
+   достигает. Тень рисует страница (`shadow-md` меню), у окна системной тени
+   нет.
+3. **Вкладка владеет меню.** Меню описано данными: типы описания, действий
+   и ответов заданы в Rust ([spec.rs](src-tauri/src/menu_panel/spec.rs)) и
+   порождают типы TypeScript, бэкенд проверяет описание при приёме (МО17).
+   Описание рисует один компонент
+   ([MenuSpecView.tsx](src/components/MenuSpecView.tsx)) и в панели, и на
+   странице. Владение меню для компонента даёт хук
+   ([usePanelMenu.ts](src/hooks/usePanelMenu.ts)). Состав меню карточки
+   собирает [cardMenuEntries.ts](src/lib/cardMenuEntries.ts), страница панели
    ([src/menuPanel](src/menuPanel)) рисует его теми же компонентами, а каждый
    выбор вкладка выполняет своими обработчиками
-   ([menuPanelSource.ts](src/lib/menuPanelSource.ts)). Протокол и номер меню
-   в каждом сообщении: [menuPanelProtocol.ts](src/lib/menuPanelProtocol.ts).
-3. **Расположение считается по правилам Radix против экрана**
-   ([menuPanelGeometry.ts](src/lib/menuPanelGeometry.ts)); подменю Radix
-   ставит само внутри панели, края которой за вычетом поля под тень (12 px)
-   стоят на краях экрана там, где подменю их достигает. Тень рисует
-   страница (`shadow-md` меню), у окна системной тени нет.
+   ([menuPanelSource.ts](src/lib/menuPanelSource.ts)). Меню закрывает тот,
+   кто его открыл, в том числе при своём размонтировании; компонент,
+   появившийся из-за открытого меню, его не закрывает (МО41, МО42).
 4. **Любой сбой оставляет меню на странице.** Возврат клавиатуры из панели
-   не считается возвратом в приложение (`focus_returns_from_panel`).
+   не считается возвратом в приложение (`focus_returns_from_panel`): бэкенд
+   возвращает клавиатуру окну сам и помечает это окно, время в расчёт не
+   входит (МО47).
+5. **Первый запуск 15.11.2026** показал непрозрачный прямоугольник: правило
+   `#root` из `global.css` по идентификатору перекрывало прозрачность
+   панели. И открытие за 88–122 мс: запрос из эффекта React после отрисовки
+   и второй круг «измерил и попросил показать». Обе причины устранены, запись
+   в [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md).
+6. **Порядок по номерам, а не по времени.** Номер меню даёт вкладка, он идёт
+   в каждом сообщении, а все сообщения идут через бэкенд и считаются по
+   порядку ([menuPanelProtocol.ts](src/lib/menuPanelProtocol.ts),
+   `MessageRow`; раздел 5 спецификации). Команды панели синхронные и
+   выполняются в главном потоке: он задаёт порядок. Единственный срок это
+   400 мс на первый кадр страницы панели (МО40).
+7. **Нажатие мимо меню гасит бэкенд.** Пока меню открыто, монитор событий
+   мыши приложения (`NSEvent.addLocalMonitorForEvents`) закрывает меню по
+   нажатию вне панели и не пускает это нажатие к окнам; подписки на уход из
+   приложения, строку меню macOS, смену рабочего стола и экранов закрывают
+   меню ([native.rs](src-tauri/src/menu_panel/native.rs); МО43, МО44).
+8. **Закрытые зависимости.** `_setWindowOcclusionDetectionEnabled:` и ключ
+   `drawsBackground` у `WKWebView`: публичной замены нет, отказ обоих виден
+   (предупреждение в журнале; проверка прозрачности). Чтение
+   `_hasActiveAppearance` и подмена метода у общего класса окон убраны
+   (МО62–МО65).
 
 | Вариант | Результат выбора |
 |---|---|
@@ -3182,3 +3274,8 @@ SPEC_MOTION_LEVELS.md, «Решение пользователя 13.11.2026»).
 | Системное `NSMenu` | Отклонено 06.10.2026 (051) |
 | Прозрачная панель на весь экран | Отклонено пользователем при согласовании схемы |
 | Окно, создаваемое при каждом открытии | Не выбрано: создание окна и страницы занимает больше кадра |
+| Замер меню страницей панели и второй вызов показа | Отклонено после первого запуска: лишний круг между страницей и бэкендом, 25–30 мс |
+
+### 073: Тесты скорости Rust: один оптимизированный запуск
+
+Решение 15.11.2026 ([AUDIT_CODE_QUALITY.md](AUDIT_CODE_QUALITY.md), О2; [AUDIT_PERFORMANCE.md](AUDIT_PERFORMANCE.md), Пр4). Тест Rust, который утверждает предел времени, называется `…_within_its_limit` и помечен `#[ignore = "asserts a speed limit of an optimised build: bun run test:rust-speed"]`. Обычный `test:rust` собирает тесты без оптимизации и такие тесты пропускает: там предел дал бы ложное падение. Команда `bun run test:rust-speed` собирает тесты библиотеки `mine` с `opt-level = 3` (переменные `CARGO_PROFILE_DEV_OPT_LEVEL` и `CARGO_PROFILE_TEST_OPT_LEVEL`, каталог `target/sidebar-strip`, общий с проверкой ленты миниатюр) и запускает только пропущенные тесты с этим именем, по одному: `--ignored --test-threads=1 within_its_limit`. По одному, чтобы тесты времени не делили процессор и диск. Предел в таком тесте утверждается всегда, переменных окружения для этого нет. Команда входит в `verify`. Новый тест скорости получает то же окончание имени и ту же пометку: тест с пометкой и другим именем не запустит никто, а тест с этим именем без пометки утверждал бы предел в неоптимизированной сборке. До 15.11.2026 три таких теста утверждали предел только при своей переменной окружения, две из них выставляли проверки, которым `test:browser` передаёт `--skip-rust`, третью не выставлял никто.

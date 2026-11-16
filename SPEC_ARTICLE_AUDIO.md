@@ -1,5 +1,7 @@
 # Article Audio Specification
 
+**Состояние:** реализовано, функция выключена 12.08.2026 (флаг сборки `article-audio` вне `default`). Источник: раздел «Status» ниже; PLAN.md, Phase 14 и Phase 15. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_MOBILE.md](SPEC_MOBILE.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md)
 
 ## Status: выключено (12.08.2026)

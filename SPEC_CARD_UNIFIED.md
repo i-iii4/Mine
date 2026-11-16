@@ -1,5 +1,7 @@
 # SPEC: одна карточка
 
+**Состояние:** реализовано 06.10.2026, живая приёмка за пользователем. Источник: раздел «Статус» ниже; PLAN.md, Phase 36. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [SPEC_FEED_DISPLAY.md](SPEC_FEED_DISPLAY.md) | [SPEC_CARD_STATES.md](SPEC_CARD_STATES.md) | [SPEC_CARD_MEDIA_GEOMETRY.md](SPEC_CARD_MEDIA_GEOMETRY.md) | [SPEC_DISPLAY_TITLE.md](SPEC_DISPLAY_TITLE.md) | [SPEC_GRID.md](SPEC_GRID.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
 
 ## Статус

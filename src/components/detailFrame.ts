@@ -1,4 +1,4 @@
-// TRIAL (SPEC_CARD_PEEK.md, О3, О8): the open card in a frame of its own,
+// SPEC_CARD_PEEK.md, О3, О8: the open card in a frame of its own,
 // the card's window. Where the card's panel stands is decided by the place
 // the window has, not by the window's width, and the window narrows to the
 // content with the panel under it: the card tells the window its content's

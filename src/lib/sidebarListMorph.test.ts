@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SIDEBAR_PREVIEW_TILE_GAP_PX, SIDEBAR_PREVIEW_TILE_PX, sidebarCompactRowsBelowPx } from "./appLayout";
 import { CHANNEL_ICON_SPRING_EASING, CHANNEL_ICON_SPRING_MS, SPRING_SAMPLES } from "./channelIcon";
-import { setListStyle } from "./compactStack";
 import { setMotionLevel } from "@/test/motionLevel";
 import { MOTION_SPRING_MOVE_MS } from "./motion";
 import { installMotionInput } from "./motionInput";
@@ -12,6 +11,7 @@ import {
   LIST_MORPH_FADE_OUT_MS,
   LIST_MORPH_SETTLE_MS,
   LIST_MORPH_STEP_LIMIT_PX,
+  LOOK_SWITCHING_ATTRIBUTE,
   STRIP_TILES_FRAME,
   anchoredScroll,
   fadeShare,
@@ -348,14 +348,21 @@ function mountList(width = 400) {
       return [rect(place.anchor - state.scroll - 8, 16)] as unknown as DOMRectList;
     };
   });
-  /** Gives each row the Contents list's body and count. */
+  /** Gives each row the Contents list's body, its count and its List marks
+   *  (Sidebar.tsx). */
   const withCounts = () => rows.forEach((row, index) => {
     const body = document.createElement("a");
     body.setAttribute("data-sidebar-row-body", "");
-    body.setAttribute("data-sidebar-count", String(index));
+    const leader = document.createElement("span");
+    leader.setAttribute("data-sidebar-list-mark", "leader");
+    body.appendChild(leader);
     const count = document.createElement("span");
     count.setAttribute("data-sidebar-meta-count", "");
     body.appendChild(count);
+    const listCount = document.createElement("span");
+    listCount.setAttribute("data-sidebar-list-mark", "count");
+    listCount.setAttribute("data-sidebar-count", String(index));
+    body.appendChild(listCount);
     row.appendChild(body);
     body.getBoundingClientRect = () => row.getBoundingClientRect();
     count.getBoundingClientRect = () => {
@@ -376,6 +383,8 @@ interface Played {
 
 describe("the scrollport", () => {
   let played: Played[];
+  /** What the fades made, in turn: an effect, an animation of one. */
+  let order: ("effect" | "animation")[];
   let report: (width: number) => void;
   /** The frames asked for, run by `nextFrame`. */
   let frames: FrameRequestCallback[];
@@ -400,12 +409,33 @@ describe("the scrollport", () => {
       frames.push(callback);
       return frames.length;
     });
-    // An engine that animates pseudo-elements.
+    order = [];
+    // An engine that animates pseudo-elements: an effect made, and played by
+    // an animation, is played as `animate` plays it.
     vi.stubGlobal("KeyframeEffect", class {
       pseudoElement: string | null;
-      constructor(_target: Element | null, _frames: Keyframe[] | null, options?: KeyframeEffectOptions) {
+      target: Element | null;
+      frames: Keyframe[];
+      options: KeyframeEffectOptions | undefined;
+      constructor(target: Element | null, frames: Keyframe[] | null, options?: KeyframeEffectOptions) {
         this.pseudoElement = options?.pseudoElement ?? null;
+        this.target = target;
+        this.frames = frames ?? [];
+        this.options = options;
+        order.push("effect");
       }
+    });
+    vi.stubGlobal("Animation", class {
+      finished = new Promise(() => {});
+      currentTime = 0;
+      startTime: number | null = null;
+      constructor(effect: { target: Element; frames: Keyframe[]; options: KeyframeAnimationOptions }) {
+        played.push({ element: effect.target, keyframes: effect.frames, options: effect.options });
+        order.push("animation");
+      }
+      play() {}
+      pause() {}
+      cancel() {}
     });
     Element.prototype.animate = function animate(this: Element, keyframes, options) {
       played.push({ element: this, keyframes: keyframes as Keyframe[], options: options as KeyframeAnimationOptions });
@@ -490,6 +520,53 @@ describe("the scrollport", () => {
     stop();
   });
 
+  it("makes every fade's effect before any of them plays, in the frame after the crossing", () => {
+    const { nav, state, threshold, withCounts } = mountList(sidebarCompactRowsBelowPx() - 10);
+    withCounts();
+    const stop = observeSidebarListMorph(nav);
+    report(state.width);
+    // What finds out whether the engine animates pseudo-elements made one.
+    order = [];
+    state.width = threshold + 10;
+    report(state.width);
+    expect(order).toEqual([]);
+    nextFrame();
+    expect(order.length).toBeGreaterThan(2);
+    expect(order.lastIndexOf("effect")).toBeLessThan(order.indexOf("animation"));
+    expect(order.filter((step) => step === "effect")).toHaveLength(order.filter((step) => step === "animation").length);
+    stop();
+  });
+
+  it("marks the frame of a look changed at once, so the rows' text changes colour with it, and not a move's", () => {
+    const { nav, state, threshold } = mountList(sidebarCompactRowsBelowPx() - 20);
+    const stop = observeSidebarListMorph(nav);
+    report(state.width);
+    nextFrame();
+    expect(nav.hasAttribute(LOOK_SWITCHING_ATTRIBUTE)).toBe(false);
+    // Across at once: the frame that changes the look carries the mark, the next one does not.
+    state.width = threshold - 20 + LIST_MORPH_STEP_LIMIT_PX + 1;
+    report(state.width);
+    expect(nav.getAttribute("data-sidebar-look")).toBe("table");
+    expect(nav.hasAttribute(LOOK_SWITCHING_ATTRIBUTE)).toBe(true);
+    nextFrame();
+    expect(nav.hasAttribute(LOOK_SWITCHING_ATTRIBUTE)).toBe(false);
+    // A width that keeps the look marks nothing.
+    state.width += 4;
+    report(state.width);
+    expect(nav.hasAttribute(LOOK_SWITCHING_ATTRIBUTE)).toBe(false);
+    stop();
+    // A move: its text keeps its own times.
+    const moving = mountList(sidebarCompactRowsBelowPx() - 10);
+    const stopMoving = observeSidebarListMorph(moving.nav);
+    report(moving.state.width);
+    nextFrame();
+    moving.state.width = threshold + 10;
+    report(moving.state.width);
+    expect(moving.nav.getAttribute("data-sidebar-rows-fade")).toBe("table");
+    expect(moving.nav.hasAttribute(LOOK_SWITCHING_ATTRIBUTE)).toBe(false);
+    stopMoving();
+  });
+
   it("switches at once, with no move, when the width crosses by more than a tile and its gap", () => {
     const { nav, rows, state, threshold } = mountList(sidebarCompactRowsBelowPx() - 20);
     const stop = observeSidebarListMorph(nav);
@@ -509,43 +586,24 @@ describe("the scrollport", () => {
     stop();
   });
 
-  it("keeps the List's places from a frame that laid it out, until a row changes", async () => {
-    const { nav, rows, state, threshold } = mountList(sidebarCompactRowsBelowPx() - 20);
-    const rail = document.createElement("div");
-    rail.setAttribute("data-sidebar-preview-rail", "");
-    rows[2]!.appendChild(rail);
+  it("reads the List's places, laid out for the read, each time the rows gather to it", () => {
+    // Contents wraps a name in the List by the List's width, so the places
+    // of the List at rest are not the ones a gathering at another width
+    // reaches: they are read anew (user's decision of 15.11.2026, Contents).
+    const { nav, state, threshold } = mountList(sidebarCompactRowsBelowPx() - 20);
     const stop = observeSidebarListMorph(nav);
     report(state.width);
-    // To the table at once, then back by a small step: the List kept from
-    // its rest is the one the rows gather to, with no List laid out for it.
+    // To the table at once, then back by a small step.
     state.width = threshold + 30;
     report(state.width);
     state.width = threshold + 5;
     report(state.width);
-    // A strip's tiles change with the width inside a cell the List hides.
-    rail.appendChild(document.createElement("span"));
-    await Promise.resolve();
     state.looks = [];
     state.width = threshold - 5;
     report(state.width);
     expect(nav.getAttribute("data-sidebar-rows-fade")).toBe("list");
-    expect(state.looks).toEqual([]);
+    expect(state.looks).toEqual(["compact", "table"]);
     stop();
-    // A row renamed: its places are read with the List laid out for the read.
-    const again = mountList(sidebarCompactRowsBelowPx() - 20);
-    const stopAgain = observeSidebarListMorph(again.nav);
-    report(again.state.width);
-    again.state.width = threshold + 30;
-    report(again.state.width);
-    again.state.width = threshold + 5;
-    report(again.state.width);
-    again.rows[3]!.firstElementChild!.textContent = "Renamed";
-    await Promise.resolve();
-    again.state.looks = [];
-    again.state.width = threshold - 5;
-    report(again.state.width);
-    expect(again.state.looks).toEqual(["compact", "table"]);
-    stopAgain();
   });
 
   /** Wraps each row's name in its cell, laid out as each look lays it out:
@@ -581,11 +639,11 @@ describe("the scrollport", () => {
     const [, cut, short] = cells;
     expect(cut!.hasAttribute("data-sidebar-name-slide")).toBe(true);
     expect(short!.hasAttribute("data-sidebar-name-slide")).toBe(false);
-    // The table cuts it at its column, the List shows it whole: the List's
-    // end lies past the text and its dissolve. The List's end stands 8px
-    // short of the scrollport, the panel's border past it, the cell 0px in.
+    // The table cuts it at its column; the List wraps it and cuts nothing:
+    // its end lies past the cell's edge and the dissolve. The List's end
+    // stands 8px short of the scrollport, the panel's border past it.
     expect(cut!.style.getPropertyValue("--sidebar-name-edge-table")).toBe("var(--sidebar-name-table-w)");
-    expect(cut!.style.getPropertyValue("--sidebar-name-edge-list")).toBe(`max(var(--sidebar-name-list-w), ${17 + 200 + 3 + 24}px)`);
+    expect(cut!.style.getPropertyValue("--sidebar-name-edge-list")).toBe(`calc(var(--sidebar-name-list-w) + ${3 + 24}px)`);
     expect(cut!.style.getPropertyValue("--sidebar-name-list-inset")).toBe("9px");
     // The frame that crossed holds the end at the List's; the next one
     // moves it to the table's on the spring's samples.
@@ -605,22 +663,6 @@ describe("the scrollport", () => {
     expect(cut!.hasAttribute("data-sidebar-name-slide")).toBe(false);
     expect(cut!.style.getPropertyValue("--sidebar-name-list-inset")).toBe("");
     expect(cut!.style.getPropertyValue("--sidebar-name-edge-list")).toBe("");
-  });
-
-  it("moves a name's List end past its text once a drag going on makes the List wide enough for it", () => {
-    vi.stubGlobal("CSS", { registerProperty: () => {} });
-    const { nav, rows, state, threshold } = mountList(threshold0() - 10);
-    // 360px of text: cut by the List 10px past the threshold, whole 30px past it.
-    const cells = withNames(nav, rows, state, () => 360);
-    const stop = observeSidebarListMorph(nav);
-    report(state.width);
-    state.width = threshold + 10;
-    report(state.width);
-    expect(cells[1]!.style.getPropertyValue("--sidebar-name-edge-list")).toBe("var(--sidebar-name-list-w)");
-    state.width = threshold + 30;
-    report(state.width);
-    expect(cells[1]!.style.getPropertyValue("--sidebar-name-edge-list")).toBe(`max(var(--sidebar-name-list-w), ${17 + 360 + 3 + 24}px)`);
-    stop();
   });
 
   it("moves the rows on whole device pixels, so they stand sharp at their last place before the landing", () => {
@@ -671,26 +713,7 @@ describe("the scrollport", () => {
     stopUp();
   });
 
-  it("slides a name without the previews too, the table's end by what the meta zone leaves", () => {
-    vi.stubGlobal("CSS", { registerProperty: () => {} });
-    document.documentElement.setAttribute("data-sidebar-hide-previews", "");
-    const { nav, rows, state, threshold } = mountList(threshold0() - 10);
-    const cells = withNames(nav, rows, state, () => 200);
-    const stop = observeSidebarListMorph(nav);
-    report(state.width);
-    state.width = threshold + 10;
-    report(state.width);
-    const cell = cells[1]!;
-    expect(cell.hasAttribute("data-sidebar-name-slide")).toBe(true);
-    // The cell ends 133px in, the scrollport's width from it, the panel's border past it.
-    expect(cell.style.getPropertyValue("--sidebar-name-table-inset")).toBe(`${state.width - 133 + 1}px`);
-    stop();
-    expect(cell.style.getPropertyValue("--sidebar-name-table-inset")).toBe("");
-    document.documentElement.removeAttribute("data-sidebar-hide-previews");
-  });
-
-  it("slides a Contents name too, in the List's lines, so the landing lifts nothing", () => {
-    setListStyle("contents");
+  it("slides a name of two lines in the List's lines, so the landing lifts nothing", () => {
     vi.stubGlobal("CSS", { registerProperty: () => {} });
     const { nav, rows, state, threshold, withCounts } = mountList(threshold0() - 10);
     withCounts();
@@ -712,11 +735,9 @@ describe("the scrollport", () => {
     stop();
     expect(cell.hasAttribute("data-sidebar-name-slide")).toBe(false);
     expect(cell.style.getPropertyValue("--sidebar-name-list-h")).toBe("");
-    setListStyle("plain");
   });
 
   it("follows a Contents name's lines through a drag going on: the rows below land where the List stands them", () => {
-    setListStyle("contents");
     vi.stubGlobal("CSS", { registerProperty: () => {} });
     const { nav, rows, state, threshold, withCounts } = mountList(threshold0() - 10);
     withCounts();
@@ -728,8 +749,10 @@ describe("the scrollport", () => {
     state.width = threshold + 10;
     report(state.width);
     nextFrame();
-    const body = rows[3]!.querySelector<HTMLElement>("[data-sidebar-row-body]")!;
+    const body = rows[3]!.querySelector<HTMLElement>('[data-sidebar-list-mark="count"]')!;
+    const leaderOf = rows[3]!.querySelector<HTMLElement>('[data-sidebar-list-mark="leader"]')!;
     const topBefore = parseFloat(body.style.getPropertyValue("--sidebar-list-count-top"));
+    expect(leaderOf.style.getPropertyValue("--sidebar-list-count-top")).toBe(`${topBefore}px`);
     const lastMove = (row: HTMLElement) => moves([row]).at(-1)!;
     const yOf = (play: Played) => Number(/translate\([^,]+, (-?[\d.]+)px\)/.exec(String(play.keyframes[0]!.transform))![1]);
     const below = yOf(lastMove(rows[4]!));
@@ -751,8 +774,9 @@ describe("the scrollport", () => {
     // The rows above stay.
     expect(yOf(lastMove(rows[2]!))).toBe(above);
     expect(parseFloat(body.style.getPropertyValue("--sidebar-list-count-top"))).not.toBe(topBefore);
+    // The leader stands on the count's line.
+    expect(leaderOf.style.getPropertyValue("--sidebar-list-count-top")).toBe(body.style.getPropertyValue("--sidebar-list-count-top"));
     stop();
-    setListStyle("plain");
   });
 
   it("slides no name where the look changes at once", () => {
@@ -850,7 +874,6 @@ describe("the scrollport", () => {
   });
 
   it("fades the Contents count in the List and the table's as two parts, each at its own place", () => {
-    setListStyle("contents");
     const { nav, rows, state, threshold, withCounts } = mountList(sidebarCompactRowsBelowPx() - 10);
     withCounts();
     const stop = observeSidebarListMorph(nav);
@@ -859,16 +882,26 @@ describe("the scrollport", () => {
     report(state.width);
     nextFrame();
     const body = rows[2]!.querySelector<HTMLElement>("[data-sidebar-row-body]")!;
+    const mark = rows[2]!.querySelector<HTMLElement>('[data-sidebar-list-mark="count"]')!;
+    const leader = rows[2]!.querySelector<HTMLElement>('[data-sidebar-list-mark="leader"]')!;
     const count = rows[2]!.querySelector("[data-sidebar-meta-count]")!;
-    // The List's count, on the row body at its place in the List.
+    // The List's count, on its own mark at its place in the List; the row's
+    // body carries none of it, so placing it changes nothing else in the row.
     const list = listLayout().rows[2]!;
     const table = tableLayout().rows[2]!;
     const top = (list.top + LIST_COUNT.top - list.anchor) - (table.top - table.anchor);
-    expect(body.style.getPropertyValue("--sidebar-list-count-top")).toBe(`${top}px`);
-    expect(body.style.getPropertyValue("--sidebar-list-count-right")).toBe(`${LIST_COUNT.inset}px`);
-    const listCount = played.find((play) => play.element === body && play.options.pseudoElement === "::after")!;
-    expect(listCount.options.duration).toBe(LIST_MORPH_FADE_OUT_MS);
-    expect(listCount.keyframes.map((frame) => frame.opacity)).toEqual([1, 0]);
+    expect(mark.style.getPropertyValue("--sidebar-list-count-top")).toBe(`${top}px`);
+    expect(mark.style.getPropertyValue("--sidebar-list-count-right")).toBe(`${LIST_COUNT.inset}px`);
+    expect(leader.style.getPropertyValue("--sidebar-list-count-top")).toBe(`${top}px`);
+    expect(body.getAttribute("style")).toBeNull();
+    // Both marks fade as elements, not as pseudo-elements of the body.
+    for (const part of [mark, leader]) {
+      const fade = played.find((play) => play.element === part)!;
+      expect(fade.options.pseudoElement).toBeUndefined();
+      expect(fade.options.duration).toBe(LIST_MORPH_FADE_OUT_MS);
+      expect(fade.keyframes.map((frame) => frame.opacity)).toEqual([1, 0]);
+    }
+    expect(played.some((play) => play.element === body)).toBe(false);
     // The table's count, the count itself, from nothing from halfway on; it
     // does not slide.
     const tableCount = played.find((play) => play.element === count)!;
@@ -876,8 +909,9 @@ describe("the scrollport", () => {
     expect(tableCount.keyframes.map((frame) => frame.opacity)).toEqual([0, 0, 1]);
     expect(played.some((play) => play.element === count && play.keyframes.some((frame) => frame.transform !== undefined))).toBe(false);
     stop();
-    expect(body.style.getPropertyValue("--sidebar-list-count-top")).toBe("");
-    setListStyle("plain");
+    expect(mark.style.getPropertyValue("--sidebar-list-count-top")).toBe("");
+    expect(leader.style.getPropertyValue("--sidebar-list-count-top")).toBe("");
+    expect(mark.hasAttribute("data-sidebar-list-count")).toBe(false);
   });
 
   // The move answers the edge in hand on every level (SPEC_MOTION_LEVELS.md,

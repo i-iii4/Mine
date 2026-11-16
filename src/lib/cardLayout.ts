@@ -1,6 +1,7 @@
 import type { LightBlock } from "@/types";
 import {
   normalizeFeedPreviewManifest,
+  type NormalizedFeedPreviewManifest,
   type NormalizedFeedPreviewTile,
 } from "@/lib/feedPreview";
 import { getDisplayTitle, getMediaOwnTitle } from "@/lib/displayTitle";
@@ -300,8 +301,39 @@ function isLocalImageFile(src: string): boolean {
   return !/^https?:\/\//i.test(src) && /\.(jpg|jpeg|png|gif|webp|bmp|tiff|tif|heic|heif|avif)(\?|$)/i.test(src);
 }
 
-export function parsePreviewManifest(block: Pick<CardLayoutBlock, "preview_manifest">) {
-  return normalizeFeedPreviewManifest(block.preview_manifest);
+/// What is read from a card's row, kept by the row (SPEC_GRID.md, «Кэш при
+/// карточке и продолжение раскладки»). A row is a value: a card that changes
+/// arrives as a new object (`reconcileBlocks`) and no row is written to after
+/// it is made, so what was read from an object stays true of it for as long as
+/// it lives. What is kept is shared by every reader and is not written to
+/// either.
+interface CardRowMemo {
+  /// The parsed preview manifest; undefined until it is read.
+  manifest?: NormalizedFeedPreviewManifest | null;
+  content?: CardContent;
+  descriptors?: Partial<Record<FeedShow, CardLayoutDescriptor>>;
+}
+
+const rowMemos = new WeakMap<object, CardRowMemo>();
+
+function rowMemo(row: object): CardRowMemo {
+  let memo = rowMemos.get(row);
+  if (memo === undefined) {
+    memo = {};
+    rowMemos.set(row, memo);
+  }
+  return memo;
+}
+
+/// The row's preview manifest, parsed once for the row object.
+export function parsePreviewManifest(
+  block: Pick<CardLayoutBlock, "preview_manifest">,
+): NormalizedFeedPreviewManifest | null {
+  const memo = rowMemo(block);
+  if (memo.manifest === undefined) {
+    memo.manifest = normalizeFeedPreviewManifest(block.preview_manifest);
+  }
+  return memo.manifest;
 }
 
 function aspectRatioFromDimensions(width: number | null | undefined, height: number | null | undefined): number | null {
@@ -600,8 +632,14 @@ function articleContent(
 }
 
 /// A card's content, read from its record by that record's own data rules
-/// (Е3). The same for every presentation.
+/// (Е3). The same for every presentation, and read once for the row object.
 export function deriveCardContent(block: CardLayoutBlock): CardContent {
+  const memo = rowMemo(block);
+  memo.content ??= readCardContent(block);
+  return memo.content;
+}
+
+function readCardContent(block: CardLayoutBlock): CardContent {
   const previewManifest = parsePreviewManifest(block);
   const indexedPreviewText = block.preview_text?.trim() ?? "";
   const cardKind = getRuntimeCardKind(block);
@@ -658,6 +696,12 @@ export function deriveCardLayoutDescriptor(
   block: CardLayoutBlock,
   show: FeedShow = "cards",
 ): CardLayoutDescriptor {
+  const memo = rowMemo(block);
+  const descriptors = (memo.descriptors ??= {});
+  return (descriptors[show] ??= describeCardLayout(block, show));
+}
+
+function describeCardLayout(block: CardLayoutBlock, show: FeedShow): CardLayoutDescriptor {
   const { media, text } = deriveCardContent(block);
   const textShown = media !== null ? textShownWithMedia(show) : "always";
   const textPartShown = textShown === "always" && hasCardText(text);

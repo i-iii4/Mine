@@ -1,14 +1,12 @@
 /* TRIAL (DESIGN_SYSTEM.md, «Меню карточки в отдельном окне: проба»): the
    menu panel's page. Nothing but the menu draws: the window is clear, and
-   the page is clear over it. While a menu is laid out before the panel moves
-   to it, the page draws nothing at all: it would flash where the panel stood
-   before. Opacity, not visibility: the menu takes the focus meanwhile. */
+   the page is clear over it. global.css paints `html`, `body` and `#root`
+   with the theme's background; `#root` by its id, so the panel's rule names
+   it with the id too, or the root stays an opaque square the size of the
+   panel (the trial's first run in the app, 15.11.2026). */
 html[data-menu-panel],
-html[data-menu-panel] body {
+html[data-menu-panel] body,
+html[data-menu-panel] #root {
   background: transparent;
   overflow: hidden;
-}
-
-html[data-menu-panel-hidden] body {
-  opacity: 0;
 }

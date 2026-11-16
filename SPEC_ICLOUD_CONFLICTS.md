@@ -1,5 +1,7 @@
 # Конфликты синхронизации iCloud
 
+**Состояние:** реализовано 11.10.2026, живая приёмка за пользователем. Источник: строка «Статус» ниже; PLAN.md, Phase 45. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_IDENTITY_ROBUSTNESS.md](SPEC_IDENTITY_ROBUSTNESS.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_TABS.md](SPEC_TABS.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
 
 Статус: решение пользователя 11.10.2026, реализовано 11.10.2026 в Phase 45

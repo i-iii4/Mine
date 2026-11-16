@@ -1,5 +1,7 @@
 # Вкладки пространств
 
+**Состояние:** реализовано, живая приёмка за пользователем. Источник: раздел «Статус» ниже. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [PRINCIPLES.md](PRINCIPLES.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [PLAN.md](PLAN.md) | [SPEC_VAULT_LIFECYCLE.md](SPEC_VAULT_LIFECYCLE.md) | [SPEC_STARTUP_PERFORMANCE.md](SPEC_STARTUP_PERFORMANCE.md) | [SPEC_SETTINGS_WINDOW.md](SPEC_SETTINGS_WINDOW.md) | [SPEC_KEYBOARD.md](SPEC_KEYBOARD.md) | [SPEC_ONBOARDING.md](SPEC_ONBOARDING.md) | [SPEC_CLOUD_STORAGE.md](SPEC_CLOUD_STORAGE.md) | [SPEC_CLIPPER.md](SPEC_CLIPPER.md) | [SPEC_AI_ACCESS.md](SPEC_AI_ACCESS.md) | [SPEC_THUMBNAILS.md](SPEC_THUMBNAILS.md) | [SPEC_FEED_SCROLL_PERFORMANCE.md](SPEC_FEED_SCROLL_PERFORMANCE.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
 
 ## Статус
@@ -637,8 +639,6 @@ Rust:
 12. Escape, уход указателя с полосы и бросок мимо полосы закрывают промежуток и ничего не создают; полоса другого окна карточку не принимает.
 13. Группа из 3 выделенных карточек А, Б, В, взятая за В, даёт вкладки В, А, Б с места заготовки, видима В, соседи справа доезжают до новых мест плавно, без скачка; группа из 15 карточек спрашивает `Open 15 tabs?`, `Cancel` ничего не создаёт, `Open` создаёт вкладки на месте броска.
 14. `Close Tabs to the Left` и `Close Tabs to the Right` закрывают вкладки одной стороны, у крайней вкладки пункт её стороны недоступен.
-
-Не относится к вкладкам и найдено попутно: проверка витрины краевых состояний (`bun run test:edge-states`) ждёт признак `data-cloud-disclaimer`, убранный из компонента 24.09.2026; проверка меню хрома (`bun run test:chrome`) подключает файл `actionButtonStyle.ts`, удалённый тогда же.
 
 ## Этапы
 

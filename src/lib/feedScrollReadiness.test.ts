@@ -19,13 +19,11 @@ describe("computeFeedScrollReadinessWindows", () => {
       renderAfterPx: 720,
       priorityBeforePx: 990,
       priorityAfterPx: 3200,
-      preloadBeforePx: 1600,
-      preloadAfterPx: 4800,
       commitLookaheadBlocks: 48,
     });
   });
 
-  it("expands render, priority and preload windows with scroll velocity", () => {
+  it("expands the render and priority windows with scroll velocity", () => {
     const windows = computeFeedScrollReadinessWindows({
       viewportHeight: 1200,
       scrollVelocityPxMs: 5,
@@ -36,7 +34,6 @@ describe("computeFeedScrollReadinessWindows", () => {
     expect(windows.renderAfterPx).toBe(1300);
     // 5 px/ms * 350 = 1750 velocity contribution, quantized up to 1800.
     expect(windows.priorityAfterPx).toBe(5400);
-    expect(windows.preloadAfterPx).toBe(7800);
     expect(windows.commitLookaheadBlocks).toBe(80);
   });
 
@@ -50,7 +47,6 @@ describe("computeFeedScrollReadinessWindows", () => {
 
     expect(windows.renderBeforePx).toBeGreaterThan(windows.renderAfterPx);
     expect(windows.priorityBeforePx).toBeGreaterThan(windows.priorityAfterPx);
-    expect(windows.preloadBeforePx).toBeGreaterThan(windows.preloadAfterPx);
   });
 
   it("clamps very large viewport and velocity values", () => {
@@ -63,8 +59,6 @@ describe("computeFeedScrollReadinessWindows", () => {
 
     expect(windows.renderAfterPx).toBe(1800);
     expect(windows.priorityAfterPx).toBe(8000);
-    expect(windows.preloadAfterPx).toBe(14000);
-    expect(windows.preloadBeforePx).toBe(3600);
   });
 
   it("quantizes velocity growth so nearby velocities produce identical windows", () => {
@@ -104,12 +98,8 @@ describe("computeFeedScrollReadinessWindows", () => {
       const rawPriorityAfter = Math.round(
         Math.min(Math.max(vh * 3 + velocity * 350, 3200), 8000),
       );
-      const rawPreloadAfter = Math.round(
-        Math.min(Math.max(vh * 4 + velocity * 600, 4800), 14000),
-      );
       expect(windows.renderAfterPx).toBeGreaterThanOrEqual(rawRenderAfter);
       expect(windows.priorityAfterPx).toBeGreaterThanOrEqual(rawPriorityAfter);
-      expect(windows.preloadAfterPx).toBeGreaterThanOrEqual(rawPreloadAfter);
     }
   });
 
@@ -123,9 +113,8 @@ describe("computeFeedScrollReadinessWindows", () => {
       });
       // Scrolling forward, the backward window is exposed as renderBeforePx.
       expect(windows.renderBeforePx).toBeGreaterThanOrEqual(vh * 0.5);
-      // Priority and preload backward windows share the same lower bound.
+      // The priority window behind the cursor shares the same lower bound.
       expect(windows.priorityBeforePx).toBeGreaterThanOrEqual(vh * 0.5);
-      expect(windows.preloadBeforePx).toBeGreaterThanOrEqual(vh * 0.5);
     }
   });
 });

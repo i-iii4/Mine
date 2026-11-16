@@ -5,13 +5,19 @@
 // does not take is dropped without a word and a missing required one fails
 // only at run time, while every other test mocks `invoke`: nothing else
 // catches a mismatch.
+//
+// The same list of registered commands holds SPEC_INTEGRATION.md to the code
+// (AUDIT_CODE_QUALITY.md, Д1): the document named commands deleted long ago.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const RUST_SOURCES = "src-tauri/src";
+const CORE_SOURCES = "mine-core/src";
 const FRONTEND_SOURCES = "src";
+const GENERATED_TYPES = "src/types/generated.ts";
+const INTEGRATION_SPEC = "SPEC_INTEGRATION.md";
 
 /** A parameter Tauri fills itself instead of reading it from the call. */
 const INJECTED_PARAMETER =
@@ -300,6 +306,98 @@ describe("the arguments of every command call (Е7.2)", () => {
       ["sample.ts:6: \"rename\" gets keys the check cannot read"],
       ["sample.ts:7: \"gone\" is not a registered command"],
       ["sample.ts:8: \"rename\" needs \"new_tag\""],
+    ]);
+  });
+});
+
+/** The Rust sources under `directory`. */
+function rustFiles(directory: string): string[] {
+  return readdirSync(directory).flatMap((name) => {
+    const path = join(directory, name);
+    if (statSync(path).isDirectory()) return rustFiles(path);
+    return name.endsWith(".rs") ? [path] : [];
+  });
+}
+
+/** Every identifier the backend writes: its functions, fields and modules in
+ *  Rust, and the names it serializes under, which only the generated types
+ *  spell out (`stale_body` is the variant `StaleBody`). */
+function backendNames(): Set<string> {
+  const names = new Set<string>();
+  const sources = [...rustFiles(RUST_SOURCES), ...rustFiles(CORE_SOURCES), GENERATED_TYPES];
+  for (const file of sources) {
+    for (const match of readFileSync(file, "utf8").matchAll(/\b[a-z][a-z0-9_]*\b/g)) {
+      names.add(match[0]);
+    }
+  }
+  return names;
+}
+
+/** The names a document gives that the code does not have. A snake_case name
+ *  in an inline code span is a command or another backend name: it must be a
+ *  registered command or an identifier of the backend. A signature written as
+ *  `#[tauri::command] name(` in a code block must be a registered command. */
+function unknownSpecNames(
+  text: string,
+  registered: ReadonlySet<string>,
+  backend: ReadonlySet<string>,
+): string[] {
+  const unknown = new Set<string>();
+  const blocks = /```[\s\S]*?```/g;
+  for (const block of text.matchAll(blocks)) {
+    for (const signature of block[0].matchAll(/#\[tauri::command[^\]]*\]\s+([a-z0-9_]+)\s*\(/g)) {
+      const name = signature[1] ?? "";
+      if (!registered.has(name)) unknown.add(name);
+    }
+  }
+  for (const span of text.replace(blocks, "").matchAll(/`([^`\n]+)`/g)) {
+    for (const match of (span[1] ?? "").matchAll(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g)) {
+      const name = match[0];
+      if (!registered.has(name) && !backend.has(name)) unknown.add(name);
+    }
+  }
+  return [...unknown].sort();
+}
+
+describe("the commands SPEC_INTEGRATION.md names (AUDIT_CODE_QUALITY.md, Д1)", () => {
+  it("every registered command is declared by its module", () => {
+    const registered = registeredCommands();
+    // The reader found the list: an empty one would pass anything below.
+    expect(registered.size).toBeGreaterThan(100);
+
+    const undeclared = [...registered].filter(([name, file]) =>
+      readRustCommand(readFileSync(file, "utf8"), name) === null);
+    expect(undeclared).toEqual([]);
+  });
+
+  it("are registered, and its other backend names exist", () => {
+    const registered = new Set(registeredCommands().keys());
+    const spec = readFileSync(INTEGRATION_SPEC, "utf8");
+    // The document still speaks of commands: a moved or emptied file would
+    // pass anything.
+    expect(spec).toContain("`list_grid_blocks`");
+
+    expect(unknownSpecNames(spec, registered, backendNames())).toEqual([]);
+  });
+
+  it("catches a command the code no longer has", () => {
+    const registered = new Set(["list_grid_blocks", "delete_block"]);
+    const backend = new Set(["upsert_block", "body_hash"]);
+    const text = [
+      "`list_grid_blocks` reads the index; `rebuild_index` and `list_tags` are gone.",
+      "`delete_block(..., delete_unused_media=true)` calls `upsert_block` with `body_hash`.",
+      "```rust",
+      "#[tauri::command] delete_block(state, slug: String)",
+      "#[tauri::command] rename_tag(state, old_tag: String)",
+      "let untouched_local = 1;",
+      "```",
+    ].join("\n");
+
+    expect(unknownSpecNames(text, registered, backend)).toEqual([
+      "delete_unused_media",
+      "list_tags",
+      "rebuild_index",
+      "rename_tag",
     ]);
   });
 });

@@ -14,10 +14,19 @@ export const FLOATING_LAYER_EDGE_PX = 8;
  */
 export type FloatingMenuWidth = "action" | "search";
 
-/// How far a dropdown menu stands from the visible plate of the button that
-/// opened it: the surface inset, `--spacing-surface` (user's decision of
-/// 11.10.2026; DESIGN_SYSTEM.md, «Всплывающие элементы», «Отступ от кнопки»).
+/// How far a dropdown menu and a tooltip stand from the visible plate of
+/// their button: the surface inset, `--spacing-surface` (user's decisions of
+/// 11.10.2026 for menus and 15.11.2026 for tooltips; DESIGN_SYSTEM.md,
+/// «Всплывающие элементы», «Отступ от кнопки»).
 export const MENU_PLATE_GAP_PX = 4;
+
+/// How far a menu a right click opened stands from the point of the click:
+/// nothing, its corner is on the point, as `NSMenu.popUpContextMenu` puts a
+/// system menu (user's decision of 15.11.2026; SPEC_MENU_WINDOW.md, МО10).
+export const MENU_POINT_OFFSET_PX = 0;
+
+/** What a menu stands at: the plate of its button, or the point of a click. */
+export type MenuAnchor = "plate" | "point";
 
 export type MenuSide = "top" | "right" | "bottom" | "left";
 
@@ -33,6 +42,24 @@ export interface MenuPlateOffsets {
 type Box = Pick<DOMRectReadOnly, "top" | "right" | "bottom" | "left">;
 
 /**
+ * How far from the box Radix anchors to (the trigger) a layer stands on
+ * `side` so that it stands `MENU_PLATE_GAP_PX` off the plate one sees inside
+ * that box. A chrome button is as tall as its row and its 24px plate stands
+ * centred in it: counted from the box, the same 4 read as 7 or 11.5 (user's
+ * reports of 11.10.2026 for a menu, 15.11.2026 for a tooltip). The menus and
+ * the tooltips take it alike.
+ */
+export function plateSideOffset(trigger: Box, plate: Box, side: MenuSide): number {
+  const inset: Record<MenuSide, number> = {
+    top: plate.top - trigger.top,
+    right: trigger.right - plate.right,
+    bottom: trigger.bottom - plate.bottom,
+    left: plate.left - trigger.left,
+  };
+  return MENU_PLATE_GAP_PX - inset[side];
+}
+
+/**
  * The offsets that put a menu `MENU_PLATE_GAP_PX` off its button's plate
  * and flush with the plate's `align` edge, from the box Radix anchors to
  * (the trigger) and the plate one sees inside it. A chrome button is as tall
@@ -45,21 +72,15 @@ export function menuPlateOffsets(
   side: MenuSide,
   align: MenuAlign,
 ): MenuPlateOffsets {
-  const inset: Record<MenuSide, number> = {
-    top: plate.top - trigger.top,
-    right: trigger.right - plate.right,
-    bottom: trigger.bottom - plate.bottom,
-    left: plate.left - trigger.left,
-  };
   const acrossTop = side === "top" || side === "bottom";
-  const alignEdge: MenuSide = acrossTop
-    ? align === "start" ? "left" : "right"
-    : align === "start" ? "top" : "bottom";
-  return { sideOffset: MENU_PLATE_GAP_PX - inset[side], alignOffset: inset[alignEdge] };
+  const alignOffset = acrossTop
+    ? align === "start" ? plate.left - trigger.left : trigger.right - plate.right
+    : align === "start" ? plate.top - trigger.top : trigger.bottom - plate.bottom;
+  return { sideOffset: plateSideOffset(trigger, plate, side), alignOffset };
 }
 
-/** What a menu measures from: a chrome control's plate (`ChromePlate`), or
- *  the button itself, whose box is the plate one sees. */
+/** What a menu or a tooltip measures from: a chrome control's plate
+ *  (`ChromePlate`), or the button itself, whose box is the plate one sees. */
 export function menuPlateOf(trigger: HTMLElement): HTMLElement {
   return trigger.querySelector<HTMLElement>("[data-chrome-plate]") ?? trigger;
 }

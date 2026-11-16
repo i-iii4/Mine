@@ -818,7 +818,7 @@ async function checkNativeHelperReplies() {
       channel: 'chromium', headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
     });
-    browser.serviceWorkers()[0] ?? await browser.waitForEvent('serviceworker', { timeout: 15_000 });
+    if (!browser.serviceWorkers()[0]) await browser.waitForEvent('serviceworker', { timeout: 15_000 });
     const page = await browser.newPage();
     await page.route('**/dist/assets/*', (route) => route.abort());
     await page.goto(`chrome-extension://${extensionId}/dist/index.html`);

@@ -68,7 +68,9 @@ describe("sidebar zone contract", () => {
   });
 
   it("lets a compact row's field and label start where its name starts (user's decision of 05.11.2026)", () => {
-    expect(css).toContain("--sidebar-name-left: 0px;");
+    // No column moves the name: the columns stand Name, Previews, Count
+    // (user's decision of 15.11.2026).
+    expect(css).not.toContain("--sidebar-name-left");
     expect(css).toMatch(/\[data-sidebar-create-channel-row-body\] \{\s*padding-left: var\(--spacing-s3\);/);
     expect(css).toMatch(/\[data-sidebar-editable-row-ghost\] \{\s*display: none;\s*visibility: hidden;/);
   });

@@ -1,5 +1,7 @@
 # Surface Search and Hybrid Retrieval
 
+**Состояние:** реализовано. Источник: PLAN.md, Phase 27 и Phase 28. **Сверка с кодом:** 15.11.2026, существование названных файлов.
+
 Related documents: [ARCHITECTURE.md](ARCHITECTURE.md) | [SPEC_FRONTEND.md](SPEC_FRONTEND.md) | [SPEC_STORAGE.md](SPEC_STORAGE.md) | [SPEC_INTEGRATION.md](SPEC_INTEGRATION.md) | [SPEC_DOMAIN.md](SPEC_DOMAIN.md) | [SPEC_GROUP_SELECTION.md](SPEC_GROUP_SELECTION.md) | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)
 
 ## Goal

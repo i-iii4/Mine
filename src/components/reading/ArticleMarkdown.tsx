@@ -24,9 +24,9 @@ import { isCalloutType, type CalloutFold } from "@/lib/reading/callouts";
 import { hastClasses, hastCodeLanguage, hastCodeOfPre, hastElements, hastText } from "@/lib/reading/hast";
 import {
   READING_REHYPE_PLUGINS,
-  READING_REMARK_PLUGINS,
   READING_REMARK_REHYPE_OPTIONS,
 } from "@/lib/reading/pipeline";
+import { READING_KEPT_TREE_PLUGINS } from "@/lib/reading/tree";
 import {
   CALLOUT_BODY_PROPERTY,
   CALLOUT_FOLD_PROPERTY,
@@ -486,8 +486,10 @@ export interface ArticleMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement
  * An article body drawn by the reading pipeline (SPEC_READING_MODE.md, Ч0,
  * Ч13): wikilinks outside code, math and HTML, GFM, highlights, math,
  * callouts, note embeds and the note's sanitized HTML, each by its own
- * element. The host (`ArticleBody` in Detail) keeps text selection and media
- * actions and lends its picture element.
+ * element. The body is parsed once: react-markdown is given the kept tree of
+ * the rendered text (`readingTree`, Ч0.5), so drawing the article again
+ * parses nothing. The host (`ArticleBody` in Detail) keeps text selection
+ * and media actions and lends its picture element.
  */
 export function ArticleMarkdown({
   body,
@@ -514,7 +516,7 @@ export function ArticleMarkdown({
     <div {...props} ref={rootRef} className={cn(ARTICLE_ROOT_CLASSES, className)}>
       <ArticleContext.Provider value={state}>
         <ReactMarkdown
-          remarkPlugins={READING_REMARK_PLUGINS}
+          remarkPlugins={READING_KEPT_TREE_PLUGINS}
           remarkRehypeOptions={READING_REMARK_REHYPE_OPTIONS}
           rehypePlugins={READING_REHYPE_PLUGINS}
           urlTransform={safeMarkdownUrl}

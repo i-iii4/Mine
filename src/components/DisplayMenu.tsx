@@ -14,7 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useTopChromeTriggerInteraction } from "@/hooks/useTopChromeTriggerInteraction";
-import { SidebarColumnsMenu } from "./SidebarColumnsMenu";
+import { COMPACT_TABLE_POSTPONED } from "@/lib/compactStack";
 import { CompactStackMenu } from "./CompactStackMenu";
 import { CardViewMenu } from "./CardViewMenu";
 
@@ -54,13 +54,17 @@ export function DisplayMenu({
         data-display-panel={panel}
       >
         {children}
-        {/* TRIALS (PLAN 47.6, 50.38): the sidebar rows' columns and the
-            compact sidebar's looks, in both panels. */}
-        <DropdownMenuSeparator />
-        <SidebarColumnsMenu />
-        <DropdownMenuSeparator />
-        <CompactStackMenu />
-        {/* TRIAL (SPEC_CARD_PEEK.md, О1): the open card's view. */}
+        {/* POSTPONED (compactStack.ts, COMPACT_TABLE_POSTPONED): the narrow
+            table's looks, in both panels, hidden until it is taken up again. The
+            sidebar's columns, List spacing and List style are fixed (user's
+            decision of 15.11.2026). */}
+        {!COMPACT_TABLE_POSTPONED && (
+          <>
+            <DropdownMenuSeparator />
+            <CompactStackMenu />
+          </>
+        )}
+        {/* SPEC_CARD_PEEK.md, О1: the open card's view. */}
         <DropdownMenuSeparator />
         <CardViewMenu />
       </DropdownMenuContent>

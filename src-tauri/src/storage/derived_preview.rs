@@ -576,14 +576,14 @@ fn reconcile_slug(
         // measurable. This is where previews written before the manifest
         // carried artifact geometry get their dimensions: they reach this
         // branch and no other, because their source has not changed since.
-        return publish_ready(conn, vault, slug, &record, &manifest, &source_stamp, false)
+        return publish_ready(conn, vault, slug, &record, &source_stamp, false)
             .map(Some);
     }
 
     if expected.is_empty() {
         // No artifacts to measure (text previews); the shared path degrades to
         // a plain state write by construction.
-        return publish_ready(conn, vault, slug, &record, &manifest, &source_stamp, false)
+        return publish_ready(conn, vault, slug, &record, &source_stamp, false)
             .map(Some);
     }
 
@@ -624,7 +624,7 @@ fn reconcile_slug(
     {
         // An outdated preview does not make iCloud download its source: it
         // stays on screen and is rebuilt by a pass that finds the source local.
-        return publish_ready(conn, vault, slug, &record, &manifest, &source_stamp, false)
+        return publish_ready(conn, vault, slug, &record, &source_stamp, false)
             .map(Some);
     }
 
@@ -723,7 +723,7 @@ fn reconcile_slug(
                 .expect("ready primary path was checked above");
             match std::fs::read(primary)
                 .with_context(|| format!("failed to read primary preview: {}", primary.display()))
-                .and_then(|bytes| files::write_atomically(&destination, &bytes))
+                .and_then(|bytes| thumbnails::write_preview_bytes(&destination, &bytes))
             {
                 Ok(()) => {
                     regenerated = true;
@@ -793,13 +793,13 @@ fn reconcile_slug(
         .iter()
         .all(|path| readiness(path) == PreviewReadiness::Finished);
     if all_ready && (!source_changed || generation_failure.is_none()) {
-        return publish_ready(conn, vault, slug, &record, &manifest, &source_stamp, regenerated)
+        return publish_ready(conn, vault, slug, &record, &source_stamp, regenerated)
             .map(Some);
     }
     if keeps_drawn && all_drawable(&expected) {
         // Some artifacts are still outdated, waiting for the browser or for a
         // decode that failed; the card goes on showing them.
-        return publish_ready(conn, vault, slug, &record, &manifest, &source_stamp, regenerated)
+        return publish_ready(conn, vault, slug, &record, &source_stamp, regenerated)
             .map(Some);
     }
 
@@ -871,6 +871,107 @@ fn manifest_matches_card_kind(
     }
 }
 
+/// Run `publish`, the last step of a pass over the card `slug`, on the
+/// manifest the index holds now (SPEC_STORAGE.md, «Публикация сверяет план,
+/// а не байты манифеста»).
+///
+/// A pass reads the card's plan in `record`, makes its pictures, which takes
+/// as long as decoding takes, and only then publishes. Meanwhile whoever
+/// rewrote the card's thumbnail stamps its size into the same manifest on
+/// another thread (`index::sync_thumb_metadata`: the watcher's preview queue,
+/// the thumbnail sweep, `save_thumb`). A size is no input of the pass:
+/// `publish` gets the manifest as stored, sizes stamped meanwhile included,
+/// and is refused only when that manifest no longer names the pictures the
+/// pass read. Until 15.11.2026 the manifest was compared byte for byte with
+/// the one read before the pictures were made, so the stamp of the watcher's
+/// thumbnail refused the publish of the pass the same event had queued.
+///
+/// The read of the stored manifest, its comparison and the writes of
+/// `publish` are one write transaction of the index: no other writer comes
+/// between them.
+fn publish_on_stored_manifest<T>(
+    conn: &Connection,
+    slug: &str,
+    record: &PreviewRecord,
+    publish: impl FnOnce(Option<&str>) -> Result<T>,
+) -> Result<T> {
+    #[cfg(test)]
+    publish_hooks::run(slug);
+    in_write_transaction(conn, || {
+        let stored = stored_manifest_of_read_plan(conn, slug, record)?;
+        publish(stored.as_deref())
+    })
+}
+
+/// Run `work` as one write transaction of the index. `BEGIN IMMEDIATE` takes
+/// the index's write lock before the first read, so what `work` reads is what
+/// it writes over; a failed `work` leaves nothing written. Inside a
+/// transaction the caller opened, `work` is a part of that transaction.
+fn in_write_transaction<T>(conn: &Connection, work: impl FnOnce() -> Result<T>) -> Result<T> {
+    if !conn.is_autocommit() {
+        return work();
+    }
+    let transaction =
+        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
+            .context("failed to begin the publish of a preview")?;
+    let value = work()?;
+    transaction
+        .commit()
+        .context("failed to commit the publish of a preview")?;
+    Ok(value)
+}
+
+/// The manifest of the card `slug` as the index holds it now, when it names
+/// the same pictures as the manifest the pass read in `record`
+/// (`index::picture_plans_differ`): the same bytes, or the same plan with
+/// other sizes measured into it.
+///
+/// # Errors
+///
+/// When the card left the index, or its manifest names other pictures now:
+/// what the pass made is not what the index asks for any more.
+fn stored_manifest_of_read_plan(
+    conn: &Connection,
+    slug: &str,
+    record: &PreviewRecord,
+) -> Result<Option<String>> {
+    let stored = conn
+        .query_row(
+            "SELECT preview_manifest FROM blocks WHERE slug = ?1",
+            [slug],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?;
+    let Some(stored) = stored else {
+        anyhow::bail!("preview owner disappeared while publishing: {slug}");
+    };
+    let read = record.manifest.as_deref();
+    let same_pictures = stored.as_deref() == read
+        || (stored
+            .as_deref()
+            .is_some_and(|raw| serde_json::from_str::<FeedPreviewManifest>(raw).is_ok())
+            && !index::picture_plans_differ(read, stored.as_deref()));
+    if !same_pictures {
+        return Err(inputs_changed(slug));
+    }
+    Ok(stored)
+}
+
+/// The refusal of a publish whose inputs moved since the pass read them: the
+/// plan or the source stamp. The pass that the change queued publishes.
+fn inputs_changed(slug: &str) -> anyhow::Error {
+    anyhow::anyhow!("preview inputs changed while publishing: {slug}")
+}
+
+/// What a pass publishes of a card whose preview is not ready.
+struct NonReady<'a> {
+    state: DerivedPreviewState,
+    source_stamp: Option<&'a str>,
+    error_kind: PreviewErrorKind,
+    retryable: bool,
+    message: String,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn mark_non_ready(
     conn: &Connection,
@@ -882,14 +983,41 @@ fn mark_non_ready(
     retryable: bool,
     message: impl Into<String>,
 ) -> Result<PreviewReconcileOutcome> {
-    let message = message.into();
+    let non_ready = NonReady {
+        state,
+        source_stamp,
+        error_kind,
+        retryable,
+        message: message.into(),
+    };
+    publish_on_stored_manifest(conn, slug, record, |stored| {
+        write_non_ready(conn, slug, record, stored, non_ready)
+    })
+}
+
+/// Write `non_ready` as the state of the card `slug`, whose stored manifest
+/// is `stored`: the body of a publish (`publish_on_stored_manifest`).
+fn write_non_ready(
+    conn: &Connection,
+    slug: &str,
+    record: &PreviewRecord,
+    stored: Option<&str>,
+    non_ready: NonReady<'_>,
+) -> Result<PreviewReconcileOutcome> {
+    let NonReady {
+        state,
+        source_stamp,
+        error_kind,
+        retryable,
+        message,
+    } = non_ready;
     let changed = update_preview_state(
         conn,
         slug,
         state,
         source_stamp,
         Some(error_kind.as_str()),
-        record.manifest.as_deref(),
+        stored,
     )?;
     Ok(PreviewReconcileOutcome {
         slug: slug.to_string(),
@@ -971,7 +1099,7 @@ fn update_preview_state(
     {
         return Ok(false);
     }
-    anyhow::bail!("preview inputs changed while publishing: {slug}")
+    Err(inputs_changed(slug))
 }
 
 fn expected_preview_paths(
@@ -1110,87 +1238,94 @@ fn publish_ready(
     vault: &VaultLayout,
     slug: &str,
     record: &PreviewRecord,
-    manifest: &FeedPreviewManifest,
     source_stamp: &str,
     regenerated: bool,
 ) -> Result<PreviewReconcileOutcome> {
-    let stamp = publish_stamped_dimensions(conn, vault, slug, record, manifest)?;
-    if stamp.unmeasurable {
-        return mark_non_ready(
+    publish_on_stored_manifest(conn, slug, record, |stored| {
+        let stamp = stamp_stored_dimensions(conn, vault, slug, stored)?;
+        if stamp.unmeasurable {
+            return write_non_ready(
+                conn,
+                slug,
+                record,
+                Some(&stamp.manifest),
+                NonReady {
+                    state: DerivedPreviewState::Failed,
+                    source_stamp: Some(source_stamp),
+                    error_kind: PreviewErrorKind::UnreadableArtifact,
+                    retryable: true,
+                    message: "preview artifact exists but its dimensions cannot be read"
+                        .to_string(),
+                },
+            )
+            .map(|mut outcome| {
+                outcome.regenerated = regenerated;
+                outcome
+            });
+        }
+        let changed = update_preview_state(
             conn,
             slug,
-            record,
-            DerivedPreviewState::Failed,
+            DerivedPreviewState::Ready,
             Some(source_stamp),
-            PreviewErrorKind::UnreadableArtifact,
-            true,
-            "preview artifact exists but its dimensions cannot be read",
-        )
-        .map(|mut outcome| {
-            outcome.regenerated = regenerated;
-            outcome
-        });
-    }
-    let changed = update_preview_state(
-        conn,
-        slug,
-        DerivedPreviewState::Ready,
-        Some(source_stamp),
-        None,
-        stamp.manifest.as_deref(),
-    )?;
-    Ok(PreviewReconcileOutcome {
-        slug: slug.to_string(),
-        state: DerivedPreviewState::Ready,
-        regenerated,
-        state_changed: changed,
-        failure: None,
+            None,
+            Some(&stamp.manifest),
+        )?;
+        Ok(PreviewReconcileOutcome {
+            slug: slug.to_string(),
+            state: DerivedPreviewState::Ready,
+            regenerated,
+            state_changed: changed,
+            failure: None,
+        })
     })
 }
 
 struct StampOutcome {
-    /// The manifest now current for this block.
-    manifest: Option<String>,
+    /// The manifest now stored for this block.
+    manifest: String,
     /// An artifact exists but could not be measured, so this block's geometry
     /// stays unknown however many times the sweep runs.
     unmeasurable: bool,
 }
 
-fn publish_stamped_dimensions(
+/// Measure the artifacts of the card `slug` into its manifest `stored`, the
+/// one the index holds now: a part of a publish
+/// (`publish_on_stored_manifest`), under its write transaction.
+fn stamp_stored_dimensions(
     conn: &Connection,
     vault: &VaultLayout,
     slug: &str,
-    record: &PreviewRecord,
-    manifest: &FeedPreviewManifest,
+    stored: Option<&str>,
 ) -> Result<StampOutcome> {
+    let stored =
+        stored.with_context(|| format!("the preview manifest of '{slug}' left the index"))?;
+    let manifest = serde_json::from_str::<FeedPreviewManifest>(stored)
+        .with_context(|| format!("the stored preview manifest of '{slug}' does not read back"))?;
     // Every publish measures, even a manifest that already carries geometry:
     // an artifact is rewritten in place by this pass and by the thumbnail
     // sweep alike, and a size kept from the file it replaced shaped a 16:9
     // video as a square (SPEC_CARD_MEDIA_GEOMETRY.md). Measuring reads each
     // artifact's header only, about 20 µs warm.
-    let stamped = stamp_preview_dimensions(vault, manifest)?;
-    let Some(stamped) = stamped else {
+    let Some(stamped) = stamp_preview_dimensions(vault, &manifest)? else {
         // Nothing changed. Where geometry is still missing, every artifact
         // was opened and none gave up its size: the files are present but
         // unusable. Reporting `ready` there is what turned a broken artifact
         // into a card that merely looked oddly shaped.
         return Ok(StampOutcome {
-            manifest: record.manifest.clone(),
-            unmeasurable: manifest_needs_dimensions(manifest),
+            manifest: stored.to_string(),
+            unmeasurable: manifest_needs_dimensions(&manifest),
         });
     };
 
     let unmeasurable = serde_json::from_str::<FeedPreviewManifest>(&stamped)
         .map(|parsed| manifest_needs_dimensions(&parsed))
         .unwrap_or(false);
-    if store_stamped_manifest(conn, slug, record.manifest.as_deref(), &stamped)? {
-        return Ok(StampOutcome {
-            manifest: Some(stamped),
-            unmeasurable,
-        });
+    if !store_stamped_manifest(conn, slug, Some(stored), &stamped)? {
+        return Err(inputs_changed(slug));
     }
     Ok(StampOutcome {
-        manifest: record.manifest.clone(),
+        manifest: stamped,
         unmeasurable,
     })
 }
@@ -1340,6 +1475,36 @@ fn merge_report(target: &mut PreviewReconcileReport, source: PreviewReconcileRep
     target.changed_slugs.extend(source.changed_slugs);
     target.failed.extend(source.failed);
     target.cancelled |= source.cancelled;
+}
+
+/// A step a test puts between the pictures a pass made and their publish:
+/// the place where another writer of the manifest lands in the application
+/// (SPEC_STORAGE.md, «Публикация сверяет план, а не байты манифеста»). The
+/// step belongs to the thread that set it, the thread of the pass under
+/// test, and runs once.
+#[cfg(test)]
+pub(crate) mod publish_hooks {
+    use std::cell::RefCell;
+
+    type Step = Box<dyn FnOnce(&str)>;
+
+    thread_local! {
+        static BEFORE_NEXT_PUBLISH: RefCell<Option<Step>> = const { RefCell::new(None) };
+    }
+
+    /// Run `step` with the card's slug right before the next publish of a
+    /// pass on this thread.
+    pub(crate) fn before_next_publish(step: impl FnOnce(&str) + 'static) {
+        BEFORE_NEXT_PUBLISH.with(|slot| *slot.borrow_mut() = Some(Box::new(step)));
+    }
+
+    pub(super) fn run(slug: &str) {
+        // Taken out first: the step may run a publish of its own.
+        let step = BEFORE_NEXT_PUBLISH.with(|slot| slot.borrow_mut().take());
+        if let Some(step) = step {
+            step(slug);
+        }
+    }
 }
 
 /// Pictures of one colour and what the feed draws of a card, for the tests
@@ -2427,8 +2592,10 @@ mod tests {
         reconcile::reconcile_vault(&conn, &vault).unwrap();
         reconcile_preview_for_slug(&conn, &vault, "Corrupt").unwrap();
 
-        // Overwrite every artifact with a JPEG header followed by nothing
-        // usable, and forget the geometry the first pass recorded.
+        // Overwrite every artifact with a file that starts and ends as a
+        // JPEG does, with nothing usable between, and forget the geometry
+        // the first pass recorded. A file cut short is another matter: it is
+        // no preview and is built again (SPEC_THUMBNAILS.md, П10).
         let raw: String = conn
             .query_row(
                 "SELECT preview_manifest FROM blocks WHERE slug = 'Corrupt'",
@@ -2454,7 +2621,7 @@ mod tests {
         assert!(!artifacts.is_empty(), "the fixture must have artifacts");
         for relative in &artifacts {
             let path = vault.thumbs_dir().join(relative);
-            std::fs::write(&path, b"\xff\xd8\xffnot really a jpeg at all").unwrap();
+            std::fs::write(&path, b"\xff\xd8\xffnot really a jpeg at all\xff\xd9").unwrap();
             assert!(
                 thumbnails::is_finished_picture(&path, thumbnails::GeneratorEpoch::AllCurrent),
                 "the readiness check must still accept this file — that is the point"
@@ -2494,6 +2661,333 @@ mod tests {
         let block = light.iter().find(|b| b.slug == "Corrupt").unwrap();
         assert!(block.preview_unreadable);
         assert!(!block.content_in_cloud);
+    }
+
+    /// The preview files of the card `slug`: its primary and its tiles.
+    fn preview_files(conn: &Connection, vault: &VaultLayout, slug: &str) -> Vec<PathBuf> {
+        let raw: String = conn
+            .query_row(
+                "SELECT preview_manifest FROM blocks WHERE slug = ?1",
+                [slug],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let manifest: FeedPreviewManifest = serde_json::from_str(&raw).unwrap();
+        expected_preview_paths(vault, &manifest).unwrap()
+    }
+
+    /// SPEC_THUMBNAILS.md, П10: files of the preview cache are not waited
+    /// onto the disk, so a power loss may leave one as `damaged` makes it of
+    /// its whole bytes. The next pass over the space builds every such file
+    /// again, whichever of the card's files were damaged, and the card stays
+    /// ready.
+    fn assert_damaged_preview_files_are_built_again(damaged: impl Fn(&[u8]) -> Vec<u8>) {
+        let (_source, vault, conn) = setup();
+        image::RgbImage::from_pixel(500, 1000, image::Rgb([10, 20, 30]))
+            .save(vault.root().join("photo.png"))
+            .unwrap();
+        files::write_block_file(&vault, &image_block("Photo", "photo.png")).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        assert_eq!(reconcile_all_previews(&conn, &vault).unwrap().ready, 1);
+        let previews = preview_files(&conn, &vault, "Photo");
+        assert_eq!(previews.len(), 2, "a primary preview and a tile: {previews:?}");
+        let whole: Vec<Vec<u8>> = previews
+            .iter()
+            .map(|path| std::fs::read(path).unwrap())
+            .collect();
+
+        for cut in [vec![0, 1], vec![0], vec![1]] {
+            for &file in &cut {
+                let bytes = damaged(&whole[file]);
+                assert_ne!(bytes, whole[file], "the file is damaged");
+                std::fs::write(&previews[file], bytes).unwrap();
+            }
+
+            let report = reconcile_all_previews(&conn, &vault).unwrap();
+
+            assert_eq!((report.ready, report.regenerated), (1, 1), "{cut:?}: {report:?}");
+            assert!(report.failed.is_empty(), "{cut:?}: {report:?}");
+            for (path, bytes) in previews.iter().zip(&whole) {
+                assert_eq!(&std::fs::read(path).unwrap(), bytes, "{cut:?}: {}", path.display());
+            }
+            let (state, kind): (String, Option<String>) = conn
+                .query_row(
+                    "SELECT preview_state, preview_error_kind FROM blocks WHERE slug = 'Photo'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!((state.as_str(), kind), ("ready", None), "{cut:?}");
+        }
+        let settled = reconcile_all_previews(&conn, &vault).unwrap();
+        assert_eq!((settled.ready, settled.regenerated), (1, 0), "{settled:?}");
+    }
+
+    #[test]
+    fn an_emptied_preview_file_is_built_again_by_the_next_pass() {
+        assert_damaged_preview_files_are_built_again(|_| Vec::new());
+    }
+
+    /// Cut inside the header, where its size no longer reads (until
+    /// 15.11.2026 such a card was `unreadable_artifact` on every pass), in
+    /// the middle, where the header is whole, and one byte short.
+    #[test]
+    fn a_preview_file_cut_short_is_built_again_by_the_next_pass() {
+        assert_damaged_preview_files_are_built_again(|whole| whole[..20].to_vec());
+        assert_damaged_preview_files_are_built_again(|whole| whole[..whole.len() / 2].to_vec());
+        assert_damaged_preview_files_are_built_again(|whole| whole[..whole.len() - 1].to_vec());
+    }
+
+    /// A file of its full length whose last bytes never reached the disk:
+    /// the length says nothing, the end of the file does.
+    #[test]
+    fn a_preview_file_of_full_length_with_a_lost_end_is_built_again_by_the_next_pass() {
+        let without_last = |lost: usize| {
+            move |whole: &[u8]| {
+                let mut bytes = whole.to_vec();
+                let kept = bytes.len() - lost.min(bytes.len());
+                bytes[kept..].fill(0);
+                bytes
+            }
+        };
+        assert_damaged_preview_files_are_built_again(without_last(2));
+        assert_damaged_preview_files_are_built_again(without_last(64));
+        assert_damaged_preview_files_are_built_again(without_last(usize::MAX));
+    }
+
+    /// The set of the pass's limit (AUDIT_PERFORMANCE.md, Б5): 2 000 picture
+    /// cards, each with a small picture of its own and a caption.
+    const TIMED_CARDS: usize = 2_000;
+    /// Б5: the first preview pass of a space, a card.
+    const PASS_LIMIT_A_CARD: std::time::Duration = std::time::Duration::from_millis(10);
+
+    /// Б5: the first preview pass of a space, which builds the thumbnail,
+    /// its levels and the tile of every card, takes no longer than
+    /// `PASS_LIMIT_A_CARD` a card. The limit is an optimised build's: a speed
+    /// test, run by `test:rust-speed` alone (ARCHITECTURE.md, «Тесты скорости
+    /// Rust»). Until 15.11.2026 every file of the cache waited for the disk,
+    /// 34 ms a card.
+    #[test]
+    #[ignore = "asserts a speed limit of an optimised build: bun run test:rust-speed"]
+    fn a_preview_pass_of_2_000_cards_answers_within_its_limit() {
+        let (_source, vault, conn) = setup();
+        for folder in ["Cards", "Media"] {
+            std::fs::create_dir_all(vault.root().join(folder)).unwrap();
+        }
+        let caption = "Подпись к картинке: город на реке и дома вдоль набережной. ".repeat(5);
+        for card in 0..TIMED_CARDS {
+            let shade = u8::try_from(card % 200).unwrap();
+            image::RgbImage::from_pixel(64, 48, image::Rgb([shade, 120, 200 - shade]))
+                .save(vault.root().join(format!("Media/photo-{card:04}.jpg")))
+                .unwrap();
+            std::fs::write(
+                vault.root().join(format!("Cards/Card {card:04}.md")),
+                format!(
+                    "---\ntype: image\nfile: \"[[photo-{card:04}.jpg]]\"\nsaved_at: 2026-07-10T00:00:00Z\n---\n{caption}\n"
+                ),
+            )
+            .unwrap();
+        }
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let started = std::time::Instant::now();
+        let report = reconcile_all_previews(&conn, &vault).unwrap();
+        let pass = started.elapsed();
+        assert_eq!(
+            (report.ready, report.regenerated, report.failed.len()),
+            (TIMED_CARDS, TIMED_CARDS, 0),
+            "{:?}",
+            report.failed.first()
+        );
+        let a_card = pass / u32::try_from(TIMED_CARDS).unwrap();
+        let started = std::time::Instant::now();
+        let settled = reconcile_all_previews(&conn, &vault).unwrap();
+        let nothing_to_build = started.elapsed();
+        assert_eq!((settled.ready, settled.regenerated), (TIMED_CARDS, 0));
+        eprintln!(
+            "preview pass, {TIMED_CARDS} cards: {pass:?}, {a_card:?} a card, limit {PASS_LIMIT_A_CARD:?} a card; a pass with nothing to build: {nothing_to_build:?}, asserted",
+        );
+        assert!(
+            a_card <= PASS_LIMIT_A_CARD,
+            "preview pass {a_card:?} a card over {PASS_LIMIT_A_CARD:?} ({pass:?} for {TIMED_CARDS} cards)"
+        );
+    }
+
+    /// What another writer of the manifest does once it rewrote the card's
+    /// thumbnail (the watcher's preview queue, the thumbnail sweep,
+    /// `save_thumb`): on a connection of its own it writes the thumbnail's
+    /// size into the manifest.
+    fn stamp_thumbnail_as_another_writer(vault: &VaultLayout, slug: &str) {
+        let other = db::open_or_create(&vault.index_db_path()).unwrap();
+        assert!(
+            index::sync_thumb_metadata(&other, slug, &vault.thumb_path(slug), Some(vault.root()))
+                .unwrap(),
+            "the other writer has a thumbnail to stamp"
+        );
+    }
+
+    fn stored_manifest(conn: &Connection, slug: &str) -> FeedPreviewManifest {
+        let raw: String = conn
+            .query_row(
+                "SELECT preview_manifest FROM blocks WHERE slug = ?1",
+                [slug],
+                |row| row.get(0),
+            )
+            .unwrap();
+        serde_json::from_str(&raw).unwrap()
+    }
+
+    fn stored_state(conn: &Connection, slug: &str) -> (String, Option<String>) {
+        conn.query_row(
+            "SELECT preview_state, preview_error_kind FROM blocks WHERE slug = ?1",
+            [slug],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap()
+    }
+
+    /// The size of every file the manifest names is the size the manifest
+    /// holds for it.
+    fn assert_manifest_holds_the_sizes_on_disk(conn: &Connection, vault: &VaultLayout, slug: &str) {
+        let manifest = stored_manifest(conn, slug);
+        let on_disk = |relative: &str| {
+            let dimensions = image::image_dimensions(vault.thumbs_dir().join(relative)).unwrap();
+            (Some(dimensions.0), Some(dimensions.1))
+        };
+        let primary = manifest.primary_preview_path.as_deref().unwrap();
+        assert_eq!(
+            (manifest.preview_width, manifest.preview_height),
+            on_disk(primary),
+            "{primary}"
+        );
+        assert!(!manifest.tiles.is_empty());
+        for tile in &manifest.tiles {
+            let path = tile.preview_path.as_deref().unwrap();
+            assert_eq!((tile.preview_width, tile.preview_height), on_disk(path), "{path}");
+        }
+    }
+
+    /// SPEC_STORAGE.md, «Публикация сверяет план, а не байты манифеста»: a
+    /// size another writer stamps into the manifest after the pass read it
+    /// and before the pass publishes is no changed input. The pass publishes
+    /// `ready`, and the manifest holds the size of every file on disk. Until
+    /// 15.11.2026 the pass refused: «preview inputs changed while
+    /// publishing», and the card stayed `stale` with its pictures made.
+    #[test]
+    fn a_size_stamped_while_the_pass_made_its_pictures_does_not_refuse_the_publish() {
+        let (_source, vault, conn) = setup();
+        image::RgbImage::from_pixel(500, 1000, image::Rgb([10, 20, 30]))
+            .save(vault.root().join("photo.png"))
+            .unwrap();
+        files::write_block_file(&vault, &image_block("Photo", "photo.png")).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let read = stored_manifest(&conn, "Photo");
+        assert_eq!((read.preview_width, read.preview_height), (None, None));
+
+        let stamped_meanwhile = std::rc::Rc::new(std::cell::Cell::new(false));
+        let stamped = std::rc::Rc::clone(&stamped_meanwhile);
+        let writer_vault = vault.clone();
+        publish_hooks::before_next_publish(move |slug| {
+            stamp_thumbnail_as_another_writer(&writer_vault, slug);
+            let stored = stored_manifest(
+                &db::open_or_create(&writer_vault.index_db_path()).unwrap(),
+                slug,
+            );
+            stamped.set(stored.preview_width.is_some() && stored.tiles[0].preview_width.is_none());
+        });
+        let outcome = reconcile_preview_for_slug(&conn, &vault, "Photo")
+            .unwrap()
+            .unwrap();
+
+        assert!(
+            stamped_meanwhile.get(),
+            "the other writer stamped the thumbnail's size before the publish"
+        );
+        assert_eq!(outcome.state, DerivedPreviewState::Ready);
+        assert!(outcome.regenerated && outcome.state_changed);
+        assert_eq!(stored_state(&conn, "Photo"), ("ready".to_string(), None));
+        assert_manifest_holds_the_sizes_on_disk(&conn, &vault, "Photo");
+    }
+
+    /// The same for a card the pass cannot make ready: the kind of the wait
+    /// is published over a manifest another writer stamped meanwhile. The
+    /// picture is one only the browser decodes, and the other writer stamps
+    /// the size of the text placeholder that stands at the thumbnail's place.
+    #[test]
+    fn a_size_stamped_meanwhile_does_not_refuse_the_publish_of_a_wait() {
+        let (_source, vault, conn) = setup();
+        std::fs::write(
+            vault.root().join("modern.avif"),
+            b"\x00\x00\x00\x1cftypavif-not-decodable",
+        )
+        .unwrap();
+        files::write_block_file(&vault, &image_block("Modern", "modern.avif")).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+        let read = stored_manifest(&conn, "Modern");
+        assert_eq!((read.preview_width, read.preview_height), (None, None));
+
+        let writer_vault = vault.clone();
+        publish_hooks::before_next_publish(move |slug| {
+            stamp_thumbnail_as_another_writer(&writer_vault, slug);
+        });
+        let outcome = reconcile_preview_for_slug(&conn, &vault, "Modern")
+            .unwrap()
+            .unwrap();
+
+        let stamped = stored_manifest(&conn, "Modern");
+        assert!(
+            stamped.preview_width.is_some() && stamped.preview_height.is_some(),
+            "the other writer stamped the placeholder's size before the publish"
+        );
+        assert_eq!(outcome.state, DerivedPreviewState::Failed);
+        assert_eq!(
+            stored_state(&conn, "Modern"),
+            ("failed".to_string(), Some("browser_decode_required".to_string()))
+        );
+    }
+
+    /// A plan that changed while the pass made its pictures still refuses
+    /// the publish: the pictures of the pass are not the pictures the index
+    /// names now, and the card keeps the state the change gave it.
+    #[test]
+    fn a_plan_changed_while_the_pass_made_its_pictures_refuses_the_publish() {
+        let (_source, vault, conn) = setup();
+        image::RgbImage::from_pixel(64, 48, image::Rgb([10, 20, 30]))
+            .save(vault.root().join("photo.png"))
+            .unwrap();
+        files::write_block_file(&vault, &image_block("Photo", "photo.png")).unwrap();
+        reconcile::reconcile_vault(&conn, &vault).unwrap();
+
+        let writer_vault = vault.clone();
+        publish_hooks::before_next_publish(move |slug| {
+            let other = db::open_or_create(&writer_vault.index_db_path()).unwrap();
+            let moved = other
+                .execute(
+                    "UPDATE blocks
+                     SET preview_manifest = replace(preview_manifest, 'Photo.preview-1.jpg', 'Photo.preview-2.jpg')
+                     WHERE slug = ?1",
+                    [slug],
+                )
+                .unwrap();
+            assert_eq!(moved, 1);
+        });
+        let refused = reconcile_preview_for_slug(&conn, &vault, "Photo").unwrap_err();
+
+        assert_eq!(
+            refused.to_string(),
+            "preview inputs changed while publishing: Photo"
+        );
+        assert_eq!(stored_state(&conn, "Photo"), ("stale".to_string(), None));
+        let stored = stored_manifest(&conn, "Photo");
+        assert_eq!(
+            stored.tiles[0].preview_path.as_deref(),
+            Some("Photo.preview-2.jpg")
+        );
+        assert_eq!(
+            (stored.tiles[0].preview_width, stored.tiles[0].preview_height),
+            (None, None),
+            "a refused publish writes nothing"
+        );
     }
 
     #[test]

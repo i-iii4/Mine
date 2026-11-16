@@ -1,37 +1,61 @@
-// What the card menu holds, as data: the one list the menu on the page and the
-// menu in the panel draw (CardHoverMenu.tsx, src/menuPanel), and the one place
-// an item's command runs, in the tab the card is in. Groups by what they act
-// on: the card's collections, its link, its file, the card itself (user's
-// decision of 12.11.2026). A card without a link has no link group and no
-// line of its own for it.
+// What the card menu holds, as data: the one description the menu on the page
+// and the menu in the panel draw (`MenuSpec`, src/components/MenuSpecView.tsx;
+// SPEC_MENU_WINDOW.md, МО16), and the one place an item's command runs, in
+// the tab the card is in. Groups by what they act on: the card's
+// collections, its link, its file, the card itself (user's decision of
+// 12.11.2026). A card without a link has no link group and no line of its
+// own for it.
 
+import type { MenuEntry, MenuSpec, MenuWidget, TagCount } from "@/types";
 import { COPY_LINK_FAILED_TITLE, COPY_PATH_FAILED_TITLE, copyTextToClipboard } from "./clipboard";
 import { collectionRefLabel } from "./collections";
 import type { EditorTableMenuCommand } from "./editorTableMenu";
 import { openLinkInBrowser, revealInFinder } from "./systemActions";
 
-export type CardMenuItemId = "source" | "copy-link" | "reveal" | "copy-path" | "rename" | "disconnect" | "delete";
+const ITEM_IDS = ["source", "copy-link", "reveal", "copy-path", "rename", "disconnect", "delete"] as const;
 
-export type CardMenuIcon = "external" | "unlink" | "trash" | null;
+export type CardMenuItemId = (typeof ITEM_IDS)[number];
+
+/** The item of the card menu `id` names, or null for another entry's. */
+export function cardMenuItemId(id: string): CardMenuItemId | null {
+  return ITEM_IDS.find((item) => item === id) ?? null;
+}
+
+/** Connect's submenu and the picker in it. */
+export const CARD_MENU_CONNECT_ID = "connect";
+export const CARD_MENU_PICKER_ID = "connect.picker";
+/** The submenu of the table active in the card's editor. */
+export const CARD_MENU_TABLE_ID = "table";
+const TABLE_COMMAND_PREFIX = "table:";
+
+/** The table command an entry's `id` names, or null for another entry's. */
+export function cardMenuTableCommand(id: string): string | null {
+  return id.startsWith(TABLE_COMMAND_PREFIX) ? id.slice(TABLE_COMMAND_PREFIX.length) : null;
+}
 
 /** A command of the table active in the card's editor, as plain data. */
 export type CardMenuTableCommand = EditorTableMenuCommand;
 
-export type CardMenuEntry =
-  | { kind: "connect" }
-  | { kind: "table"; commands: readonly CardMenuTableCommand[] }
-  | { kind: "separator"; key: string }
-  | {
-    kind: "item";
-    id: CardMenuItemId;
-    label: string;
-    icon: CardMenuIcon;
-    variant: "default" | "detach" | "destructive";
-    /** The label may be longer than the row: cut with an ellipsis. */
-    truncate: boolean;
-  };
+/** What Connect's picker shows: the card, its collections, and every one. */
+export interface CardMenuPicker {
+  card: string;
+  selected: readonly string[];
+  tags: readonly TagCount[];
+  currentTag: string | null;
+}
 
-export interface CardMenuEntriesInput {
+/** The picker of the card's collections, as the menu's widget. */
+export function cardPickerWidget({ card, selected, tags, currentTag }: CardMenuPicker): MenuWidget {
+  return {
+    kind: "collection_picker",
+    card,
+    selected: [...selected],
+    collections: tags.map(({ tag, count }) => ({ name: tag, count })),
+    current: currentTag,
+  };
+}
+
+export interface CardMenuSpecInput {
   hasUrl: boolean;
   /** The collection the feed stands on, when the card is in it: the menu
    *  offers to disconnect it. */
@@ -39,39 +63,72 @@ export interface CardMenuEntriesInput {
   /** The commands of the table active in the card's editor (SPEC_EDITING.md,
    *  Л9.8, Л16). */
   tableCommands: readonly CardMenuTableCommand[];
+  picker: CardMenuPicker;
 }
 
-export function cardMenuEntries({ hasUrl, disconnectFrom, tableCommands }: CardMenuEntriesInput): CardMenuEntry[] {
-  const entries: CardMenuEntry[] = [{ kind: "connect" }];
-  if (tableCommands.length > 0) entries.push({ kind: "table", commands: tableCommands });
+function item(id: CardMenuItemId, label: string, more: Partial<Pick<Extract<MenuEntry, { kind: "item" }>, "icon" | "variant" | "truncate">> = {}): MenuEntry {
+  return { kind: "item", id, label, icon: more.icon ?? null, variant: more.variant ?? "default", truncate: more.truncate ?? false };
+}
+
+/** The card menu: `More`, the right click and ⌘K show this one menu. */
+export function cardMenuSpec({ hasUrl, disconnectFrom, tableCommands, picker }: CardMenuSpecInput): MenuSpec {
+  const entries: MenuEntry[] = [
+    {
+      kind: "submenu",
+      id: CARD_MENU_CONNECT_ID,
+      label: "Connect",
+      icon: "plus",
+      content: cardConnectSpec(picker),
+    },
+  ];
+  if (tableCommands.length > 0) {
+    entries.push({
+      kind: "submenu",
+      id: CARD_MENU_TABLE_ID,
+      label: "Table",
+      icon: null,
+      content: {
+        role: "action",
+        entries: tableCommands.flatMap((command): MenuEntry[] => [
+          ...(command.separatorBefore ? [{ kind: "separator" } as const] : []),
+          {
+            kind: "item",
+            id: `${TABLE_COMMAND_PREFIX}${command.id}`,
+            label: command.label,
+            icon: null,
+            variant: command.destructive ? "destructive" : "default",
+            truncate: false,
+          },
+        ]),
+      },
+    });
+  }
   if (hasUrl) {
     entries.push(
-      { kind: "separator", key: "link" },
-      { kind: "item", id: "source", label: "Source", icon: "external", variant: "default", truncate: false },
+      { kind: "separator" },
+      item("source", "Source", { icon: "external" }),
       // The card's link, beside the item that opens it (user's decision of
       // 11.11.2026).
-      { kind: "item", id: "copy-link", label: "Copy Link", icon: null, variant: "default", truncate: false },
+      item("copy-link", "Copy Link"),
     );
   }
   entries.push(
-    { kind: "separator", key: "file" },
-    { kind: "item", id: "reveal", label: "Reveal in Finder", icon: null, variant: "default", truncate: false },
-    { kind: "item", id: "copy-path", label: "Copy Path", icon: null, variant: "default", truncate: false },
-    { kind: "separator", key: "card" },
-    { kind: "item", id: "rename", label: "Rename…", icon: null, variant: "default", truncate: false },
+    { kind: "separator" },
+    item("reveal", "Reveal in Finder"),
+    item("copy-path", "Copy Path"),
+    { kind: "separator" },
+    item("rename", "Rename…"),
   );
   if (disconnectFrom !== null) {
-    entries.push({
-      kind: "item",
-      id: "disconnect",
-      label: `Disconnect from “${collectionRefLabel(disconnectFrom)}”`,
-      icon: "unlink",
-      variant: "detach",
-      truncate: true,
-    });
+    entries.push(item("disconnect", `Disconnect from “${collectionRefLabel(disconnectFrom)}”`, { icon: "unlink", variant: "detach", truncate: true }));
   }
-  entries.push({ kind: "item", id: "delete", label: "Delete", icon: "trash", variant: "destructive", truncate: false });
-  return entries;
+  entries.push(item("delete", "Delete", { icon: "trash", variant: "destructive" }));
+  return { role: "action", entries };
+}
+
+/** Connect alone, the card's `+`: the picker of its collections as a menu. */
+export function cardConnectSpec(picker: CardMenuPicker): MenuSpec {
+  return { role: "search", entries: [{ kind: "widget", id: CARD_MENU_PICKER_ID, widget: cardPickerWidget(picker) }] };
 }
 
 /** What an item's command needs from the tab the card is in. */

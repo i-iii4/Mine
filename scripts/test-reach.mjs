@@ -490,8 +490,10 @@ function shellSteps(command) {
   return command.split(/&&|\|\||;|\|/).map(step => step.trim()).filter(Boolean);
 }
 
-export function createReach(root) {
-  const files = new Map();
+/** `sources` gives the text of files, by repository path, in place of what
+ *  is on the disk: a test asks what would hold after an edit. */
+export function createReach(root, sources = new Map()) {
+  const files = new Map(sources);
   const read = path => {
     if (!files.has(path)) files.set(path, readFileSync(join(root, path), 'utf8'));
     return files.get(path);
@@ -866,9 +868,82 @@ export function createReach(root) {
     return runs;
   }
 
+  /** A step's words without the variables set in front of the program. */
+  function programWords(step) {
+    const words = shellWords(step);
+    while (words.length && /^[A-Z_][A-Z0-9_]*=/.test(words[0])) words.shift();
+    return words;
+  }
+
+  const startedCache = new Map();
+  /** The package.json scripts `name` starts with `bun run`, itself included,
+   *  and the steps they consist of, word for word. */
+  function started(name) {
+    if (startedCache.has(name)) return startedCache.get(name);
+    const found = { names: new Set(), steps: new Set() };
+    const visit = script => {
+      if (found.names.has(script)) return;
+      const command = packageJson.scripts?.[script];
+      if (typeof command !== 'string') throw new Error(`No package.json script: ${script}`);
+      found.names.add(script);
+      for (const step of shellSteps(command)) {
+        const words = programWords(step);
+        if ((words[0] === 'bun' || words[0] === 'npm') && words[1] === 'run' && words[2]) visit(words[2]);
+        else found.steps.add(words.join(' '));
+      }
+    };
+    visit(name);
+    startedCache.set(name, found);
+    return found;
+  }
+
+  /**
+   * Whether running the script `whole` does what the script `name` does.
+   * It does when `whole` starts `name`, or when every step of `name` is done
+   * by `whole`: the same step word for word, a script that a script of
+   * `whole` launches, or test files `whole` runs. A step with arguments
+   * counts only word for word, because the arguments decide what the script
+   * checks. A script launched by another script is counted without its
+   * arguments: the launcher's own arguments for it are not read.
+   */
+  function covers(whole, name, seen = new Set()) {
+    const { names, steps } = started(whole);
+    if (names.has(name)) return true;
+    const command = packageJson.scripts?.[name];
+    if (typeof command !== 'string') throw new Error(`No package.json script: ${name}`);
+    if (seen.has(name)) return false;
+    const inner = new Set([...seen, name]);
+    const runs = scriptRuns(whole);
+    const own = shellSteps(command);
+    return own.length > 0 && own.every(step => {
+      const words = programWords(step);
+      if (steps.has(words.join(' '))) return true;
+      const [program, ...rest] = words;
+      if ((program === 'bun' || program === 'npm') && rest[0] === 'run' && rest[1]) return covers(whole, rest[1], inner);
+      if (program === 'node' && rest[0] === '--test') {
+        const tests = rest.slice(1).filter(word => !word.startsWith('-'));
+        return tests.length > 0 && tests.every(runs);
+      }
+      if (program === 'node') {
+        return rest.length === 1 && !rest[0].startsWith('-') && [...steps].some(done => {
+          const [launcher, script] = done.split(' ');
+          return launcher === 'node' && script && SCRIPT_EXTENSIONS.includes(extname(script))
+            && isFile(join(root, script)) && scriptLaunches(script).has(rest[0]);
+        });
+      }
+      if (program === 'vitest' || (program === 'bunx' && rest[0] === 'vitest')) {
+        const tests = rest.filter(word => word !== 'vitest' && word !== 'run' && !word.startsWith('-'));
+        return tests.length > 0 && tests.every(test => isFile(join(root, test)) && runs(test));
+      }
+      return false;
+    });
+  }
+
   return {
     /** Whether the package.json script `command` runs the test file `test`. */
     commandRuns(command, test) { return scriptRuns(command)(test); },
+    /** Whether the package.json script `whole` does what the script `name` does. */
+    covers(whole, name) { return covers(whole, name); },
     /** Whether running `test` executes `path` directly. */
     executes(test, path) {
       if (test === path) return true;

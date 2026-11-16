@@ -185,9 +185,9 @@ export function computeFeedPlaybackSurfaceEnvelope(
  * from letter to letter (Д25), and never less than the hover minimum. A card
  * without content is the frame at that minimum (Е8).
  *
- * Pure function: same inputs always produce the same output. No DOM
- * access, no side effects. Suitable for use in useMemo, in workers,
- * and in unit tests without jsdom.
+ * Same inputs always produce the same output, with no DOM access: suitable
+ * for use in useMemo, in workers, and in unit tests without jsdom. The
+ * height last computed for a row is kept by the row (`CardHeightMemo`).
  *
  * @param block       Block metadata from LightBlock.
  * @param columnWidth Column width in pixels (derived from layout engine).
@@ -203,6 +203,47 @@ export function computeCardHeight(
   columnWidth: number,
   wordWidths: WordWidths | null,
   show: FeedShow = "cards",
+): number {
+  const held = heightMemos.get(block);
+  if (
+    held !== undefined
+    && held.columnWidth === columnWidth
+    && held.wordWidths === wordWidths
+    && held.show === show
+  ) {
+    return held.height;
+  }
+  const height = cardHeight(block, columnWidth, wordWidths, show);
+  if (held === undefined) {
+    heightMemos.set(block, { columnWidth, wordWidths, show, height });
+  } else {
+    held.columnWidth = columnWidth;
+    held.wordWidths = wordWidths;
+    held.show = show;
+    held.height = height;
+  }
+  return height;
+}
+
+/// The last height computed for a card's row, kept by the row (SPEC_GRID.md,
+/// «Кэш при карточке и продолжение раскладки»): a row is a value, and a set
+/// of word widths is one too, a new measure being a new object. Another
+/// column width, presentation or set of widths computes the height anew and
+/// takes the place of the one held.
+interface CardHeightMemo {
+  columnWidth: number;
+  wordWidths: WordWidths | null;
+  show: FeedShow;
+  height: number;
+}
+
+const heightMemos = new WeakMap<LightBlock, CardHeightMemo>();
+
+function cardHeight(
+  block: LightBlock,
+  columnWidth: number,
+  wordWidths: WordWidths | null,
+  show: FeedShow,
 ): number {
   const descriptor = deriveCardLayoutDescriptor(block, show);
   const iw = innerWidth(columnWidth);

@@ -69,9 +69,16 @@ use crate::storage::note_links::{LabelMatch, NoteLinkQuery, NoteLinkSuggestion};
 use crate::commands::edit_sessions::{FlushEditsPayload, NoteChangedPayload};
 use crate::domain::edit_menu::{EditMenuCommand, FocusedEditor};
 use crate::watcher::handler::ScanResult;
+use crate::menu_panel::geometry::{
+    MenuAlign, MenuOpener, MenuPanelLayout, MenuPanelSize, MenuSide, ScreenPoint, ScreenRect, SubmenuSize,
+};
+use crate::menu_panel::spec::{
+    MenuAction, MenuAnswer, MenuCollection, MenuEntry, MenuIcon, MenuItemVariant, MenuSpec, MenuWidget,
+    MenuWidgetAction, MenuWidthRole,
+};
 use crate::menu_panel::{
-    MenuPanelCloseReason, MenuPanelClosed, MenuPanelOpenRequest, MenuPanelOpening, MenuPanelPaint,
-    MenuPanelRefusal, MenuPanelShown, MenuPanelSize, MenuPanelStatus, MenuPanelTicket, ScreenPoint, ScreenRect,
+    MenuPanelCloseOutcome, MenuPanelCloseReason, MenuPanelOpenRequest, MenuPanelPageMessage, MenuPanelPageRequest,
+    MenuPanelPaint, MenuPanelRefusal, MenuPanelSourceMessage, MenuPanelStatus, MenuPanelToPage, MenuPanelToSource,
 };
 
 pub fn export_types(check_only: bool) -> Result<()> {
@@ -235,13 +242,30 @@ pub fn export_types(check_only: bool) -> Result<()> {
         .register::<ScreenRect>()
         .register::<ScreenPoint>()
         .register::<MenuPanelSize>()
+        .register::<SubmenuSize>()
+        .register::<MenuWidthRole>()
+        .register::<MenuIcon>()
+        .register::<MenuItemVariant>()
+        .register::<MenuCollection>()
+        .register::<MenuWidget>()
+        .register::<MenuEntry>()
+        .register::<MenuSpec>()
+        .register::<MenuWidgetAction>()
+        .register::<MenuAction>()
+        .register::<MenuAnswer>()
         .register::<MenuPanelStatus>()
         .register::<MenuPanelOpenRequest>()
-        .register::<MenuPanelTicket>()
-        .register::<MenuPanelOpening>()
-        .register::<MenuPanelShown>()
+        .register::<MenuPanelToSource>()
+        .register::<MenuPanelSourceMessage>()
+        .register::<MenuPanelToPage>()
+        .register::<MenuPanelPageMessage>()
+        .register::<MenuPanelPageRequest>()
+        .register::<MenuPanelCloseOutcome>()
+        .register::<MenuAlign>()
+        .register::<MenuSide>()
+        .register::<MenuOpener>()
+        .register::<MenuPanelLayout>()
         .register::<MenuPanelCloseReason>()
-        .register::<MenuPanelClosed>()
         .register::<MenuPanelPaint>()
         .register::<MenuPanelRefusal>();
 
