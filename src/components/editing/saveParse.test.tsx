@@ -3,7 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DndContext } from "@dnd-kit/core";
 import { EditorView } from "@codemirror/view";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { Detail } from "@/components/Detail";
+import { Detail, preloadNoteEditor } from "@/components/Detail";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { deriveCardContent } from "@/lib/cardLayout";
 import { beginNoteEdit, noteBodyState, saveNoteBody } from "@/lib/commands";
@@ -78,8 +78,13 @@ const BODY = [
   "Абзац после таблицы.",
 ].join("\n\n");
 
-beforeAll(() => {
+beforeAll(async () => {
   installCodeMirrorLayoutStubs();
+  // The editor's part of the bundle is loaded before the card opens, as the
+  // card's window loads it (SPEC_CARD_PEEK.md, О12): the editor then comes
+  // when its session opens, not after the module's import, whose time
+  // depends on how busy the machine is.
+  await preloadNoteEditor();
 });
 
 let disk = { body: BODY, hash: "hash-0" };
@@ -139,12 +144,12 @@ describe("a keystroke's write while editing (SPEC_EDITING.md, Л14)", () => {
         </DndContext>
       </TooltipProvider>,
     );
-    const view = await waitFor(() => {
-      const content = container.querySelector<HTMLElement>(".cm-content");
-      const found = content ? EditorView.findFromDOM(content) : null;
-      if (!found) throw new Error("no editor yet");
-      return found;
-    });
+    // The session opens on the backend's answer: the editor stands once
+    // those promises have settled.
+    await act(async () => {});
+    const content = container.querySelector<HTMLElement>(".cm-content");
+    const view = content ? EditorView.findFromDOM(content) : null;
+    if (!view) throw new Error("no editor once the session opened");
     // The reading mode read the body when the card opened.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));

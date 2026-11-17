@@ -1,8 +1,8 @@
-import { act, render, waitFor } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DndContext } from "@dnd-kit/core";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { Detail } from "@/components/Detail";
+import { Detail, preloadNoteEditor } from "@/components/Detail";
 import { NoteEditingSwitch } from "@/components/editing/noteEditingSwitch";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { beginNoteEdit, noteBodyState } from "@/lib/commands";
@@ -65,8 +65,13 @@ function articleBody(title: string, embed: (index: number) => string): string {
   return Array.from({ length: 12 }, (_, index) => `${paragraph}\n\n${embed(index + 1)}`).join("\n\n");
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   installCodeMirrorLayoutStubs();
+  // The editor's part of the bundle is loaded before a card opens, as the
+  // card's window loads it (SPEC_CARD_PEEK.md, О12): the editor then comes
+  // when its session opens, not after the module's import, whose time
+  // depends on how busy the machine is.
+  await preloadNoteEditor();
 });
 
 function cardOf(slug: string, body: string): IndexedBlock {
@@ -141,9 +146,10 @@ describe("the parses of a body on opening its card (SPEC_READING_MODE.md, Ч0.5)
     vi.mocked(beginNoteEdit).mockImplementation(async () => card);
     vi.mocked(noteBodyState).mockImplementation(async () => ({ body, body_hash: "hash-0" }));
     const { container } = openCard(card, true);
-    await waitFor(() => {
-      if (!container.querySelector(".cm-content")) throw new Error("no editor yet");
-    });
+    // The session opens on the backend's answer: the editor stands once
+    // those promises have settled.
+    await act(async () => {});
+    if (!container.querySelector(".cm-content")) throw new Error("no editor once the session opened");
     await settle();
     expect(wholeBodyParses(body)).toEqual([body]);
   });

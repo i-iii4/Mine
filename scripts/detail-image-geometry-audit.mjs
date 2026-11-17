@@ -21,8 +21,9 @@ const entry='/detail-image-geometry-entry.js';
 // (85 % of it, 680, is the media height limit). The reading column,
 // `DETAIL_CONTENT_MAX_WIDTH_PX` (user's decision of 16.10.2026: 680 instead
 // of 768). A window too short for the panel's cards. The line before the
-// panel, `DETAIL_RAIL_LINE_PX` (user's decisions of 24.10.2026).
-const SIDEBAR=240,HEIGHT=800,LIMIT=0.85*HEIGHT,COLUMN=680,SHORT=400,RAIL_LINE=1;
+// panel, `DETAIL_RAIL_LINE_PX` (user's decisions of 24.10.2026), and the
+// panel, `DETAIL_RAIL_WIDTH_PX`.
+const SIDEBAR=240,HEIGHT=800,LIMIT=0.85*HEIGHT,COLUMN=680,SHORT=400,RAIL_LINE=1,RAIL=320;
 const vite=await startAuditVite([{
     name:'detail-image-geometry-audit',
     resolveId(id){if(id===entry)return `\0${entry}`;},
@@ -63,14 +64,31 @@ const vite=await startAuditVite([{
 /** Same within a pixel: Chromium lays out in fractions of one. */
 function near(actual,expected,message){assert(Math.abs(actual-expected)<=1,`${message}: ${actual} against ${expected}`);}
 
-/** The open card's geometry as the reader sees it. */
+/** The content's full width `W` (Р1): the reading column, or a lone
+ *  medium's frame at its own width or at the height limit when narrower. */
+function contentWidth([width,height]){return Math.min(COLUMN,width,LIMIT*width/height);}
+
+/** The narrowest whole window width beside the panel (Р3): the open card
+ *  stacks under `4 × pad + W + 321`, the panel's column with its line, and
+ *  the sidebar takes the rest of the window. One pixel narrower stacks. */
+function lastWidthBesidePanel(pad,content){return Math.ceil(SIDEBAR+4*pad+content+RAIL+RAIL_LINE);}
+
+/** The open card's geometry as the reader sees it. `pad` is
+ *  `--card-content-pad` from the page's computed styles, in pixels. */
 async function measure(page){
   return page.evaluate(()=>{
     const box=node=>{if(!node)return null;const r=node.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height};};
     const all=selector=>[...document.querySelectorAll(selector)].map(box);
+    const card=document.querySelector('[data-detail-layout-mode]');
+    // The token as the page resolves it, whatever its unit: a ruler of its width.
+    const ruler=document.createElement('div');
+    ruler.style.cssText=`position:absolute;visibility:hidden;width:${getComputedStyle(card).getPropertyValue('--card-content-pad').trim()}`;
+    card.append(ruler);
+    const pad=parseFloat(getComputedStyle(ruler).width);
+    ruler.remove();
     return {
-      mode:document.querySelector('[data-detail-layout-mode]')?.getAttribute('data-detail-layout-mode'),
-      pad:box(document.querySelector('[data-detail-pad-probe]')).width,
+      mode:card.getAttribute('data-detail-layout-mode'),
+      pad,
       main:box(document.querySelector('main')),
       column:box(document.querySelector('[data-detail-article-column]')),
       scroll:box(document.querySelector('[data-detail-scroll]')),
@@ -150,10 +168,11 @@ try{
     await page.close();
   }
 
-  // The layout. Each card at window widths round its threshold
-  // 4 × pad + W + 321 + sidebar (Р3; pad 32): the reading column 680
-  // (1369), a picture 880 × 1100 at 544 (1233), a portrait video
-  // 1080 × 1920 at 382.5 (1072).
+  // The layout. Each card at the last window width beside the panel and the
+  // first stacked one, computed from the page's pad (Р3): the reading
+  // column 680, a picture 880 × 1100 at the height limit, a portrait video
+  // 1080 × 1920 at the height limit. With pad 16 they are 1305, 1169 and
+  // 1008, the first whole pixel past 1007.5.
   const images={'photo.png':[880,1100],'small.png':[600,300],'link.jpg':[400,300],'wide.png':[1920,1080]};
   async function openCard(card,width,height=HEIGHT){
     const page=await browser.newPage({viewport:{width,height}});
@@ -174,15 +193,17 @@ try{
 
   {
     const {page,errors,resize}=await openCard('article',1600);
-    for(const width of [1600,1369,1368,900]){
+    const beside=lastWidthBesidePanel((await resize(1600)).pad,COLUMN),stacked=beside-1;
+    for(const width of [1600,beside,stacked,900]){
       const geometry=await resize(width);
       const label=`article at ${width}`;
-      if(width>=1369){
+      if(width>=beside){
         const margin=assertCentredBesidePanel(geometry,geometry.column,label);
-        if(width===1369)near(margin,geometry.pad,`${label}: margins at the inset on the last width beside the panel`);
+        if(width===beside)near(margin,geometry.pad,`${label}: margins at the inset on the last width beside the panel`);
       }else{
-        // Stacked at 1368 the area is wider than the column, at 900 not.
-        assert.equal(assertStacked(geometry,geometry.column,label),width===1368,`${label}: panel cards held by the reading column`);
+        // Stacked one pixel under the threshold the area is wider than the
+        // column, at 900 (660 for the card) not.
+        assert.equal(assertStacked(geometry,geometry.column,label),width===stacked,`${label}: panel cards held by the reading column`);
       }
       assert.equal(geometry.bodyMedia.length,2,`${label}: both body media`);
       for(const media of geometry.bodyMedia)near(media.left-geometry.column.left,geometry.column.right-media.right,`${label}: body media centred in the column`);
@@ -191,45 +212,48 @@ try{
       near(geometry.videos[0].frame.height,LIMIT,`${label}: portrait body video at the height limit`);
     }
     assert.deepEqual(errors,[]);
-    console.log('PASS article: centred beside the panel at 1600 and 1369, stacked at 1368 with panel cards 680 wide and centred and at 900 across the width between the insets, body media centred, body video box is its frame');
+    console.log(`PASS article: centred beside the panel at 1600 and ${beside}, stacked at ${stacked} with panel cards 680 wide and centred and at 900 across the width between the insets, body media centred, body video box is its frame`);
     await page.close();
   }
 
   {
     const {page,errors,resize}=await openCard('image',1600);
-    for(const width of [1600,1233,1232]){
+    const content=contentWidth(images['photo.png']);
+    const beside=lastWidthBesidePanel((await resize(1600)).pad,content),stacked=beside-1;
+    for(const width of [1600,beside,stacked]){
       const geometry=await resize(width);
       const label=`picture at ${width}`;
-      near(geometry.image.width,544,`${label}: frame width at the height limit`);
-      if(width>=1233){
+      near(geometry.image.width,content,`${label}: frame width at the height limit`);
+      if(width>=beside){
         const margin=assertCentredBesidePanel(geometry,geometry.image,label);
-        if(width===1233)near(margin,geometry.pad,`${label}: margins at the inset`);
+        if(width===beside)near(margin,geometry.pad,`${label}: margins at the inset`);
       }else{
         assert(assertStacked(geometry,geometry.image,label),`${label}: panel cards held by the reading column`);
       }
     }
     assert.deepEqual(errors,[]);
-    console.log('PASS picture: centred beside the panel at 1600 and 1233, stacked at 1232 with panel cards 680 wide and centred');
+    console.log(`PASS picture: ${content} wide, centred beside the panel at 1600 and ${beside}, stacked at ${stacked} with panel cards 680 wide and centred`);
     await page.close();
   }
 
   {
     const {page,errors,resize}=await openCard('video',1600);
-    for(const width of [1600,1072,1071]){
+    const beside=lastWidthBesidePanel((await resize(1600)).pad,contentWidth([1080,1920])),stacked=beside-1;
+    for(const width of [1600,beside,stacked]){
       const geometry=await resize(width);
       const label=`video at ${width}`;
       assert.equal(geometry.videos.length,1,`${label}: the card's video`);
       const [video]=geometry.videos;
       assertVideoFillsFrame(video,1080/1920,label);
-      if(width>=1072){
+      if(width>=beside){
         const margin=assertCentredBesidePanel(geometry,video.frame,label);
-        if(width===1072)near(margin,geometry.pad,`${label}: margins at the inset`);
+        if(width===beside)near(margin,geometry.pad,`${label}: margins at the inset`);
       }else{
         assert(assertStacked(geometry,video.frame,label),`${label}: panel cards held by the reading column`);
       }
     }
     assert.deepEqual(errors,[]);
-    console.log('PASS video: box is its frame, centred beside the panel at 1600 and 1072, stacked at 1071 with panel cards 680 wide and centred');
+    console.log(`PASS video: box is its frame, centred beside the panel at 1600 and ${beside}, stacked at ${stacked} with panel cards 680 wide and centred`);
     await page.close();
   }
 

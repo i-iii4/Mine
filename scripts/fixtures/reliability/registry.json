@@ -2027,6 +2027,17 @@
     },
     {
       "paths": [
+        "scripts/browser-audit-runner.mjs",
+        "scripts/browser-audits.test.mjs"
+      ],
+      "requirement": "SPEC_GRID_LAYOUT_READINESS.md### Browser Acceptance Harness",
+      "tests": [
+        "scripts/browser-audits.test.mjs"
+      ],
+      "command": "test:scripts"
+    },
+    {
+      "paths": [
         "src/components/MenuTextTrigger.test.tsx",
         "src/components/VaultSwitcher.tsx"
       ],
@@ -3580,6 +3591,30 @@
         "scripts/selection-menu-audit.mjs"
       ],
       "command": "test:selection-menu"
+    },
+    {
+      "paths": [
+        "scripts/search-overlay-audit.mjs"
+      ],
+      "requirement": "SPEC_SEARCH_OVERLAY.md#### Прокрутка списка",
+      "tests": [
+        "scripts/search-overlay-audit.mjs"
+      ],
+      "command": "test:search-overlay"
+    },
+    {
+      "paths": [
+        "src/components/SearchOverlay.tsx",
+        "src/components/SearchOverlay.test.tsx",
+        "src/lib/commands.ts",
+        "src/lib/commands.test.ts"
+      ],
+      "requirement": "SPEC_SEARCH_OVERLAY.md#### Ответ на набранный текст",
+      "tests": [
+        "src/components/SearchOverlay.test.tsx",
+        "src/lib/commands.test.ts"
+      ],
+      "command": "test:frontend"
     },
     {
       "paths": [
@@ -5940,6 +5975,60 @@
         "src/lib/cardAssociations.test.ts"
       ],
       "command": "test:frontend"
+    },
+    {
+      "paths": [
+        "scripts/menu-person-audit.mjs"
+      ],
+      "requirement": "SPEC_MENU_WINDOW.md### 3. Правила расположения",
+      "tests": [
+        "scripts/menu-person-audit.mjs"
+      ],
+      "command": "test:menu-person"
+    },
+    {
+      "paths": [
+        "scripts/icloud-evicted-audit.mjs"
+      ],
+      "requirement": "SPEC_CLOUD_STORAGE.md### Отказ чтения",
+      "tests": [
+        "scripts/icloud-evicted-audit.mjs"
+      ],
+      "command": "test:icloud-evicted"
+    },
+    {
+      "paths": [
+        "scripts/collection-create-audit.mjs"
+      ],
+      "requirement": "DESIGN_SYSTEM.md#### Создание коллекции",
+      "tests": [
+        "scripts/collection-create-audit.mjs"
+      ],
+      "command": "test:collection-create"
+    },
+    {
+      "paths": [
+        "scripts/tab-title-audit.mjs"
+      ],
+      "requirement": "DESIGN_SYSTEM.md### Растворение кромок (edge fade)",
+      "tests": [
+        "scripts/tab-title-audit.mjs"
+      ],
+      "command": "test:tab-title"
+    },
+    {
+      "paths": [
+        "scripts/built-app-pages.mjs",
+        "scripts/app-backend-stand-in.mjs"
+      ],
+      "requirement": "SPEC_MENU_WINDOW.md#### 13.1 Автоматические проверки без окна",
+      "tests": [
+        "scripts/menu-person-audit.mjs",
+        "scripts/icloud-evicted-audit.mjs",
+        "scripts/collection-create-audit.mjs",
+        "scripts/tab-title-audit.mjs"
+      ],
+      "command": "test:browser"
     }
   ],
   "release": null

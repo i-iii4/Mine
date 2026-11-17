@@ -1,7 +1,7 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DndContext } from "@dnd-kit/core";
-import { Detail } from "@/components/Detail";
+import { Detail, preloadNoteEditor } from "@/components/Detail";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TASK_NOTE_GONE, taskInCloudLine, taskReadOnlyLine } from "@/components/reading/TaskCheckbox";
 import { beginNoteEdit, getBlock, noteBodyState } from "@/lib/commands";
@@ -43,8 +43,13 @@ vi.mock("@/lib/commands", () => ({
 const SLUG = "Cards/Note";
 const BODY = "# Note\n\nThe text of the note.";
 
-beforeAll(() => {
+beforeAll(async () => {
   installCodeMirrorLayoutStubs();
+  // The editor's part of the bundle is loaded before a card opens, as the
+  // card's window loads it (SPEC_CARD_PEEK.md, О12): the editor then comes
+  // when its session opens, not after the module's import, whose time
+  // depends on how busy the machine is.
+  await preloadNoteEditor();
 });
 
 let failures: ReturnType<typeof useActionFailures> = [];
@@ -83,11 +88,12 @@ function openCard(block: LightBlock | IndexedBlock) {
 
 /** The editor's text box once it stands in the open card. */
 async function editorIn(container: HTMLElement): Promise<HTMLElement> {
-  return waitFor(() => {
-    const content = container.querySelector<HTMLElement>(".mine-note-editor .cm-content");
-    if (!content) throw new Error("no editor yet");
-    return content;
-  }, { timeout: 5000 });
+  // The session opens on the backend's answer: the editor stands once those
+  // promises have settled.
+  await act(async () => {});
+  const content = container.querySelector<HTMLElement>(".mine-note-editor .cm-content");
+  if (!content) throw new Error("no editor once the session opened");
+  return content;
 }
 
 /** Let the lazy part of the editor and the backend's answers come. */

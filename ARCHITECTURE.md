@@ -691,6 +691,13 @@ iOS UI contract:
     `image-preview-motion`, `card-peek-motion`, `card-open`, `tooltip-motion`,
     `swipe-scroller`, `editing-perf`. Группы процессов
     проверки и сервера завершаются при успехе, сбое, `SIGINT` и `SIGTERM`.
+    Упавшая проверка не останавливает следующие; после последней сценарий
+    перечисляет все упавшие с первой строкой их ошибки и выходит с кодом 1
+    (решение пользователя 17.11.2026; запуск и итог в
+    `scripts/browser-audit-runner.mjs`, контракт в
+    [SPEC_GRID_LAYOUT_READINESS.md](SPEC_GRID_LAYOUT_READINESS.md),
+    «Browser Acceptance Harness»; тест `scripts/browser-audits.test.mjs` в
+    `test:scripts`).
   - Проверки, которым нужно собранное приложение, запускает
     `verify:built-app`. `verify:release` это `check:release-evidence`,
     `verify` и `verify:built-app`.

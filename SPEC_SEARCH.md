@@ -531,7 +531,10 @@ Search results are never applied if:
 A newer search of the same tab stops the older one in the backend
 («Отмена устаревшего запроса» below). The older request is rejected with the
 error `search_superseded`; the overlay has already dropped its sequence, so
-the rejection is never shown.
+the rejection is never shown. The backend numbers a tab's requests as they
+reach it, so it can stop the overlay's latest request when an older one of the
+page reached it later; the overlay shows no error then and asks the same text
+again (SPEC_SEARCH_OVERLAY.md, «Ответ на набранный текст»).
 
 Every search response carries both `ProjectionRevision` and `SearchRevision`.
 If either changed, or the cursor query fingerprint differs, backend returns a
@@ -834,6 +837,11 @@ neighbors — an accepted soft degradation (SPEC_SEARCH_OVERLAY.md).
   на следующей сверке номера.
 - Остановленный запрос кончается ошибкой `search_superseded`. Его снимок
   откатывается: незаконченная сверка документов не остаётся в индексе.
+  Человек остановку не видит: окно поиска не показывает её ошибкой, а если
+  остановлен его последний запрос (прежний запрос страницы дошёл до команды
+  позже), спрашивает тот же текст снова
+  ([SPEC_SEARCH_OVERLAY.md](SPEC_SEARCH_OVERLAY.md), «Ответ на набранный
+  текст»).
 - Запрос, после которого новый не пришёл (поле очищено, оверлей закрыт),
   дорабатывает до конца, и страница его ответ отбрасывает.
 

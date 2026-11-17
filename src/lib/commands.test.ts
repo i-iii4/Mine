@@ -9,9 +9,11 @@ import {
   createMediaAssetCard,
   deleteOrphanMedia,
   getVaultPath,
+  isSearchSuperseded,
   nameRefusal,
   promoteOrphanMedia,
   renameChannel,
+  searchGridBlocks,
   selectVault,
 } from "./commands";
 
@@ -60,6 +62,17 @@ describe("IPC command adapter", () => {
     await expect(selectVault("/Users/me/Mine")).rejects.toThrow(
       "Mine cannot read the identity file of “Mine”, so it did not open the space and changed nothing.",
     );
+  });
+
+  it("tells a search the backend stopped for a newer one from a failed search (SPEC_SEARCH.md, «Отмена устаревшего запроса»)", async () => {
+    mockInvoke.mockRejectedValueOnce({ kind: "search_superseded" });
+    const stopped = await searchGridBlocks(undefined, "metal", 200).catch((error: unknown) => error);
+    expect(isSearchSuperseded(stopped)).toBe(true);
+
+    mockInvoke.mockRejectedValueOnce({ kind: "internal", message: "database failed" });
+    const failed = await searchGridBlocks(undefined, "metal", 200).catch((error: unknown) => error);
+    expect(isSearchSuperseded(failed)).toBe(false);
+    expect(isSearchSuperseded(new Error("network"))).toBe(false);
   });
 
   it("carries a refused name's reason in words, and the check answers with it (05.10.2026)", async () => {

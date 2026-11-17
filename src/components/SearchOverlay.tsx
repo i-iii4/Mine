@@ -10,6 +10,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -31,7 +32,7 @@ import {
   METADATA_VALUE_BASE_CLASSES,
 } from "@/components/MetadataRow";
 import { domainFromUrl, isSafeUrl, fallbackThumbsRoot } from "@/lib/assets";
-import { listGridBlocks, searchGridBlocks } from "@/lib/commands";
+import { isSearchSuperseded, listGridBlocks, searchGridBlocks } from "@/lib/commands";
 import { normalizeSurfaceSearchQuery } from "@/lib/searchQuery";
 import { groupByRecency } from "@/lib/recencyBuckets";
 import { deriveSearchResultRow } from "@/lib/searchResultRow";
@@ -144,6 +145,13 @@ export function SearchOverlay({
   const [tagsBySlug, setTagsBySlug] = useState<Map<string, string[]>>(new Map());
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  // Answers that replaced the rows: the list starts again at its top. A
+  // silent refresh keeps the place the person scrolled to.
+  const [rowsReplacedSequence, setRowsReplacedSequence] = useState(0);
+  // Arrow presses: the list scrolls to the active row only when the keyboard
+  // moved it. The pointer, a silent refresh and a deletion never scroll it.
+  const [keyboardMoveSequence, setKeyboardMoveSequence] = useState(0);
   const requestSequenceRef = useRef(0);
   /// The query Enter was pressed for before its results arrived: the first
   /// result of exactly that query opens once it settles (А6.11).
@@ -189,55 +197,67 @@ export function SearchOverlay({
   // query returns the canonical saved_at-DESC order (the feed's first page).
   const runSearch = useCallback(
     (searchQuery: string | null, options: { preserveActive: boolean }) => {
-      const sequence = ++requestSequenceRef.current;
       const queryKey = searchQuery ?? "";
-      const request = searchQuery === null
-        ? listGridBlocks({ kind: "everything" }, null, SEARCH_OVERLAY_RECENT_LIMIT, undefined, "search")
-        : searchGridBlocks(undefined, searchQuery, SEARCH_OVERLAY_RESULT_LIMIT);
-      void request
-        .then((snapshot) => {
-          if (requestSequenceRef.current !== sequence) return;
-          setResults((previous) => {
-            if (options.preserveActive) {
-              // Silent refresh (vault mutated): keep the user's place — follow
-              // the active slug into the new result set, or clamp the index
-              // when that card is gone (e.g. it was just deleted).
-              setActiveIndex((index) => {
-                const activeSlugBefore = previous?.[index]?.slug ?? null;
-                const followed = activeSlugBefore
-                  ? snapshot.blocks.findIndex((candidate) => candidate.slug === activeSlugBefore)
-                  : -1;
-                if (followed >= 0) return followed;
-                return Math.min(index, Math.max(0, snapshot.blocks.length - 1));
-              });
-            } else {
-              setActiveIndex(0);
+      const ask = () => {
+        const sequence = ++requestSequenceRef.current;
+        const request = searchQuery === null
+          ? listGridBlocks({ kind: "everything" }, null, SEARCH_OVERLAY_RECENT_LIMIT, undefined, "search")
+          : searchGridBlocks(undefined, searchQuery, SEARCH_OVERLAY_RESULT_LIMIT);
+        void request
+          .then((snapshot) => {
+            if (requestSequenceRef.current !== sequence) return;
+            if (!options.preserveActive) setRowsReplacedSequence((current) => current + 1);
+            setResults((previous) => {
+              if (options.preserveActive) {
+                // Silent refresh (vault mutated): keep the user's place — follow
+                // the active slug into the new result set, or clamp the index
+                // when that card is gone (e.g. it was just deleted).
+                setActiveIndex((index) => {
+                  const activeSlugBefore = previous?.[index]?.slug ?? null;
+                  const followed = activeSlugBefore
+                    ? snapshot.blocks.findIndex((candidate) => candidate.slug === activeSlugBefore)
+                    : -1;
+                  if (followed >= 0) return followed;
+                  return Math.min(index, Math.max(0, snapshot.blocks.length - 1));
+                });
+              } else {
+                setActiveIndex(0);
+              }
+              return snapshot.blocks;
+            });
+            setResultHasMore(snapshot.has_more);
+            setSettledQueryKey(queryKey);
+            setFailedQuery(null);
+            // New rows under a resting pointer wait for it to move (С7.5).
+            if (!options.preserveActive) setPointerSlug(null);
+          })
+          .catch((error: unknown) => {
+            if (requestSequenceRef.current !== sequence) return;
+            if (isSearchSuperseded(error)) {
+              // The backend numbers a tab's searches as they reach it, and an
+              // older request of this page reached it after this one. The stop
+              // is the backend's saving, not a failure of this text: the rows
+              // on screen stay, and this text is asked again.
+              ask();
+              return;
             }
-            return snapshot.blocks;
+            console.error("Search overlay query failed:", error);
+            // The rows on screen answer an older text or an older vault: none
+            // of them is this text's answer, so none stays to be clicked or
+            // opened with Enter. An Enter waiting for this answer is dropped
+            // with it rather than firing on a later silent refresh (Г4.3).
+            pendingOpenRef.current = null;
+            setResults(null);
+            setResultHasMore(false);
+            setSettledQueryKey(null);
+            setActiveIndex(0);
+            setFailedQuery({
+              key: queryKey,
+              message: error instanceof Error ? error.message : String(error),
+            });
           });
-          setResultHasMore(snapshot.has_more);
-          setSettledQueryKey(queryKey);
-          setFailedQuery(null);
-          // New rows under a resting pointer wait for it to move (С7.5).
-          if (!options.preserveActive) setPointerSlug(null);
-        })
-        .catch((error: unknown) => {
-          if (requestSequenceRef.current !== sequence) return;
-          console.error("Search overlay query failed:", error);
-          // The rows on screen answer an older text or an older vault: none
-          // of them is this text's answer, so none stays to be clicked or
-          // opened with Enter. An Enter waiting for this answer is dropped
-          // with it rather than firing on a later silent refresh (Г4.3).
-          pendingOpenRef.current = null;
-          setResults(null);
-          setResultHasMore(false);
-          setSettledQueryKey(null);
-          setActiveIndex(0);
-          setFailedQuery({
-            key: queryKey,
-            message: error instanceof Error ? error.message : String(error),
-          });
-        });
+      };
+      ask();
     },
     [],
   );
@@ -329,25 +349,36 @@ export function SearchOverlay({
     [resolvedThumbsRoot, results],
   );
 
-  // Recent mode groups rows into dynamic date sections (Today · Yesterday ·
-  // Past 7 days · …). Rows keep their flat index — keyboard navigation and
-  // the active row are blind to section boundaries. Search results stay
-  // ungrouped: there the order is relevance, not time.
+  // The recent cards are grouped into dynamic date sections (Today ·
+  // Yesterday · Past 7 days · …). Rows keep their flat index — keyboard
+  // navigation and the active row are blind to section boundaries. What is
+  // grouped is the rows of the empty text's answer, not the rows on screen
+  // while the field is empty: a search answer standing until the recent
+  // cards arrive is in the order of relevance, not of time, and stays
+  // ungrouped.
   const recentGroups = useMemo(() => {
-    if (normalizedQuery.length > 0) return null;
+    if (settledQueryKey !== "") return null;
     const indexed = rows.map((entry, index) => ({ ...entry, index }));
     return groupByRecency(indexed, (entry) => entry.block.saved_at, new Date());
-  }, [normalizedQuery, rows]);
+  }, [rows, settledQueryKey]);
 
   const activeBlock = results?.[activeIndex] ?? null;
 
-  // Keep the keyboard-active row visible.
+  // A new set of rows starts at the top of the list, before it is painted.
+  useLayoutEffect(() => {
+    if (rowsReplacedSequence === 0 || !listRef.current) return;
+    listRef.current.scrollTop = 0;
+  }, [rowsReplacedSequence]);
+
+  // The arrows keep the row they moved to in view. Only they scroll the list:
+  // a row the pointer took is under the pointer already, and a scroll of the
+  // list's own stops the scroll the person is making, momentum included.
   useEffect(() => {
-    if (!activeBlock) return;
-    document
-      .getElementById(searchOverlayOptionDomId(activeBlock.id))
+    if (keyboardMoveSequence === 0) return;
+    listRef.current
+      ?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')
       ?.scrollIntoView?.({ block: "nearest" });
-  }, [activeBlock]);
+  }, [keyboardMoveSequence]);
 
   const activeSlug = activeBlock?.slug ?? null;
   useEffect(() => {
@@ -422,6 +453,7 @@ export function SearchOverlay({
       setActiveIndex((current) =>
         Math.min(results.length - 1, Math.max(0, current + delta)),
       );
+      setKeyboardMoveSequence((current) => current + 1);
     },
     [results],
   );
@@ -672,6 +704,7 @@ export function SearchOverlay({
 
         <div ref={bodyRef} className="flex min-h-0 flex-1" data-search-overlay-body="">
           <div
+            ref={listRef}
             id="search-overlay-listbox"
             role="listbox"
             aria-label="Search results"
@@ -698,7 +731,9 @@ export function SearchOverlay({
             )}
             {recentGroups
               ? recentGroups.map((group) => (
-                  <div key={group.label} role="presentation">
+                  // Keyed by its first row: a label can repeat in a list
+                  // that is not newest first, and a key must not.
+                  <div key={`section-${group.items[0]?.block.id ?? group.label}`} role="presentation">
                     {/* Dynamic date sections (Notion convention): the label
                         is derived from saved_at, never typed in. A row of
                         the list, its text at the rows' thumbnails. */}

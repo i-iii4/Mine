@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { DndContext } from "@dnd-kit/core";
 import { EditorView } from "@codemirror/view";
 import { CardPeek, type CardPeekOpening } from "@/components/CardPeek";
-import { Detail } from "@/components/Detail";
+import { Detail, preloadNoteEditor } from "@/components/Detail";
 import { NoteEditingSwitch } from "@/components/editing/noteEditingSwitch";
 import { SpecPointMenu, type SpecPointMenuHandle } from "@/components/SpecPointMenu";
 import { menuItem } from "@/lib/menuSpec";
@@ -174,8 +174,13 @@ function Page({ currentRowKey, sidebarHidden, cardOpen, sizedBy, feed, onOpen, o
   );
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   installCodeMirrorLayoutStubs();
+  // The editor's part of the bundle is loaded before a card opens, as the
+  // card's window loads it (SPEC_CARD_PEEK.md, О12): the editor then comes
+  // when its session opens, not after the module's import, whose time
+  // depends on how busy the machine is.
+  await preloadNoteEditor();
   // jsdom has no `isContentEditable`; the card's Escape asks it, as a browser answers.
   Object.defineProperty(HTMLElement.prototype, "isContentEditable", {
     configurable: true,
@@ -220,10 +225,11 @@ async function open(overrides: Partial<Parameters<typeof Page>[0]> = {}) {
     ...overrides,
   };
   const view = render(<Page {...props} />);
-  await waitFor(() => {
-    const content = view.container.querySelector<HTMLElement>(".cm-content");
-    if (!content || !EditorView.findFromDOM(content)) throw new Error("no editor yet");
-  });
+  // The session opens on the backend's answer: the editor stands once those
+  // promises have settled.
+  await act(async () => {});
+  const content = view.container.querySelector<HTMLElement>(".cm-content");
+  if (!content || !EditorView.findFromDOM(content)) throw new Error("no editor once the session opened");
   let current = props;
   return {
     ...view,

@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DndContext, type DragStartEvent } from "@dnd-kit/core";
 import { EditorView } from "@codemirror/view";
-import { Detail } from "@/components/Detail";
+import { Detail, preloadNoteEditor } from "@/components/Detail";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { beginNoteEdit, getBlock, noteBodyState, resolveNoteLink, saveNoteBody } from "@/lib/commands";
 import { computeBodyHash } from "@/lib/editing/bodyHash";
@@ -55,8 +55,13 @@ vi.mock("@/lib/commands", () => ({
 const SLUG = "Cards/Open";
 const RELATED = "Cards/Related";
 
-beforeAll(() => {
+beforeAll(async () => {
   installCodeMirrorLayoutStubs();
+  // The editor's part of the bundle is loaded before a card opens, as the
+  // card's window loads it (SPEC_CARD_PEEK.md, О12): the editor then comes
+  // when its session opens, not after the module's import, whose time
+  // depends on how busy the machine is.
+  await preloadNoteEditor();
 });
 
 /** The file of the open note: writes land in it, the card read after a
@@ -121,12 +126,13 @@ function renderOpenCard(body: string, extra: Partial<Parameters<typeof Detail>[0
 }
 
 async function editorOf(container: HTMLElement): Promise<EditorView> {
-  return waitFor(() => {
-    const content = container.querySelector<HTMLElement>(".cm-content");
-    const view = content ? EditorView.findFromDOM(content) : null;
-    if (!view) throw new Error("no editor yet");
-    return view;
-  });
+  // The session opens on the backend's answer: the editor stands once those
+  // promises have settled.
+  await act(async () => {});
+  const content = container.querySelector<HTMLElement>(".cm-content");
+  const view = content ? EditorView.findFromDOM(content) : null;
+  if (!view) throw new Error("no editor once the session opened");
+  return view;
 }
 
 describe("the open card with the editor mounted (SPEC_EDITING.md, Л11)", () => {

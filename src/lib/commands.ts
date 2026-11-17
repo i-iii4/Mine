@@ -126,6 +126,15 @@ export function nameRefusal(error: unknown): string | null {
   return isCommandError(cause) && cause.kind === "name_refused" ? cause.message : null;
 }
 
+/** Whether `error` is the backend stopping this tab's search because a
+ *  newer search of the tab began (SPEC_SEARCH.md, «Отмена устаревшего
+ *  запроса»): the person never sees it as a failure. */
+export function isSearchSuperseded(error: unknown): boolean {
+  if (!(error instanceof Error) || !("cause" in error)) return false;
+  const cause = error.cause;
+  return isCommandError(cause) && cause.kind === "search_superseded";
+}
+
 /// The note's name for a message: the last segment of its path.
 function noteName(path: string): string {
   return path.split("/").filter(Boolean).pop() ?? path;

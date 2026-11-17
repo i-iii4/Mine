@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
+import { createAuditRunner } from "./browser-audit-runner.mjs";
+
 const HOST = "127.0.0.1";
 const STARTUP_TIMEOUT_MS = 20_000;
 const SHUTDOWN_TIMEOUT_MS = 3_000;
@@ -57,30 +59,6 @@ async function waitForServer(url, child, readLogs) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`Vite did not become ready within ${STARTUP_TIMEOUT_MS} ms.\n${readLogs()}`);
-}
-
-function runAudit(script, env, onChildChange, args = []) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script, ...args], {
-      cwd: process.cwd(),
-      env: { ...process.env, ...env },
-      detached: process.platform !== "win32",
-      stdio: "inherit",
-    });
-    onChildChange(child);
-    child.once("error", (error) => {
-      onChildChange(null);
-      reject(error);
-    });
-    child.once("exit", (code, signal) => {
-      onChildChange(null);
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(new Error(`${script} failed with code=${code ?? "null"} signal=${signal ?? "none"}`));
-    });
-  });
 }
 
 function runCommand(command, args) {
@@ -182,10 +160,13 @@ async function main() {
   const onAuditChildChange = (child) => {
     activeAudit = child;
   };
+  const runner = createAuditRunner();
+  const { runAudit } = runner;
   const shutdown = (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
     const exitCode = signal === "SIGINT" ? 130 : 143;
+    runner.stop(exitCode);
     void Promise.all([stopProcess(activeAudit), stopProcess(server)]).finally(() => {
       fs.rmSync(coldSpaceRoot, { recursive: true, force: true });
       process.exit(exitCode);
@@ -232,6 +213,12 @@ async function main() {
     await runAudit("scripts/menu-panel-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/fade-text-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/outside-window-audit.mjs", {}, onAuditChildChange);
+    // Build the app's pages for production and act on them as a person
+    // does: presses, right clicks, keys, drags (scripts/built-app-pages.mjs).
+    await runAudit("scripts/menu-person-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/icloud-evicted-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/collection-create-audit.mjs", {}, onAuditChildChange);
+    await runAudit("scripts/tab-title-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/narrow-window-audit.mjs", {}, onAuditChildChange);
     // Builds its page for production; the Rust test of the full read builds
     // the tests optimised and runs with `bun run test:sidebar-strip`.
@@ -245,6 +232,9 @@ async function main() {
     await runAudit("scripts/card-open-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/tooltip-motion-audit.mjs", {}, onAuditChildChange);
     await runAudit("scripts/swipe-scroller-audit.mjs", {}, onAuditChildChange);
+    // WebKit: the search overlay's answers to typed and erased text, and its
+    // list's scrolling under the pointer.
+    await runAudit("scripts/search-overlay-audit.mjs", {}, onAuditChildChange);
     // The browser's measures only: the Rust test of the save's time builds
     // the tests optimised and runs with `bun run test:editing-perf`.
     await runAudit("scripts/editing-perf-audit.mjs", {}, onAuditChildChange, ["--skip-rust"]);
@@ -255,6 +245,8 @@ async function main() {
     await stopProcess(server);
     fs.rmSync(coldSpaceRoot, { recursive: true, force: true });
   }
+  // Every failed audit with its first line, and 1 when one failed.
+  process.exitCode = runner.finish();
 }
 
 main().catch((error) => {

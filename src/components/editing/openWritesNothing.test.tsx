@@ -1,8 +1,8 @@
-import { act, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DndContext } from "@dnd-kit/core";
 import { EditorView } from "@codemirror/view";
-import { Detail } from "@/components/Detail";
+import { Detail, preloadNoteEditor } from "@/components/Detail";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { beginNoteEdit, endNoteEdit, noteBodyState, reportEditsFlushed, reportNoteEdits, saveNoteBody } from "@/lib/commands";
 import { bodyOfState } from "@/lib/editing/lineEndings";
@@ -47,8 +47,13 @@ vi.mock("@/lib/commands", () => ({
 const SLUG = "Cards/Parachute Wide Track Pants";
 const HASH = "hash-disk";
 
-beforeAll(() => {
+beforeAll(async () => {
   installCodeMirrorLayoutStubs();
+  // The editor's part of the bundle is loaded before a card opens, as the
+  // card's window loads it (SPEC_CARD_PEEK.md, О12): the editor then comes
+  // when its session opens, not after the module's import, whose time
+  // depends on how busy the machine is.
+  await preloadNoteEditor();
 });
 
 function whole(body: string): IndexedBlock {
@@ -115,12 +120,11 @@ describe("opening a card writes nothing (SPEC_EDITING.md, Л3, Л17)", () => {
       vi.mocked(beginNoteEdit).mockResolvedValue(whole(body));
       vi.mocked(noteBodyState).mockResolvedValue({ body, body_hash: HASH });
       const { container, unmount } = openCard(whole(body));
-      const content = await waitFor(() => {
-        const found = container.querySelector<HTMLElement>(".mine-note-editor .cm-content");
-        if (!found) throw new Error("no editor yet");
-        return found;
-      }, { timeout: 5000 });
+      // The session opens on the backend's answer: the editor stands once
+      // those promises have settled.
       await settle();
+      const content = container.querySelector<HTMLElement>(".mine-note-editor .cm-content");
+      if (!content) throw new Error("no editor once the session opened");
       const view = EditorView.findFromDOM(content);
       if (!view) throw new Error("no view");
       expect(bodyOfState(view.state, false)).toBe(body);

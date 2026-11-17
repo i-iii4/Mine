@@ -42,6 +42,9 @@ vi.mock("@/lib/commands", () => ({
   },
   // CardHoverMenu lazily loads the full block for its Connect submenu.
   getBlock: async () => null,
+  // The rule of commands.ts, over the error its `invoke` throws.
+  isSearchSuperseded: (error: unknown) =>
+    error instanceof Error && (error.cause as { kind?: string } | undefined)?.kind === "search_superseded",
 }));
 
 vi.mock("@/components/Card", () => ({
@@ -1432,5 +1435,244 @@ describe("SearchOverlay by the input", () => {
     const { surface, scrim } = parts();
     expect(surface).not.toHaveAttribute(MOTION_KEY_ATTRIBUTE);
     expect(scrim).not.toHaveAttribute(MOTION_KEY_ATTRIBUTE);
+  });
+});
+
+/// What the list shows is the answer to the text in the field, whatever order
+/// the answers come back in and however the backend stops older searches
+/// (SPEC_SEARCH_OVERLAY.md, «Ответ на набранный текст»).
+describe("SearchOverlay answers to the typed text", () => {
+  interface Asked {
+    query: string;
+    answer: (blocks: LightBlock[]) => void;
+    fail: (error: unknown) => void;
+  }
+  let asked: Asked[];
+  const props = {
+    open: true,
+    vaultPath: "/vault",
+    onQueryChange: vi.fn(),
+    onClose: vi.fn(),
+    onOpenBlock: vi.fn(),
+  };
+
+  beforeEach(() => {
+    asked = [];
+    listGridBlocksMock.mockImplementation((_tag, _offset, _limit, query) => new Promise((resolve, reject) => {
+      asked.push({ query: query ?? "", answer: (blocks) => resolve(snapshot(blocks)), fail: reject });
+    }));
+  });
+
+  /** The cards an answer to `query` names, `label` telling two answers to
+   *  the same text apart. */
+  function cardsOf(query: string, label = "") {
+    return [1, 2].map((index) => makeBlock(query.length * 10 + index, `${query} ${label}${index}`));
+  }
+
+  function shownNames(): string[] {
+    return screen.queryAllByRole("option").map(
+      (option) => option.querySelector("[data-card-row-name]")?.textContent ?? "",
+    );
+  }
+
+  /** The person types `query`, and its request goes out once the debounce
+   *  has passed. */
+  async function type(view: ReturnType<typeof render>, query: string) {
+    view.rerender(<SearchOverlay {...props} query={query} />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 130));
+    });
+  }
+
+  async function settle(work: () => void) {
+    await act(async () => {
+      work();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  function superseded(): Error {
+    return Object.assign(new Error("the search was superseded by a newer one"), {
+      cause: { kind: "search_superseded" },
+    });
+  }
+
+  const texts = ["me", "met", "meta", "metal"];
+  it.each([
+    ["in the order they were asked", [0, 1, 2, 3]],
+    ["newest first", [3, 2, 1, 0]],
+    ["the newest between older ones", [1, 3, 0, 2]],
+    ["the oldest last", [3, 1, 2, 0]],
+  ])("shows the answer to the text in the field when the answers come back %s", async (_name, order) => {
+    const view = render(<SearchOverlay {...props} query="" />);
+    for (const text of texts) await type(view, text);
+    expect(asked.map((request) => request.query)).toEqual(["", ...texts]);
+
+    for (const index of order) {
+      await settle(() => asked[index + 1]!.answer(cardsOf(texts[index]!)));
+      const expected = index === texts.length - 1 ? ["metal 1", "metal 2"] : null;
+      // Before the answer to «metal» lands, the field shows no other text's
+      // answer either: nothing older replaces the rows.
+      if (expected) expect(shownNames()).toEqual(expected);
+      else expect(shownNames().every((name) => name.startsWith("metal"))).toBe(true);
+    }
+    expect(shownNames()).toEqual(["metal 1", "metal 2"]);
+    expect(document.querySelector("[data-search-overlay-result-count]")).toHaveTextContent("2");
+  });
+
+  it("keeps the earlier rows while the next text's answer is on its way, and shows it at once", async () => {
+    const view = render(<SearchOverlay {...props} query="" />);
+    await type(view, "me");
+    await settle(() => asked[1]!.answer(cardsOf("me")));
+    await type(view, "met");
+    expect(shownNames()).toEqual(["me 1", "me 2"]);
+    await settle(() => asked[2]!.answer(cardsOf("met")));
+    expect(shownNames()).toEqual(["met 1", "met 2"]);
+  });
+
+  it("never shows an earlier asking of the same text over a later one", async () => {
+    const view = render(<SearchOverlay {...props} query="" />);
+    await type(view, "metal");
+    await type(view, "me");
+    await type(view, "metal");
+    expect(asked.map((request) => request.query)).toEqual(["", "metal", "me", "metal"]);
+
+    await settle(() => asked[3]!.answer(cardsOf("metal", "later ")));
+    expect(shownNames()).toEqual(["metal later 1", "metal later 2"]);
+    await settle(() => asked[1]!.answer(cardsOf("metal", "earlier ")));
+    await settle(() => asked[2]!.answer(cardsOf("me")));
+    expect(shownNames()).toEqual(["metal later 1", "metal later 2"]);
+  });
+
+  it("groups only the recent cards by date: a search answer on screen with the field emptied stays one list, and nothing of it is left behind", async () => {
+    const dated = (id: number, slug: string, savedAt: string) => makeBlock(id, slug, { saved_at: savedAt });
+    // In the order of relevance: the months go back and forth.
+    const me = [
+      dated(1, "MEK.txt", "2026-07-10T10:00:00Z"),
+      dated(2, "mech", "2026-08-10T10:00:00Z"),
+      dated(3, "meanswhile", "2026-07-11T10:00:00Z"),
+      dated(4, "MetalUI", "2026-04-10T10:00:00Z"),
+    ];
+    const view = render(<SearchOverlay {...props} query="me" />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 130));
+    });
+    await settle(() => asked[0]!.answer(me));
+    expect(shownNames()).toEqual(["MEK.txt", "mech", "meanswhile", "MetalUI"]);
+
+    // The field is emptied at once; the recent cards are on their way.
+    view.rerender(<SearchOverlay {...props} query="" />);
+    expect(document.querySelectorAll("[data-search-overlay-recent-label]")).toHaveLength(0);
+    expect(shownNames()).toEqual(["MEK.txt", "mech", "meanswhile", "MetalUI"]);
+
+    // «metal» is typed before they come: its answer alone is the list.
+    await type(view, "metal");
+    await settle(() => asked[1]!.answer([dated(9, "recent", "2026-11-17T10:00:00Z")]));
+    await settle(() => asked[2]!.answer([me[3]!]));
+    expect(shownNames()).toEqual(["MetalUI"]);
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(document.querySelectorAll("[data-search-overlay-recent-label]")).toHaveLength(0);
+  });
+
+  it("keeps date sections whose label repeats apart, and leaves none behind", async () => {
+    const view = render(<SearchOverlay {...props} query="" />);
+    await settle(() => asked[0]!.answer([
+      makeBlock(1, "one", { saved_at: "2026-07-10T10:00:00Z" }),
+      makeBlock(2, "two", { saved_at: "2026-08-10T10:00:00Z" }),
+      makeBlock(3, "three", { saved_at: "2026-07-11T10:00:00Z" }),
+    ]));
+    expect([...document.querySelectorAll("[data-search-overlay-recent-label]")].map((label) => label.textContent))
+      .toEqual(["July", "August", "July"]);
+    await type(view, "on");
+    await settle(() => asked[1]!.answer([makeBlock(1, "one")]));
+    expect(shownNames()).toEqual(["one"]);
+    expect(document.querySelectorAll("[data-search-overlay-recent-label]")).toHaveLength(0);
+  });
+
+  it("shows nothing of a superseded search: an older one is dropped, the current one is asked again", async () => {
+    const view = render(<SearchOverlay {...props} query="" />);
+    await type(view, "me");
+    await settle(() => asked[1]!.answer(cardsOf("me")));
+    await type(view, "met");
+    await type(view, "meta");
+
+    // The backend stopped the older search: the rows stay as they were.
+    await settle(() => asked[2]!.fail(superseded()));
+    expect(shownNames()).toEqual(["me 1", "me 2"]);
+    expect(document.querySelector("[data-search-overlay-error]")).toBeNull();
+
+    // The current one was stopped too: an older request of the page reached
+    // the backend after it. No error, the rows stay, the text is asked again.
+    await settle(() => asked[3]!.fail(superseded()));
+    expect(document.querySelector("[data-search-overlay-error]")).toBeNull();
+    expect(shownNames()).toEqual(["me 1", "me 2"]);
+    expect(asked.map((request) => request.query)).toEqual(["", "me", "met", "meta", "meta"]);
+
+    await settle(() => asked[4]!.answer(cardsOf("meta")));
+    expect(shownNames()).toEqual(["meta 1", "meta 2"]);
+  });
+});
+
+/// The list scrolls as a macOS list does: only the person moves it, and the
+/// arrows bring the row they moved to into view (SPEC_SEARCH_OVERLAY.md,
+/// «Прокрутка списка»).
+describe("SearchOverlay list scrolling", () => {
+  const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView);
+
+  async function renderRows(count: number) {
+    // Every answer is new rows, as every IPC answer is.
+    listGridBlocksMock.mockImplementation(async () =>
+      snapshot(Array.from({ length: count }, (_, index) => makeBlock(index + 1, `card ${index + 1}`))),
+    );
+    const view = renderOverlay({ query: "card" });
+    await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(count));
+    scrollIntoView.mockClear();
+    return view;
+  }
+
+  it("never scrolls for the pointer or a silent refresh; the arrows scroll to the row they moved to", async () => {
+    await renderRows(3);
+    const options = () => screen.getAllByRole("option");
+
+    fireEvent.pointerMove(options()[2]!, { clientX: 40, clientY: 90 });
+    expect(options()[2]).toHaveAttribute("aria-selected", "true");
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    fireEvent(window, new Event("vault-refreshed"));
+    await waitFor(() => expect(listGridBlocksMock).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(options()[2]).toHaveAttribute("aria-selected", "true");
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    fireEvent(window, new CustomEvent("block-deleted", { detail: { slug: "card 1" } }));
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowUp" });
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView.mock.contexts[0]).toBe(screen.getAllByRole("option")[0]);
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+  });
+
+  it("starts a new answer at the top of the list and keeps the place on a silent refresh", async () => {
+    const { rerender, onQueryChange, onClose, onOpenBlock } = await renderRows(3);
+    const listbox = screen.getByRole("listbox");
+
+    listbox.scrollTop = 120;
+    fireEvent(window, new Event("vault-refreshed"));
+    await waitFor(() => expect(listGridBlocksMock).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(listbox.scrollTop).toBe(120);
+
+    rerender(
+      <SearchOverlay open query="cards" vaultPath="/vault"
+        onQueryChange={onQueryChange} onClose={onClose} onOpenBlock={onOpenBlock} />,
+    );
+    await waitFor(() => expect(listGridBlocksMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(listbox.scrollTop).toBe(0));
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 });

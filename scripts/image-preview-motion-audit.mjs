@@ -316,7 +316,39 @@ try {
     await page.goto(new URL(`/__image-preview-audit?page=${pageName}`, vite.origin).href, { timeout: COLD_START_MS });
     await page.waitForFunction(() => [...document.images].some((image) => image.naturalWidth > 0), null, { timeout: COLD_START_MS });
     await page.waitForTimeout(300);
+    await decodeWhole(page);
     return { page, errors, release };
+  };
+
+  /** WebKit decodes a large picture drawn small at a smaller size; once the
+   *  same address is drawn at its own size, it decodes it whole and redraws
+   *  every copy on the page from that, a change in their thin lines some
+   *  frames later, whatever drew it. The preview draws the picture at its own
+   *  size, so the page is first brought to that state, with no app code: a
+   *  comparison then sees the motion, not the decoder's race with the
+   *  screenshot (17.11.2026: 557 or 4175 pixels for one first frame). */
+  const decodeWhole = async (page) => {
+    await page.evaluate(async (address) => {
+      const image = new Image();
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = () => reject(new Error(`The picture did not load: ${address}`));
+        image.src = address;
+      });
+      // At its own size, as the preview's rest draws it.
+      image.style.cssText = `position:fixed;left:0;top:0;width:${image.naturalWidth}px;height:${image.naturalHeight}px`;
+      document.body.append(image);
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      image.remove();
+    }, new URL("/audit-media/photo.png", vite.origin).href);
+    let last = await page.screenshot();
+    for (let index = 0; index < 20; index += 1) {
+      await page.waitForTimeout(100);
+      const now = await page.screenshot();
+      if (differing(last, now, 0) === 0) return;
+      last = now;
+    }
+    throw new Error("The page did not come to rest after the picture was decoded whole");
   };
 
   const clickSource = (page, selector) => page.locator(selector).click({ position: { x: 60, y: 60 } });

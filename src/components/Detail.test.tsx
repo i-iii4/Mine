@@ -3314,8 +3314,9 @@ describe("Detail", () => {
     expect(original.style.display).not.toBe("none");
   });
 
-  it("re-requests the original when the reader tries again", () => {
-    const { container } = render(<Detail {...cloudImageProps(true)} />);
+  it("re-requests the original when the reader tries again, without opening the picture's view", () => {
+    const onOpenImagePreview = vi.fn();
+    const { container } = render(<Detail {...cloudImageProps(true)} onOpenImagePreview={onOpenImagePreview} />);
 
     const imageSelector = '[data-detail-image] img:not([data-detail-preview-backing])';
     const before = (container.querySelector(imageSelector) as HTMLImageElement).getAttribute("src");
@@ -3328,6 +3329,8 @@ describe("Detail", () => {
     expect(after).not.toBe(before);
     expect(after).toContain("retry=1");
     expect(container.querySelector('[data-detail-cloud-state="offline"]')).toBeNull();
+    // The button is a control of the picture's frame, not the picture.
+    expect(onOpenImagePreview).not.toHaveBeenCalled();
   });
 
   it("keeps a local file's failure silent about the cloud", () => {

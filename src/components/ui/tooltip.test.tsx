@@ -9,7 +9,7 @@
 // global.css give it; a leaving ends when the test says so.
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { installMotionInput, MOTION_KEY_ATTRIBUTE } from "@/lib/motionInput";
 import type { MotionLevel } from "@/lib/motion";
 import { setMotionLevel } from "@/test/motionLevel";
@@ -18,12 +18,21 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./tool
 
 /** Longer than the button's 500 ms tooltip delay. */
 const PAST_THE_DELAY_MS = 650;
-const wait = (ms: number) => act(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+/** Time passes: on the test's own clock where a test fakes it, so a check
+ *  that a delay has not run out yet counts it as the page does. */
+const wait = (ms: number) => (vi.isFakeTimers()
+  ? act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  })
+  : act(() => new Promise<void>((resolve) => setTimeout(resolve, ms))));
 /** Radix's state reaches the tooltip's own follower on a mutation record, a
  *  microtask after React's commit and before the frame. */
 const settle = () => act(async () => undefined);
 const frames = (count: number) => act(async () => {
-  for (let index = 0; index < count; index += 1) await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  for (let index = 0; index < count; index += 1) {
+    if (vi.isFakeTimers()) await vi.advanceTimersToNextFrame();
+    else await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
 });
 
 const animations = document.createElement("style");
@@ -39,7 +48,10 @@ let removeInput: () => void;
 beforeEach(() => {
   removeInput = installMotionInput();
 });
-afterEach(() => removeInput());
+afterEach(() => {
+  removeInput();
+  vi.useRealTimers();
+});
 
 function place(element: Element, box: { left: number; top: number; width: number; height: number }): void {
   element.getBoundingClientRect = () => DOMRect.fromRect({ x: box.left, y: box.top, width: box.width, height: box.height });
@@ -118,6 +130,9 @@ describe.each<MotionLevel>(["full", "minimal", "off"])("the tooltips of a row of
   beforeEach(() => setMotionLevel(level));
 
   it("brings the first one after its delay, with its appearance", async () => {
+    // The delay runs from the pointer's move, the page's own timer: the
+    // page's clock is faked, so the test counts the delay as the page does.
+    vi.useFakeTimers();
     render(<Stand />);
     layOut();
     fireEvent.pointerMove(button("Zoom out"), { clientX: 16, clientY: 16 });
@@ -215,6 +230,9 @@ describe.each<MotionLevel>(["full", "minimal", "off"])("a tooltip when the point
   beforeEach(() => setMotionLevel(level));
 
   it("goes, however fast the pointer left, and the next one waits for its delay again", async () => {
+    // The delays run from the pointer's moves, the page's own timers: the
+    // page's clock is faked, so the test counts them as the page does.
+    vi.useFakeTimers();
     render(<Stand />);
     layOut();
     const zoomOut = await restOn("Zoom out", 16);

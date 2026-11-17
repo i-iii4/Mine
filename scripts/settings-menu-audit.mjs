@@ -49,7 +49,9 @@ const vite = await startAuditVite([{
         function Fixture() {
           const [detail, setDetail] = React.useState(false);
           window.setDetail = setDetail;
-          const block = { id: 1, slug: "audit", block_type: "article", card_kind: "article", display_title: "Audit", fallback_label: "Audit", saved_at: "2026-09-18T00:00:00Z", body: "Text", url: null, media_urls: null, author: null };
+          // A feed row: a LightBlock carries the collections the card is in,
+          // which the card menu's Connect reads at its opening.
+          const block = { id: 1, slug: "audit", block_type: "article", card_kind: "article", display_title: "Audit", fallback_label: "Audit", saved_at: "2026-09-18T00:00:00Z", body: "Text", url: null, media_urls: null, author: null, collections: [] };
           const props = { ...secondaryProps, detailBlock: detail ? block : null, detailEntered: detail, onDetailClose: () => { window.closeCount = (window.closeCount || 0) + 1; } };
           return React.createElement(ChromeShell, null,
           React.createElement(ChromeRow, { as: "header", separator: "bottom", className: "bg-chrome" },

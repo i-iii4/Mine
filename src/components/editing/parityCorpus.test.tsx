@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { DndContext } from "@dnd-kit/core";
 import { EditorView } from "@codemirror/view";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Detail } from "@/components/Detail";
+import { Detail, preloadNoteEditor } from "@/components/Detail";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { beginNoteEdit, getBlock, noteBodyState, resolveNoteLink, saveNoteBody, toggleTaskItem } from "@/lib/commands";
 import { revealField } from "@/lib/editing/reveal";
@@ -98,8 +98,13 @@ const EMBEDDED: IndexedBlock = indexedBlock({
   body_hash: "hash-embed",
 });
 
-beforeAll(() => {
+beforeAll(async () => {
   installCodeMirrorLayoutStubs();
+  // The editor's part of the bundle is loaded before a card opens, as the
+  // card's window loads it (SPEC_CARD_PEEK.md, О12): the editor then comes
+  // when its session opens, not after the module's import, whose time
+  // depends on how busy the machine is.
+  await preloadNoteEditor();
 });
 
 beforeEach(() => {
@@ -171,12 +176,12 @@ async function open(surface: NoteSurface, body: string): Promise<Surface> {
   );
   let view: EditorView | null = null;
   if (surface === "editing") {
-    view = await waitFor(() => {
-      const content = container.querySelector<HTMLElement>(".cm-content");
-      const found = content ? EditorView.findFromDOM(content) : null;
-      if (!found) throw new Error("no editor yet");
-      return found;
-    });
+    // The session opens on the backend's answer: the editor stands once
+    // those promises have settled.
+    await act(async () => {});
+    const content = container.querySelector<HTMLElement>(".cm-content");
+    view = content ? EditorView.findFromDOM(content) : null;
+    if (!view) throw new Error("no editor once the session opened");
   }
   // The embeds have answered and drawn their cards.
   if (body.includes("![[Пример заметки]]")) {

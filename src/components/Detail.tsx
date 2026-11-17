@@ -2430,6 +2430,23 @@ function DetailLinkPicture({
   );
 }
 
+/** What a press can land on inside the frame of a medium besides the medium:
+ *  a control of its own (the cloud state's «Try again», a link, a field, a
+ *  menu row). */
+const MEDIA_FRAME_CONTROL = "button, a[href], input, textarea, select, [role='button'], [role='menuitem']";
+
+/** Whether a press inside the frame of a medium (`MediaAssetActionFrame`)
+ *  lands on one of its controls rather than on the medium. A click, a key on
+ *  a focused button or a press on such a control does what the control does
+ *  and nothing of the frame: it neither opens the picture's full-screen view
+ *  nor starts a drag. Until 17.11.2026 «Try again» of a picture in iCloud also
+ *  opened the view, and the next Escape closed the view, not the card. */
+function pressesControlInFrame(event: { target: EventTarget; currentTarget: EventTarget }): boolean {
+  if (!(event.target instanceof Element) || !(event.currentTarget instanceof Element)) return false;
+  const control = event.target.closest(MEDIA_FRAME_CONTROL);
+  return control !== null && control !== event.currentTarget && event.currentTarget.contains(control);
+}
+
 function MediaAssetActionFrame({
   asset,
   vaultPath,
@@ -2558,7 +2575,7 @@ function MediaAssetActionFrame({
         data-detail-inline-media-drag={canDrag ? "true" : undefined}
         data-media-asset-ref={asset.media_ref}
         onPointerDown={(event) => {
-          if (!canDrag || event.button !== 0) return;
+          if (!canDrag || event.button !== 0 || pressesControlInFrame(event)) return;
           dragPointerListener?.(event);
           // Suppressing the default here would also suppress the click that
           // follows, and a click is now how the image opens. The drag sensor
@@ -2567,7 +2584,7 @@ function MediaAssetActionFrame({
           window.getSelection()?.removeAllRanges();
         }}
         onMouseDown={(event) => {
-          if (canDrag && event.button === 0 && !canOpenImagePreview) {
+          if (canDrag && event.button === 0 && !canOpenImagePreview && !pressesControlInFrame(event)) {
             event.preventDefault();
           }
         }}
@@ -2575,6 +2592,7 @@ function MediaAssetActionFrame({
           // A completed drag never reaches here: dnd-kit swallows the click once
           // the pointer passes the activation distance.
           if (!canOpenImagePreview || !fullSizeImageSrc || isDragging) return;
+          if (pressesControlInFrame(event)) return;
           const origin = event.currentTarget;
           // What a click on the picture means is decided with the
           // editor's (SPEC_EDITING.md, Л11.1).

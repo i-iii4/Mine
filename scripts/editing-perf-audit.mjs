@@ -27,8 +27,9 @@
 // A limit a measure does not hold, where SPEC_EDITING.md names the
 // exception and the decision it waits for (`KNOWN_EXCEEDANCES`), is reported
 // as that exception: the audit fails when the measure gets worse than the
-// exception's ceiling or holds the limit again (the exception is then
-// stale). Every other limit must hold. The report goes to
+// exception's ceiling or holds the limit again by more than the measure's
+// spread (`STALE_MARGINS`; the exception is then stale). Every other limit
+// must hold. The report goes to
 // `output/playwright/editing-perf-<time>/report.json`.
 //
 // `--skip-rust` leaves out the Rust test, `--sets=a,b` measures those sets
@@ -95,6 +96,21 @@ const CHUNK_RUNS = 3;
  * measure of one place of one set that does not hold its limit, with what
  * it was measured at and the ceiling past which it is a regression.
  */
+/**
+ * How far under its limit an exception's measure must come before the
+ * exception counts as stale (SPEC_EDITING.md, Л14, «Исключения»): a measure
+ * at its limit lands on either side of it by chance, and a run that happens
+ * to land under it must not fail. Under the limit by less than this, the
+ * exception is reported as known, with the note that it held this run.
+ *
+ * Typing: three standard deviations of the p95 of И3, the exception at the
+ * limit, over five runs of it on a quiet machine on 17.11.2026 (16.4, 16.1,
+ * 17, 16 and 16.3 ms: 0.39 ms). The machine's other work only raises the
+ * p95 (16 to 22.2 ms in the runs of the same day under load), never brings
+ * it under that floor.
+ */
+const STALE_MARGINS = { typingP95Ms: 1.2 };
+
 const KNOWN_EXCEEDANCES = [
   {
     id: 'И1',
@@ -646,18 +662,27 @@ const results = [];
 function judge(name, value, limit, { set = null, place = null, measure = null, unit = 'ms' } = {}) {
   const known = KNOWN_EXCEEDANCES.find((exception) => exception.set === set && exception.places.includes(place) && exception.measure === measure);
   const holds = value <= limit;
+  // An exception is stale only when its measure holds the limit by more
+  // than the measure's spread; under the limit by less, it held by chance.
+  const margin = known ? STALE_MARGINS[measure] ?? 0 : 0;
+  const heldByChance = Boolean(known) && holds && !known.intermittent && value > limit - margin;
   let status;
-  if (known) status = holds ? (known.intermittent ? 'pass' : 'stale-exception') : value <= known.ceilingMs ? 'known-exceedance' : 'regression';
-  else status = holds ? 'pass' : 'fail';
-  results.push({ name, value, limit, unit, status, exception: known?.id ?? null });
+  if (known) {
+    if (!holds) status = value <= known.ceilingMs ? 'known-exceedance' : 'regression';
+    else if (known.intermittent) status = 'pass';
+    else status = heldByChance ? 'known-exceedance' : 'stale-exception';
+  } else status = holds ? 'pass' : 'fail';
+  results.push({ name, value, limit, unit, status, exception: known?.id ?? null, ...(heldByChance ? { heldWithinMargin: margin } : {}) });
   const word = { pass: 'PASS', fail: 'FAIL', 'known-exceedance': `KNOWN EXCEEDANCE ${known?.id}`, 'stale-exception': `STALE EXCEPTION ${known?.id}`, regression: `REGRESSION ${known?.id}` }[status];
-  const detail = known && status !== 'pass' ? ` (${known.why}; ceiling ${known.ceilingMs} ms; waits for ${known.waitsFor})` : '';
+  const held = heldByChance ? `held the limit this run, by less than its margin of ${margin} ${unit}; ` : '';
+  const stale = status === 'stale-exception' ? `holds the limit by more than its margin of ${margin} ${unit}; ` : '';
+  const detail = known && status !== 'pass' ? ` (${held}${stale}${known.why}; ceiling ${known.ceilingMs} ms; waits for ${known.waitsFor})` : '';
   console.log(`${word} ${name}: ${value} ${unit} against ${limit} ${unit}${detail}`);
 }
 
 let browser;
 let server;
-const report = { started: new Date().toISOString(), limits: LIMITS, knownExceedances: KNOWN_EXCEEDANCES, sets: [] };
+const report = { started: new Date().toISOString(), limits: LIMITS, knownExceedances: KNOWN_EXCEEDANCES, staleMargins: STALE_MARGINS, sets: [] };
 try {
   console.log(`editing-perf: building the page into ${buildFolder}`);
   report.build = await buildPage();

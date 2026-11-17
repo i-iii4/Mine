@@ -3960,12 +3960,25 @@ describe("AppWithVault", () => {
 
     it("holds the closed page for 100 ms in Full, the rows' fade out", async () => {
       await openCard();
-      fireEvent.click(screen.getByRole("button", { name: "Close" }));
-      expect(detailMenu()).toHaveAttribute("data-entered", "false");
-      await wait(MOTION_EXIT_MS - 40);
-      expect(detailMenu()).not.toBeNull();
-      await wait(60);
-      expect(detailMenu()).toBeNull();
+      // The hold counts from the press, the page's own timer; the closing's
+      // render after it takes its own time, longer on a busy machine. The
+      // page's clock is faked from the press on, so the test counts the
+      // hold as the page does.
+      vi.useFakeTimers();
+      try {
+        fireEvent.click(screen.getByRole("button", { name: "Close" }));
+        expect(detailMenu()).toHaveAttribute("data-entered", "false");
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(MOTION_EXIT_MS - 1);
+        });
+        expect(detailMenu()).not.toBeNull();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1);
+        });
+        expect(detailMenu()).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("holds the closed page for 100 ms in Minimal", async () => {
